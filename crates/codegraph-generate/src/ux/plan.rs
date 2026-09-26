@@ -300,7 +300,11 @@ pub(crate) struct ColumnResolution {
 
 impl ColumnResolution {
     /// Fold into the pack-default column plan, applying rule payloads.
-    fn into_column_plan(self, format: FormatConfig) -> ColumnPlan {
+    ///
+    /// `pub(crate)` so the IFML route generator (issue #300) resolves its
+    /// fallback-table columns through the exact same inference + rule tier
+    /// + pack-default fold — no second fold path to drift.
+    pub(crate) fn into_column_plan(self, format: FormatConfig) -> ColumnPlan {
         let (default_display, default_align, sortable_base, truncate_default) =
             dimension_defaults(self.dimension);
         let display = self.rule_display.unwrap_or(default_display);

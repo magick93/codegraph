@@ -80,6 +80,12 @@ impl ToneMap {
             .map(String::as_str)
             .unwrap_or(WORKFLOW_TONE_FALLBACK)
     }
+
+    /// True when no keyword is mapped (serialize-skip signal: templates
+    /// treat an absent map as "no tone entries").
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl Default for ToneMap {

@@ -135,6 +135,61 @@
 {%- endif %}
 {%- endif %}
 {%- endfor %}
+{%- if ux %}
+
+	// ux-rules fallback-table cell formatting (issue #300).
+	const UX_TONES: Record<string, Record<string, string>> = {
+	{%- for comp in components %}
+	{%- if comp.table %}
+	{%- for col in comp.table.columns %}
+	{%- if col.ux %}
+	{%- if col.ux.tone %}
+		'{{ comp.name }}.{{ col.binding }}': { {% for k, v in col.ux.tone %}{{ k }}: '{{ v }}', {% endfor %}},
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
+	{%- if comp.ux_list_columns %}
+	{%- for col in comp.ux_list_columns %}
+	{%- if col.ux %}
+	{%- if col.ux.tone %}
+		'{{ comp.name }}.{{ col.binding }}': { {% for k, v in col.ux.tone %}{{ k }}: '{{ v }}', {% endfor %}},
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
+	{%- endfor %}
+	};
+
+	function toneFor(key: string, value: unknown): string {
+		const tones = UX_TONES[key];
+		if (!tones) return 'outline';
+		return tones[String(value).toLowerCase()] ?? 'outline';
+	}
+
+	const UX_MONEY_OPTS = {{ ux.money_options }};
+
+	const UX_NUMBER_FMT = new Intl.NumberFormat('{{ ux.locale }}');
+	const UX_DATE_FMT = new Intl.DateTimeFormat('{{ ux.locale }}', { dateStyle: 'medium' });
+
+	function formatMoney(value: unknown): string {
+		return new Intl.NumberFormat('{{ ux.locale }}', UX_MONEY_OPTS).format(Number(value));
+	}
+
+	function formatNumber(value: unknown): string {
+		return UX_NUMBER_FMT.format(Number(value));
+	}
+
+	function formatDate(value: unknown): string {
+		const date = new Date(String(value));
+		return Number.isNaN(date.getTime()) ? String(value ?? '') : UX_DATE_FMT.format(date);
+	}
+
+	function copyChip(event: Event, value: unknown): void {
+		event.stopPropagation();
+		void navigator.clipboard?.writeText(String(value ?? ''));
+	}
+{%- endif %}
 </script>
 
 <svelte:head>
@@ -213,7 +268,7 @@
 	<thead>
 		<tr>
 		{% for col in comp.table.columns %}
-			<th>{{ col.label }}</th>
+			{% if col.ux %}{% if col.ux.align == "right" %}<th class="text-right">{{ col.label }}</th>{% else %}<th>{{ col.label }}</th>{% endif %}{% else %}<th>{{ col.label }}</th>{% endif %}
 		{% endfor %}
 		</tr>
 	</thead>
@@ -221,7 +276,7 @@
 {% raw %}		{#each data.items as item}{% endraw %}
 			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for col in comp.table.columns %}
-				<td>{item.{{ col.binding }}}</td>
+				{% if col.ux %}{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}{% else %}<td>{item.{{ col.binding }}}</td>{% endif %}
 			{% endfor %}{% if comp.workflow %}
 			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
 			</tr>
@@ -289,17 +344,19 @@
 <table data-testid="{{ comp.name }}-table">
 	<thead>
 		<tr>
-		{% for field in comp.fields %}
+		{% if comp.ux_list_columns %}{% for col in comp.ux_list_columns %}{% if col.ux.align == "right" %}<th class="text-right">{{ col.label }}</th>{% else %}<th>{{ col.label }}</th>{% endif %}{% endfor %}{% else %}{% for field in comp.fields %}
 			<th>{{ field }}</th>
-		{% endfor %}
+		{% endfor %}{% endif %}
 		</tr>
 	</thead>
 	<tbody>
 {% raw %}		{#each data.items as item}{% endraw %}
 			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
-			{% for field in comp.fields %}
+			{% if comp.ux_list_columns %}{% for col in comp.ux_list_columns %}
+				{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}
+			{% endfor %}{% else %}{% for field in comp.fields %}
 				<td>{item.{{ field }}}</td>
-			{% endfor %}{% if comp.workflow %}
+			{% endfor %}{% endif %}{% if comp.workflow %}
 			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}

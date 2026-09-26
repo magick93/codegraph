@@ -1940,3 +1940,195 @@ testids = { root = "data-table", row = "data-row" }
         "the sibling badge keeps the same attrs contract as fallback markup: {list}"
     );
 }
+
+// ── ux-rules fallback tables (issue #300) ────────────────────────────
+
+/// Schema with one property per dimension the fallback tables format:
+/// uuid id (Identifier), enum status (StatusCategory), numeric money name
+/// (Money), integer quantity (Quantity), datetime (TimePoint), text name.
+const UX_CUSTOMER_SCHEMA: &str = r#"{
+  "$id": "CustomerType.json",
+  "title": "CustomerType",
+  "description": "A customer",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "Unique identifier" },
+    "name": { "type": "string", "description": "Customer name" },
+    "status": { "type": "string", "enum": ["draft", "active"], "description": "Status" },
+    "total_amount": { "type": "number", "description": "Total billed" },
+    "quantity": { "type": "integer", "description": "Units ordered" },
+    "created_at": { "type": "string", "format": "date-time", "description": "Created" }
+  }
+}"#;
+
+/// Typed table covering the lookup gap plus every formatting dimension.
+const UX_TABLE_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerTable" {
+    label "Customers";
+
+    component "grid" {
+        type: table;
+        data: Customer;
+        pagination: true;
+
+        column "Name"    -> field Customer.name;
+        column "Status"  -> lookup Customer.status via status_labels;
+        column "Total"   -> field Customer.total_amount;
+        column "Count"   -> field Customer.quantity;
+        column "Created" -> field Customer.created_at;
+        column "Id"      -> field Customer.id;
+    }
+}
+"#;
+
+/// A project ux file that only pins [format]: rules merge ahead of the
+/// built-in pack, so the pack's per-dimension defaults still apply.
+fn write_ux_rules_file(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("ux-rules.toml");
+    std::fs::write(&path, "[format]\nlocale = \"en-NZ\"\ncurrency = \"NZD\"\n").unwrap();
+    path
+}
+
+#[tokio::test]
+async fn ux_on_fallback_table_renders_chips_alignment_and_formatting() {
+    let dir = tempfile::tempdir().unwrap();
+    let schemas_dir = dir.path().join("schemas");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(schemas_dir.join("CustomerType.json"), UX_CUSTOMER_SCHEMA).unwrap();
+    let classifier_path = dir.path().join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, UX_TABLE_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_without_workflow()).unwrap();
+    let ux_rules_path = write_ux_rules_file(dir.path());
+    let schemas = dir.path().join("schemas");
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .unwrap();
+
+    let page = read(
+        &output.join("svelte"),
+        "src/routes/customertable/+page.svelte",
+    );
+
+    // Lookup column: chip with tone lookup (the #300 lookup gap, closed).
+    assert!(
+        page.contains(
+            "<span class=\"chip\" data-chip={item.status} data-chip-variant={toneFor('grid.status', item.status)} data-testid=\"grid-chip\">{item.status}</span>"
+        ),
+        "lookup column must render as a tone-mapped chip:\n{page}"
+    );
+
+    // Money: right-aligned tabular figures + currency formatting.
+    assert!(
+        page.contains(
+            "<td class=\"text-right tabular-nums\">{formatMoney(item.total_amount)}</td>"
+        ),
+        "money column must be right-aligned currency:\n{page}"
+    );
+    assert!(
+        page.contains("<th class=\"text-right\">Total</th>"),
+        "headers align with cells:\n{page}"
+    );
+    assert!(
+        page.contains("currency: 'NZD'"),
+        "the money formatter carries the configured currency:\n{page}"
+    );
+
+    // Quantity: right-aligned, plain number formatting.
+    assert!(
+        page.contains("<td class=\"text-right tabular-nums\">{formatNumber(item.quantity)}</td>"),
+        "quantity column must be right-aligned number:\n{page}"
+    );
+
+    // Time point: localized date formatting.
+    assert!(
+        page.contains("{formatDate(item.created_at)}"),
+        "datetime column must render localized:\n{page}"
+    );
+
+    // Identifier: copy-chip button.
+    assert!(
+        page.contains(
+            "<td><button type=\"button\" class=\"chip chip-copy\" data-testid=\"grid-copy\" onclick={(e) => copyChip(e, item.id)}>{item.id}</button></td>"
+        ),
+        "identifier column must render a copy chip:\n{page}"
+    );
+
+    // Plain text column stays raw.
+    assert!(page.contains("<td>{item.name}</td>"), "{page}");
+    assert!(page.contains("<th>Name</th>"), "{page}");
+
+    // The tone map for the chip column is in the script (BTreeMap order).
+    assert!(
+        page.contains("'grid.status': { active: 'default', approved: 'default', draft: 'secondary', pending: 'secondary', }"),
+        "the toneFor map mirrors the pack tone table:\n{page}"
+    );
+}
+
+#[tokio::test]
+async fn ux_on_lookup_chip_survives_schemaless_runs() {
+    // Without schemas there are no graph props — the lookup tier still
+    // pins StatusCategory + chip (that is the point of tier 0), while
+    // unresolvable fields stay raw.
+    let dir = tempfile::tempdir().unwrap();
+    let ux_rules_path = write_ux_rules_file(dir.path());
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, UX_TABLE_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_without_workflow()).unwrap();
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: None,
+        classifier: None,
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .unwrap();
+
+    let page = read(
+        &output.join("svelte"),
+        "src/routes/customertable/+page.svelte",
+    );
+    assert!(
+        page.contains("data-testid=\"grid-chip\""),
+        "lookup chip must not depend on graph props:\n{page}"
+    );
+    assert!(
+        page.contains("<td>{item.name}</td>"),
+        "signal-less fields stay raw:\n{page}"
+    );
+    assert!(
+        !page.contains("text-right tabular-nums"),
+        "no money inference without a pg type:\n{page}"
+    );
+}

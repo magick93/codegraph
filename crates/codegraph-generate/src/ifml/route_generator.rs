@@ -3,8 +3,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use codegraph_config::ux::{Align, Dimension, Display, ToneMap, UxRules};
 use codegraph_config::{DomainConfig, IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::PropertyNode;
+use codegraph_type_contracts::RefClassificationKind;
 use rex_ifml::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
@@ -140,6 +143,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
                 vc,
                 self.mappings.as_ref(),
                 &modal_targets,
+                project.ux.as_ref(),
             )
             .await;
 
@@ -323,6 +327,26 @@ pub struct PageSvelteContext {
     /// derived const (query-param resolution — SvelteKit views have no
     /// dynamic segments here, so route params are always empty).
     view_params: Vec<String>,
+    /// ux-rules page-level formatting baseline (issue #300): locale + money
+    /// `Intl.NumberFormat` options for the fallback-table script helpers.
+    /// `None` when the `ux_rules` plane is off — the key is skipped so
+    /// flag-off output stays byte-identical. IFML page templates render
+    /// with the component context only (no `project` in scope — see
+    /// `render_template`), so the format baseline is threaded explicitly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ux: Option<PageUxContext>,
+}
+
+/// Locale/currency baseline for the fallback-table formatting helpers
+/// (issue #300), threaded from `ProjectConfig.ux.format`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PageUxContext {
+    /// BCP-47 locale for the page's `Intl` formatters.
+    pub locale: String,
+    /// Ready-to-render `Intl.NumberFormat` options object literal for money
+    /// cells (`{ style: 'currency', currency: 'NZD' }`), or `{}` when no
+    /// currency is configured (money degrades to grouped decimals).
+    pub money_options: String,
 }
 
 /// Markup gate for a view's interactive controls (form submit/cancel buttons
@@ -533,6 +557,12 @@ pub struct PageComponentContext {
     /// Whether the component belongs to a nested view container: suppresses
     /// the page-level `<h1>` heading inside the group.
     in_container: bool,
+    /// ux-resolved columns for a spec-less list component (issue #300):
+    /// the same [`RenderColumn`] shape as typed tables, keyed aligned with
+    /// `fields`. Empty (and skipped from the context) when the ux plane is
+    /// off — the template keeps its `comp.fields` loop, byte-identical.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    ux_list_columns: Vec<RenderColumn>,
 }
 
 /// Workflow config for a component's bound entity, pre-rendered into the
@@ -904,6 +934,66 @@ pub struct RenderColumn {
     binding: String,
     lookup: String,
     expr: String,
+    /// ux-rules resolved presentation (issue #300). `None` when the plane
+    /// is off — the key is skipped so flag-off contexts and rendered
+    /// markup stay byte-identical (the template's ux branches are then
+    /// never taken).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ux: Option<RenderColumnUx>,
+}
+
+/// ux-rules resolved presentation for one fallback-table column (issue
+/// #300), carried as the shared ux vocabulary (`codegraph_config::ux`)
+/// serialized kebab-case for the template's cell branches.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderColumnUx {
+    /// Resolved dimension, kebab-case (`text`, `quantity`, `money`,
+    /// `time-point`, `status-category`, `identifier`, `reference`, `flag`).
+    pub dimension: String,
+    /// Resolved display, kebab-case (`raw`, `chip`, `copy-chip`, `link`).
+    pub display: String,
+    /// Cell/header alignment, kebab-case (`left`, `right`).
+    pub align: String,
+    /// Status keyword → badge-variant map driving `toneFor`; skipped when
+    /// empty so templates treat absence as "no tone entries".
+    #[serde(skip_serializing_if = "ToneMap::is_empty")]
+    pub tone: ToneMap,
+}
+
+impl RenderColumnUx {
+    /// The fixed presentation for a `lookup` column (tier 0): the DSL
+    /// names the rendering explicitly (`via status_labels`), so the column
+    /// is a StatusCategory chip with the pack keyword tone map — closing
+    /// the gap where lookup columns rendered raw. Deliberately ABOVE the
+    /// rule tier: no `[[column]]` rule downgrades an explicit lookup.
+    fn for_lookup() -> Self {
+        Self {
+            dimension: Dimension::StatusCategory.as_str().to_string(),
+            display: "chip".to_string(),
+            align: "left".to_string(),
+            tone: ToneMap::default(),
+        }
+    }
+
+    /// Project a resolved [`ColumnPlan`] onto the render context.
+    fn from_plan(plan: &crate::ux::plan::ColumnPlan) -> Self {
+        Self {
+            dimension: plan.dimension.as_str().to_string(),
+            display: match plan.display {
+                Display::Raw => "raw",
+                Display::Chip => "chip",
+                Display::CopyChip => "copy-chip",
+                Display::Link => "link",
+            }
+            .to_string(),
+            align: match plan.align {
+                Align::Left => "left",
+                Align::Right => "right",
+            }
+            .to_string(),
+            tone: plan.tone.clone(),
+        }
+    }
 }
 
 /// Typed-form render context derived from a `ComponentSpec::Form`
@@ -996,6 +1086,7 @@ pub struct PageLoadComponentContext {
     fetch_form: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn build_page_context(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -1003,6 +1094,7 @@ async fn build_page_context(
     vc: &IfmlViewContainer,
     mappings: Option<&IfmlComponentMappings>,
     modal_targets: &HashSet<String>,
+    ux_rules: Option<&UxRules>,
 ) -> PageSvelteContext {
     let id_param = id_param_from(&vc.params);
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
@@ -1020,6 +1112,7 @@ async fn build_page_context(
             mappings,
             &mut api_cache,
             modal_targets,
+            ux_rules,
         )
         .await;
         components.push(ctx);
@@ -1056,6 +1149,7 @@ async fn build_page_context(
                     mappings,
                     &mut api_cache,
                     modal_targets,
+                    ux_rules,
                 )
                 .await;
                 ctx.in_container = true;
@@ -1244,6 +1338,7 @@ async fn build_page_context(
         control_gate,
         modal,
         container,
+        ux: ux_rules.map(page_ux_context),
     }
 }
 
@@ -1258,12 +1353,61 @@ async fn page_component_context(
     mappings: Option<&IfmlComponentMappings>,
     api_cache: &mut HashMap<String, Option<ResolvedApi>>,
     modal_targets: &HashSet<String>,
+    ux_rules: Option<&UxRules>,
 ) -> PageComponentContext {
     let (table, form, chart) = match c.spec {
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
         Some(ComponentSpec::Form(ref spec)) => (None, Some(render_form(spec)), None),
         Some(ComponentSpec::Chart(ref spec)) => (None, None, Some(render_chart(spec))),
         None => (None, None, None),
+    };
+
+    // ux-rules fallback-table resolution (issue #300): only when the plane
+    // is active — otherwise the ux context keys stay absent and the
+    // rendered page is byte-identical. Field columns resolve through the
+    // bound property's graph metadata (mirroring
+    // `ifml_control_inference.rs`), then the shared Pass-1 + rule tier in
+    // `crate::ux::plan`; lookup columns pin StatusCategory + chip above
+    // both tiers; expression columns stay Text (the IFML AST carries no
+    // return type).
+    let (table, ux_list_columns) = match ux_rules {
+        Some(rules) => {
+            let props = ux_props_for_entity(db, c.entity.as_deref().unwrap_or_default()).await;
+            let status_field = c
+                .entity
+                .as_deref()
+                .and_then(|entity| workflow_for_entity(config, entity))
+                .map(|wf| wf.status_field);
+            let status_field = status_field.as_deref();
+            let mut table = table;
+            if let Some(table) = table.as_mut() {
+                apply_table_ux(table, rules, &props, &c.fields_with_types, status_field);
+            }
+            let ux_list_columns = if c.spec.is_none() && c.component_type == "list" {
+                c.fields
+                    .iter()
+                    .map(|field| RenderColumn {
+                        label: field.clone(),
+                        kind: "field".to_string(),
+                        binding: field.clone(),
+                        lookup: String::new(),
+                        expr: String::new(),
+                        ux: Some(resolve_column_ux(
+                            rules,
+                            "field",
+                            field,
+                            &props,
+                            &c.fields_with_types,
+                            status_field,
+                        )),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (table, ux_list_columns)
+        }
+        None => (table, Vec::new()),
     };
 
     let kind = kind_of(c);
@@ -1402,6 +1546,7 @@ async fn page_component_context(
         table,
         form,
         chart,
+        ux_list_columns,
     }
 }
 
@@ -2080,6 +2225,7 @@ fn render_column(col: &ColumnDef) -> RenderColumn {
             binding: field.property.clone(),
             lookup: String::new(),
             expr: String::new(),
+            ux: None,
         },
         ColumnDef::Lookup {
             label,
@@ -2091,6 +2237,7 @@ fn render_column(col: &ColumnDef) -> RenderColumn {
             binding: field.property.clone(),
             lookup: lookup.clone(),
             expr: String::new(),
+            ux: None,
         },
         ColumnDef::Expression { label, expr } => RenderColumn {
             label: label.clone(),
@@ -2098,6 +2245,190 @@ fn render_column(col: &ColumnDef) -> RenderColumn {
             binding: render_expression(expr),
             lookup: String::new(),
             expr: render_expression(expr),
+            ux: None,
+        },
+    }
+}
+
+/// Resolve the graph schema title for an IFML entity binding: exact match
+/// first, then the `{entity}Type` shape (mirrors the IFML querier's
+/// `resolve_schema_title_by_name`). `None` when the entity is not
+/// schema-backed — ux columns then resolve from the component's
+/// `(field, rust_type)` pairs alone.
+async fn ux_schema_title(db: &dyn GraphQuerier, entity: &str) -> Option<String> {
+    if entity.is_empty() {
+        return None;
+    }
+    if matches!(db.get_schema(entity).await, Ok(Some(_))) {
+        return Some(entity.to_string());
+    }
+    let suffixed = format!("{entity}Type");
+    matches!(db.get_schema(&suffixed).await, Ok(Some(_))).then_some(suffixed)
+}
+
+/// Graph properties for an IFML component's bound entity, keyed by both
+/// the property name and the `r#`-stripped rust field name. Empty when the
+/// entity is not schema-backed (columns fall back to the component's
+/// `(field, rust_type)` pairs — an honest, signal-poor inference).
+async fn ux_props_for_entity(db: &dyn GraphQuerier, entity: &str) -> HashMap<String, PropertyNode> {
+    let Some(title) = ux_schema_title(db, entity).await else {
+        return HashMap::new();
+    };
+    let Ok(props) = db.get_properties(&title).await else {
+        return HashMap::new();
+    };
+    let mut by_name: HashMap<String, PropertyNode> = HashMap::with_capacity(props.len() * 2);
+    for prop in props {
+        let stripped = prop
+            .rust_field_name
+            .strip_prefix("r#")
+            .unwrap_or(&prop.rust_field_name)
+            .to_string();
+        by_name.insert(prop.name.clone(), prop.clone());
+        by_name.insert(stripped, prop);
+    }
+    by_name
+}
+
+/// The codelist half of the `ifml_control_inference.rs` mirror: graph
+/// classification kinds whose value sets live in the graph. (InlineEnum
+/// properties are detected through their projected `select` input type
+/// instead — the same signal Pass 1 reads.)
+fn column_is_codelist(prop: &PropertyNode) -> bool {
+    matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference) | Some(RefClassificationKind::CodelistCheck)
+    )
+}
+
+/// The entity-ref half of the `ifml_control_inference.rs` mirror.
+fn column_is_entity_ref(prop: &PropertyNode) -> bool {
+    prop.effective_kind() == Some(RefClassificationKind::EntityReference)
+}
+
+/// A signal-poor [`UiField`] for columns whose property is absent from the
+/// graph: the component's `(field, rust_type)` pair is projected through
+/// the entity pipeline's rust→ts mapping. No pg type exists here, so the
+/// pg-backed branches of Pass 1 (money/quantity/time-point) honestly
+/// cannot fire.
+fn ux_synth_field(
+    binding: &str,
+    fields_with_types: &[(String, String)],
+) -> crate::ui::page::UiField {
+    let rust_type = fields_with_types
+        .iter()
+        .find(|(name, _)| name == binding)
+        .map(|(_, t)| t.as_str())
+        .unwrap_or("String");
+    crate::ui::page::UiField {
+        name: binding.to_string(),
+        label: String::new(),
+        ts_type: crate::ui::form::rust_type_to_ts(rust_type, false),
+        input_type: String::new(),
+        is_required: false,
+        is_array: rust_type.starts_with("Vec<"),
+        is_entity_ref: false,
+        is_immutable: false,
+        is_codelist: false,
+        is_range: false,
+        codelist_values: Vec::new(),
+        description: String::new(),
+        pg_type: String::new(),
+        open_end: false,
+        ref_api_path: None,
+        structured_sub_fields: Vec::new(),
+        nested_type_name: None,
+    }
+}
+
+/// ux-rules resolution for ONE fallback-table column (issue #300).
+///
+/// Precedence, highest first (the future DSL `dimension:` key slots above
+/// rules; then rules > pack defaults > inference):
+///
+/// 1. `kind == "lookup"` — the DSL names the presentation explicitly
+///    (`via status_labels`): StatusCategory + chip with the pack tone map
+///    (see [`RenderColumnUx::for_lookup`]). No rule can downgrade an
+///    explicit lookup.
+/// 2. Everything else resolves through the shared Pass-1 + rule tier
+///    ([`crate::ux::plan::resolve_column`] folded by `into_column_plan`):
+///    Pass 1 infers from the bound property's GRAPH metadata — the entity
+///    pipeline's exact projection ([`crate::ui::form::ui_field_from_property`])
+///    over classification kind, pg type, and input type — then the
+///    first-match `[[column]]` rule (project rules ahead of pack rules)
+///    overrides the inference and pins display/align/tone/sortable
+///    payloads.
+/// 3. `kind == "expr"` infers from what the model actually has — nothing:
+///    the IFML AST carries no expression return type, so the bound
+///    property (if any) is NOT consulted and Pass 1 runs signal-poor over
+///    the rendered name (no inference theater). Rules may still pin
+///    display/align payloads on the column's name.
+///
+/// When the bound property is absent from the graph (schema-less IFML
+/// runs), a signal-poor [`UiField`] is synthesized from the component's
+/// `(field, rust_type)` pairs ([`ux_synth_field`]).
+fn resolve_column_ux(
+    rules: &UxRules,
+    kind: &str,
+    binding: &str,
+    props: &HashMap<String, PropertyNode>,
+    fields_with_types: &[(String, String)],
+    workflow_status_field: Option<&str>,
+) -> RenderColumnUx {
+    if kind == "lookup" {
+        return RenderColumnUx::for_lookup();
+    }
+    let prop = if kind == "expr" {
+        None
+    } else {
+        props.get(binding)
+    };
+    let field = match prop {
+        Some(prop) => crate::ui::form::ui_field_from_property(
+            prop,
+            column_is_entity_ref(prop),
+            column_is_codelist(prop),
+            &[],
+            &[],
+            &prop.pg_column_type,
+            prop.pg_column_type.contains("RANGE"),
+            false,
+        ),
+        None => ux_synth_field(binding, fields_with_types),
+    };
+    let resolution = crate::ux::plan::resolve_column(rules, prop, &field, workflow_status_field);
+    RenderColumnUx::from_plan(&resolution.into_column_plan(rules.format.clone()))
+}
+
+/// Apply the ux resolution to every column of a typed fallback table.
+fn apply_table_ux(
+    table: &mut RenderTable,
+    rules: &UxRules,
+    props: &HashMap<String, PropertyNode>,
+    fields_with_types: &[(String, String)],
+    workflow_status_field: Option<&str>,
+) {
+    for col in &mut table.columns {
+        col.ux = Some(resolve_column_ux(
+            rules,
+            &col.kind,
+            &col.binding,
+            props,
+            fields_with_types,
+            workflow_status_field,
+        ));
+    }
+}
+
+/// The page-level ux formatting context: locale plus a ready-to-render
+/// money options object literal (`Intl.NumberFormat`). Currency-less packs
+/// degrade money cells to grouped decimals (`{}` options).
+fn page_ux_context(rules: &UxRules) -> PageUxContext {
+    PageUxContext {
+        locale: rules.format.locale.clone(),
+        money_options: match rules.format.currency.as_deref() {
+            Some(code) => format!("{{ style: 'currency', currency: {} }}", js_quote(code)),
+            None => "{}".to_string(),
         },
     }
 }
@@ -2411,6 +2742,7 @@ entities = ["CustomerType"]
             Some(mappings),
             &mut cache,
             &HashSet::new(),
+            None,
         ))
     }
 
@@ -2466,6 +2798,7 @@ terminal_states = ["done"]
             Some(&IfmlComponentMappings::default()),
             &mut cache,
             &HashSet::new(),
+            None,
         ))
     }
 
@@ -2834,6 +3167,308 @@ testids = { root = "ui-button" }
         assert_eq!(table.columns[1].binding, "status");
         assert_eq!(table.columns[2].kind, "expr");
         assert_eq!(table.columns[2].binding, "tenure_years(Customer.hire_date)");
+    }
+
+    // ── ux-rules fallback-table resolution (issue #300) ──
+
+    fn ux_rules(toml: &str) -> UxRules {
+        codegraph_config::parse_ux_rules_str(toml).unwrap().rules
+    }
+
+    fn ux_prop(name: &str, pg_type: &str, kind: Option<RefClassificationKind>) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".into(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: false,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: name.into(),
+            pg_column_type: pg_type.into(),
+            rust_field_name: name.into(),
+            rust_field_type: "String".into(),
+            sea_orm_type: "String".into(),
+            render_strategy: "scalar".into(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: kind,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn ux_props(props: Vec<PropertyNode>) -> HashMap<String, PropertyNode> {
+        let mut by_name = HashMap::new();
+        for prop in props {
+            by_name.insert(prop.name.clone(), prop);
+        }
+        by_name
+    }
+
+    fn pack() -> UxRules {
+        codegraph_config::builtin_ux_rules().unwrap().rules
+    }
+
+    #[test]
+    fn lookup_column_pins_status_category_chip_above_inference_and_rules() {
+        // An EntityReference property would infer Reference via Pass 1; the
+        // explicit DSL lookup (`via status_labels`) still wins (tier 0).
+        let props = ux_props(vec![ux_prop(
+            "status",
+            "UUID",
+            Some(RefClassificationKind::EntityReference),
+        )]);
+        // A project rule that would pin the same name raw must NOT reach a
+        // lookup column either.
+        let rules = ux_rules("[[column]]\nname_pattern = \"status\"\ndisplay = \"raw\"\n");
+        let ux = resolve_column_ux(&rules, "lookup", "status", &props, &[], None);
+        assert_eq!(ux.dimension, "status-category");
+        assert_eq!(ux.display, "chip");
+        assert_eq!(ux.align, "left");
+        assert_eq!(ux.tone.lookup("active"), "default", "pack tone map");
+    }
+
+    #[test]
+    fn rule_beats_inference_for_field_columns() {
+        // `total_amount` on NUMERIC infers Money (keyword + numeric pg); the
+        // project rule pins Quantity + raw instead (rules > pack > inference).
+        let props = ux_props(vec![ux_prop("total_amount", "NUMERIC(10,2)", None)]);
+        let rules = ux_rules(
+            "[[column]]\nname_pattern = \"*_amount\"\ndimension = \"quantity\"\ndisplay = \"raw\"\nalign = \"left\"\n",
+        );
+        let ux = resolve_column_ux(&rules, "field", "total_amount", &props, &[], None);
+        assert_eq!(ux.dimension, "quantity", "rule pins quantity");
+        assert_eq!(ux.display, "raw");
+        assert_eq!(ux.align, "left", "rule align replaces the pack default");
+    }
+
+    #[test]
+    fn expression_columns_stay_text() {
+        // The IFML AST carries no return type for `tenure_years(...)` — the
+        // column stays Text regardless of the name.
+        let props = ux_props(vec![ux_prop("tenure_years", "NUMERIC(10,2)", None)]);
+        let ux = resolve_column_ux(&pack(), "expr", "tenure_years", &props, &[], None);
+        assert_eq!(ux.dimension, "text");
+        assert_eq!(ux.display, "raw");
+        assert_eq!(ux.align, "left");
+    }
+
+    #[test]
+    fn graph_metadata_drives_pass1_inference() {
+        let props = ux_props(vec![
+            ux_prop(
+                "status",
+                "TEXT",
+                Some(RefClassificationKind::CodelistReference),
+            ),
+            ux_prop(
+                "assignee",
+                "UUID",
+                Some(RefClassificationKind::EntityReference),
+            ),
+            ux_prop("id", "UUID", None),
+            ux_prop("total_amount", "NUMERIC(10,2)", None),
+            ux_prop("created_at", "TIMESTAMPTZ", None),
+        ]);
+        let status = resolve_column_ux(&pack(), "field", "status", &props, &[], None);
+        assert_eq!(status.dimension, "status-category");
+        assert_eq!(status.display, "chip");
+
+        let reference = resolve_column_ux(&pack(), "field", "assignee", &props, &[], None);
+        assert_eq!(reference.dimension, "reference");
+        assert_eq!(reference.display, "link");
+
+        let id = resolve_column_ux(&pack(), "field", "id", &props, &[], None);
+        assert_eq!(id.dimension, "identifier");
+        assert_eq!(id.display, "copy-chip");
+
+        let money = resolve_column_ux(&pack(), "field", "total_amount", &props, &[], None);
+        assert_eq!(money.dimension, "money");
+        assert_eq!(money.align, "right");
+
+        let time = resolve_column_ux(&pack(), "field", "created_at", &props, &[], None);
+        assert_eq!(time.dimension, "time-point");
+    }
+
+    #[test]
+    fn workflow_status_field_lifts_to_status_category() {
+        let props = ux_props(vec![ux_prop("state", "TEXT", None)]);
+        let ux = resolve_column_ux(&pack(), "field", "state", &props, &[], Some("state"));
+        assert_eq!(ux.dimension, "status-category");
+        assert_eq!(ux.display, "chip");
+    }
+
+    #[test]
+    fn schemaless_columns_fall_back_to_component_type_pairs() {
+        // No graph props: `id` with a Uuid rust type still infers Identifier
+        // through the (field, rust_type) projection; a Decimal money name
+        // stays Text (no pg type — honest degradation).
+        let pairs = vec![
+            ("id".to_string(), "Uuid".to_string()),
+            ("total_amount".to_string(), "Decimal".to_string()),
+        ];
+        let id = resolve_column_ux(&pack(), "field", "id", &HashMap::new(), &pairs, None);
+        assert_eq!(id.dimension, "identifier");
+        assert_eq!(id.display, "copy-chip");
+        let money = resolve_column_ux(
+            &pack(),
+            "field",
+            "total_amount",
+            &HashMap::new(),
+            &pairs,
+            None,
+        );
+        assert_eq!(money.dimension, "text");
+    }
+
+    #[test]
+    fn apply_table_ux_resolves_every_column_by_tier() {
+        let mut table = render_table(&TableSpec {
+            columns: vec![
+                ColumnDef::Field {
+                    label: "Name".to_string(),
+                    field: PropertyRef {
+                        entity: "Customer".to_string(),
+                        property: "name".to_string(),
+                    },
+                },
+                ColumnDef::Lookup {
+                    label: "Status".to_string(),
+                    field: PropertyRef {
+                        entity: "Customer".to_string(),
+                        property: "status".to_string(),
+                    },
+                    lookup: "status_labels".to_string(),
+                },
+                ColumnDef::Expression {
+                    label: "Tenure".to_string(),
+                    expr: Expression::Ident("Customer".to_string()),
+                },
+            ],
+            pagination: false,
+        });
+        let props = ux_props(vec![
+            ux_prop("name", "TEXT", None),
+            ux_prop(
+                "status",
+                "TEXT",
+                Some(RefClassificationKind::CodelistReference),
+            ),
+        ]);
+        apply_table_ux(&mut table, &pack(), &props, &[], Some("status"));
+        assert_eq!(table.columns[0].ux.as_ref().unwrap().dimension, "text");
+        assert_eq!(
+            table.columns[1].ux.as_ref().unwrap().display,
+            "chip",
+            "lookup pins the chip"
+        );
+        assert_eq!(table.columns[2].ux.as_ref().unwrap().dimension, "text");
+    }
+
+    #[test]
+    fn flag_off_leaves_render_contexts_ux_free() {
+        let ctx = page_component_context_sync(&component_with_spec(Some(table_spec())));
+        let table = ctx.table.expect("table render context");
+        assert!(
+            table.columns.iter().all(|col| col.ux.is_none()),
+            "flag off ⇒ no ux payloads in the context"
+        );
+        assert!(ctx.ux_list_columns.is_empty());
+
+        let mut list = component_with_spec(None);
+        list.component_type = "list".to_string();
+        list.fields = vec!["name".to_string(), "status".to_string()];
+        let ctx = page_component_context_sync(&list);
+        assert!(ctx.ux_list_columns.is_empty(), "no ux columns when off");
+    }
+
+    #[test]
+    fn ux_on_resolves_specless_list_columns() {
+        let mut c = component_with_spec(None);
+        c.component_type = "list".to_string();
+        c.fields = vec!["status".to_string(), "name".to_string()];
+        let rules = pack();
+        let props = ux_props(vec![
+            ux_prop(
+                "status",
+                "TEXT",
+                Some(RefClassificationKind::CodelistReference),
+            ),
+            ux_prop("name", "TEXT", None),
+        ]);
+        let status = resolve_column_ux(&rules, "field", "status", &props, &[], None);
+        assert_eq!(status.display, "chip");
+        assert!(status.tone.lookup("draft") == "secondary");
+        let name = resolve_column_ux(&rules, "field", "name", &props, &[], None);
+        assert_eq!(name.display, "raw");
+    }
+
+    #[test]
+    fn page_ux_context_formats_locale_and_money_options() {
+        let rules = ux_rules("[format]\nlocale = \"de-DE\"\ncurrency = \"EUR\"\n");
+        let ctx = page_ux_context(&rules);
+        assert_eq!(ctx.locale, "de-DE");
+        assert_eq!(ctx.money_options, "{ style: 'currency', currency: 'EUR' }");
+
+        let ctx = page_ux_context(&pack());
+        assert_eq!(ctx.locale, "en-NZ");
+        assert_eq!(ctx.money_options, "{ style: 'currency', currency: 'NZD' }");
+
+        let ctx = page_ux_context(&ux_rules("[format]\nlocale = \"de-DE\"\n"));
+        assert_eq!(ctx.money_options, "{}", "no currency ⇒ plain decimals");
+    }
+
+    #[test]
+    fn page_ux_rides_the_page_context_only_when_enabled() {
+        let vc = IfmlViewContainer {
+            name: "CustomerList".to_string(),
+            label: None,
+            is_xor: false,
+            is_default: false,
+            is_landmark: true,
+            is_modal: false,
+            conditional_expression: None,
+            roles: Vec::new(),
+            requires: Vec::new(),
+            params: Vec::new(),
+            components: vec![],
+            events: Vec::new(),
+            containers: Vec::new(),
+        };
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            None,
+            &HashSet::new(),
+            None,
+        ));
+        assert!(ctx.ux.is_none(), "flag off ⇒ no ux key on the page context");
+
+        let ctx = futures::executor::block_on(build_page_context(
+            &MockEngine::new(),
+            &test_config(),
+            "v1",
+            &vc,
+            None,
+            &HashSet::new(),
+            Some(&pack()),
+        ));
+        let ux = ctx.ux.expect("ux context");
+        assert_eq!(ux.locale, "en-NZ");
+        assert_eq!(ux.money_options, "{ style: 'currency', currency: 'NZD' }");
     }
 
     #[test]
@@ -3468,6 +4103,7 @@ testids = { root = "ui-button" }
             vc,
             mappings,
             &HashSet::new(),
+            None,
         ))
     }
 
@@ -3868,6 +4504,7 @@ testids = { root = "ui-button" }
             control_gate: ControlGateContext::default(),
             modal: None,
             container: None,
+            ux: None,
         }
     }
 
@@ -3967,6 +4604,7 @@ testids = { root = "data-table", row = "data-row" }
             &vc,
             Some(&mappings),
             &HashSet::new(),
+            None,
         ));
 
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -4152,6 +4790,7 @@ testids = { root = "data-table", row = "data-row" }
             &vc(true, false, false),
             None,
             &HashSet::new(),
+            None,
         ));
         assert_eq!(ctx.view_role, Some(SemanticRole::ModalView));
         assert_eq!(ctx.container_role, None);
@@ -4163,6 +4802,7 @@ testids = { root = "data-table", row = "data-row" }
             &vc(false, true, false),
             None,
             &HashSet::new(),
+            None,
         ));
         assert_eq!(ctx.view_role, Some(SemanticRole::Shell));
 
@@ -4173,6 +4813,7 @@ testids = { root = "data-table", row = "data-row" }
             &vc(false, false, true),
             None,
             &HashSet::new(),
+            None,
         ));
         assert_eq!(ctx.view_role, None);
         assert_eq!(
@@ -4281,6 +4922,7 @@ testids = { root = "ui-button" }
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4320,6 +4962,7 @@ testids = { root = "ui-button" }
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4342,6 +4985,7 @@ testids = { root = "ui-button" }
             &vc,
             Some(&IfmlComponentMappings::default()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4380,6 +5024,7 @@ export = "Button"
             &vc,
             Some(&mappings),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4413,6 +5058,7 @@ export = "Button"
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4440,6 +5086,7 @@ export = "Button"
             &vc,
             None,
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(!rendered.contains("dialog_open"), "{rendered}");
@@ -4531,6 +5178,7 @@ testids = { root = "card" }
             &vc,
             Some(&container_mappings()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4560,6 +5208,7 @@ testids = { root = "card" }
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4582,6 +5231,7 @@ testids = { root = "card" }
             &vc,
             None,
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(!rendered.contains("<section"), "{rendered}");
@@ -4655,6 +5305,7 @@ testids = { root = "tabs" }
             &vc,
             Some(&tabs_mappings()),
             &HashSet::new(),
+            None,
         ));
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
