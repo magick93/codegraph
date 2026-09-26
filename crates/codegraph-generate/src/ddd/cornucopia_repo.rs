@@ -554,19 +554,29 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter) {
         "        let offset = ((page.saturating_sub(1)).saturating_mul(page_size)) as i64;"
     );
     wln!(code, "        let page_size_i = page_size as i64;");
-    wln!(code, "        let total = if include_deleted {{");
-    wln!(
-        code,
-        "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())? as u64",
-        snake = tree.table_name
-    );
-    wln!(code, "        }} else {{");
-    wln!(
-        code,
-        "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())? as u64",
-        snake = tree.table_name
-    );
-    wln!(code, "        }};");
+    // Append-only (#284): no deleted_at column — no include_deleted param,
+    // single count/list query, no audit columns in the response.
+    if tree.is_auditable {
+        wln!(code, "        let total = if include_deleted {{");
+        wln!(
+            code,
+            "            {qmod}::count_{snake}_including_deleted().bind(db).one().await.map_err(|e| e.to_string())? as u64",
+            snake = tree.table_name
+        );
+        wln!(code, "        }} else {{");
+        wln!(
+            code,
+            "            {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())? as u64",
+            snake = tree.table_name
+        );
+        wln!(code, "        }};");
+    } else {
+        wln!(
+            code,
+            "        let total = {qmod}::count_{snake}().bind(db).one().await.map_err(|e| e.to_string())? as u64;",
+            snake = tree.table_name
+        );
+    }
     wln!(code, "        let mut items = Vec::new();");
     if tree.is_auditable {
         wln!(code, "        if include_deleted {{");
@@ -624,7 +634,6 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter) {
         emit_nested_filter_checks(code, tree);
         wln!(code, "                items.push(resp);");
         wln!(code, "            }}");
-        wln!(code, "        }}");
     }
     // Nested filters (dot-notation, e.g. deployment.organization_id) cannot
     // be expressed in the static list SQL — apply them on the hydrated
@@ -1038,7 +1047,10 @@ fn emit_response_expr(
         wln!(code, "{pad}    workflow_state: None,");
     }
     wln!(code, "{pad}    created_at: {row_var}.created_at,");
-    wln!(code, "{pad}    updated_at: {row_var}.updated_at,");
+    // Append-only entities (#284) carry no updated_at column.
+    if !tree.append_only {
+        wln!(code, "{pad}    updated_at: {row_var}.updated_at,");
+    }
     // DTO fields the tree does not load (e.g. base-inherited junction arrays
     // under nested composition nodes) default to None instead of failing E0063.
     wln!(code, "{pad}    ..Default::default()");

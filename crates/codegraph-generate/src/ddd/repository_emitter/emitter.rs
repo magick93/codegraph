@@ -534,7 +534,14 @@ impl RepositoryImplEmitter {
             }
         });
 
-        let is_auditable = if has_audit_policy {
+        // Append-only snapshot semantics (issue #284) — same inference as
+        // db/ddl.rs: explicit entity-config flag, or effective operations
+        // exclude update AND delete. Append-only tables carry no updated_at
+        // and no audit columns, so repositories must not reference them.
+        let append_only = entity_cfg.as_ref().is_some_and(|ec| ec.is_append_only())
+            || !(has_update || has_delete);
+
+        let is_auditable = (if has_audit_policy {
             audit_policy
                 .as_ref()
                 .map(|a| a.track_deleted)
@@ -545,7 +552,7 @@ impl RepositoryImplEmitter {
                 .get(domain)
                 .and_then(|d| d.auditable)
                 .unwrap_or(true)
-        };
+        }) && !append_only;
 
         let soft_delete_visibility = soft_delete_policy
             .as_ref()
@@ -793,6 +800,7 @@ impl RepositoryImplEmitter {
             has_read,
             has_update,
             has_delete,
+            append_only,
             has_workflow,
             has_fts,
             has_embeddings,

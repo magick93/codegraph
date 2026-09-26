@@ -170,7 +170,21 @@ impl EntityGenerator for RepositoryTraitGenerator {
         let has_audit_policy = policies
             .iter()
             .any(|p| matches!(p.kind, PolicyKind::Audit(_)));
-        let is_auditable = if has_audit_policy {
+        // Append-only snapshot semantics (issue #284) — same inference as
+        // db/ddl.rs and the repository emitter: no update/delete ops (or an
+        // explicit flag) means no audit columns, so the repository trait must
+        // not declare `include_deleted` (the impl side omits it).
+        let entity_cfg = config
+            .domains
+            .get(&domain)
+            .and_then(|d| d.get_entity_config(schema_title));
+        let append_only = entity_cfg.as_ref().is_some_and(|ec| ec.is_append_only()) || {
+            let ops =
+                crate::api::api_model::resolve_entity_operations(db, config, &domain, schema_title)
+                    .await;
+            !ops.iter().any(|op| op == "update" || op == "delete")
+        };
+        let is_auditable = (if has_audit_policy {
             policies
                 .iter()
                 .find_map(|p| {
@@ -187,7 +201,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
                 .get(&domain)
                 .and_then(|d| d.auditable)
                 .unwrap_or(true)
-        };
+        } && !append_only);
         let soft_delete_visibility = policies
             .iter()
             .find_map(|p| {

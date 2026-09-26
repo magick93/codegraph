@@ -367,13 +367,15 @@ impl RepositoryImplEmitter {
                 tree.entity_module
             );
             wln!(code);
-            wln!(code, "        if !include_deleted {{");
-            wln!(
-                code,
-                "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
-                tree.entity_module
-            );
-            wln!(code, "        }}");
+            if !tree.append_only {
+                wln!(code, "        if !include_deleted {{");
+                wln!(
+                    code,
+                    "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                    tree.entity_module
+                );
+                wln!(code, "        }}");
+            }
             wln!(code);
             wln!(code, "        let row = query.one(db)");
             wln!(code, "            .await?;");
@@ -443,13 +445,15 @@ impl RepositoryImplEmitter {
                 pascal_col
             );
             wln!(code);
-            wln!(code, "        if !include_deleted {{");
-            wln!(
-                code,
-                "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
-                tree.entity_module
-            );
-            wln!(code, "        }}");
+            if !tree.append_only {
+                wln!(code, "        if !include_deleted {{");
+                wln!(
+                    code,
+                    "            query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                    tree.entity_module
+                );
+                wln!(code, "        }}");
+            }
             wln!(code);
             wln!(code, "        let row = query.one(db)");
             wln!(code, "            .await?;");
