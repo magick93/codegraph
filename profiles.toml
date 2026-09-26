@@ -65,6 +65,10 @@ namespace_layout = false
 # eligibility rules as endpoint guards naming the ApiOperations they gate.
 rosetta_backend = false
 function_postconditions = false
+# UX rules plane (issue #293). When true, the built-in ux-default pack
+# resolves into ProjectConfig.ux for every template/generator; a project
+# --ux-rules file shadows pack rules per selector tier. Off = byte-identical.
+ux_rules = true
 
 [profiles.default.api]
 generators = [
@@ -167,6 +171,7 @@ since = "2026-05-08"
 auth = true
 pagination = true
 validation_level = "strict"
+ux_rules = true
 
 [profiles.ui.ui]
 generators = [
@@ -206,6 +211,7 @@ auth = true
 pagination = true
 validation_level = "strict"
 grpc_backend = true
+ux_rules = true
 
 [profiles.fullstack.api]
 generators = [
@@ -317,6 +323,7 @@ since = "2026-05-08"
 
 [profiles.ci.features]
 grpc_backend = true
+ux_rules = true
 
 [profiles.ci.api]
 generators = [

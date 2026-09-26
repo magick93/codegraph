@@ -1,0 +1,88 @@
+# ux-default — the built-in UX rules pack (issue #293).
+#
+# This file is the DEFAULT behavior contract for generated UIs, and a
+# user-facing example: copy it to ux-rules.toml, edit, and pass it via
+# `--ux-rules <file>` on generate/run/ifml-generate. Project rules shadow
+# these per selector tier — rules resolve first-match-wins and project
+# rules sit ahead of pack rules, so pack rules only fill the gaps the
+# project does not cover.
+#
+# ── Valid keys ──────────────────────────────────────────────────────────
+# [format]        locale (default "en-NZ"), currency (default "NZD")
+# [[column]]      selectors: dimension ("text" | "quantity" | "money" |
+#                 "time-point" | "status-category" | "identifier" |
+#                 "reference" | "flag"), classification, pg_type,
+#                 name_pattern (glob; "*" alone is rejected — select on
+#                 dimension instead)
+#                 payload: display ("chip" | "copy-chip" | "link" | "raw"),
+#                 align ("left" | "right"), tone (keyword → "default" |
+#                 "secondary" | "destructive" | "outline"), sortable (bool)
+# [[collection]]  entity_pattern (glob; "*" covers every entity), display
+#                 ("table" | "timeline" — timeline REQUIRES order_by),
+#                 order_by, title_field, preview ([field, ...]; fields
+#                 resolve at generation time)
+# [actions]       inline_max (>= 1, default 1), confirm ([action, ...])
+#
+# Unknown keys/values are parse errors; every error names the offending
+# `[[column]] #N` / `[[collection]] #N` block with a fix hint.
+#
+# Everything here can be overridden per project — copy a block into your
+# ux-rules.toml and edit it.
+
+[format]
+# Locale/currency baseline for number and date rendering. Localized
+# formatting itself is template-side (Intl / tabular-nums); these values
+# feed it.
+locale = "en-NZ"
+currency = "NZD"
+
+# Column presentation defaults per field dimension. Selector-tier rules:
+# a project rule on the same dimension shadows the pack rule wholesale.
+
+# Quantities compare visually — right-align with tabular figures.
+[[column]]
+dimension = "quantity"
+align = "right"
+
+# Money right-aligns like quantities; the currency symbol comes from
+# [format].currency.
+[[column]]
+dimension = "money"
+align = "right"
+
+# Time points render localized (template-side); left is the reading
+# baseline, pinned here so the contract is explicit.
+[[column]]
+dimension = "time-point"
+align = "left"
+
+# Status categories render as tone-mapped chips (see ToneMap defaults).
+[[column]]
+dimension = "status-category"
+display = "chip"
+
+# Identifiers render as copy-to-clipboard chips.
+[[column]]
+dimension = "identifier"
+display = "copy-chip"
+
+# References to other entities render as links.
+[[column]]
+dimension = "reference"
+display = "link"
+
+# Booleans render as chips.
+[[column]]
+dimension = "flag"
+display = "chip"
+
+# NO [[collection]] rules: timeline rendering is strictly opt-in — tables
+# never silently morph into timelines. Declare `display = "timeline"` with
+# `order_by` in a project ux-rules.toml to opt in per entity pattern.
+
+[actions]
+# At most one action renders inline per list row; the rest collapse into
+# an overflow menu.
+inline_max = 1
+# Destructive actions require confirmation.
+confirm = ["delete"]

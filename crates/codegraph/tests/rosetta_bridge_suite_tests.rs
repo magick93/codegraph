@@ -99,6 +99,7 @@ async fn run_fixture() -> (tempfile::TempDir, PathBuf) {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     };
     codegraph::driver::run(args).await.unwrap();
     (dir, output)

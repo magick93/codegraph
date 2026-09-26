@@ -383,6 +383,7 @@ entities = ["CustomerType"]
         template_dir: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .expect("ifml_generate should succeed for typed components");

@@ -325,6 +325,7 @@ async fn run_pipeline() -> Result<(), String> {
             build_plan: Some(&plan),
             ifml_frameworks: vec!["svelte".to_string()],
             ifml_components: Some(&pack),
+            ux_rules: None,
             project_config: Some(&project_config),
             emdash_plugins: None,
             domain_config_dir: Some(&home),

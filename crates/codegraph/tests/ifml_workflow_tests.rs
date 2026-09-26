@@ -98,6 +98,7 @@ async fn generate(dir: &Path, ifml: &str, mappings: Option<&Path>) -> std::path:
         template_dir: &[],
         ifml_components: mappings,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .unwrap();

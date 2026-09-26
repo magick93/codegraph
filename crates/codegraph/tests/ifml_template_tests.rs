@@ -158,6 +158,7 @@ async fn generate_svelte_with_pack(
         template_dir: template_dirs,
         ifml_components: mappings,
         ifml_design_system: design_system,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -1883,6 +1884,7 @@ async fn transition_handler_posts_to_the_resolved_transition_endpoint() {
         template_dir: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .unwrap();

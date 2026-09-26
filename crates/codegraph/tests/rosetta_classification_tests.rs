@@ -309,6 +309,7 @@ async fn legacy_entities_list_flips_rosetta_titles_end_to_end() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -376,6 +377,7 @@ async fn legacy_entities_list_flips_rosetta_titles_end_to_end() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     })
     .await
     .unwrap();

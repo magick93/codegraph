@@ -185,6 +185,7 @@ fn emdash_build_plan() -> BuildPlan {
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
         namespace_layout: false,
+        ux_rules: false,
         features: Default::default(),
     }
 }
@@ -230,6 +231,7 @@ async fn emdash_generators_emit_package_site_pages_e2e_and_manifests() {
         build_plan: Some(&plan),
         ifml_frameworks: vec![],
         ifml_components: None,
+        ux_rules: None,
         project_config: Some(&project),
         emdash_plugins: plugins,
         domain_config_dir: None,
@@ -437,6 +439,7 @@ async fn emdash_generators_emit_nothing_without_config_or_feature() {
         build_plan: Some(&plan),
         ifml_frameworks: vec![],
         ifml_components: None,
+        ux_rules: None,
         project_config: None,
         emdash_plugins: Some(load_plugins_config_std(PLUGINS_TOML)),
         domain_config_dir: None,
@@ -466,6 +469,7 @@ async fn emdash_generators_emit_nothing_without_config_or_feature() {
         build_plan: Some(&plan),
         ifml_frameworks: vec![],
         ifml_components: None,
+        ux_rules: None,
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: None,

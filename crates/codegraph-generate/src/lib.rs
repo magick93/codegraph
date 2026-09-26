@@ -299,6 +299,12 @@ pub struct ProjectConfig {
     /// `cli_scaffold` generator). Defaults to false.
     #[serde(default)]
     pub cargo_workspace: bool,
+    /// Resolved ux-rules (issue #293): the built-in `ux-default` pack,
+    /// optionally merged with a project `--ux-rules` file. `None` = flag
+    /// off / plan-less run without a CLI file — templates see `project.ux`
+    /// only when rules resolved, so unset keeps output byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ux: Option<codegraph_config::UxRules>,
 }
 
 fn default_emdash_site_pages_base() -> String {
@@ -425,6 +431,7 @@ impl Default for ProjectConfig {
             extra_dependencies: String::new(),
             cargo_workspace: false,
             api_version: "v1".into(),
+            ux: None,
         }
     }
 }
@@ -547,6 +554,10 @@ pub struct GeneratorOpts<'a> {
     /// Optional IFML component mappings (`ifml-components.toml`). `None` or
     /// empty renders all components with the built-in templates.
     pub ifml_components: Option<&'a codegraph_config::IfmlComponentMappings>,
+    /// Resolved ux-rules (issue #293): the built-in `ux-default` pack,
+    /// optionally merged with a project `--ux-rules` file. `None` = flag
+    /// off — generators keep their pre-#293 rendering byte-identical.
+    pub ux_rules: Option<codegraph_config::UxRules>,
     /// Project-level config injected into all template contexts.
     pub project_config: Option<&'a ProjectConfig>,
     /// EmDash plugin packages config (plugins.toml), loaded by the CLI
@@ -595,6 +606,7 @@ pub async fn run_generators(
         build_plan: None,
         ifml_frameworks: vec![],
         ifml_components: None,
+        ux_rules: None,
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: None,
@@ -631,6 +643,7 @@ pub async fn run_generators_with_domain_types_base(
         build_plan: None,
         ifml_frameworks: vec![],
         ifml_components: None,
+        ux_rules: None,
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: None,
@@ -859,6 +872,7 @@ async fn build_generator_context<'a>(
         build_plan, // used for has_webhooks / profile-based filter
         ifml_frameworks,
         ifml_components,
+        ux_rules: _, // consumed by generators in later #293 phases
         project_config,
         emdash_plugins,
         domain_config_dir,
@@ -3378,6 +3392,40 @@ fn prune_entity_mod(src_dir: &Path) -> Result<Option<GeneratedFile>> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Issue #293 acceptance: resolved ux rules serialize into the Tera
+    /// context so templates can read `project.ux.locale` etc., and stay
+    /// absent (`skip_serializing_if`) when rules are None.
+    #[test]
+    fn project_ux_is_reachable_in_tera_templates() {
+        let mut tera = Tera::default();
+        tera.add_raw_template("smoke", "locale={{ project.ux.format.locale }}")
+            .unwrap();
+
+        let project = ProjectConfig {
+            ux: Some(codegraph_config::UxRules {
+                format: codegraph_config::FormatConfig {
+                    locale: "de-DE".into(),
+                    currency: Some("EUR".into()),
+                },
+                ..codegraph_config::UxRules::default()
+            }),
+            ..ProjectConfig::default()
+        };
+        let rendered =
+            render_template_with_project(&tera, "smoke", &serde_json::json!({}), &project).unwrap();
+        assert_eq!(rendered, "locale=de-DE");
+
+        // None keeps the key out of the context entirely (render errors).
+        let project = ProjectConfig {
+            ux: None,
+            ..project
+        };
+        assert!(
+            render_template_with_project(&tera, "smoke", &serde_json::json!({}), &project).is_err(),
+            "unset ux must be absent from the context"
+        );
+    }
 
     #[test]
     fn test_reports_config_dir_prefers_domain_config_dir_over_cwd() {
