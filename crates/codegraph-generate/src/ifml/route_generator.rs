@@ -1,5 +1,5 @@
 use crate::ProjectConfig;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -135,6 +135,21 @@ impl GlobalGenerator for IfmlRouteGenerator {
             .collect();
         let denial = denial_target(&model);
 
+        // Issue #301: resolve the ux plane ONCE per generation — one plan
+        // per distinct bound entity drives the timeline layouts and the
+        // advisory diagnostics (printed through the stderr warning channel,
+        // deduped like the entity pipeline's ui-page generator). Flag off ⇒
+        // no plans, no lines, byte-identical output.
+        let (ux_plans, ux_diag_lines) =
+            resolve_generation_ux(db, config, &model, project.ux.as_ref()).await?;
+        for line in &ux_diag_lines {
+            eprintln!("warning: ux-rules: {line}");
+        }
+        let ux_generation = project.ux.as_ref().map(|rules| UxGeneration {
+            rules,
+            plans: &ux_plans,
+        });
+
         for vc in ordered_view_containers(&model) {
             let ctx = build_page_context(
                 db,
@@ -143,7 +158,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
                 vc,
                 self.mappings.as_ref(),
                 &modal_targets,
-                project.ux.as_ref(),
+                ux_generation.as_ref(),
             )
             .await;
 
@@ -563,6 +578,23 @@ pub struct PageComponentContext {
     /// off — the template keeps its `comp.fields` loop, byte-identical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     ux_list_columns: Vec<RenderColumn>,
+    /// Uniform timeline view of the collection layout (issue #301):
+    /// `Some` exactly when the active fallback branch renders a timeline —
+    /// typed tables project their `RenderTable::layout` timeline here,
+    /// spec-less lists resolve theirs directly. Mapped components never
+    /// resolve one (whole-component mappings replace the fallback by
+    /// design). `None` (skipped) renders the table — flag-off and
+    /// rule-less pages stay byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeline: Option<RenderTimeline>,
+    /// Secondary navigate events (issue #301) for fallback collections
+    /// carrying more than one: the first navigate event stays inline (the
+    /// row/item click handler), the rest disclose into the per-row actions
+    /// menu. Empty (and skipped from the context) when the component has
+    /// at most one navigate event, is mapped, or the ux plane is off —
+    /// single-event markup stays byte-identical.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    row_menu_events: Vec<RenderRowMenuEvent>,
 }
 
 /// Workflow config for a component's bound entity, pre-rendered into the
@@ -922,12 +954,79 @@ pub struct RenderTable {
     /// `pagination` when the list spec enables pagination.
     role: Option<SemanticRole>,
     columns: Vec<RenderColumn>,
+    /// Collection layout (issue #301): the default `Table`, or a timeline
+    /// resolved ONLY from an explicit matching `[[collection]]`
+    /// `display = "timeline"` rule through the shared plan machinery
+    /// ([`crate::ux::plan`]). The `Table` variant is skipped from the
+    /// serialized context, so flag-off / rule-less rendering never sees
+    /// the key and stays byte-identical (a single template gate).
+    #[serde(skip_serializing_if = "TableLayout::is_table")]
+    layout: TableLayout,
+}
+
+/// Collection layout for a fallback table/list (issue #301).
+///
+/// Timeline is strictly opt-in: only an explicit matching `[[collection]]`
+/// rule produces it. The plan output is reused verbatim — order_by was
+/// already validated against the entity's TimePoint fields by
+/// [`crate::ux::plan::build_ux_plan`], so this type never re-validates.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "layout", rename_all = "kebab-case")]
+pub enum TableLayout {
+    /// The default table rendering (skipped from the serialized context).
+    Table,
+    /// Chronological rendering replacing the table block: newest-first
+    /// `<ol>` items with a `<time>` head, title, preview fields and the
+    /// workflow badge per item.
+    Timeline {
+        /// Data path each item sorts by (the rule's `order_by`).
+        order_binding: String,
+        /// Title field per item (rule value or the plan's column-order
+        /// first field); `None` renders no title line.
+        title_binding: Option<String>,
+        /// Extra fields shown per item, resolved through the SAME
+        /// per-column ux tier as #300 table cells.
+        preview: Vec<RenderColumn>,
+    },
+}
+
+impl TableLayout {
+    /// True for the default table layout — the skip-serialization gate.
+    pub fn is_table(&self) -> bool {
+        matches!(self, TableLayout::Table)
+    }
+}
+
+/// Template-facing timeline payload for a fallback collection (issue
+/// #301). Typed tables project their [`RenderTable::layout`] timeline
+/// here; spec-less lists resolve theirs directly — one uniform component
+/// field renders both branches.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderTimeline {
+    /// Data path each item sorts by (newest first).
+    pub order_binding: String,
+    /// Title field per item; `None` renders no title line.
+    pub title_binding: Option<String>,
+    /// Preview fields rendered through the same per-column ux resolution
+    /// as #300 cells (chips/copy/money/quantity/date helpers).
+    pub preview: Vec<RenderColumn>,
+}
+
+/// One secondary event disclosed into the per-row actions menu (issue
+/// #301, IFML Pass-3 flavor). The menu item calls the SAME named handler
+/// function the inline placement would call — parity by construction.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderRowMenuEvent {
+    /// The shared handler fn name (`comp_grid_archive`).
+    pub handler_name: String,
+    /// Humanized event-type label (`Archive`).
+    pub label: String,
 }
 
 /// One typed table column; `binding` is the ready-to-emit data path
 /// (`property` for field/lookup columns, the rendered expression for
 /// expression columns)
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RenderColumn {
     label: String,
     kind: String,
@@ -945,7 +1044,7 @@ pub struct RenderColumn {
 /// ux-rules resolved presentation for one fallback-table column (issue
 /// #300), carried as the shared ux vocabulary (`codegraph_config::ux`)
 /// serialized kebab-case for the template's cell branches.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RenderColumnUx {
     /// Resolved dimension, kebab-case (`text`, `quantity`, `money`,
     /// `time-point`, `status-category`, `identifier`, `reference`, `flag`).
@@ -1094,7 +1193,7 @@ async fn build_page_context(
     vc: &IfmlViewContainer,
     mappings: Option<&IfmlComponentMappings>,
     modal_targets: &HashSet<String>,
-    ux_rules: Option<&UxRules>,
+    ux: Option<&UxGeneration<'_>>,
 ) -> PageSvelteContext {
     let id_param = id_param_from(&vc.params);
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
@@ -1112,7 +1211,7 @@ async fn build_page_context(
             mappings,
             &mut api_cache,
             modal_targets,
-            ux_rules,
+            ux,
         )
         .await;
         components.push(ctx);
@@ -1149,7 +1248,7 @@ async fn build_page_context(
                     mappings,
                     &mut api_cache,
                     modal_targets,
-                    ux_rules,
+                    ux,
                 )
                 .await;
                 ctx.in_container = true;
@@ -1338,7 +1437,7 @@ async fn build_page_context(
         control_gate,
         modal,
         container,
-        ux: ux_rules.map(page_ux_context),
+        ux: ux.map(|uxg| page_ux_context(uxg.rules)),
     }
 }
 
@@ -1353,9 +1452,9 @@ async fn page_component_context(
     mappings: Option<&IfmlComponentMappings>,
     api_cache: &mut HashMap<String, Option<ResolvedApi>>,
     modal_targets: &HashSet<String>,
-    ux_rules: Option<&UxRules>,
+    ux: Option<&UxGeneration<'_>>,
 ) -> PageComponentContext {
-    let (table, form, chart) = match c.spec {
+    let (mut table, form, chart) = match c.spec {
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
         Some(ComponentSpec::Form(ref spec)) => (None, Some(render_form(spec)), None),
         Some(ComponentSpec::Chart(ref spec)) => (None, None, Some(render_chart(spec))),
@@ -1370,8 +1469,15 @@ async fn page_component_context(
     // `crate::ux::plan`; lookup columns pin StatusCategory + chip above
     // both tiers; expression columns stay Text (the IFML AST carries no
     // return type).
-    let (table, ux_list_columns) = match ux_rules {
-        Some(rules) => {
+    //
+    // Issue #301 adds the collection layout: the plan for the bound entity
+    // (resolved ONCE per generation, see `resolve_generation_ux`)
+    // contributes a Timeline layout ONLY from an explicit matching
+    // `[[collection]] display = "timeline"` rule. Plan output is reused
+    // verbatim — never re-validated here.
+    let (ux_list_columns, timeline) = match ux {
+        Some(uxg) => {
+            let rules = uxg.rules;
             let props = ux_props_for_entity(db, c.entity.as_deref().unwrap_or_default()).await;
             let status_field = c
                 .entity
@@ -1379,7 +1485,6 @@ async fn page_component_context(
                 .and_then(|entity| workflow_for_entity(config, entity))
                 .map(|wf| wf.status_field);
             let status_field = status_field.as_deref();
-            let mut table = table;
             if let Some(table) = table.as_mut() {
                 apply_table_ux(table, rules, &props, &c.fields_with_types, status_field);
             }
@@ -1405,9 +1510,26 @@ async fn page_component_context(
             } else {
                 Vec::new()
             };
-            (table, ux_list_columns)
+            let timeline = timeline_from_plan(
+                uxg,
+                c.entity.as_deref().unwrap_or_default(),
+                rules,
+                &props,
+                &c.fields_with_types,
+                status_field,
+            );
+            if let Some(payload) = &timeline {
+                if let Some(table) = table.as_mut() {
+                    table.layout = TableLayout::Timeline {
+                        order_binding: payload.order_binding.clone(),
+                        title_binding: payload.title_binding.clone(),
+                        preview: payload.preview.clone(),
+                    };
+                }
+            }
+            (ux_list_columns, timeline)
         }
-        None => (table, Vec::new()),
+        None => (Vec::new(), None),
     };
 
     let kind = kind_of(c);
@@ -1415,11 +1537,39 @@ async fn page_component_context(
     let mapping = mappings
         .and_then(|m| m.resolve_slot(&vc.name, &c.name, &c.component_type, &kind, slot_role))
         .map(mapping_context);
+    // Mapped components replace the fallback wholesale (issue #301): no
+    // timeline layout, no row-actions menu — the mapped component owns its
+    // presentation.
+    let mut timeline = timeline;
+    if mapping.is_some() {
+        if let Some(table) = table.as_mut() {
+            table.layout = TableLayout::Table;
+        }
+        timeline = None;
+    }
     let events: Vec<RenderEvent> = c
         .events
         .iter()
         .map(|e| render_event(e, modal_targets))
         .collect();
+    // IFML Pass-3 event tiering (issue #301): the first navigate event
+    // stays inline (the row/item click handler, exactly as before);
+    // additional secondary events disclose into the per-row actions menu.
+    // Handler functions are emitted once per event regardless, so every
+    // menu item calls the identical body its inline placement would.
+    let row_menu_events = if ux.is_some() && mapping.is_none() && is_collection(c) {
+        events
+            .iter()
+            .filter(|e| e.action_kind == "navigate")
+            .skip(1)
+            .map(|e| RenderRowMenuEvent {
+                handler_name: e.handler_name.clone(),
+                label: humanize_event_label(&e.event_type),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let event_props: Vec<String> = events
         .iter()
         .filter(|e| {
@@ -1547,6 +1697,8 @@ async fn page_component_context(
         form,
         chart,
         ux_list_columns,
+        timeline,
+        row_menu_events,
     }
 }
 
@@ -2214,6 +2366,7 @@ fn render_table(spec: &TableSpec) -> RenderTable {
             None
         },
         columns: spec.columns.iter().map(render_column).collect(),
+        layout: TableLayout::Table,
     }
 }
 
@@ -2417,6 +2570,236 @@ fn apply_table_ux(
             fields_with_types,
             workflow_status_field,
         ));
+    }
+}
+
+/// Generation-scoped ux-rules context (issue #301): the resolved rules
+/// plus one plan per distinct bound entity, built ONCE per generation by
+/// [`resolve_generation_ux`]. Page contexts reuse the plan output verbatim
+/// (timeline layout) instead of re-resolving — no second validation path.
+pub(crate) struct UxGeneration<'a> {
+    /// The project's resolved rules (`project.ux`).
+    pub rules: &'a UxRules,
+    /// Bound entity name → built plan. Flag-off generations carry an
+    /// empty map.
+    pub plans: &'a HashMap<String, crate::ux::plan::UxPlan>,
+}
+
+/// Resolve the ux-rules plane for a whole IFML generation (issue #301).
+///
+/// One plan per distinct bound entity over its collection components'
+/// display fields — the same projection #300 uses for columns: the graph
+/// property when the entity is schema-backed, a synthesized
+/// `(field, rust_type)` pair otherwise. Advisory diagnostics are collected
+/// over each plan and returned as DEDUPLICATED report lines for the
+/// caller's stderr warning channel (mirroring the entity pipeline's
+/// ui-page generator). Flag off ⇒ an empty map and no lines.
+///
+/// Errors when an explicit timeline rule's `order_by` does not resolve to
+/// one of the entity's TimePoint fields — the error names the candidates
+/// (a hard generation error, surfacing through the global phase's `?`).
+async fn resolve_generation_ux(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    model: &super::context::IfmlModel,
+    rules: Option<&UxRules>,
+) -> Result<(HashMap<String, crate::ux::plan::UxPlan>, Vec<String>)> {
+    let Some(rules) = rules else {
+        return Ok((HashMap::new(), Vec::new()));
+    };
+    let mut plans: HashMap<String, crate::ux::plan::UxPlan> = HashMap::new();
+    let mut reported: HashSet<String> = HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for vc in &model.view_containers {
+        for c in vc
+            .components
+            .iter()
+            .chain(vc.containers.iter().flat_map(|g| g.components.iter()))
+        {
+            if !is_collection(c) {
+                continue;
+            }
+            let Some(entity) = c.entity.as_deref().filter(|e| !e.is_empty()) else {
+                continue;
+            };
+            // Resolve once per entity, not per component: the first
+            // collection bound to the entity fixes its plan for the run.
+            if plans.contains_key(entity) {
+                continue;
+            }
+            let props = ux_props_for_entity(db, entity).await;
+            let status_field = workflow_for_entity(config, entity).map(|wf| wf.status_field);
+            let entity_input = ux_entity_input(c, &props, status_field.as_deref());
+            let input = entity_input.plan_input(entity);
+            if let Some(plan) = crate::ux::plan::build_ux_plan(Some(rules), &input)? {
+                let diag = crate::ux::diagnostics::collect_diagnostics(rules, &input, &plan);
+                for line in crate::ux::diagnostics::report(&diag) {
+                    if reported.insert(line.clone()) {
+                        lines.push(line);
+                    }
+                }
+                plans.insert(entity.to_string(), plan);
+            }
+        }
+    }
+    Ok((plans, lines))
+}
+
+/// The plan-input display fields of a collection component: the declared
+/// `fields` when present, else the typed-table column bindings
+/// (expression columns carry no property and are skipped).
+fn ux_plan_fields(c: &IfmlComponent) -> Vec<String> {
+    if !c.fields.is_empty() {
+        return c.fields.clone();
+    }
+    match &c.spec {
+        Some(ComponentSpec::Table(spec)) => spec
+            .columns
+            .iter()
+            .filter_map(|col| match col {
+                ColumnDef::Field { field, .. } | ColumnDef::Lookup { field, .. } => {
+                    Some(field.property.clone())
+                }
+                ColumnDef::Expression { .. } => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Owned plan-input holder for one collection component ([`UxPlanInput`]
+/// borrows, so the owner must outlive the plan build — see
+/// [`UxEntityInput::plan_input`]).
+struct UxEntityInput<'a> {
+    fields: Vec<crate::ui::page::UiField>,
+    prop_by_name: BTreeMap<String, &'a PropertyNode>,
+    workflow_status_field: Option<&'a str>,
+}
+
+impl UxEntityInput<'_> {
+    /// Borrow into the plan input [`crate::ux::plan::build_ux_plan`]
+    /// consumes.
+    fn plan_input<'b>(&'b self, entity: &'b str) -> crate::ux::plan::UxPlanInput<'b> {
+        crate::ux::plan::UxPlanInput {
+            entity_title: entity,
+            fields: &self.fields,
+            prop_by_name: self
+                .prop_by_name
+                .iter()
+                .map(|(name, prop)| (name.as_str(), *prop))
+                .collect(),
+            workflow_status_field: self.workflow_status_field,
+            workflow_terminal_states: &[],
+            has_soft_delete: false,
+            user_pinned_list_order: false,
+        }
+    }
+}
+
+/// The plan-input projection of one collection component. Schema-backed
+/// entities plan over ALL their properties — the timeline `order_by` must
+/// resolve to a TimePoint property of the bound entity, whether or not a
+/// component displays it — with names sorted for deterministic output.
+/// Schema-less projections fall back to the component's display fields
+/// ([`ux_plan_fields`], signal-poor synthesized [`UiField`] pairs).
+fn ux_entity_input<'a>(
+    c: &IfmlComponent,
+    props: &'a HashMap<String, PropertyNode>,
+    workflow_status_field: Option<&'a str>,
+) -> UxEntityInput<'a> {
+    let names: Vec<String> = if props.is_empty() {
+        ux_plan_fields(c)
+    } else {
+        let mut names: Vec<String> = props
+            .iter()
+            .filter(|(key, prop)| prop.name == **key)
+            .map(|(key, _)| key.clone())
+            .collect();
+        names.sort();
+        names
+    };
+    let mut fields: Vec<crate::ui::page::UiField> = Vec::with_capacity(names.len());
+    let mut prop_by_name: BTreeMap<String, &'a PropertyNode> = BTreeMap::new();
+    for name in &names {
+        if let Some(prop) = props.get(name) {
+            prop_by_name.insert(name.clone(), prop);
+            fields.push(crate::ui::form::ui_field_from_property(
+                prop,
+                column_is_entity_ref(prop),
+                column_is_codelist(prop),
+                &[],
+                &[],
+                &prop.pg_column_type,
+                prop.pg_column_type.contains("RANGE"),
+                false,
+            ));
+        } else {
+            fields.push(ux_synth_field(name, &c.fields_with_types));
+        }
+    }
+    UxEntityInput {
+        fields,
+        prop_by_name,
+        workflow_status_field,
+    }
+}
+
+/// Project the entity plan's collection shape onto the component (issue
+/// #301): a Timeline plan yields the render payload, with preview columns
+/// resolved through the SAME per-column ux tier as #300 cells. Table
+/// plans (and entities without a plan) yield `None`. The plan output is
+/// reused verbatim — never re-validated.
+fn timeline_from_plan(
+    uxg: &UxGeneration<'_>,
+    entity: &str,
+    rules: &UxRules,
+    props: &HashMap<String, PropertyNode>,
+    fields_with_types: &[(String, String)],
+    workflow_status_field: Option<&str>,
+) -> Option<RenderTimeline> {
+    let plan = uxg.plans.get(entity)?;
+    match &plan.collection {
+        crate::ux::plan::CollectionPlan::Timeline {
+            order_by,
+            title_field,
+            preview,
+        } => Some(RenderTimeline {
+            order_binding: order_by.clone(),
+            title_binding: title_field.clone(),
+            preview: preview
+                .iter()
+                .map(|name| {
+                    preview_column(rules, name, props, fields_with_types, workflow_status_field)
+                })
+                .collect(),
+        }),
+        crate::ux::plan::CollectionPlan::Table => None,
+    }
+}
+
+/// One timeline preview column: the shared #300 column resolution over the
+/// field's graph property (or its synthesized `(field, rust_type)` pair).
+fn preview_column(
+    rules: &UxRules,
+    name: &str,
+    props: &HashMap<String, PropertyNode>,
+    fields_with_types: &[(String, String)],
+    workflow_status_field: Option<&str>,
+) -> RenderColumn {
+    RenderColumn {
+        label: name.to_string(),
+        kind: "field".to_string(),
+        binding: name.to_string(),
+        lookup: String::new(),
+        expr: String::new(),
+        ux: Some(resolve_column_ux(
+            rules,
+            "field",
+            name,
+            props,
+            fields_with_types,
+            workflow_status_field,
+        )),
     }
 }
 
@@ -3464,11 +3847,679 @@ testids = { root = "ui-button" }
             &vc,
             None,
             &HashSet::new(),
-            Some(&pack()),
+            Some(&ux_generation_for_tests(&pack())),
         ));
         let ux = ctx.ux.expect("ux context");
         assert_eq!(ux.locale, "en-NZ");
         assert_eq!(ux.money_options, "{ style: 'currency', currency: 'NZD' }");
+    }
+
+    /// A flag-on [`UxGeneration`] over an empty plan map — the shape test
+    /// contexts use when the timeline/layout plane itself isn't the
+    /// subject.
+    fn ux_generation_for_tests<'a>(rules: &'a UxRules) -> UxGeneration<'a> {
+        static EMPTY_PLANS: std::sync::OnceLock<HashMap<String, crate::ux::plan::UxPlan>> =
+            std::sync::OnceLock::new();
+        UxGeneration {
+            rules,
+            plans: EMPTY_PLANS.get_or_init(HashMap::new),
+        }
+    }
+
+    // ── Timeline layout + event tiering + diagnostics (issue #301) ──
+
+    fn ux_schema(title: &str) -> codegraph_core::types::SchemaNode {
+        codegraph_core::types::SchemaNode {
+            namespace: None,
+            schema_id: format!("id:{title}"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity".to_string(),
+            domain: Some("sales".to_string()),
+            rel_path: format!("{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: codegraph_naming::to_snake_case(title),
+            api_path_segment: codegraph_naming::to_kebab_case(title),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+
+    /// Graph fixture for the Customer entity: a name, a codelist status,
+    /// a numeric money-named amount and a timestamp — one field per
+    /// dimension the timeline layout touches.
+    fn ux_customer_db() -> MockEngine {
+        MockEngine::builder()
+            .with_schema(ux_schema("CustomerType"))
+            .with_properties(
+                "CustomerType",
+                vec![
+                    ux_prop("name", "TEXT", None),
+                    ux_prop(
+                        "status",
+                        "TEXT",
+                        Some(RefClassificationKind::CodelistReference),
+                    ),
+                    ux_prop("total_amount", "NUMERIC(10,2)", None),
+                    ux_prop("created_at", "TIMESTAMPTZ", None),
+                ],
+            )
+            .build()
+    }
+
+    fn nav_event(name: &str, event_type: &str, target: &str) -> IfmlEvent {
+        IfmlEvent {
+            name: name.to_string(),
+            event_type: event_type.to_string(),
+            params: vec!["row".to_string()],
+            requires: Vec::new(),
+            action: IfmlAction::Navigate {
+                target: target.to_string(),
+                binding: HashMap::new(),
+            },
+        }
+    }
+
+    fn timeline_rules() -> UxRules {
+        ux_rules(
+            "[[collection]]\nentity_pattern = \"Customer*\"\ndisplay = \"timeline\"\n\
+             order_by = \"created_at\"\ntitle_field = \"name\"\npreview = [\"status\", \"total_amount\"]\n",
+        )
+    }
+
+    /// A typed fallback table over the Customer fixture carrying THREE
+    /// navigate events (select inline + archive/delete disclosed).
+    fn timeline_table_component() -> IfmlComponent {
+        let mut c = component_with_spec(Some(ComponentSpec::Table(TableSpec {
+            columns: vec![
+                ColumnDef::Field {
+                    label: "Name".to_string(),
+                    field: PropertyRef {
+                        entity: "Customer".to_string(),
+                        property: "name".to_string(),
+                    },
+                },
+                ColumnDef::Field {
+                    label: "Created".to_string(),
+                    field: PropertyRef {
+                        entity: "Customer".to_string(),
+                        property: "created_at".to_string(),
+                    },
+                },
+            ],
+            pagination: false,
+        })));
+        c.events = vec![
+            nav_event("comp_grid_select", "select", "CustomerDetail"),
+            nav_event("comp_grid_archive", "archive", "CustomerArchive"),
+            nav_event("comp_grid_delete", "delete", "CustomerDelete"),
+        ];
+        c
+    }
+
+    /// Resolve the generation plans for a single-view fixture.
+    fn resolve_plans_for(
+        db: &MockEngine,
+        vc: &IfmlViewContainer,
+        rules: &UxRules,
+    ) -> HashMap<String, crate::ux::plan::UxPlan> {
+        let model = model_of(vec![vc.clone()]);
+        let (plans, _lines) = futures::executor::block_on(resolve_generation_ux(
+            db,
+            &test_config(),
+            &model,
+            Some(rules),
+        ))
+        .expect("generation ux resolution");
+        plans
+    }
+
+    fn page_component_context_with_ux(
+        db: &MockEngine,
+        config: &DomainConfig,
+        vc: &IfmlViewContainer,
+        c: &IfmlComponent,
+        uxgen: Option<&UxGeneration<'_>>,
+    ) -> PageComponentContext {
+        let mut cache = HashMap::new();
+        futures::executor::block_on(page_component_context(
+            db,
+            config,
+            "v1",
+            vc,
+            c,
+            None,
+            None,
+            &mut cache,
+            &HashSet::new(),
+            uxgen,
+        ))
+    }
+
+    #[test]
+    fn timeline_rule_resolves_layout_with_resolved_bindings() {
+        let db = ux_customer_db();
+        let rules = timeline_rules();
+        let c = timeline_table_component();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c.clone());
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let ctx = page_component_context_with_ux(&db, &test_config(), &vc, &c, Some(&uxgen));
+
+        // RenderTable.layout carries the timeline with the rule's
+        // resolved bindings (reused plan output — no re-validation).
+        let table = ctx.table.expect("table context");
+        let TableLayout::Timeline {
+            order_binding,
+            title_binding,
+            preview,
+        } = &table.layout
+        else {
+            panic!(
+                "explicit matching rule must resolve a timeline: {:?}",
+                table.layout
+            );
+        };
+        assert_eq!(order_binding, "created_at");
+        assert_eq!(title_binding.as_deref(), Some("name"));
+        assert_eq!(
+            preview
+                .iter()
+                .map(|col| col.binding.as_str())
+                .collect::<Vec<_>>(),
+            vec!["status", "total_amount"]
+        );
+
+        // The uniform component view agrees (single template path).
+        let timeline = ctx.timeline.as_ref().expect("uniform timeline view");
+        assert_eq!(timeline.order_binding, "created_at");
+        assert_eq!(timeline.title_binding.as_deref(), Some("name"));
+        assert_eq!(timeline.preview[0].binding, "status");
+        assert_eq!(
+            timeline.preview[0].ux.as_ref().unwrap().display,
+            "chip",
+            "preview renders through the shared #300 chip tier"
+        );
+        assert_eq!(timeline.preview[1].binding, "total_amount");
+        assert_eq!(
+            timeline.preview[1].ux.as_ref().unwrap().dimension,
+            "money",
+            "preview renders through the shared #300 money tier"
+        );
+    }
+
+    #[test]
+    fn timeline_unresolvable_order_by_errors_naming_candidates() {
+        let db = ux_customer_db();
+        let rules = ux_rules(
+            "[[collection]]\nentity_pattern = \"Customer*\"\ndisplay = \"timeline\"\norder_by = \"deleted_at\"\n",
+        );
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(timeline_table_component());
+        let model = model_of(vec![vc]);
+        let err = futures::executor::block_on(resolve_generation_ux(
+            &db,
+            &test_config(),
+            &model,
+            Some(&rules),
+        ))
+        .expect_err("unresolvable order_by must fail generation");
+        let message = err.to_string();
+        assert!(message.contains("deleted_at"), "{message}");
+        assert!(message.contains("Customer"), "{message}");
+        assert!(
+            message.contains("created_at"),
+            "the error names the candidate time-point fields: {message}"
+        );
+    }
+
+    #[test]
+    fn mapped_component_beats_timeline_layout() {
+        let db = ux_customer_db();
+        let rules = timeline_rules();
+        let c = timeline_table_component();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c.clone());
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+        let mappings: IfmlComponentMappings = toml::from_str(
+            r#"
+[[component]]
+kind = "table"
+path = "$lib/components/DataTable.svelte"
+export = "DataTable"
+"#,
+        )
+        .unwrap();
+
+        let mut cache = HashMap::new();
+        let ctx = futures::executor::block_on(page_component_context(
+            &db,
+            &test_config(),
+            "v1",
+            &vc,
+            &c,
+            None,
+            Some(&mappings),
+            &mut cache,
+            &HashSet::new(),
+            Some(&uxgen),
+        ));
+
+        assert!(ctx.mapping.is_some(), "whole-component mapping resolves");
+        assert!(
+            ctx.timeline.is_none(),
+            "mapped components replace the fallback — no timeline"
+        );
+        assert!(
+            ctx.table.as_ref().unwrap().layout.is_table(),
+            "mapped components reset the table layout"
+        );
+        assert!(
+            ctx.row_menu_events.is_empty(),
+            "mapped components keep their own event surface — no actions menu"
+        );
+    }
+
+    #[test]
+    fn no_timeline_rule_stays_table_and_single_event_has_no_menu() {
+        let db = ux_customer_db();
+        let rules = pack();
+        let mut c = timeline_table_component();
+        c.events = vec![nav_event("comp_grid_select", "select", "CustomerDetail")];
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c.clone());
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let ctx = page_component_context_with_ux(&db, &test_config(), &vc, &c, Some(&uxgen));
+        assert!(ctx.table.unwrap().layout.is_table(), "no rule ⇒ table");
+        assert!(ctx.timeline.is_none());
+        assert!(
+            ctx.row_menu_events.is_empty(),
+            "single navigate event ⇒ no menu, no actions testid"
+        );
+    }
+
+    #[test]
+    fn event_partition_first_inline_rest_menu_with_shared_handlers() {
+        let db = ux_customer_db();
+        let rules = pack();
+        let c = timeline_table_component();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c.clone());
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let ctx = page_component_context_with_ux(&db, &test_config(), &vc, &c, Some(&uxgen));
+        assert_eq!(
+            ctx.row_handler.as_deref(),
+            Some("comp_grid_select"),
+            "the FIRST navigate event stays inline"
+        );
+        let menu = &ctx.row_menu_events;
+        assert_eq!(menu.len(), 2, "the other two events disclose");
+        assert_eq!(menu[0].handler_name, "comp_grid_archive");
+        assert_eq!(menu[0].label, "Archive");
+        assert_eq!(menu[1].handler_name, "comp_grid_delete");
+        assert_eq!(menu[1].label, "Delete");
+
+        // Handler parity: menu items call the same named functions the
+        // inline placement would call (the page template emits one
+        // function per event, referenced from both placements).
+        let emitted: Vec<&str> = ctx.events.iter().map(|e| e.handler_name.as_str()).collect();
+        for evt in menu {
+            assert!(
+                emitted.contains(&evt.handler_name.as_str()),
+                "menu handler {} must be an emitted event handler",
+                evt.handler_name
+            );
+        }
+    }
+
+    #[test]
+    fn flag_off_context_json_omits_issue301_keys() {
+        let c = timeline_table_component();
+        let ctx = page_component_context_sync(&c);
+        let json = serde_json::to_value(&ctx).unwrap();
+        assert!(json.get("timeline").is_none(), "{json}");
+        assert!(json.get("row_menu_events").is_none(), "{json}");
+        assert!(
+            json.get("table").and_then(|t| t.get("layout")).is_none(),
+            "flag off ⇒ no layout key on the serialized table: {json}"
+        );
+
+        // Flag ON but no matching rule ⇒ same absence.
+        let db = ux_customer_db();
+        let rules = pack();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c.clone());
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+        let ctx = page_component_context_with_ux(&db, &test_config(), &vc, &c, Some(&uxgen));
+        let json = serde_json::to_value(&ctx).unwrap();
+        assert!(json.get("timeline").is_none(), "{json}");
+        assert!(
+            json.get("table").and_then(|t| t.get("layout")).is_none(),
+            "table plan ⇒ layout key skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn specless_list_resolves_the_uniform_timeline_view() {
+        let db = ux_customer_db();
+        let rules = timeline_rules();
+        let mut c = component_with_spec(None);
+        c.component_type = "list".to_string();
+        c.fields = vec![
+            "name".to_string(),
+            "status".to_string(),
+            "created_at".to_string(),
+        ];
+        c.events = vec![nav_event("comp_grid_select", "select", "CustomerDetail")];
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c.clone());
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let ctx = page_component_context_with_ux(&db, &test_config(), &vc, &c, Some(&uxgen));
+        let timeline = ctx.timeline.as_ref().expect("spec-less list timeline");
+        assert_eq!(timeline.order_binding, "created_at");
+        assert_eq!(timeline.title_binding.as_deref(), Some("name"));
+        assert_eq!(timeline.preview[0].binding, "status");
+    }
+
+    fn render_page_with_ux(
+        db: &MockEngine,
+        config: &DomainConfig,
+        vc: &IfmlViewContainer,
+        uxgen: Option<&UxGeneration<'_>>,
+    ) -> String {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let ctx = futures::executor::block_on(build_page_context(
+            db,
+            config,
+            "v1",
+            vc,
+            None,
+            &HashSet::new(),
+            uxgen,
+        ));
+        render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render")
+    }
+
+    #[test]
+    fn timeline_render_replaces_the_table_block() {
+        let db = ux_customer_db();
+        let rules = timeline_rules();
+        let c = timeline_table_component();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c);
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let rendered = render_page_with_ux(&db, &test_config(), &vc, Some(&uxgen));
+        assert!(
+            rendered.contains("<ol class=\"timeline\" data-testid=\"grid-timeline\">"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("{#each grid_timeline_items as item}"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("timeOf(b['created_at']) - timeOf(a['created_at'])"),
+            "items sort newest first on the order binding:\n{rendered}"
+        );
+        assert!(
+            rendered
+                .contains("<li class=\"timeline-item\" data-testid=\"grid-timeline-item\" onclick={() => comp_grid_select(item)}>"),
+            "the row onclick fires from the item body:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "<time class=\"timeline-time\" datetime={item.created_at}>{formatDate(item.created_at)}</time>"
+            ),
+            "the time head renders the date-only Intl helper:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "<button type=\"button\" class=\"timeline-title\" data-testid=\"grid-timeline-title\" onclick={() => comp_grid_select(item)}>{item.name}</button>"
+            ),
+            "the title carries the row-handler target convention:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "<span class=\"timeline-meta\" data-testid=\"grid-timeline-meta\"><span class=\"chip\" data-chip={item.status} data-chip-variant={toneFor('grid.status', item.status)} data-testid=\"grid-chip\">{item.status}</span></span>"
+            ),
+            "preview fields render through the shared #300 chip formatter:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("{formatMoney(item.total_amount)}"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("'grid.status': {"),
+            "preview chips join the page tone map:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("<table data-testid=\"grid-table\""),
+            "the timeline replaces the table block:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn timeline_item_renders_workflow_badge_and_actions_menu() {
+        let db = ux_customer_db();
+        let rules = timeline_rules();
+        let c = timeline_table_component();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c);
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let rendered = render_page_with_ux(&db, &workflow_config(), &vc, Some(&uxgen));
+        assert!(
+            rendered.contains("data-workflow-state={item.status}"),
+            "the workflow badge renders per item:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("let grid_actions_open = $state(false);"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"grid-actions\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"grid-actions-menu\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("onclick={(e) => { e.stopPropagation(); comp_grid_archive(item); }}>Archive</button>"),
+            "menu items carry the identical handler invocation:\n{rendered}"
+        );
+        // Handler parity: each handler body is emitted exactly once and
+        // referenced from both the item click and the menu.
+        assert_eq!(
+            rendered
+                .matches("function comp_grid_archive(row: Record<string, unknown>) {")
+                .count(),
+            1,
+            "the secondary handler body is emitted once:\n{rendered}"
+        );
+        let def = rendered
+            .find("function comp_grid_archive(row: Record<string, unknown>) {")
+            .expect("handler definition");
+        let menu_use = rendered.find("comp_grid_archive(item);").expect("menu use");
+        assert!(menu_use > def, "{rendered}");
+    }
+
+    #[test]
+    fn secondary_event_menu_renders_on_plain_tables_with_inline_parity() {
+        let db = ux_customer_db();
+        let rules = pack();
+        let c = timeline_table_component();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c);
+        let plans = resolve_plans_for(&db, &vc, &rules);
+        let uxgen = UxGeneration {
+            rules: &rules,
+            plans: &plans,
+        };
+
+        let rendered = render_page_with_ux(&db, &test_config(), &vc, Some(&uxgen));
+        // The table stays; the first event remains the inline row handler.
+        assert!(
+            rendered
+                .contains("<tr data-testid=\"grid-row\" onclick={() => comp_grid_select(item)}>"),
+            "first event stays inline byte-equal:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"grid-actions\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("data-testid=\"grid-actions-menu\""),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "onclick={(e) => { e.stopPropagation(); comp_grid_archive(item); }}>Archive</button>"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("grid-timeline"),
+            "no timeline without a rule: {rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("function comp_grid_archive(row: Record<string, unknown>) {")
+                .count(),
+            1,
+            "menu handlers are the shared named functions:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn generation_diagnostics_are_deduped_per_entity_and_quiet_when_clean() {
+        // A spec-less list whose declared fields carry the finding shapes:
+        // a money keyword, a time-named field. Both hint classes fire once,
+        // and a second view binding the same entity adds nothing.
+        let db = ux_customer_db();
+        let rules = pack();
+        let mut c = component_with_spec(None);
+        c.component_type = "list".to_string();
+        c.fields = vec![
+            "name".to_string(),
+            "status".to_string(),
+            "total_amount".to_string(),
+            "created_at".to_string(),
+        ];
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c);
+        let mut vc2 = plain_vc("CustomerList2");
+        vc2.components.push({
+            let mut c = component_with_spec(None);
+            c.component_type = "list".to_string();
+            c.fields = vec![
+                "name".to_string(),
+                "status".to_string(),
+                "total_amount".to_string(),
+                "created_at".to_string(),
+            ];
+            c
+        });
+        let model = model_of(vec![vc, vc2]);
+        let (plans, lines) = futures::executor::block_on(resolve_generation_ux(
+            &db,
+            &test_config(),
+            &model,
+            Some(&rules),
+        ))
+        .expect("resolution");
+        assert_eq!(plans.len(), 1, "one plan per distinct bound entity");
+        let money = lines
+            .iter()
+            .find(|l| l.contains("total_amount"))
+            .expect("money hint line");
+        assert!(money.contains("total_amount"), "{money}");
+        let suggestion = lines
+            .iter()
+            .find(|l| l.contains("timeline"))
+            .expect("a time-dominated collection without a rule earns a suggestion");
+        assert!(suggestion.contains("created_at"), "{suggestion}");
+
+        // Clean projection — an entity without money keywords or
+        // time-shaped fields: only the shared actions accounting line
+        // remains, once.
+        let mut c = component_with_spec(None);
+        c.component_type = "list".to_string();
+        c.fields = vec!["name".to_string(), "quantity".to_string()];
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(c);
+        let model = model_of(vec![vc]);
+        let empty_db = MockEngine::new();
+        let (_plans, lines) = futures::executor::block_on(resolve_generation_ux(
+            &empty_db,
+            &test_config(),
+            &model,
+            Some(&rules),
+        ))
+        .expect("resolution");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("2 row action(s)"), "{lines:?}");
+    }
+
+    #[test]
+    fn flag_off_generation_diagnostics_stay_silent() {
+        let db = ux_customer_db();
+        let mut vc = plain_vc("CustomerList");
+        vc.components.push(timeline_table_component());
+        let model = model_of(vec![vc]);
+        let (plans, lines) =
+            futures::executor::block_on(resolve_generation_ux(&db, &test_config(), &model, None))
+                .expect("resolution");
+        assert!(plans.is_empty());
+        assert!(lines.is_empty());
     }
 
     #[test]

@@ -25,6 +25,20 @@
 	const {{ comp.js_name }}_form_state = $derived((data.formData ?? {}) as Record<string, any>);
 {%- endif %}
 {%- endfor %}
+{%- for comp in components %}
+{%- if comp.row_menu_events %}
+	let {{ comp.js_name }}_actions_open = $state(false);
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.timeline %}
+	const {{ comp.js_name }}_timeline_items = $derived(
+		((data.items ?? []) as Record<string, unknown>[]).sort(
+			(a, b) => timeOf(b['{{ comp.timeline.order_binding }}']) - timeOf(a['{{ comp.timeline.order_binding }}'])
+		)
+	);
+{%- endif %}
+{%- endfor %}
 {%- if control_gate.consts %}
 
 	{{ control_gate.consts }}
@@ -158,6 +172,15 @@
 	{%- endif %}
 	{%- endfor %}
 	{%- endif %}
+	{%- if comp.timeline %}
+	{%- for col in comp.timeline.preview %}
+	{%- if col.ux %}
+	{%- if col.ux.tone %}
+		'{{ comp.name }}.{{ col.binding }}': { {% for k, v in col.ux.tone %}{{ k }}: '{{ v }}', {% endfor %}},
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
 	{%- endfor %}
 	};
 
@@ -188,6 +211,11 @@
 	function copyChip(event: Event, value: unknown): void {
 		event.stopPropagation();
 		void navigator.clipboard?.writeText(String(value ?? ''));
+	}
+
+	function timeOf(value: unknown): number {
+		const date = new Date(String(value ?? ''));
+		return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 	}
 {%- endif %}
 </script>
@@ -260,6 +288,37 @@
 {%- endfor %}
 {%- endif %}
 {%- endif %}
+{% elif comp.timeline %}
+{%- if not comp.in_container %}
+<h1>{{ label }}</h1>
+{%- endif %}
+<ol class="timeline" data-testid="{{ comp.name }}-timeline">
+{% raw %}	{#each {% endraw %}{{ comp.js_name }}{% raw %}_timeline_items as item}{% endraw %}
+	<li class="timeline-item" data-testid="{{ comp.name }}-timeline-item"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
+		<time class="timeline-time" datetime={item.{{ comp.timeline.order_binding }}}>{formatDate(item.{{ comp.timeline.order_binding }})}</time>
+		<div class="timeline-rail" aria-hidden="true"></div>
+		<div class="timeline-body">
+{% if comp.timeline.title_binding %}
+{% if comp.row_handler %}
+			<button type="button" class="timeline-title" data-testid="{{ comp.name }}-timeline-title" onclick={() => {{ comp.row_handler }}(item)}>{item.{{ comp.timeline.title_binding }}}</button>
+{% else %}
+			<span class="timeline-title">{item.{{ comp.timeline.title_binding }}}</span>
+{% endif %}
+{% endif %}
+{% for col in comp.timeline.preview %}
+			<span class="timeline-meta" data-testid="{{ comp.name }}-timeline-meta">{% if col.ux %}{% if col.ux.display == "chip" %}<span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span>{% elif col.ux.display == "copy-chip" %}<button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button>{% elif col.ux.dimension == "money" %}{formatMoney(item.{{ col.binding }})}{% elif col.ux.dimension == "quantity" %}{formatNumber(item.{{ col.binding }})}{% elif col.ux.dimension == "time-point" %}{formatDate(item.{{ col.binding }})}{% else %}{item.{{ col.binding }}}{% endif %}{% else %}{item.{{ col.binding }}}{% endif %}</span>
+{% endfor %}
+{% if comp.workflow %}
+			{{ comp.workflow.badge_html }}
+{% endif %}
+{% if comp.row_menu_events %}
+			<div class="timeline-actions"><button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open %}{% endraw %}<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">{% for evt in comp.row_menu_events %}<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>{% endfor %}</div>{% raw %}{/if}{% endraw %}</div>
+{% endif %}
+		</div>
+	</li>
+{% raw %}	{/each}{% endraw %}
+</ol>
+
 {% elif comp.table %}
 {%- if not comp.in_container %}
 <h1>{{ label }}</h1>
@@ -279,6 +338,18 @@
 				{% if col.ux %}{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}{% else %}<td>{item.{{ col.binding }}}</td>{% endif %}
 			{% endfor %}{% if comp.workflow %}
 			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
+{%- if comp.row_menu_events %}
+			<td class="row-actions">
+			<button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>
+			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open %}{% endraw %}
+			<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">
+			{% for evt in comp.row_menu_events %}
+				<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>
+			{% endfor %}
+			</div>
+			{% raw %}{/if}{% endraw %}
+			</td>
+{%- endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
 	</tbody>
@@ -358,6 +429,18 @@
 				<td>{item.{{ field }}}</td>
 			{% endfor %}{% endif %}{% if comp.workflow %}
 			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
+{%- if comp.row_menu_events %}
+			<td class="row-actions">
+			<button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>
+			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open %}{% endraw %}
+			<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">
+			{% for evt in comp.row_menu_events %}
+				<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>
+			{% endfor %}
+			</div>
+			{% raw %}{/if}{% endraw %}
+			</td>
+{%- endif %}
 			</tr>
 {% raw %}		{/each}{% endraw %}
 	</tbody>
