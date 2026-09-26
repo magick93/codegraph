@@ -111,7 +111,9 @@ pub(crate) fn emit_response_construction(code: &mut CodeWriter, tree: &EntityTre
         wln!(code, "            workflow_state: None,");
     }
     wln!(code, "            created_at: row.created_at,");
-    wln!(code, "            updated_at: row.updated_at,");
+    if !tree.append_only {
+        wln!(code, "            updated_at: row.updated_at,");
+    }
     // DTO fields the tree does not load (e.g. base-inherited junction arrays
     // under nested composition nodes) default to None instead of failing E0063.
     wln!(code, "            ..Default::default()");

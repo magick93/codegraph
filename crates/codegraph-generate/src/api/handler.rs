@@ -884,7 +884,22 @@ async fn resolve_is_auditable(
     domain: &str,
 ) -> Result<bool> {
     let policies = db.get_policies_for_schema(schema_title).await?;
-    let is_auditable = if policies.is_empty() {
+    // Append-only snapshot semantics (issue #284) — same inference as
+    // db/ddl.rs: insert-only entities carry no audit columns, so the API
+    // layer never passes `include_deleted` to the query/repository traits.
+    let append_only = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title))
+        .as_ref()
+        .is_some_and(|ec| ec.is_append_only())
+        || {
+            let ops =
+                crate::api::api_model::resolve_entity_operations(db, config, domain, schema_title)
+                    .await;
+            !ops.iter().any(|op| op == "update" || op == "delete")
+        };
+    let is_auditable = (if policies.is_empty() {
         config
             .domains
             .get(domain)
@@ -894,6 +909,6 @@ async fn resolve_is_auditable(
         policies
             .iter()
             .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
-    };
+    }) && !append_only;
     Ok(is_auditable)
 }

@@ -2119,8 +2119,11 @@ impl EntityGenerator for DdlGenerator {
             }
         }
 
-        // Updated_at trigger — dialect-aware style
-        if ctx.has_updated_at && self.dialect.has_plpgsql() {
+        // Timestamp + org-assignment triggers — dialect-aware style. The
+        // set_org_id BEFORE INSERT trigger is required for EVERY tenant-scoped
+        // entity (it assigns platform_organization_id from the session GUC);
+        // append-only entities skip only the updated_at trigger (#284).
+        if (ctx.has_updated_at || ctx.is_tenant_scoped) && self.dialect.has_plpgsql() {
             let trigger_sql = render_template_with_project(
                 tera,
                 &db_template_for(&*self.dialect, "trigger"),

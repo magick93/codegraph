@@ -56,6 +56,11 @@ pub struct EntityTree {
     pub track_updated_user: bool,
     /// Whether the audit policy tracks the deleting user (for `deleted_by` column).
     pub track_deleted_user: bool,
+    /// Append-only snapshot semantics (issue #284): explicit entity-config
+    /// flag or inferred from effective operations excluding update AND
+    /// delete. Mirrors the DDL inference (ddl.rs) — when true the table has
+    /// no `updated_at` column, so emitted repositories must not reference it.
+    pub append_only: bool,
     pub filter_fields: Vec<FilterFieldInfo>,
     pub nested_filter_fields: Vec<NestedFilterFieldInfo>,
     /// FK column for parent-scoped lookups (child entities only).

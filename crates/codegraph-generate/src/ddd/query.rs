@@ -139,7 +139,17 @@ impl EntityGenerator for QueryGenerator {
         };
 
         let policies = db.get_policies_for_schema(schema_title).await?;
-        let is_auditable = if policies.is_empty() {
+        // Append-only snapshot semantics (issue #284) — mirror ddl.rs /
+        // repository.rs: no audit columns on insert-only tables, so the
+        // generated query layer must not reference `include_deleted`.
+        let append_only = config
+            .domains
+            .get(&domain)
+            .and_then(|d| d.get_entity_config(schema_title))
+            .as_ref()
+            .is_some_and(|ec| ec.is_append_only())
+            || !operations.iter().any(|op| op == "update" || op == "delete");
+        let is_auditable = (if policies.is_empty() {
             config
                 .domains
                 .get(&domain)
@@ -149,7 +159,7 @@ impl EntityGenerator for QueryGenerator {
             policies
                 .iter()
                 .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
-        };
+        }) && !append_only;
 
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),

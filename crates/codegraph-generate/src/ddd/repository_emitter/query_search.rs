@@ -344,7 +344,9 @@ impl RepositoryImplEmitter {
             wln!(code, "                workflow_state: None,");
         }
         wln!(code, "                created_at: row.created_at,");
-        wln!(code, "                updated_at: row.updated_at,");
+        if !tree.append_only {
+            wln!(code, "                updated_at: row.updated_at,");
+        }
         wln!(code, "                ..Default::default()");
         wln!(code, "            }});");
         wln!(code, "        }}");

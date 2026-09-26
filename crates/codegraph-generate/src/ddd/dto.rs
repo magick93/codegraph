@@ -314,6 +314,7 @@ async fn build_child_dto(
             | Some(RefClassificationKind::RangeWrapper)
             | Some(RefClassificationKind::InlineEnum) => {
                 let fd = codegraph_core::types::resolve_field(c);
+                let len_ok = supports_garde_length(&c.rust_field_type);
                 child_fields.push(DtoField {
                     name: fd.rust_field_name.clone(),
                     rust_type: c.rust_field_type.clone(),
@@ -323,8 +324,8 @@ async fn build_child_dto(
                     render_strategy: "direct_column".to_string(),
                     is_entity_ref: false,
                     is_hierarchy_field: false,
-                    min_length: c.min_length,
-                    max_length: c.max_length,
+                    min_length: if len_ok { c.min_length } else { None },
+                    max_length: if len_ok { c.max_length } else { None },
                     minimum: c.minimum,
                     maximum: c.maximum,
                     pattern: c.pattern.clone(),
@@ -341,6 +342,7 @@ async fn build_child_dto(
                     )
                 {
                     let fd = codegraph_core::types::resolve_field(c);
+                    let len_ok = supports_garde_length(t);
                     child_fields.push(DtoField {
                         name: fd.rust_field_name.clone(),
                         rust_type: t.clone(),
@@ -350,8 +352,8 @@ async fn build_child_dto(
                         render_strategy: "direct_column".to_string(),
                         is_entity_ref: false,
                         is_hierarchy_field: false,
-                        min_length: c.min_length,
-                        max_length: c.max_length,
+                        min_length: if len_ok { c.min_length } else { None },
+                        max_length: if len_ok { c.max_length } else { None },
                         minimum: c.minimum,
                         maximum: c.maximum,
                         pattern: c.pattern.clone(),
@@ -719,6 +721,7 @@ pub async fn build_dto_context(
 
         let field_def = codegraph_core::types::resolve_field(prop);
         // Use field_def.rust_field_name for DTO field names
+        let len_ok = supports_garde_length(&rust_type);
 
         fields.push(DtoField {
             name: field_def.rust_field_name.clone(),
@@ -731,8 +734,8 @@ pub async fn build_dto_context(
             render_strategy: prop.render_strategy.clone(),
             is_entity_ref,
             is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&field_def.rust_field_name),
-            min_length: prop.min_length,
-            max_length: prop.max_length,
+            min_length: if len_ok { prop.min_length } else { None },
+            max_length: if len_ok { prop.max_length } else { None },
             minimum: prop.minimum,
             maximum: prop.maximum,
             pattern: prop.pattern.clone(),
@@ -1472,6 +1475,31 @@ fn dot_field_type(prop: &PropertyNode, is_optional: bool) -> String {
             raw
         }
     }
+}
+
+/// True when the field's Rust type can carry garde `length` semantics
+/// (strings and collections — the types implementing garde's `Simple`
+/// length rule). `Option<...>` wrappers are unwrapped first: the DTO
+/// template validates inner values via `#[garde(inner(length(...)))]`.
+/// Without this gate, JSON `minLength` on e.g. a `format: date-time`
+/// property emits `#[garde(length(...))]` on a `chrono::DateTime<Utc>`
+/// field, which does not compile.
+fn supports_garde_length(rust_type: &str) -> bool {
+    let t = rust_type.trim();
+    let t = t
+        .strip_prefix("Option<")
+        .and_then(|s| s.strip_suffix('>'))
+        .map(str::trim)
+        .unwrap_or(t);
+    t.starts_with("String")
+        || t.starts_with("Vec<")
+        || t.starts_with("VecDeque<")
+        || t.contains("HashMap<")
+        || t.contains("BTreeMap<")
+        || t.contains("HashSet<")
+        || t.contains("BTreeSet<")
+        || t.contains("LinkedList<")
+        || t.contains("BinaryHeap<")
 }
 
 #[allow(clippy::too_many_arguments)]
