@@ -17,6 +17,10 @@ pub struct UiScaffoldContext {
     pub domains: Vec<UiDomain>,
     pub has_integrations: bool,
     pub has_webhooks: bool,
+    /// The ux-rules plane is active (`project.ux` resolved, issue #293).
+    /// Gates ux-only i18n message keys so flag-off scaffold output stays
+    /// byte-identical.
+    pub has_ux_rules: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +46,37 @@ pub struct UiNavField {
     pub name: String,
     pub label: String,
 }
+
+/// The shadcn-svelte primitive set a generated app's UI is built on
+/// (`#lib/components/ui/<name>/index.js` imports). Existing generated pages
+/// already import the first entries; issue #297 adds `dropdown-menu` and
+/// `tooltip` for the ux-rules list page (row-actions menu, truncated-cell
+/// tooltips). #299 ships the wrapper components themselves into the
+/// scaffold; until then real projects get them via `npx shadcn-svelte add`
+/// against the emitted `components.json`.
+pub const SHADCN_PRIMITIVES: &[&str] = &[
+    "alert-dialog",
+    "avatar",
+    "badge",
+    "breadcrumb",
+    "button",
+    "card",
+    "checkbox",
+    "collapsible",
+    "dialog",
+    "dropdown-menu",
+    "empty",
+    "input",
+    "label",
+    "popover",
+    "select",
+    "separator",
+    "sheet",
+    "sidebar",
+    "sonner",
+    "table",
+    "tooltip",
+];
 
 pub struct UiScaffoldGenerator {
     output_dir: PathBuf,
@@ -80,6 +115,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             domains,
             has_integrations: self.has_integrations,
             has_webhooks: self.has_webhooks,
+            has_ux_rules: project.ux.is_some(),
         };
 
         let ui = self.output_dir.join("ui");
@@ -474,4 +510,25 @@ fn integration_scaffold_templates(src: &Path, lib: &Path) -> Vec<(&'static str, 
             edit_dir.join("+page.svelte"),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #297: the ux-rules list page's row-actions menu and
+    /// truncated-cell tooltips require the two new primitives in every
+    /// generated app's component set.
+    #[test]
+    fn shadcn_primitive_set_covers_ux_list_page_requirements() {
+        for primitive in ["dropdown-menu", "tooltip"] {
+            assert!(
+                SHADCN_PRIMITIVES.contains(&primitive),
+                "primitive {primitive:?} must be declared in SHADCN_PRIMITIVES"
+            );
+        }
+        // Pre-existing primitives stay declared (no duplicates).
+        let unique: std::collections::HashSet<_> = SHADCN_PRIMITIVES.iter().collect();
+        assert_eq!(unique.len(), SHADCN_PRIMITIVES.len());
+    }
 }

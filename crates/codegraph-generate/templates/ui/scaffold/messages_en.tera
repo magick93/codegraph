@@ -14,7 +14,9 @@
   "common_search_placeholder": "Search {entity}...",
   "common_no_results": "No results found for \u201c{query}\u201d",
   "common_previous": "Previous",
-  "common_next": "Next",
+  "common_next": "Next",{% if has_ux_rules %}
+  "common_open": "Open",
+  "common_actions": "Actions",{% endif %}
   "common_confirm_delete_title": "Delete {entity}",
   "common_confirm_delete_description": "Are you sure? This action cannot be undone.",
   "common_saving": "Saving\u2026",
