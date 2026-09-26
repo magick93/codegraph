@@ -17,10 +17,45 @@ use super::child::flatten_child_tables;
 use super::context::{
     build_columns_and_children, resolve_worker_detail_joins, ClassificationContext,
 };
-use super::{ChildTableInfo, EntityTree, TreeColumn, TreeIncludeResolved};
+use super::{ChildTableInfo, EntityTree, TreeColumn, TreeIncludeResolved, UxSortColumn};
 
 /// Emits repository implementation Rust code by walking the entity's graph subtree.
 pub struct RepositoryImplEmitter;
+
+/// Map the ux sort plan's fields onto the entity's direct columns
+/// (issue #306). Flag off ⇒ empty; a plan field with no matching direct
+/// column (r#-stripped entity-model name or DTO name) is skipped.
+async fn sort_columns_for_tree(
+    tree: &EntityTree,
+    project: &ProjectConfig,
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    schema_title: &str,
+    domain: &str,
+) -> Result<Vec<UxSortColumn>> {
+    let plan =
+        crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, domain).await?;
+    let sort_columns: Vec<UxSortColumn> = plan
+        .fields
+        .iter()
+        .filter_map(|field| {
+            tree.direct_columns.iter().find_map(|col| {
+                let bare = col.field_name.strip_prefix("r#").unwrap_or(&col.field_name);
+                let matches = col
+                    .dto_field_name
+                    .as_deref()
+                    .unwrap_or(bare)
+                    .eq_ignore_ascii_case(field)
+                    || bare.eq_ignore_ascii_case(field);
+                matches.then(|| UxSortColumn {
+                    key: field.clone(),
+                    column: col.pg_column_name.clone(),
+                })
+            })
+        })
+        .collect();
+    Ok(sort_columns)
+}
 
 impl RepositoryImplEmitter {
     /// Resolve whether `find_tree` returns JOINed `serde_json::Value` rows
@@ -131,7 +166,13 @@ impl RepositoryImplEmitter {
         if tree.has_delete {
             self.emit_delete_fn(&tree, &mut code);
         }
-        self.emit_list_fn(&tree, &mut code);
+        // Issue #306: map the plan's sortable fields onto the entity's
+        // direct columns; fields without a direct column (synthetic or
+        // expanded slots) are dropped so the emitted match arms stay
+        // compile-clean.
+        let sort_columns =
+            sort_columns_for_tree(&tree, project, db, config, schema_title, domain).await?;
+        self.emit_list_fn(&tree, &sort_columns, &mut code);
         if tree.has_fts {
             self.emit_search_fn(&tree, &mut code);
         }

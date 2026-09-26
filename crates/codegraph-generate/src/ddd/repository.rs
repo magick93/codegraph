@@ -43,6 +43,12 @@ pub struct RepositoryContext {
     /// The soft-delete visibility mode: "exclude_by_default", "include_by_default", or "explicit_only".
     #[serde(default)]
     pub soft_delete_visibility: String,
+    /// Whether the list query accepts the ux sort param (issue #306).
+    /// When false, the trait keeps its pre-#306 signature so flag-off
+    /// output stays byte-identical. Must agree with the query handler and
+    /// both repository impls (same resolver).
+    #[serde(default)]
+    pub ux_sort: bool,
 }
 
 pub struct RepositoryTraitGenerator {
@@ -217,6 +223,14 @@ impl EntityGenerator for RepositoryTraitGenerator {
             })
             .unwrap_or_else(|| "exclude_by_default".to_string());
 
+        // ux sort plane (issue #306): must agree with the query handler and
+        // both repository impls — all resolve through the same helper.
+        let ux_sort = operations.contains(&"list".to_string())
+            && crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, &domain)
+                .await
+                .map(|plan| !plan.is_empty())
+                .unwrap_or(false);
+
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -235,6 +249,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
             module_name: module_name.clone(),
             domain: domain.clone(),
             operations,
+            ux_sort,
         };
 
         // Issue #268 (namespace_layout): namespaced repositories emit

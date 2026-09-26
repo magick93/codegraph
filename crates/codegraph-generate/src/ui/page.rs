@@ -5,7 +5,6 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::{PolicyKind, PropertyNode, SoftDeleteMarker};
 use serde::Serialize;
 
 use crate::api::api_model::{
@@ -14,9 +13,9 @@ use crate::api::api_model::{
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, GeneratedFile};
-use crate::ux::plan::{build_ux_plan, ActionSpec, RowAction, UxPlanInput};
+use crate::ux::plan::{build_ux_plan, ActionSpec, RowAction};
 use codegraph_config::ux::{Align, Display};
-use codegraph_config::{DomainConfig, WorkflowConfig};
+use codegraph_config::DomainConfig;
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::store::UiParentInfo;
@@ -59,6 +58,12 @@ pub struct UiPageContext {
     /// ux-rules locale/visual baseline (present only with a plan).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ux: Option<UxSettingsCtx>,
+    /// ux-rules list-sort contract (issue #306): the `?sort=` allow-list,
+    /// present only when the plan exposes at least one sortable column and
+    /// the collection renders as a table. Skipped from the serialized
+    /// context otherwise, so timeline/flag-off renders stay byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ux_sort: Option<UxSortCtx>,
 }
 
 /// One consumer-owned panel mounted on a generated detail page.
@@ -137,6 +142,9 @@ pub struct UxColumnCtx {
     pub tone: BTreeMap<String, String>,
     /// The cell truncates and surfaces the full value through a Tooltip.
     pub truncate_tooltip: bool,
+    /// The column is sortable in tables — the header renders a sort
+    /// button and the list endpoint accepts `?sort=<key>` (issue #306).
+    pub sortable: bool,
 }
 
 /// One row action for the list template (issue #297).
@@ -210,6 +218,16 @@ pub struct UxTimelineCtx {
     /// Extra fields shown on each entry, rendered through the shared
     /// cell formatter (chips, money, ...).
     pub preview: Vec<String>,
+}
+
+/// List-sort contract for the list template (issue #306): the `?sort=`
+/// allow-list derived from the plan, present only when at least one
+/// column is sortable and the collection renders as a table.
+#[derive(Debug, Clone, Serialize)]
+pub struct UxSortCtx {
+    /// Sortable field keys, in `column_order` sequence — the same values
+    /// the list endpoint's allow-list validates against.
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -366,14 +384,13 @@ impl EntityGenerator for UiPageGenerator {
         // ux-rules list contract (issue #297): resolve the plan over the
         // collected list fields when the plane is active, then map it onto
         // the template context. No rules ⇒ defaults keep output identical.
-        let (ux_columns, ux_actions, ux, ux_diag) = resolve_ux_context(
+        let (ux_columns, ux_actions, ux, ux_sort, ux_diag) = resolve_ux_context(
             db,
             config,
             project,
             &UxEntityInfo {
                 schema_title,
                 domain: &domain,
-                workflow,
                 list_fields: &list_fields,
                 operations: &operations,
                 user_pinned_list_order: !list_include.is_empty() || !list_exclude.is_empty(),
@@ -425,6 +442,7 @@ impl EntityGenerator for UiPageGenerator {
             ux_columns,
             ux_actions,
             ux,
+            ux_sort,
         };
 
         let routes_base = self
@@ -461,7 +479,6 @@ impl EntityGenerator for UiPageGenerator {
 struct UxEntityInfo<'a> {
     schema_title: &'a str,
     domain: &'a str,
-    workflow: Option<&'a WorkflowConfig>,
     list_fields: &'a [UiField],
     operations: &'a [String],
     user_pinned_list_order: bool,
@@ -476,80 +493,39 @@ async fn resolve_ux_context(
     Vec<UxColumnCtx>,
     Option<UxActionsCtx>,
     Option<UxSettingsCtx>,
+    Option<UxSortCtx>,
     Vec<String>,
 )> {
     let UxEntityInfo {
         schema_title,
         domain,
-        workflow,
         list_fields,
         operations,
         user_pinned_list_order,
     } = *info;
     let Some(rules) = project.ux.as_ref() else {
-        return Ok((Vec::new(), None, None, Vec::new()));
+        return Ok((Vec::new(), None, None, None, Vec::new()));
     };
 
-    // Soft-delete signal, mirroring `build_persistence_entity`: a
-    // SoftDelete graph policy names its marker field; otherwise the
-    // auditable audit band (the DEFAULT — `auditable` unset means true)
-    // carries `deleted_at`, which inactive rows can check.
-    let policies = db.get_policies_for_schema(schema_title).await?;
-    let graph_marker: Option<String> = policies.iter().find_map(|p| match &p.kind {
-        PolicyKind::SoftDelete(sd) => match &sd.marker {
-            SoftDeleteMarker::Timestamp(name)
-            | SoftDeleteMarker::Boolean(name)
-            | SoftDeleteMarker::Status(name) => Some(name.clone()),
-        },
-        _ => None,
-    });
-    let auditable = config
-        .domains
-        .get(domain)
-        .and_then(|d| d.auditable)
-        .unwrap_or(true);
-    let soft_delete_field = graph_marker.or_else(|| auditable.then(|| "deleted_at".to_string()));
-
-    let workflow_status_field = workflow.map(|wf| wf.status_field.clone());
-    let workflow_terminal_states = workflow
-        .map(|wf| wf.terminal_states.clone())
-        .unwrap_or_default();
-
-    // Graph properties keyed by TS field name (best-effort: synthetic and
-    // composite-expanded fields have no property and infer from the field
-    // alone).
-    let all_props = db.get_properties_in_domain(schema_title, domain).await?;
-    let props: Vec<PropertyNode> = {
-        let mut seen = std::collections::HashSet::new();
-        all_props
-            .into_iter()
-            .filter(|p| seen.insert(p.rust_field_name.clone()))
-            .collect()
-    };
-    let prop_by_name: BTreeMap<&str, &PropertyNode> = props
-        .iter()
-        .map(|p| {
-            let name = p
-                .rust_field_name
-                .strip_prefix("r#")
-                .unwrap_or(&p.rust_field_name);
-            (name, p)
-        })
-        .collect();
-
-    let input = UxPlanInput {
-        entity_title: schema_title,
-        fields: list_fields,
-        prop_by_name,
-        workflow_status_field: workflow_status_field.as_deref(),
-        workflow_terminal_states: &workflow_terminal_states,
-        has_soft_delete: soft_delete_field.is_some(),
+    // Shared plan-input collection (issue #306): the same assembly feeds
+    // the page context and the API-side sort allow-list, so the rendered
+    // sort buttons and the endpoint's validation can never disagree.
+    let plan_ctx = crate::ux::sort::collect_ux_plan_context(
+        db,
+        config,
+        schema_title,
+        domain,
+        list_fields.to_vec(),
         user_pinned_list_order,
-    };
+    )
+    .await?;
+    let soft_delete_field = plan_ctx.soft_delete_field().map(str::to_string);
+    let workflow_status_field = plan_ctx.workflow_status_field().map(str::to_string);
+    let input = plan_ctx.plan_input(schema_title);
 
     let plan = match build_ux_plan(Some(rules), &input)? {
         Some(plan) => plan,
-        None => return Ok((Vec::new(), None, None, Vec::new())),
+        None => return Ok((Vec::new(), None, None, None, Vec::new())),
     };
 
     let diag = crate::ux::diagnostics::collect_diagnostics(rules, &input, &plan);
@@ -577,6 +553,7 @@ async fn resolve_ux_context(
             .to_string(),
             tone: col.tone.0.clone(),
             truncate_tooltip: col.truncate_tooltip,
+            sortable: col.sortable,
         });
     }
 
@@ -640,6 +617,23 @@ async fn resolve_ux_context(
         crate::ux::plan::CollectionPlan::Table => None,
     };
 
+    // Issue #306: table layouts expose the plan's sortable columns through
+    // the `?sort=` allow-list; timelines keep their fixed DESC order (a
+    // ledger item — sort UI is deliberately table-only in v1).
+    let ux_sort = match plan.collection {
+        crate::ux::plan::CollectionPlan::Timeline { .. } => None,
+        crate::ux::plan::CollectionPlan::Table => {
+            let sort = crate::ux::sort::sort_plan_from_plan(&plan);
+            if sort.is_empty() {
+                None
+            } else {
+                Some(UxSortCtx {
+                    fields: sort.fields,
+                })
+            }
+        }
+    };
+
     let ux = UxSettingsCtx {
         locale: plan.format.locale.clone(),
         currency: plan.format.currency.clone(),
@@ -655,7 +649,7 @@ async fn resolve_ux_context(
         timeline,
     };
 
-    Ok((ux_columns, ux_actions, Some(ux), diag_lines))
+    Ok((ux_columns, ux_actions, Some(ux), ux_sort, diag_lines))
 }
 
 async fn resolve_parent_info(
@@ -961,10 +955,10 @@ mod ux_list_template_tests {
         let mut ctx = base_ctx();
         let obj = ctx.as_object_mut().unwrap();
         obj.insert("ux_columns".into(), json!([
-            {"key": "name", "dimension": "text", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false},
-            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false},
-            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {"active": "default", "draft": "secondary"}, "truncate_tooltip": false},
-            {"key": "id", "dimension": "identifier", "display": "copy-chip", "align": "left", "tone": {}, "truncate_tooltip": true}
+            {"key": "name", "dimension": "text", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": true},
+            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false, "sortable": true},
+            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {"active": "default", "draft": "secondary"}, "truncate_tooltip": false, "sortable": false},
+            {"key": "id", "dimension": "identifier", "display": "copy-chip", "align": "left", "tone": {}, "truncate_tooltip": true, "sortable": false}
         ]));
         obj.insert("ux_actions".into(), json!({
             "primary": [{"action": "open", "label": "Open"}],
@@ -983,6 +977,10 @@ mod ux_list_template_tests {
                 "soft_delete_field": "deleted_at",
                 "workflow_status_field": null
             }),
+        );
+        obj.insert(
+            "ux_sort".into(),
+            json!({"fields": ["name", "total_amount"]}),
         );
 
         let out = render(&ctx);
@@ -1031,6 +1029,97 @@ mod ux_list_template_tests {
         );
     }
 
+    /// Column-header sorting (issue #306): sortable headers render as
+    /// toggle buttons with `aria-sort` on the `th` and a direction
+    /// indicator; sort state threads through pagination/search (page
+    /// resets, `q` preserved); non-sortable headers keep the plain label.
+    #[test]
+    fn flag_on_sortable_headers_render_toggle_buttons_with_aria_sort() {
+        let mut ctx = base_ctx();
+        let obj = ctx.as_object_mut().unwrap();
+        obj.insert("ux_columns".into(), json!([
+            {"key": "name", "dimension": "text", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": true},
+            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": false}
+        ]));
+        obj.insert(
+            "ux".into(),
+            json!({
+                "locale": "en-NZ", "currency": null, "zebra": false,
+                "inactive_shading": false, "vertical_align": "center",
+                "soft_delete_field": null, "workflow_status_field": null
+            }),
+        );
+        obj.insert("ux_sort".into(), json!({"fields": ["name"]}));
+
+        let out = render(&ctx);
+
+        // aria-sort on the th, driven by the runtime sort state.
+        assert!(
+            out.contains("aria-sort={col.sortable ? sortStateFor(col.key) : undefined}"),
+            "{out}"
+        );
+        // Toggle button per sortable column with a stable testid, native
+        // button semantics, and the direction indicator.
+        assert!(
+            out.contains(r#"data-testid="task-sort-{col.key}""#),
+            "{out}"
+        );
+        assert!(out.contains("onclick={() => toggleSort(col.key)}"), "{out}");
+        assert!(out.contains("function sortIndicator("), "{out}");
+        assert!(
+            out.contains("'ascending' ? '▲' : state === 'descending' ? '▼' : ''"),
+            "{out}"
+        );
+        // Asc → desc → none ladder (none drops the params = default order).
+        assert!(out.contains("function toggleSort("), "{out}");
+        assert!(out.contains("params.set('sort', key);"), "{out}");
+        assert!(out.contains("params.set('order', 'asc');"), "{out}");
+        assert!(out.contains("params.set('order', 'desc');"), "{out}");
+        // FTS query preserved across sort toggles.
+        assert!(
+            out.contains("if (searchQuery) params.set('q', searchQuery);"),
+            "{out}"
+        );
+        // Sort state survives pagination.
+        assert!(out.contains("function withSort("), "{out}");
+        assert!(out.contains("withSort(params);"), "{out}");
+        // Non-sortable header keeps the plain label branch.
+        assert!(out.contains("{:else}"), "{out}");
+    }
+
+    /// Without a `ux_sort` context (no sortable columns, timeline, or the
+    /// flag off) no sort markup leaks.
+    #[test]
+    fn no_sort_context_renders_no_sort_markup() {
+        let mut ctx = base_ctx();
+        let obj = ctx.as_object_mut().unwrap();
+        obj.insert("ux_columns".into(), json!([
+            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": false}
+        ]));
+        obj.insert(
+            "ux".into(),
+            json!({
+                "locale": "en-NZ", "currency": null, "zebra": false,
+                "inactive_shading": false, "vertical_align": "center",
+                "soft_delete_field": null, "workflow_status_field": null
+            }),
+        );
+        let out = render(&ctx);
+        for needle in [
+            "aria-sort",
+            "toggleSort",
+            "sortIndicator",
+            "withSort",
+            "sortStateFor",
+            "-sort-",
+        ] {
+            assert!(
+                !out.contains(needle),
+                "no-sort output must not contain {needle:?}:\n{out}"
+            );
+        }
+    }
+
     /// The Flag dimension keeps the runtime boolean Badge (no regression
     /// vs today's `isBooleanField` path): boolean values hit the badge
     /// branch before the chip branch.
@@ -1039,7 +1128,7 @@ mod ux_list_template_tests {
         let mut ctx = base_ctx();
         let obj = ctx.as_object_mut().unwrap();
         obj.insert("ux_columns".into(), json!([
-            {"key": "active", "dimension": "flag", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false}
+            {"key": "active", "dimension": "flag", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": false}
         ]));
         obj.insert(
             "ux".into(),
@@ -1064,7 +1153,7 @@ mod ux_list_template_tests {
         let mut ctx = base_ctx();
         let obj = ctx.as_object_mut().unwrap();
         obj.insert("ux_columns".into(), json!([
-            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false}
+            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false, "sortable": true}
         ]));
         obj.insert(
             "ux".into(),
@@ -1090,10 +1179,10 @@ mod ux_list_template_tests {
         let mut ctx = base_ctx();
         let obj = ctx.as_object_mut().unwrap();
         obj.insert("ux_columns".into(), json!([
-            {"key": "name", "dimension": "text", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false},
-            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false},
-            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false},
-            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false}
+            {"key": "name", "dimension": "text", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": true},
+            {"key": "total_amount", "dimension": "money", "display": "raw", "align": "right", "tone": {}, "truncate_tooltip": false, "sortable": true},
+            {"key": "status", "dimension": "status-category", "display": "chip", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": false},
+            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": true}
         ]));
         obj.insert("ux_actions".into(), json!({
             "primary": [{"action": "open", "label": "Open"}],
@@ -1168,7 +1257,7 @@ mod ux_list_template_tests {
         let mut ctx = base_ctx();
         let obj = ctx.as_object_mut().unwrap();
         obj.insert("ux_columns".into(), json!([
-            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false}
+            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": false}
         ]));
         obj.insert(
             "ux".into(),
@@ -1207,7 +1296,7 @@ mod ux_list_template_tests {
         let obj = ctx.as_object_mut().unwrap();
         obj.insert("has_workflow".into(), json!(true));
         obj.insert("ux_columns".into(), json!([
-            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false}
+            {"key": "created_at", "dimension": "time-point", "display": "raw", "align": "left", "tone": {}, "truncate_tooltip": false, "sortable": false}
         ]));
         obj.insert(
             "ux".into(),

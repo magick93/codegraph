@@ -598,7 +598,7 @@ fn ux_rules_timeline_unresolvable_order_by_skips_entity_page() {
     // the plan error (with the candidate fields) is printed to stderr.
     run.run(Some(ux_rules_path.as_path()));
 
-    let task_page = project.join("generated/ui/src/routes/common/task/+page.svelte");
+    let task_page = project.join("generated/ui/src/routes/(app)/common/task/+page.svelte");
     assert!(
         !task_page.exists(),
         "unresolvable order_by must fail the ui-page generation: {}",
@@ -766,4 +766,262 @@ fn ux_rules_flag_off_child_sections_stay_flat() {
         !project.join("generated/ui/PRIMITIVES.md").exists(),
         "PRIMITIVES.md must not be emitted with ux_rules off"
     );
+}
+
+/// The ux sort plane on generated list endpoints (issue #306): the
+/// handler parses/validates `?sort=`/`?order=` against the plan's
+/// allow-list (400 naming the valid fields), the query/repository layers
+/// thread the spec into a quoted ORDER BY with a deterministic `id`
+/// tiebreaker, and the list page renders `aria-sort` header buttons whose
+/// state threads through pagination and FTS search.
+#[test]
+fn ux_rules_sort_plane_wires_handler_query_and_list_page() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    let run = FixtureRun {
+        config: project.join("domains.toml"),
+        output: project.join("generated"),
+        profiles: project.join("profiles.toml"),
+        mox_files: vec![mox],
+    };
+    run.run(None);
+
+    // ── API handler: param parsing + allow-list validation ──
+    let handler = fs::read_to_string(project.join("generated/src/api/common/task_handler.rs"))
+        .expect("task handler generated");
+    assert!(
+        handler.contains("const ALLOWED_SORT_FIELDS: &[&str] = &["),
+        "{handler}"
+    );
+    // Scope to the allow-list block: the handler body legitimately
+    // mentions other field names elsewhere (filters, params).
+    let sort_block = handler
+        .split("const ALLOWED_SORT_FIELDS")
+        .nth(1)
+        .and_then(|rest| rest.split("];").next())
+        .unwrap_or_default();
+    for field in [
+        "name",
+        "description",
+        "quantity",
+        "total_amount",
+        "due_date",
+        "created_at",
+    ] {
+        assert!(sort_block.contains(&format!("\"{field}\",")), "{handler}");
+    }
+    // Identifier/status/reference columns stay out of the allow-list.
+    for field in ["id", "status", "sub_tasks"] {
+        assert!(
+            !sort_block.contains(&format!("\"{field}\",")),
+            "allow-list must not contain {field:?}:\n{handler}"
+        );
+    }
+    // serde defaults: absent params keep the default ordering.
+    assert!(handler.contains("pub sort: Option<String>,"), "{handler}");
+    assert!(handler.contains("pub order: Option<String>,"), "{handler}");
+    // 400 texts name the valid sortable fields (include-path style).
+    assert!(
+        handler.contains("Unknown sort field: {sort}. Valid sortable fields: {}"),
+        "{handler}"
+    );
+    assert!(
+        handler.contains("order requires sort; valid sortable fields: {}"),
+        "{handler}"
+    );
+    assert!(
+        handler.contains("Invalid order: {other}. Valid values: asc, desc"),
+        "{handler}"
+    );
+    // The validated spec rides the existing list-query path (RLS/context
+    // bundle untouched). The fixture entity is auditable by default, so
+    // the `include_deleted` slot (`false`) sits before the sort spec.
+    assert!(
+        handler.contains("list_filtered(params.page, params.page_size, &filters, false, ux_sort,"),
+        "{handler}"
+    );
+
+    // ── Query + repository trait: signature threading ──
+    let query = fs::read_to_string(project.join("generated/src/domain/common/task/query.rs"))
+        .expect("task query generated");
+    assert!(query.contains("sort: Option<(String, bool)>"), "{query}");
+    assert!(
+        query.contains("self.repo.list(&tx, page, page_size, filters, include_deleted, sort)"),
+        "{query}"
+    );
+    let repo_trait =
+        fs::read_to_string(project.join("generated/src/domain/common/task/repository.rs"))
+            .expect("task repository trait generated");
+    assert!(
+        repo_trait.contains("sort: Option<(String, bool)>,"),
+        "{repo_trait}"
+    );
+
+    // ── Repository impl: ORDER BY with quoted identifiers + tiebreaker ──
+    let repo_impl =
+        fs::read_to_string(project.join("generated/src/domain/common/task/repository_impl.rs"))
+            .expect("task repository impl generated");
+    assert!(
+        repo_impl.contains("if let Some((sort_field, sort_desc)) = sort"),
+        "{repo_impl}"
+    );
+    // Dialect-safe quoting: fully qualified sea_query aliases.
+    assert!(
+        repo_impl
+            .contains("Alias::new(\"common\"), sea_orm::sea_query::Alias::new(\"task\"), sea_orm::sea_query::Alias::new(\"name\")"),
+        "{repo_impl}"
+    );
+    // Deterministic `, id ASC` tiebreaker for stable pagination.
+    assert!(
+        repo_impl
+            .contains("ordered.order_by_asc(sea_orm::sea_query::Expr::col((sea_orm::sea_query::Alias::new(\"common\"), sea_orm::sea_query::Alias::new(\"task\"), sea_orm::sea_query::Alias::new(\"id\"))))"),
+        "{repo_impl}"
+    );
+    // Default (no params) keeps today's created_at DESC ordering.
+    assert!(
+        repo_impl.contains("query.order_by_desc(crate::entity::common_task::Column::CreatedAt)"),
+        "{repo_impl}"
+    );
+
+    // ── List page: sortable header buttons + aria-sort + threading ──
+    let page =
+        fs::read_to_string(project.join("generated/ui/src/routes/(app)/common/task/+page.svelte"))
+            .unwrap();
+    assert!(
+        page.contains("aria-sort={col.sortable ? sortStateFor(col.key) : undefined}"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"data-testid="task-sort-{col.key}""#),
+        "{page}"
+    );
+    assert!(
+        page.contains("onclick={() => toggleSort(col.key)}"),
+        "{page}"
+    );
+    assert!(page.contains("function sortIndicator("), "{page}");
+    assert!(page.contains("'▲'"), "{page}");
+    assert!(page.contains("'▼'"), "{page}");
+    // Sort survives FTS search and pagination; sort changes reset the page.
+    assert!(page.contains("function withSort("), "{page}");
+    assert!(
+        page.contains("if (searchQuery) params.set('q', searchQuery);"),
+        "{page}"
+    );
+    // The load function forwards the params and returns the current state.
+    let load = fs::read_to_string(
+        project.join("generated/ui/src/routes/(app)/common/task/+page.server.ts"),
+    )
+    .unwrap();
+    assert!(
+        load.contains("apiUrl.searchParams.set('sort', sort);"),
+        "{load}"
+    );
+    assert!(
+        load.contains("apiUrl.searchParams.set('order', order === 'desc' ? 'desc' : 'asc');"),
+        "{load}"
+    );
+    assert!(load.contains("sort: sort ?? null,"), "{load}");
+}
+
+/// Timeline collections keep their fixed DESC date order (issue #306 v1
+/// scope): no sort buttons, no aria-sort, no sort plumbing in the load.
+#[test]
+fn ux_rules_sort_plane_stays_out_of_timeline_layout() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+
+    let ux_rules_path = project.join("ux-rules.toml");
+    fs::write(
+        &ux_rules_path,
+        "[[collection]]\n\
+         entity_pattern = \"Task*\"\n\
+         display = \"timeline\"\n\
+         order_by = \"created_at\"\n",
+    )
+    .unwrap();
+
+    let run = FixtureRun {
+        config: project.join("domains.toml"),
+        output: project.join("generated"),
+        profiles: project.join("profiles.toml"),
+        mox_files: vec![mox],
+    };
+    run.run(Some(ux_rules_path.as_path()));
+
+    let page =
+        fs::read_to_string(project.join("generated/ui/src/routes/(app)/common/task/+page.svelte"))
+            .expect("task timeline page");
+    for needle in ["aria-sort", "toggleSort", "withSort", "-sort-"] {
+        assert!(
+            !page.contains(needle),
+            "timeline page must not contain {needle:?}:\n{page}"
+        );
+    }
+    let load = fs::read_to_string(
+        project.join("generated/ui/src/routes/(app)/common/task/+page.server.ts"),
+    )
+    .unwrap();
+    assert!(
+        !load.contains("searchParams.set('sort'"),
+        "timeline load must not forward sort:\n{load}"
+    );
+}
+
+/// Flag OFF: no sort param handling anywhere — the handler/query/
+/// repository surface stays byte-identical to pre-#306 output.
+#[test]
+fn ux_rules_flag_off_emits_no_sort_plane() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+
+    let profiles_path = project.join("profiles.toml");
+    let profiles = fs::read_to_string(&profiles_path).unwrap();
+    let flag_off = profiles.replace("ux_rules = true", "ux_rules = false");
+    fs::write(&profiles_path, flag_off).unwrap();
+
+    let run = FixtureRun {
+        config: project.join("domains.toml"),
+        output: project.join("generated"),
+        profiles: profiles_path,
+        mox_files: vec![mox],
+    };
+    run.run(None);
+
+    let handler = fs::read_to_string(project.join("generated/src/api/common/task_handler.rs"))
+        .expect("task handler generated");
+    for needle in [
+        "ALLOWED_SORT_FIELDS",
+        "pub sort:",
+        "pub order:",
+        "Unknown sort field",
+    ] {
+        assert!(
+            !handler.contains(needle),
+            "flag-off handler must not contain {needle:?}:\n{handler}"
+        );
+    }
+    assert!(
+        handler
+            .contains("list_filtered(params.page, params.page_size, &filters, false, api_key_info"),
+        "pre-#306 call shape must stay:\n{handler}"
+    );
+
+    let repo_impl =
+        fs::read_to_string(project.join("generated/src/domain/common/task/repository_impl.rs"))
+            .expect("task repository impl generated");
+    assert!(
+        !repo_impl.contains("if let Some((sort_field, sort_desc)) = sort"),
+        "{repo_impl}"
+    );
+
+    let page =
+        fs::read_to_string(project.join("generated/ui/src/routes/(app)/common/task/+page.svelte"))
+            .unwrap();
+    for needle in ["aria-sort", "toggleSort", "withSort", "-sort-"] {
+        assert!(
+            !page.contains(needle),
+            "flag-off page must not contain {needle:?}:\n{page}"
+        );
+    }
 }

@@ -523,7 +523,16 @@ pub struct ListParams {
     pub page: u64,
     #[serde(default = "default_page_size")]
     pub page_size: u64,
-{% if status_field %}
+{% if ux_sort_fields %}
+    /// Sort results by a sortable field, e.g. `?sort=name&order=desc`.
+    /// Absent (the default) keeps the repository's `created_at DESC`
+    /// ordering. Ignored when combined with `?q=` (full-text ranking wins).
+    #[serde(default)]
+    pub sort: Option<String>,
+    /// Sort direction for `sort`: `asc` (default) or `desc`. Requires `sort`.
+    #[serde(default)]
+    pub order: Option<String>,
+{% endif %}{% if status_field %}
     /// Filter by workflow status (e.g. ?status=draft).
     #[serde(default)]
     pub status: Option<String>,
@@ -558,7 +567,16 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
     "{{ nf.filter_key }}",
 {% endfor %}
 ];
-{% if has_include %}
+{% if ux_sort_fields %}
+/// Sortable fields for this entity (issue #306): the `?sort=` allow-list,
+/// derived from the ux plan (`Quantity`/`Money`/`TimePoint`/`Text`
+/// dimensions minus rule opt-outs). Anything else is a 400.
+const ALLOWED_SORT_FIELDS: &[&str] = &[
+{% for f in ux_sort_fields %}
+    "{{ f }}",
+{% endfor %}
+];
+{% endif %}{% if has_include %}
 /// Allowed include paths for eager-loading related entities.
 const ALLOWED_INCLUDE_KEYS: &[&str] = &[
 {% for path in include_paths %}
@@ -601,7 +619,43 @@ pub async fn list(
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
-{% if has_fts %}
+{% if ux_sort_fields %}
+    // Validate ?sort=/?order= against the entity's sortable-field
+    // allow-list (issue #306). No params ⇒ the repository's default
+    // `created_at DESC` ordering, unchanged.
+    let ux_sort: Option<(String, bool)> = match params.sort.as_deref() {
+        None => {
+            if params.order.is_some() {
+                return Err(AppError::bad_request(format!(
+                    "order requires sort; valid sortable fields: {}",
+                    ALLOWED_SORT_FIELDS.join(", ")
+                ))
+                .with_correlation_id(correlation_id));
+            }
+            None
+        }
+        Some(sort) => {
+            if !ALLOWED_SORT_FIELDS.contains(&sort) {
+                return Err(AppError::bad_request(format!(
+                    "Unknown sort field: {sort}. Valid sortable fields: {}",
+                    ALLOWED_SORT_FIELDS.join(", ")
+                ))
+                .with_correlation_id(correlation_id));
+            }
+            let descending = match params.order.as_deref() {
+                None | Some("asc") => false,
+                Some("desc") => true,
+                Some(other) => {
+                    return Err(AppError::bad_request(format!(
+                        "Invalid order: {other}. Valid values: asc, desc"
+                    ))
+                    .with_correlation_id(correlation_id));
+                }
+            };
+            Some((sort.to_string(), descending))
+        }
+    };
+{% endif %}{% if has_fts %}
     // When ?q= is provided, delegate to full-text search with ranking
     if let Some(ref q) = params.q {
         if !q.is_empty() {
@@ -638,7 +692,7 @@ pub async fn list(
     // Scope results to the parent entity
     filters.insert("{{ parent_ref }}".to_string(), parent_id.to_string());
 {% endif %}
-    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, false{% endif %}{% if ux_sort_fields %}, ux_sort{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list {{ entity_name }}")
                         .with_correlation_id(correlation_id)

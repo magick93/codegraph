@@ -88,7 +88,15 @@ impl EntityGenerator for CornucopiaRepoGenerator {
             return Ok(Vec::new());
         }
 
-        let code = emit_adapter(&tree, domain, project);
+        // ux sort plane (issue #306): must agree with the trait (rendered
+        // by the repository generator) — same resolver, same flag.
+        let ux_sort =
+            crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, domain)
+                .await
+                .map(|plan| !plan.is_empty())
+                .unwrap_or(false);
+
+        let code = emit_adapter(&tree, domain, project, ux_sort);
 
         Ok(vec![GeneratedFile {
             path: self
@@ -111,7 +119,7 @@ fn query_module(tree: &EntityTree) -> String {
 }
 
 /// Emit the complete adapter file for one entity.
-fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig) -> String {
+fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sort: bool) -> String {
     let entity_name = &tree.entity_name;
     let mut code = CodeWriter::new();
 
@@ -197,7 +205,7 @@ fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig) -> Str
     }
 
     // ── list (always emitted — matches the SeaORM implementation) ─────
-    emit_adapter_list(tree, &mut code);
+    emit_adapter_list(tree, &mut code, ux_sort);
 
     // ── search (FTS) ────────────────────────────────────────────────────
     if tree.has_fts {
@@ -529,7 +537,7 @@ fn emit_adapter_delete(tree: &EntityTree, code: &mut CodeWriter) {
 }
 
 /// Emit list: paged rows + count, with in-memory filters.
-fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter) {
+fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter, ux_sort: bool) {
     let entity_name = &tree.entity_name;
     let qmod = qmod(tree);
     wln!(code);
@@ -545,10 +553,19 @@ fn emit_adapter_list(tree: &EntityTree, code: &mut CodeWriter) {
     if tree.is_auditable {
         wln!(code, "        include_deleted: bool,");
     }
+    if ux_sort {
+        wln!(code, "        sort: Option<(String, bool)>,");
+    }
     wln!(
         code,
         "    ) -> Result<(Vec<{entity_name}Response>, u64), Box<dyn std::error::Error>> {{"
     );
+    if ux_sort {
+        // Trait parity only: the static cornucopia list SQL cannot take a
+        // dynamic ORDER BY, so the sort spec is accepted and ignored —
+        // matches the includes precedent on this provider.
+        wln!(code, "        let _ = sort;");
+    }
     wln!(
         code,
         "        let offset = ((page.saturating_sub(1)).saturating_mul(page_size)) as i64;"

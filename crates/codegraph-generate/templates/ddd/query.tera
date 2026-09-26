@@ -208,21 +208,21 @@ impl {{ entity_name }}QueryHandler {
 {% endif %}
 {% if has_list %}
 
-    pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>{% if is_auditable %}, include_deleted: bool{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(Vec<{{ entity_name }}Response>, u64), {{ domain | pascal_case }}Error> {
+    pub async fn list_filtered(&self, page: u64, page_size: u64, filters: &std::collections::HashMap<String, String>{% if is_auditable %}, include_deleted: bool{% endif %}{% if ux_sort %}, sort: Option<(String, bool)>{% endif %}, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<(Vec<{{ entity_name }}Response>, u64), {{ domain | pascal_case }}Error> {
 {% if project.persistence_provider == "cornucopia" %}
         let mut client = self.client_source.client().await
             .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         let tx = client.transaction().await
             .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;
-        let result = self.repo.list(&tx, page, page_size, filters{% if is_auditable %}, include_deleted{% endif %}).await
+        let result = self.repo.list(&tx, page, page_size, filters{% if is_auditable %}, include_deleted{% endif %}{% if ux_sort %}, sort{% endif %}).await
             .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await
             .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
 {% else %}
         let tx = self.db.begin().await?;
         set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;
-        let result = self.repo.list(&tx, page, page_size, filters{% if is_auditable %}, include_deleted{% endif %}).await
+        let result = self.repo.list(&tx, page, page_size, filters{% if is_auditable %}, include_deleted{% endif %}{% if ux_sort %}, sort{% endif %}).await
             .map_err(|e| {{ domain | pascal_case }}Error::from_repo_err(e))?;
         tx.commit().await?;
 {% endif %}

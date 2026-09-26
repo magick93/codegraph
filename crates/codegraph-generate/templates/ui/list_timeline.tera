@@ -1,4 +1,5 @@
 {%- import "ui/_ux_cell.tera" as ux_cell -%}
+{# Timeline collections keep their fixed DESC date order (issue #306 v1): no sort buttons, no aria-sort. If/when IFML parity lands, a RenderColumn-style per-entry contract would mirror the table's header-button pattern — deliberately not built here (ledger item, #291). #}
 {% raw %}
 		<ol class="timeline" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline">
 			{#each displayRowsSorted as row}

@@ -38,7 +38,9 @@
 			total: number | null;
 			query: string | null;
 {% endif %}
-		};
+{% if ux_sort %}			sort: string | null;
+			order: string | null;
+{% endif %}		};
 	}
 
 	let { data }: Props = $props();
@@ -50,7 +52,7 @@
 
 	const columns = [
 {% if ux %}{% for col in ux_columns %}
-		{ key: '{{ col.key }}', label: m.{{ domain }}_{{ module_name }}_field_{{ col.key }}(), dimension: '{{ col.dimension }}', display: '{{ col.display }}', align: '{{ col.align }}', tone: { {% for k, v in col.tone %}{{ k }}: '{{ v }}'{% if not loop.last %}, {% endif %}{% endfor %} }, truncateTooltip: {{ col.truncate_tooltip }} },
+		{ key: '{{ col.key }}', label: m.{{ domain }}_{{ module_name }}_field_{{ col.key }}(), dimension: '{{ col.dimension }}', display: '{{ col.display }}', align: '{{ col.align }}', tone: { {% for k, v in col.tone %}{{ k }}: '{{ v }}'{% if not loop.last %}, {% endif %}{% endfor %} }, truncateTooltip: {{ col.truncate_tooltip }}, sortable: {{ col.sortable }} },
 {% endfor %}{% else %}{% for field in list_fields %}
 		{ key: '{{ field.name }}', label: m.{{ domain }}_{{ module_name }}_field_{{ field.name }}() },
 {% endfor %}{% endif %}
@@ -95,23 +97,36 @@
 		params.set('page', String(newPage));
 		params.set('page_size', String(data.pageSize));
 		if (searchQuery) params.set('q', searchQuery);
-		goto(`${basePath}?${params.toString()}`);
+{% if ux_sort %}		withSort(params);
+{% endif %}		goto(`${basePath}?${params.toString()}`);
 	}
 {% else %}
 	function handlePageChange(newPage: number) {
-		goto(`${basePath}?page=${newPage}&page_size=${data.pageSize}`);
-	}
+{% if ux_sort %}		const params = new URLSearchParams();
+		params.set('page', String(newPage));
+		params.set('page_size', String(data.pageSize));
+		withSort(params);
+		goto(`${basePath}?${params.toString()}`);
+{% else %}		goto(`${basePath}?page=${newPage}&page_size=${data.pageSize}`);
+{% endif %}	}
 {% endif %}
 
 {% if has_fts %}
 	function handleSearch(query: string) {
 		searchQuery = query;
-		if (query) {
+{% if ux_sort %}		const params = new URLSearchParams();
+		if (query) params.set('q', query);
+		params.set('page', '0');
+		params.set('page_size', String(data.pageSize));
+		withSort(params);
+		const qs = params.toString();
+		goto(qs ? `${basePath}?${qs}` : basePath);
+{% else %}		if (query) {
 			goto(`${basePath}?q=${encodeURIComponent(query)}&page=0&page_size=${data.pageSize}`);
 		} else {
 			goto(basePath);
 		}
-	}
+{% endif %}	}
 {% else %}
 {% raw %}
 	function handleSearch(query: string) {
@@ -218,7 +233,42 @@
 		return fallback;
 	}
 {% endif %}
-{% if ux_actions and has_delete %}
+{% if ux_sort %}
+	// Column sorting (issue #306): header buttons toggle asc → desc →
+	// none. Sort state rides the query string — the FTS `q` is preserved
+	// and the page resets on every sort change.
+	function sortStateFor(key: string): 'ascending' | 'descending' | 'none' {
+		if (data.sort !== key) return 'none';
+		return data.order === 'desc' ? 'descending' : 'ascending';
+	}
+
+	function sortIndicator(key: string): string {
+		const state = sortStateFor(key);
+		return state === 'ascending' ? '▲' : state === 'descending' ? '▼' : '';
+	}
+
+	function toggleSort(key: string): void {
+		const state = sortStateFor(key);
+		const params = new URLSearchParams();
+		if (state === 'none') {
+			params.set('sort', key);
+			params.set('order', 'asc');
+		} else if (state === 'ascending') {
+			params.set('sort', key);
+			params.set('order', 'desc');
+		}
+		if (searchQuery) params.set('q', searchQuery);
+		const qs = params.toString();
+		goto(qs ? `${basePath}?${qs}` : basePath);
+	}
+
+	function withSort(params: URLSearchParams): void {
+		if (data.sort) {
+			params.set('sort', data.sort);
+			params.set('order', data.order ?? 'asc');
+		}
+	}
+{% endif %}{% if ux_actions and has_delete %}
 	let deleteTarget: Record<string, unknown> | null = $state(null);
 	let deleting = $state(false);
 
@@ -313,8 +363,23 @@
 				<Table.Header>
 					<Table.Row>
 						{#each columns as col}{% endraw %}{% if ux %}{% raw %}
-							<Table.Head class={col.align === 'right' ? 'text-right tabular-nums align-middle' : 'align-middle'}>{col.label}</Table.Head>
-{% endraw %}{% else %}{% raw %}
+							<Table.Head class={col.align === 'right' ? 'text-right tabular-nums align-middle' : 'align-middle'}{% endraw %}{% if ux_sort %}{% raw %} aria-sort={col.sortable ? sortStateFor(col.key) : undefined}>{% endraw %}{% else %}{% raw %}>{% endraw %}{% endif %}
+{% if ux_sort %}{% raw %}
+								{#if col.sortable}
+									<Button variant="ghost" size="sm" class="h-auto gap-1 px-2 font-medium" onclick={() => toggleSort(col.key)} data-testid="{% endraw %}{{ module_name }}{% raw %}-sort-{col.key}">
+										{col.label}
+										<span aria-hidden="true">{sortIndicator(col.key)}</span>
+									</Button>
+								{:else}
+									{col.label}
+								{/if}
+							</Table.Head>
+{% endraw %}
+{% else %}{% raw %}
+								{col.label}
+							</Table.Head>
+{% endraw %}
+{% endif %}{% else %}{% raw %}
 							<Table.Head>{col.label}</Table.Head>{% endraw %}{% endif %}{% raw %}
 						{/each}
 					</Table.Row>

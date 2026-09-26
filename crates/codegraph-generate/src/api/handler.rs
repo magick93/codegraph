@@ -85,6 +85,12 @@ pub struct HandlerContext {
     /// When true, the entity has a soft-delete audit policy and the query layer
     /// expects an `include_deleted: bool` argument on all read methods.
     pub is_auditable: bool,
+    /// Sortable-field allow-list for `?sort=` on the list endpoint
+    /// (issue #306), derived from the ux plan. Empty = the ux sort plane
+    /// is inactive: no sort params are emitted and the handler stays
+    /// byte-identical.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ux_sort_fields: Vec<String>,
 }
 
 pub struct HandlerGenerator {
@@ -251,6 +257,17 @@ impl EntityGenerator for HandlerGenerator {
         // generator (ddd/query.rs) so handler/query signatures stay in sync.
         let is_auditable = resolve_is_auditable(db, schema_title, config, &domain).await?;
 
+        // ux sort plane (issue #306): the `?sort=` allow-list, resolved from
+        // the SAME ux plan the list page renders. Empty when the flag is off
+        // or no column is sortable — the handler then emits nothing.
+        let ux_sort_fields = if operations.iter().any(|op| op == "list") {
+            crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, &domain)
+                .await?
+                .fields
+        } else {
+            Vec::new()
+        };
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -294,6 +311,7 @@ impl EntityGenerator for HandlerGenerator {
             include_paths: include_paths.clone(),
             handler_imports,
             is_auditable,
+            ux_sort_fields,
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;
@@ -911,4 +929,131 @@ async fn resolve_is_auditable(
             .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
     }) && !append_only;
     Ok(is_auditable)
+}
+
+/// Template pins for the `?sort=` list surface (issue #306): the
+/// generated handler parses/validates `sort`/`order` against the plan's
+/// allow-list and names the valid fields in the 400; flag-off renders no
+/// sort surface at all.
+#[cfg(test)]
+mod ux_sort_handler_template_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn base_ctx(ux_sort_fields: Vec<&str>) -> serde_json::Value {
+        json!({
+            "entity_name": "Task",
+            "module_name": "task",
+            "domain": "common",
+            "path_segment": "tasks",
+            "tag": "Task",
+            "operations": ["list", "read"],
+            "has_create": false,
+            "has_read": true,
+            "has_update": false,
+            "has_delete": false,
+            "has_list": true,
+            "role": "root",
+            "param_name": "task_id",
+            "children": [],
+            "cross_refs": [],
+            "status_field": null,
+            "has_workflow": false,
+            "has_fts": false,
+            "fts_rest_mode": "query_param",
+            "has_embeddings": false,
+            "filter_fields": [],
+            "nested_filter_fields": [],
+            "max_bulk_size": 100,
+            "ancestor_path_params": 0,
+            "hierarchy_field": null,
+            "tree_include": false,
+            "has_include": false,
+            "include_paths": [],
+            "handler_imports": [],
+            "is_auditable": false,
+            "ux_sort_fields": ux_sort_fields,
+        })
+    }
+
+    fn render(ctx: &serde_json::Value) -> String {
+        let tera = crate::template_engine::create_tera(std::path::Path::new("."))
+            .expect("embedded templates");
+        crate::render_template_with_project(
+            &tera,
+            "api/handler.tera",
+            ctx,
+            &ProjectConfig::default(),
+        )
+        .expect("handler renders")
+    }
+
+    #[test]
+    fn flag_on_handler_validates_sort_params_against_allow_list() {
+        let out = render(&base_ctx(vec!["name", "total_amount"]));
+
+        // ListParams gains optional sort/order with serde defaults (absent
+        // params keep the default created_at DESC ordering).
+        assert!(
+            out.contains("#[serde(default)]\n    pub sort: Option<String>,"),
+            "{out}"
+        );
+        assert!(
+            out.contains("#[serde(default)]\n    pub order: Option<String>,"),
+            "{out}"
+        );
+        // The allow-list const carries the plan's sortable fields.
+        assert!(
+            out.contains("const ALLOWED_SORT_FIELDS: &[&str] = &["),
+            "{out}"
+        );
+        assert!(out.contains("\"name\","), "{out}");
+        assert!(out.contains("\"total_amount\","), "{out}");
+        // 400 texts name the valid sortable fields (include-path style).
+        assert!(
+            out.contains("Unknown sort field: {sort}. Valid sortable fields: {}"),
+            "{out}"
+        );
+        assert!(
+            out.contains("order requires sort; valid sortable fields: {}"),
+            "{out}"
+        );
+        // `order` is restricted to asc|desc.
+        assert!(
+            out.contains("Invalid order: {other}. Valid values: asc, desc"),
+            "{out}"
+        );
+        // The validated spec threads into the query layer.
+        assert!(out.contains("let ux_sort: Option<(String, bool)>"), "{out}");
+        assert!(
+            out.contains(
+                "list_filtered(params.page, params.page_size, &filters, ux_sort, api_key_info"
+            ),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn flag_off_handler_emits_no_sort_surface() {
+        let out = render(&base_ctx(Vec::new()));
+        for needle in [
+            "ALLOWED_SORT_FIELDS",
+            "pub sort:",
+            "pub order:",
+            "Unknown sort field",
+            "Invalid order",
+            "order requires sort",
+            "ux_sort",
+        ] {
+            assert!(
+                !out.contains(needle),
+                "flag-off handler must not contain {needle:?}:\n{out}"
+            );
+        }
+        // The pre-#306 call shape stays intact.
+        assert!(
+            out.contains("list_filtered(params.page, params.page_size, &filters, api_key_info"),
+            "{out}"
+        );
+    }
 }
