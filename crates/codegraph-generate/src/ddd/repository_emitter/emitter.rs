@@ -367,6 +367,36 @@ impl RepositoryImplEmitter {
             // Deduplicate while preserving order.
             let mut seen = std::collections::HashSet::new();
             include_type_names.retain(|n| seen.insert(n.clone()));
+            // Pre-register each include target's `{Entity}Response` with the
+            // exact module path the target's own DTO generator uses. Junction
+            // linked entities impose no generation-order constraint, so this
+            // emitter can run before the target's DTO generator registered
+            // the type — and the import below was nondeterministically
+            // dropped depending on emission order. Registration is
+            // idempotent for identical paths (register_type ignores
+            // conflicts), so a warm registry wins and this only fills gaps.
+            for (idx, path) in include_paths.iter().enumerate() {
+                let Some(last_seg) = path.segments.last() else {
+                    continue;
+                };
+                let ns = crate::namespace_rust_prefix(
+                    include_target_trees
+                        .get(idx)
+                        .and_then(|t| t.as_ref())
+                        .and_then(|t| t.namespace.as_deref()),
+                    project,
+                );
+                let mut module: Vec<String> = match ns {
+                    Some(ns) => format!("crate::domain::{ns}")
+                        .split("::")
+                        .map(str::to_string)
+                        .collect(),
+                    None => vec!["crate".into(), "domain".into(), last_seg.domain.clone()],
+                };
+                module.push(last_seg.module_name.clone());
+                module.push("dto_response".into());
+                type_registry::register_type(&format!("{}Response", last_seg.entity_name), module);
+            }
             let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
             for import in &imports {
                 wln!(code, "{}", import);
