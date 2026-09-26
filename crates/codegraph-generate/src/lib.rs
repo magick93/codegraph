@@ -12,6 +12,7 @@ pub mod rosetta_expr;
 pub mod template_engine;
 pub mod traits;
 pub mod type_registry;
+pub mod ux;
 
 pub mod api;
 pub mod atproto;
