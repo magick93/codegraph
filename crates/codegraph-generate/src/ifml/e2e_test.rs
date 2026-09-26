@@ -1,17 +1,24 @@
 use crate::ProjectConfig;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use codegraph_config::ux::{Align, Dimension, Display, UxRules};
 use codegraph_config::{DomainConfig, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::PropertyNode;
+use codegraph_type_contracts::RefClassificationKind;
 use rex_ifml::{ComponentSpec, FormSpec};
 
 use crate::error::Result;
 use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::ux::plan::{build_ux_plan, CollectionPlan, UxPlan, UxPlanInput};
 use crate::GenerationEntry;
 
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
-use super::context::{IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer, PolicyContext};
+use super::context::{
+    IfmlAction, IfmlComponent, IfmlEvent, IfmlModel, IfmlViewContainer, PolicyContext,
+};
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 use super::route_generator::{
     denial_target, mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
@@ -377,18 +384,15 @@ impl IfmlE2eTestGenerator {
         id_param: Option<&str>,
     ) -> Option<WorkflowTest> {
         let entity = c.entity.as_deref()?;
-        let kind = component_kind(c);
-        let is_mapped = self
-            .mappings
-            .as_ref()
-            .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
-            .is_some();
-        // Mapped collections are skipped: their badge is a per-row sibling
-        // over shared list rows, so neither the row identity nor the status
-        // column (unset on creates) can back a strict assertion. Mapped
-        // details/forms keep their workflow spec — their badge and
-        // transition buttons are fetch-backed siblings.
-        if is_collection(c) && is_mapped {
+        // Collections are skipped outright (issue #303, exposed by the
+        // gate fixture's unmapped fallback list): their per-row badge reads
+        // the entity's status column, which API creates leave unset (the
+        // create DTO carries no status field — the workflow plane owns it),
+        // so no seeded row can back the strict initial-state assertion.
+        // Details/forms keep their workflow spec — their badge reads the
+        // `{id}/workflow` endpoint, which materializes the instance at the
+        // initial state on first read.
+        if is_collection(c) {
             return None;
         }
         let workflow = workflow_for_entity(config, entity)?;
@@ -518,6 +522,121 @@ impl IfmlE2eTestGenerator {
         }
         tests
     }
+
+    /// ux-rules rendering tests for a view (issue #303): one
+    /// `{view}.ux.spec.ts` per view carrying an UNMAPPED fallback list
+    /// component, asserting the chips / numeric alignment / Intl formatting
+    /// / copy-chip / overflow-menu / timeline markup the fallback template
+    /// renders when the `ux_rules` plane is active. Gated like the other
+    /// API-dependent kinds: schema-backed entity with create+list, unguarded
+    /// view, and a live ux plan. Mapped components replace the fallback
+    /// markup wholesale, so they never carry ux assertions; typed tables
+    /// resolve their columns through a different path and are deferred.
+    #[allow(clippy::too_many_arguments)]
+    async fn build_view_ux_test(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        vc: &IfmlViewContainer,
+        rules: &UxRules,
+        plans: &HashMap<String, UxPlan>,
+    ) -> Option<UxViewTest> {
+        // Guarded views redirect unauthenticated visitors; the ux spec
+        // navigates without persona seeding (persona tests cover access).
+        if !vc.roles.is_empty() || !vc.requires.is_empty() {
+            return None;
+        }
+        for c in &vc.components {
+            // Spec-less fallback lists only — mapped components replace the
+            // fallback wholesale and typed tables project their columns
+            // through render_table.
+            if !is_collection(c) || c.spec.is_some() {
+                continue;
+            }
+            if self.is_mapped(vc, c) {
+                continue;
+            }
+            let entity = c.entity.as_deref()?;
+            let api = schema_backed_api(db, config, entity, api_version).await?;
+            if !api.has_create || !api.has_list {
+                return None;
+            }
+            let plan = plans.get(entity)?;
+            let entries = ux_fixture_entries(db, c).await;
+            let route = view_route(&vc.name);
+            let columns = ux_column_checks(c, plan, &entries);
+            // The workflow status column is never a chip exercise (issue
+            // #303): API creates leave it unset (the create DTO carries no
+            // status field), so a seeded override cannot reach the page.
+            let status_field = c
+                .entity
+                .as_deref()
+                .and_then(|entity| workflow_for_entity(config, entity))
+                .map(|wf| wf.status_field);
+            let status_field = status_field.as_deref();
+            let chip_checks = ux_chip_checks(db, c, plan, &entries, status_field).await;
+            if columns.is_empty() && chip_checks.is_empty() {
+                // Nothing the fallback markup renders differently under the
+                // ux plane — no vacuous spec.
+                continue;
+            }
+            let copy_check = plan.columns.iter().find_map(|(field, col)| {
+                (col.display == Display::CopyChip && field != "id" && !field.ends_with("_id")).then(
+                    || UxCopyCheck {
+                        field: field.clone(),
+                    },
+                )
+            });
+            let menu = ux_menu_event(&c.events).and_then(|e| match &e.action {
+                IfmlAction::Navigate { target, binding } => Some(UxMenuCheck {
+                    trigger_testid: format!("{}-actions", c.name),
+                    menu_testid: format!("{}-actions-menu", c.name),
+                    target_pattern: url_pattern(&view_route(target), binding),
+                }),
+                _ => None,
+            });
+            let timeline = match &plan.collection {
+                CollectionPlan::Timeline { order_by, .. } => Some(UxTimelineCheck {
+                    root_testid: format!("{}-timeline", c.name),
+                    item_testid: format!("{}-timeline-item", c.name),
+                    order_literal: entries
+                        .iter()
+                        .find(|(field, _)| field == order_by)
+                        .map(|(_, value)| js_literal_inner(value)),
+                }),
+                CollectionPlan::Table => None,
+            };
+            return Some(UxViewTest {
+                component_name: c.name.clone(),
+                route,
+                fixture: Fixture {
+                    base_path: api.base_path,
+                    entries,
+                },
+                table_testid: format!("{}-table", c.name),
+                row_testid: format!("{}-row", c.name),
+                chip_checks,
+                column_checks: columns,
+                copy_check,
+                menu,
+                timeline,
+                locale: rules.format.locale.clone(),
+                money_options: ux_money_options(rules),
+            });
+        }
+        None
+    }
+
+    /// Whether the component resolves to a whole-component mapping (the
+    /// same resolution the route generator uses to replace the fallback).
+    fn is_mapped(&self, vc: &IfmlViewContainer, c: &IfmlComponent) -> bool {
+        let kind = component_kind(c);
+        self.mappings
+            .as_ref()
+            .and_then(|m| m.resolve(&vc.name, &c.name, &c.component_type, &kind))
+            .is_some()
+    }
 }
 
 #[async_trait]
@@ -549,6 +668,15 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
+        // ux-rules plane (issue #303): one plan per bound entity plus one
+        // ux spec per view with an eligible fallback list. Flag off → no
+        // plans, no ux specs (byte-identical output).
+        let ux_rules = project.ux.as_ref();
+        let ux_plans = match ux_rules {
+            Some(rules) => build_ux_plans(db, config, &model, rules).await?,
+            None => HashMap::new(),
+        };
+        let mut ux_specs: Vec<(String, UxViewTest)> = Vec::new();
         let human_actors: Vec<String> = match &model.policy {
             Some(_) => db
                 .get_actors()
@@ -571,6 +699,14 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             if has_tests(&spec) {
                 specs.push(spec);
             }
+            if let Some(rules) = ux_rules {
+                if let Some(ux_test) = self
+                    .build_view_ux_test(db, config, &project.api_version, vc, rules, &ux_plans)
+                    .await
+                {
+                    ux_specs.push((vc.name.clone(), ux_test));
+                }
+            }
             let workflow_tests = self
                 .build_view_workflow_tests(db, config, &project.api_version, vc)
                 .await;
@@ -583,9 +719,11 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         }
 
         // Remove stale per-view spec files for views no longer in the model,
-        // and stale workflow specs whose view no longer carries workflow
+        // stale workflow specs whose view no longer carries workflow
         // tests (e.g. the workflow config or a mapped collection changed
-        // across regenerations into the same root).
+        // across regenerations into the same root), and stale ux specs
+        // (issue #303) whose view lost its ux eligibility (flag off, view
+        // removed, or a mapping now replaces the fallback).
         let active_specs: std::collections::HashSet<String> = model
             .view_containers
             .iter()
@@ -598,6 +736,12 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     "{}.workflow.spec.ts",
                     codegraph_naming::to_kebab_case(view_name)
                 )
+            })
+            .collect();
+        let active_ux_specs: std::collections::HashSet<String> = ux_specs
+            .iter()
+            .map(|(view_name, _)| {
+                format!("{}.ux.spec.ts", codegraph_naming::to_kebab_case(view_name))
             })
             .collect();
         let specs_dir = self.output_dir.join("tests").join("ifml");
@@ -613,6 +757,12 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     }
                     if name.strip_suffix(".workflow.spec.ts").is_some() {
                         if !active_workflow_specs.contains(name) {
+                            let _ = std::fs::remove_file(&path);
+                        }
+                        continue;
+                    }
+                    if name.strip_suffix(".ux.spec.ts").is_some() {
+                        if !active_ux_specs.contains(name) {
                             let _ = std::fs::remove_file(&path);
                         }
                         continue;
@@ -649,6 +799,16 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     content: render_workflow_spec(vc, workflow_tests),
                 });
             }
+        }
+
+        for (view_name, ux_test) in &ux_specs {
+            files.push(GeneratedFile {
+                path: self.output_dir.join("tests").join("ifml").join(format!(
+                    "{}.ux.spec.ts",
+                    codegraph_naming::to_kebab_case(view_name)
+                )),
+                content: render_ux_spec(ux_test),
+            });
         }
 
         let config_path = self.output_dir.join("playwright.config.ts");
@@ -792,6 +952,96 @@ pub struct TransitionStep {
     pub from: String,
     pub to: String,
     pub to_testid: String,
+}
+
+/// The ux-rules rendering tests for one view (issue #303), rendered into
+/// `{view}.ux.spec.ts`. Every check is generated only for markup the
+/// fallback template actually renders (chips, numeric alignment, Intl
+/// formatting, copy-chip, overflow menu, timeline) — no vacuous tests.
+#[derive(Debug)]
+pub struct UxViewTest {
+    /// The fallback list component carrying the asserted markup.
+    pub component_name: String,
+    pub route: String,
+    pub fixture: Fixture,
+    pub table_testid: String,
+    pub row_testid: String,
+    /// Chip columns: seeded value, its rendered text, and the expected
+    /// `data-chip-variant` (the column's ToneMap lookup).
+    pub chip_checks: Vec<UxChipCheck>,
+    /// Numeric/date column cells: nth-child position, alignment class, and
+    /// the Intl formatter the page runs for the column's dimension.
+    pub column_checks: Vec<UxColumnCheck>,
+    /// Copy-chip column: click writes the cell value to the clipboard.
+    pub copy_check: Option<UxCopyCheck>,
+    /// Overflow menu (second+ navigate events disclosed by tiering).
+    pub menu: Option<UxMenuCheck>,
+    /// Timeline layout entries (explicit `[[collection]]` rule).
+    pub timeline: Option<UxTimelineCheck>,
+    /// Locale/currency baseline feeding the in-spec Intl computations.
+    pub locale: String,
+    /// Ready-to-render money options object literal (`{}` when the pack
+    /// carries no currency).
+    pub money_options: String,
+}
+
+/// One chip assertion: create a row overriding `field` to `override_literal`,
+/// then expect the row's `{comp}-chip` carrying `text` to show `variant`.
+#[derive(Debug)]
+pub struct UxChipCheck {
+    pub field: String,
+    pub override_literal: String,
+    pub text: String,
+    pub variant: String,
+}
+
+/// One numeric/date cell assertion: the cell at `cell_index` (0-based within
+/// the row) renders `literal` through the Intl formatter of `format`; the
+/// `text-right` header/cell class asserts fire only on right-aligned
+/// columns (mirroring the template).
+#[derive(Debug)]
+pub struct UxColumnCheck {
+    /// Header name when the column is right-aligned (asserts `text-right`
+    /// on the `<th>`).
+    pub header: Option<String>,
+    pub cell_index: usize,
+    pub format: UxCellFormat,
+    pub assert_right: bool,
+}
+
+/// The Intl formatter a column's dimension renders through (mirroring the
+/// page's `formatMoney`/`formatNumber`/`formatDate`).
+#[derive(Debug)]
+pub enum UxCellFormat {
+    Money { literal: String },
+    Quantity { literal: String },
+    Date { literal: String },
+}
+
+/// One copy-chip assertion: clicking `{comp}-copy` writes the created
+/// entity's `field` value to the clipboard.
+#[derive(Debug)]
+pub struct UxCopyCheck {
+    pub field: String,
+}
+
+/// Overflow-menu assertions: open the trigger, expect the menu, and follow
+/// its first item to the navigation target.
+#[derive(Debug)]
+pub struct UxMenuCheck {
+    pub trigger_testid: String,
+    pub menu_testid: String,
+    pub target_pattern: String,
+}
+
+/// Timeline assertions: the `{comp}-timeline` root renders items newest-first
+/// with real `<time>` content matching the fixture's order value.
+#[derive(Debug)]
+pub struct UxTimelineCheck {
+    pub root_testid: String,
+    pub item_testid: String,
+    /// The fixture's value for the timeline `order_by` field, when present.
+    pub order_literal: Option<String>,
 }
 
 /// The (from → to) edge a spec can safely exercise: with a populated
@@ -968,6 +1218,577 @@ fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest]) -> Strin
     }
     s.push_str("});\n");
     s
+}
+
+/// Render a view's `{view}.ux.spec.ts` (issue #303): ux-rules fallback
+/// markup assertions computed from the SAME resolution the route generator
+/// renders from — chip tones via the ToneMap lookup, cell text via the
+/// Intl formatters the page runs (`UX_LOCALE`/`UX_MONEY_OPTS`).
+fn render_ux_spec(test: &UxViewTest) -> String {
+    let mut s = String::new();
+    s.push_str("// Generated by codegraph. DO NOT EDIT.\n");
+    s.push_str(&format!(
+        "// IFML Playwright E2E ux-rules tests for view {} component {} (#303).\n\n",
+        test.route.trim_start_matches('/'),
+        test.component_name
+    ));
+    s.push_str("import { test, expect } from '@playwright/test';\n\n");
+    s.push_str(&format!(
+        "test.describe('{} ux', () => {{\n",
+        js_string(&test.component_name)
+    ));
+    s.push_str(&format!(
+        "\tconst UX_BASE = '{}';\n",
+        test.fixture.base_path
+    ));
+    s.push_str(&format!(
+        "\tconst UX_DATA = {};\n",
+        test.fixture.data_literal()
+    ));
+    s.push_str(&format!(
+        "\tconst UX_LOCALE = '{}';\n",
+        js_string(&test.locale)
+    ));
+    s.push_str(&format!(
+        "\tconst UX_MONEY_OPTS = {};\n\n",
+        test.money_options
+    ));
+    s.push_str(
+        "\tasync function createUxRow(request: any, overrides: Record<string, unknown> = {}) {\n",
+    );
+    s.push_str("\t\tconst response = await request.post(UX_BASE, { data: { ...UX_DATA, ...overrides } });\n");
+    s.push_str("\t\texpect(response.ok(), 'ux fixture entity should be created').toBeTruthy();\n");
+    s.push_str("\t\tconst body = await response.json();\n");
+    s.push_str("\t\treturn (body.data ?? body) as Record<string, unknown>;\n\t}\n");
+
+    if !test.chip_checks.is_empty() {
+        s.push_str(
+            "\n\ttest('ux chips render with tone variants', async ({ page, request }) => {\n",
+        );
+        for (index, chip) in test.chip_checks.iter().enumerate() {
+            s.push_str(&format!(
+                "\t\tawait createUxRow(request, {{ 'title': 'Ux chips {index}', {}: {} }});\n",
+                js_string(&chip.field),
+                chip.override_literal
+            ));
+        }
+        s.push_str(&format!("\t\tawait page.goto('{}');\n", test.route));
+        s.push_str(&format!(
+            "\t\tconst rows = page.getByTestId('{}');\n",
+            test.row_testid
+        ));
+        for (index, chip) in test.chip_checks.iter().enumerate() {
+            s.push_str(&format!("\t\t{{\n\t\t\tconst chip = rows.filter({{ hasText: 'Ux chips {index}' }}).first().getByTestId('{comp}-chip').filter({{ hasText: '{text}' }}).first();\n", index = index, comp = test.component_name, text = js_string(&chip.text)));
+            s.push_str("\t\t\tawait expect(chip).toBeVisible();\n");
+            s.push_str(&format!(
+                "\t\t\tawait expect(chip).toHaveText('{}');\n",
+                js_string(&chip.text)
+            ));
+            s.push_str(&format!(
+                "\t\t\tawait expect(chip).toHaveAttribute('data-chip-variant', '{}');\n\t\t}}\n",
+                js_string(&chip.variant)
+            ));
+        }
+        s.push_str("\t});\n");
+    }
+
+    if !test.column_checks.is_empty() {
+        s.push_str("\n\ttest('ux numeric columns align and format through Intl', async ({ page, request }) => {\n");
+        s.push_str("\t\tawait createUxRow(request, { 'title': 'Ux formats 0' });\n");
+        s.push_str(&format!("\t\tawait page.goto('{}');\n", test.route));
+        s.push_str(&format!(
+            "\t\tconst row = page.getByTestId('{}').filter({{ hasText: 'Ux formats 0' }}).first();\n",
+            test.row_testid
+        ));
+        for check in &test.column_checks {
+            if let Some(header) = &check.header {
+                s.push_str("\t\t{\n");
+                s.push_str(&format!(
+                    "\t\t\tconst th = page.getByTestId('{}').locator('thead th').filter({{ hasText: '{}' }});\n",
+                    test.table_testid,
+                    js_string(header)
+                ));
+                s.push_str("\t\t\tawait expect(th).toHaveClass(/text-right/);\n\t\t}\n");
+            }
+            s.push_str("\t\t{\n");
+            s.push_str(&format!(
+                "\t\t\tconst td = row.locator('td').nth({});\n",
+                check.cell_index
+            ));
+            match &check.format {
+                UxCellFormat::Money { literal } => {
+                    if check.assert_right {
+                        s.push_str("\t\t\tawait expect(td).toHaveClass(/text-right/);\n");
+                        s.push_str("\t\t\tawait expect(td).toHaveClass(/tabular-nums/);\n");
+                    }
+                    s.push_str(
+                        "\t\t\tconst fmt = new Intl.NumberFormat(UX_LOCALE, UX_MONEY_OPTS);\n",
+                    );
+                    s.push_str(&format!(
+                        "\t\t\tawait expect(td).toHaveText(fmt.format({literal}));\n"
+                    ));
+                }
+                UxCellFormat::Quantity { literal } => {
+                    if check.assert_right {
+                        s.push_str("\t\t\tawait expect(td).toHaveClass(/text-right/);\n");
+                        s.push_str("\t\t\tawait expect(td).toHaveClass(/tabular-nums/);\n");
+                    }
+                    s.push_str("\t\t\tconst fmt = new Intl.NumberFormat(UX_LOCALE);\n");
+                    s.push_str(&format!(
+                        "\t\t\tawait expect(td).toHaveText(fmt.format({literal}));\n"
+                    ));
+                }
+                UxCellFormat::Date { literal } => {
+                    if check.assert_right {
+                        s.push_str("\t\t\tawait expect(td).toHaveClass(/text-right/);\n");
+                    }
+                    s.push_str("\t\t\tconst fmt = new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium' });\n");
+                    s.push_str(&format!(
+                        "\t\t\tawait expect(td).toHaveText(fmt.format(new Date('{literal}')));\n"
+                    ));
+                }
+            }
+            s.push_str("\t\t}\n");
+        }
+        s.push_str("\t});\n");
+    }
+
+    if let Some(copy) = &test.copy_check {
+        s.push_str("\n\ttest('ux copy chips write the clipboard', async ({ page, request, context }) => {\n");
+        s.push_str("\t\tconst created = await createUxRow(request, { 'title': 'Ux copies 0' });\n");
+        s.push_str(&format!("\t\tawait page.goto('{}');\n", test.route));
+        s.push_str("\t\tawait context.grantPermissions(['clipboard-read', 'clipboard-write']);\n");
+        s.push_str(&format!(
+            "\t\tconst copy = page.getByTestId('{}').filter({{ hasText: 'Ux copies 0' }}).first().getByTestId('{comp}-copy').first();\n",
+            test.row_testid,
+            comp = test.component_name
+        ));
+        s.push_str("\t\tawait copy.click();\n");
+        s.push_str("\t\tawait expect\n\t\t\t.poll(() => page.evaluate(() => navigator.clipboard.readText()))\n");
+        s.push_str(&format!(
+            "\t\t\t.toBe(String(created['{field}'] ?? ''));\n\t}});\n",
+            field = js_string(&copy.field)
+        ));
+    }
+
+    if let Some(menu) = &test.menu {
+        s.push_str(
+            "\n\ttest('ux row actions open the overflow menu', async ({ page, request }) => {\n",
+        );
+        s.push_str("\t\tawait createUxRow(request, { 'title': 'Ux menu 0' });\n");
+        s.push_str(&format!("\t\tawait page.goto('{}');\n", test.route));
+        s.push_str(&format!(
+            "\t\tawait page.getByTestId('{}').first().click();\n",
+            menu.trigger_testid
+        ));
+        s.push_str(&format!(
+            "\t\tconst menu = page.getByTestId('{}').first();\n",
+            menu.menu_testid
+        ));
+        s.push_str("\t\tawait expect(menu).toBeVisible();\n");
+        s.push_str("\t\tawait menu.getByRole('button').first().click();\n");
+        s.push_str(&format!(
+            "\t\tawait page.waitForURL(new RegExp('{}'));\n\t}});\n",
+            js_string(&menu.target_pattern)
+        ));
+    }
+
+    if let Some(timeline) = &test.timeline {
+        s.push_str(
+            "\n\ttest('ux timeline renders entries newest-first', async ({ page, request }) => {\n",
+        );
+        s.push_str("\t\tawait createUxRow(request, { 'title': 'Ux timeline 0' });\n");
+        s.push_str("\t\tawait createUxRow(request, { 'title': 'Ux timeline 1' });\n");
+        s.push_str(&format!("\t\tawait page.goto('{}');\n", test.route));
+        s.push_str(&format!(
+            "\t\tconst timeline = page.getByTestId('{}');\n",
+            timeline.root_testid
+        ));
+        s.push_str("\t\tawait expect(timeline).toBeVisible();\n");
+        s.push_str(&format!(
+            "\t\tconst items = page.getByTestId('{}');\n",
+            timeline.item_testid
+        ));
+        s.push_str("\t\texpect(await items.count()).toBeGreaterThan(0);\n");
+        s.push_str("\t\tconst times = await items.locator('time').allTextContents();\n");
+        s.push_str("\t\tfor (const text of times) {\n\t\t\texpect(text.trim().length).toBeGreaterThan(0);\n\t\t}\n");
+        if let Some(literal) = &timeline.order_literal {
+            s.push_str(&format!(
+                "\t\t{{\n\t\t\tconst fmt = new Intl.DateTimeFormat(UX_LOCALE, {{ dateStyle: 'medium' }});\n\t\t\texpect(times).toContain(fmt.format(new Date('{literal}')));\n\t\t}}\n"
+            ));
+        }
+        s.push_str(
+            "\t\tconst parsed = times.map((t) => Date.parse(t)).filter((v) => !Number.isNaN(v));\n",
+        );
+        s.push_str("\t\tfor (let i = 1; i < parsed.length; i++) {\n\t\t\texpect(parsed[i]).toBeLessThanOrEqual(parsed[i - 1]);\n\t\t}\n");
+        s.push_str("\t});\n");
+    }
+
+    s.push_str("});\n");
+    s
+}
+
+// ── ux spec helpers (issue #303) ─────────────────────────────────────────────
+
+/// The second navigate event of a collection component — the first one the
+/// route generator keeps inline (the row click), any further one it
+/// discloses into the per-row overflow menu. `None` means the page renders
+/// no menu, so the ux spec asserts none.
+fn ux_menu_event(events: &[IfmlEvent]) -> Option<&IfmlEvent> {
+    events
+        .iter()
+        .filter(|e| matches!(e.action, IfmlAction::Navigate { .. }))
+        .nth(1)
+}
+
+/// Numeric/date cell checks for a fallback list: per displayed field, the
+/// Intl formatter its dimension renders through, plus alignment assertions
+/// when the resolved align is right. Skips id/FK fields and fields without
+/// a fixture value.
+fn ux_column_checks(
+    c: &IfmlComponent,
+    plan: &UxPlan,
+    entries: &[(String, String)],
+) -> Vec<UxColumnCheck> {
+    let mut out = Vec::new();
+    for (index, field) in c.fields.iter().enumerate() {
+        if field == "id" || field.ends_with("_id") {
+            continue;
+        }
+        let Some(col) = plan.columns.get(field) else {
+            continue;
+        };
+        if col.display != Display::Raw {
+            continue;
+        }
+        let Some(literal) = entry_inner(entries, field) else {
+            continue;
+        };
+        let format = match col.dimension {
+            Dimension::Money => UxCellFormat::Money { literal },
+            Dimension::Quantity => UxCellFormat::Quantity { literal },
+            Dimension::TimePoint => UxCellFormat::Date { literal },
+            _ => continue,
+        };
+        let right = col.align == Align::Right;
+        out.push(UxColumnCheck {
+            header: right.then(|| field.clone()),
+            cell_index: index,
+            format,
+            assert_right: right,
+        });
+    }
+    out
+}
+
+/// Chip checks for a fallback list: per chip column, up to two seeded
+/// values with DISTINCT expected variants (exercising the ToneMap). The
+/// candidates are the backing codelist's values when there is one, else
+/// the field's fixture value. The workflow status field is skipped: API
+/// creates leave it unset (the create DTO carries no status field), so a
+/// seeded override cannot reach the rendered chip.
+async fn ux_chip_checks(
+    db: &dyn GraphQuerier,
+    c: &IfmlComponent,
+    plan: &UxPlan,
+    entries: &[(String, String)],
+    workflow_status_field: Option<&str>,
+) -> Vec<UxChipCheck> {
+    let mut out = Vec::new();
+    for field in &c.fields {
+        if field == "id" || field.ends_with("_id") {
+            continue;
+        }
+        if workflow_status_field == Some(field.as_str()) {
+            continue;
+        }
+        let Some(col) = plan.columns.get(field) else {
+            continue;
+        };
+        if col.display != Display::Chip {
+            continue;
+        }
+        let Some((_, literal)) = entries.iter().find(|(name, _)| name == field) else {
+            continue;
+        };
+        let mut candidates: Vec<String> = codelist_values(db, c.entity.as_deref(), field)
+            .await
+            .unwrap_or_default();
+        if candidates.is_empty() {
+            candidates.push(js_literal_inner(literal));
+        }
+        let mut picked = 0usize;
+        for value in candidates {
+            let variant = col.tone.lookup(&value.to_lowercase()).to_string();
+            if out
+                .iter()
+                .any(|check: &UxChipCheck| check.variant == variant)
+            {
+                continue;
+            }
+            let override_literal = if literal.starts_with('\'') {
+                format!("'{}'", js_string(&value))
+            } else {
+                value.clone()
+            };
+            out.push(UxChipCheck {
+                field: field.clone(),
+                override_literal,
+                text: value,
+                variant,
+            });
+            picked += 1;
+            if picked == 2 || out.len() == 4 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Fixture payload for a ux spec: `fixture_entries` plus valid values for
+/// codelist-backed fields (the create would otherwise reference a code
+/// outside the codelist table).
+async fn ux_fixture_entries(db: &dyn GraphQuerier, c: &IfmlComponent) -> Vec<(String, String)> {
+    let mut entries = fixture_entries(c);
+    for (field, value) in entries.iter_mut() {
+        if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
+            *value = format!("'{}'", js_string(&code));
+        }
+    }
+    entries
+}
+
+/// All values of the codelist backing `field` on `entity`'s schema, when
+/// the property references one (`None` keeps the generic fixture value).
+async fn codelist_values(
+    db: &dyn GraphQuerier,
+    entity: Option<&str>,
+    field: &str,
+) -> Option<Vec<String>> {
+    let entity = entity?;
+    let schema = match db.get_schema(entity).await {
+        Ok(Some(schema)) => Some(schema),
+        Ok(None) => db.get_schema(&format!("{entity}Type")).await.ok()?,
+        Err(_) => None,
+    }?;
+    let props = db.get_properties(&schema.title).await.ok()?;
+    let target = props
+        .iter()
+        .find(|p| p.name == field)?
+        .ref_target
+        .as_deref()?;
+    let stem = target.rsplit('/').next()?.strip_suffix(".json")?;
+    let codelist = db.get_schema(stem).await.ok()??;
+    if !codelist.is_codelist {
+        return None;
+    }
+    let values = db.get_enum_values(stem).await.ok()?;
+    Some(values.into_iter().map(|v| v.value).collect())
+}
+
+/// The ready-to-render money options object literal for a rules document:
+/// currency style when configured, grouped decimals otherwise (mirroring
+/// the page context the route generator renders from).
+fn ux_money_options(rules: &UxRules) -> String {
+    match rules.format.currency.as_deref() {
+        Some(code) => format!("{{ style: 'currency', currency: '{}' }}", js_string(code)),
+        None => "{}".to_string(),
+    }
+}
+
+/// The inner text of a JS literal (`'draft'` → `draft`, `42` → `42`).
+fn js_literal_inner(literal: &str) -> String {
+    let trimmed = literal.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn entry_inner(entries: &[(String, String)], field: &str) -> Option<String> {
+    entries
+        .iter()
+        .find(|(name, _)| name == field)
+        .map(|(_, value)| js_literal_inner(value))
+        .filter(|value| !value.is_empty())
+}
+
+/// One ux plan per distinct bound entity (issue #303) — the same projection
+/// the route generator's `resolve_generation_ux` builds (schema-backed
+/// entities plan over ALL their properties, schema-less ones over the
+/// component's display fields), minus the advisory diagnostics the e2e
+/// generator never prints.
+async fn build_ux_plans(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    model: &IfmlModel,
+    rules: &UxRules,
+) -> Result<HashMap<String, UxPlan>> {
+    let mut plans: HashMap<String, UxPlan> = HashMap::new();
+    for vc in &model.view_containers {
+        for c in vc
+            .components
+            .iter()
+            .chain(vc.containers.iter().flat_map(|g| g.components.iter()))
+        {
+            if !is_collection(c) {
+                continue;
+            }
+            let Some(entity) = c.entity.as_deref().filter(|e| !e.is_empty()) else {
+                continue;
+            };
+            if plans.contains_key(entity) {
+                continue;
+            }
+            let props = ux_props_for_entity(db, entity).await;
+            let status_field = workflow_for_entity(config, entity).map(|wf| wf.status_field);
+            let status_field = status_field.as_deref();
+            let names = ux_plan_field_names(c, &props);
+            let mut fields: Vec<crate::ui::page::UiField> = Vec::with_capacity(names.len());
+            let mut prop_by_name: BTreeMap<String, &PropertyNode> = BTreeMap::new();
+            for name in &names {
+                if let Some(prop) = props.get(name) {
+                    prop_by_name.insert(name.clone(), prop);
+                    fields.push(ux_ui_field(prop));
+                } else {
+                    fields.push(ux_synth_field(name, &c.fields_with_types));
+                }
+            }
+            let input = UxPlanInput {
+                entity_title: entity,
+                fields: &fields,
+                prop_by_name: prop_by_name
+                    .iter()
+                    .map(|(name, prop)| (name.as_str(), *prop))
+                    .collect(),
+                workflow_status_field: status_field,
+                workflow_terminal_states: &[],
+                has_soft_delete: false,
+                user_pinned_list_order: false,
+            };
+            if let Some(plan) = build_ux_plan(Some(rules), &input)? {
+                plans.insert(entity.to_string(), plan);
+            }
+        }
+    }
+    Ok(plans)
+}
+
+/// The plan-input display field names of a collection component: the
+/// declared `fields` when present, else the typed-table column bindings
+/// (expression columns carry no property and are skipped).
+fn ux_plan_field_names(c: &IfmlComponent, props: &HashMap<String, PropertyNode>) -> Vec<String> {
+    if !props.is_empty() {
+        let mut names: Vec<String> = props
+            .iter()
+            .filter(|(key, prop)| prop.name == **key)
+            .map(|(key, _)| key.clone())
+            .collect();
+        names.sort();
+        return names;
+    }
+    if !c.fields.is_empty() {
+        return c.fields.clone();
+    }
+    match &c.spec {
+        Some(ComponentSpec::Table(spec)) => spec
+            .columns
+            .iter()
+            .filter_map(|col| match col {
+                rex_ifml::ColumnDef::Field { field, .. }
+                | rex_ifml::ColumnDef::Lookup { field, .. } => Some(field.property.clone()),
+                rex_ifml::ColumnDef::Expression { .. } => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The graph properties of an IFML component's bound entity keyed by
+/// property name (mirroring the route generator's resolution).
+async fn ux_props_for_entity(db: &dyn GraphQuerier, entity: &str) -> HashMap<String, PropertyNode> {
+    let Some(title) = ux_schema_title(db, entity).await else {
+        return HashMap::new();
+    };
+    let Ok(props) = db.get_properties(&title).await else {
+        return HashMap::new();
+    };
+    props
+        .into_iter()
+        .map(|prop| (prop.name.clone(), prop))
+        .collect()
+}
+
+/// Resolve the graph schema title for an IFML entity binding: exact match
+/// first, then the `{entity}Type` shape.
+async fn ux_schema_title(db: &dyn GraphQuerier, entity: &str) -> Option<String> {
+    if entity.is_empty() {
+        return None;
+    }
+    if matches!(db.get_schema(entity).await, Ok(Some(_))) {
+        return Some(entity.to_string());
+    }
+    let suffixed = format!("{entity}Type");
+    matches!(db.get_schema(&suffixed).await, Ok(Some(_))).then_some(suffixed)
+}
+
+/// The entity pipeline's UI-field projection of one graph property.
+fn ux_ui_field(prop: &PropertyNode) -> crate::ui::page::UiField {
+    crate::ui::form::ui_field_from_property(
+        prop,
+        column_is_entity_ref(prop),
+        column_is_codelist(prop),
+        &[],
+        &[],
+        &prop.pg_column_type,
+        prop.pg_column_type.contains("RANGE"),
+        false,
+    )
+}
+
+fn column_is_codelist(prop: &PropertyNode) -> bool {
+    matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference) | Some(RefClassificationKind::CodelistCheck)
+    )
+}
+
+fn column_is_entity_ref(prop: &PropertyNode) -> bool {
+    prop.effective_kind() == Some(RefClassificationKind::EntityReference)
+}
+
+/// A signal-poor [`crate::ui::page::UiField`] for columns whose property is
+/// absent from the graph.
+fn ux_synth_field(
+    binding: &str,
+    fields_with_types: &[(String, String)],
+) -> crate::ui::page::UiField {
+    let rust_type = fields_with_types
+        .iter()
+        .find(|(name, _)| name == binding)
+        .map(|(_, t)| t.as_str())
+        .unwrap_or("String");
+    crate::ui::page::UiField {
+        name: binding.to_string(),
+        label: String::new(),
+        ts_type: crate::ui::form::rust_type_to_ts(rust_type, false),
+        input_type: String::new(),
+        is_required: false,
+        is_array: rust_type.starts_with("Vec<"),
+        is_entity_ref: false,
+        is_immutable: false,
+        is_codelist: false,
+        is_range: false,
+        codelist_values: Vec::new(),
+        description: String::new(),
+        pg_type: String::new(),
+        open_end: false,
+        ref_api_path: None,
+        structured_sub_fields: Vec::new(),
+        nested_type_name: None,
+    }
 }
 
 fn render_spec(spec: &ViewTestSpec) -> String {
@@ -1610,5 +2431,428 @@ mod tests {
         assert!(rendered.contains("page.getByTestId('grid-row').first().click()"));
         assert!(rendered.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"));
         assert!(rendered.ends_with("});\n"));
+    }
+
+    fn ux_test_fixture() -> UxViewTest {
+        UxViewTest {
+            component_name: "grid".to_string(),
+            route: "/refundrequestlist".to_string(),
+            fixture: Fixture {
+                base_path: "/api/v1/refunds/refund-request".to_string(),
+                entries: vec![
+                    ("title".to_string(), "'Test title'".to_string()),
+                    ("status".to_string(), "'draft'".to_string()),
+                    ("amount".to_string(), "42".to_string()),
+                    ("urgent".to_string(), "true".to_string()),
+                    (
+                        "submittedAt".to_string(),
+                        "'2024-01-15T10:30:00Z'".to_string(),
+                    ),
+                ],
+            },
+            table_testid: "grid-table".to_string(),
+            row_testid: "grid-row".to_string(),
+            chip_checks: vec![
+                UxChipCheck {
+                    field: "status".to_string(),
+                    override_literal: "'draft'".to_string(),
+                    text: "draft".to_string(),
+                    variant: "secondary".to_string(),
+                },
+                UxChipCheck {
+                    field: "status".to_string(),
+                    override_literal: "'approved'".to_string(),
+                    text: "approved".to_string(),
+                    variant: "default".to_string(),
+                },
+            ],
+            column_checks: vec![
+                UxColumnCheck {
+                    header: Some("amount".to_string()),
+                    cell_index: 2,
+                    format: UxCellFormat::Money {
+                        literal: "42".to_string(),
+                    },
+                    assert_right: true,
+                },
+                UxColumnCheck {
+                    header: None,
+                    cell_index: 4,
+                    format: UxCellFormat::Date {
+                        literal: "2024-01-15T10:30:00Z".to_string(),
+                    },
+                    assert_right: false,
+                },
+            ],
+            copy_check: None,
+            menu: Some(UxMenuCheck {
+                trigger_testid: "grid-actions".to_string(),
+                menu_testid: "grid-actions-menu".to_string(),
+                target_pattern: "/refundrequestdetail\\?id=[^&]+".to_string(),
+            }),
+            timeline: None,
+            locale: "en-NZ".to_string(),
+            money_options: "{ style: 'currency', currency: 'NZD' }".to_string(),
+        }
+    }
+
+    #[test]
+    fn ux_spec_renders_chip_tone_and_intl_assertions() {
+        let rendered = render_ux_spec(&ux_test_fixture());
+        assert!(rendered.ends_with("});\n"), "{rendered}");
+        // Pinned title prefixes — the gate's `ux` category matches these.
+        assert!(
+            rendered.contains("test('ux chips render with tone variants'"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("test('ux numeric columns align and format through Intl'"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("test('ux row actions open the overflow menu'"),
+            "{rendered}"
+        );
+        // Fixture + in-spec Intl computation.
+        assert!(
+            rendered.contains("const UX_BASE = '/api/v1/refunds/refund-request';"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("const UX_LOCALE = 'en-NZ';"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("const UX_MONEY_OPTS = { style: 'currency', currency: 'NZD' };"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("new Intl.NumberFormat(UX_LOCALE, UX_MONEY_OPTS)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium' })"),
+            "{rendered}"
+        );
+        // Balanced parens on the Intl text assertions (regression pin).
+        assert!(
+            rendered.contains("await expect(td).toHaveText(fmt.format(42));"),
+            "{rendered}"
+        );
+        // Chip variant + visibility within the fixture row.
+        assert!(
+            rendered.contains("toHaveAttribute('data-chip-variant', 'secondary')"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("toHaveAttribute('data-chip-variant', 'default')"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("getByTestId('grid-chip')"), "{rendered}");
+        // Numeric alignment classes + nth cell addressing.
+        assert!(rendered.contains("toHaveClass(/text-right/)"), "{rendered}");
+        assert!(
+            rendered.contains("toHaveClass(/tabular-nums/)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("row.locator('td').nth(2)"), "{rendered}");
+        assert!(rendered.contains("row.locator('td').nth(4)"), "{rendered}");
+        // Overflow menu open + first item navigation.
+        assert!(
+            rendered.contains("getByTestId('grid-actions').first().click()"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("getByTestId('grid-actions-menu')"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("waitForURL(new RegExp('/refundrequestdetail\\\\?id=[^&]+'))"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn ux_spec_omits_absent_features_and_renders_timeline() {
+        let mut test = ux_test_fixture();
+        test.chip_checks.clear();
+        test.column_checks.clear();
+        test.menu = None;
+        test.timeline = Some(UxTimelineCheck {
+            root_testid: "grid-timeline".to_string(),
+            item_testid: "grid-timeline-item".to_string(),
+            order_literal: Some("2024-01-15T10:30:00Z".to_string()),
+        });
+        let rendered = render_ux_spec(&test);
+        assert!(!rendered.contains("ux chips render"), "{rendered}");
+        assert!(!rendered.contains("ux numeric columns"), "{rendered}");
+        assert!(!rendered.contains("overflow menu"), "{rendered}");
+        assert!(!rendered.contains("UX_MONEY_OPTS)"), "{rendered}");
+        assert!(
+            rendered.contains("test('ux timeline renders entries newest-first'"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("getByTestId('grid-timeline-item')"),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .contains("expect(times).toContain(fmt.format(new Date('2024-01-15T10:30:00Z')))"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("expect(parsed[i]).toBeLessThanOrEqual(parsed[i - 1]);"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn ux_menu_event_requires_a_second_navigate() {
+        let navigate = |target: &str| IfmlEvent {
+            name: String::new(),
+            event_type: "select".to_string(),
+            params: Vec::new(),
+            requires: Vec::new(),
+            action: IfmlAction::Navigate {
+                target: target.to_string(),
+                binding: HashMap::new(),
+            },
+        };
+        let single = vec![navigate("Detail")];
+        assert!(ux_menu_event(&single).is_none());
+        let mut second = navigate("Review");
+        second.event_type = "review".to_string();
+        let pair = vec![navigate("Detail"), second];
+        let menu = ux_menu_event(&pair).expect("second navigate discloses into the menu");
+        match &menu.action {
+            IfmlAction::Navigate { target, .. } => assert_eq!(target, "Review"),
+            _ => panic!("expected a navigate action"),
+        }
+    }
+
+    #[test]
+    fn ux_chip_checks_skip_the_workflow_status_field() {
+        use codegraph_core::mock::MockEngine;
+        use codegraph_core::types::{EnumValue, SchemaNode};
+
+        fn schema(title: &str, is_codelist: bool) -> SchemaNode {
+            SchemaNode {
+                namespace: None,
+                schema_id: format!("id:{title}"),
+                title: title.to_string(),
+                description: None,
+                schema_type: "object".to_string(),
+                classification: "entity".to_string(),
+                domain: Some("refunds".to_string()),
+                rel_path: format!("{title}.json"),
+                pg_type: "UUID".to_string(),
+                rust_type: "Uuid".to_string(),
+                sea_orm_type: "Uuid".to_string(),
+                rust_type_name: title.to_string(),
+                pg_table_name: codegraph_naming::to_snake_case(title),
+                api_path_segment: codegraph_naming::to_kebab_case(title),
+                parent_schema: None,
+                is_entity: !is_codelist,
+                is_codelist,
+                is_primitive_wrapper: false,
+                has_all_of: false,
+                has_one_of: false,
+                has_any_of: false,
+                has_definitions: false,
+                custom_annotations: Default::default(),
+            }
+        }
+
+        let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
+        let mut status_prop = ux_test_prop("status");
+        status_prop.classification_kind = Some(RefClassificationKind::CodelistReference);
+        status_prop.ref_target = Some("codelist/RefundStatusCodeList.json".to_string());
+        let field = ux_ui_field(&status_prop);
+        let input = UxPlanInput {
+            entity_title: "RefundRequest",
+            fields: std::slice::from_ref(&field),
+            prop_by_name: BTreeMap::from([("status", &status_prop)]),
+            workflow_status_field: None,
+            workflow_terminal_states: &[],
+            has_soft_delete: false,
+            user_pinned_list_order: false,
+        };
+        let plan = build_ux_plan(Some(&rules), &input)
+            .unwrap()
+            .expect("codelist column planned");
+        assert!(
+            matches!(plan.columns.get("status"), Some(col) if col.display == Display::Chip),
+            "precondition: the codelist column resolves to a chip"
+        );
+
+        let c = IfmlComponent {
+            name: "grid".to_string(),
+            component_type: "list".to_string(),
+            mode: None,
+            entity: Some("RefundRequest".to_string()),
+            fields: vec!["status".to_string()],
+            fields_with_types: Vec::new(),
+            filter: None,
+            properties: HashMap::new(),
+            events: Vec::new(),
+            parts: Vec::new(),
+            spec: None,
+        };
+        let entries = vec![("status".to_string(), "'draft'".to_string())];
+        let db = MockEngine::builder()
+            .with_schema(schema("RefundRequestType", false))
+            .with_properties("RefundRequestType", vec![status_prop])
+            .with_schema(schema("RefundStatusCodeList", true))
+            .with_enum_values(
+                "RefundStatusCodeList",
+                vec![
+                    EnumValue {
+                        value: "draft".to_string(),
+                        display_name: None,
+                        sort_order: 0,
+                    },
+                    EnumValue {
+                        value: "approved".to_string(),
+                        display_name: None,
+                        sort_order: 1,
+                    },
+                ],
+            )
+            .build();
+
+        // Control: without a workflow the codelist chip is exercised with
+        // distinct expected variants.
+        let control = futures::executor::block_on(ux_chip_checks(&db, &c, &plan, &entries, None));
+        assert!(
+            !control.is_empty(),
+            "control: the codelist chip column is exercised without a workflow"
+        );
+        // The workflow status column reads NULL on API-created rows (the
+        // create DTO carries no status field), so a seeded override could
+        // never reach the rendered chip — it must be skipped (issue #303).
+        let skipped =
+            futures::executor::block_on(ux_chip_checks(&db, &c, &plan, &entries, Some("status")));
+        assert!(
+            skipped.is_empty(),
+            "the workflow status column must never be chip-exercised"
+        );
+    }
+
+    fn ux_test_prop(name: &str) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".into(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: false,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: name.into(),
+            pg_column_type: "TEXT".into(),
+            rust_field_name: name.into(),
+            rust_field_type: "String".into(),
+            sea_orm_type: "String".into(),
+            render_strategy: "scalar".into(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    #[test]
+    fn ux_column_checks_pin_dimensions_and_alignment() {
+        let rules = codegraph_config::parse_ux_rules_str(
+            "[[column]]\nname_pattern = \"amount\"\ndimension = \"money\"\n",
+        )
+        .unwrap()
+        .rules;
+        let c = IfmlComponent {
+            name: "grid".to_string(),
+            component_type: "list".to_string(),
+            mode: None,
+            entity: Some("RefundRequest".to_string()),
+            fields: vec!["title".to_string(), "amount".to_string()],
+            fields_with_types: Vec::new(),
+            filter: None,
+            properties: HashMap::new(),
+            events: Vec::new(),
+            parts: Vec::new(),
+            spec: None,
+        };
+        let field = crate::ui::page::UiField {
+            name: "amount".to_string(),
+            label: String::new(),
+            ts_type: "number".to_string(),
+            input_type: String::new(),
+            is_required: false,
+            is_array: false,
+            is_entity_ref: false,
+            is_immutable: false,
+            is_codelist: false,
+            is_range: false,
+            codelist_values: Vec::new(),
+            description: String::new(),
+            pg_type: "BIGINT".to_string(),
+            open_end: false,
+            ref_api_path: None,
+            structured_sub_fields: Vec::new(),
+            nested_type_name: None,
+        };
+        let input = UxPlanInput {
+            entity_title: "RefundRequest",
+            fields: std::slice::from_ref(&field),
+            prop_by_name: BTreeMap::new(),
+            workflow_status_field: None,
+            workflow_terminal_states: &[],
+            has_soft_delete: false,
+            user_pinned_list_order: false,
+        };
+        let plan = build_ux_plan(Some(&rules), &input)
+            .unwrap()
+            .expect("rules on → plan");
+        let checks = ux_column_checks(&c, &plan, &[("amount".to_string(), "42".to_string())]);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].cell_index, 1);
+        assert_eq!(checks[0].header.as_deref(), Some("amount"));
+        assert!(checks[0].assert_right);
+        assert!(matches!(checks[0].format, UxCellFormat::Money { .. }));
+    }
+
+    #[test]
+    fn stale_cleanup_removes_ux_specs_by_suffix() {
+        // Mirrors the suffix ordering in generate(): ux specs must be
+        // matched BEFORE the generic `.spec.ts` fallback or active ux files
+        // would be deleted as stale plain specs.
+        let name = "refund-request-list.ux.spec.ts";
+        assert!(name.strip_suffix(".workflow.spec.ts").is_none());
+        assert!(name.strip_suffix(".ux.spec.ts").is_some());
+        let plain = "refund-request-list.spec.ts";
+        assert!(plain.strip_suffix(".ux.spec.ts").is_none());
+        assert!(plain.strip_suffix(".workflow.spec.ts").is_none());
+    }
+
+    #[test]
+    fn js_literal_inner_strips_quotes() {
+        assert_eq!(js_literal_inner("'draft'"), "draft");
+        assert_eq!(js_literal_inner("42"), "42");
+        assert_eq!(js_literal_inner("true"), "true");
+        assert_eq!(
+            entry_inner(&[("a".into(), "'x y'".into())], "a"),
+            Some("x y".into())
+        );
+        assert_eq!(entry_inner(&[("a".into(), "''".into())], "a"), None);
     }
 }

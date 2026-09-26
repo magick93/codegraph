@@ -312,7 +312,7 @@
 			{{ comp.workflow.badge_html }}
 {% endif %}
 {% if comp.row_menu_events %}
-			<div class="timeline-actions"><button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open %}{% endraw %}<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">{% for evt in comp.row_menu_events %}<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>{% endfor %}</div>{% raw %}{/if}{% endraw %}</div>
+			<div class="timeline-actions"><button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open}{% endraw %}<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">{% for evt in comp.row_menu_events %}<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>{% endfor %}</div>{% raw %}{/if}{% endraw %}</div>
 {% endif %}
 		</div>
 	</li>
@@ -341,7 +341,7 @@
 {%- if comp.row_menu_events %}
 			<td class="row-actions">
 			<button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>
-			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open %}{% endraw %}
+			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open}{% endraw %}
 			<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">
 			{% for evt in comp.row_menu_events %}
 				<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>
@@ -432,7 +432,7 @@
 {%- if comp.row_menu_events %}
 			<td class="row-actions">
 			<button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>
-			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open %}{% endraw %}
+			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open}{% endraw %}
 			<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">
 			{% for evt in comp.row_menu_events %}
 				<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>

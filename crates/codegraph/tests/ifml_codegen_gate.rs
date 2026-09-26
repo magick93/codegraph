@@ -271,6 +271,30 @@ async fn run_pipeline() -> Result<(), String> {
     let workflow = workspace.join("crates/codegraph-workflow");
     let domain_types_dir = output.join("domain-types");
 
+    // ux-rules resolution (issue #303), mirroring the driver's
+    // `effective_ux_rules`: the built-in ux-default pack when the resolved
+    // plan enables the feature, with the fixture's ux-rules.toml merged
+    // over it (project rules shadow pack rules per selector tier).
+    let ux_rules = if plan.ux_rules {
+        let pack = codegraph_config::builtin_ux_rules()
+            .map_err(|e| format!("built-in ux pack failed to parse: {e}"))?
+            .rules;
+        let override_path = home.join("ux-rules.toml");
+        let rules = if override_path.exists() {
+            let parsed = codegraph_config::load_ux_rules(&override_path)
+                .map_err(|e| format!("load ux-rules.toml: {e}"))?;
+            for warning in &parsed.warnings {
+                eprintln!("  WARN ux-rules: {warning}");
+            }
+            codegraph_config::merge(&parsed.rules, &pack)
+        } else {
+            pack
+        };
+        Some(rules)
+    } else {
+        None
+    };
+
     let project_config = codegraph::generate::ProjectConfig {
         app_name: "ifml-gate-app".into(),
         lib_name: "cosmos".into(),
@@ -292,20 +316,22 @@ async fn run_pipeline() -> Result<(), String> {
             workflow.display(),
             type_contracts.display(),
         ),
+        ux: ux_rules.clone(),
         ..Default::default()
     };
 
-    // Built-in shadcn-svelte pack, shadowed by the fixture's mapping
-    // overrides (ifml-components.toml) so gate assertions can pin specific
-    // wrapper components (issue #200: the Tabs presentation-container).
-    let pack = codegraph_config::built_in_pack("shadcn-svelte").map_err(|e| e.to_string())?;
+    // The fixture's OWN component mappings (issue #303): loaded WITHOUT the
+    // built-in shadcn-svelte pack so collection components stay UNMAPPED and
+    // the fallback tables render — the chips/money/actions markup the ux
+    // specs assert. The fixture maps every non-collection slot the pack used
+    // to resolve (Button/Dialog/Card/NavigationMenu/Tabs), so the pre-#303
+    // page shapes and testids hold unchanged.
     let fixture_mappings_path = home.join("ifml-components.toml");
     let pack = if fixture_mappings_path.exists() {
-        let project = codegraph_config::IfmlComponentMappings::load(&fixture_mappings_path)
-            .map_err(|e| e.to_string())?;
-        codegraph_config::IfmlComponentMappings::merge_with_pack(project, &pack)
+        codegraph_config::IfmlComponentMappings::load(&fixture_mappings_path)
+            .map_err(|e| e.to_string())?
     } else {
-        pack
+        codegraph_config::IfmlComponentMappings::default()
     };
     let hooks_tmp = tempfile::tempdir().map_err(|e| e.to_string())?;
 
@@ -325,7 +351,7 @@ async fn run_pipeline() -> Result<(), String> {
             build_plan: Some(&plan),
             ifml_frameworks: vec!["svelte".to_string()],
             ifml_components: Some(&pack),
-            ux_rules: None,
+            ux_rules: ux_rules.clone(),
             project_config: Some(&project_config),
             emdash_plugins: None,
             domain_config_dir: Some(&home),
@@ -586,6 +612,7 @@ fn assert_categories(titles: &[String]) {
     let workflow_transition = has(&|t| t.starts_with("transitions ") && t.contains(" to "));
     let create_via_ui = has(&|t| t.starts_with("create round trip persists a new refund request"));
     let details_values = has(&|t| t.starts_with("details shows the persisted values"));
+    let ux = has(&|t| t.starts_with("ux "));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -598,6 +625,7 @@ fn assert_categories(titles: &[String]) {
         ("workflow transition", workflow_transition),
         ("create via ui", create_via_ui),
         ("details values", details_values),
+        ("ux", ux),
     ]
     .iter()
     .filter(|(_, present)| !present)
@@ -673,6 +701,32 @@ fn assert_categories(titles: &[String]) {
             home.matches("<Tabs testid=\"tabs\">").count(),
             1,
             "sibling xor containers must share exactly one mapped wrapper:\n{home}"
+        );
+    }
+
+    // Issue #303: the ux fallback markup renders on the fixture's unmapped
+    // list page (RefundRequestList "grid") — chip spans with tone variants,
+    // the money column's right-aligned tabular figures, and the overflow
+    // actions menu the second navigate event tiers into.
+    let list_path = svelte_dir().join("src/routes/refundrequestlist/+page.svelte");
+    if list_path.exists() {
+        let list = fs::read_to_string(&list_path).unwrap_or_default();
+        assert!(
+            list.contains("data-testid=\"grid-chip\""),
+            "fallback table page should render ux chip spans:\n{list}"
+        );
+        assert!(
+            list.contains("data-chip-variant"),
+            "ux chip spans should carry the data-chip-variant binding:\n{list}"
+        );
+        assert!(
+            list.contains("text-right tabular-nums"),
+            "money/quantity cells should right-align with tabular figures:\n{list}"
+        );
+        assert!(
+            list.contains("data-testid=\"grid-actions\"")
+                && list.contains("data-testid=\"grid-actions-menu\""),
+            "a collection with second+ navigate events should render the row-actions menu:\n{list}"
         );
     }
 }

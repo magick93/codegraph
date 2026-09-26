@@ -173,6 +173,14 @@ impl RepositoryImplEmitter {
         if tree.is_auditable {
             wln!(code, "        include_deleted: bool,");
         }
+        // Issue #306: the trait (repository.tera) and the query handler
+        // carry the sort parameter whenever the ux sort plane resolves
+        // sortable columns for the entity — the impl must match, or the
+        // generated crate diverges (trait 7 params vs impl 6) and the sort
+        // ordering emitted below has no `sort` binding.
+        if !sort_columns.is_empty() {
+            wln!(code, "        sort: Option<(String, bool)>,");
+        }
         wln!(
             code,
             "    ) -> Result<(Vec<{}Response>, u64), Box<dyn std::error::Error>> {{",
