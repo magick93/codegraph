@@ -1764,7 +1764,14 @@ async fn build_ux_e2e_spec(
             && col.display == Display::Raw
             && !is_audit_stamp(name)
         {
-            if let Some(literal) = create_field.and_then(stable_fixture_literal) {
+            // StructuredWrapper fixture literals are JSONB object literals
+            // ('{ value: ... }') for the create body — the rendered cell is
+            // the wrapper's stringified form, so a toHaveText(object) is
+            // invalid Playwright. The assertion simply doesn't apply.
+            if let Some(literal) = create_field
+                .filter(|f| f.structured_sub_fields.is_empty())
+                .and_then(stable_fixture_literal)
+            {
                 first_column = Some(UxE2eFirstColumnCtx {
                     key: name.clone(),
                     expected_literal: literal,
