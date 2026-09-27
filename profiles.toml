@@ -43,6 +43,12 @@ rls_from_policy = false
 # (`cdm.base.datetime` → `cdm/base/datetime/...`) for the entity/DTO/db
 # module outputs. Default OFF = flat domain layout, byte-identical output.
 namespace_layout = false
+# Canonical expression IR (issue #278). When true, IFML view guards render
+# from the persisted `expr_json` AST via the TypeScript lowering
+# (crates/codegraph-generate/src/ifml/expr_ts.rs); conditions outside the
+# closed subset are hard errors naming the view. Default OFF =
+# byte-identical output.
+expr_ir = false
 # Constraint-plane validations (issue #261). When true, add
 # "condition_validations" to an [api] generators list; emits per-domain
 # src/domain/<domain>/validations.rs from array minItems/maxItems and the
