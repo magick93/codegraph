@@ -102,7 +102,8 @@ test.describe('Refund UX list rendering', () => {
     await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
     await expect(page.locator(`[data-testid="${MODULE}-table"]`)).toBeVisible();
     // The header sequence mirrors the plan's column_order — no extra or
-    // missing columns.
+    // missing columns. A plan with no resolvable columns renders the
+    // id fallback column, so expect exactly that one.
     const headerCount = await page.locator('thead th').count();
     expect(headerCount).toBe(7);
 

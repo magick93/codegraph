@@ -147,9 +147,10 @@ test.describe('{{ entity_name }} UX list rendering', () => {
     await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
     await expect(page.locator(`[data-testid="${MODULE}-table"]`)).toBeVisible();
     // The header sequence mirrors the plan's column_order — no extra or
-    // missing columns.
+    // missing columns. A plan with no resolvable columns renders the
+    // id fallback column, so expect exactly that one.
     const headerCount = await page.locator('thead th').count();
-    expect(headerCount).toBe({{ ux_spec.columns | length }});
+    expect(headerCount).toBe({% if ux_spec.columns %}{{ ux_spec.columns | length }}{% else %}1{% endif %});
 {% if ux_spec.first_column %}
     // The first rendered column is the human-readable field, not the
     // system id (plan rows 17/25).
