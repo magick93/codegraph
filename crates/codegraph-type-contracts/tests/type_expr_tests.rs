@@ -5,9 +5,7 @@
 //! Rust type), and the proto scalar names via the canonical Rust string
 //! (the proto lowering itself lives in the generate crate).
 
-use codegraph_type_contracts::{
-    PgType, RefClassificationKind, RustType, TypeExpr, TypeExprError,
-};
+use codegraph_type_contracts::{PgType, RefClassificationKind, RustType, TypeExpr, TypeExprError};
 
 fn r#ref(target: &str, kind: Option<RefClassificationKind>) -> TypeExpr {
     TypeExpr::Ref {
@@ -44,8 +42,7 @@ fn ref_to_string_primitive_lowers_across_targets() {
 #[test]
 fn list_of_optional_nests_correctly() {
     let expr = TypeExpr::List(Box::new(TypeExpr::Optional(Box::new(r#ref(
-        "string",
-        None,
+        "string", None,
     )))));
     assert_eq!(expr.lower_pg(), Ok(PgType::TextArray));
     assert_eq!(expr.lower_rust(), Ok(RustType::VecString));
@@ -82,10 +79,7 @@ fn codelist_and_entity_ref_lower_with_kind() {
 
 #[test]
 fn codelist_check_kind_lowers_like_codelist_reference() {
-    let expr = r#ref(
-        "Priority",
-        Some(RefClassificationKind::CodelistCheck),
-    );
+    let expr = r#ref("Priority", Some(RefClassificationKind::CodelistCheck));
     assert_eq!(expr.lower_pg(), Ok(PgType::Text));
     assert_eq!(expr.lower_rust(), Ok(RustType::String));
 }
@@ -108,10 +102,7 @@ fn unsupported_expr_is_a_named_error() {
         "error must name the target: {err}"
     );
 
-    let vo_has_no_scalar_column = r#ref(
-        "AddressType",
-        Some(RefClassificationKind::ValueObject),
-    );
+    let vo_has_no_scalar_column = r#ref("AddressType", Some(RefClassificationKind::ValueObject));
     assert!(vo_has_no_scalar_column.lower_pg().is_err());
 
     let unknown_primitive = primitive("wibble");
@@ -126,7 +117,10 @@ fn primitive_scalar_lowers_to_pg_and_rust() {
     assert_eq!(primitive("uuid").lower_pg(), Ok(PgType::Uuid));
     assert_eq!(primitive("uuid").lower_rust(), Ok(RustType::Uuid));
     assert_eq!(primitive("datetime").lower_pg(), Ok(PgType::Timestamptz));
-    assert_eq!(primitive("datetime").lower_rust(), Ok(RustType::DateTimeUtc));
+    assert_eq!(
+        primitive("datetime").lower_rust(),
+        Ok(RustType::DateTimeUtc)
+    );
     assert_eq!(primitive("decimal").lower_rust(), Ok(RustType::Decimal));
 }
 
@@ -164,7 +158,11 @@ fn from_frozen_maps_primitive_wrappers_by_rust_string() {
 
 #[test]
 fn from_frozen_wraps_primitive_arrays_in_list() {
-    let expr = TypeExpr::from_frozen(&RefClassificationKind::PrimitiveWrapper, None, "Vec<String>");
+    let expr = TypeExpr::from_frozen(
+        &RefClassificationKind::PrimitiveWrapper,
+        None,
+        "Vec<String>",
+    );
     assert_eq!(expr, Some(TypeExpr::List(Box::new(primitive("string")))));
 
     let expr = TypeExpr::from_frozen(&RefClassificationKind::ArrayWrapper, None, "Vec<i64>");
@@ -180,10 +178,17 @@ fn from_frozen_maps_refs_and_codelists_with_target() {
     );
     assert_eq!(
         expr,
-        Some(r#ref("WorkerType", Some(RefClassificationKind::EntityReference)))
+        Some(r#ref(
+            "WorkerType",
+            Some(RefClassificationKind::EntityReference)
+        ))
     );
 
-    let expr = TypeExpr::from_frozen(&RefClassificationKind::CodelistReference, Some("Gender"), "");
+    let expr = TypeExpr::from_frozen(
+        &RefClassificationKind::CodelistReference,
+        Some("Gender"),
+        "",
+    );
     assert_eq!(
         expr,
         Some(TypeExpr::Codelist {
@@ -194,7 +199,10 @@ fn from_frozen_maps_refs_and_codelists_with_target() {
     let expr = TypeExpr::from_frozen(&RefClassificationKind::ValueObject, Some("AddressType"), "");
     assert_eq!(
         expr,
-        Some(r#ref("AddressType", Some(RefClassificationKind::ValueObject)))
+        Some(r#ref(
+            "AddressType",
+            Some(RefClassificationKind::ValueObject)
+        ))
     );
 }
 
@@ -202,7 +210,11 @@ fn from_frozen_maps_refs_and_codelists_with_target() {
 fn from_frozen_returns_none_when_unrepresentable() {
     // Non-invertible frozen rust string on a primitive wrapper.
     assert_eq!(
-        TypeExpr::from_frozen(&RefClassificationKind::PrimitiveWrapper, None, "MonetaryAmount"),
+        TypeExpr::from_frozen(
+            &RefClassificationKind::PrimitiveWrapper,
+            None,
+            "MonetaryAmount"
+        ),
         None
     );
     // Ref-shaped kinds need a target.
@@ -219,7 +231,7 @@ fn projection_of(
     dto_response: codegraph_type_contracts::DtoFieldType,
 ) -> codegraph_type_contracts::DddFieldProjection {
     use codegraph_type_contracts::{
-        DddFieldProjection, DomainProjection, DtoFieldType, DtoProjections, RustType,
+        DddFieldProjection, DomainProjection, DtoProjections, RustType,
     };
     DddFieldProjection {
         entity,
@@ -236,9 +248,7 @@ fn projection_of(
 
 #[test]
 fn from_projection_derives_codelist_and_entity_refs() {
-    use codegraph_type_contracts::{
-        ColumnType, DtoFieldType, EntityProjection, FkTarget, PgType,
-    };
+    use codegraph_type_contracts::{ColumnType, DtoFieldType, EntityProjection, FkTarget, PgType};
 
     let codelist = projection_of(
         EntityProjection::SingleColumn {
@@ -279,13 +289,16 @@ fn from_projection_derives_codelist_and_entity_refs() {
     );
     assert_eq!(
         TypeExpr::from_projection(&entity_ref),
-        Some(r#ref("WorkerType", Some(RefClassificationKind::EntityReference)))
+        Some(r#ref(
+            "WorkerType",
+            Some(RefClassificationKind::EntityReference)
+        ))
     );
 }
 
 #[test]
 fn from_projection_derives_primitives_and_lists() {
-    use codegraph_type_contracts::{ColumnType, EntityProjection, PgType, RustType, DtoFieldType};
+    use codegraph_type_contracts::{ColumnType, DtoFieldType, EntityProjection, PgType, RustType};
 
     let text = projection_of(
         EntityProjection::SingleColumn {
