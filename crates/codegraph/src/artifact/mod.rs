@@ -105,7 +105,11 @@ fn collect_schema_dir_into(
 }
 
 /// Every model/config input that shapes the graph: domain config,
-/// classifier config, JSON schemas, mox/rosetta/IFML/OpenAPI sources.
+/// classifier config, `ui-overrides.toml` (ingested onto property nodes),
+/// JSON schemas, mox/rosetta/IFML/OpenAPI sources. Transitive files pulled
+/// in by model sources (mox `import schema` targets, IFML `.actor`
+/// imports) are NOT tracked yet — editing one of those invalidates the
+/// cache only when its importing file changes too.
 pub fn collect_run_inputs(
     schemas: Option<&Path>,
     classifier: Option<&Path>,
@@ -119,6 +123,12 @@ pub fn collect_run_inputs(
     files.push(read_input_file(config_path)?);
     if let Some(classifier) = classifier {
         files.push(read_input_file(classifier)?);
+    }
+    if let Some(parent) = config_path.parent() {
+        let ui_overrides = parent.join("ui-overrides.toml");
+        if ui_overrides.exists() {
+            files.push(read_input_file(&ui_overrides)?);
+        }
     }
     if let Some(schemas_dir) = schemas {
         files.extend(collect_schema_dir(schemas_dir)?);
