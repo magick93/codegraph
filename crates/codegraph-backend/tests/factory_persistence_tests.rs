@@ -2,7 +2,6 @@
 //! `data_dir` reopens the persisted graph instead of starting in-memory.
 
 use codegraph_backend::{create_backend, BackendConfig, BackendKind};
-use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::SchemaNode;
 
 fn schema(title: &str) -> SchemaNode {
@@ -36,7 +35,7 @@ fn schema(title: &str) -> SchemaNode {
 #[tokio::test]
 async fn backend_with_data_dir_reopens_persisted_graph() {
     let dir = tempfile::tempdir().unwrap();
-    let data_dir = dir.path().to_path_buf();
+    let data_dir = dir.path().join("graph.grafeo");
 
     {
         let config = BackendConfig {

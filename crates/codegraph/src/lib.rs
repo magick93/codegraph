@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod classify;
 pub mod driver;
 pub mod error;

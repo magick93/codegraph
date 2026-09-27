@@ -1,6 +1,7 @@
 use crate::schema_ddl;
 use codegraph_core::error::GraphError;
 use grafeo::GrafeoDB;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -31,6 +32,36 @@ impl GrafeoEngine {
         };
         engine.init_schema()?;
         Ok(engine)
+    }
+
+    /// Open (or create) a persistent engine backed by a single-file Grafeo
+    /// database at `path`. Parent directories are created as needed. On
+    /// reopen, schema DDL re-runs (IF NOT EXISTS) and prior WAL records
+    /// replay, so ingested data survives process exit once
+    /// [`GrafeoEngine::checkpoint`] (or close) flushes it.
+    pub fn persistent(path: &Path) -> Result<Self, GraphError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                GraphError::Connection(format!(
+                    "failed to create graph dir {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let config = grafeo::Config {
+            path: Some(path.to_path_buf()),
+            storage_format: grafeo_engine::config::StorageFormat::SingleFile,
+            ..grafeo::Config::default()
+        };
+        Self::with_config(config)
+    }
+
+    /// Flush the write-ahead log into the storage file so all committed
+    /// mutations are durable on disk.
+    pub fn checkpoint(&self) -> Result<(), GraphError> {
+        self.db
+            .wal_checkpoint()
+            .map_err(|e| GraphError::Connection(format!("checkpoint failed: {e}")))
     }
 
     /// Re-run schema DDL (idempotent due to IF NOT EXISTS).

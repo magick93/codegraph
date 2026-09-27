@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use codegraph_backend::{create_backend, BackendConfig};
+use codegraph_backend::{create_backend, Backend, BackendConfig};
 
 use crate::error::Result;
 use crate::generate::ProjectConfig;
@@ -138,8 +138,33 @@ pub fn rosetta_primary_notice() -> &'static str {
     "INFO: .rosetta files are a primary model source; --schemas fills gaps for types not authored in .rosetta"
 }
 
+/// What a pipeline run did with the persisted-graph cache (issue #275).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunOutcome {
+    /// True when the run reopened the persisted graph and skipped
+    /// re-ingestion because the inputs hash was unchanged.
+    pub graph_cache_reused: bool,
+    /// The inputs hash (all model/config inputs + graph format version)
+    /// when a graph cache dir was in play.
+    pub inputs_hash: Option<String>,
+}
+
 /// Run the full pipeline: ingest + classify + generate.
 pub async fn run(args: RunArgs<'_>) -> Result<()> {
+    run_with_graph_cache(args, None).await.map(|_| ())
+}
+
+/// [`run`] with an optional persisted-graph cache directory (issue #275).
+/// When `graph_cache` is set, the run computes an inputs hash over all
+/// model/config inputs plus the graph format version; on a match with the
+/// stored hash the persisted graph is reopened and re-ingestion is skipped
+/// entirely (an INFO notice goes to stderr). Otherwise the model is
+/// ingested into a fresh persistent engine which is checkpointed and
+/// recorded for the next run.
+pub async fn run_with_graph_cache(
+    args: RunArgs<'_>,
+    graph_cache: Option<&Path>,
+) -> Result<RunOutcome> {
     let RunArgs {
         schemas,
         classifier,
@@ -186,10 +211,56 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         }
     }
 
-    let backend_config = BackendConfig::default();
-    let be = create_backend(&backend_config)
-        .await
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    let inputs_hash: Option<String> = match graph_cache {
+        Some(_cache_dir) => {
+            let inputs = crate::artifact::collect_run_inputs(
+                schemas,
+                classifier,
+                config_path,
+                mox_files,
+                rosetta_files,
+                ifml_files,
+                openapi_files,
+            )
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+            Some(crate::artifact::inputs_hash(&inputs))
+        }
+        None => None,
+    };
+
+    // Graph cache (issue #275): reopen the persisted graph when the stored
+    // inputs hash matches; otherwise ingest fresh into a persistent engine
+    // (checkpointed after ingestion). Without a cache dir this is the
+    // in-memory default.
+    let (be, graph_cache_reused) = match (graph_cache, inputs_hash.as_deref()) {
+        (Some(cache_dir), Some(hash)) => {
+            if let Some(engine) = crate::artifact::open_reusable_engine(cache_dir, hash)
+                .map_err(|e| crate::error::Error::Config(e.to_string()))?
+            {
+                eprintln!(
+                    "INFO: reusing persisted graph cache at {} (inputs hash {} unchanged) — skipping re-ingestion",
+                    cache_dir.display(),
+                    &hash[..16]
+                );
+                (Backend::from_engine(engine), true)
+            } else {
+                let cached_config = BackendConfig {
+                    data_dir: Some(cache_dir.join(crate::artifact::CACHE_GRAPH_FILE)),
+                    ..BackendConfig::default()
+                };
+                let backend = create_backend(&cached_config)
+                    .await
+                    .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+                (backend, false)
+            }
+        }
+        _ => {
+            let backend = create_backend(&BackendConfig::default())
+                .await
+                .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+            (backend, false)
+        }
+    };
 
     let domain_config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
@@ -294,234 +365,254 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
         None
     };
 
-    // Pass 1: Ingest rexlang .mox domain sources FIRST (mox-first, issue
-    // #231): vocabularies with facets, class operations, derived features,
-    // and schema/property nodes for mox-authored classes and enums. The
-    // bridged class titles win schema-title conflicts because the schema
-    // pass below skips every title created here. Diagnostics warn and never
-    // fail the run — except missing/invalid `import schema` targets, which
-    // are a hard error (issue #230): the lowered model's structural
-    // references depend on them.
-    let mut mox_covered: HashSet<String> = HashSet::new();
-    let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();
-    let mut pending_alias_refs: Vec<crate::ingest::mox_ingest::PendingAliasRef> = Vec::new();
-    if !mox_files.is_empty() {
-        println!("Pass 1: {} mox files to ingest", mox_files.len());
-        let outcome = crate::ingest::mox_ingest::ingest_mox_files(
-            be.ingestor(),
-            be.querier(),
-            mox_files,
-            &domain_config,
-            &domain_config.defaults.type_suffix,
-        )
-        .await?;
-        println!("Pass 1 complete: {}", outcome.stats);
-        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
-        mox_stats = outcome.stats;
-        pending_alias_refs = outcome.pending_alias_refs;
-
-        // Pass 1 (imports): the .mox model's imported JSON schema files go
-        // through the same pipeline as --schemas, BEFORE the schema pass so
-        // their titles join the skip-set and a file passed both ways
-        // ingests exactly once (issue #230).
-        if !outcome.imported_files.is_empty() {
-            let imported = crate::ingest::async_ingest::ingest_imported_schemas(
+    // All ingestion passes are skipped when the graph cache reused the
+    // persisted graph (inputs unchanged): the graph already holds the
+    // model. Generation and validation still run on the reused graph.
+    if !graph_cache_reused {
+        // Pass 1: Ingest rexlang .mox domain sources FIRST (mox-first, issue
+        // #231): vocabularies with facets, class operations, derived features,
+        // and schema/property nodes for mox-authored classes and enums. The
+        // bridged class titles win schema-title conflicts because the schema
+        // pass below skips every title created here. Diagnostics warn and never
+        // fail the run — except missing/invalid `import schema` targets, which
+        // are a hard error (issue #230): the lowered model's structural
+        // references depend on them.
+        let mut mox_covered: HashSet<String> = HashSet::new();
+        let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();
+        let mut pending_alias_refs: Vec<crate::ingest::mox_ingest::PendingAliasRef> = Vec::new();
+        if !mox_files.is_empty() {
+            println!("Pass 1: {} mox files to ingest", mox_files.len());
+            let outcome = crate::ingest::mox_ingest::ingest_mox_files(
                 be.ingestor(),
-                &outcome.imported_files,
-                &classifier_config,
-                &ui_overrides,
+                be.querier(),
+                mox_files,
+                &domain_config,
                 &domain_config.defaults.type_suffix,
             )
             .await?;
-            println!(
-                "Pass 1 imports: {} schema files ingested",
-                imported.ingested.schemas_created
-            );
-            mox_covered.extend(imported.titles);
+            println!("Pass 1 complete: {}", outcome.stats);
+            mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
+            mox_stats = outcome.stats;
+            pending_alias_refs = outcome.pending_alias_refs;
+
+            // Pass 1 (imports): the .mox model's imported JSON schema files go
+            // through the same pipeline as --schemas, BEFORE the schema pass so
+            // their titles join the skip-set and a file passed both ways
+            // ingests exactly once (issue #230).
+            if !outcome.imported_files.is_empty() {
+                let imported = crate::ingest::async_ingest::ingest_imported_schemas(
+                    be.ingestor(),
+                    &outcome.imported_files,
+                    &classifier_config,
+                    &ui_overrides,
+                    &domain_config.defaults.type_suffix,
+                )
+                .await?;
+                println!(
+                    "Pass 1 imports: {} schema files ingested",
+                    imported.ingested.schemas_created
+                );
+                mox_covered.extend(imported.titles);
+            }
         }
-    }
 
-    // Pass 1b: Rosetta (Rune DSL) data-plane bridge (issues #256, #257).
-    // Runs alongside mox and BEFORE the JSON schema pass: bridged titles
-    // join the skip-set so a same-titled JSON schema never duplicates the
-    // node. Mox keeps primary position (rosetta wins over JSON by passing
-    // first; mox wins over rosetta).
-    if !rosetta_files.is_empty() {
-        println!("Pass 1b: {} rosetta files to ingest", rosetta_files.len());
-        let outcome = crate::ingest::rosetta_ingest::ingest_rosetta_files(
-            be.ingestor(),
-            be.querier(),
-            rosetta_files,
-            &domain_config,
-            &domain_config.defaults.type_suffix,
-        )
-        .await?;
-        println!("Pass 1b complete: {}", outcome.stats);
-        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
-    }
-
-    // Pass 1a: Ingest JSON schemas (no entity classification). Optional
-    // under mox-first: skipped entirely when only .mox files are provided,
-    // and titles already created from .mox are skipped within the pass.
-    if let Some(schemas_dir) = schemas {
-        let empty_entities = HashSet::new();
-        let ingest_result = crate::ingest::async_ingest::ingest_schemas_with_skips(
-            be.ingestor(),
-            schemas_dir,
-            &classifier_config,
-            &empty_entities,
-            &ui_overrides,
-            &domain_config.defaults.type_suffix,
-            &mox_covered,
-        )
-        .await?;
-        println!(
-            "Pass 1a: {} schemas ingested",
-            ingest_result.schemas_created
-        );
-    }
-
-    // Pass 1a (alias wiring): imported-schema aliases resolve now that both
-    // the imported files and the --schemas pass have run — exact title
-    // match, then title + type suffix; misses warn and skip the edge
-    // (issue #230).
-    if !pending_alias_refs.is_empty() {
-        crate::ingest::mox_ingest::wire_alias_refs(
-            be.ingestor(),
-            be.querier(),
-            &pending_alias_refs,
-            &domain_config.defaults.type_suffix,
-            &mut mox_stats,
-        )
-        .await?;
-        println!(
-            "Pass 1a wiring: {} aliases resolved, {} unresolved",
-            mox_stats.resolved_aliases, mox_stats.unresolved_aliases
-        );
-    }
-
-    // Pass 1b: Ingest IFML DSL files (if provided)
-    if !ifml_files.is_empty() {
-        println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
-        let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
-        for ifml_path in ifml_files {
-            let model = rex_ifml::parse_ifml_file(ifml_path).map_err(|e| {
-                crate::error::Error::Config(format!(
-                    "Failed to parse IFML file '{}': {}",
-                    ifml_path.display(),
-                    e
-                ))
-            })?;
-            let mut stats =
-                crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
-            stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+        // Pass 1b: Rosetta (Rune DSL) data-plane bridge (issues #256, #257).
+        // Runs alongside mox and BEFORE the JSON schema pass: bridged titles
+        // join the skip-set so a same-titled JSON schema never duplicates the
+        // node. Mox keeps primary position (rosetta wins over JSON by passing
+        // first; mox wins over rosetta).
+        if !rosetta_files.is_empty() {
+            println!("Pass 1b: {} rosetta files to ingest", rosetta_files.len());
+            let outcome = crate::ingest::rosetta_ingest::ingest_rosetta_files(
                 be.ingestor(),
                 be.querier(),
-                &model,
-                ifml_path,
+                rosetta_files,
+                &domain_config,
+                &domain_config.defaults.type_suffix,
             )
             .await?;
-            total_stats.view_containers += stats.view_containers;
-            total_stats.containers += stats.containers;
-            total_stats.components += stats.components;
-            total_stats.events += stats.events;
-            total_stats.parameters += stats.parameters;
-            total_stats.actions += stats.actions;
-            total_stats.module_uses += stats.module_uses;
-            total_stats.actors += stats.actors;
-            total_stats.imported_policies += stats.imported_policies;
+            println!("Pass 1b complete: {}", outcome.stats);
+            mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
         }
-        println!("Pass 1b complete: {total_stats}");
-    }
 
-    // Pass 1c: Ingest API model from domain configuration
-    {
-        let api_stats =
-            crate::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
-        println!("Pass 1c complete: {api_stats}");
-    }
-
-    // Pass 1d: Ingest OpenAPI spec files (if provided)
-    if !openapi_files.is_empty() {
-        println!("Pass 1d: {} OpenAPI files to ingest", openapi_files.len());
-        for openapi_path in openapi_files {
-            let stats =
-                crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
-                    .await?;
-            println!("  ingested {}: {stats}", openapi_path.display());
+        // Pass 1a: Ingest JSON schemas (no entity classification). Optional
+        // under mox-first: skipped entirely when only .mox files are provided,
+        // and titles already created from .mox are skipped within the pass.
+        if let Some(schemas_dir) = schemas {
+            let empty_entities = HashSet::new();
+            let ingest_result = crate::ingest::async_ingest::ingest_schemas_with_skips(
+                be.ingestor(),
+                schemas_dir,
+                &classifier_config,
+                &empty_entities,
+                &ui_overrides,
+                &domain_config.defaults.type_suffix,
+                &mox_covered,
+            )
+            .await?;
+            println!(
+                "Pass 1a: {} schemas ingested",
+                ingest_result.schemas_created
+            );
         }
-    }
 
-    // Auto-classify
-    let classifier_types: HashSet<String> = classifier_config
-        .primitive_wrappers
-        .keys()
-        .cloned()
-        .chain(classifier_config.array_wrappers.keys().cloned())
-        .chain(classifier_config.range_wrappers.keys().cloned())
-        .chain(
-            classifier_config
-                .composite_wrappers
-                .iter()
-                .map(|cw| cw.schema.clone()),
-        )
-        .collect();
-
-    let all_data = be
-        .querier()
-        .get_classification_data()
-        .await
-        .map_err(crate::error::Error::Graph)?;
-
-    let naming_rules = classifier_config.naming_rules.clone();
-    let auto_classifier = crate::classify::AutoClassifier::new(classifier_types, naming_rules);
-    let mut entity_names = HashSet::new();
-
-    let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
-    sorted_domain_names.sort();
-    for domain_name in &sorted_domain_names {
-        let domain_entry = &domain_config.domains[domain_name.as_str()];
-        let domain_schemas: Vec<_> = all_data
-            .iter()
-            .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
-            .cloned()
-            .collect();
-        let result = auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
-        for score in &result.entities {
-            entity_names.insert(score.title.clone());
-        }
-    }
-
-    // Also include legacy entities[] for backward compat during migration
-    for domain_entry in domain_config.domains.values() {
-        for entity in &domain_entry.entities {
-            entity_names.insert(entity.clone());
-        }
-    }
-
-    println!("Auto-classified {} entities", entity_names.len());
-
-    // Pass 2: Update graph with entity flags
-    crate::ingest::async_ingest::reclassify_with_entities(
-        be.ingestor(),
-        be.querier(),
-        &entity_names,
-    )
-    .await?;
-
-    // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
-    if let Some(ref pc) = project_config {
-        if pc.has_atproto {
-            crate::ingest::atproto_projection::project_atproto_lexicons(
+        // Pass 1a (alias wiring): imported-schema aliases resolve now that both
+        // the imported files and the --schemas pass have run — exact title
+        // match, then title + type suffix; misses warn and skip the edge
+        // (issue #230).
+        if !pending_alias_refs.is_empty() {
+            crate::ingest::mox_ingest::wire_alias_refs(
                 be.ingestor(),
                 be.querier(),
-                &domain_config,
-                pc,
+                &pending_alias_refs,
+                &domain_config.defaults.type_suffix,
+                &mut mox_stats,
             )
+            .await?;
+            println!(
+                "Pass 1a wiring: {} aliases resolved, {} unresolved",
+                mox_stats.resolved_aliases, mox_stats.unresolved_aliases
+            );
+        }
+
+        // Pass 1b: Ingest IFML DSL files (if provided)
+        if !ifml_files.is_empty() {
+            println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
+            let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
+            for ifml_path in ifml_files {
+                let model = rex_ifml::parse_ifml_file(ifml_path).map_err(|e| {
+                    crate::error::Error::Config(format!(
+                        "Failed to parse IFML file '{}': {}",
+                        ifml_path.display(),
+                        e
+                    ))
+                })?;
+                let mut stats =
+                    crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+                stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+                    be.ingestor(),
+                    be.querier(),
+                    &model,
+                    ifml_path,
+                )
+                .await?;
+                total_stats.view_containers += stats.view_containers;
+                total_stats.containers += stats.containers;
+                total_stats.components += stats.components;
+                total_stats.events += stats.events;
+                total_stats.parameters += stats.parameters;
+                total_stats.actions += stats.actions;
+                total_stats.module_uses += stats.module_uses;
+                total_stats.actors += stats.actors;
+                total_stats.imported_policies += stats.imported_policies;
+            }
+            println!("Pass 1b complete: {total_stats}");
+        }
+
+        // Pass 1c: Ingest API model from domain configuration
+        {
+            let api_stats =
+                crate::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
+            println!("Pass 1c complete: {api_stats}");
+        }
+
+        // Pass 1d: Ingest OpenAPI spec files (if provided)
+        if !openapi_files.is_empty() {
+            println!("Pass 1d: {} OpenAPI files to ingest", openapi_files.len());
+            for openapi_path in openapi_files {
+                let stats =
+                    crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
+                        .await?;
+                println!("  ingested {}: {stats}", openapi_path.display());
+            }
+        }
+
+        // Auto-classify
+        let classifier_types: HashSet<String> = classifier_config
+            .primitive_wrappers
+            .keys()
+            .cloned()
+            .chain(classifier_config.array_wrappers.keys().cloned())
+            .chain(classifier_config.range_wrappers.keys().cloned())
+            .chain(
+                classifier_config
+                    .composite_wrappers
+                    .iter()
+                    .map(|cw| cw.schema.clone()),
+            )
+            .collect();
+
+        let all_data = be
+            .querier()
+            .get_classification_data()
             .await
-            .map_err(|e| {
-                crate::error::Error::Config(format!("AT Protocol projection failed: {e}"))
-            })?;
+            .map_err(crate::error::Error::Graph)?;
+
+        let naming_rules = classifier_config.naming_rules.clone();
+        let auto_classifier = crate::classify::AutoClassifier::new(classifier_types, naming_rules);
+        let mut entity_names = HashSet::new();
+
+        let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
+        sorted_domain_names.sort();
+        for domain_name in &sorted_domain_names {
+            let domain_entry = &domain_config.domains[domain_name.as_str()];
+            let domain_schemas: Vec<_> = all_data
+                .iter()
+                .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+                .cloned()
+                .collect();
+            let result =
+                auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+            for score in &result.entities {
+                entity_names.insert(score.title.clone());
+            }
+        }
+
+        // Also include legacy entities[] for backward compat during migration
+        for domain_entry in domain_config.domains.values() {
+            for entity in &domain_entry.entities {
+                entity_names.insert(entity.clone());
+            }
+        }
+
+        println!("Auto-classified {} entities", entity_names.len());
+
+        // Pass 2: Update graph with entity flags
+        crate::ingest::async_ingest::reclassify_with_entities(
+            be.ingestor(),
+            be.querier(),
+            &entity_names,
+        )
+        .await?;
+
+        // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
+        if let Some(ref pc) = project_config {
+            if pc.has_atproto {
+                crate::ingest::atproto_projection::project_atproto_lexicons(
+                    be.ingestor(),
+                    be.querier(),
+                    &domain_config,
+                    pc,
+                )
+                .await
+                .map_err(|e| {
+                    crate::error::Error::Config(format!("AT Protocol projection failed: {e}"))
+                })?;
+            }
+        }
+    }
+
+    if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused) {
+        if let Some(hash) = inputs_hash.as_deref() {
+            be.engine()
+                .checkpoint()
+                .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+            crate::artifact::persist_cache_marker(cache_dir, hash)
+                .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+            println!(
+                "Graph cache: persisted fresh graph (inputs hash {})",
+                &hash[..16]
+            );
         }
     }
 
@@ -601,7 +692,10 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
     }
 
     println!("Done.");
-    Ok(())
+    Ok(RunOutcome {
+        graph_cache_reused,
+        inputs_hash,
+    })
 }
 
 /// IFML-only UI generation: ingest IFML DSL files (+ optional schemas) and
