@@ -432,9 +432,7 @@ async fn consumer_generates_against_pinned_face() {
     let config_path = consumer_dir.join("domains.toml");
     fs::write(
         &config_path,
-        format!(
-            "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n\n[[domains.common.dependencies]]\ndomain = \"party\"\nsource = \"../publisher/out/party.artifact.json\"\nversion = \"1.2.0\"\n"
-        ),
+        "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n\n[[domains.common.dependencies]]\ndomain = \"party\"\nsource = \"../publisher/out/party.artifact.json\"\nversion = \"1.2.0\"\n",
     )
     .unwrap();
 

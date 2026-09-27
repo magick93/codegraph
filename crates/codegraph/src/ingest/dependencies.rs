@@ -99,7 +99,12 @@ pub fn resolve_dependency_path(config_dir: Option<&Path>, source: &str) -> PathB
 /// is an unversioned face (all fields `None`).
 pub fn read_dependency_meta(path: &Path) -> Result<DependencyArtifactMeta> {
     let bytes = std::fs::read(path)?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    dependency_meta_from_bytes(&bytes)
+}
+
+/// [`read_dependency_meta`] over already-read document bytes.
+pub fn dependency_meta_from_bytes(bytes: &[u8]) -> Result<DependencyArtifactMeta> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
     let meta = value.get("meta").cloned();
     Ok(match meta {
         Some(meta) => Some(serde_json::from_value::<DependencyArtifactMeta>(meta)?),
@@ -127,36 +132,23 @@ pub async fn load_dependency_artifacts(
         .map(|s| s.title)
         .collect();
 
-    let mut declared: BTreeSet<&str> = BTreeSet::new();
-    for entry in config.domains.values() {
-        for dep in &entry.dependencies {
-            declared.insert(dep.domain.as_str());
+    // One face per foreign domain, loaded once even when several consumer
+    // domains pin it. Pin selection is deterministic: consumer domains in
+    // sorted order, then declaration order within a domain.
+    let mut pins: Vec<(String, String, &DomainDependency)> = Vec::new();
+    let mut consumer_domains: Vec<&String> = config.domains.keys().collect();
+    consumer_domains.sort();
+    for consumer in consumer_domains {
+        for dep in &config.domains[consumer.as_str()].dependencies {
+            pins.push((dep.domain.clone(), consumer.clone(), dep));
         }
     }
-    let pins: Vec<(&str, Vec<&DomainDependency>)> = declared
-        .into_iter()
-        .map(|domain| {
-            let pins = config
-                .domains
-                .values()
-                .flat_map(|e| e.dependencies.iter())
-                .filter(|d| d.domain == domain)
-                .collect();
-            (domain, pins)
-        })
-        .collect();
+    pins.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    pins.dedup_by(|a, b| a.0 == b.0);
 
-    let mut loaded: HashSet<String> = HashSet::new();
-    for (domain, pins) in pins {
-        let dep = pins
-            .iter()
-            .min_by_key(|d| d.version.clone())
-            .ok_or_else(|| Error::Config(format!("dependency {domain} has no pin")))?;
-        if !loaded.insert(domain.to_string()) {
-            continue;
-        }
+    for (domain, _, dep) in pins {
         let path = resolve_dependency_path(config_dir, &dep.source);
-        load_one(ingestor, &local_titles, domain, dep, &path, &mut stats).await?;
+        load_one(ingestor, &local_titles, &domain, dep, &path, &mut stats).await?;
     }
     Ok(stats)
 }
@@ -216,7 +208,7 @@ async fn load_one(
     stats: &mut DependencyLoadStats,
 ) -> Result<()> {
     let bytes = std::fs::read(path)?;
-    let meta = read_dependency_meta(path)?;
+    let meta = dependency_meta_from_bytes(&bytes)?;
     if let Some(face_domain) = meta.domain.as_deref() {
         if face_domain != domain {
             return Err(Error::Config(format!(
