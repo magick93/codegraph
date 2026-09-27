@@ -492,6 +492,59 @@ dropped on finish; warm run ~110s. Runs locally and on the nightly
 `.github/workflows/ifml-gate.yml` (workflow_dispatch + 03:00 UTC cron, postgres:16
 service, gate logs artifact on failure) — PR CI stays node-free.
 
+## UX Rules (#286 ux-rules branch)
+
+Codified UX rules for generated UIs ("form follows data"): a ux-rules TOML
+document (built-in `ux-default` pack, optionally shadowed by a project
+file via `--ux-rules <file>`) plus Pass-1 dimension inference resolve into
+a per-entity `UxPlan`; the entity UI pipeline and the IFML pipeline both
+render it. Four passes: dimension inference → rules/ordering → action
+tiering → invisible-UI visuals, plus a sort plane (`?sort=` allow-list)
+and advisory diagnostics (money hints, timeline suggestions, overflow
+accounting — printed as `warning: ux-rules: …`, never fatal). Timeline
+rendering is strictly opt-in via `[[collection]] display = "timeline"`.
+Full reference, the 34-row #286 traceability table, testid contract, and
+the deferred ledger: `docs/ux-rules.md`.
+
+| Module | Role |
+|---------|------|
+| `crates/codegraph-config/src/ux/` | Config plane: `dimension.rs` (8 kebab dimensions), `presentation.rs` (Display/Align/FormatConfig/ToneMap), `rule.rs` (ColumnRule/CollectionRule/ActionRules + `glob_match`), `mod.rs` (strict parse with `[[column]] #N`-attributed errors + hint lines, `BUILT_IN_UX_PACK`, `merge`), `packs/ux_default.toml` (en-NZ/NZD pack, doubles as the key reference) |
+| `crates/codegraph-generate/src/ux/` | `dimension.rs` (Pass 1 ordered decision list), `plan.rs` (`build_ux_plan`, `column_order`, `ids` testid consts), `diagnostics.rs`, `sort.rs` (`resolve_ux_sort_plan`) |
+| `crates/codegraph-generate/src/ui/page.rs` | `resolve_ux_context` — plan → list-page context; `crates/codegraph-generate/templates/ui/{list_page,_ux_cell,list_timeline,child_section}.tera` render it |
+| `crates/codegraph-generate/src/ifml/route_generator.rs` | `resolve_column_ux` (lookup tier > rules > pack > inference), `resolve_generation_ux`, `TableLayout::Timeline`, event tiering; `crates/codegraph-generate/templates/ifml/svelte/page.tera` |
+| `crates/codegraph-generate/src/api/handler.rs` + `ddd/repository_emitter/query_search.rs` | `?sort=`/`?order=` validation (allow-list 400s) + quoted ORDER BY with `, id ASC` tiebreaker |
+| `crates/codegraph-generate/src/ui/e2e_test.rs`, `ifml/e2e_test.rs` | `{seg}.ux.test.ts` / `{view}.ux.spec.ts` emitters (per-feature gated blocks) |
+
+Flag plumbing: `ux_rules = true` under `[features]` in profiles.toml
+(default/ui/fullstack/ci ON; non-bool is a hard error) →
+`BuildPlan.ux_rules`; `--ux-rules <file>` CLI on generate/run/ifml-generate
+wins over the profile flag (missing file = hard error; plan-less runs
+still honor it); resolved into `GeneratorOpts.ux_rules` +
+`ProjectConfig.ux` (templates read `project.ux.*`). `codegraph init`
+scaffolds `ux_rules = true`. Selector semantics: first-match-wins,
+project-ahead-of-pack; `dimension` is payload (not selector) on rules
+carrying a classification/pg_type/name_pattern selector, and an override
+cancels the column's money hint.
+
+Byte-identity contract: flag off ⇒ no plan, no ux context keys, no sort
+surface, no ux spec files — pinned by committed pre-feature tree snapshots
+(`UX_RULES_BLESS=1` rebless, rev/path/hex normalization). Gates:
+
+```bash
+cargo test -p codegraph --test ux_rules_tests                 # 18, node-free PR-CI net
+cargo test -p codegraph --test ux_rules_byte_identity_tests   # 4, the canary
+cargo test -p codegraph --test ui_e2e_test_tests              # 20, ux spec gating
+cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture  # nightly, ux-ON fixture + `ux` category
+```
+
+Adding a new rule: (1) dimension/display vocabulary if needed
+(`codegraph-config/src/ux/`, closed kebab set), (2) pack default in
+`ux_default.toml`, (3) Pass-1 inference branch or rule selector/payload in
+`codegraph-generate/src/ux/`, (4) BOTH emitters (entity templates + IFML
+`page.tera`), every new block ux-gated so flag-off stays byte-identical,
+(5) `{seg}.ux.test.ts` assertion + Rust pin in `ux_rules_tests.rs`,
+(6) gate category in `ifml_codegen_gate.rs`.
+
 ## gRPC Code Generation
 
 ### Overview
