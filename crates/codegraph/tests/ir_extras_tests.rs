@@ -205,6 +205,7 @@ scope = "common:notice"
 async fn generate_public_rls(
     flag: bool,
 ) -> Vec<codegraph::generate::traits::GeneratedFile> {
+    use codegraph::generate::traits::GlobalGenerator;
     let engine = MockEngine::new();
     engine.ingest_schema(&public_schema()).await.expect("ingest");
     let config = domain_config_with_public_operations();
@@ -319,6 +320,7 @@ async fn mox_lsp_uses_incompleteness_vocabulary() {
         &Incompleteness::unresolved_reference("missing.json"),
         "missing.json",
         dir.path().join("missing.json").as_path(),
+        auto_lsp::lsp_types::Range::default(),
     );
     assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
     let data = diagnostic.data.expect("structured diagnostic payload");
@@ -335,12 +337,18 @@ fn doctor_reports_incompleteness_reasons() {
         concat!(
             "package todo\n\n",
             "import schema \"missing.json\" as Widget\n\n",
-            "class C {\n    derived int total;\n}\n",
+            "class C {}\n",
         ),
     )
     .expect("write model");
+    let draft = dir.path().join("draft.mox");
+    std::fs::write(
+        &draft,
+        "package draft\n\nclass D {\n    derived int total { expr { } }\n}\n",
+    )
+    .expect("write draft");
 
-    let findings = codegraph::doctor_extras::scan_mox_incompleteness(&[model.clone()]);
+    let findings = codegraph::doctor_extras::scan_mox_incompleteness(&[model, draft]);
     assert!(
         findings.iter().any(|f| matches!(
             &f.incompleteness.reason,
@@ -349,9 +357,10 @@ fn doctor_reports_incompleteness_reasons() {
         "doctor must report the unresolved import target: {findings:?}"
     );
     assert!(
-        findings
-            .iter()
-            .any(|f| matches!(&f.incompleteness.reason, IncompletenessReason::Draft)),
+        findings.iter().any(|f| matches!(
+            &f.incompleteness.reason,
+            IncompletenessReason::Draft
+        )),
         "a derived feature with no expr body is a Draft: {findings:?}"
     );
     let line = codegraph::doctor_extras::report_line(&findings[0]);
