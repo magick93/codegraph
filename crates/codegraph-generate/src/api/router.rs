@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::ParentCandidate;
+use codegraph_core::types::{Access, ParentCandidate};
 use serde::Serialize;
 
 use crate::error::Result;
@@ -13,6 +13,27 @@ use crate::traits::{DomainGenerator, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
+
+/// Route-auth skip decision (issue #279): an entity's routes mount WITHOUT
+/// the permission layers only when the `public_operations_rls` feature is
+/// ON, the schema carries `access = Public`, and the entity's
+/// `public_operations` config covers its ENTIRE effective operation set —
+/// a partially-public entity keeps auth on the remainder. Flag off, no
+/// access flag, or `Private` all keep today's behavior (byte-identity).
+pub fn route_auth_is_public(
+    public_operations_rls: bool,
+    access: Option<Access>,
+    config_public_operations: Option<&[String]>,
+    effective_operations: &[String],
+) -> bool {
+    if !public_operations_rls || access != Some(Access::Public) {
+        return false;
+    }
+    let Some(public_ops) = config_public_operations else {
+        return false;
+    };
+    effective_operations.iter().all(|op| public_ops.contains(op))
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ParentInfo {
@@ -271,7 +292,13 @@ impl DomainGenerator for RouterGenerator {
                         .map(|ec| ec.permissions.clone())
                         .unwrap_or_default();
                     let permission_scope = permissions.scope.clone().unwrap_or_default();
-                    let has_permissions = !permission_scope.is_empty();
+                    let public_skip = route_auth_is_public(
+                        project.public_operations_rls,
+                        schema.access,
+                        entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
+                        &operations,
+                    );
+                    let has_permissions = !permission_scope.is_empty() && !public_skip;
 
                     let entity_idx = entities.len();
                     module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
@@ -546,6 +573,7 @@ pub async fn build_router_context(
     entity_titles: &[String],
     config: &DomainConfig,
     parent_candidates: &[ParentCandidate],
+    project: &ProjectConfig,
 ) -> Result<RouterContext> {
     let mut entities = Vec::new();
     // Maps pg_table_name → entity index (for dedup)
@@ -615,7 +643,13 @@ pub async fn build_router_context(
                     .map(|ec| ec.permissions.clone())
                     .unwrap_or_default();
                 let permission_scope = permissions.scope.clone().unwrap_or_default();
-                let has_permissions = !permission_scope.is_empty();
+                let public_skip = route_auth_is_public(
+                    project.public_operations_rls,
+                    schema.access,
+                    entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
+                    &operations,
+                );
+                let has_permissions = !permission_scope.is_empty() && !public_skip;
 
                 let entity_idx = entities.len();
                 module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);

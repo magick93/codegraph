@@ -161,6 +161,7 @@ impl CapabilityRegistry {
                         | "fern_sdk"
                         | "emdash_plugins"
                         | "rls_from_policy"
+                        | "public_operations_rls"
                         | "rosetta_backend"
                 )
             })
@@ -275,6 +276,12 @@ pub struct BuildPlan {
     /// from the persisted `expr_json` AST via the TypeScript lowering
     /// instead of raw source interpolation. Default OFF = byte-identical.
     pub expr_ir: bool,
+    /// Public-operations consumer (issue #279): when true, schemas carrying
+    /// `access = Public` whose entity config declares `public_operations`
+    /// emit permissive `TO PUBLIC` RLS policies (`public_operations_rls`
+    /// global generator) and mount their routes without the permission
+    /// layers. Default OFF = byte-identical.
+    pub public_operations_rls: bool,
     /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
     pub features: toml::Table,
 }
@@ -436,6 +443,13 @@ impl BuildPlan {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Parse public_operations_rls from features (issue #279; default: false).
+        let public_operations_rls = profile
+            .features
+            .get("public_operations_rls")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -454,6 +468,7 @@ impl BuildPlan {
             deployment_topology,
             namespace_layout,
             expr_ir,
+            public_operations_rls,
             features: profile.features.clone(),
         })
     }
@@ -510,6 +525,7 @@ impl BuildPlan {
             deployment_topology: DeploymentTopology::default(),
             namespace_layout: false,
             expr_ir: false,
+            public_operations_rls: false,
             features,
         })
     }
@@ -705,6 +721,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
 
         // ── policy-driven RLS (issue #219) ─────────────────────────────
         cap("policy_rls",           Global,  Common, &["rls_from_policy"], &[]),
+
+        // ── public-operations RLS + route gating (issue #279) ──────────
+        cap("public_operations_rls", Global, Common, &["public_operations_rls"], &[]),
 
         // ── constraint-plane validations (issue #261) ───────────────────
         cap("condition_validations", Domain, Api,  &["rosetta_backend"], &[]),
