@@ -273,7 +273,7 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                         rex_ir::GrantEffect::Forbid => "forbid".to_string(),
                     },
                     when: entry.when.clone(),
-                    expr_json: None,
+                    expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
                     obligations: entry.obligations.clone(),
                 });
             }
@@ -301,7 +301,7 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                             rex_ir::GrantEffect::Forbid => "forbid".to_string(),
                         },
                         when: entry.when.clone(),
-                        expr_json: None,
+                        expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
                         obligations: entry.obligations.clone(),
                     })
                     .collect(),

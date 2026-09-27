@@ -23,6 +23,14 @@ fn module_use_records(uses: &[ModuleUse]) -> Option<Vec<ModuleUseRecord>> {
     )
 }
 
+/// Canonical AST JSON for a DSL condition: the typed IFML `Expression`
+/// serialized once at ingest (issue #278). `None` when the node is
+/// unconditional or the payload fails to serialize — ingest never
+/// fails on an expression.
+fn expr_json(condition: Option<&Expression>) -> Option<String> {
+    condition.and_then(|expr| serde_json::to_string(expr).ok())
+}
+
 /// Ingest a parsed IFML model into the graph database.
 pub async fn ingest_ifml_model(
     db: &dyn GraphIngestor,
@@ -126,7 +134,7 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         is_landmark: view.is_landmark,
         is_modal: view.is_modal,
         conditional_expression: view.condition.as_ref().map(render_expression),
-        expr_json: None,
+        expr_json: expr_json(view.condition.as_ref()),
         domain: None,
         module_uses: module_use_records(&view.module_uses),
         roles: if view.roles.is_empty() {
@@ -176,7 +184,7 @@ async fn ingest_container_node(
         is_landmark: false,
         is_modal: false,
         conditional_expression: container.condition.as_ref().map(render_expression),
-        expr_json: None,
+        expr_json: expr_json(container.condition.as_ref()),
         domain: None,
         module_uses: module_use_records(&container.module_uses),
         roles: None,
@@ -307,7 +315,7 @@ async fn ingest_view_component(
         api_operation,
         spec,
         conditional_expression: comp.condition.as_ref().map(render_expression),
-        expr_json: None,
+        expr_json: expr_json(comp.condition.as_ref()),
         domain: None,
     };
 
@@ -329,7 +337,7 @@ async fn ingest_view_component(
             .ingest_data_binding(&DataBindingNode {
                 name: binding_name.clone(),
                 conditional_expression: node.conditional_expression.clone(),
-                expr_json: None,
+                expr_json: node.expr_json.clone(),
                 expression_language: "ifml".to_string(),
                 domain: None,
             })
@@ -411,7 +419,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
             Some(event.params.clone())
         },
         conditional_expression: event.condition.as_ref().map(render_expression),
-        expr_json: None,
+        expr_json: expr_json(event.condition.as_ref()),
         requires: event.requires.clone(),
         domain: None,
     };

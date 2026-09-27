@@ -746,6 +746,7 @@ dependencies = [
  "pathdiff",
  "proc-macro2",
  "rex-driver",
+ "rex-expr",
  "rex-ifml",
  "rex-ir",
  "rust_decimal",
