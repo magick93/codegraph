@@ -958,6 +958,7 @@ async fn run_routing_generators(
         deployment_topology: topology,
         namespace_layout: false,
         expr_ir: false,
+        public_operations_rls: false,
         features: toml::Table::new(),
     };
 
@@ -1316,6 +1317,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         deployment_topology: codegraph::profile::DeploymentTopology::Workers,
         namespace_layout: false,
         expr_ir: false,
+        public_operations_rls: false,
         features: toml::Table::new(),
     };
 
@@ -1924,6 +1926,7 @@ async fn run_routing_generators_with_parts(
         deployment_topology: topology,
         namespace_layout: false,
         expr_ir: false,
+        public_operations_rls: false,
         features: toml::Table::new(),
     };
 

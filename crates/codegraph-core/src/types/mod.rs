@@ -1,5 +1,5 @@
-mod api;
 mod annotation;
+mod api;
 mod atproto;
 mod authorization;
 mod codelist;
@@ -24,11 +24,11 @@ mod schema;
 mod security;
 mod stats;
 
+pub use annotation::{Annotation, AnnotationArg};
 pub use api::{
     ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
     PermissionNode, PipelineNode,
 };
-pub use annotation::{Annotation, AnnotationArg};
 // Naming-collision resolution (issue #267): the AT-Protocol repo namespace
 // node is renamed `AtprotoNamespaceNode` (grafeo label `AtprotoNamespace`,
 // trait methods `ingest_atproto_namespace`/`get_atproto_namespaces`) so the

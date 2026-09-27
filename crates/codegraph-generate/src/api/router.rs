@@ -32,7 +32,9 @@ pub fn route_auth_is_public(
     let Some(public_ops) = config_public_operations else {
         return false;
     };
-    effective_operations.iter().all(|op| public_ops.contains(op))
+    effective_operations
+        .iter()
+        .all(|op| public_ops.contains(op))
 }
 
 #[derive(Debug, Clone, Serialize)]

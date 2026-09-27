@@ -95,7 +95,7 @@ pub fn scan_mox_incompleteness(mox_files: &[PathBuf]) -> Vec<IncompleteFinding> 
                         && feature
                             .bodies
                             .get("expr")
-                            .map_or(true, |expr| expr.trim().is_empty())
+                            .is_none_or(|expr| expr.trim().is_empty())
                     {
                         findings.push(IncompleteFinding::draft(&file));
                     }

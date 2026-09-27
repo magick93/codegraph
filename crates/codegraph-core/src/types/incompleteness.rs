@@ -94,8 +94,8 @@ mod tests {
 
     #[test]
     fn serde_tags_are_snake_case_kinds() {
-        let json = serde_json::to_value(Incompleteness::unresolved_reference("missing.json"))
-            .unwrap();
+        let json =
+            serde_json::to_value(Incompleteness::unresolved_reference("missing.json")).unwrap();
         assert_eq!(json["reason"]["kind"], "unresolved_reference");
         assert_eq!(json["reason"]["target"], "missing.json");
     }

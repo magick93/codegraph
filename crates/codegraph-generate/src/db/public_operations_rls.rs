@@ -144,8 +144,10 @@ impl GlobalGenerator for PublicOperationsRlsGenerator {
             project,
         )?;
         Ok(vec![GeneratedFile {
-            path: crate::db::migrations_root(&self.output_dir)
-                .join(format!("{:06}_public_operations_rls.sql", PUBLIC_OPERATIONS_RLS_MIGRATION_SEQ)),
+            path: crate::db::migrations_root(&self.output_dir).join(format!(
+                "{:06}_public_operations_rls.sql",
+                PUBLIC_OPERATIONS_RLS_MIGRATION_SEQ
+            )),
             content,
         }])
     }
@@ -214,19 +216,16 @@ mod tests {
 
     #[test]
     fn operations_map_onto_postgres_actions() {
-        assert_eq!(
-            action_for_operation("list"),
-            Some(("SELECT", true, false))
-        );
+        assert_eq!(action_for_operation("list"), Some(("SELECT", true, false)));
         assert_eq!(
             action_for_operation("create"),
             Some(("INSERT", false, true))
         );
+        assert_eq!(action_for_operation("update"), Some(("UPDATE", true, true)));
         assert_eq!(
-            action_for_operation("update"),
-            Some(("UPDATE", true, true))
+            action_for_operation("delete"),
+            Some(("DELETE", true, false))
         );
-        assert_eq!(action_for_operation("delete"), Some(("DELETE", true, false)));
         assert_eq!(action_for_operation("search"), None);
     }
 }

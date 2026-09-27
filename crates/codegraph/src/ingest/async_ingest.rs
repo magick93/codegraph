@@ -374,9 +374,9 @@ async fn ingest_schema_node(
             "private" => Some(codegraph_core::types::Access::Private),
             _ => None,
         });
-    let annotations = custom_annotations
-        .get("annotations")
-        .and_then(|v| serde_json::from_value::<Vec<codegraph_core::types::Annotation>>(v.clone()).ok());
+    let annotations = custom_annotations.get("annotations").and_then(|v| {
+        serde_json::from_value::<Vec<codegraph_core::types::Annotation>>(v.clone()).ok()
+    });
 
     let node = SchemaNode {
         // Issue #268: $namespace / $id-derived namespace (None keeps the

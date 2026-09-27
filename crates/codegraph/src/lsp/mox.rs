@@ -168,17 +168,13 @@ pub fn build_mox_state(
             // exists but the alias matches no schema title, the alias is
             // the unresolved reference (the wire_alias_refs order).
             if !file_exists {
-                state
-                    .incompleteness
-                    .push(codegraph_core::types::Incompleteness::unresolved_reference(
-                        &decl.path,
-                    ));
+                state.incompleteness.push(
+                    codegraph_core::types::Incompleteness::unresolved_reference(&decl.path),
+                );
             } else if resolved_title.is_none() {
-                state
-                    .incompleteness
-                    .push(codegraph_core::types::Incompleteness::unresolved_reference(
-                        &alias,
-                    ));
+                state.incompleteness.push(
+                    codegraph_core::types::Incompleteness::unresolved_reference(&alias),
+                );
             }
             state.import_aliases.push(ImportAliasInfo {
                 resolved_title,

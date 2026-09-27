@@ -2,9 +2,12 @@
 /// Persisted graphs and exported artifacts carry it; a reader refusing a
 /// NEWER version than its own constant keeps old binaries honest, and a
 /// writer bumping it invalidates persisted-graph caches deterministically.
-/// Bumped to 2 by issue #279 (new `Schema.access`/`Schema.annotations`
-/// properties).
-pub const GRAPH_FORMAT_VERSION: u32 = 2;
+///
+/// NOT bumped for issue #279 (`Schema.access`/`Schema.annotations`): the
+/// properties are nullable, old persisted graphs read them as NULL
+/// (→ `None`), and inserts of the new properties are tolerated on
+/// pre-existing node types — verified against the grafeo engine.
+pub const GRAPH_FORMAT_VERSION: u32 = 1;
 
 /// Returns GQL DDL statements for node types and edge types.
 /// These match the `codegraph-core` shared types (derived from `db/schema.hx`).

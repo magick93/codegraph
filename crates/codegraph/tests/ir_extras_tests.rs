@@ -146,7 +146,12 @@ fn route_auth_is_public_only_when_fully_public_and_flagged() {
     let ops = vec!["list".to_string(), "read".to_string()];
 
     assert!(
-        !route_auth_is_public(false, Some(Access::Public), Some(&["list".into(), "read".into()]), &ops),
+        !route_auth_is_public(
+            false,
+            Some(Access::Public),
+            Some(&["list".into(), "read".into()]),
+            &ops
+        ),
         "flag OFF keeps auth layers (byte-identity)"
     );
     assert!(
@@ -154,7 +159,12 @@ fn route_auth_is_public_only_when_fully_public_and_flagged() {
         "no access flag = unchanged behavior"
     );
     assert!(
-        !route_auth_is_public(true, Some(Access::Private), Some(&["list".into(), "read".into()]), &ops),
+        !route_auth_is_public(
+            true,
+            Some(Access::Private),
+            Some(&["list".into(), "read".into()]),
+            &ops
+        ),
         "Private stays authed"
     );
     assert!(
@@ -202,16 +212,19 @@ scope = "common:notice"
     codegraph_config::config::parse_domain_config(&path).expect("parse domains.toml")
 }
 
-async fn generate_public_rls(
-    flag: bool,
-) -> Vec<codegraph::generate::traits::GeneratedFile> {
+async fn generate_public_rls(flag: bool) -> Vec<codegraph::generate::traits::GeneratedFile> {
     use codegraph::generate::traits::GlobalGenerator;
     let engine = MockEngine::new();
-    engine.ingest_schema(&public_schema()).await.expect("ingest");
+    engine
+        .ingest_schema(&public_schema())
+        .await
+        .expect("ingest");
     let config = domain_config_with_public_operations();
     let tera = codegraph::generate::template_engine::create_tera(Path::new("")).unwrap();
-    let mut project = codegraph::generate::ProjectConfig::default();
-    project.public_operations_rls = flag;
+    let project = codegraph::generate::ProjectConfig {
+        public_operations_rls: flag,
+        ..codegraph::generate::ProjectConfig::default()
+    };
     let gen = codegraph::generate::db::public_operations_rls::PublicOperationsRlsGenerator::new(
         Path::new("/tmp/public-rls-test"),
     );
@@ -281,13 +294,10 @@ async fn unresolved_import_reports_hole_reason() {
     .expect("wiring");
     assert_eq!(stats.unresolved_aliases, 1);
     assert!(
-        stats
-            .incompleteness
-            .iter()
-            .any(|i| matches!(
-                &i.reason,
-                IncompletenessReason::UnresolvedReference { target } if target == "Widget"
-            )),
+        stats.incompleteness.iter().any(|i| matches!(
+            &i.reason,
+            IncompletenessReason::UnresolvedReference { target } if target == "Widget"
+        )),
         "stats must carry the structured UnresolvedReference reason: {:?}",
         stats.incompleteness
     );
@@ -295,8 +305,8 @@ async fn unresolved_import_reports_hole_reason() {
 
 #[tokio::test]
 async fn mox_lsp_uses_incompleteness_vocabulary() {
-    use codegraph::lsp::mox::{build_mox_state, import_missing_diagnostic};
     use auto_lsp::lsp_types::DiagnosticSeverity;
+    use codegraph::lsp::mox::{build_mox_state, import_missing_diagnostic};
 
     let dir = tempfile::tempdir().expect("tempdir");
     let model = dir.path().join("model.mox");
@@ -306,7 +316,11 @@ async fn mox_lsp_uses_incompleteness_vocabulary() {
     )
     .expect("write model");
 
-    let state = build_mox_state(&[model.clone()], &std::collections::HashSet::new(), "Type");
+    let state = build_mox_state(
+        std::slice::from_ref(&model),
+        &std::collections::HashSet::new(),
+        "Type",
+    );
     assert!(
         state.incompleteness.iter().any(|i| matches!(
             &i.reason,
@@ -357,10 +371,9 @@ fn doctor_reports_incompleteness_reasons() {
         "doctor must report the unresolved import target: {findings:?}"
     );
     assert!(
-        findings.iter().any(|f| matches!(
-            &f.incompleteness.reason,
-            IncompletenessReason::Draft
-        )),
+        findings
+            .iter()
+            .any(|f| matches!(&f.incompleteness.reason, IncompletenessReason::Draft)),
         "a derived feature with no expr body is a Draft: {findings:?}"
     );
     let line = codegraph::doctor_extras::report_line(&findings[0]);
