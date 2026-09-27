@@ -103,7 +103,15 @@
 	function startAddChild(domain: string, pathSegment: string) {
 		goto(`/${domain}/${pathSegment}/new?parent_id=${item.id}`);
 	}
-
+{% if ux_actions %}
+	// Per-item child action menu partition (issue #299), mirrored into the
+	// component so the child section rows can iterate it at runtime.
+	const ux_actions = {
+		child_menu: [
+{% for a in ux_actions.child_menu %}			{ action: '{{ a.action }}', label: '{{ a.label }}' }{% if not loop.last %},{% endif %}
+{% endfor %}		]
+	};
+{% endif %}
 	function editChild(domain: string, pathSegment: string, childId: string) {
 		goto(`/${domain}/${pathSegment}/${childId}/edit`);
 	}
