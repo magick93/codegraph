@@ -21,4 +21,5 @@ serde_json.workspace = true
 
 [dev-dependencies]
 codegraph-core = { path = "../codegraph-core", features = ["test-fixtures"] }
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
