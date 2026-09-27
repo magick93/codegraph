@@ -85,6 +85,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "familyName".to_string(),
@@ -115,6 +116,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -1138,5 +1140,6 @@ fn make_test_property(name: &str, rust_type: &str) -> PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }

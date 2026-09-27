@@ -71,6 +71,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "family_name".into(),
@@ -101,6 +102,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "email".into(),
@@ -131,6 +133,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "status".into(),
@@ -161,6 +164,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
             ],
         )

@@ -162,6 +162,7 @@ mod tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 

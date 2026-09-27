@@ -4,12 +4,15 @@
 //! the byte-identity contract for the first TypeExpr consumer.
 
 use codegraph_core::mock::MockEngine;
-use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use codegraph_type_contracts::TypeExpr;
 
-fn prop(kind: RefClassificationKind, rust_field_type: &str, ref_target: Option<&str>) -> PropertyNode {
+fn prop(
+    kind: RefClassificationKind,
+    rust_field_type: &str,
+    ref_target: Option<&str>,
+) -> PropertyNode {
     PropertyNode {
         name: "salary".to_string(),
         prop_type: String::new(),
@@ -70,12 +73,10 @@ fn r#ref(target: &str, kind: RefClassificationKind) -> TypeExpr {
 
 fn assert_parity(legacy: &PropertyNode, expr_fed: &PropertyNode, entity: &str) {
     let db = MockEngine::builder().build();
-    let via_string = codegraph_generate::grpc::proto_type::proto_type_from_field(
-        legacy, &db, entity,
-    );
-    let via_expr = codegraph_generate::grpc::proto_type::proto_type_from_field(
-        expr_fed, &db, entity,
-    );
+    let via_string =
+        codegraph_generate::grpc::proto_type::proto_type_from_field(legacy, &db, entity);
+    let via_expr =
+        codegraph_generate::grpc::proto_type::proto_type_from_field(expr_fed, &db, entity);
     assert_eq!(
         via_string.proto_type, via_expr.proto_type,
         "proto_type divergence for entity {entity}"
@@ -105,7 +106,10 @@ fn grpc_message_from_type_expr_matches_string_path() {
     let mut expr_fed = named("count");
     expr_fed.rust_field_type = String::new();
     expr_fed.type_expr = Some(primitive("int64"));
-    assert_eq!(proto_type_from_field(&expr_fed, &db, "Candidate").proto_type, "int64");
+    assert_eq!(
+        proto_type_from_field(&expr_fed, &db, "Candidate").proto_type,
+        "int64"
+    );
 }
 
 #[test]
@@ -142,7 +146,11 @@ fn parity_across_ingest_expressible_shapes() {
     assert_parity(&legacy, &expr_fed, "Candidate");
 
     // Entity reference.
-    let legacy = prop(RefClassificationKind::EntityReference, "WorkerType", Some("WorkerType"));
+    let legacy = prop(
+        RefClassificationKind::EntityReference,
+        "WorkerType",
+        Some("WorkerType"),
+    );
     let expr_fed = with_expr(
         legacy.clone(),
         r#ref("WorkerType", RefClassificationKind::EntityReference),

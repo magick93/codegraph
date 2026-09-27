@@ -100,7 +100,10 @@ fn absent_type_expr_serializes_as_before() {
     }"#;
     let prop: PropertyNode = serde_json::from_str(legacy).unwrap();
     assert_eq!(prop.type_expr, None);
-    assert_eq!(prop.effective_kind(), Some(RefClassificationKind::CodelistReference));
+    assert_eq!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference)
+    );
 
     // A node with type_expr: None round-trips through JSON preserving None.
     let prop = base_property();

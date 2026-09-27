@@ -96,6 +96,7 @@ fn worker_properties_with_person_ref() -> Vec<PropertyNode> {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }]
 }
 
@@ -240,6 +241,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                 ui_override_form: None,
                 ui_override_list_cell: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .with_properties(
@@ -274,6 +276,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "full_time_equivalent_ratio".into(),
@@ -304,6 +307,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "position".into(),
@@ -334,6 +338,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
             ],
         )

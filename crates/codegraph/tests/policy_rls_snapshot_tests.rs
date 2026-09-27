@@ -48,6 +48,7 @@ fn property(name: &str, pg_type: &str) -> codegraph_core::types::PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
