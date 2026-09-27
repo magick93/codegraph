@@ -48,6 +48,8 @@ fn mock_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let props = vec![PropertyNode {
@@ -79,6 +81,7 @@ fn mock_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let engine = codegraph_core::mock::MockEngine::builder()

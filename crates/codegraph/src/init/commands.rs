@@ -732,6 +732,15 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         hard_failures += hard;
         soft_warnings += soft;
         model_warnings += soft;
+        // Structured incompleteness reporting (issue #279): advisory WARN
+        // lines in the shared vocabulary — hard failures stay above.
+        let findings = crate::doctor_extras::scan_mox_incompleteness(&args.mox_files);
+        for finding in &findings {
+            println!("{}", crate::doctor_extras::report_line(finding));
+        }
+        let incomplete = findings.len();
+        soft_warnings += incomplete;
+        model_warnings += incomplete;
     } else if rosetta_mode {
         let (hard, soft) = check_rosetta_files(&args.rosetta_files, domain_config.as_ref().ok());
         hard_failures += hard;
@@ -745,6 +754,16 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             "     hint: consider migrating: codegraph migrate --schemas {} --output <dir>",
             schemas_dir.unwrap().display()
         );
+    }
+
+    if let Ok(config) = domain_config.as_ref() {
+        let checks =
+            crate::doctor_dependencies::check_domain_dependencies(config, args.config.parent());
+        if !checks.is_empty() {
+            let (hard, soft) = crate::doctor_dependencies::print_dependency_checks(&checks);
+            hard_failures += hard;
+            soft_warnings += soft;
+        }
     }
 
     let mut manifest_candidates = vec![PathBuf::from("codegraph-ops.toml")];

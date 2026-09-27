@@ -38,6 +38,8 @@ pub fn mock_engine_with_candidate() -> MockEngine {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         })
         .with_properties(
             "CandidateType",
@@ -71,6 +73,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "family_name".into(),
@@ -101,6 +104,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "email".into(),
@@ -131,6 +135,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "status".into(),
@@ -161,6 +166,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
             ],
         )
@@ -177,6 +183,7 @@ pub fn domain_config() -> DomainConfig {
             schema_dir: "schemas/recruiting".into(),
             postgres_schema: "recruiting".into(),
             depends_on: vec!["common".into()],
+            dependencies: Vec::new(),
             entities: vec!["CandidateType".into()],
             entity_config: HashMap::new(),
             auto_discover: None,

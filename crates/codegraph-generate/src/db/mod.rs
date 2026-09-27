@@ -11,6 +11,7 @@ pub mod label_setup;
 pub mod platform_grants;
 pub mod platform_schema;
 pub mod policy_rls;
+pub mod public_operations_rls;
 pub mod report_view;
 pub mod seed;
 pub mod service_tables;

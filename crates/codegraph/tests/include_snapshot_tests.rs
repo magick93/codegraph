@@ -35,6 +35,8 @@ fn worker_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -63,6 +65,8 @@ fn person_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -96,6 +100,7 @@ fn worker_properties_with_person_ref() -> Vec<PropertyNode> {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }]
 }
 
@@ -185,6 +190,8 @@ fn dot_notation_schema_for(title: &str, table: &str, rust_type_name: &str) -> Sc
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -240,6 +247,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                 ui_override_form: None,
                 ui_override_list_cell: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .with_properties(
@@ -274,6 +282,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "full_time_equivalent_ratio".into(),
@@ -304,6 +313,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "position".into(),
@@ -334,6 +344,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
             ],
         )

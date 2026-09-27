@@ -108,7 +108,7 @@ use codegraph_core::types::{
     RegulatoryKind, RegulatoryNode, RegulatoryOwner, RuleKind, RuleNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
-use codegraph_type_contracts::{PgType, RefClassificationKind};
+use codegraph_type_contracts::{PgType, RefClassificationKind, TypeExpr};
 
 use crate::error::{Error, Result};
 use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
@@ -1787,6 +1787,8 @@ fn data_schema_node(
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+        access: None,
+        annotations: None,
     }
 }
 
@@ -1829,6 +1831,8 @@ fn enum_schema_node(
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+        access: None,
+        annotations: None,
     }
 }
 
@@ -1973,6 +1977,10 @@ fn attribute_property(
         rust_field_name = strip_code_suffix(&rust_field_name);
     }
 
+    // Express the frozen classification structurally (issue #277); the
+    // legacy strings on the node stay populated either way.
+    let type_expr = TypeExpr::from_frozen(&kind, ref_target.as_deref(), &rust_type);
+
     Some(PropertyNode {
         name: attribute.name.clone(),
         prop_type,
@@ -2002,5 +2010,6 @@ fn attribute_property(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr,
     })
 }

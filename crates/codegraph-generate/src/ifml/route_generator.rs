@@ -140,8 +140,9 @@ impl GlobalGenerator for IfmlRouteGenerator {
                 vc,
                 self.mappings.as_ref(),
                 &modal_targets,
+                project,
             )
-            .await;
+            .await?;
 
             if let Ok(content) = render_template(tera, &page_template, &ctx) {
                 files.push(GeneratedFile {
@@ -323,6 +324,10 @@ pub struct PageSvelteContext {
     /// derived const (query-param resolution — SvelteKit views have no
     /// dynamic segments here, so route params are always empty).
     view_params: Vec<String>,
+    /// View-level guard lowered from the persisted expression AST
+    /// (issue #278). `None` — and therefore no rendered guard — unless the
+    /// `expr_ir` feature flag is ON and the condition lowers cleanly.
+    guard_expr: Option<String>,
 }
 
 /// Markup gate for a view's interactive controls (form submit/cancel buttons
@@ -996,6 +1001,28 @@ pub struct PageLoadComponentContext {
     fetch_form: bool,
 }
 
+/// The lowered TypeScript guard for a view's `condition:`, or `None`.
+///
+/// Gated on the `expr_ir` feature flag: OFF (default) always yields `None`
+/// so generated output stays byte-identical. ON, the guard is lowered from
+/// the persisted expression AST (`expr_json`); a condition outside the
+/// closed subset is a hard error naming the view (rexlang philosophy —
+/// no silent passthrough).
+pub(crate) fn page_guard_expr(
+    vc: &IfmlViewContainer,
+    project: &ProjectConfig,
+) -> crate::error::Result<Option<String>> {
+    if !project.expr_ir {
+        return Ok(None);
+    }
+    let Some(expr_json) = vc.conditional_expr_json.as_deref() else {
+        return Ok(None);
+    };
+    super::expr_ts::lower_ifml_json(expr_json, &vc.name)
+        .map(Some)
+        .map_err(|e| crate::error::Error::Config(e.to_string()))
+}
+
 async fn build_page_context(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -1003,7 +1030,8 @@ async fn build_page_context(
     vc: &IfmlViewContainer,
     mappings: Option<&IfmlComponentMappings>,
     modal_targets: &HashSet<String>,
-) -> PageSvelteContext {
+    project: &ProjectConfig,
+) -> crate::error::Result<PageSvelteContext> {
     let id_param = id_param_from(&vc.params);
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
     let container = container_context(vc, mappings);
@@ -1216,7 +1244,7 @@ async fn build_page_context(
         .iter()
         .any(|comp| comp.transition_url_expr.is_some());
 
-    PageSvelteContext {
+    Ok(PageSvelteContext {
         api_version: api_version.to_string(),
         name: vc.name.clone(),
         label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
@@ -1244,7 +1272,8 @@ async fn build_page_context(
         control_gate,
         modal,
         container,
-    }
+        guard_expr: page_guard_expr(vc, project)?,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2393,6 +2422,7 @@ entities = ["CustomerType"]
             is_landmark: true,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -2448,6 +2478,7 @@ terminal_states = ["done"]
             is_landmark: true,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3033,6 +3064,7 @@ testids = { root = "ui-button" }
             is_landmark: true,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: vec![
@@ -3116,6 +3148,7 @@ testids = { root = "ui-button" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: vec!["admin".to_string(), "manager".to_string()],
             requires: Vec::new(),
             params: Vec::new(),
@@ -3170,6 +3203,7 @@ testids = { root = "ui-button" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3209,6 +3243,7 @@ testids = { root = "ui-button" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles,
             requires,
             params: Vec::new(),
@@ -3284,6 +3319,7 @@ testids = { root = "ui-button" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3468,7 +3504,9 @@ testids = { root = "ui-button" }
             vc,
             mappings,
             &HashSet::new(),
+            &ProjectConfig::default(),
         ))
+        .expect("page ctx")
     }
 
     #[test]
@@ -3868,6 +3906,7 @@ testids = { root = "ui-button" }
             control_gate: ControlGateContext::default(),
             modal: None,
             container: None,
+            guard_expr: None,
         }
     }
 
@@ -3953,6 +3992,7 @@ testids = { root = "data-table", row = "data-row" }
             is_landmark: true,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -3967,7 +4007,9 @@ testids = { root = "data-table", row = "data-row" }
             &vc,
             Some(&mappings),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
 
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
@@ -4021,6 +4063,7 @@ testids = { root = "data-table", row = "data-row" }
             is_landmark: true,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: vec![super::super::context::ParameterDef {
@@ -4138,6 +4181,7 @@ testids = { root = "data-table", row = "data-row" }
             is_landmark,
             is_modal,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4152,7 +4196,9 @@ testids = { root = "data-table", row = "data-row" }
             &vc(true, false, false),
             None,
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         assert_eq!(ctx.view_role, Some(SemanticRole::ModalView));
         assert_eq!(ctx.container_role, None);
 
@@ -4163,7 +4209,9 @@ testids = { root = "data-table", row = "data-row" }
             &vc(false, true, false),
             None,
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         assert_eq!(ctx.view_role, Some(SemanticRole::Shell));
 
         let ctx = futures::executor::block_on(build_page_context(
@@ -4173,7 +4221,9 @@ testids = { root = "data-table", row = "data-row" }
             &vc(false, false, true),
             None,
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         assert_eq!(ctx.view_role, None);
         assert_eq!(
             ctx.container_role,
@@ -4247,6 +4297,7 @@ path = "$lib/components/Collection.svelte"
             is_landmark: false,
             is_modal,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4281,7 +4332,9 @@ testids = { root = "ui-button" }
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains("import Button from '$lib/components/Button.svelte';"),
@@ -4320,7 +4373,9 @@ testids = { root = "ui-button" }
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains(
@@ -4342,7 +4397,9 @@ testids = { root = "ui-button" }
             &vc,
             Some(&IfmlComponentMappings::default()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains(
@@ -4380,7 +4437,9 @@ export = "Button"
             &vc,
             Some(&mappings),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains("import Dialog from '$lib/components/Dialog.svelte';"),
@@ -4413,7 +4472,9 @@ export = "Button"
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains(
@@ -4440,7 +4501,9 @@ export = "Button"
             &vc,
             None,
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(!rendered.contains("dialog_open"), "{rendered}");
         assert!(!rendered.contains("class=\"modal\""), "{rendered}");
@@ -4497,6 +4560,7 @@ export = "Button"
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4531,7 +4595,9 @@ testids = { root = "card" }
             &vc,
             Some(&container_mappings()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains("import Card from '$lib/components/Card.svelte';"),
@@ -4560,7 +4626,9 @@ testids = { root = "card" }
             &vc,
             Some(&button_mappings()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains("<section data-testid=\"checkout-container\">"),
@@ -4582,7 +4650,9 @@ testids = { root = "card" }
             &vc,
             None,
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(!rendered.contains("<section"), "{rendered}");
         assert!(!rendered.contains("<Card"), "{rendered}");
@@ -4630,6 +4700,7 @@ testids = { root = "tabs" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4655,7 +4726,9 @@ testids = { root = "tabs" }
             &vc,
             Some(&tabs_mappings()),
             &HashSet::new(),
-        ));
+            &ProjectConfig::default(),
+        ))
+        .expect("page ctx");
         let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
         assert!(
             rendered.contains("import Tabs from '$lib/components/ui/tabs/tabs.svelte';"),
@@ -4706,6 +4779,7 @@ testids = { root = "tabs" }
             is_landmark: true,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4731,6 +4805,7 @@ testids = { root = "tabs" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4766,6 +4841,7 @@ testids = { root = "side-nav" }
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            conditional_expr_json: None,
             roles: Vec::new(),
             requires: Vec::new(),
             params: Vec::new(),
@@ -4945,6 +5021,96 @@ testids = { root = "side-nav" }
         assert!(
             rendered.contains("method: 'PUT'"),
             "edit mode (?id present) must keep the item PUT:\n{rendered}"
+        );
+    }
+
+    // ── expr_ir gated page guard (issue #278) ───────────────────────────
+
+    fn conditional_vc() -> IfmlViewContainer {
+        let expr = serde_json::json!({
+            "type": "binOp",
+            "value": {
+                "left": {"type": "fieldExpr", "value": {
+                    "object": {"type": "ident", "value": "row"},
+                    "field": "active"
+                }},
+                "op": "eq",
+                "right": {"type": "boolLit", "value": true}
+            }
+        });
+        let mut vc = plain_vc("Promo");
+        vc.conditional_expression = Some("row.active == true".to_string());
+        vc.conditional_expr_json = Some(expr.to_string());
+        vc
+    }
+
+    #[test]
+    fn page_guard_expr_only_when_expr_ir_flag_on() {
+        let vc = conditional_vc();
+        let off = ProjectConfig::default();
+        assert_eq!(
+            page_guard_expr(&vc, &off).expect("flag OFF cannot fail"),
+            None,
+            "expr_ir OFF must never lower a guard"
+        );
+        let on = ProjectConfig {
+            expr_ir: true,
+            ..ProjectConfig::default()
+        };
+        assert_eq!(
+            page_guard_expr(&vc, &on)
+                .expect("lowering must succeed")
+                .as_deref(),
+            Some("(row.active === true)"),
+            "expr_ir ON must lower the persisted AST"
+        );
+    }
+
+    #[test]
+    fn page_guard_is_none_without_expr_json_or_condition() {
+        let project = ProjectConfig {
+            expr_ir: true,
+            ..ProjectConfig::default()
+        };
+        let mut unconditioned = plain_vc("Plain");
+        unconditioned.conditional_expr_json = None;
+        assert_eq!(
+            page_guard_expr(&unconditioned, &project).expect("lowerable"),
+            None
+        );
+        let mut source_only = plain_vc("Plain");
+        source_only.conditional_expression = Some("row.active == true".to_string());
+        source_only.conditional_expr_json = None;
+        assert_eq!(
+            page_guard_expr(&source_only, &project).expect("lowerable"),
+            None,
+            "without a persisted AST there is nothing to lower"
+        );
+    }
+
+    #[test]
+    fn guard_template_renders_from_ast_gated() {
+        let tera = create_tera(Path::new(".")).expect("tera");
+        let vc = conditional_vc();
+
+        let off_ctx = page_context_for(&vc, None);
+        assert_eq!(off_ctx.guard_expr, None);
+        let off = render_template(&tera, "ifml/svelte/page.tera", &off_ctx).expect("render");
+        assert!(
+            !off.contains("view_guard"),
+            "expr_ir OFF must render no guard: {off}"
+        );
+
+        let on = ProjectConfig {
+            expr_ir: true,
+            ..ProjectConfig::default()
+        };
+        let mut on_ctx = page_context_for(&vc, None);
+        on_ctx.guard_expr = page_guard_expr(&vc, &on).expect("lowering must succeed");
+        let rendered = render_template(&tera, "ifml/svelte/page.tera", &on_ctx).expect("render");
+        assert!(
+            rendered.contains("const view_guard = $derived(Boolean((row.active === true)));"),
+            "expr_ir ON must render the lowered guard: {rendered}"
         );
     }
 }

@@ -231,7 +231,11 @@ fn scan_imports(source: &str) -> Vec<String> {
         .collect()
 }
 
-fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
+/// Convert a compiled rexlang actor model into its graph representation.
+///
+/// Public so tests (and future policy consumers) can exercise the grant
+/// mapping — including `expr_json` canonicalization — without a database.
+pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
     let mut actors = Vec::new();
     let mut capabilities = Vec::new();
     let mut grants = Vec::new();
@@ -269,6 +273,7 @@ fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                         rex_ir::GrantEffect::Forbid => "forbid".to_string(),
                     },
                     when: entry.when.clone(),
+                    expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
                     obligations: entry.obligations.clone(),
                 });
             }
@@ -296,6 +301,7 @@ fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                             rex_ir::GrantEffect::Forbid => "forbid".to_string(),
                         },
                         when: entry.when.clone(),
+                        expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
                         obligations: entry.obligations.clone(),
                     })
                     .collect(),

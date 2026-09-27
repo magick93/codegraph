@@ -31,6 +31,8 @@ fn schema_node_serde_round_trip() {
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let json = serde_json::to_string(&node).unwrap();
     let deserialized: SchemaNode = serde_json::from_str(&json).unwrap();
@@ -68,6 +70,7 @@ fn property_node_serde_round_trip() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let json = serde_json::to_string(&prop).unwrap();
     let deserialized: PropertyNode = serde_json::from_str(&json).unwrap();
@@ -100,6 +103,8 @@ fn schema_node_with_parent_schema() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     assert_eq!(node.parent_schema, Some("PersonType".into()));
 }

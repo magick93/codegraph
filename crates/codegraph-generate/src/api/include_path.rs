@@ -1189,6 +1189,8 @@ mod tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -1222,6 +1224,7 @@ mod tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 

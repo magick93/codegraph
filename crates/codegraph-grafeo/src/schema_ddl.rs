@@ -1,3 +1,14 @@
+/// Version of the graph schema/document format produced by this binary.
+/// Persisted graphs and exported artifacts carry it; a reader refusing a
+/// NEWER version than its own constant keeps old binaries honest, and a
+/// writer bumping it invalidates persisted-graph caches deterministically.
+///
+/// NOT bumped for issue #279 (`Schema.access`/`Schema.annotations`): the
+/// properties are nullable, old persisted graphs read them as NULL
+/// (→ `None`), and inserts of the new properties are tolerated on
+/// pre-existing node types — verified against the grafeo engine.
+pub const GRAPH_FORMAT_VERSION: u32 = 1;
+
 /// Returns GQL DDL statements for node types and edge types.
 /// These match the `codegraph-core` shared types (derived from `db/schema.hx`).
 pub fn ddl_statements() -> Vec<&'static str> {
@@ -70,7 +81,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             org_name STRING NOT NULL,
             tenancy_mode STRING NOT NULL
         )",
-        // SchemaNode — 23 fields from codegraph-core/src/types/schema.rs
+        // SchemaNode — 25 fields from codegraph-core/src/types/schema.rs
         "CREATE NODE TYPE IF NOT EXISTS Schema (
             schema_id STRING NOT NULL,
             title STRING NOT NULL,
@@ -94,7 +105,9 @@ fn node_type_ddl() -> Vec<&'static str> {
             has_one_of BOOLEAN NOT NULL,
             has_any_of BOOLEAN NOT NULL,
             has_definitions BOOLEAN NOT NULL,
-            custom_annotations STRING NOT NULL
+            custom_annotations STRING NOT NULL,
+            access STRING,
+            annotations STRING
         )",
         // PropertyNode — 16 fields + scalar/item bounds + _schema_title
         // denormalized. Bounds are persisted as STRING (u64/Decimal serialize

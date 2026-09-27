@@ -27,6 +27,8 @@ fn make_schema(title: &str, domain: &str, is_entity: bool) -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -60,6 +62,7 @@ fn make_property(name: &str, is_required: bool) -> PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -705,6 +708,7 @@ async fn test_view_component_spec_round_trip() {
         is_landmark: true,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: Some("sales".to_string()),
         module_uses: None,
         roles: None,
@@ -722,6 +726,7 @@ async fn test_view_component_spec_round_trip() {
         api_operation: None,
         spec: Some(r#"{"columns":[{"field":"name","sortable":true}]}"#.to_string()),
         conditional_expression: None,
+        expr_json: None,
         domain: Some("sales".to_string()),
     };
     engine.ingest_view_component(&component).await.unwrap();
@@ -755,6 +760,7 @@ async fn test_view_component_spec_absent_round_trip() {
         is_landmark: false,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: None,
         roles: None,
@@ -772,6 +778,7 @@ async fn test_view_component_spec_absent_round_trip() {
         api_operation: None,
         spec: None,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
     };
     engine.ingest_view_component(&component).await.unwrap();
@@ -804,6 +811,7 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         is_landmark: true,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: Some(vec![
             ModuleUseRecord {
@@ -831,6 +839,7 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         is_landmark: false,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: None,
         roles: None,
@@ -924,6 +933,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 capability: "approve_expense".to_string(),
                 effect: "permit".to_string(),
                 when: None,
+                expr_json: None,
                 obligations: vec![],
             },
             GrantEdge {
@@ -931,6 +941,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 capability: "view_report".to_string(),
                 effect: "permit".to_string(),
                 when: Some("admin.verified == true".to_string()),
+                expr_json: None,
                 obligations: vec!["log_access".to_string()],
             },
             GrantEdge {
@@ -938,6 +949,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 capability: "approve_expense".to_string(),
                 effect: "forbid".to_string(),
                 when: None,
+                expr_json: None,
                 obligations: vec![],
             },
         ],
@@ -957,6 +969,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                     capability: "view_report".to_string(),
                     effect: "permit".to_string(),
                     when: Some("report.draft == true".to_string()),
+                    expr_json: None,
                     obligations: vec!["log_access".to_string()],
                 }],
             }],
@@ -1068,6 +1081,7 @@ async fn test_parameter_ingest_is_idempotent() {
         is_landmark: false,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: Some("refunds".to_string()),
         module_uses: None,
         roles: None,
@@ -1197,4 +1211,49 @@ async fn test_condition_round_trip() {
 async fn test_list_conditions_empty_by_default() {
     let engine = seeded_engine().await;
     assert!(engine.list_conditions().await.unwrap().is_empty());
+}
+
+/// Issue #279: the access flag and structured annotations round-trip
+/// through the grafeo node payload, and legacy nodes without them read
+/// back as `None`.
+#[tokio::test]
+async fn test_schema_access_and_annotations_round_trip() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    engine.reinit_schema().unwrap();
+
+    let mut flagged = make_schema("NoticeType", "common", true);
+    flagged.access = Some(Access::Public);
+    flagged.annotations = Some(vec![Annotation {
+        name: "acme.doc.tag".to_string(),
+        arguments: vec![
+            AnnotationArg::Named {
+                name: "since".to_string(),
+                value: serde_json::json!("2026-01-01"),
+            },
+            AnnotationArg::Literal(serde_json::json!(2)),
+        ],
+    }]);
+    engine.ingest_schema(&flagged).await.unwrap();
+    engine
+        .ingest_schema(&make_schema("PlainType", "common", true))
+        .await
+        .unwrap();
+
+    let back = engine
+        .get_schema("NoticeType")
+        .await
+        .unwrap()
+        .expect("flagged schema present");
+    assert_eq!(back.access, Some(Access::Public));
+    let annotations = back.annotations.expect("annotations round-trip");
+    assert_eq!(annotations[0].name, "acme.doc.tag");
+    assert_eq!(annotations[0].arguments.len(), 2);
+
+    let plain = engine
+        .get_schema("PlainType")
+        .await
+        .unwrap()
+        .expect("plain schema present");
+    assert_eq!(plain.access, None);
+    assert_eq!(plain.annotations, None);
 }

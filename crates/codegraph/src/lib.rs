@@ -1,6 +1,10 @@
+pub mod artifact;
 pub mod classify;
+pub mod doctor_dependencies;
+pub mod doctor_extras;
 pub mod driver;
 pub mod error;
+pub mod expr_json;
 pub mod ifml_actor_import;
 pub mod ifml_control_inference;
 pub mod ifml_derive;

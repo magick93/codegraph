@@ -44,6 +44,8 @@ fn mock_schema(
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -78,6 +80,7 @@ fn mock_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "family_name".to_string(),
@@ -108,6 +111,7 @@ fn mock_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -337,6 +341,8 @@ async fn test_generation_ordering_excludes_inline_def_schemas() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // Also add a top-level schema for the same domain to ensure the domain
@@ -660,6 +666,7 @@ fn prop(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -877,6 +884,8 @@ async fn snapshot_repository_emitter_child_tables() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -1739,6 +1748,7 @@ fn prop_split(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -2708,6 +2718,7 @@ async fn generate_policy_driven_entity_with_soft_delete() {
                 ui_override_list_cell: None,
                 ui_override_form: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .build();
@@ -2851,6 +2862,7 @@ async fn generate_policy_driven_ddl_with_soft_delete() {
                 ui_override_list_cell: None,
                 ui_override_form: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .build();

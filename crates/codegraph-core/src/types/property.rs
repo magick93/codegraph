@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
+use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind, TypeExpr};
 
 /// If props is empty and the entity is a codelist (enum-only JSON schema with
 /// zero properties), inject synthetic PropertyNodes for the three columns that
@@ -52,6 +52,7 @@ pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bo
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     };
     props.push(make(
@@ -120,6 +121,11 @@ pub struct PropertyNode {
     /// Typed classification kind. When Some, replaces render_strategy string matching.
     #[serde(default)]
     pub classification_kind: Option<RefClassificationKind>,
+    /// Composable abstract type expression (issue #277). When Some, target
+    /// types can be lowered structurally instead of matched from strings.
+    /// Serde-defaulted for backward compat with pre-#277 payloads.
+    #[serde(default)]
+    pub type_expr: Option<TypeExpr>,
 
     // UI override fields — populated during ingestion from ui-overrides.toml
     /// UI override component for 'detail' render context (from ui-overrides.toml).
@@ -153,6 +159,23 @@ impl PropertyNode {
         }
         // Priority 3: render_strategy string (fallback for legacy ingestion)
         parse_classification_str(&self.render_strategy)
+    }
+
+    /// Returns the composable type expression, mirroring `effective_kind()`:
+    /// typed field first, then the projection-derived expression, then `None`
+    /// (generators keep working from the legacy frozen strings).
+    pub fn effective_type_expr(&self) -> Option<TypeExpr> {
+        // Priority 1: populated type expression
+        if let Some(ref expr) = self.type_expr {
+            return Some(expr.clone());
+        }
+        // Priority 2: derived from the pre-computed projection
+        if let Some(ref projection) = self.projection {
+            if let Some(expr) = TypeExpr::from_projection(projection) {
+                return Some(expr);
+            }
+        }
+        None
     }
 }
 
@@ -207,6 +230,7 @@ mod tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 

@@ -7,6 +7,7 @@ pub mod projection;
 pub mod resolved;
 pub mod rust_type;
 pub mod structured;
+pub mod type_expr;
 
 pub use column_type::ColumnType;
 pub use error::FieldResolutionError;
@@ -16,3 +17,4 @@ pub use projection::*;
 pub use resolved::{FieldClassification, RefClassificationKind, ResolvedField};
 pub use rust_type::RustType;
 pub use structured::IdentifierType;
+pub use type_expr::{TypeExpr, TypeExprError};

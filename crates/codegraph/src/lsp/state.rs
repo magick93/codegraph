@@ -3,6 +3,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+use codegraph_core::types::Incompleteness;
+
 pub static GRAFE: OnceLock<Mutex<Option<GrafeoState>>> = OnceLock::new();
 
 pub fn init_grafe(state: GrafeoState) {
@@ -77,6 +79,12 @@ pub struct MoxState {
     /// files, with the alias resolution replayed from the ingest pipeline's
     /// `wire_alias_refs` (exact title, then title + type suffix).
     pub import_aliases: Vec<ImportAliasInfo>,
+    /// Structured incompleteness findings (issue #279): import targets that
+    /// do not exist or aliases that resolve to no schema title, as
+    /// `UnresolvedReference { target }` holes. Empty for fully-resolved
+    /// workspaces.
+    #[serde(default)]
+    pub incompleteness: Vec<Incompleteness>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

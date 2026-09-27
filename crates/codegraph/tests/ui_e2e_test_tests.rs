@@ -33,6 +33,8 @@ fn schema(
     SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: format!("{domain}/json/{table}.schema.json"),
         title: title.into(),
         description: None,
@@ -87,6 +89,7 @@ fn scalar(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -123,6 +126,7 @@ fn plain_uuid(name: &str, is_required: bool) -> PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -164,6 +168,7 @@ fn entity_ref(name: &str, ref_target: &str, is_array: bool, is_required: bool) -
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 

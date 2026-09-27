@@ -71,6 +71,8 @@ fn gender_codelist_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -99,6 +101,8 @@ fn candidate_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -133,6 +137,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "familyName".to_string(),
@@ -163,6 +168,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -1733,6 +1739,8 @@ async fn router_nests_child_under_parent() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -1758,6 +1766,8 @@ async fn router_nests_child_under_parent() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -1869,6 +1879,8 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -1894,6 +1906,8 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let candidates = vec![codegraph_core::types::ParentCandidate {
@@ -1934,6 +1948,7 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let mock = MockEngine::builder()
@@ -2100,6 +2115,8 @@ async fn array_items_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -2125,6 +2142,8 @@ async fn array_items_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // ArrayItems: field_name is the array property on the parent (e.g., "rewards")
@@ -2194,6 +2213,8 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -2219,6 +2240,8 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let candidates = vec![codegraph_core::types::ParentCandidate {
@@ -2258,6 +2281,7 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let mock = MockEngine::builder()
@@ -3367,6 +3391,7 @@ fn candidate_with_fk_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "employer".to_string(),
@@ -3397,6 +3422,7 @@ fn candidate_with_fk_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -3432,6 +3458,7 @@ fn candidate_with_codelist_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "gender".to_string(),
@@ -3462,6 +3489,7 @@ fn candidate_with_codelist_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -3592,6 +3620,7 @@ async fn codelist_field_with_code_suffix_no_double_code() {
                 ui_override_list_cell: None,
                 ui_override_form: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .build();
@@ -3690,6 +3719,7 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
                 PropertyNode {
                     name: "referredByApplication".into(),
@@ -3720,6 +3750,7 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 },
             ],
         )
@@ -4276,6 +4307,8 @@ async fn workflow_action_child_entity_renders() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -4301,6 +4334,8 @@ async fn workflow_action_child_entity_renders() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -4840,6 +4875,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let end_prop = PropertyNode {
@@ -4871,6 +4907,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let title_prop = PropertyNode {
@@ -4902,6 +4939,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let composite_range = CompositeRange {
@@ -4942,6 +4980,8 @@ async fn composite_range_collapses_start_end_into_daterange() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -5039,6 +5079,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let communication_schema = SchemaNode {
@@ -5065,6 +5107,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let address_schema = SchemaNode {
@@ -5091,6 +5135,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let country_codelist_schema = SchemaNode {
@@ -5117,6 +5163,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // Person has a "name" (PrimitiveWrapper) and "communication" (ValueObject)
@@ -5150,6 +5198,7 @@ async fn recursive_child_tables_with_full_classification() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "communication".to_string(),
@@ -5180,6 +5229,7 @@ async fn recursive_child_tables_with_full_classification() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ];
 
@@ -5214,6 +5264,7 @@ async fn recursive_child_tables_with_full_classification() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "address".to_string(),
@@ -5244,6 +5295,7 @@ async fn recursive_child_tables_with_full_classification() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ];
 
@@ -5278,6 +5330,7 @@ async fn recursive_child_tables_with_full_classification() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "countryCode".to_string(),
@@ -5308,6 +5361,7 @@ async fn recursive_child_tables_with_full_classification() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ];
 
@@ -5987,6 +6041,8 @@ mod include_path_resolution_tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -6032,6 +6088,7 @@ mod include_path_resolution_tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -6190,6 +6247,8 @@ entities = ["WorkerType"]
     async fn resolve_vo_through_allof_to_entity() {
         let legal_type = SchemaNode {
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -6243,6 +6302,8 @@ entities = ["WorkerType"]
     async fn entity_model_emits_fk_for_vo_that_extends_entity() {
         let legal_type = SchemaNode {
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -6287,6 +6348,7 @@ entities = ["WorkerType"]
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 }],
             )
             .with_allof_targets(
@@ -6358,6 +6420,8 @@ operations = ["create", "read", "update", "list"]
     fn setup_vo_entity_mock() -> MockEngine {
         let legal_type = SchemaNode {
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -6402,6 +6466,7 @@ operations = ["create", "read", "update", "list"]
                     ui_override_list_cell: None,
                     ui_override_form: None,
                     ui_override_inline: None,
+                    type_expr: None,
                 }],
             )
             .with_allof_targets(
@@ -6594,6 +6659,7 @@ operations = ["create", "read", "update", "list"]
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -7303,6 +7369,7 @@ fn prop_split(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -7331,6 +7398,8 @@ fn worker_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -7359,6 +7428,8 @@ fn person_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -7392,6 +7463,7 @@ fn worker_properties_with_person_ref() -> Vec<PropertyNode> {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }]
 }
 
@@ -7879,6 +7951,8 @@ async fn dto_include_dot_notation() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let deployment_schema = SchemaNode {
@@ -7905,6 +7979,8 @@ async fn dto_include_dot_notation() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let worker_schema = worker_schema();
@@ -7938,6 +8014,7 @@ async fn dto_include_dot_notation() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let position_prop = PropertyNode {
@@ -7969,6 +8046,7 @@ async fn dto_include_dot_notation() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     // Scalar properties on DeploymentType (non-FK fields that should appear in enriched type)
@@ -8002,6 +8080,7 @@ async fn dto_include_dot_notation() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "full_time_equivalent_ratio".to_string(),
@@ -8032,6 +8111,7 @@ async fn dto_include_dot_notation() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ];
 
@@ -8141,6 +8221,8 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let deployment_schema = SchemaNode {
@@ -8167,6 +8249,8 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     use codegraph_type_contracts::RefClassificationKind;
@@ -8465,6 +8549,8 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let dep_schema = SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: "hr/json/DepEntityType.json".into(),
         title: "DepEntityType".into(),
         schema_type: "object".into(),
@@ -8491,6 +8577,8 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let worker_schema = SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: "hr/json/WorkerType.json".into(),
         title: "WorkerType".into(),
         schema_type: "object".into(),
@@ -8543,6 +8631,7 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let mock = MockEngine::builder()
@@ -8650,6 +8739,8 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // Codelist reference — rust_field_name stripped (no _code),
@@ -8685,6 +8776,7 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let mock = MockEngine::builder()
@@ -8882,6 +8974,8 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -8915,6 +9009,7 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -9119,6 +9214,8 @@ async fn person_include_hydrates_target_child_tables() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -9152,6 +9249,7 @@ async fn person_include_hydrates_target_child_tables() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -9310,6 +9408,8 @@ async fn person_include_hydrates_scoped_child_tables() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -9343,6 +9443,7 @@ async fn person_include_hydrates_scoped_child_tables() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -9552,6 +9653,8 @@ async fn detail_page_emits_extension_points() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -9585,6 +9688,7 @@ async fn detail_page_emits_extension_points() {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 

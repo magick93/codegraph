@@ -9,6 +9,14 @@ pub struct Backend {
 }
 
 impl Backend {
+    pub fn from_engine(engine: GrafeoEngine) -> Backend {
+        Backend { engine }
+    }
+
+    pub fn engine(&self) -> &GrafeoEngine {
+        &self.engine
+    }
+
     pub fn ingestor(&self) -> &dyn GraphIngestor {
         &self.engine
     }
@@ -18,7 +26,13 @@ impl Backend {
     }
 }
 
-pub async fn create_backend(_config: &BackendConfig) -> Result<Backend, GraphError> {
-    let engine = GrafeoEngine::in_memory()?;
-    Ok(Backend { engine })
+/// Create the backend the pipeline runs on. With `data_dir` set the engine
+/// persists to a single-file Grafeo database at that path (issue #275);
+/// the default stays in-memory.
+pub async fn create_backend(config: &BackendConfig) -> Result<Backend, GraphError> {
+    let engine = match &config.data_dir {
+        Some(dir) => GrafeoEngine::persistent(dir)?,
+        None => GrafeoEngine::in_memory()?,
+    };
+    Ok(Backend::from_engine(engine))
 }

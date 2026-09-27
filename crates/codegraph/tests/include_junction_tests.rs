@@ -23,6 +23,8 @@ fn schema_for(title: &str, table: &str, rust_type_name: &str) -> SchemaNode {
     SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: format!("hr/json/{title}.json"),
         title: title.into(),
         description: None,
@@ -91,6 +93,7 @@ fn prop(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 

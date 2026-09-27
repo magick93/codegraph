@@ -27,6 +27,8 @@ fn test_schema_node() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -60,6 +62,7 @@ fn test_property_node() -> PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
