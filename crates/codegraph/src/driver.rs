@@ -320,6 +320,7 @@ pub async fn run_with_graph_cache(
             deployment_topology: deployment_topology_str,
             namespace_layout: plan.namespace_layout,
             expr_ir: plan.expr_ir,
+            public_operations_rls: plan.public_operations_rls,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
             has_atproto: plan.has_atproto,
@@ -899,6 +900,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.persistence_provider = plan.persistence_provider().to_string();
         project_config.deployment_topology = plan.deployment_topology().to_string();
         project_config.expr_ir = plan.expr_ir;
+        project_config.public_operations_rls = plan.public_operations_rls;
 
         println!(
             "Using profile \"{}\" — {} global generators",

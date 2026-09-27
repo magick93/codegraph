@@ -33,6 +33,8 @@ fn schema(
     SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: format!("{domain}/json/{table}.schema.json"),
         title: title.into(),
         description: None,

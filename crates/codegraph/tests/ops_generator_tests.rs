@@ -48,6 +48,8 @@ fn mock_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let props = vec![PropertyNode {

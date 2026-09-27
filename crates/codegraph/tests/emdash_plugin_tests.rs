@@ -43,6 +43,8 @@ fn rsvp_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -187,6 +189,7 @@ fn emdash_build_plan() -> BuildPlan {
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
         namespace_layout: false,
         expr_ir: false,
+        public_operations_rls: false,
         features: Default::default(),
     }
 }

@@ -94,6 +94,8 @@ pub fn row_to_schema_node(
     reader: &RowReader,
     row: &[grafeo::Value],
 ) -> Result<SchemaNode, GraphError> {
+    let access = reader.get_opt_string(row, "s.access")?;
+    let annotations_json = reader.get_opt_string(row, "s.annotations")?;
     Ok(SchemaNode {
         schema_id: reader.get_string(row, "s.schema_id")?,
         title: reader.get_string(row, "s.title")?,
@@ -119,6 +121,11 @@ pub fn row_to_schema_node(
         has_definitions: reader.get_bool(row, "s.has_definitions")?,
         custom_annotations: serde_json::from_str(&reader.get_string(row, "s.custom_annotations")?)
             .unwrap_or_default(),
+        access: access.as_deref().map(|a| match a {
+            "public" => codegraph_core::types::Access::Public,
+            _ => codegraph_core::types::Access::Private,
+        }),
+        annotations: annotations_json.and_then(|json| serde_json::from_str(&json).ok()),
     })
 }
 

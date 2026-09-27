@@ -246,6 +246,12 @@ pub struct ProjectConfig {
     /// = byte-identical output.
     #[serde(default)]
     pub expr_ir: bool,
+    /// Public-operations consumer (issue #279): schemas carrying
+    /// `access = Public` whose entity config declares `public_operations`
+    /// emit `TO PUBLIC` RLS policies and mount routes without permission
+    /// layers. Default false = byte-identical output.
+    #[serde(default)]
+    pub public_operations_rls: bool,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -416,6 +422,7 @@ impl Default for ProjectConfig {
             deployment_topology: "monolith".to_string(),
             namespace_layout: false,
             expr_ir: false,
+            public_operations_rls: false,
             types_import_prefix: "codegraph_type_contracts".into(),
             has_atproto: false,
             has_fern: false,
@@ -1462,6 +1469,12 @@ fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGene
     // the `rls_from_policy` capability (Postgres only; sqlite is a no-op).
     global_gens.push(Box::new(
         db::policy_rls::PolicyRlsGenerator::new(output_dir).with_dialect(ctx.make_dialect()),
+    ) as Box<dyn GlobalGenerator>);
+    // Public-operations RLS + route gating (issue #279) — gated by the
+    // `public_operations_rls` capability (Postgres only; sqlite no-op).
+    global_gens.push(Box::new(
+        db::public_operations_rls::PublicOperationsRlsGenerator::new(output_dir)
+            .with_dialect(ctx.make_dialect()),
     ) as Box<dyn GlobalGenerator>);
     // atproto global generators
     global_gens.push(Box::new(atproto::scaffold_gen::LexiconScaffoldEmitter::new(

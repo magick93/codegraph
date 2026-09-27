@@ -82,6 +82,8 @@ fn customer_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: HashMap::new(),
+        access: None,
+        annotations: None,
     }
 }
 
