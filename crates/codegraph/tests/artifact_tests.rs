@@ -79,6 +79,7 @@ fn property(name: &str, required: bool) -> PropertyNode {
         classification: None,
         projection: None,
         classification_kind: None,
+        type_expr: None,
         ui_override_detail: None,
         ui_override_list_cell: None,
         ui_override_form: None,
