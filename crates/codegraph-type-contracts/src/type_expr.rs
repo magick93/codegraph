@@ -243,15 +243,15 @@ impl TypeExpr {
             Some(
                 RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck,
             ) => Ok(PgType::Text),
-            Some(RefClassificationKind::PrimitiveWrapper) => {
-                primitive_def(target).map(|d| d.pg.clone()).or_else(|_| {
-                    Err(unsupported(
+            Some(RefClassificationKind::PrimitiveWrapper) => primitive_def(target)
+                .map_err(|_| {
+                    unsupported(
                         "pg",
                         self,
                         "wrapper references have no scalar column without the resolved primitive",
-                    ))
+                    )
                 })
-            }
+                .map(|d| d.pg.clone()),
             Some(other) => Err(unsupported(
                 "pg",
                 self,
