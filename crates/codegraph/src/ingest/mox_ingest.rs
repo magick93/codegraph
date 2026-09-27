@@ -48,7 +48,7 @@ use codegraph_core::types::{
     PropertyNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
-use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind};
+use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind, TypeExpr};
 use rex_driver::{compile_files_with_imports, SchemaImports};
 use rex_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
@@ -1335,6 +1335,10 @@ fn feature_property(
         _ => "string".to_string(),
     };
 
+    // Express the frozen classification structurally (issue #277); the
+    // legacy strings on the node stay populated either way.
+    let type_expr = TypeExpr::from_frozen(&kind, ref_target.as_deref(), &rust_type);
+
     Some(PropertyNode {
         name: feature.name.clone(),
         prop_type,
@@ -1364,7 +1368,7 @@ fn feature_property(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
-        type_expr: None,
+        type_expr,
     })
 }
 

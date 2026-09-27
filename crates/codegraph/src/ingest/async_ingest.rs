@@ -10,7 +10,7 @@ use codegraph_core::types::{
     SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
-use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind};
+use codegraph_type_contracts::{DddFieldProjection, RefClassificationKind, TypeExpr};
 use heck::ToUpperCamelCase;
 
 use crate::error::{Error, Result};
@@ -726,6 +726,12 @@ async fn ingest_properties_from_schema(
                 ui_override_inline: None,
                 type_expr: None,
             };
+
+            // Express the frozen classification structurally (issue #277);
+            // legacy strings above stay populated either way.
+            prop.type_expr = prop.effective_kind().and_then(|kind| {
+                TypeExpr::from_frozen(&kind, prop.ref_target.as_deref(), &prop.rust_field_type)
+            });
 
             // Sanitize rust_field_name for codelist properties: strip the _code
             // suffix so that entity model, DTO, and repository generators all see
