@@ -10,6 +10,8 @@
 //!   (`kit` module, added in the L3 step; the committed case file lives at
 //!   `tests/fixtures/artifact_kit/graph_document_v1.md`).
 
+pub mod kit;
+
 use std::path::Path;
 
 pub use codegraph_grafeo::artifact::{

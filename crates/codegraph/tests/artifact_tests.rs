@@ -9,7 +9,6 @@
 //! - with `--graph-cache`, a second consecutive `run` with unchanged inputs
 //!   reopens the persisted graph instead of re-ingesting.
 
-use std::fs;
 use codegraph::artifact::{self, ArtifactError, FORMAT_VERSION};
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -17,6 +16,7 @@ use codegraph_core::types::{
 };
 use codegraph_grafeo::GrafeoEngine;
 use serde_json::Value as Json;
+use std::fs;
 
 // ── fixture graph ────────────────────────────────────────────────────────
 
