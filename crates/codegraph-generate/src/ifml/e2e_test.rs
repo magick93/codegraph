@@ -384,17 +384,6 @@ impl IfmlE2eTestGenerator {
         id_param: Option<&str>,
     ) -> Option<WorkflowTest> {
         let entity = c.entity.as_deref()?;
-        // Collections are skipped outright (issue #303, exposed by the
-        // gate fixture's unmapped fallback list): their per-row badge reads
-        // the entity's status column, which API creates leave unset (the
-        // create DTO carries no status field — the workflow plane owns it),
-        // so no seeded row can back the strict initial-state assertion.
-        // Details/forms keep their workflow spec — their badge reads the
-        // `{id}/workflow` endpoint, which materializes the instance at the
-        // initial state on first read.
-        if is_collection(c) {
-            return None;
-        }
         let workflow = workflow_for_entity(config, entity)?;
         let api = schema_backed_api(db, config, entity, api_version).await?;
         if !api.has_create {
@@ -441,10 +430,12 @@ impl IfmlE2eTestGenerator {
     }
 
     /// Fixture payload for a workflow spec: `fixture_entries` plus valid
-    /// values for constrained columns — the workflow status field seeds the
-    /// initial state, and other codelist-backed fields use their first
-    /// enum value (the create would otherwise violate the column's FK to
-    /// the codelist table).
+    /// values for constrained columns — other codelist-backed fields use
+    /// their first enum value (the create would otherwise violate the
+    /// column's FK to the codelist table). The workflow status field pins
+    /// its payload value to the initial state too; the key is inert on the
+    /// wire (the create DTO excludes workflow-managed fields) — the state
+    /// itself materializes via the DDL column DEFAULT (issue #311).
     async fn valid_fixture_entries(
         &self,
         db: &dyn GraphQuerier,
@@ -566,16 +557,14 @@ impl IfmlE2eTestGenerator {
             let entries = ux_fixture_entries(db, c).await;
             let route = view_route(&vc.name);
             let columns = ux_column_checks(c, plan, &entries);
-            // The workflow status column is never a chip exercise (issue
-            // #303): API creates leave it unset (the create DTO carries no
-            // status field), so a seeded override cannot reach the page.
-            let status_field = c
+            // The workflow status column pins a chip to the initial state
+            // (issue #311): create materializes it via the DDL default on
+            // the status column, so the chip is exercisable on created rows.
+            let workflow = c
                 .entity
                 .as_deref()
-                .and_then(|entity| workflow_for_entity(config, entity))
-                .map(|wf| wf.status_field);
-            let status_field = status_field.as_deref();
-            let chip_checks = ux_chip_checks(db, c, plan, &entries, status_field).await;
+                .and_then(|entity| workflow_for_entity(config, entity));
+            let chip_checks = ux_chip_checks(db, c, plan, &entries, workflow.as_ref()).await;
             if columns.is_empty() && chip_checks.is_empty() {
                 // Nothing the fallback markup renders differently under the
                 // ux plane — no vacuous spec.
@@ -985,12 +974,15 @@ pub struct UxViewTest {
     pub money_options: String,
 }
 
-/// One chip assertion: create a row overriding `field` to `override_literal`,
-/// then expect the row's `{comp}-chip` carrying `text` to show `variant`.
+/// One chip assertion: create a row, then expect the row's `{comp}-chip`
+/// carrying `text` to show `variant`. `override_literal` is `Some` when the
+/// row is created with `field` overridden to it; `None` for workflow status
+/// chips (issue #311): the create DTO excludes the status field, so the
+/// row's chip is pinned to the initial state the DDL default materializes.
 #[derive(Debug)]
 pub struct UxChipCheck {
     pub field: String,
-    pub override_literal: String,
+    pub override_literal: Option<String>,
     pub text: String,
     pub variant: String,
 }
@@ -1266,11 +1258,18 @@ fn render_ux_spec(test: &UxViewTest) -> String {
             "\n\ttest('ux chips render with tone variants', async ({ page, request }) => {\n",
         );
         for (index, chip) in test.chip_checks.iter().enumerate() {
-            s.push_str(&format!(
-                "\t\tawait createUxRow(request, {{ 'title': 'Ux chips {index}', {}: {} }});\n",
-                js_string(&chip.field),
-                chip.override_literal
-            ));
+            match &chip.override_literal {
+                Some(literal) => s.push_str(&format!(
+                    "\t\tawait createUxRow(request, {{ 'title': 'Ux chips {index}', {}: {} }});\n",
+                    js_string(&chip.field),
+                    literal
+                )),
+                // No override: the chip's value is what create materializes
+                // (the workflow initial state, via the DDL default).
+                None => s.push_str(&format!(
+                    "\t\tawait createUxRow(request, {{ 'title': 'Ux chips {index}' }});\n"
+                )),
+            }
         }
         s.push_str(&format!("\t\tawait page.goto('{}');\n", test.route));
         s.push_str(&format!(
@@ -1484,62 +1483,74 @@ fn ux_column_checks(
 /// Chip checks for a fallback list: per chip column, up to two seeded
 /// values with DISTINCT expected variants (exercising the ToneMap). The
 /// candidates are the backing codelist's values when there is one, else
-/// the field's fixture value. The workflow status field is skipped: API
-/// creates leave it unset (the create DTO carries no status field), so a
-/// seeded override cannot reach the rendered chip.
+/// the field's fixture value. The workflow status column is pinned to the
+/// initial state WITHOUT an override (issue #311): the create DTO carries
+/// no status field, so the DDL default materializes it and that is what
+/// the created row's chip shows.
 async fn ux_chip_checks(
     db: &dyn GraphQuerier,
     c: &IfmlComponent,
     plan: &UxPlan,
     entries: &[(String, String)],
-    workflow_status_field: Option<&str>,
+    workflow: Option<&RenderWorkflow>,
 ) -> Vec<UxChipCheck> {
     let mut out = Vec::new();
     for field in &c.fields {
         if field == "id" || field.ends_with("_id") {
             continue;
         }
-        if workflow_status_field == Some(field.as_str()) {
-            continue;
-        }
-        let Some(col) = plan.columns.get(field) else {
-            continue;
-        };
-        if col.display != Display::Chip {
-            continue;
-        }
-        let Some((_, literal)) = entries.iter().find(|(name, _)| name == field) else {
-            continue;
-        };
-        let mut candidates: Vec<String> = codelist_values(db, c.entity.as_deref(), field)
-            .await
-            .unwrap_or_default();
-        if candidates.is_empty() {
-            candidates.push(js_literal_inner(literal));
-        }
-        let mut picked = 0usize;
-        for value in candidates {
-            let variant = col.tone.lookup(&value.to_lowercase()).to_string();
-            if out
-                .iter()
-                .any(|check: &UxChipCheck| check.variant == variant)
-            {
+        if let Some(col) = plan.columns.get(field) {
+            if col.display != Display::Chip {
                 continue;
             }
-            let override_literal = if literal.starts_with('\'') {
-                format!("'{}'", js_string(&value))
-            } else {
-                value.clone()
+            if let Some(wf) = workflow.filter(|wf| wf.status_field == *field) {
+                // Created rows carry the initial state (DDL default on the
+                // status column, issue #311) — assert it without an override.
+                let variant = col
+                    .tone
+                    .lookup(&wf.initial_state.to_lowercase())
+                    .to_string();
+                out.push(UxChipCheck {
+                    field: field.clone(),
+                    override_literal: None,
+                    text: wf.initial_state.clone(),
+                    variant,
+                });
+                continue;
+            }
+            let Some((_, literal)) = entries.iter().find(|(name, _)| name == field) else {
+                continue;
             };
-            out.push(UxChipCheck {
-                field: field.clone(),
-                override_literal,
-                text: value,
-                variant,
-            });
-            picked += 1;
-            if picked == 2 || out.len() == 4 {
-                break;
+            let mut candidates: Vec<String> = codelist_values(db, c.entity.as_deref(), field)
+                .await
+                .unwrap_or_default();
+            if candidates.is_empty() {
+                candidates.push(js_literal_inner(literal));
+            }
+            let mut picked = 0usize;
+            for value in candidates {
+                let variant = col.tone.lookup(&value.to_lowercase()).to_string();
+                if out
+                    .iter()
+                    .any(|check: &UxChipCheck| check.variant == variant)
+                {
+                    continue;
+                }
+                let override_literal = if literal.starts_with('\'') {
+                    format!("'{}'", js_string(&value))
+                } else {
+                    value.clone()
+                };
+                out.push(UxChipCheck {
+                    field: field.clone(),
+                    override_literal: Some(override_literal),
+                    text: value,
+                    variant,
+                });
+                picked += 1;
+                if picked == 2 || out.len() == 4 {
+                    break;
+                }
             }
         }
     }
@@ -2455,13 +2466,13 @@ mod tests {
             chip_checks: vec![
                 UxChipCheck {
                     field: "status".to_string(),
-                    override_literal: "'draft'".to_string(),
+                    override_literal: Some("'draft'".to_string()),
                     text: "draft".to_string(),
                     variant: "secondary".to_string(),
                 },
                 UxChipCheck {
                     field: "status".to_string(),
-                    override_literal: "'approved'".to_string(),
+                    override_literal: Some("'approved'".to_string()),
                     text: "approved".to_string(),
                     variant: "default".to_string(),
                 },
@@ -2632,7 +2643,7 @@ mod tests {
     }
 
     #[test]
-    fn ux_chip_checks_skip_the_workflow_status_field() {
+    fn ux_chip_checks_pin_the_workflow_status_to_the_initial_state() {
         use codegraph_core::mock::MockEngine;
         use codegraph_core::types::{EnumValue, SchemaNode};
 
@@ -2722,20 +2733,42 @@ mod tests {
             .build();
 
         // Control: without a workflow the codelist chip is exercised with
-        // distinct expected variants.
+        // distinct expected variants and per-check overrides.
         let control = futures::executor::block_on(ux_chip_checks(&db, &c, &plan, &entries, None));
         assert!(
-            !control.is_empty(),
-            "control: the codelist chip column is exercised without a workflow"
+            control.len() >= 2 && control.iter().all(|check| check.override_literal.is_some()),
+            "control: the codelist chip column is exercised with overrides without a workflow"
         );
-        // The workflow status column reads NULL on API-created rows (the
-        // create DTO carries no status field), so a seeded override could
-        // never reach the rendered chip — it must be skipped (issue #303).
-        let skipped =
-            futures::executor::block_on(ux_chip_checks(&db, &c, &plan, &entries, Some("status")));
-        assert!(
-            skipped.is_empty(),
-            "the workflow status column must never be chip-exercised"
+        // With a workflow the status column pins ONE check to the initial
+        // state, WITHOUT an override (issue #311): the create payload cannot
+        // set the status field, and the DDL default materializes it, so the
+        // created row's chip shows the initial state and its tone variant.
+        let workflow = RenderWorkflow {
+            status_field: "status".to_string(),
+            states: vec!["draft".to_string(), "approved".to_string()],
+            terminal_states: vec!["approved".to_string()],
+            initial_state: "draft".to_string(),
+            transition_map: Default::default(),
+            generate_action_endpoints: true,
+            transitions: Vec::new(),
+            badge_html: String::new(),
+            each: false,
+        };
+        let pinned =
+            futures::executor::block_on(ux_chip_checks(&db, &c, &plan, &entries, Some(&workflow)));
+        assert_eq!(pinned.len(), 1, "one initial-state chip check: {pinned:?}");
+        let check = &pinned[0];
+        assert_eq!(check.field, "status");
+        assert_eq!(check.text, "draft");
+        assert_eq!(check.override_literal, None);
+        assert_eq!(
+            check.variant,
+            control
+                .iter()
+                .find(|chk| chk.text == "draft")
+                .map(|chk| chk.variant.as_str())
+                .unwrap_or_default(),
+            "the pinned variant is the same ToneMap lookup the override path uses"
         );
     }
 

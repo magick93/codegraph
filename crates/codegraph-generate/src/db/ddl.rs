@@ -1741,18 +1741,32 @@ fn apply_workflow_defaults(
         .map(|wf| wf.generate_action_endpoints)
         .unwrap_or(false);
 
-    // Workflow status fields from native schema columns are NOT NULL but lack a
-    // DEFAULT. Set the initial_state as the DB DEFAULT so INSERTs that don't
-    // include the status column (the API excludes it from CreateRequest) succeed.
+    // Issue #311: the workflow plane owns the status field — the create DTO
+    // excludes it, so every API INSERT omits the column and the row used to
+    // land with a NULL status (list badges/chips rendered nothing until the
+    // first transition). Emit the initial_state as the DB DEFAULT regardless
+    // of column nullability, so creates materialize the workflow at its
+    // initial state and both pipelines' list badges work on created rows
+    // (matching the details/form view, which reads the {id}/workflow
+    // endpoint). Single source: WorkflowConfig.initial_state. Explicit
+    // schema/config defaults win. Fresh generates only — pre-existing
+    // databases get no backfill; their NULL-status rows stay as they are.
     if let Some(wf) = workflow_cfg {
         for col in columns.iter_mut() {
-            if col.name == wf.status_field && !col.nullable && col.default.is_none() {
-                col.default = Some(format!("'{}'", wf.initial_state));
+            if col.name == wf.status_field && col.default.is_none() {
+                col.default = Some(pg_string_default(&wf.initial_state));
             }
         }
     }
 
     has_workflow
+}
+
+/// A single-quoted SQL string literal for a column DEFAULT, with embedded
+/// single quotes doubled. Workflow state names are identifiers in practice;
+/// the escaping keeps a hostile config from breaking out of the literal.
+fn pg_string_default(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 /// Mapping from Postgres extension name to the column type patterns that require it.
@@ -2644,5 +2658,106 @@ mod tests {
         // Unmapped types pass through unchanged.
         assert_eq!(ctx.columns[0].pg_type, "DATERANGE");
         assert_eq!(ctx.columns[1].pg_type, "TEXT[]");
+    }
+
+    fn workflow_config_toml() -> codegraph_config::config::DomainConfig {
+        codegraph_config::config::parse_domain_config_str(
+            r#"
+[domains.refunds]
+label = "Refunds"
+schema_dir = "refunds"
+postgres_schema = "refunds"
+entities = ["RefundRequestType"]
+
+[domains.refunds.entity_config.RefundRequestType.workflow]
+status_field = "status"
+states = ["draft", "submitted", "approved", "rejected"]
+initial_state = "draft"
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+"#,
+        )
+        .expect("workflow domains.toml must parse")
+    }
+
+    fn status_col(nullable: bool, default: Option<&str>) -> ColumnDef {
+        ColumnDef {
+            name: "status".to_string(),
+            pg_type: "TEXT".to_string(),
+            nullable,
+            default: default.map(str::to_string),
+            is_primary_key: false,
+            is_array: false,
+        }
+    }
+
+    /// Issue #311: the workflow status column gains a DEFAULT of the
+    /// configured initial_state, so API creates (which omit the column —
+    /// the create DTO excludes workflow-managed fields) materialize the
+    /// initial state. Applies to NULLABLE columns too: the gate fixture's
+    /// status column is a non-required codelist ref, and the pre-fix
+    /// `!col.nullable` guard silently skipped it.
+    #[test]
+    fn workflow_status_column_defaults_to_initial_state() {
+        let config = workflow_config_toml();
+        let mut columns = vec![status_col(true, None), col("TEXT")];
+        let has_workflow =
+            apply_workflow_defaults(&config, "refunds", "RefundRequestType", &mut columns);
+        assert!(has_workflow);
+        assert_eq!(
+            columns[0].default.as_deref(),
+            Some("'draft'"),
+            "nullable status column must carry the initial_state default"
+        );
+        // Nullability is untouched — the default alone fixes creates.
+        assert!(columns[0].nullable);
+    }
+
+    #[test]
+    fn workflow_status_default_survives_when_column_not_null() {
+        let config = workflow_config_toml();
+        let mut columns = vec![status_col(false, None)];
+        apply_workflow_defaults(&config, "refunds", "RefundRequestType", &mut columns);
+        assert_eq!(columns[0].default.as_deref(), Some("'draft'"));
+    }
+
+    #[test]
+    fn workflow_default_preserves_explicit_column_default() {
+        let config = workflow_config_toml();
+        let mut columns = vec![status_col(true, Some("'new'"))];
+        apply_workflow_defaults(&config, "refunds", "RefundRequestType", &mut columns);
+        assert_eq!(
+            columns[0].default.as_deref(),
+            Some("'new'"),
+            "an explicit schema/config default must win over the workflow default"
+        );
+    }
+
+    #[test]
+    fn workflow_default_escapes_quoted_initial_state() {
+        let mut quoted = workflow_config_toml();
+        if let Some(ec) = quoted
+            .domains
+            .get_mut("refunds")
+            .and_then(|d| d.entity_config.get_mut("RefundRequestType"))
+        {
+            if let Some(wf) = ec.workflow.as_mut() {
+                wf.initial_state = "o'clock".to_string();
+            }
+        }
+        let mut columns = vec![status_col(true, None)];
+        apply_workflow_defaults(&quoted, "refunds", "RefundRequestType", &mut columns);
+        assert_eq!(columns[0].default.as_deref(), Some("'o''clock'"));
+    }
+
+    #[test]
+    fn non_status_columns_and_workflowless_entities_are_untouched() {
+        let config = workflow_config_toml();
+        let mut columns = vec![col("TEXT"), status_col(true, None)];
+        apply_workflow_defaults(&config, "refunds", "OtherEntityType", &mut columns);
+        assert!(
+            columns.iter().all(|c| c.default.is_none()),
+            "no workflow config on the entity → no defaults injected"
+        );
     }
 }

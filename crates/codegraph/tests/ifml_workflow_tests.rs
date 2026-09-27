@@ -181,3 +181,38 @@ testids = { root = "detail-card" }
         "the mapped component's transition round trip is un-skipped:\n{spec}"
     );
 }
+
+/// Collections get workflow specs too (issue #311 un-skip): the per-row
+/// badge reads the status column, which the DDL DEFAULT now materializes at
+/// the initial state on API creates — the strict assertion is backed by the
+/// API it drives. List specs stay badge-only (no transition buttons on
+/// collections) and assert through `.first()` (strict-mode-safe `{#each}`).
+#[tokio::test]
+async fn workflow_spec_emitted_for_collections() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate(dir.path(), WORKFLOW_APP_IFML, None).await;
+
+    let spec = std::fs::read_to_string(
+        svelte
+            .join("tests/ifml")
+            .join("customer-list.workflow.spec.ts"),
+    )
+    .expect("workflow spec must be emitted for the collection view");
+
+    assert!(
+        spec.contains("test('shows the initial workflow state for grid'"),
+        "the collection's initial-state assertion is un-skipped:\n{spec}"
+    );
+    assert!(
+        spec.contains("toContainText('draft')"),
+        "the created row materializes the configured initial state:\n{spec}"
+    );
+    assert!(
+        spec.contains("getByTestId('grid-state').first()"),
+        "list badges render per row, so the assertion is .first()-scoped:\n{spec}"
+    );
+    assert!(
+        !spec.contains("transition"),
+        "collections stay badge-only — no transition round trip:\n{spec}"
+    );
+}
