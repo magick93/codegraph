@@ -75,7 +75,7 @@ pub use policy::{
     RowSecurityPolicy, SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility,
     TenantIsolationPolicy, TenantPropagation, TenantStrategy,
 };
-pub use property::{inject_codelist_properties, PropertyNode};
+pub use property::{inject_codelist_properties, ref_target_candidate_title, PropertyNode};
 pub use regulatory::{
     RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RegulatoryRefRecord,
 };

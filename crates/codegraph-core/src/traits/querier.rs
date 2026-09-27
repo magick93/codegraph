@@ -43,6 +43,27 @@ pub trait GraphQuerier: Send + Sync {
         self.get_properties(schema_title).await
     }
 
+    /// Resolve the schemas that structurally hang off `schema_title` as
+    /// children. Two structural routes resolve, unioned, deduped by title
+    /// (route 1 wins), and sorted by title:
+    ///
+    /// 1. **Inline `#/$defs` children** — schemas whose `parent_schema`
+    ///    back-pointer names this schema (JSON-Schema inline definition
+    ///    shape).
+    /// 2. **Derived `refers` children** (issue #312) — entities targeted by
+    ///    this schema's array-of-entity-ref properties (the
+    ///    `Schema -[:HasProperty]-> Property {is_array: true}
+    ///    -[:ItemsOf]-> Schema` chain). The array-of-entity-ref lowering
+    ///    puts the FK on the CHILD table (`{parent}_id`), so the target is
+    ///    the child. Only entity targets resolve here: value-object
+    ///    (`contains`) arrays materialize as composition child tables and
+    ///    codelist arrays as codelist FKs — different planes — and
+    ///    self-references are excluded.
+    ///
+    /// This is the GRAPH route only. `domains.toml` `entity_config`
+    /// (`role = "child"` + `parent`/`parent_ref`) stays authoritative:
+    /// consumers merge config-declared children first and skip graph
+    /// children already covered by them.
     async fn get_child_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError>;
 
     async fn get_classification_data(&self) -> Result<Vec<SchemaClassificationData>, GraphError>;

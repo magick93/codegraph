@@ -173,6 +173,24 @@ fn parse_classification_str(s: &str) -> Option<RefClassificationKind> {
     }
 }
 
+/// Normalize a raw [`PropertyNode::ref_target`] into a candidate schema
+/// title for title-based resolution (derived child schemas, issue #312).
+///
+/// Ref targets are stored verbatim from their producing source: the mox
+/// bridge stores the bare target class name (== schema title), while the
+/// JSON path stores the raw `$ref` string (`"common/json/Foo.json#"`,
+/// `"#/definitions/Bar"`, a URL…). Both spellings must reduce to the same
+/// candidate so graph engines (which resolve through `ItemsOf`/edges) and
+/// edge-less stores (which match on `ref_target`) agree.
+pub fn ref_target_candidate_title(ref_target: &str) -> &str {
+    let mut candidate = ref_target;
+    if let Some(pos) = candidate.rfind('/') {
+        candidate = &candidate[pos + 1..];
+    }
+    let candidate = candidate.strip_suffix('#').unwrap_or(candidate);
+    candidate.strip_suffix(".json").unwrap_or(candidate)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +345,27 @@ mod tests {
         assert_eq!(
             prop.effective_kind(),
             Some(RefClassificationKind::StructuredWrapper)
+        );
+    }
+
+    #[test]
+    fn ref_target_candidate_reduces_to_schema_title() {
+        // mox bridge: bare class name == title
+        assert_eq!(ref_target_candidate_title("TodoItemType"), "TodoItemType");
+        // JSON path: file-relative $ref with fragment marker
+        assert_eq!(
+            ref_target_candidate_title("common/json/TodoItemType.json#"),
+            "TodoItemType"
+        );
+        // JSON path: inline definition fragment
+        assert_eq!(
+            ref_target_candidate_title("#/definitions/PersonName"),
+            "PersonName"
+        );
+        // URL form
+        assert_eq!(
+            ref_target_candidate_title("https://example.org/schemas/TodoItemType.json#"),
+            "TodoItemType"
         );
     }
 }

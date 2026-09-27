@@ -154,6 +154,89 @@ async fn get_child_schemas_returns_inline_defs() {
 }
 
 #[tokio::test]
+async fn get_child_schemas_derives_refers_children() {
+    let engine = MockEngine::new();
+    engine.ingest_schema(&test_schema()).await.unwrap(); // PersonType (entity)
+
+    let mut item = test_schema();
+    item.schema_id = "common/json/ItemType.json".into();
+    item.title = "ItemType".into();
+    engine.ingest_schema(&item).await.unwrap();
+
+    // Non-entity target (codelist) must NOT resolve as a child.
+    let mut codelist = test_schema();
+    codelist.schema_id = "common/json/PriorityCode.json".into();
+    codelist.title = "PriorityCode".into();
+    codelist.is_entity = false;
+    codelist.is_codelist = true;
+    engine.ingest_schema(&codelist).await.unwrap();
+
+    // mox refers lowering: array-of-entity-ref property on the parent whose
+    // ref_target names the child.
+    let mut refers = test_property();
+    refers.name = "items".into();
+    refers.is_array = true;
+    refers.ref_target = Some("ItemType".into());
+    engine
+        .ingest_property("PersonType", "test/PersonType", &refers)
+        .await
+        .unwrap();
+
+    // File-path ref targets reduce to the same candidate title.
+    let mut path_refers = test_property();
+    path_refers.name = "extras".into();
+    path_refers.is_array = true;
+    path_refers.ref_target = Some("common/json/ItemType.json#".into());
+    engine
+        .ingest_property("PersonType", "test/PersonType", &path_refers)
+        .await
+        .unwrap();
+
+    // Codelist array: ItemsOf-lowered too, but never a child.
+    let mut codelist_prop = test_property();
+    codelist_prop.name = "priorities".into();
+    codelist_prop.is_array = true;
+    codelist_prop.ref_target = Some("PriorityCode".into());
+    engine
+        .ingest_property("PersonType", "test/PersonType", &codelist_prop)
+        .await
+        .unwrap();
+
+    let children = engine.get_child_schemas("PersonType").await.unwrap();
+    let titles: Vec<_> = children.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, vec!["ItemType"]);
+
+    // Reverse direction: the referenced entity has no children of its own.
+    let reverse = engine.get_child_schemas("ItemType").await.unwrap();
+    assert!(reverse.is_empty());
+}
+
+#[tokio::test]
+async fn get_child_schemas_dedupes_inline_and_derived() {
+    let engine = MockEngine::new();
+    engine.ingest_schema(&test_schema()).await.unwrap(); // PersonType
+
+    let mut child = test_schema();
+    child.schema_id = "common/json/ItemType.json".into();
+    child.title = "ItemType".into();
+    child.parent_schema = Some("PersonType".into()); // inline route
+    engine.ingest_schema(&child).await.unwrap();
+
+    let mut refers = test_property();
+    refers.name = "items".into();
+    refers.is_array = true;
+    refers.ref_target = Some("ItemType".into()); // derived route, same child
+    engine
+        .ingest_property("PersonType", "test/PersonType", &refers)
+        .await
+        .unwrap();
+
+    let children = engine.get_child_schemas("PersonType").await.unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].title, "ItemType");
+}
+
+#[tokio::test]
 async fn ingest_condition_round_trips_through_the_mock() {
     let engine = MockEngine::new();
     engine.ingest_schema(&test_schema()).await.unwrap();

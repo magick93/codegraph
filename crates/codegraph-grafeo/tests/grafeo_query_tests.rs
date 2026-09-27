@@ -150,6 +150,131 @@ async fn test_get_child_schemas() {
     assert_eq!(children[0].title, "PersonNameType");
 }
 
+#[tokio::test]
+async fn test_get_child_schemas_derives_refers_children() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    engine
+        .ingest_schema(&make_schema("TodoListType", "common", true))
+        .await
+        .unwrap();
+    engine
+        .ingest_schema(&make_schema("TodoItemType", "common", true))
+        .await
+        .unwrap();
+    engine
+        .ingest_schema(&make_schema("PriorityCode", "common", false))
+        .await
+        .unwrap();
+
+    // mox refers lowering: array-of-entity-ref property + ItemsOf edge to
+    // the target entity (edge id convention `{prop}::{schema_title}`).
+    let mut prop = make_property("items", false);
+    prop.is_array = true;
+    prop.ref_target = Some("TodoItemType".to_string());
+    engine
+        .ingest_property("TodoListType", "common/TodoListType", &prop)
+        .await
+        .unwrap();
+    engine
+        .ingest_edge(
+            "items::TodoListType",
+            "common/TodoItemType",
+            EdgeType::ItemsOf,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // Codelist arrays are ItemsOf-lowered too, but never children.
+    let mut codelist_prop = make_property("priorities", false);
+    codelist_prop.is_array = true;
+    codelist_prop.ref_target = Some("PriorityCode".to_string());
+    engine
+        .ingest_property("TodoListType", "common/TodoListType", &codelist_prop)
+        .await
+        .unwrap();
+    engine
+        .ingest_edge(
+            "priorities::TodoListType",
+            "common/PriorityCode",
+            EdgeType::ItemsOf,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let children = engine.get_child_schemas("TodoListType").await.unwrap();
+    let titles: Vec<_> = children.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, vec!["TodoItemType"]);
+
+    // Reverse direction: the referenced entity has no children of its own.
+    let reverse = engine.get_child_schemas("TodoItemType").await.unwrap();
+    assert!(reverse.is_empty());
+}
+
+#[tokio::test]
+async fn test_get_child_schemas_excludes_self_reference() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    engine
+        .ingest_schema(&make_schema("NodeType", "common", true))
+        .await
+        .unwrap();
+
+    let mut prop = make_property("children", false);
+    prop.is_array = true;
+    prop.ref_target = Some("NodeType".to_string());
+    engine
+        .ingest_property("NodeType", "common/NodeType", &prop)
+        .await
+        .unwrap();
+    engine
+        .ingest_edge(
+            "children::NodeType",
+            "common/NodeType",
+            EdgeType::ItemsOf,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let children = engine.get_child_schemas("NodeType").await.unwrap();
+    assert!(children.is_empty());
+}
+
+#[tokio::test]
+async fn test_get_child_schemas_dedupes_inline_and_derived() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    engine
+        .ingest_schema(&make_schema("PersonType", "common", true))
+        .await
+        .unwrap();
+
+    let mut child = make_schema("ItemType", "common", true);
+    child.parent_schema = Some("PersonType".to_string());
+    engine.ingest_schema(&child).await.unwrap();
+
+    let mut prop = make_property("items", false);
+    prop.is_array = true;
+    prop.ref_target = Some("ItemType".to_string());
+    engine
+        .ingest_property("PersonType", "common/PersonType", &prop)
+        .await
+        .unwrap();
+    engine
+        .ingest_edge(
+            "items::PersonType",
+            "common/ItemType",
+            EdgeType::ItemsOf,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let children = engine.get_child_schemas("PersonType").await.unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].title, "ItemType");
+}
+
 // --- Task 6: Property, codelist, composite queries ---
 
 #[tokio::test]

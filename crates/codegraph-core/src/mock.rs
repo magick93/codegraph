@@ -1173,12 +1173,42 @@ impl GraphQuerier for MockEngine {
     }
 
     async fn get_child_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
+        let properties = {
+            let props = self.properties.lock().unwrap();
+            props.get(schema_title).cloned().unwrap_or_default()
+        };
         let schemas = self.schemas.lock().unwrap();
-        Ok(schemas
+        // Route 1: inline #/$defs children (parent_schema back-pointer).
+        let mut children: Vec<SchemaNode> = schemas
             .values()
             .filter(|s| s.parent_schema.as_deref() == Some(schema_title))
             .cloned()
-            .collect())
+            .collect();
+        // Route 2 (issue #312): derived refers children — array-of-entity-ref
+        // properties whose ref target is an entity schema (the FK-on-child
+        // lowering). Mirrors the Grafeo ItemsOf route: entity targets only,
+        // self-references excluded.
+        let mut seen: std::collections::HashSet<String> =
+            children.iter().map(|c| c.title.clone()).collect();
+        for prop in &properties {
+            if !prop.is_array {
+                continue;
+            }
+            let Some(ref target) = prop.ref_target else {
+                continue;
+            };
+            let candidate = ref_target_candidate_title(target);
+            if candidate == schema_title {
+                continue;
+            }
+            if let Some(child) = schemas.get(candidate) {
+                if child.is_entity && seen.insert(child.title.clone()) {
+                    children.push(child.clone());
+                }
+            }
+        }
+        children.sort_by(|a, b| a.title.cmp(&b.title));
+        Ok(children)
     }
 
     async fn get_classification_data(&self) -> Result<Vec<SchemaClassificationData>, GraphError> {

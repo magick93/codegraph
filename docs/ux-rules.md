@@ -418,11 +418,17 @@ exists, and what it would take.
   run against a just-created row. The fix belongs to the workflow/repo
   emitters (return the created row's status), not the ux plane. Surfaced
   by the #303 gate.
-- **`get_child_schemas` graph route returns nothing for mox
-  `refers`-array structures**: child-section collection falls back to the
-  config route (`role = "child"` + `parent`), which works; the graph
-  route's emptiness for mox-derived graphs limits auto-discovery.
-  Surfaced by #299.
+- **`get_child_schemas` graph route now derives mox `refers`-array
+  children** (fixed in #312; surfaced by #299): the graph route resolves
+  inline `#/$defs` children (`parent_schema`) PLUS derived refers children
+  (`Schema -[:HasProperty]-> Property {is_array} -[:ItemsOf]-> entity` —
+  the FK-on-child lowering). `entity_config` (`role = "child"` + `parent`)
+  stays authoritative: consumers merge config children first and dedupe.
+  Scalar `refers` remains config-only (intent ambiguous — the same FK
+  shape serves plain references). Note: a `refers` without an explicit
+  multiplicity defaults to MANY upstream (rexlang `lower_relation`), so
+  single-valued back-references like the init starter's `refers
+  TodoListType todoList` lower as arrays and DO derive children.
 - **Diagnostics are pinned at the `report()` boundary**: in-process
   stderr capture is impractical, so the exact strings are pinned in
   `ux_rules_tests.rs` and the `warning: ux-rules: ` prefix framing is
