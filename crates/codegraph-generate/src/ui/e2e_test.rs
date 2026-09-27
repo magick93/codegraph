@@ -1728,7 +1728,13 @@ async fn build_ux_e2e_spec(
         // Audit stamps are excluded — they may be server-stamped, so their
         // cell values are not fixture-controlled.
         if !is_audit_stamp(name) {
-            if let Some(fixture) = create_field.and_then(stable_fixture_literal) {
+            // Range fixtures are interval literals ('[a,b)'), array and
+            // structured fixtures are JSONB — none is a valid Intl
+            // formatter input, and the rendered cell transforms them.
+            if let Some(fixture) = create_field
+                .filter(|f| !f.is_range && !f.is_array && f.structured_sub_fields.is_empty())
+                .and_then(stable_fixture_literal)
+            {
                 let kind = match col.dimension {
                     codegraph_config::ux::Dimension::Money => Some("money"),
                     codegraph_config::ux::Dimension::Quantity => Some("quantity"),
@@ -1765,11 +1771,12 @@ async fn build_ux_e2e_spec(
             && !is_audit_stamp(name)
         {
             // StructuredWrapper fixture literals are JSONB object literals
-            // ('{ value: ... }') for the create body — the rendered cell is
-            // the wrapper's stringified form, so a toHaveText(object) is
-            // invalid Playwright. The assertion simply doesn't apply.
+            // ('{ value: ... }', or '[{ ... }]' when array-typed) for the
+            // create body — the rendered cell is the wrapper's stringified
+            // form, so a toHaveText(object) is invalid Playwright. The
+            // assertion simply doesn't apply.
             if let Some(literal) = create_field
-                .filter(|f| f.structured_sub_fields.is_empty())
+                .filter(|f| !f.is_array && f.structured_sub_fields.is_empty())
                 .and_then(stable_fixture_literal)
             {
                 first_column = Some(UxE2eFirstColumnCtx {

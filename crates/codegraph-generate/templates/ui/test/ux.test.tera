@@ -241,7 +241,11 @@ test.describe('{{ entity_name }} UX list rendering', () => {
       .toBe({{ ux_spec.copy_check.expected_expr }});
 {% endif %}
 {% if ux_spec.copy_check.truncate_tooltip %}
-    // Hover (or focus) surfaces the FULL value through the Tooltip.
+    // Hover (or focus) surfaces the FULL value through the Tooltip. Radix
+    // closes the tooltip on trigger click, and a hover() over an element
+    // the pointer already occupies fires no new pointerenter — move the
+    // pointer away first so the reopen is deterministic.
+    await page.mouse.move(0, 0);
     await copyTrigger.hover();
     const tooltip = page
       .locator('[data-slot="tooltip-content"]')
@@ -358,20 +362,24 @@ test.describe('{{ entity_name }} UX list rendering', () => {
       expect(body).toContain('{{ ux_spec.sort.valid_fields_text }}');
     }
 {% if ux_spec.sort.flip %}
-    // Valid ?sort=&order= flips first-row ordering on two distinct rows.
+    // Valid ?sort=&order= flips the alt fixture row's position. The row
+    // is located by its own fixture literal, not by first-row cell text —
+    // null placeholder cells (—) sort differently asc/desc and make a
+    // first-row text comparison vacuous.
     {
       await createUxFixture(orgContext);
       await createUxFixture(orgContext, { '{{ ux_spec.sort.flip.key }}': {{ ux_spec.sort.flip.alt_literal }} });
+      const altRow = page
+        .locator('tbody tr')
+        .filter({ hasText: {{ ux_spec.sort.flip.alt_literal }} })
+        .first();
       await page.goto(`${LIST_PATH}?sort={{ ux_spec.sort.flip.key }}&order=asc`);
       await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-      const cell = page.locator('tbody tr:first-child td:nth-child({{ ux_spec.sort.flip.td_index }})');
-      const asc = await cell.textContent();
+      const ascPos = await altRow.evaluate((el) => Array.from(el.parentElement?.children ?? []).indexOf(el));
       await page.goto(`${LIST_PATH}?sort={{ ux_spec.sort.flip.key }}&order=desc`);
       await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-      const desc = await cell.textContent();
-      expect(asc).not.toBeNull();
-      expect(desc).not.toBeNull();
-      expect(desc).not.toBe(asc);
+      const descPos = await altRow.evaluate((el) => Array.from(el.parentElement?.children ?? []).indexOf(el));
+      expect(ascPos).not.toBe(descPos);
     }
 {% endif %}
   });
