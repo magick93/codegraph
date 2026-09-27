@@ -850,6 +850,7 @@ dependencies = [
  "sqlglot-rust",
  "tempfile",
  "tera",
+ "thiserror",
  "tokio",
  "toml",
  "tracing",

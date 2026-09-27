@@ -248,6 +248,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
             dto_key_casing: plan.dto_key_casing.clone(),
             deployment_topology: deployment_topology_str,
             namespace_layout: plan.namespace_layout,
+            expr_ir: plan.expr_ir,
             types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
             has_atproto: plan.has_atproto,
@@ -803,6 +804,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.database_target = plan.database_target().to_string();
         project_config.persistence_provider = plan.persistence_provider().to_string();
         project_config.deployment_topology = plan.deployment_topology().to_string();
+        project_config.expr_ir = plan.expr_ir;
 
         println!(
             "Using profile \"{}\" — {} global generators",

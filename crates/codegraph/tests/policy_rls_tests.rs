@@ -79,6 +79,7 @@ fn fixture_policy() -> ActorPolicyModel {
         capability: capability.into(),
         effect: effect.into(),
         when: when.map(|w| w.into()),
+        expr_json: None,
         obligations: vec![],
     };
     let grants = vec![

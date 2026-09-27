@@ -126,6 +126,7 @@ async fn ingest_view_container(db: &dyn GraphIngestor, view: &ViewDeclaration) -
         is_landmark: view.is_landmark,
         is_modal: view.is_modal,
         conditional_expression: view.condition.as_ref().map(render_expression),
+        expr_json: None,
         domain: None,
         module_uses: module_use_records(&view.module_uses),
         roles: if view.roles.is_empty() {
@@ -175,6 +176,7 @@ async fn ingest_container_node(
         is_landmark: false,
         is_modal: false,
         conditional_expression: container.condition.as_ref().map(render_expression),
+        expr_json: None,
         domain: None,
         module_uses: module_use_records(&container.module_uses),
         roles: None,
@@ -305,6 +307,7 @@ async fn ingest_view_component(
         api_operation,
         spec,
         conditional_expression: comp.condition.as_ref().map(render_expression),
+        expr_json: None,
         domain: None,
     };
 
@@ -326,6 +329,7 @@ async fn ingest_view_component(
             .ingest_data_binding(&DataBindingNode {
                 name: binding_name.clone(),
                 conditional_expression: node.conditional_expression.clone(),
+                expr_json: None,
                 expression_language: "ifml".to_string(),
                 domain: None,
             })
@@ -407,6 +411,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
             Some(event.params.clone())
         },
         conditional_expression: event.condition.as_ref().map(render_expression),
+        expr_json: None,
         requires: event.requires.clone(),
         domain: None,
     };
@@ -475,6 +480,7 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
                             event_type: outcome_str.clone(),
                             params: None,
                             conditional_expression: None,
+                            expr_json: None,
                             requires: Vec::new(),
                             domain: None,
                         })

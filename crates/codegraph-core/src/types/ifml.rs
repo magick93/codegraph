@@ -22,6 +22,12 @@ pub struct ViewContainerNode {
     pub is_landmark: bool,
     pub is_modal: bool,
     pub conditional_expression: Option<String>,
+    /// Canonical AST JSON of `conditional_expression` (issue #278): the
+    /// typed IFML `Expression` serialized at ingest. `None` when the node
+    /// is unconditional or the payload could not be serialized. Purely
+    /// additive: legacy payloads without this field deserialize to `None`.
+    #[serde(default)]
+    pub expr_json: Option<String>,
     pub domain: Option<String>,
     pub module_uses: Option<Vec<ModuleUseRecord>>,
     pub roles: Option<Vec<String>>,
@@ -48,6 +54,12 @@ pub struct ViewComponentNode {
     pub api_operation: Option<String>,
     pub spec: Option<String>,
     pub conditional_expression: Option<String>,
+    /// Canonical AST JSON of `conditional_expression` (issue #278): the
+    /// typed IFML `Expression` serialized at ingest. `None` when the node
+    /// is unconditional or the payload could not be serialized. Purely
+    /// additive: legacy payloads without this field deserialize to `None`.
+    #[serde(default)]
+    pub expr_json: Option<String>,
     pub domain: Option<String>,
 }
 
@@ -57,6 +69,12 @@ pub struct EventNode {
     pub event_type: String,
     pub params: Option<Vec<String>>,
     pub conditional_expression: Option<String>,
+    /// Canonical AST JSON of `conditional_expression` (issue #278): the
+    /// typed IFML `Expression` serialized at ingest. `None` when the node
+    /// is unconditional or the payload could not be serialized. Purely
+    /// additive: legacy payloads without this field deserialize to `None`.
+    #[serde(default)]
+    pub expr_json: Option<String>,
     /// Capability requirements on the event (`requires: [Cap]` in the DSL);
     /// persisted as a JSON prop on the Event node.
     #[serde(default)]
@@ -82,6 +100,12 @@ pub struct ParameterDefinitionNode {
 pub struct DataBindingNode {
     pub name: String,
     pub conditional_expression: Option<String>,
+    /// Canonical AST JSON of `conditional_expression` (issue #278): the
+    /// typed IFML `Expression` serialized at ingest. `None` when the node
+    /// is unconditional or the payload could not be serialized. Purely
+    /// additive: legacy payloads without this field deserialize to `None`.
+    #[serde(default)]
+    pub expr_json: Option<String>,
     pub expression_language: String,
     pub domain: Option<String>,
 }

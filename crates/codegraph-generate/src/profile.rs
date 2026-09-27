@@ -271,6 +271,10 @@ pub struct BuildPlan {
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
     /// domain layout. Default OFF = byte-identical flat output.
     pub namespace_layout: bool,
+    /// Canonical expression IR (issue #278): when true, IFML guards render
+    /// from the persisted `expr_json` AST via the TypeScript lowering
+    /// instead of raw source interpolation. Default OFF = byte-identical.
+    pub expr_ir: bool,
     /// Feature flags from the profile (e.g., has_admin_cli, auth, etc.).
     pub features: toml::Table,
 }
@@ -425,6 +429,13 @@ impl BuildPlan {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Parse expr_ir from features (issue #278; default: false).
+        let expr_ir = profile
+            .features
+            .get("expr_ir")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         Ok(BuildPlan {
             entity_generators: entity_gens,
             domain_generators: domain_gens,
@@ -442,6 +453,7 @@ impl BuildPlan {
             dto_key_casing,
             deployment_topology,
             namespace_layout,
+            expr_ir,
             features: profile.features.clone(),
         })
     }
@@ -497,6 +509,7 @@ impl BuildPlan {
             dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
             namespace_layout: false,
+            expr_ir: false,
             features,
         })
     }
