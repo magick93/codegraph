@@ -23,8 +23,13 @@ use super::{ChildTableInfo, EntityTree, TreeColumn, TreeIncludeResolved, UxSortC
 pub struct RepositoryImplEmitter;
 
 /// Map the ux sort plan's fields onto the entity's direct columns
-/// (issue #306). Flag off ⇒ empty; a plan field with no matching direct
-/// column (r#-stripped entity-model name or DTO name) is skipped.
+/// (issue #306). Flag off ⇒ no plan, empty mapping. Returns whether the
+/// plan is non-empty at all alongside the mapped columns: the trait, the
+/// query handler and the cornucopia adapter all carry the `sort` param
+/// whenever the plan is non-empty, so the SeaORM impl must too — even
+/// when no plan field maps onto a direct column (the param is then
+/// accepted and ignored, matching the cornucopia adapter's contract).
+/// Mapped columns feed the emitted match arms and stay compile-clean.
 async fn sort_columns_for_tree(
     tree: &EntityTree,
     project: &ProjectConfig,
@@ -32,9 +37,10 @@ async fn sort_columns_for_tree(
     config: &DomainConfig,
     schema_title: &str,
     domain: &str,
-) -> Result<Vec<UxSortColumn>> {
+) -> Result<(bool, Vec<UxSortColumn>)> {
     let plan =
         crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, domain).await?;
+    let has_sort_plan = !plan.is_empty();
     let sort_columns: Vec<UxSortColumn> = plan
         .fields
         .iter()
@@ -54,7 +60,7 @@ async fn sort_columns_for_tree(
             })
         })
         .collect();
-    Ok(sort_columns)
+    Ok((has_sort_plan, sort_columns))
 }
 
 impl RepositoryImplEmitter {
@@ -170,9 +176,9 @@ impl RepositoryImplEmitter {
         // direct columns; fields without a direct column (synthetic or
         // expanded slots) are dropped so the emitted match arms stay
         // compile-clean.
-        let sort_columns =
+        let (has_sort_plan, sort_columns) =
             sort_columns_for_tree(&tree, project, db, config, schema_title, domain).await?;
-        self.emit_list_fn(&tree, &sort_columns, &mut code);
+        self.emit_list_fn(&tree, has_sort_plan, &sort_columns, &mut code);
         if tree.has_fts {
             self.emit_search_fn(&tree, &mut code);
         }

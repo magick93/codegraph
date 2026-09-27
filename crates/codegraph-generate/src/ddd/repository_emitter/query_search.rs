@@ -152,6 +152,7 @@ impl RepositoryImplEmitter {
     pub(crate) fn emit_list_fn(
         &self,
         tree: &EntityTree,
+        has_sort_plan: bool,
         sort_columns: &[UxSortColumn],
         code: &mut CodeWriter,
     ) {
@@ -173,12 +174,14 @@ impl RepositoryImplEmitter {
         if tree.is_auditable {
             wln!(code, "        include_deleted: bool,");
         }
-        // Issue #306: the trait (repository.tera) and the query handler
-        // carry the sort parameter whenever the ux sort plane resolves
-        // sortable columns for the entity — the impl must match, or the
-        // generated crate diverges (trait 7 params vs impl 6) and the sort
-        // ordering emitted below has no `sort` binding.
-        if !sort_columns.is_empty() {
+        // Issue #306: the trait (repository.tera), the query handler and
+        // the cornucopia adapter carry the sort parameter whenever the ux
+        // sort plan is non-empty — the impl must match, or the generated
+        // crate diverges (trait 7 params vs impl 6). When no plan field
+        // maps onto a direct column the ordering below degrades to the
+        // `id` tiebreaker (unknown keys are ignored), mirroring the
+        // cornucopia adapter's accept-and-ignore contract.
+        if has_sort_plan {
             wln!(code, "        sort: Option<(String, bool)>,");
         }
         wln!(
@@ -335,7 +338,7 @@ impl RepositoryImplEmitter {
             if tree.is_auditable { " mut" } else { "" },
             tree.entity_module
         );
-        let sort_aware = !sort_columns.is_empty();
+        let sort_aware = has_sort_plan;
         if has_any_filters {
             if tree.is_auditable || sort_aware {
                 wln!(code, "            .filter(condition);");
