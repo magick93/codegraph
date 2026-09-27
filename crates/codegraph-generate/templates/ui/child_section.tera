@@ -71,7 +71,7 @@
 												<DropdownMenu.Item
 													class="text-destructive data-[highlighted]:text-destructive"
 													data-testid="{% endraw %}{{ section.module_name }}{% raw %}-action-delete"
- 													onclick={() => {% endraw %}{% if ux_actions.confirm_delete %}{% raw %}{% endraw %}{{ section.module_name }}{% raw %}DeleteId = child.id; }{% endraw %}{% else %}{% raw %} void deleteChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id); }{% endraw %}{% endif %}{% raw %}
+ 													onclick={() => {% endraw %}{% if ux_actions.confirm_delete %}{% raw %}{% endraw %}{{ section.module_name }}{% raw %}DeleteId = child.id}{% endraw %}{% else %}{% raw %} void deleteChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}{% endraw %}{% endif %}{% raw %}
 												>
 													{m.common_delete()}
 												</DropdownMenu.Item>
