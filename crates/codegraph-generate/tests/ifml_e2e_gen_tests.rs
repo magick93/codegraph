@@ -167,6 +167,7 @@ async fn ingest_guarded_view(
         is_landmark: label.is_some(),
         is_modal,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: None,
         roles,
@@ -202,6 +203,7 @@ async fn ingest_policy(db: &MockEngine) {
             capability: "manage_refunds".to_string(),
             effect: "permit".to_string(),
             when: None,
+            expr_json: None,
             obligations: vec![],
         }],
         policy: ActorPolicyNode {
@@ -233,6 +235,7 @@ async fn ingest_component(
         api_operation: None,
         spec: spec.map(str::to_string),
         conditional_expression: None,
+        expr_json: None,
         domain: None,
     })
     .await
@@ -253,6 +256,7 @@ async fn ingest_event(db: &MockEngine, parent: &str, name: &str, event_type: &st
         event_type: event_type.to_string(),
         params: None,
         conditional_expression: None,
+        expr_json: None,
         requires: Vec::new(),
         domain: None,
     })
@@ -758,6 +762,7 @@ async fn render_tests_assert_mapped_container_wrapper() {
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            expr_json: None,
             domain: None,
             module_uses: None,
             roles: None,
@@ -843,6 +848,7 @@ async fn form_fixtures_derive_typed_values_from_spec_fields() {
             api_operation: None,
             spec: Some(typed_spec.to_string()),
             conditional_expression: None,
+            expr_json: None,
             domain: None,
         })
         .await

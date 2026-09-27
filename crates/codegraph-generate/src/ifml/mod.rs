@@ -3,6 +3,7 @@ pub mod context;
 pub mod control_core;
 pub mod dependency_graph;
 pub mod e2e_test;
+pub mod expr_ts;
 pub mod navigation_generator;
 pub mod output_paths;
 pub mod profiles;

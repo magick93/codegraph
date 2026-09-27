@@ -955,6 +955,7 @@ async fn run_routing_generators(
         dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
         namespace_layout: false,
+        expr_ir: false,
         features: toml::Table::new(),
     };
 
@@ -963,6 +964,7 @@ async fn run_routing_generators(
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: topology.to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
 
@@ -1307,12 +1309,14 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Workers,
         namespace_layout: false,
+        expr_ir: false,
         features: toml::Table::new(),
     };
 
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
 
@@ -1905,6 +1909,7 @@ async fn run_routing_generators_with_parts(
         dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
         namespace_layout: false,
+        expr_ir: false,
         features: toml::Table::new(),
     };
 
@@ -1952,6 +1957,7 @@ async fn workers_topology_emits_per_worker_codelist_reexports() {
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2104,6 +2110,7 @@ async fn monolith_topology_keeps_root_codelist_reexport() {
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "monolith".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2185,6 +2192,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         hooks_api_crate: "hr_hooks_api".to_string(),
         hooks_api_base: "crates/hr-hooks-api".to_string(),
         ..Default::default()
@@ -2285,6 +2293,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let project2 = codegraph::generate::ProjectConfig {
         deployment_topology: "monolith".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         hooks_api_crate: "hr_hooks_api".to_string(),
         ..Default::default()
     };

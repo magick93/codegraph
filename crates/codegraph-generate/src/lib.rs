@@ -241,6 +241,11 @@ pub struct ProjectConfig {
     /// flat domain layout, byte-identical output.
     #[serde(default)]
     pub namespace_layout: bool,
+    /// Canonical expression IR (issue #278): IFML guards render from the
+    /// persisted `expr_json` AST via the TypeScript lowering. Default false
+    /// = byte-identical output.
+    #[serde(default)]
+    pub expr_ir: bool,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -410,6 +415,7 @@ impl Default for ProjectConfig {
             dto_key_casing: "snake".to_string(),
             deployment_topology: "monolith".to_string(),
             namespace_layout: false,
+            expr_ir: false,
             types_import_prefix: "codegraph_type_contracts".into(),
             has_atproto: false,
             has_fern: false,

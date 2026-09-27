@@ -1013,6 +1013,7 @@ impl GraphQuerier for GrafeoEngine {
                 spec: reader.get_opt_string(row, "comp.spec")?,
                 conditional_expression: reader
                     .get_opt_string(row, "comp.conditional_expression")?,
+                expr_json: None,
                 domain: reader.get_opt_string(row, "comp.domain")?,
             });
         }
@@ -1043,6 +1044,7 @@ impl GraphQuerier for GrafeoEngine {
                 event_type: reader.get_string(row, "evt.event_type")?,
                 params,
                 conditional_expression: reader.get_opt_string(row, "evt.conditional_expression")?,
+                expr_json: None,
                 requires,
                 domain: reader.get_opt_string(row, "evt.domain")?,
             });
@@ -1783,6 +1785,7 @@ impl GraphQuerier for GrafeoEngine {
                 capability: reader.get_string(row, "c.name")?,
                 effect: reader.get_string(row, "g.effect")?,
                 when: reader.get_opt_string(row, "g.when_expr")?,
+                expr_json: None,
                 obligations,
             });
         }
@@ -2294,6 +2297,7 @@ fn view_container_from_row(
         is_landmark: reader.get_bool(row, &col("is_landmark"))?,
         is_modal: reader.get_bool(row, &col("is_modal"))?,
         conditional_expression: reader.get_opt_string(row, &col("conditional_expression"))?,
+        expr_json: None,
         domain: reader.get_opt_string(row, &col("domain"))?,
         module_uses,
         roles,

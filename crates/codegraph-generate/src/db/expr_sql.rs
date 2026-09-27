@@ -230,7 +230,7 @@ fn date_literal(text: &str, capability: &str) -> Result<String, String> {
 ///
 /// Mirrors rex-expr's private `parse_date_text` / `rex_runtime::Date::from_str`
 /// calendar rules so both sides accept exactly the same literal text.
-fn parse_date_text(text: &str) -> Option<(i32, u32, u32)> {
+pub(crate) fn parse_date_text(text: &str) -> Option<(i32, u32, u32)> {
     let (sign, rest) = match text.strip_prefix('-') {
         Some(rest) => (-1i64, rest),
         None => (1, text),

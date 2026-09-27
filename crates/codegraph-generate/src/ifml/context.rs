@@ -41,6 +41,10 @@ pub struct IfmlViewContainer {
     /// Rendered guard expression (`if …;`) on the container; `None` when
     /// unconditional.
     pub conditional_expression: Option<String>,
+    /// Canonical AST JSON of `conditional_expression` (issue #278); `None`
+    /// when the container is unconditional or the graph predates #278.
+    #[serde(default)]
+    pub conditional_expr_json: Option<String>,
     /// Roles allowed to view this page; empty when unrestricted
     pub roles: Vec<String>,
     /// Capabilities required to view this page; empty when unrestricted

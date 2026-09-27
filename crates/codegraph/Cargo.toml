@@ -47,6 +47,7 @@ tree-sitter-svelte-next = "0.1.1"
 rex-ir = { workspace = true }
 rex-driver = { workspace = true }
 rex-ifml = { workspace = true }
+rex-expr = { workspace = true }
 # Sigil (Rune DSL) — issue #255: workspace rev-pins, codegraph-crate-only.
 # Provenance for rosetta-derived graph data rides custom_annotations under a
 # distinct `origin=rosetta` key (never the mox `source` key).

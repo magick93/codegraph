@@ -706,6 +706,7 @@ async fn test_view_component_spec_round_trip() {
         is_landmark: true,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: Some("sales".to_string()),
         module_uses: None,
         roles: None,
@@ -723,6 +724,7 @@ async fn test_view_component_spec_round_trip() {
         api_operation: None,
         spec: Some(r#"{"columns":[{"field":"name","sortable":true}]}"#.to_string()),
         conditional_expression: None,
+        expr_json: None,
         domain: Some("sales".to_string()),
     };
     engine.ingest_view_component(&component).await.unwrap();
@@ -756,6 +758,7 @@ async fn test_view_component_spec_absent_round_trip() {
         is_landmark: false,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: None,
         roles: None,
@@ -773,6 +776,7 @@ async fn test_view_component_spec_absent_round_trip() {
         api_operation: None,
         spec: None,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
     };
     engine.ingest_view_component(&component).await.unwrap();
@@ -805,6 +809,7 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         is_landmark: true,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: Some(vec![
             ModuleUseRecord {
@@ -832,6 +837,7 @@ async fn test_view_container_module_uses_and_roles_round_trip() {
         is_landmark: false,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: None,
         module_uses: None,
         roles: None,
@@ -925,6 +931,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 capability: "approve_expense".to_string(),
                 effect: "permit".to_string(),
                 when: None,
+                expr_json: None,
                 obligations: vec![],
             },
             GrantEdge {
@@ -932,6 +939,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 capability: "view_report".to_string(),
                 effect: "permit".to_string(),
                 when: Some("admin.verified == true".to_string()),
+                expr_json: None,
                 obligations: vec!["log_access".to_string()],
             },
             GrantEdge {
@@ -939,6 +947,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                 capability: "approve_expense".to_string(),
                 effect: "forbid".to_string(),
                 when: None,
+                expr_json: None,
                 obligations: vec![],
             },
         ],
@@ -958,6 +967,7 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
                     capability: "view_report".to_string(),
                     effect: "permit".to_string(),
                     when: Some("report.draft == true".to_string()),
+                    expr_json: None,
                     obligations: vec!["log_access".to_string()],
                 }],
             }],
@@ -1069,6 +1079,7 @@ async fn test_parameter_ingest_is_idempotent() {
         is_landmark: false,
         is_modal: false,
         conditional_expression: None,
+        expr_json: None,
         domain: Some("refunds".to_string()),
         module_uses: None,
         roles: None,

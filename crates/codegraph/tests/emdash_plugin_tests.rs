@@ -186,6 +186,7 @@ fn emdash_build_plan() -> BuildPlan {
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
         namespace_layout: false,
+        expr_ir: false,
         features: Default::default(),
     }
 }
