@@ -161,9 +161,28 @@ pub fn build_mox_state(
                 .alias
                 .clone()
                 .unwrap_or_else(|| file_stem_name(&decl.path));
+            let file_exists = abs_path.exists();
+            let resolved_title = resolve_alias_title(schema_titles, &alias, type_suffix);
+            // Issue #279: carry the structured incompleteness vocabulary —
+            // a missing target file is the hole's cause; when the file
+            // exists but the alias matches no schema title, the alias is
+            // the unresolved reference (the wire_alias_refs order).
+            if !file_exists {
+                state
+                    .incompleteness
+                    .push(codegraph_core::types::Incompleteness::unresolved_reference(
+                        &decl.path,
+                    ));
+            } else if resolved_title.is_none() {
+                state
+                    .incompleteness
+                    .push(codegraph_core::types::Incompleteness::unresolved_reference(
+                        &alias,
+                    ));
+            }
             state.import_aliases.push(ImportAliasInfo {
-                resolved_title: resolve_alias_title(schema_titles, &alias, type_suffix),
-                alias: alias.clone(),
+                resolved_title,
+                alias,
                 abs_path: abs_path.display().to_string(),
             });
             match std::fs::read_to_string(&abs_path) {
@@ -371,7 +390,8 @@ pub fn compute_mox_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
 
 /// Every `import schema "<path>"` target must exist relative to the
 /// document's directory (the doctor/C1 hard-error semantics, as an editor
-/// diagnostic).
+/// diagnostic). The diagnostic carries the structured incompleteness
+/// reason (issue #279) in its `data` payload, not just the message string.
 fn validate_import_paths(source: &str, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
     let Ok(doc_path) = uri.to_file_path() else {
         return;
@@ -387,22 +407,41 @@ fn validate_import_paths(source: &str, uri: &Url, diagnostics: &mut Vec<Diagnost
                 continue;
             }
             let col = (line.find(&decl.path)).unwrap_or(0) as u32;
-            diagnostics.push(Diagnostic {
-                range: Range::new(
-                    Position::new(line_idx as u32, col),
-                    Position::new(line_idx as u32, col + decl.path.len() as u32),
-                ),
-                severity: Some(DiagnosticSeverity::ERROR),
-                message: format!(
-                    "import schema '{}' not found (resolved to '{}')",
-                    decl.path,
-                    abs_path.display()
-                ),
-                source: Some("codegraph".to_string()),
-                ..Default::default()
-            });
+            let range = Range::new(
+                Position::new(line_idx as u32, col),
+                Position::new(line_idx as u32, col + decl.path.len() as u32),
+            );
+            diagnostics.push(import_missing_diagnostic(
+                &codegraph_core::types::Incompleteness::unresolved_reference(&decl.path),
+                &decl.path,
+                &abs_path,
+                range,
+            ));
             break;
         }
+    }
+}
+
+/// The ERROR diagnostic for an `import schema` target that does not exist:
+/// the message stays human-readable while `data` carries the structured
+/// `Incompleteness` reason (`{"kind": "unresolved_reference", "target":
+/// ...}`) so tooling can consume the taxonomy (issue #279).
+pub fn import_missing_diagnostic(
+    reason: &codegraph_core::types::Incompleteness,
+    decl_path: &str,
+    abs_path: &Path,
+    range: Range,
+) -> Diagnostic {
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::ERROR),
+        message: format!(
+            "import schema '{decl_path}' not found (resolved to '{}') — incomplete: {reason}",
+            abs_path.display()
+        ),
+        source: Some("codegraph".to_string()),
+        data: Some(serde_json::to_value(&reason.reason).unwrap_or_default()),
+        ..Default::default()
     }
 }
 
