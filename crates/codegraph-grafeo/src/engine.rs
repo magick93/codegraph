@@ -34,11 +34,15 @@ impl GrafeoEngine {
         Ok(engine)
     }
 
-    /// Open (or create) a persistent engine backed by a single-file Grafeo
-    /// database at `path`. Parent directories are created as needed. On
-    /// reopen, schema DDL re-runs (IF NOT EXISTS) and prior WAL records
-    /// replay, so ingested data survives process exit once
-    /// [`GrafeoEngine::checkpoint`] (or close) flushes it.
+    /// Open (or create) a persistent engine via the documented persistent
+    /// configuration (`Config::persistent` → `GrafeoDB::with_config`),
+    /// pinned to the single-file storage format. Parent directories are
+    /// created as needed. Ingested data survives process exit once
+    /// [`GrafeoEngine::checkpoint`] (or close) flushes the WAL.
+    ///
+    /// Persistence is plain database durability — independent of the
+    /// artifact export/import layer, which is a separate, optional
+    /// document concern.
     pub fn persistent(path: &Path) -> Result<Self, GraphError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -48,12 +52,25 @@ impl GrafeoEngine {
                 ))
             })?;
         }
-        let config = grafeo::Config {
-            path: Some(path.to_path_buf()),
-            storage_format: grafeo_engine::config::StorageFormat::SingleFile,
-            ..grafeo::Config::default()
-        };
+        let config = grafeo::Config::persistent(path)
+            .with_storage_format(grafeo_engine::config::StorageFormat::SingleFile);
         Self::with_config(config)
+    }
+
+    /// Open an existing persistent database in read-only mode (the
+    /// read-replica pattern): shared file lock, loads the last checkpoint
+    /// snapshot, no WAL replay, and mutations are rejected at the session
+    /// level. Schema DDL is NOT re-run — the checkpoint snapshot already
+    /// carries the catalog — so call this only on a database that was
+    /// checkpointed before.
+    pub fn open_read_only(path: &Path) -> Result<Self, GraphError> {
+        let config = grafeo::Config::read_only(path);
+        let db = GrafeoDB::with_config(config)
+            .map_err(|e| GraphError::Connection(format!("read-only open failed: {e}")))?;
+        Ok(Self {
+            db: Arc::new(db),
+            start_time: Instant::now(),
+        })
     }
 
     /// Flush the write-ahead log into the storage file so all committed

@@ -1,13 +1,18 @@
 //! Deterministic graph artifact + persisted-graph cache (issue #275).
 //!
-//! - **L1 graph cache**: an inputs hash (all model/config input file
-//!   contents + the graph format version) decides whether a run may reopen
-//!   the persisted graph instead of re-ingesting everything;
+//! - **L1 graph cache**: a plain persistent Grafeo database
+//!   (`Config::persistent` → `GrafeoDB::with_config`; reopens read-only)
+//!   plus an inputs hash (all model/config input file contents + the graph
+//!   format version) that decides whether a run may reuse the persisted
+//!   graph instead of re-ingesting everything. This layer stands alone —
+//!   it touches no document/artifact machinery.
 //! - **L2 artifact** (the `doc` layer, implemented in `codegraph-grafeo`):
 //!   `export_ir`/`import_ir` produce a canonical, hashable JSON document
-//!   of the full graph state whose round trip is byte-identical;
+//!   of the full graph state whose round trip is byte-identical. A
+//!   separate deliverable for diffing/publishing — never used by the
+//!   persistence path.
 //! - **L3 conformance kit**: executable cases pinning the document format
-//!   (`kit` module, added in the L3 step; the committed case file lives at
+//!   (the committed case file lives at
 //!   `tests/fixtures/artifact_kit/graph_document_v1.md`).
 
 pub mod kit;
@@ -141,9 +146,13 @@ pub fn collect_run_inputs(
     Ok(files)
 }
 
-/// Open the persisted graph when the stored inputs hash matches. Returns
-/// `Ok(None)` when the cache is absent, unreadable, or was written for
-/// different inputs (or an older graph format).
+/// Open the persisted graph when the stored inputs hash matches. The
+/// database is opened READ-ONLY (checkpoint snapshot, shared file lock,
+/// mutations rejected): the reuse path must never mutate the cached graph.
+/// The inputs marker lives outside the DB, so guarding the DB file does
+/// not affect the hash bookkeeping. Returns `Ok(None)` when the cache is
+/// absent, unreadable, or was written for different inputs (or an older
+/// graph format).
 pub fn open_reusable_engine(
     cache_dir: &Path,
     inputs_hash: &str,
@@ -157,7 +166,7 @@ pub fn open_reusable_engine(
     if stored.trim() != inputs_hash {
         return Ok(None);
     }
-    codegraph_grafeo::GrafeoEngine::persistent(&graph_file)
+    codegraph_grafeo::GrafeoEngine::open_read_only(&graph_file)
         .map(Some)
         .map_err(ArtifactError::from)
 }

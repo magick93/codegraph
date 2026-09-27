@@ -68,3 +68,30 @@ async fn persistent_engine_on_fresh_path_starts_empty() {
     assert!(schemas.is_empty(), "fresh persistent engine must be empty");
     assert!(graph_path.exists(), "graph file must exist after open");
 }
+
+#[tokio::test]
+async fn read_only_reopen_sees_checkpointed_graph_and_rejects_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph_path = dir.path().join("graph.grafeo");
+
+    {
+        let engine = GrafeoEngine::persistent(&graph_path).unwrap();
+        engine
+            .ingest_schema(&fixture_schema())
+            .await
+            .expect("ingest");
+        engine.checkpoint().expect("checkpoint");
+    }
+
+    let read_only = GrafeoEngine::open_read_only(&graph_path).unwrap();
+    let schema = read_only
+        .get_schema("PersonType")
+        .await
+        .expect("query read-only engine")
+        .expect("checkpointed schema visible");
+    assert_eq!(schema.schema_id, "common/PersonType");
+
+    let session = read_only.db().session();
+    let mutation = session.execute("INSERT (:Schema {title: 'X'})");
+    assert!(mutation.is_err(), "read-only open must reject DB mutations");
+}
