@@ -1,6 +1,6 @@
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
-use codegraph_type_contracts::RefClassificationKind;
+use codegraph_type_contracts::{RefClassificationKind, TypeExpr, TypeExprError};
 
 /// Mapped type information for a single protocol buffer field.
 pub struct ProtoFieldType {
@@ -23,7 +23,173 @@ pub struct ProtoFieldType {
 /// `db` and `entity_name` are provided for resolving referenced entities,
 /// value object properties, and codelist cardinality — currently used only
 /// for generating nested message names.
+///
+/// Read precedence (issue #277): the property's `TypeExpr` when resolvable,
+/// else the legacy frozen-string path. Expressions the proto lowerings
+/// cannot represent fall back identically — output is byte-identical with
+/// the pre-#277 string path either way.
 pub fn proto_type_from_field(
+    prop: &PropertyNode,
+    db: &dyn GraphQuerier,
+    entity_name: &str,
+) -> ProtoFieldType {
+    if let Some(expr) = prop.effective_type_expr() {
+        if let Ok(field) = proto_type_from_expr(&expr, prop, entity_name) {
+            return field;
+        }
+    }
+    proto_type_from_field_from_strings(prop, db, entity_name)
+}
+
+/// Pure lowering: `TypeExpr` → proto/tonic representation. Message names are
+/// composed exactly as the string path does (from the property name and the
+/// owning entity), so resolvable expressions are output-identical.
+pub fn proto_type_from_expr(
+    expr: &TypeExpr,
+    prop: &PropertyNode,
+    entity_name: &str,
+) -> Result<ProtoFieldType, TypeExprError> {
+    match expr {
+        TypeExpr::Primitive { .. } => {
+            let canonical = expr.canonical_rust_str()?;
+            Ok(proto_type_from_rust_type(&canonical))
+        }
+        TypeExpr::Codelist { .. } => Ok(scalar("string", "String")),
+        TypeExpr::Ref {
+            kind: Some(kind),
+            args,
+            ..
+        } => {
+            if !args.is_empty() {
+                return Err(TypeExprError::Unsupported {
+                    target: "proto",
+                    expr: format!("{expr:?}"),
+                    reason: "parameterized references carry no wire-level semantics yet"
+                        .to_string(),
+                });
+            }
+            Ok(proto_type_from_kind(kind, prop, entity_name))
+        }
+        TypeExpr::Ref { kind: None, .. } => Err(TypeExprError::Unsupported {
+            target: "proto",
+            expr: format!("{expr:?}"),
+            reason: "untyped reference has no wire representation".to_string(),
+        }),
+        TypeExpr::List(inner) => {
+            let lowered = proto_type_from_expr(inner, prop, entity_name)?;
+            if lowered.proto_type.starts_with("repeated ") {
+                return Err(TypeExprError::Unsupported {
+                    target: "proto",
+                    expr: format!("{expr:?}"),
+                    reason: "nested lists are not representable".to_string(),
+                });
+            }
+            Ok(ProtoFieldType {
+                proto_type: format!("repeated {}", lowered.proto_type),
+                rust_type: prop.rust_field_type.clone(),
+                is_import: lowered.is_import,
+                import_path: lowered.import_path,
+                is_message: false,
+            })
+        }
+        TypeExpr::Optional(inner) => proto_type_from_expr(inner, prop, entity_name),
+        TypeExpr::Record { .. } => Ok(ProtoFieldType {
+            proto_type: "google.protobuf.Struct".to_string(),
+            rust_type: "prost_types::Struct".to_string(),
+            is_import: true,
+            import_path: Some("google/protobuf/struct.proto".to_string()),
+            is_message: true,
+        }),
+    }
+}
+
+/// Kind-driven proto mapping shared by the string and expression paths.
+fn proto_type_from_kind(
+    kind: &RefClassificationKind,
+    prop: &PropertyNode,
+    entity_name: &str,
+) -> ProtoFieldType {
+    match kind {
+        RefClassificationKind::EntityReference => ProtoFieldType {
+            proto_type: "string".to_string(),
+            rust_type: "String".to_string(),
+            is_import: false,
+            import_path: None,
+            is_message: false,
+        },
+        RefClassificationKind::CodelistReference
+        | RefClassificationKind::CodelistCheck
+        | RefClassificationKind::InlineEnum => ProtoFieldType {
+            // Base type is string; the context builder may upgrade to a proto enum name
+            // when the codelist cardinality is ≤ 20.
+            proto_type: "string".to_string(),
+            rust_type: "String".to_string(),
+            is_import: false,
+            import_path: None,
+            is_message: false,
+        },
+        RefClassificationKind::ValueObject => {
+            let msg_name = format!(
+                "{}{}",
+                entity_name,
+                codegraph_naming::to_pascal_case(&prop.name)
+            );
+            ProtoFieldType {
+                proto_type: msg_name.clone(),
+                rust_type: msg_name,
+                is_import: false,
+                import_path: None,
+                is_message: true,
+            }
+        }
+        RefClassificationKind::CompositeWrapper => {
+            let msg_name = format!(
+                "{}{}",
+                entity_name,
+                codegraph_naming::to_pascal_case(&prop.name)
+            );
+            ProtoFieldType {
+                proto_type: msg_name.clone(),
+                rust_type: msg_name,
+                is_import: false,
+                import_path: None,
+                is_message: true,
+            }
+        }
+        RefClassificationKind::MediaWrapper => ProtoFieldType {
+            proto_type: "MediaContent".to_string(),
+            rust_type: "MediaContent".to_string(),
+            is_import: false,
+            import_path: None,
+            is_message: true,
+        },
+        RefClassificationKind::StructuredWrapper => ProtoFieldType {
+            proto_type: "google.protobuf.Struct".to_string(),
+            rust_type: "prost_types::Struct".to_string(),
+            is_import: true,
+            import_path: Some("google/protobuf/struct.proto".to_string()),
+            is_message: true,
+        },
+        RefClassificationKind::RangeWrapper => {
+            let msg_name = format!("{}Range", codegraph_naming::to_pascal_case(&prop.name));
+            ProtoFieldType {
+                proto_type: msg_name.clone(),
+                rust_type: msg_name,
+                is_import: false,
+                import_path: None,
+                is_message: true,
+            }
+        }
+        // PrimitiveWrapper resolves through the frozen Rust string, which the
+        // expression path does not carry — callers fall back to the strings.
+        RefClassificationKind::PrimitiveWrapper | RefClassificationKind::ArrayWrapper => {
+            proto_type_from_rust_type(&prop.rust_field_type)
+        }
+    }
+}
+
+/// The legacy frozen-string path, unchanged from pre-#277 behavior.
+fn proto_type_from_field_from_strings(
     prop: &PropertyNode,
     _db: &dyn GraphQuerier,
     entity_name: &str,
@@ -34,91 +200,7 @@ pub fn proto_type_from_field(
         Some(RefClassificationKind::PrimitiveWrapper) => {
             proto_type_from_rust_type(&prop.rust_field_type)
         }
-        Some(RefClassificationKind::EntityReference) => ProtoFieldType {
-            proto_type: "string".to_string(),
-            rust_type: "String".to_string(),
-            is_import: false,
-            import_path: None,
-            is_message: false,
-        },
-        Some(RefClassificationKind::CodelistReference)
-        | Some(RefClassificationKind::CodelistCheck)
-        | Some(RefClassificationKind::InlineEnum) => ProtoFieldType {
-            // Base type is string; the context builder may upgrade to a proto enum name
-            // when the codelist cardinality is ≤ 20.
-            proto_type: "string".to_string(),
-            rust_type: "String".to_string(),
-            is_import: false,
-            import_path: None,
-            is_message: false,
-        },
-        Some(RefClassificationKind::ValueObject) => {
-            let msg_name = format!(
-                "{}{}",
-                entity_name,
-                codegraph_naming::to_pascal_case(&prop.name)
-            );
-            ProtoFieldType {
-                proto_type: msg_name.clone(),
-                rust_type: msg_name,
-                is_import: false,
-                import_path: None,
-                is_message: true,
-            }
-        }
-        Some(RefClassificationKind::CompositeWrapper) => {
-            let msg_name = format!(
-                "{}{}",
-                entity_name,
-                codegraph_naming::to_pascal_case(&prop.name)
-            );
-            ProtoFieldType {
-                proto_type: msg_name.clone(),
-                rust_type: msg_name,
-                is_import: false,
-                import_path: None,
-                is_message: true,
-            }
-        }
-        Some(RefClassificationKind::MediaWrapper) => ProtoFieldType {
-            proto_type: "MediaContent".to_string(),
-            rust_type: "MediaContent".to_string(),
-            is_import: false,
-            import_path: None,
-            is_message: true,
-        },
-        Some(RefClassificationKind::StructuredWrapper) => ProtoFieldType {
-            proto_type: "google.protobuf.Struct".to_string(),
-            rust_type: "prost_types::Struct".to_string(),
-            is_import: true,
-            import_path: Some("google/protobuf/struct.proto".to_string()),
-            is_message: true,
-        },
-        Some(RefClassificationKind::ArrayWrapper) => {
-            let inner_type = prop
-                .rust_field_type
-                .strip_prefix("Vec<")
-                .and_then(|s| s.strip_suffix('>'))
-                .unwrap_or(&prop.rust_field_type);
-            let inner = proto_type_from_rust_type(inner_type);
-            ProtoFieldType {
-                proto_type: format!("repeated {}", inner.proto_type),
-                rust_type: prop.rust_field_type.clone(),
-                is_import: inner.is_import,
-                import_path: inner.import_path,
-                is_message: false,
-            }
-        }
-        Some(RefClassificationKind::RangeWrapper) => {
-            let msg_name = format!("{}Range", codegraph_naming::to_pascal_case(&prop.name));
-            ProtoFieldType {
-                proto_type: msg_name.clone(),
-                rust_type: msg_name,
-                is_import: false,
-                import_path: None,
-                is_message: true,
-            }
-        }
+        Some(kind) => proto_type_from_kind(&kind, prop, entity_name),
     }
 }
 
