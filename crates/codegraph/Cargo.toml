@@ -16,6 +16,9 @@ codegraph-core = { path = "../codegraph-core" }
 codegraph-backend = { path = "../codegraph-backend" }
 codegraph-ext-points = { path = "../codegraph-ext-points" }
 codegraph-ops = { path = "../codegraph-ops" }
+# Direct engine access for the artifact export/import + graph cache (issue #275).
+codegraph-grafeo = { path = "../codegraph-grafeo" }
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -59,4 +62,3 @@ tempfile = "3"
 insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"
-sha2 = "0.10"

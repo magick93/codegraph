@@ -780,6 +780,7 @@ dependencies = [
  "codegraph-core",
  "codegraph-grafeo",
  "serde",
+ "tempfile",
  "tokio",
 ]
 
@@ -873,6 +874,9 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
  "tokio",
  "uuid",
 ]

@@ -1,3 +1,4 @@
+pub mod artifact;
 mod conversions;
 mod engine;
 mod ingestor;

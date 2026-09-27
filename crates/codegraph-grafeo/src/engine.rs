@@ -1,6 +1,7 @@
 use crate::schema_ddl;
 use codegraph_core::error::GraphError;
 use grafeo::GrafeoDB;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -31,6 +32,53 @@ impl GrafeoEngine {
         };
         engine.init_schema()?;
         Ok(engine)
+    }
+
+    /// Open (or create) a persistent engine via the documented persistent
+    /// configuration (`Config::persistent` → `GrafeoDB::with_config`),
+    /// pinned to the single-file storage format. Parent directories are
+    /// created as needed. Ingested data survives process exit once
+    /// [`GrafeoEngine::checkpoint`] (or close) flushes the WAL.
+    ///
+    /// Persistence is plain database durability — independent of the
+    /// artifact export/import layer, which is a separate, optional
+    /// document concern.
+    pub fn persistent(path: &Path) -> Result<Self, GraphError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                GraphError::Connection(format!(
+                    "failed to create graph dir {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+        let config = grafeo::Config::persistent(path)
+            .with_storage_format(grafeo_engine::config::StorageFormat::SingleFile);
+        Self::with_config(config)
+    }
+
+    /// Open an existing persistent database in read-only mode (the
+    /// read-replica pattern): shared file lock, loads the last checkpoint
+    /// snapshot, no WAL replay, and mutations are rejected at the session
+    /// level. Schema DDL is NOT re-run — the checkpoint snapshot already
+    /// carries the catalog — so call this only on a database that was
+    /// checkpointed before.
+    pub fn open_read_only(path: &Path) -> Result<Self, GraphError> {
+        let config = grafeo::Config::read_only(path);
+        let db = GrafeoDB::with_config(config)
+            .map_err(|e| GraphError::Connection(format!("read-only open failed: {e}")))?;
+        Ok(Self {
+            db: Arc::new(db),
+            start_time: Instant::now(),
+        })
+    }
+
+    /// Flush the write-ahead log into the storage file so all committed
+    /// mutations are durable on disk.
+    pub fn checkpoint(&self) -> Result<(), GraphError> {
+        self.db
+            .wal_checkpoint()
+            .map_err(|e| GraphError::Connection(format!("checkpoint failed: {e}")))
     }
 
     /// Re-run schema DDL (idempotent due to IF NOT EXISTS).

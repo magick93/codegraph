@@ -11,4 +11,5 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 codegraph-core = { path = "../codegraph-core", features = ["test-fixtures"] }
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

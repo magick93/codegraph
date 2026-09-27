@@ -141,6 +141,12 @@ pub enum Commands {
         /// Overrides the profiles.toml `ifml_design_system` feature.
         #[arg(long)]
         ifml_design_system: Option<String>,
+        /// Directory for the persistent graph cache. When set, a run whose
+        /// inputs (mox/schema/IFML/config files) hash unchanged since the
+        /// previous run reopens the persisted graph instead of re-ingesting
+        /// (issue #275). Default: off (fresh in-memory graph).
+        #[arg(long)]
+        graph_cache: Option<PathBuf>,
     },
     /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
     IfmlGenerate {

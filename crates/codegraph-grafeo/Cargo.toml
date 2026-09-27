@@ -6,6 +6,7 @@ description = "Grafeo graph database adapter for codegraph-core traits"
 
 [dependencies]
 codegraph-core = { path = "../codegraph-core" }
+thiserror = "2"
 codegraph-naming = { path = "../codegraph-naming" }
 codegraph-type-contracts = { path = "../codegraph-type-contracts" }
 grafeo = "=0.5.42"
@@ -18,7 +19,9 @@ rust_decimal = { version = "1", features = ["serde-with-str"] }
 uuid.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 
 [dev-dependencies]
 codegraph-core = { path = "../codegraph-core", features = ["test-fixtures"] }
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

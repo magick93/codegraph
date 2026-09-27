@@ -1,3 +1,9 @@
+/// Version of the graph schema/document format produced by this binary.
+/// Persisted graphs and exported artifacts carry it; a reader refusing a
+/// NEWER version than its own constant keeps old binaries honest, and a
+/// writer bumping it invalidates persisted-graph caches deterministically.
+pub const GRAPH_FORMAT_VERSION: u32 = 1;
+
 /// Returns GQL DDL statements for node types and edge types.
 /// These match the `codegraph-core` shared types (derived from `db/schema.hx`).
 pub fn ddl_statements() -> Vec<&'static str> {
