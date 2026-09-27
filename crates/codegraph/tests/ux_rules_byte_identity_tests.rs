@@ -2,14 +2,25 @@
 //!
 //! THE contract for the whole ux-rules epic: while the feature is OFF (or
 //! on but unconsumed), generation output must not change by a single byte.
-//! Two gates live here:
+//! Gates live here for BOTH pipelines (issue #304 extended the canary from
+//! entity-only to both):
 //!
-//! 1. `flag_off_pipeline_is_deterministic` — the full pipeline run TWICE
-//!    with `ux_rules = false` produces identical output trees.
-//! 2. `flag_off_output_matches_pre_feature_snapshot` — a flag-OFF tree
-//!    hashes to the committed pre-feature snapshot
+//! 1. `flag_off_pipeline_is_deterministic` — the full ENTITY pipeline
+//!    (`driver::run`, mox-first init fixture) run TWICE with
+//!    `ux_rules = false` produces identical output trees.
+//! 2. `flag_off_output_matches_pre_feature_snapshot` — a flag-OFF entity
+//!    tree hashes to the committed pre-feature snapshot
 //!    (`tests/fixtures/ux_rules_pre_feature_tree.sha256`), so any
 //!    generator change that leaks through the ux plane is caught.
+//! 3. `ifml_flag_off_pipeline_is_deterministic` — the IFML pipeline
+//!    (`driver::ifml_generate`, `ux_rules: None`) run TWICE produces
+//!    identical output trees.
+//! 4. `ifml_flag_off_output_matches_pre_feature_snapshot` — a flag-OFF
+//!    IFML tree hashes to the committed pre-#300 snapshot
+//!    (`tests/fixtures/ux_rules_pre_feature_ifml_tree.sha256`). Flag-off
+//!    IFML output is pre-ux byte-identical by contract (pinned by the
+//!    committed expected-markup fixture in `ifml_template_tests.rs`), so
+//!    the snapshot was generated from the current code at #304 time.
 //!
 //! # Snapshot normalization
 //!
@@ -21,12 +32,14 @@
 //! - every remaining `[0-9a-f]{7,40}` hex run (greedy, leftmost — regex
 //!   semantics) is replaced with `REV`.
 //!
-//! # Regenerating the snapshot
+//! # Regenerating a snapshot
 //!
 //! ```text
 //! UX_RULES_BLESS=1 CARGO_TARGET_DIR=... \
 //!   cargo test -p codegraph --test ux_rules_byte_identity_tests \
 //!   -- flag_off_output_matches_pre_feature_snapshot
+//!   # or, for the IFML snapshot:
+//!   -- ifml_flag_off_output_matches_pre_feature_snapshot
 //! ```
 //!
 //! then commit the updated fixture. Only bless when a change to the
@@ -311,6 +324,163 @@ async fn flag_off_output_matches_pre_feature_snapshot() {
     assert_eq!(
         hash, expected,
         "flag-OFF output diverged from the committed pre-feature snapshot.\n\
+         If the generator change is intended, re-bless with UX_RULES_BLESS=1\n\
+         (see the module comment for the procedure)."
+    );
+}
+
+// ── IFML pipeline canary (issue #304) ───────────────────────────────────
+
+/// The smallest IFML fixture that still exercises both view shapes the ux
+/// plane renders into (fallback list + details), mirroring the
+/// `SPECLESS_IFML` fixture of `ifml_template_tests.rs`. Spec-less ⇒ no
+/// schemas/classifier needed — the whole canary stays fast and node-free.
+const IFML_CANARY_MODEL: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customer Management";
+    landmark: true;
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name, email, phone, status];
+
+        on select(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name, email, phone];
+    }
+}
+"#;
+
+fn ifml_domains_toml() -> &'static str {
+    r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+"#
+}
+
+/// Write the IFML fixture into `dir`. Flag off = `ux_rules: None` (the
+/// `IfmlGenerateArgs` default shape before #300). Returns the output root
+/// (the tree the driver writes into) and the .ifml file path.
+fn ifml_fixture(dir: &TempDir) -> (PathBuf, PathBuf) {
+    let ifml_path = dir.path().join("app.ifml");
+    fs::write(&ifml_path, IFML_CANARY_MODEL).unwrap();
+    fs::write(dir.path().join("domains.toml"), ifml_domains_toml()).unwrap();
+    let output = dir.path().join("out");
+    (output, ifml_path)
+}
+
+/// Run the IFML pipeline flag-off into `output`.
+async fn run_ifml_pipeline(output: &Path, ifml_file: &Path, config: &Path) {
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: config,
+        output,
+        ifml_files: &[ifml_file.to_path_buf()],
+        schemas: None,
+        classifier: None,
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: None,
+    })
+    .await
+    .unwrap();
+}
+
+fn ifml_snapshot_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/ux_rules_pre_feature_ifml_tree.sha256")
+}
+
+#[tokio::test]
+async fn ifml_flag_off_pipeline_is_deterministic() {
+    let dir_a = TempDir::new().unwrap();
+    let dir_b = TempDir::new().unwrap();
+
+    let (output_a, ifml_a) = ifml_fixture(&dir_a);
+    let (output_b, ifml_b) = ifml_fixture(&dir_b);
+    run_ifml_pipeline(&output_a, &ifml_a, &dir_a.path().join("domains.toml")).await;
+    run_ifml_pipeline(&output_b, &ifml_b, &dir_b.path().join("domains.toml")).await;
+
+    let tree_a = collect_tree(&output_a);
+    let tree_b = collect_tree(&output_b);
+    assert_eq!(
+        tree_a.len(),
+        tree_b.len(),
+        "IFML file sets differ between runs"
+    );
+    assert!(!tree_a.is_empty(), "IFML generation must produce files");
+
+    // Normalize each run's own output dir before comparing so only
+    // genuine content differences count.
+    let a_str = output_a.to_string_lossy().into_owned();
+    let b_str = output_b.to_string_lossy().into_owned();
+    let mut diffs: Vec<String> = Vec::new();
+    for (name, bytes_a) in &tree_a {
+        let bytes_b = tree_b
+            .get(name)
+            .unwrap_or_else(|| panic!("file {name} missing in second run"));
+        let text_a = String::from_utf8_lossy(bytes_a).replace(&a_str, "OUT");
+        let text_b = String::from_utf8_lossy(bytes_b).replace(&b_str, "OUT");
+        if text_a != text_b {
+            diffs.push(name.clone());
+        }
+    }
+    assert!(
+        diffs.is_empty(),
+        "flag-OFF IFML generation is not deterministic — {} files differ:\n{:?}",
+        diffs.len(),
+        diffs
+    );
+}
+
+#[tokio::test]
+async fn ifml_flag_off_output_matches_pre_feature_snapshot() {
+    let dir = TempDir::new().unwrap();
+    let (output, ifml) = ifml_fixture(&dir);
+    run_ifml_pipeline(&output, &ifml, &dir.path().join("domains.toml")).await;
+
+    let tree = collect_tree(&output);
+    let hash = tree_hash(&tree, &current_git_rev(), &output, &repo_root());
+
+    if std::env::var("UX_RULES_BLESS").is_ok() {
+        fs::write(ifml_snapshot_path(), &hash).unwrap();
+        println!(
+            "blessed snapshot {}: {hash}",
+            ifml_snapshot_path().display()
+        );
+        return;
+    }
+
+    let expected = fs::read_to_string(ifml_snapshot_path())
+        .expect("snapshot fixture must exist")
+        .trim()
+        .to_string();
+    assert_eq!(
+        hash, expected,
+        "flag-OFF IFML output diverged from the committed pre-#300 snapshot.\n\
          If the generator change is intended, re-bless with UX_RULES_BLESS=1\n\
          (see the module comment for the procedure)."
     );

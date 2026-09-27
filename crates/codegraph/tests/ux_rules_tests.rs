@@ -1,4 +1,25 @@
-//! Driver-level content pins for the ux-rules list page (issue #297).
+//! Driver-level content pins for the ux-rules plane (issues #297–#306,
+//! consolidated under #304).
+//!
+//! # Where ux-rules coverage lives (the split, per issue #304)
+//!
+//! - **THIS file + `ux_rules_byte_identity_tests.rs`** — the PR-CI,
+//!   node-free safety net: driver-level content pins over real pipeline
+//!   runs (flag ON renders the contract, flag OFF renders none of it),
+//!   the diagnostics report() pins, the generated-spec content pins, and
+//!   the byte-identity canaries for BOTH pipelines.
+//! - **`ui_e2e_test_tests.rs` / `ifml_e2e_tests.rs` +
+//!   `codegraph-generate` unit tests** — generator-level pins (mock
+//!   engines, rendered-spec content); the fast inner loop for emitter
+//!   changes. Flag-OFF negatives in `ifml_template_tests.rs` stay there —
+//!   they guard that file's committed byte-identical fixtures.
+//! - **`ifml_codegen_gate.rs`** (nightly, `--ignored`) — the real-API
+//!   proof: the generated Playwright specs actually run against a live
+//!   backend. Never in PR CI (node).
+//!
+//! Consolidation rule (#304): nothing here deletes or weakens the other
+//! files' pins; this file adds the umbrella coverage those files cannot
+//! see (full-driver runs) and cross-references the rest.
 //!
 //! `ux_rules = true` is ON in the default profile, so the mox-first
 //! pipeline renders ux markup into every generated list page. These tests
@@ -1024,4 +1045,599 @@ fn ux_rules_flag_off_emits_no_sort_plane() {
             "flag-off page must not contain {needle:?}:\n{page}"
         );
     }
+}
+
+// ── Diagnostics pins (issue #304) ─────────────────────────────────────
+//
+// Limitation, named on purpose: in-process stderr capture is impractical
+// (the drivers print through `eprintln!` deep inside generator code), so
+// these tests pin at the `report()` boundary instead — the exact strings
+// both generators emit — plus the shared stderr prefix as a constant.
+// The actual print sites are
+// `codegraph-generate/src/ui/page.rs` (`report_ux_diagnostics`, deduped
+// per run) and `codegraph-generate/src/ifml/route_generator.rs`
+// (`resolve_generation_ux` lines, deduped per generation); both frame the
+// payload as `{UX_STDERR_PREFIX}{line}`.
+
+/// The stderr framing both generators print ux diagnostic lines with.
+const UX_STDERR_PREFIX: &str = "warning: ux-rules: ";
+
+/// A minimal [`codegraph_generate::ui::page::UiField`] for the
+/// fixture-shaped plan inputs below (no graph properties — the heuristics
+/// under test run on the field alone).
+fn ux_field(
+    name: &str,
+    pg_type: &str,
+    ts_type: &str,
+    input_type: &str,
+) -> codegraph_generate::ui::page::UiField {
+    codegraph_generate::ui::page::UiField {
+        name: name.to_string(),
+        label: String::new(),
+        ts_type: ts_type.to_string(),
+        input_type: input_type.to_string(),
+        is_required: false,
+        is_array: false,
+        is_entity_ref: false,
+        is_immutable: false,
+        is_codelist: false,
+        is_range: false,
+        codelist_values: vec![],
+        description: String::new(),
+        pg_type: pg_type.to_string(),
+        open_end: false,
+        ref_api_path: None,
+        structured_sub_fields: vec![],
+        nested_type_name: None,
+    }
+}
+
+/// A fixture-shaped [`codegraph_generate::ux::UxPlanInput`] over the
+/// file's fixture entity (no workflow, no soft delete, unpinned order).
+fn ux_plan_input<'a>(
+    entity_title: &'a str,
+    fields: &'a [codegraph_generate::ui::page::UiField],
+) -> codegraph_generate::ux::UxPlanInput<'a> {
+    codegraph_generate::ux::UxPlanInput {
+        entity_title,
+        fields,
+        prop_by_name: std::collections::BTreeMap::new(),
+        workflow_status_field: None,
+        workflow_terminal_states: &[],
+        has_soft_delete: false,
+        user_pinned_list_order: false,
+    }
+}
+
+/// Money-keyword inference emits the exact hint line (and nothing else):
+/// the keyword that matched, and the `[[column]]` rule that pins intent.
+#[test]
+fn ux_diagnostics_money_hint_pins_exact_report_line() {
+    use codegraph_generate::ux::{build_ux_plan, collect_diagnostics, report};
+
+    let fields = vec![ux_field(
+        "total_amount",
+        "NUMERIC(10,2)",
+        "string",
+        "number",
+    )];
+    // inline_max = 3 keeps every default action inline, so the overflow
+    // accounting stays out of the report — this fixture isolates the hint.
+    let rules = codegraph_config::parse_ux_rules_str("[actions]\ninline_max = 3\n")
+        .unwrap()
+        .rules;
+    let input = ux_plan_input("Task", &fields);
+    let plan = build_ux_plan(Some(&rules), &input).unwrap().unwrap();
+
+    let lines = report(&collect_diagnostics(&rules, &input, &plan));
+    assert_eq!(lines.len(), 1, "exactly the money hint: {lines:?}");
+    assert_eq!(
+        lines[0],
+        "column `total_amount` inferred Money from its name (\"amount\"); \
+         pin intent with a [[column]] rule: dimension = \"money\" (or \"quantity\")"
+    );
+    // The full stderr line (see the section comment for the print sites).
+    assert_eq!(
+        format!("{UX_STDERR_PREFIX}{}", lines[0]),
+        "warning: ux-rules: column `total_amount` inferred Money from its name \
+         (\"amount\"); pin intent with a [[column]] rule: dimension = \"money\" \
+         (or \"quantity\")"
+    );
+}
+
+/// A default table over time-ordered data emits the exact opt-in
+/// suggestion: entity + candidate field, and the literal rule to add.
+#[test]
+fn ux_diagnostics_timeline_suggestion_pins_exact_report_line() {
+    use codegraph_generate::ux::{build_ux_plan, collect_diagnostics, report};
+
+    let fields = vec![
+        ux_field("name", "TEXT", "string", "text"),
+        ux_field("created_at", "TIMESTAMPTZ", "string", "datetime-local"),
+    ];
+    let rules = codegraph_config::parse_ux_rules_str("[actions]\ninline_max = 3\n")
+        .unwrap()
+        .rules;
+    let input = ux_plan_input("Task", &fields);
+    let plan = build_ux_plan(Some(&rules), &input).unwrap().unwrap();
+
+    let lines = report(&collect_diagnostics(&rules, &input, &plan));
+    assert_eq!(lines.len(), 1, "exactly the suggestion: {lines:?}");
+    assert_eq!(
+        lines[0],
+        "entity \"Task\" renders as a table but has time-ordered data \
+         (field \"created_at\"); to opt into timeline rendering add:\n\
+         [[collection]]\n\
+         entity_pattern = \"Task*\"\n\
+         display = \"timeline\"\n\
+         order_by = \"created_at\"\n\
+         (tables never auto-switch)"
+    );
+    assert_eq!(
+        format!("{UX_STDERR_PREFIX}{}", lines[0]),
+        format!("{UX_STDERR_PREFIX}{}", lines[0]),
+        "prefix framing is mechanical; the payload above is the pin"
+    );
+}
+
+/// The action-budget accounting emits the exact overflow line (both
+/// default actions beyond the pack's inline budget).
+#[test]
+fn ux_diagnostics_moved_to_menu_pins_exact_report_line() {
+    use codegraph_generate::ux::{build_ux_plan, collect_diagnostics, report};
+
+    let pack = codegraph_config::builtin_ux_rules().unwrap().rules;
+    let input = ux_plan_input("Task", &[]);
+    let plan = build_ux_plan(Some(&pack), &input).unwrap().unwrap();
+
+    let lines = report(&collect_diagnostics(&pack, &input, &plan));
+    assert_eq!(
+        lines,
+        vec!["2 row action(s) collapsed into the overflow menu ([actions] inline_max)"]
+    );
+}
+
+/// Integration-level: the default fixture TRIGGERS diagnostics (numeric
+/// money-named column + `created_at` over a default table) yet generation
+/// SUCCEEDS and the plan still applies — diagnostics are advisory
+/// warnings, never failures. (The warning text itself is pinned at the
+/// report() boundary above; stderr capture is impractical in-process.)
+#[test]
+fn ux_rules_diagnostics_are_non_fatal_and_plan_still_applies() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    let run = FixtureRun {
+        config: project.join("domains.toml"),
+        output: project.join("generated"),
+        profiles: project.join("profiles.toml"),
+        mox_files: vec![mox],
+    };
+    run.run(None);
+
+    let page =
+        fs::read_to_string(project.join("generated/ui/src/routes/(app)/common/task/+page.svelte"))
+            .expect("task list page must be generated despite active diagnostics");
+    // The plan applied: money formatting + chips are in the markup.
+    assert!(page.contains("Intl.NumberFormat"), "{page}");
+    assert!(page.contains(r#"data-testid="task-chip""#), "{page}");
+}
+
+// ── Generated-spec content pins (issue #304, design item 3) ──────────
+//
+// Umbrella coverage over FULL driver runs: the `.ux.test.ts` /
+// `.ux.spec.ts` emitters are pinned per-block at the generator level
+// (`ui_e2e_test_tests.rs`, `codegraph-generate` unit tests); here we pin
+// that the real pipelines emit the files and the expected assertion
+// strings per gated block — spec CONTENT only, no Playwright (that is the
+// nightly gate's job). The ux-ON IFML page-content pins live in
+// `ifml_template_tests.rs` (#300 chips/alignment/formatting + #301
+// timeline/menu); the flag-OFF negatives there guard that file's
+// committed byte-identical fixtures and intentionally stay put.
+
+/// The entity pipeline (flag ON) emits `{seg}.ux.test.ts` mirroring the
+/// task list page's plan: header contract, chip, Intl formatting,
+/// copy-chip, overflow actions with confirm-cancel, sorting and zebra
+/// blocks — every gated block the fixture qualifies for.
+#[test]
+fn ux_rules_entity_pipeline_emits_the_ux_spec_with_gated_blocks() {
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    let run = FixtureRun {
+        config: project.join("domains.toml"),
+        output: project.join("generated"),
+        profiles: project.join("profiles.toml"),
+        mox_files: vec![mox],
+    };
+    run.run(None);
+
+    let spec_path = project.join("generated/ui/tests/generated/common/task.ux.test.ts");
+    let spec = fs::read_to_string(&spec_path)
+        .expect("task.ux.test.ts must be emitted beside the other generated specs");
+
+    // Fixture plumbing: persona fixtures + the real list path + the
+    // pack's format baseline.
+    assert!(
+        spec.contains("// UX list-rendering E2E tests for Task (ux-rules epic, #302)."),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("import { test, expect } from '../../e2e/fixtures/personas';"),
+        "{spec}"
+    );
+    assert!(spec.contains("const BASE_PATH = '/common/task';"), "{spec}");
+    assert!(spec.contains("const UX_LOCALE = 'en-NZ';"), "{spec}");
+    assert!(spec.contains("const UX_CURRENCY = 'NZD';"), "{spec}");
+
+    // Table contract: header count mirrors column_order, readable lead.
+    assert!(
+        spec.contains("test('list renders the ux table contract'"),
+        "{spec}"
+    );
+    assert!(spec.contains("expect(headerCount).toBe(9);"), "{spec}");
+    assert!(spec.contains(".toHaveText('Test Name')"), "{spec}");
+
+    // Chips: the codelist's first value is the known fixture label.
+    assert!(
+        spec.contains("test('status chips render with the expected labels'"),
+        "{spec}"
+    );
+    assert!(spec.contains(".filter({ hasText: 'Draft' })"), "{spec}");
+
+    // Alignment + Intl formatting.
+    assert!(
+        spec.contains("test('numeric columns right-align and format through Intl'"),
+        "{spec}"
+    );
+    assert!(spec.contains("toHaveClass(/text-right/)"), "{spec}");
+    assert!(spec.contains("toHaveClass(/tabular-nums/)"), "{spec}");
+    assert!(
+        spec.contains(
+            "new Intl.NumberFormat(UX_LOCALE, { style: 'currency', currency: UX_CURRENCY })"
+        ),
+        "{spec}"
+    );
+    assert!(
+        spec.contains(
+            "new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium', timeStyle: 'short' })"
+        ),
+        "{spec}"
+    );
+
+    // Copy chip.
+    assert!(
+        spec.contains("test('copy-chip copies the identifier and surfaces a tooltip'"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("`[data-testid=\"${MODULE}-copy\"]`"),
+        "{spec}"
+    );
+
+    // Overflow actions + confirm-CANCEL.
+    assert!(
+        spec.contains("test('row actions open the overflow menu'"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("`[data-testid=\"${MODULE}-action-delete\"]`"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("`[data-testid=\"${MODULE}-delete-confirm\"]`"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("getByRole('button', { name: /cancel/i })"),
+        "{spec}"
+    );
+
+    // Sorting: aria-sort toggling + the API allow-list.
+    assert!(
+        spec.contains("test('sortable headers toggle aria-sort and validate ?sort'"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("toHaveAttribute('aria-sort', 'ascending')"),
+        "{spec}"
+    );
+    assert!(spec.contains("'Unknown sort field'"), "{spec}");
+
+    // Zebra shading.
+    assert!(
+        spec.contains("test('rows keep zebra shading and hover/focus feedback'"),
+        "{spec}"
+    );
+    assert!(spec.contains("toHaveClass(/bg-muted\\/50/)"), "{spec}");
+}
+
+/// The IFML pipeline (ux rules active) emits
+/// `tests/ifml/{view-kebab}.ux.spec.ts` for the view's fallback list:
+/// chip tone, numeric/date Intl formatting, and the overflow menu —
+/// computed from the SAME resolution the route generator renders from.
+#[tokio::test]
+async fn ux_rules_ifml_pipeline_emits_the_view_ux_spec_with_gated_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    // Schema-backed entity under `schemas/{domain}/json/` (the layout the
+    // schema loader derives domains from).
+    let schemas_dir = dir.path().join("schemas").join("sales").join("json");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(
+        schemas_dir.join("CustomerType.json"),
+        r#"{
+  "$id": "CustomerType.json",
+  "title": "CustomerType",
+  "description": "A customer",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "Unique identifier" },
+    "name": { "type": "string", "description": "Customer name" },
+    "status": { "type": "string", "enum": ["draft", "active"], "description": "Status" },
+    "total_amount": { "type": "number", "description": "Total billed" },
+    "quantity": { "type": "integer", "description": "Units ordered" },
+    "created_at": { "type": "string", "format": "date-time", "description": "Created" }
+  }
+}"#,
+    )
+    .unwrap();
+    let classifier_path = dir.path().join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(
+        &ifml_path,
+        r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name, status, total_amount, quantity, created_at, id];
+
+        on click(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+        on delete(row) -> navigate("CustomerTrash");
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerTrash" {
+    component "trash" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#,
+    )
+    .unwrap();
+    let domains = dir.path().join("domains.toml");
+    std::fs::write(
+        &domains,
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+"#,
+    )
+    .unwrap();
+    let ux_rules_path = dir.path().join("ux-rules.toml");
+    std::fs::write(
+        &ux_rules_path,
+        "[format]\nlocale = \"en-NZ\"\ncurrency = \"NZD\"\n",
+    )
+    .unwrap();
+    let schemas = dir.path().join("schemas");
+    let output = dir.path().join("out");
+    let ifml_files = vec![ifml_path.clone()];
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains,
+        output: &output,
+        ifml_files: &ifml_files,
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .unwrap();
+
+    let spec_path = output.join("svelte/tests/ifml/customer-list.ux.spec.ts");
+    let spec = fs::read_to_string(&spec_path)
+        .expect("customer-list.ux.spec.ts must be emitted beside the view specs");
+
+    // Header + in-spec Intl baseline (same locale/currency the page runs).
+    assert!(
+        spec.contains(
+            "// IFML Playwright E2E ux-rules tests for view customerlist component grid (#303)."
+        ),
+        "{spec}"
+    );
+    assert!(spec.contains("test.describe('grid ux'"), "{spec}");
+    assert!(
+        spec.contains("const UX_BASE = '/api/v1/sales/customer';"),
+        "{spec}"
+    );
+    assert!(spec.contains("const UX_LOCALE = 'en-NZ';"), "{spec}");
+    assert!(
+        spec.contains("const UX_MONEY_OPTS = { style: 'currency', currency: 'NZD' };"),
+        "{spec}"
+    );
+
+    // Chip tone block: seeded value + ToneMap-resolved variant.
+    assert!(
+        spec.contains("test('ux chips render with tone variants'"),
+        "{spec}"
+    );
+    assert!(spec.contains("getByTestId('grid-chip')"), "{spec}");
+    assert!(
+        spec.contains("toHaveAttribute('data-chip-variant', 'outline')"),
+        "{spec}"
+    );
+
+    // Numeric/date formatting block: right-aligned cells through the SAME
+    // Intl formatters the page runs.
+    assert!(
+        spec.contains("test('ux numeric columns align and format through Intl'"),
+        "{spec}"
+    );
+    assert!(spec.contains("toHaveClass(/text-right/)"), "{spec}");
+    assert!(spec.contains("toHaveClass(/tabular-nums/)"), "{spec}");
+    assert!(
+        spec.contains("new Intl.NumberFormat(UX_LOCALE, UX_MONEY_OPTS)"),
+        "{spec}"
+    );
+    assert!(
+        spec.contains("new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium' })"),
+        "{spec}"
+    );
+
+    // Overflow menu block: trigger → menu → first item navigates to the
+    // secondary event's target.
+    assert!(
+        spec.contains("test('ux row actions open the overflow menu'"),
+        "{spec}"
+    );
+    assert!(spec.contains("getByTestId('grid-actions')"), "{spec}");
+    assert!(spec.contains("getByTestId('grid-actions-menu')"), "{spec}");
+    assert!(
+        spec.contains("waitForURL(new RegExp('/customertrash$'))"),
+        "{spec}"
+    );
+}
+
+/// Flag OFF: NEITHER pipeline emits a ux spec file — the umbrella
+/// negative complementing the flag-ON pins above and the byte-identity
+/// canaries (`ux_rules_byte_identity_tests.rs`).
+#[tokio::test]
+async fn ux_rules_flag_off_emits_no_ux_specs() {
+    // Entity pipeline: flag off via profiles.toml. (Direct driver await —
+    // `FixtureRun::run` builds its own runtime, which would nest here.)
+    let dir = TempDir::new().unwrap();
+    let (project, mox) = fixture(&dir);
+    let profiles_path = project.join("profiles.toml");
+    let profiles = fs::read_to_string(&profiles_path).unwrap();
+    let flag_off = profiles.replace("ux_rules = true", "ux_rules = false");
+    assert_ne!(profiles, flag_off, "scaffold must ship the ux_rules flag");
+    fs::write(&profiles_path, flag_off).unwrap();
+    let mox_files = vec![mox];
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &project.join("domains.toml"),
+        output: &project.join("generated"),
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        rosetta_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: None,
+        codegraph_rev: None,
+    })
+    .await
+    .unwrap();
+    assert!(
+        !project
+            .join("generated/ui/tests/generated/common/task.ux.test.ts")
+            .exists(),
+        "flag-off entity pipeline must not emit a ux spec"
+    );
+
+    // IFML pipeline: flag off = no ux rules file.
+    let dir = tempfile::tempdir().unwrap();
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(
+        &ifml_path,
+        r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#,
+    )
+    .unwrap();
+    let domains = dir.path().join("domains.toml");
+    std::fs::write(
+        &domains,
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+"#,
+    )
+    .unwrap();
+    let output = dir.path().join("out");
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: None,
+        classifier: None,
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: None,
+    })
+    .await
+    .unwrap();
+    let specs: Vec<PathBuf> = walkdir::WalkDir::new(output.join("svelte/tests"))
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.path().to_path_buf())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".ux.spec.ts") || n.ends_with(".ux.test.ts"))
+        })
+        .collect();
+    assert!(
+        specs.is_empty(),
+        "flag-off IFML pipeline must not emit ux specs: {specs:?}"
+    );
 }
