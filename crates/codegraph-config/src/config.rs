@@ -235,6 +235,20 @@ impl DefaultsConfig {
     }
 }
 
+/// A pinned external domain face (issue #276): a foreign domain published
+/// as a #275 artifact document and consumed read-only by this project.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DomainDependency {
+    /// The foreign (publisher-side) domain name.
+    pub domain: String,
+    /// Path to the #275 artifact document, relative to the project root
+    /// (the directory holding domains.toml). Absolute paths pass through.
+    pub source: String,
+    /// The pinned face version. Compared against the version the artifact
+    /// carries in its `meta` block (when present) by `doctor`.
+    pub version: String,
+}
+
 /// A single domain entry in the TOML configuration.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DomainEntry {
@@ -243,6 +257,11 @@ pub struct DomainEntry {
     pub postgres_schema: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Pinned external domain faces consumed by this domain (issue #276).
+    /// Absent in existing domains.toml files (serde-defaulted) — parsing
+    /// and generated output are unchanged when no dependency is declared.
+    #[serde(default)]
+    pub dependencies: Vec<DomainDependency>,
     #[serde(default)]
     pub entities: Vec<String>,
     /// Per-entity configuration for API generation.
@@ -828,6 +847,7 @@ pub fn parse_domain_config_str(content: &str) -> Result<DomainConfig, DomainConf
     let config: DomainConfig = toml::from_str(content)?;
     validate_rbac_config(&config)?;
     validate_append_only_config(&config)?;
+    validate_dependencies(&config)?;
     Ok(config)
 }
 
@@ -902,6 +922,47 @@ fn validate_append_only_config(config: &DomainConfig) -> Result<(), DomainConfig
                          forbids {op:?} in the effective operations (configured: {effective:?})"
                     )));
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Domain dependencies (issue #276): every entry must name a foreign
+/// domain, a source path, and a version pin; a domain cannot depend on
+/// itself, and the same foreign domain cannot be pinned twice by one
+/// consumer domain.
+fn validate_dependencies(config: &DomainConfig) -> Result<(), DomainConfigError> {
+    for (domain, entry) in &config.domains {
+        let mut seen = std::collections::HashSet::new();
+        for dep in &entry.dependencies {
+            let at = format!("[domains.{domain}.dependencies]");
+            if dep.domain.is_empty() {
+                return Err(DomainConfigError::Invalid(format!(
+                    "{at} dependency `domain` must not be empty"
+                )));
+            }
+            if dep.source.trim().is_empty() {
+                return Err(DomainConfigError::Invalid(format!(
+                    "{at} dependency `{}` has an empty `source` path",
+                    dep.domain
+                )));
+            }
+            if dep.version.trim().is_empty() {
+                return Err(DomainConfigError::Invalid(format!(
+                    "{at} dependency `{}` has an empty `version` pin",
+                    dep.domain
+                )));
+            }
+            if dep.domain == *domain {
+                return Err(DomainConfigError::Invalid(format!(
+                    "{at} domain {domain:?} cannot depend on itself"
+                )));
+            }
+            if !seen.insert(dep.domain.as_str()) {
+                return Err(DomainConfigError::Invalid(format!(
+                    "{at} domain {domain:?} is pinned more than once"
+                )));
             }
         }
     }
