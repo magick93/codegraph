@@ -504,3 +504,73 @@ async fn consumer_generates_against_pinned_face() {
         "the foreign entity must appear in generated Rust output"
     );
 }
+// ── doctor command wiring ────────────────────────────────────────────────
+
+#[test]
+fn doctor_command_reports_dependency_outcomes() {
+    use codegraph::init::commands::{cmd_add_domain, cmd_doctor, DoctorArgs};
+
+    let root = tempfile::tempdir().unwrap();
+    write_face_artifact(
+        &block_on(party_face_graph()),
+        &root.path().join("publisher/out/party.artifact.json"),
+        "1.2.0",
+        "party",
+    );
+
+    let project = root.path().join("app");
+    std::fs::create_dir_all(project.join("model")).unwrap();
+    std::fs::write(project.join("model/common.mox"), LOCAL_MOX).unwrap();
+    std::fs::write(
+        project.join("domains.toml"),
+        "[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n",
+    )
+    .unwrap();
+    cmd_add_domain(&project.join("domains.toml"), "billing", false).unwrap();
+
+    // Pin the party face; the artifact lives outside the project.
+    {
+        let toml = std::fs::read_to_string(project.join("domains.toml")).unwrap();
+        std::fs::write(
+            project.join("domains.toml"),
+            format!(
+                "{toml}\n[[domains.common.dependencies]]\ndomain = \"party\"\nsource = \"../publisher/out/party.artifact.json\"\nversion = \"1.2.0\"\n"
+            ),
+        )
+        .unwrap();
+    }
+    let args = |config: PathBuf| DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![project.join("model/common.mox")],
+        rosetta_files: vec![],
+    };
+    let summary = cmd_doctor(&args(project.join("domains.toml"))).unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "resolved face must not fail doctor"
+    );
+
+    // A stale pin (face moved to 2.0.0) is a hard failure.
+    let stale = root.path().join("stale");
+    std::fs::create_dir_all(stale.join("model")).unwrap();
+    std::fs::write(stale.join("model/common.mox"), LOCAL_MOX).unwrap();
+    std::fs::write(
+        stale.join("domains.toml"),
+        format!(
+            "[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n\n[[domains.common.dependencies]]\ndomain = \"party\"\nsource = \"{}\"\nversion = \"9.9.9\"\n",
+            root.path().join("publisher/out/party.artifact.json").display()
+        ),
+    )
+    .unwrap();
+    assert!(
+        cmd_doctor(&args(stale.join("domains.toml"))).is_err(),
+        "version mismatch must fail doctor"
+    );
+}
+
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    tokio::runtime::Runtime::new().unwrap().block_on(fut)
+}

@@ -293,6 +293,7 @@ mod tests {
                 schema_dir: "grants".to_string(),
                 postgres_schema: "grants".to_string(),
                 depends_on: vec![],
+                dependencies: Vec::new(),
                 entities: vec![],
                 entity_config: HashMap::new(),
                 auto_discover: None,

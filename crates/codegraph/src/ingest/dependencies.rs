@@ -394,7 +394,7 @@ async fn load_one(
     Ok(())
 }
 
-fn prop_str<'a>(node: &'a NodeRecord, key: &str) -> Option<String> {
+fn prop_str(node: &NodeRecord, key: &str) -> Option<String> {
     match node.properties.get(key)? {
         PropValue::Str(s) => Some(s.clone()),
         _ => None,
