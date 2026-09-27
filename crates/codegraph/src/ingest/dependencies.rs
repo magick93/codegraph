@@ -465,6 +465,11 @@ fn schema_node_from_record(
         has_one_of: prop_bool(node, "has_one_of").unwrap_or(false),
         has_any_of: prop_bool(node, "has_any_of").unwrap_or(false),
         has_definitions: prop_bool(node, "has_definitions").unwrap_or(false),
+        access: prop_str(node, "access").map(|a| match a.as_str() {
+            "public" => codegraph_core::types::Access::Public,
+            _ => codegraph_core::types::Access::Private,
+        }),
+        annotations: prop_str(node, "annotations").and_then(|a| serde_json::from_str(&a).ok()),
         custom_annotations,
     })
 }

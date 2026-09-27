@@ -51,6 +51,8 @@ fn schema(title: &str, classification: &str, domain: &str) -> SchemaNode {
         has_one_of: false,
         has_any_of: false,
         has_definitions: false,
+        access: None,
+        annotations: None,
         custom_annotations: Default::default(),
     }
 }
