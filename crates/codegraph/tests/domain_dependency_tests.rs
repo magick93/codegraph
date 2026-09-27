@@ -5,15 +5,12 @@
 //! reports resolution/version/conflict outcomes, and the driver generates
 //! against the pinned face end to end.
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use codegraph::artifact;
-use codegraph::doctor_dependencies::{
-    check_domain_dependencies, DependencyCheckStatus,
-};
-use codegraph::ingest::dependencies::{load_dependency_artifacts, DependencyLoadStats};
+use codegraph::doctor_dependencies::{check_domain_dependencies, DependencyCheckStatus};
+use codegraph::ingest::dependencies::load_dependency_artifacts;
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
@@ -44,7 +41,7 @@ fn schema(title: &str, classification: &str, domain: &str) -> SchemaNode {
         }
         .to_string(),
         rust_type_name: title.to_string(),
-        pg_table_name: title.to_lowercase(),
+        pg_table_name: codegraph_naming::to_snake_case(title),
         api_path_segment: title.to_string(),
         parent_schema: None,
         is_entity: classification == "entity",
@@ -101,7 +98,11 @@ async fn party_face_graph() -> GrafeoEngine {
         .await
         .unwrap();
     engine
-        .ingest_property("PartyContact", "party/PartyContact", &property("email", true))
+        .ingest_property(
+            "PartyContact",
+            "party/PartyContact",
+            &property("email", true),
+        )
         .await
         .unwrap();
     engine
@@ -313,7 +314,7 @@ async fn doctor_reports_dependency_graph() {
     let dir = tempfile::tempdir().unwrap();
     let ok_path = dir.path().join("party/artifact.json");
     write_face_artifact(&party_face_graph().await, &ok_path, "1.2.0", "party");
-    let bare_path = dir.path().join("bare/artifact.json");
+    let bare_path = dir.path().join("bare.artifact.json");
     artifact::export_ir(&party_face_graph().await, &bare_path).unwrap();
 
     // Resolved with a matching version.
@@ -344,7 +345,10 @@ async fn doctor_reports_dependency_graph() {
     }
 
     // Missing artifact file.
-    let config = consumer_config(dir.path().join("gone/artifact.json").to_str().unwrap(), "1.0.0");
+    let config = consumer_config(
+        dir.path().join("gone/artifact.json").to_str().unwrap(),
+        "1.0.0",
+    );
     let checks = check_domain_dependencies(&config, Some(dir.path()));
     assert!(matches!(
         checks[0].status,
@@ -394,7 +398,10 @@ async fn doctor_reports_cross_face_title_conflicts() {
             DependencyCheckStatus::TitleConflict { titles } => {
                 assert!(titles.contains(&"PartyContact".to_string()));
             }
-            other => panic!("expected TitleConflict for {}, got {other:?}", check.dependency_domain),
+            other => panic!(
+                "expected TitleConflict for {}, got {other:?}",
+                check.dependency_domain
+            ),
         }
     }
 }
@@ -426,8 +433,7 @@ async fn consumer_generates_against_pinned_face() {
     fs::write(
         &config_path,
         format!(
-            "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n\n[[domains.common.dependencies]]\ndomain = \"party\"\nsource = \"{}\"\nversion = \"1.2.0\"\n",
-            face_path.strip_prefix(root_path).unwrap().display()
+            "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n\n[[domains.common.dependencies]]\ndomain = \"party\"\nsource = \"../publisher/out/party.artifact.json\"\nversion = \"1.2.0\"\n"
         ),
     )
     .unwrap();

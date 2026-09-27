@@ -211,9 +211,13 @@ pub async fn run_with_graph_cache(
         }
     }
 
+    let mut domain_config = codegraph_config::config::parse_domain_config(config_path)
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+
+    let config_dir = config_path.parent();
     let inputs_hash: Option<String> = match graph_cache {
         Some(_cache_dir) => {
-            let inputs = crate::artifact::collect_run_inputs(
+            let mut inputs = crate::artifact::collect_run_inputs(
                 schemas,
                 classifier,
                 config_path,
@@ -223,6 +227,12 @@ pub async fn run_with_graph_cache(
                 openapi_files,
             )
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+            // Pinned dependency faces shape the graph too (issue #276):
+            // editing one must invalidate the persisted graph cache.
+            inputs.extend(
+                crate::ingest::dependencies::collect_dependency_inputs(&domain_config, config_dir)
+                    .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+            );
             Some(crate::artifact::inputs_hash(&inputs))
         }
         None => None,
@@ -262,8 +272,6 @@ pub async fn run_with_graph_cache(
         }
     };
 
-    let domain_config = codegraph_config::config::parse_domain_config(config_path)
-        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
     let classifier_config = match classifier {
         Some(classifier) => codegraph_classifier::config::parse_classifier_config(classifier)
             .map_err(|e| crate::error::Error::Config(e.to_string()))?,
@@ -586,6 +594,26 @@ pub async fn run_with_graph_cache(
         )
         .await?;
 
+        // Pass 2b: pinned dependency faces (issue #276). Foreign schemas
+        // load AFTER classification so their artifact classification is
+        // authoritative (never re-classified); local titles shadow foreign
+        // titles (local wins dedup) and every shadow is reported.
+        let dep_stats = crate::ingest::dependencies::load_dependency_artifacts(
+            be.ingestor(),
+            be.querier(),
+            &domain_config,
+            config_dir,
+        )
+        .await?;
+        if dep_stats.artifacts > 0 {
+            println!("Pass 2b: dependency faces — {dep_stats}");
+            for title in &dep_stats.shadowed_titles {
+                eprintln!(
+                    "WARN dependency title {title} is also defined locally — local definition wins dedup"
+                );
+            }
+        }
+
         // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
         if let Some(ref pc) = project_config {
             if pc.has_atproto {
@@ -602,6 +630,12 @@ pub async fn run_with_graph_cache(
             }
         }
     }
+
+    // Synthetic bounded contexts for the dependency domains (issue #276):
+    // generation reads the foreign faces from the graph; the entries carry
+    // no local model config. Runs on both the fresh and the cache-reused
+    // path (domain_config is re-parsed every run).
+    crate::ingest::dependencies::inject_dependency_domains(&mut domain_config);
 
     if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused) {
         if let Some(hash) = inputs_hash.as_deref() {

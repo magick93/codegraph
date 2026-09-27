@@ -372,6 +372,42 @@ fn normalize_config_key(name: &str) -> String {
 }
 
 impl DomainEntry {
+    /// A synthetic entry for a pinned dependency domain (issue #276): the
+    /// foreign face is read from the graph, so the entry carries no local
+    /// model config — it only registers the bounded context for generation
+    /// ordering and validation.
+    pub fn dependency_placeholder(domain: &str) -> DomainEntry {
+        DomainEntry {
+            label: domain.to_string(),
+            schema_dir: String::new(),
+            postgres_schema: domain.to_string(),
+            depends_on: Vec::new(),
+            dependencies: Vec::new(),
+            entities: Vec::new(),
+            entity_config: HashMap::new(),
+            auto_discover: Some(false),
+            exclude_entities: Vec::new(),
+            force_entities: Vec::new(),
+            force_value_objects: Vec::new(),
+            exclude: Vec::new(),
+            auditable: None,
+            tier: default_tier(),
+            worker_name: None,
+            custom_domain: None,
+            service_bindings: None,
+            hyperdrive_binding: None,
+            cron_triggers: None,
+            remote_include_mode: None,
+            webhooks: None,
+            queue_name: None,
+            queue_binding: None,
+            queue_max_retries: None,
+            queue_max_concurrency: None,
+            observability: None,
+            custom_routes: false,
+        }
+    }
+
     /// Look up entity config by name, trying both `name` and `nameType` variants.
     ///
     /// HR Open schemas use `XxxType` titles, so config keys are conventionally
