@@ -79,6 +79,7 @@ fn mock_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let engine = codegraph_core::mock::MockEngine::builder()

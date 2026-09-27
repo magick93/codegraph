@@ -78,6 +78,7 @@ fn mock_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "family_name".to_string(),
@@ -108,6 +109,7 @@ fn mock_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -660,6 +662,7 @@ fn prop(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -1739,6 +1742,7 @@ fn prop_split(
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -2708,6 +2712,7 @@ async fn generate_policy_driven_entity_with_soft_delete() {
                 ui_override_list_cell: None,
                 ui_override_form: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .build();
@@ -2851,6 +2856,7 @@ async fn generate_policy_driven_ddl_with_soft_delete() {
                 ui_override_list_cell: None,
                 ui_override_form: None,
                 ui_override_inline: None,
+                type_expr: None,
             }],
         )
         .build();

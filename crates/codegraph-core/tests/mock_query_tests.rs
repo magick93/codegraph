@@ -59,6 +59,7 @@ async fn builder_creates_engine_with_preloaded_data() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let tree = CompositionTree {

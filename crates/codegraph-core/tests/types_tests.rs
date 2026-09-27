@@ -68,6 +68,7 @@ fn property_node_serde_round_trip() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let json = serde_json::to_string(&prop).unwrap();
     let deserialized: PropertyNode = serde_json::from_str(&json).unwrap();

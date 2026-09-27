@@ -405,6 +405,7 @@ fn mock_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let engine = codegraph_core::mock::MockEngine::builder()
@@ -1225,6 +1226,7 @@ fn workers_scaffold_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let engine = codegraph_core::mock::MockEngine::builder()
@@ -1651,6 +1653,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let gender_prop = PropertyNode {
         name: "gender".to_string(),
@@ -1681,6 +1684,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let pay_line_ref_prop = PropertyNode {
         name: "pay_line".to_string(),
@@ -1711,6 +1715,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let code_ref_prop = PropertyNode {
         name: "code".to_string(),
@@ -1741,6 +1746,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let work_item_ref_prop = PropertyNode {
         name: "work_item".to_string(),
@@ -1771,6 +1777,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let engine = codegraph_core::mock::MockEngine::builder()
