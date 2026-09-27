@@ -10,8 +10,6 @@
 //!   reopens the persisted graph instead of re-ingesting.
 
 use std::fs;
-use std::path::PathBuf;
-
 use codegraph::artifact::{self, ArtifactError, FORMAT_VERSION};
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
@@ -113,6 +111,14 @@ async fn fixture_graph() -> GrafeoEngine {
         .await
         .unwrap();
     engine
+        .ingest_property(
+            "WidgetType",
+            "inventory/WidgetType",
+            &property("status", false),
+        )
+        .await
+        .unwrap();
+    engine
         .ingest_schema(&schema("WidgetStatus", "codelist", "inventory"))
         .await
         .unwrap();
@@ -141,7 +147,7 @@ async fn fixture_graph() -> GrafeoEngine {
     }
     engine
         .ingest_edge(
-            "inventory/WidgetType",
+            "status::WidgetType",
             "inventory/WidgetStatus",
             EdgeType::ReferencesSchema,
             Some(&EdgeProperties {
@@ -204,7 +210,10 @@ async fn newer_format_version_is_rejected() {
     let newer = dir.path().join("newer.artifact.json");
     fs::write(&newer, serde_json::to_vec(&doc).unwrap()).unwrap();
 
-    let err = artifact::import_ir(&newer).expect_err("newer formatVersion must be rejected");
+    let err = match artifact::import_ir(&newer) {
+        Err(err) => err,
+        Ok(_) => panic!("newer formatVersion must be rejected"),
+    };
     match &err {
         ArtifactError::FormatVersionTooNew { found, supported } => {
             assert_eq!(*found, FORMAT_VERSION + 1);

@@ -3,47 +3,24 @@
 //! - **L1 graph cache**: an inputs hash (all model/config input file
 //!   contents + the graph format version) decides whether a run may reopen
 //!   the persisted graph instead of re-ingesting everything;
-//! - **L2 artifact** (`doc`): `export_ir`/`import_ir` produce a canonical,
-//!   hashable JSON document of the full graph state whose round trip is
-//!   byte-identical;
-//! - **L3 conformance kit** (`kit`): executable cases pinning the document
-//!   format (`tests/fixtures/artifact_kit/graph_document_v1.md`).
+//! - **L2 artifact** (the `doc` layer, implemented in `codegraph-grafeo`):
+//!   `export_ir`/`import_ir` produce a canonical, hashable JSON document
+//!   of the full graph state whose round trip is byte-identical;
+//! - **L3 conformance kit**: executable cases pinning the document format
+//!   (`kit` module, added in the L3 step; the committed case file lives at
+//!   `tests/fixtures/artifact_kit/graph_document_v1.md`).
 
 use std::path::Path;
 
+pub use codegraph_grafeo::artifact::{
+    canonical_bytes, export_ir, import_ir, normalize, parse_document, sha256_hex, ArtifactError,
+    EdgeRecord, ExportedArtifact, GraphDocument, NodeRecord, PropValue,
+};
 pub use codegraph_grafeo::schema_ddl::GRAPH_FORMAT_VERSION as FORMAT_VERSION;
 
 /// Layout of the persisted-graph cache directory.
 pub const CACHE_GRAPH_FILE: &str = "graph.grafeo";
 pub const CACHE_INPUTS_MARKER: &str = "inputs.sha256";
-
-#[derive(Debug, thiserror::Error)]
-pub enum ArtifactError {
-    #[error("artifact format version {found} is newer than supported version {supported}")]
-    FormatVersionTooNew { found: u32, supported: u32 },
-    #[error("artifact format version {found} is older than supported version {supported}")]
-    FormatVersionTooOld { found: u32, supported: u32 },
-    #[error("duplicate node identity {key}; export requires unique node content per label")]
-    DuplicateNodeIdentity { key: String },
-    #[error("duplicate edge {edge_type} {from} -> {to} with identical properties")]
-    DuplicateEdgeIdentity {
-        edge_type: String,
-        from: String,
-        to: String,
-    },
-    #[error("edge references unknown node key {key}")]
-    UnknownEdgeEndpoint { key: String },
-    #[error("unsupported property value of type {kind} on {owner}")]
-    UnsupportedValue { owner: String, kind: String },
-    #[error("node {key} carries multiple labels; the artifact format is single-label")]
-    MultiLabelNode { key: String },
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("graph error: {0}")]
-    Graph(#[from] codegraph_core::error::GraphError),
-}
 
 /// An input file contributing to the graph: its path (as given on the
 /// command line or discovered under a schema dir) and its full contents.
@@ -57,12 +34,12 @@ pub struct InputFile {
 /// path and contents, in sorted path order. Identical inputs (and an
 /// unchanged graph format) therefore always produce the same hash.
 pub fn inputs_hash(files: &[InputFile]) -> String {
-    use sha2::{Digest, Sha256};
+    use sha2::Digest;
 
     let mut sorted: Vec<&InputFile> = files.iter().collect();
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
 
-    let mut hasher = Sha256::new();
+    let mut hasher = sha2::Sha256::new();
     hasher.update(FORMAT_VERSION.to_le_bytes());
     for file in sorted {
         hasher.update(file.path.as_bytes());
@@ -70,15 +47,12 @@ pub fn inputs_hash(files: &[InputFile]) -> String {
         hasher.update((file.bytes.len() as u64).to_le_bytes());
         hasher.update(&file.bytes);
     }
-    hex_digest(&mut hasher)
+    hex_digest(hasher.finalize())
 }
 
-fn hex_digest(hasher: &mut sha2::Sha256) -> String {
-    use sha2::Digest;
-
-    let digest = hasher.finalize_reset();
-    let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest {
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    let mut out = String::new();
+    for byte in digest.as_ref() {
         out.push_str(&format!("{byte:02x}"));
     }
     out
