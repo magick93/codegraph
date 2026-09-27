@@ -71,6 +71,8 @@ fn gender_codelist_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -99,6 +101,8 @@ fn candidate_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -1735,6 +1739,8 @@ async fn router_nests_child_under_parent() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -1760,6 +1766,8 @@ async fn router_nests_child_under_parent() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -1871,6 +1879,8 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -1896,6 +1906,8 @@ fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::ParentCandidat
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let candidates = vec![codegraph_core::types::ParentCandidate {
@@ -2103,6 +2115,8 @@ async fn array_items_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -2128,6 +2142,8 @@ async fn array_items_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // ArrayItems: field_name is the array property on the parent (e.g., "rewards")
@@ -2197,6 +2213,8 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -2222,6 +2240,8 @@ async fn array_items_handler_fk_uses_parent_type_name() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let candidates = vec![codegraph_core::types::ParentCandidate {
@@ -4287,6 +4307,8 @@ async fn workflow_action_child_entity_renders() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let child_schema = SchemaNode {
         namespace: None,
@@ -4312,6 +4334,8 @@ async fn workflow_action_child_entity_renders() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -4956,6 +4980,8 @@ async fn composite_range_collapses_start_end_into_daterange() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()
@@ -5053,6 +5079,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let communication_schema = SchemaNode {
@@ -5079,6 +5107,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let address_schema = SchemaNode {
@@ -5105,6 +5135,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let country_codelist_schema = SchemaNode {
@@ -5131,6 +5163,8 @@ async fn recursive_child_tables_with_full_classification() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // Person has a "name" (PrimitiveWrapper) and "communication" (ValueObject)
@@ -6007,6 +6041,8 @@ mod include_path_resolution_tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -6211,6 +6247,8 @@ entities = ["WorkerType"]
     async fn resolve_vo_through_allof_to_entity() {
         let legal_type = SchemaNode {
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -6264,6 +6302,8 @@ entities = ["WorkerType"]
     async fn entity_model_emits_fk_for_vo_that_extends_entity() {
         let legal_type = SchemaNode {
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -6380,6 +6420,8 @@ operations = ["create", "read", "update", "list"]
     fn setup_vo_entity_mock() -> MockEngine {
         let legal_type = SchemaNode {
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
             pg_table_name: String::new(),
             is_entity: false,
             classification: "value_object".to_string(),
@@ -7356,6 +7398,8 @@ fn worker_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -7384,6 +7428,8 @@ fn person_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -7905,6 +7951,8 @@ async fn dto_include_dot_notation() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let deployment_schema = SchemaNode {
@@ -7931,6 +7979,8 @@ async fn dto_include_dot_notation() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let worker_schema = worker_schema();
@@ -8171,6 +8221,8 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let deployment_schema = SchemaNode {
@@ -8197,6 +8249,8 @@ async fn dto_included_enriched_codelist_fields_use_stripped_names() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     use codegraph_type_contracts::RefClassificationKind;
@@ -8495,6 +8549,8 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let dep_schema = SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: "hr/json/DepEntityType.json".into(),
         title: "DepEntityType".into(),
         schema_type: "object".into(),
@@ -8521,6 +8577,8 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     let worker_schema = SchemaNode {
         namespace: None,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
         schema_id: "hr/json/WorkerType.json".into(),
         title: "WorkerType".into(),
         schema_type: "object".into(),
@@ -8681,6 +8739,8 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     // Codelist reference — rust_field_name stripped (no _code),
@@ -8914,6 +8974,8 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -9152,6 +9214,8 @@ async fn person_include_hydrates_target_child_tables() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -9344,6 +9408,8 @@ async fn person_include_hydrates_scoped_child_tables() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -9587,6 +9653,8 @@ async fn detail_page_emits_extension_points() {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 

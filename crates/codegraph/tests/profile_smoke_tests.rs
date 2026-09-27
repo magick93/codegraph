@@ -374,6 +374,8 @@ fn mock_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let props = vec![PropertyNode {
@@ -1172,6 +1174,8 @@ fn workers_scaffold_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let code = SchemaNode {
         namespace: None,
@@ -1197,6 +1201,8 @@ fn workers_scaffold_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let props = vec![PropertyNode {
@@ -1551,6 +1557,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let pay_line = SchemaNode {
         namespace: None,
@@ -1576,6 +1584,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let code = SchemaNode {
         namespace: None,
@@ -1601,6 +1611,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let work_item = SchemaNode {
         namespace: None,
@@ -1626,6 +1638,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let name_prop = PropertyNode {

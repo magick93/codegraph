@@ -363,6 +363,21 @@ async fn ingest_schema_node(
         }
     }
 
+    // Issue #279: the per-definition access flag and structured annotations
+    // ride the `x-access` / `x-annotations` custom annotations. Undeclared
+    // (or unparseable) values stay `None` — unchanged behavior.
+    let access = custom_annotations
+        .get("access")
+        .and_then(|v| v.as_str())
+        .and_then(|s| match s {
+            "public" => Some(codegraph_core::types::Access::Public),
+            "private" => Some(codegraph_core::types::Access::Private),
+            _ => None,
+        });
+    let annotations = custom_annotations
+        .get("annotations")
+        .and_then(|v| serde_json::from_value::<Vec<codegraph_core::types::Annotation>>(v.clone()).ok());
+
     let node = SchemaNode {
         // Issue #268: $namespace / $id-derived namespace (None keeps the
         // schema namespace-less — byte-identical back-compat).
@@ -399,6 +414,8 @@ async fn ingest_schema_node(
         has_definitions: entry.schema.get("definitions").is_some()
             || entry.schema.get("$defs").is_some(),
         custom_annotations,
+        access,
+        annotations,
     };
 
     db.ingest_schema(&node).await.map_err(Error::Graph)?;

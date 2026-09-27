@@ -1,11 +1,23 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use super::annotation::Annotation;
+
 /// Value stored under the `source` key of `SchemaNode::custom_annotations`
 /// (and mirrored onto `SchemaClassificationData::source`) for schemas whose
 /// entity/value-object nature is author-declared in a `.mox` domain source
 /// rather than inferred by the auto-classifier (issue #229).
 pub const MOX_SOURCE: &str = "mox";
+
+/// Per-definition visibility (issue #279, the Morphir access flag).
+/// `None` = undeclared (unchanged behavior — generation treats the
+/// definition exactly as before).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Access {
+    Public,
+    Private,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SchemaNode {
@@ -47,6 +59,15 @@ pub struct SchemaNode {
     /// field to an entity's AT Protocol record type).
     #[serde(default)]
     pub custom_annotations: HashMap<String, serde_json::Value>,
+    /// Per-definition access flag (issue #279): `Public` or `Private` when
+    /// declared, `None` otherwise. Serde-defaulted; consumers are
+    /// feature-gated so `None` keeps output byte-identical.
+    #[serde(default)]
+    pub access: Option<Access>,
+    /// Structured annotations (issue #279) beside the legacy
+    /// `custom_annotations` map. `None`/empty = unchanged behavior.
+    #[serde(default)]
+    pub annotations: Option<Vec<Annotation>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +129,8 @@ mod tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -137,6 +160,8 @@ mod tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         };
         assert!(!s.is_entity);
         assert!(!s.is_codelist);

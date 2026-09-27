@@ -43,9 +43,9 @@ use codegraph_classifier::projection_builder::ProjectionBuilder;
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    CodeList, EdgeProperties, EdgeType, EnumValue, MoxDerivedFeatureNode, MoxDomainModel, MoxEntry,
-    MoxFacet, MoxOperationNode, MoxPackageNode, MoxParam, MoxVocabularyNode, NamespaceNode,
-    PropertyNode, SchemaNode,
+    CodeList, EdgeProperties, EdgeType, EnumValue, Incompleteness, MoxDerivedFeatureNode,
+    MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode, MoxParam,
+    MoxVocabularyNode, NamespaceNode, PropertyNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind, TypeExpr};
@@ -92,6 +92,10 @@ pub struct MoxIngestStats {
     /// (issue #268), including the dotted parent chain. Namespace-less
     /// models (no package line) contribute zero.
     pub namespaces: usize,
+    /// Structured incompleteness findings (issue #279): unresolvable import
+    /// aliases and the like, as `UnresolvedReference { target }` holes.
+    /// Empty for fully-resolved models.
+    pub incompleteness: Vec<Incompleteness>,
 }
 
 impl std::fmt::Display for MoxIngestStats {
@@ -122,6 +126,11 @@ impl std::fmt::Display for MoxIngestStats {
         // Namespace counter only surfaces when namespaces exist (#268).
         if self.namespaces != 0 {
             write!(f, ", {} namespaces", self.namespaces)?;
+        }
+        // Incompleteness counter only surfaces when partial authoring was
+        // detected (#279) — fully-resolved models keep byte-identical output.
+        if !self.incompleteness.is_empty() {
+            write!(f, ", {} incomplete", self.incompleteness.len())?;
         }
         Ok(())
     }
@@ -877,6 +886,9 @@ pub async fn wire_alias_refs(
             };
             eprintln!("{}", unresolved_alias_warning(&unresolvable));
             stats.unresolved_aliases += 1;
+            stats
+                .incompleteness
+                .push(Incompleteness::unresolved_reference(&pending.alias));
             continue;
         };
         // `title` is a key of the map by construction.
@@ -1054,6 +1066,11 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+        // rex-ir v1 (rev 77688ee) carries neither an access flag nor
+        // structured annotations on `ClassDef` — `None` keeps the bridge
+        // byte-identical (issue #279); producers connect upstream.
+        access: None,
+        annotations: None,
     }
 }
 
@@ -1092,6 +1109,8 @@ fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+        access: None,
+        annotations: None,
     }
 }
 
@@ -1507,6 +1526,7 @@ mod tests {
             resolved_aliases: 0,
             unresolved_aliases: 0,
             namespaces: 0,
+            incompleteness: Vec::new(),
         };
         assert_eq!(
             stats.to_string(),

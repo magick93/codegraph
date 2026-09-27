@@ -1,4 +1,5 @@
 mod api;
+mod annotation;
 mod atproto;
 mod authorization;
 mod codelist;
@@ -10,6 +11,7 @@ mod edge;
 mod field_def;
 mod function;
 mod ifml;
+mod incompleteness;
 mod mox;
 mod namespace;
 mod persistence;
@@ -26,6 +28,7 @@ pub use api::{
     ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
     PermissionNode, PipelineNode,
 };
+pub use annotation::{Annotation, AnnotationArg};
 // Naming-collision resolution (issue #267): the AT-Protocol repo namespace
 // node is renamed `AtprotoNamespaceNode` (grafeo label `AtprotoNamespace`,
 // trait methods `ingest_atproto_namespace`/`get_atproto_namespaces`) so the
@@ -56,6 +59,7 @@ pub use ifml::{
     ModuleUseRecord, NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode,
     ViewComponentNode, ViewContainerNode,
 };
+pub use incompleteness::{Incompleteness, IncompletenessReason};
 pub use mox::{
     MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
     MoxParam, MoxVocabularyNode,
@@ -83,7 +87,7 @@ pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
 pub use rule::{RuleKind, RuleNode, RuleRefRecord};
-pub use schema::{SchemaClassificationData, SchemaNode, MOX_SOURCE};
+pub use schema::{Access, SchemaClassificationData, SchemaNode, MOX_SOURCE};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
 };

@@ -1787,6 +1787,8 @@ fn data_schema_node(
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+        access: None,
+        annotations: None,
     }
 }
 
@@ -1829,6 +1831,8 @@ fn enum_schema_node(
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
+        access: None,
+        annotations: None,
     }
 }
 
