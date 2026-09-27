@@ -756,6 +756,16 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         );
     }
 
+    if let Ok(config) = domain_config.as_ref() {
+        let checks =
+            crate::doctor_dependencies::check_domain_dependencies(config, args.config.parent());
+        if !checks.is_empty() {
+            let (hard, soft) = crate::doctor_dependencies::print_dependency_checks(&checks);
+            hard_failures += hard;
+            soft_warnings += soft;
+        }
+    }
+
     let mut manifest_candidates = vec![PathBuf::from("codegraph-ops.toml")];
     if let Some(parent) = args.config.parent().filter(|p| !p.as_os_str().is_empty()) {
         manifest_candidates.push(parent.join("codegraph-ops.toml"));

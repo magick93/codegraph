@@ -183,6 +183,7 @@ pub fn domain_config() -> DomainConfig {
             schema_dir: "schemas/recruiting".into(),
             postgres_schema: "recruiting".into(),
             depends_on: vec!["common".into()],
+            dependencies: Vec::new(),
             entities: vec!["CandidateType".into()],
             entity_config: HashMap::new(),
             auto_discover: None,
