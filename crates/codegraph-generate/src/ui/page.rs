@@ -1470,7 +1470,10 @@ mod ux_child_section_template_tests {
             out.contains(r#"onclick={() => editChild('common', 'sub-task', child.id)}"#),
             "{out}"
         );
-        assert!(out.contains("sub_taskDeleteId = child.id; }}"), "{out}");
+        assert!(
+            out.contains("onclick={() => sub_taskDeleteId = child.id}"),
+            "{out}"
+        );
         // Delete behind the per-section AlertDialog confirm.
         assert!(out.contains("DropdownMenu.Root"), "{out}");
         assert!(out.contains("open={sub_taskDeleteId !== null}"), "{out}");
@@ -1551,7 +1554,7 @@ mod ux_child_section_template_tests {
         );
         let out = render_detail(&ctx);
         assert!(
-            out.contains(r#"void deleteChild('common', 'sub-task', child.id); }}"#),
+            out.contains(r#"onclick={() =>  void deleteChild('common', 'sub-task', child.id)}"#,),
             "{out}"
         );
         assert!(!out.contains("sub_task-delete-confirm"), "{out}");
