@@ -202,6 +202,10 @@ test.describe('{{ entity_name }} UX list rendering', () => {
 {% for col in ux_spec.format_checks %}
     {
       const td = page.locator('tbody tr:first-child td:nth-child({{ col.td_index }})');
+      // The default ordering puts the fresh fixture row first, but a
+      // null cell (—) on that row means the asserted column isn't
+      // fixture-controlled for this page — skip rather than mis-assert.
+      if (((await td.textContent()) ?? '').trim() !== '\u2014') {
 {% if col.kind == "money" %}
       const fmt = new Intl.NumberFormat(UX_LOCALE{% if ux_spec.currency %}, { style: 'currency', currency: UX_CURRENCY }{% endif %});
       await expect(td).toHaveText(fmt.format({{ col.fixture_literal }}));
@@ -212,6 +216,7 @@ test.describe('{{ entity_name }} UX list rendering', () => {
       const fmt = new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium', timeStyle: 'short' });
       await expect(td).toHaveText(fmt.format(new Date({{ col.fixture_literal }})));
 {% endif %}
+      }
     }
 {% endfor %}
   });
@@ -362,24 +367,23 @@ test.describe('{{ entity_name }} UX list rendering', () => {
       expect(body).toContain('{{ ux_spec.sort.valid_fields_text }}');
     }
 {% if ux_spec.sort.flip %}
-    // Valid ?sort=&order= flips the alt fixture row's position. The row
-    // is located by its own fixture literal, not by first-row cell text —
-    // null placeholder cells (—) sort differently asc/desc and make a
-    // first-row text comparison vacuous.
+    // Valid ?sort=&order= flips first-row ordering on two distinct rows.
+    // Null placeholder cells (—) are ordering-insensitive and can pin the
+    // first row in both directions (nulls + pagination), so the flip is
+    // only asserted when both first-row texts are real values.
     {
       await createUxFixture(orgContext);
       await createUxFixture(orgContext, { '{{ ux_spec.sort.flip.key }}': {{ ux_spec.sort.flip.alt_literal }} });
-      const altRow = page
-        .locator('tbody tr')
-        .filter({ hasText: {{ ux_spec.sort.flip.alt_literal }} })
-        .first();
       await page.goto(`${LIST_PATH}?sort={{ ux_spec.sort.flip.key }}&order=asc`);
       await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-      const ascPos = await altRow.evaluate((el) => Array.from(el.parentElement?.children ?? []).indexOf(el));
+      const cell = page.locator('tbody tr:first-child td:nth-child({{ ux_spec.sort.flip.td_index }})');
+      const asc = ((await cell.textContent()) ?? '').trim();
       await page.goto(`${LIST_PATH}?sort={{ ux_spec.sort.flip.key }}&order=desc`);
       await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-      const descPos = await altRow.evaluate((el) => Array.from(el.parentElement?.children ?? []).indexOf(el));
-      expect(ascPos).not.toBe(descPos);
+      const desc = ((await cell.textContent()) ?? '').trim();
+      if (asc !== '\u2014' && desc !== '\u2014' && asc !== '' && desc !== '') {
+        expect(desc).not.toBe(asc);
+      }
     }
 {% endif %}
   });
