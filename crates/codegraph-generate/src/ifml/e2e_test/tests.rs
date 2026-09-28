@@ -5,6 +5,7 @@
 //! and carry zero raw testid construction).
 
 use codegraph_config::ux::Display;
+use codegraph_config::DomainConfig;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
@@ -619,6 +620,103 @@ fn stale_cleanup_removes_ux_specs_by_suffix() {
     let plain = "refund-request-list.spec.ts";
     assert!(plain.strip_suffix(".ux.spec.ts").is_none());
     assert!(plain.strip_suffix(".workflow.spec.ts").is_none());
+}
+
+#[test]
+fn pom_page_imports_resolve_to_emitted_kernel_files() {
+    // The gate caught this class of bug (#318): a page class importing
+    // `./support/pom` while the kernel emits `base-page.ts`/`ux-table.ts`
+    // typechecks NOWHERE (svelte-check fails, Playwright cannot transpile).
+    // Pin the contract structurally: every relative `./support/…` import
+    // specifier in an emitted page class must resolve, as
+    // `tests/pages/support/<name>.ts`, to a file in the SAME emission set.
+    use super::super::context::{IfmlComponent, IfmlViewContainer};
+    use super::pom::pom_file_set;
+    use codegraph_config::ux::UxRules;
+
+    let view = || IfmlViewContainer {
+        name: "CustomerList".to_string(),
+        label: Some("Customer Management".to_string()),
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        roles: Vec::new(),
+        requires: Vec::new(),
+        params: Vec::new(),
+        components: vec![IfmlComponent {
+            name: "grid".to_string(),
+            component_type: "list".to_string(),
+            mode: None,
+            entity: Some("Customer".to_string()),
+            fields: vec!["name".to_string()],
+            fields_with_types: Vec::new(),
+            filter: None,
+            properties: HashMap::new(),
+            events: Vec::new(),
+            parts: Vec::new(),
+            spec: None,
+        }],
+        events: Vec::new(),
+        containers: Vec::new(),
+    };
+    let config: DomainConfig = toml::from_str(
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = []
+"#,
+    )
+    .unwrap();
+
+    for (label, rules) in [
+        ("no-ux-rules", None),
+        ("ux-rules-on", Some(UxRules::default())),
+    ] {
+        let files = pom_file_set(
+            &config,
+            None,
+            &[(&view(), None)],
+            rules.as_ref(),
+            &HashMap::new(),
+        );
+        let paths: Vec<String> = files
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .collect();
+        for (path, content) in &files {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.ends_with("-page.ts") {
+                continue;
+            }
+            for (at, _) in content.match_indices("from './support/") {
+                let rest = &content[at + "from './support/".len()..];
+                let module = rest.split('\'').next().unwrap_or("");
+                assert!(!module.is_empty(), "{label}: empty support import");
+                let resolved = format!("tests/pages/support/{module}.ts");
+                assert!(
+                    paths.iter().any(|p| p == &resolved),
+                    "{label}: {name} imports './support/{module}' but the emission set \
+                     carries no {resolved}: {paths:?}"
+                );
+            }
+        }
+        // The kernel files themselves are always in the set.
+        assert!(
+            paths.contains(&"tests/pages/support/base-page.ts".to_string()),
+            "{label}: kernel base-page.ts missing: {paths:?}"
+        );
+        assert!(
+            paths.contains(&"tests/pages/support/ux-table.ts".to_string()),
+            "{label}: kernel ux-table.ts missing: {paths:?}"
+        );
+    }
 }
 
 #[test]

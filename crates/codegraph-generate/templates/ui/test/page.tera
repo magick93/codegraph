@@ -14,7 +14,12 @@
 // All selector/testid construction lives here; specs assert against the
 // locators and flows this class returns.
 
-import { expect, type Locator, type Page } from '@playwright/test';
+import {
+  expect,
+  type Locator,
+  type Page,
+  type Response,
+} from '@playwright/test';
 
 import { BasePage{% if pom.ux %}, UxTable{% endif %} } from '../_support/pom';
 
@@ -70,8 +75,9 @@ export class {{ entity_name }}Page extends BasePage {
     return `${this.base}/${id}/edit`;
   }
 
-  async gotoList(): Promise<void> {
-    await this.goto(this.listUrl());
+  /** Raw navigation — returns the response, mirroring `page.goto`. */
+  async gotoList(): Promise<Response | null> {
+    return this.page.goto(this.listUrl());
   }
 
   /** List route + the hydration wait the generated specs share. */
@@ -82,20 +88,20 @@ export class {{ entity_name }}Page extends BasePage {
 
   /** List route with a query string (`?sort=` / `?q=`) + hydration. */
   async openListAt(query: string): Promise<void> {
-    await this.goto(`${this.listUrl()}${query}`);
+    await this.page.goto(`${this.listUrl()}${query}`);
     await this.waitForHydration(`[data-testid="${this.module}-pagination"]`);
   }
 
-  async gotoCreate(): Promise<void> {
-    await this.goto(this.createUrl());
+  async gotoCreate(): Promise<Response | null> {
+    return this.page.goto(this.createUrl());
   }
 
-  async gotoDetail(id: string): Promise<void> {
-    await this.goto(this.detailUrl(id));
+  async gotoDetail(id: string): Promise<Response | null> {
+    return this.page.goto(this.detailUrl(id));
   }
 
-  async gotoEdit(id: string): Promise<void> {
-    await this.goto(this.editUrl(id));
+  async gotoEdit(id: string): Promise<Response | null> {
+    return this.page.goto(this.editUrl(id));
   }
 
   // ── List-page surface ───────────────────────────────────────────────

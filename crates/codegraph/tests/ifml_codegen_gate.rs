@@ -760,6 +760,35 @@ async fn regen_after_view_removal_stays_green() {
     // re-appended before the server build.
     isolate_generated_workspace().unwrap();
 
+    // Stale POM cleanup pin (#318): the removed view's page class must be
+    // swept by regeneration, the surviving views' page classes and the
+    // kernel stay. The sweep lives in IfmlE2eTestGenerator::generate (the
+    // `tests/pages/*-page.ts` staleness pass).
+    let pages_dir = svelte_dir().join("tests").join("pages");
+    assert!(
+        !pages_dir.join("help-modal-page.ts").exists(),
+        "removed view's page class (tests/pages/help-modal-page.ts) was not \
+         swept by regeneration"
+    );
+    assert!(
+        pages_dir.join("support").join("base-page.ts").exists()
+            && pages_dir.join("support").join("ux-table.ts").exists(),
+        "POM kernel (tests/pages/support/) must survive regeneration"
+    );
+    for page in [
+        "admin-console-page.ts",
+        "home-page.ts",
+        "refund-request-detail-page.ts",
+        "refund-request-form-page.ts",
+        "refund-request-list-page.ts",
+        "review-queue-page.ts",
+    ] {
+        assert!(
+            pages_dir.join(page).exists(),
+            "surviving page class {page} missing after regeneration"
+        );
+    }
+
     let project = svelte_project();
 
     // Wave B note: the full `run` pipeline does not clean stale route dirs of

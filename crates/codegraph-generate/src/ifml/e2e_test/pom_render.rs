@@ -12,6 +12,8 @@ use super::pom::{PomFieldKind, PomWorkflowMethods, ViewPom};
 /// The `tests/pages/{view-kebab}-page.ts` content for one view.
 pub(super) fn render_pom_page(pom: &ViewPom) -> String {
     let needs_expect = pom.collections.iter().any(|c| c.workflow.is_some())
+        || pom.forms.iter().any(|f| f.workflow.is_some())
+        || pom.details.iter().any(|d| d.workflow.is_some())
         || pom.flows.iter().any(|f| f.close_method.is_some());
     let needs_ux_table = pom.collections.iter().any(|c| c.ux_table.is_some());
 
@@ -29,9 +31,10 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
         s.push_str("import { type Locator, type Page } from '@playwright/test';\n\n");
     }
     if needs_ux_table {
-        s.push_str("import { BasePage, UxTable } from './support/pom';\n\n");
+        s.push_str("import { BasePage } from './support/base-page';\n");
+        s.push_str("import { UxTable } from './support/ux-table';\n\n");
     } else {
-        s.push_str("import { BasePage } from './support/pom';\n\n");
+        s.push_str("import { BasePage } from './support/base-page';\n\n");
     }
 
     s.push_str(&format!(

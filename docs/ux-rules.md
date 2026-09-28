@@ -105,7 +105,7 @@ plan consumed by two emitters:
    │         diagnostics.rs  advisory warnings (never fatal)       │
    └───────────────────────────────┬───────────────────────────────┘
                                    ▼
-                              UxPlan (pure data)
+                               UxPlan (pure data)
                                    │
               ┌────────────────────┴────────────────────┐
               ▼                                         ▼
@@ -114,8 +114,11 @@ plan consumed by two emitters:
    → crates/codegraph-generate/               resolve_column_ux +
      templates/ui/list_page.tera              resolve_generation_ux
      (+ _ux_cell.tera, list_timeline.tera,    → crates/codegraph-generate/
-      child_section.tera)                       templates/ifml/svelte/page.tera
-   ui/e2e_test.rs → {seg}.ux.test.ts          ifml/e2e_test.rs → {view}.ux.spec.ts
+       child_section.tera)                       templates/ifml/svelte/page.tera
+   ui/e2e_test/ → {seg}.ux.test.ts            ifml/e2e_test/ → {view}.ux.spec.ts
+   ui/e2e_test/pom_ctx.rs +                   ifml/e2e_test/{pom,pom_render}.rs →
+     ui/test/{page,_pom_kernel}.tera            tests/pages/{view}-page.ts
+     → {seg}.page.ts + _support/pom.ts
 ```
 
 ### Module map
@@ -136,6 +139,8 @@ plan consumed by two emitters:
 | `crates/codegraph-generate/src/api/handler.rs` | `?sort=`/`?order=` validation against the allow-list |
 | `crates/codegraph-generate/src/ddd/repository_emitter/query_search.rs` | `emit_sort_ordering` — quoted ORDER BY + `, id ASC` tiebreaker |
 | `crates/codegraph-generate/src/ifml/route_generator.rs` | `resolve_column_ux` (lookup tier + shared Pass-1/rules), `resolve_generation_ux`, `TableLayout::Timeline`, event tiering |
+| `crates/codegraph-generate/src/ui/e2e_test/` | `{seg}.{family}.test.ts` emitters (11 families), `pom_ctx.rs` (per-entity POM inputs) |
+| `crates/codegraph-generate/src/ifml/e2e_test/` | `{view}.spec.ts`/`.workflow.spec.ts`/`.ux.spec.ts` assembly + `pom.rs`/`pom_render.rs` (per-view POM) + `kernel.rs` (IFML half of the shared kernel) |
 
 ### Pass 1 decision list (ordered, first hit wins — a pinned contract)
 
@@ -321,34 +326,176 @@ replaces outright); `[[column]]`/`[[collection]]` project rules PREPEND
 `[actions]` project `inline_max` wins; project `confirm` wins when
 non-empty, else the pack's survives.
 
-## 5. Testid contract
+## 5. Testid contract (canonical)
 
-Single source: `crates/codegraph-generate/src/ux/plan.rs` `pub mod ids`
-(shared with the e2e generators so specs never drift from markup), plus
-per-entity `{module}-*` fragments in `crates/codegraph-generate/templates/ui/list_page.tera` /
-`_ux_cell.tera` / `list_timeline.tera` / `child_section.tera`, and
-per-component `{comp}-*` fragments in `crates/codegraph-generate/templates/ifml/svelte/page.tera`.
+Single source: `crates/codegraph-generate/src/ux/plan.rs` `pub mod ids` —
+Rust constants + `{family}` constructor fns, shared by the UI generators,
+the e2e/ux spec emitters, and the POM generators so generated specs never
+drift from generated markup.
 
-| Testid | Rendered by | Asserted by |
-|---|---|---|
-| `{module}-chip` | entity chip cells (`_ux_cell.tera` chip branch) | `{seg}.ux.test.ts` chip block; `ux_rules_tests.rs` |
-| `{module}-copy` | entity copy-chip cells (Tooltip trigger or plain button) | `{seg}.ux.test.ts` copy block (clipboard/full-value) |
-| `{module}-actions` | entity row overflow-menu trigger | `{seg}.ux.test.ts` actions block |
-| `{module}-actions-menu` | entity overflow menu content | `{seg}.ux.test.ts` actions block |
-| `{module}-action-{edit,delete,…}` | entity menu items | `{seg}.ux.test.ts` (delete + confirm-cancel) |
-| `{module}-delete-confirm` / `{module}-delete-confirm-confirm` | AlertDialog delete confirmation (content / confirm action) | `{seg}.ux.test.ts` confirm-cancel block |
-| `{module}-sort-{key}` | sortable column-header buttons (`list_page.tera`, ux_sort only) | `{seg}.ux.test.ts` sort block (allow-list + flip) |
-| `{module}-timeline` / `-timeline-item` / `-timeline-meta` / `-workflow-state` | entity timeline rail (`list_timeline.tera`) | timeline block, `ux_rules_tests.rs` timeline pins |
-| `{comp}-chip` | IFML chip spans (`data-chip` value + `data-chip-variant` tone) | `{view}.ux.spec.ts`; nightly gate fixture pins |
-| `{comp}-copy` | IFML copy-chip buttons | `{view}.ux.spec.ts` |
-| `{comp}-timeline` / `-timeline-item` / `-timeline-title` / `-timeline-meta` | IFML `<ol>` rail (`page.tera`) | `{view}.ux.spec.ts` timeline block |
-| `{comp}-actions` / `{comp}-actions-menu` | IFML per-row actions menu (event tiering) | `{view}.ux.spec.ts` |
+**The single-source story.** Tera templates keep their literals (Tera
+cannot call Rust); the relationship is pinned in the other direction:
+
+1. `ids::` in Rust is the canonical table (the doc comment on the module
+   carries the same table with template line refs);
+2. Tera literals are pinned by the GENERATED SPECS — a template edit that
+   drifts a testid breaks the generated specs (and the byte-identity
+   suites pin the specs);
+3. the POM kernels mirror the same fragments (`tid('{fragment}')` in both
+   kernels; surface parity pinned by
+   `pom_kernel_surface_matches_entity_kernel`), and the Rust-built IFML
+   page classes format their locators from the same fragment vocabulary.
+
+So there are exactly three places a testid lives — template literal, spec
+assertion, POM locator — and each pair is pinned by a suite.
+
+### Entity family (prefix `{module}` = the entity's snake_case module)
+
+| id | Owning template/emitter | POM consumer | Spec assertor |
+|---|---|---|---|
+| `{module}-search` | `ui/list_page.tera` | page `searchInput()` | search specs, POM fill |
+| `{module}-create-btn` | `ui/list_page.tera` | page `createButton()` | crud spec create flow, POM |
+| `{module}-empty` | `ui/list_page.tera` | page `emptyState()` | crud spec table-or-empty |
+| `{module}-no-results` | `ui/list_page.tera` | page `noResults()` | search spec |
+| `{module}-table` | `ui/list_page.tera` | page `tableRoot()` + `UxTable.root()` | crud/ux specs, POM rows |
+| `{module}-sort-{field}` | `ui/list_page.tera` (ux sort only) | `UxTable.sortButton/sortHeader/sortBy` | ux spec sort block |
+| `{module}-pagination` | `ui/list_page.tera` | page `pagination()` | ux spec hydration waits |
+| `{module}-delete-confirm` / `-delete-confirm-confirm` | `ui/list_page.tera`, `ui/child_section.tera` | `UxTable.deleteConfirm()/deleteConfirmConfirm()`, `deleteViaMenu()` | ux spec confirm-cancel block |
+| `{module}-form` | `ui/entity_form.tera` | page `formRoot()` | validation/crud specs |
+| `{module}-cancel-btn` | `ui/entity_form.tera` | page `cancelButton()`/`cancel()` | POM cancel flow |
+| `{module}-submit-btn` | `ui/entity_form.tera` | page `submitButton()`/`submit()` | crud spec, POM submit |
+| `{module}-edit-btn` | `ui/detail_page.tera` | page `editButton()`/`edit()` | crud spec edit nav |
+| `{module}-delete-btn` | `ui/detail_page.tera` | page `deleteButton()`/`delete()` | crud spec delete flow |
+| `{module}-field-{field}` | `ui/detail_page.tera` | page `field(name)` | crud spec, POM detail read |
+| `confirm-dialog` / `-confirm` | `ui/detail_page.tera` | page delete flow | crud spec |
+| `workflow-panel` / `workflow-state` | `ui/scaffold/workflow_panel.tera` | page `workflowPanel()`/`workflowState()`/`expectState()`/`transitionTo()` | workflow specs |
+| `{module}-row` | (not stamped in entity markup yet — rows located via the `{module}-table` root) | reserved for family uniformity | — |
+| `{module}-chip` | `ui/_ux_cell.tera` chip branch | `UxTable.chipFor()` | `{seg}.ux.test.ts` chip block |
+| `{module}-copy` | `ui/_ux_cell.tera` copy branch | `UxTable.copyTrigger()/copyCell()/tooltipFor()` | `{seg}.ux.test.ts` copy block |
+| `{module}-actions` / `-actions-menu` / `-action-{edit,delete,…}` | `ui/_ux_cell.tera`, `ui/child_section.tera` | `UxTable.actionsTrigger()/openActions()/menu()/menuDelete()` | `{seg}.ux.test.ts` actions block |
+| `{module}-timeline` / `-timeline-item` / `-timeline-meta` / `-workflow-state` | `ui/list_timeline.tera` | `UxTable.timelineRoot()/timelineItems()/timelineTimes()` | `{seg}.ux.test.ts` timeline block, `ux_rules_tests.rs` |
+
+### IFML family (prefix `{comp}` = the IFML component name)
+
+| id | Owning template/emitter | POM consumer | Spec assertor |
+|---|---|---|---|
+| `{comp}-table` | `ifml/svelte/page.tera` fallback + `selectors()` (mapped testids) | page `{comp}Row()` / `UxTable` over the module | `{view}.spec.ts` render |
+| `{comp}-row` | `page.tera` fallback + `selectors()` | page `{comp}Row()` | click-through specs |
+| `{comp}-form` | `page.tera` fallback + `selectors()` | page `{comp}Form()`/`{comp}Input(field)` | validation/CRUD specs |
+| `{comp}-submit` | `page.tera` fallback + `selectors()` | page `{comp}Submit()`/`submit{Comp}()`/`save{Comp}()` | CRUD specs |
+| `{comp}-error` | `page.tera` fallback | (validation asserted via the form surface) | validation specs |
+| `{comp}-details` | `page.tera` fallback + `selectors()` | page `{comp}Details()` + per-field getters (`dd` order) | details/sweep specs |
+| `{comp}-state` | `route_generator::workflow_badge_html` | page `{comp}StateBadge()`/`expect{Comp}State()` | `{view}.workflow.spec.ts` |
+| `{comp}-transition-{to}` | `route_generator` (kebab via `codegraph-naming`) | page `transition{Comp}To()` (testid map = the same edge enumeration) | `{view}.workflow.spec.ts` |
+| `{comp}-chip` / `-copy` | `page.tera` ux cell branches | `UxTable.chipFor()/copyTrigger()/copyCell()` | `{view}.ux.spec.ts` |
+| `{comp}-actions` / `-actions-menu` | `page.tera` (event tiering; one per row) | `UxTable.actionsTrigger()/openActions()/menu()` (first-match) | `{view}.ux.spec.ts` |
+| `{comp}-timeline` / `-timeline-item` | `page.tera` `<ol>` rail | `UxTable.timelineRoot()/timelineItems()` | `{view}.ux.spec.ts` timeline block |
+
+Framework-level ids outside `ids::` (`side-nav` mapped shell,
+`{container}-label` xor headings, `tabs` mapped wrapper) are asserted by
+the gate-owned sweep spec and the gate's structural checks — see
+`tests/fixtures/ifml_gate/ifml-components.toml` for the mapped testids.
 
 Sorting headers carry `aria-sort` (set only for sortable columns, only
 when the ux sort plane is active). The `ids` constants themselves:
 `actions`, `actions-menu`, `chip`, `copy`, `timeline`, `timeline-item`.
 
-## 6. Diagnostics catalog
+## 6. Playwright Object Model (POM, #315–#318)
+
+Every generated Playwright spec drives the UI through an emitted
+page-object layer — zero raw testid construction in spec bodies (the
+#316/#317 rewires took the entity families from 164 raw constructions to
+0). Two parallel POM families mirror the two emitters and share one
+kernel contract.
+
+### Kernel + page classes
+
+| Pipeline | Kernel (once per run) | Page classes | Consumers |
+|---|---|---|---|
+| Entity (`ui-e2e-test`) | `ui/tests/generated/_support/pom.ts` — rendered from `templates/ui/test/_pom_kernel.tera` by the FIRST spec-emitting entity (`AtomicBool` once-per-run hook), rewritten every run | `ui/tests/generated/{domain}/{seg}.page.ts` from `templates/ui/test/page.tera` — every any-op entity | all 11 `{seg}.{family}.test.ts` families |
+| IFML (`ifml-e2e-test`) | `tests/pages/support/base-page.ts` + `ux-table.ts` — Rust-built constants (`ifml/e2e_test/kernel.rs`) | `tests/pages/{view-kebab}-page.ts` — `ifml/e2e_test/pom_render.rs` renders the `ViewPom` plan | `{view}.spec.ts` / `.workflow.spec.ts` / `.ux.spec.ts` |
+
+`BasePage` carries `goto` + `waitForHydration` (Svelte hydration +
+selector visibility). `UxTable` is the shared ux contract component
+object: rows/`rowFor`, `chipFor`, `sortBy` (aria-sort aware
+click-to-cycle), `openActions`/`menu`/`menuDelete`/`deleteViaMenu`,
+`copyCell` (clipboard poll), `timelineItems`/`timelineTimes`, plus the
+Intl mirrors — `expectFormatted` runs the SAME
+`Intl.DateTimeFormat`/`NumberFormat` (plan locale + rule currency) the
+page runs, so format assertions cannot disagree with the markup. Row
+visuals close the contract: `expectZebra`, `expectInactive`.
+
+**Kernel parity**: both kernels declare the IDENTICAL public method
+surface (names + semantics + `ids::`-mirrored fragments), pinned by
+`pom_kernel_surface_matches_entity_kernel`, which renders the entity
+template through the real embedded Tera and diff-extracts the surface.
+The IFML kernel is Rust-built (not rendered from the shared template)
+because the IFML generator must not depend on the passed-in Tera carrying
+the ui templates (the external harness passes `Tera::default()`).
+
+### Test-object lowering
+
+The POM is the test-object lowering of the model plane: every
+UxPlan/IFML-IR construct lowers to exactly one POM surface, and specs
+assert only through it:
+
+| Model construct | POM surface |
+|---|---|
+| `ColumnPlan { sortable }` + `?sort=` allow-list | `UxTable.sortBy(field, dir)` / `sortButton` / `sortHeader` |
+| `Display::Chip` + `ToneMap` | `UxTable.chipFor(label)` |
+| `ActionPlan` tiering at `[actions] inline_max` | `UxTable.openActions(row?)` / `menu()` / `menuDelete()` / `deleteViaMenu(row?)` |
+| `Display::CopyChip` | `UxTable.copyTrigger(row)` / `copyCell(row, expected)` / `tooltipFor(text)` |
+| `CollectionPlan::Timeline` | `UxTable.timelineRoot()` / `timelineItems()` / `timelineTimes()` |
+| `[format]` Intl plane | kernel `formatDate/DateTime/Money/Quantity` mirrors (locale/currency from the plan) |
+| Row visuals (`RowVisuals`) | `expectZebra()` / `expectInactive(row)` |
+| Workflow config (states/edges) | entity page `expectState`/`transitionTo`; IFML page `expect{Comp}State`/`transition{Comp}To` — the transition testid map is the SAME edge enumeration `route_generator` renders as buttons |
+| `NavigationFlow` (+ modal views) | IFML page `navigateTo{Target}()` / `close{Target}Modal()` (row click + `waitForURL` pattern; modal wrapper/close/back waits) |
+| Mapped components (`ifml-components.toml`) | `ComponentSelectors` resolve the mapping's testids into the page class locators; `UxTable` attaches ONLY to unmapped fallback collections whose entity carries a plan |
+| View structure (render/persona payloads) | page `heading()` / `primaryRoot()` / `navRoot()` / `containerRoot()` / `expectDenied()` |
+
+IFML page classes are built from the SAME resolution the route generator
+renders from — `ComponentSelectors`, `workflow_for_entity`,
+`html_input_for_dsl` (typed fills: select/check/fill/datetime-local per
+input kind), the ux plan mirror — so the POM can never disagree with the
+markup about which control does what. Handler parity: the first navigate
+event drives the row testid the markup wires; menu events drive the
+actions menu.
+
+### Emission gating + lifecycle
+
+- **spec-infra gated, never ux-flag gated** (locked #316 contract): the
+  kernel + page classes emit whenever ANY spec emits — entity: any-op
+  entities; IFML: any view with payloads. A schema-less IFML run emits
+  page classes with NO navigation surface (flows/save/denial are
+  payload-gated); the workflow and ux-object surfaces stay model-derived
+  (markup parity — badges/chips/buttons render whenever the config/plan
+  renders them).
+- Generated-fresh every run (never-overwrite applies only to the harness
+  stubs); `tests/pages/*-page.ts` of REMOVED views are swept by the next
+  regeneration (the generator's staleness pass) — pinned by the gate's
+  T4, alongside the surviving page classes and the kernel.
+
+### Canary contract evolution
+
+Flag-off output remains byte-identical **modulo the reviewed test-infra
+files**: the POM kernel + page classes ARE part of flag-off output
+(their gate is spec-infra, which is flag-independent), so the committed
+pre-feature snapshots include them. Rebless discipline is unchanged —
+`UX_RULES_BLESS=1` — but every POM-era rebless carries an ENUMERATED
+reviewed diff (e.g. #316's entity rebless: exactly `_support/pom.ts`, 2
+page classes, 12 spec rewirings, mechanical migration renumbering).
+
+### Validation boundary
+
+The IFML POM runs LIVE in the nightly gate (T3): all spec categories
+drive the real API through the page classes. The entity POM is
+pin/snapshot-verified (`ui_e2e_test_tests`, insta snapshots,
+`ux_rules_tests` content pins, the byte-identity canary) plus a
+typecheck over the regenerated review fixture (below); live entity-app
+Playwright runs belong to consumer projects — hr-specs' ~4,000-spec
+suite is the acceptance gate there.
+
+## 7. Diagnostics catalog
 
 All diagnostics are advisory warnings printed to stderr as
 `warning: ux-rules: {line}` (ui-page generator `report_ux_diagnostics`,
@@ -370,20 +517,20 @@ field (names the candidates), and a programmatic timeline rule without
 `order_by`. The unresolvable-`order_by` case skips the entity page in the
 ui pipeline (pinned by `ux_rules_timeline_unresolvable_order_by_skips_entity_page`).
 
-## 7. Test-layers map
+## 8. Test-layers map
 
 Three layers, node-free first:
 
 | Layer | Suite | Command | Covers |
 |---|---|---|---|
 | PR-CI net (node-free, no Postgres) | `crates/codegraph/tests/ux_rules_tests.rs` (18 tests) | `cargo test -p codegraph --test ux_rules_tests` | full driver runs over the init fixture: default-pack pins, flag-off negatives, project-file override, timeline on/off, child-section tiering, sort-plane wiring (handler + query + page), diagnostics report() pins, `{seg}.ux.test.ts`/`{view}.ux.spec.ts` content |
-| | `crates/codegraph/tests/ux_rules_byte_identity_tests.rs` (4 tests) | `cargo test -p codegraph --test ux_rules_byte_identity_tests` | the byte-identity contract: entity + IFML determinism canaries, committed pre-feature snapshots, `UX_RULES_BLESS=1` rebless |
-| Generator-level (in-crate unit) | `crates/codegraph/tests/ui_e2e_test_tests.rs` (20 tests) | `cargo test -p codegraph --test ui_e2e_test_tests` | `{seg}.ux.test.ts` gating: spec absent when flag off / no list+create, per-feature blocks (chip/copy/format/align/sort/actions/first-column/timeline) |
+| | `crates/codegraph/tests/ux_rules_byte_identity_tests.rs` (4 tests) | `cargo test -p codegraph --test ux_rules_byte_identity_tests` | the byte-identity contract: entity + IFML determinism canaries, committed pre-feature snapshots (which now include the POM test-infra files — see §6), `UX_RULES_BLESS=1` rebless |
+| Generator-level (in-crate unit) | `crates/codegraph/tests/ui_e2e_test_tests.rs` (23 tests) | `cargo test -p codegraph --test ui_e2e_test_tests` | `{seg}.ux.test.ts` gating: spec absent when flag off / no list+create, per-feature blocks (chip/copy/format/align/sort/actions/first-column/timeline) |
 | | `crates/codegraph/tests/ui_e2e_snapshot_tests.rs` | `cargo test -p codegraph --test ui_e2e_snapshot_tests` | insta snapshot of the canonical ux spec |
-| | `codegraph-generate` lib tests (`crates/codegraph-generate/src/ux/*`, `crates/codegraph-generate/src/ifml/e2e_test.rs`) | `cargo test -p codegraph-generate --lib -- ux` | Pass-1 decision table, plan builder, config strictness matrix, sort projection, IFML spec renderer |
-| Nightly real-API gate | `crates/codegraph/tests/ifml_codegen_gate.rs` | `cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture` | full pipeline + axum + Playwright; the gate fixture is ux-ON (`fixtures/ifml_gate/ux-rules.toml` merged over the pack), `ux` is an assert_categories entry, dropdown-menu/tooltip stubs back the fallback-table markup |
+| | `codegraph-generate` lib tests (`crates/codegraph-generate/src/ux/*`, `crates/codegraph-generate/src/ui/e2e_test/`, `crates/codegraph-generate/src/ifml/e2e_test/`) | `cargo test -p codegraph-generate --lib -- ux e2e_test` | Pass-1 decision table, plan builder, config strictness matrix, sort projection, spec renderers, the POM pins: kernel surface parity (entity↔IFML), page-import↔kernel-emission coherence, `expect`-import gating, plan/payload-driven page-class surface |
+| Nightly real-API gate | `crates/codegraph/tests/ifml_codegen_gate.rs` | `cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture` | full pipeline + axum + Playwright; the gate fixture is ux-ON (`fixtures/ifml_gate/ux-rules.toml` merged over the pack), `ux` is an assert_categories entry, dropdown-menu/tooltip stubs back the fallback-table markup. Since #318 every spec category drives the app through the POM page classes; T4 pins stale-POM cleanup |
 
-## 8. Deferred ledger
+## 9. Deferred ledger
 
 Each entry: the #286 row it serves, reserved config vocabulary where it
 exists, and what it would take.
@@ -454,7 +601,12 @@ exists, and what it would take.
    `_ux_cell.tera` AND `crates/codegraph-generate/templates/ifml/svelte/page.tera`; keep every new
    block behind a ux-gated `{% if %}` so flag-off stays byte-identical.
 5. **Test pins**: `{seg}.ux.test.ts` block in
-   `crates/codegraph-generate/src/ui/e2e_test.rs` + template, a Rust pin
+   `crates/codegraph-generate/src/ui/e2e_test/` + template, a Rust pin
    in `ux_rules_tests.rs`, and generator-level unit tests.
-6. **Gate category**: extend the gate fixture + `assert_categories` in
+6. **POM surface**: any new ux capability must consider its POM surface
+   and the spec assertion that exercises it — a kernel method (`UxTable`),
+   a page-class section (`ui/test/page.tera` payload / `ifml/e2e_test/pom.rs`
+   plan), or both — so specs keep asserting through the page objects, never
+   raw testids (see §6).
+7. **Gate category**: extend the gate fixture + `assert_categories` in
    `ifml_codegen_gate.rs` so the nightly real-API run exercises it.

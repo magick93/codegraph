@@ -143,14 +143,16 @@ export class UxTable {
     return menu;
   }
 
-  /** `{module}-actions-menu` — the overflow menu. */
+  /** `{module}-actions-menu` — the overflow menu. The fallback markup
+   * renders one menu PER ROW; callers operate on the row `openActions`
+   * opened (the first row by default), so first-match is the contract. */
   menu(): Locator {
-    return this.page.locator(this.tid('actions-menu'));
+    return this.page.locator(this.tid('actions-menu')).first();
   }
 
-  /** The menu's Delete item (`{module}-action-delete`). */
+  /** The menu's Delete item (`{module}-action-delete`), first row. */
   menuDelete(): Locator {
-    return this.page.locator(this.tid('action-delete'));
+    return this.page.locator(this.tid('action-delete')).first();
   }
 
   /** `{module}-delete-confirm` — the row-delete dialog. */

@@ -754,4 +754,23 @@ entities = []
         assert!(!rendered.contains("containerRoot(): Locator"), "{rendered}");
         assert!(!rendered.contains("expectDenied"), "{rendered}");
     }
+
+    /// The `expect` import is required by the workflow surface on ANY
+    /// component kind — not just collections (#318 gate finding: a
+    /// details-only workflow view rendered `expectInfoState` without the
+    /// import and failed svelte-check + Playwright transpile).
+    #[test]
+    fn details_workflow_imports_expect() {
+        let config = workflow_config();
+        let mut vc = list_view();
+        vc.components.retain(|c| c.component_type == "details");
+        let pom = build_view_pom(&config, None, &vc, None, None, &HashMap::new());
+        let rendered = render_pom_page(&pom);
+        assert!(
+            rendered
+                .contains("import { expect, type Locator, type Page } from '@playwright/test';"),
+            "details workflow must pull in expect:\n{rendered}"
+        );
+        assert!(rendered.contains("async expectInfoState"), "{rendered}");
+    }
 }
