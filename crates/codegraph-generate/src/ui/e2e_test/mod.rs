@@ -3,6 +3,7 @@ mod deps;
 mod fixtures;
 mod generator;
 mod include;
+mod pom_ctx;
 mod refs;
 mod ux_spec;
 
@@ -13,5 +14,6 @@ pub use context::{
     UxE2eSpecCtx,
 };
 pub use generator::UiE2eTestGenerator;
+pub use pom_ctx::{PomCtx, PomFieldCtx, PomUrlsCtx, PomWorkflowCtx};
 
 use super::{common, page, store};

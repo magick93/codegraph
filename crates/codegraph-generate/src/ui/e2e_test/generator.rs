@@ -559,6 +559,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             grandparent_test_data_json,
             e2e_include,
             ux_spec,
+            pom: None,
         };
 
         let tests_dir = self

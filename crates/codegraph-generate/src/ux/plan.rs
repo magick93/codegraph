@@ -40,10 +40,66 @@ use crate::ui::page::UiField;
 
 use super::dimension::{infer_dimension_with_hints, DimensionHints};
 
-/// Stable `data-testid` fragments for ux-rules-rendered controls.
+/// Stable `data-testid` constants for generated UI, shared by the UI
+/// generators, the e2e/ux spec emitters (#302/#304), and the POM
+/// generator (#316/#317) so generated specs never drift from generated
+/// markup.
 ///
-/// Single source shared by the UI generators and the e2e generator
-/// (#302/#304) so generated specs never drift from generated markup.
+/// # The contract
+///
+/// Tera templates keep their literals — Tera cannot call Rust. The
+/// relationship is pinned in the other direction: the GENERATED SPECS
+/// locate markup through these literals (and the byte-identity suites pin
+/// the specs), while the POM builds its locators from `ids::`. So a
+/// template edit that drifts a testid breaks the generated specs, and the
+/// POM — reading the same table — stays in sync by construction.
+///
+/// | id | Owning template / literal source | Consumer |
+/// |----|----------------------------------|----------|
+/// | `{module}-search` | `ui/list_page.tera:334` | search specs, POM |
+/// | `{module}-create-btn` | `ui/list_page.tera:339` | crud spec, POM |
+/// | `{module}-empty` | `ui/list_page.tera:348` | crud spec (table-or-empty), POM |
+/// | `{module}-no-results` | `ui/list_page.tera:367` | search spec, POM |
+/// | `{module}-table` | `ui/list_page.tera:372` | crud spec `:190`, ux spec, POM |
+/// | `{module}-sort-{field}` | `ui/list_page.tera:379` | ux spec sort blocks |
+/// | `{module}-pagination` | `ui/list_page.tera:447` | ux spec hydration waits, POM |
+/// | `{module}-delete-confirm` | `ui/list_page.tera:488`, `ui/child_section.tera:116` | ux spec `:275`, POM |
+/// | `{module}-delete-confirm-confirm` | `ui/list_page.tera:500`, `ui/child_section.tera:127` | ux spec delete flow, POM |
+/// | `{module}-form` | `ui/entity_form.tera:140` | validation/crud specs, POM |
+/// | `{module}-cancel-btn` | `ui/entity_form.tera:255` | POM cancel flow |
+/// | `{module}-submit-btn` | `ui/entity_form.tera:258` | crud spec `:204`, POM submit |
+/// | `{module}-edit-btn` | `ui/detail_page.tera:245` | crud spec edit nav, POM |
+/// | `{module}-delete-btn` | `ui/detail_page.tera:253` | crud spec delete flow, POM |
+/// | `{module}-field-{field}` | `ui/detail_page.tera:281` | crud spec `:281`, POM detail read |
+/// | `confirm-dialog` | `ui/detail_page.tera:368` | crud spec `:507`, POM |
+/// | `confirm-dialog-confirm` | `ui/detail_page.tera:380` | crud spec `:508`, POM |
+/// | `workflow-panel` | `ui/scaffold/workflow_panel.tera:31` | workflow spec `:136-158`, POM |
+/// | `workflow-state` | `ui/scaffold/workflow_panel.tera:36` | workflow spec `:138/:158`, POM |
+/// | `{module}-row` | (no entity markup testid yet — entity specs locate rows via the `{module}-table` root; kept for family uniformity with `{comp}-row`) | POM row targeting, future |
+/// | `{prefix}-chip` / `{prefix}-copy` / `{prefix}-actions` / `{prefix}-actions-menu` | `ui/_ux_cell.tera:20/:28/:82/:90` (prefix = module) | ux spec chip/copy/action blocks, POM |
+/// | `{prefix}-timeline` / `{prefix}-timeline-item` | `ui/list_timeline.tera:4/:6` (prefix = module) | ux spec timeline block, POM |
+///
+/// IFML family (prefix = the IFML component name; fallback markup in
+/// `templates/ifml/svelte/page.tera`, mapped components carry the
+/// `ifml-components.toml` testids resolved by
+/// [`crate::ifml::selectors::ComponentSelectors`]):
+///
+/// | id | Owning source | Consumer |
+/// |----|---------------|----------|
+/// | `{comp}-table` | `ifml/svelte/page.tera:326/:415` + `selectors()` fallback | ifml e2e specs, POM |
+/// | `{comp}-row` | `ifml/svelte/page.tera:336/:425` + `selectors()` fallback | ifml click-through specs, POM |
+/// | `{comp}-form` | `ifml/svelte/page.tera:359/:450` + `selectors()` fallback | ifml validation/CRUD specs, POM |
+/// | `{comp}-submit` | `ifml/svelte/page.tera:395/:460` + `selectors()` fallback | ifml CRUD specs, POM |
+/// | `{comp}-error` | `ifml/svelte/page.tera:393/:458` | ifml validation specs, POM |
+/// | `{comp}-details` | `ifml/svelte/page.tera:474` + `selectors()` fallback | ifml specs, POM |
+/// | `{comp}-state` | `route_generator::workflow_badge_html` | ifml workflow specs, POM |
+/// | `{comp}-transition-{to}` | `route_generator.rs:724` (kebab via `codegraph_naming`) | ifml workflow specs, POM |
+/// | `{comp}-chip` / `{comp}-copy` / `{comp}-actions` / `{comp}-actions-menu` | `ifml/svelte/page.tera` ux cell branches | ifml ux specs, POM |
+/// | `{comp}-timeline` / `{comp}-timeline-item` | `ifml/svelte/page.tera:295/:297` | ifml timeline specs, POM |
+///
+/// Template line numbers track the `ux-rules` branch state; they are
+/// orientation, not a pin — the literals themselves are pinned by the
+/// generated specs.
 pub mod ids {
     /// Row-actions cell / wrapper.
     pub const ACTIONS: &str = "actions";
@@ -57,6 +113,194 @@ pub mod ids {
     pub const TIMELINE: &str = "timeline";
     /// One entry on a timeline collection.
     pub const TIMELINE_ITEM: &str = "timeline-item";
+
+    // ── Entity family (prefix = the entity's snake_case module name) ────
+
+    /// `{module}-search` — the list page's FTS search input.
+    pub fn entity_search(module: &str) -> String {
+        format!("{module}-search")
+    }
+
+    /// `{module}-create-btn` — the list page's create button.
+    pub fn entity_create_btn(module: &str) -> String {
+        format!("{module}-create-btn")
+    }
+
+    /// `{module}-empty` — the empty-state placeholder (no data, no query).
+    pub fn entity_empty(module: &str) -> String {
+        format!("{module}-empty")
+    }
+
+    /// `{module}-no-results` — the empty-state placeholder (active query).
+    pub fn entity_no_results(module: &str) -> String {
+        format!("{module}-no-results")
+    }
+
+    /// `{module}-table` — the list page table root.
+    pub fn entity_table(module: &str) -> String {
+        format!("{module}-table")
+    }
+
+    /// `{module}-row` — a body row.
+    ///
+    /// Entity markup does not stamp this testid yet: entity specs locate
+    /// rows via the [`entity_table`] root (`tbody tr`). Kept for family
+    /// uniformity with the IFML `{comp}-row` fallback; do not assert
+    /// against it until markup stamps it.
+    pub fn entity_row(module: &str) -> String {
+        format!("{module}-row")
+    }
+
+    /// `{module}-sort-{field}` — a column header's sort button.
+    pub fn entity_sort(module: &str, field: &str) -> String {
+        format!("{module}-sort-{field}")
+    }
+
+    /// `{module}-pagination` — the results count / pager strip.
+    pub fn entity_pagination(module: &str) -> String {
+        format!("{module}-pagination")
+    }
+
+    /// `{module}-delete-confirm` — the list page's row-delete dialog.
+    pub fn entity_delete_confirm(module: &str) -> String {
+        format!("{module}-delete-confirm")
+    }
+
+    /// `{module}-delete-confirm-confirm` — its confirm button.
+    pub fn entity_delete_confirm_confirm(module: &str) -> String {
+        format!("{module}-delete-confirm-confirm")
+    }
+
+    /// `{module}-form` — the create/edit form root.
+    pub fn entity_form(module: &str) -> String {
+        format!("{module}-form")
+    }
+
+    /// `{module}-cancel-btn` — the form's cancel button.
+    pub fn entity_cancel_btn(module: &str) -> String {
+        format!("{module}-cancel-btn")
+    }
+
+    /// `{module}-submit-btn` — the form's submit button.
+    pub fn entity_submit_btn(module: &str) -> String {
+        format!("{module}-submit-btn")
+    }
+
+    /// `{module}-edit-btn` — the detail page's edit button.
+    pub fn entity_edit_btn(module: &str) -> String {
+        format!("{module}-edit-btn")
+    }
+
+    /// `{module}-delete-btn` — the detail page's delete button (opens
+    /// [`confirm_dialog`]).
+    pub fn entity_delete_btn(module: &str) -> String {
+        format!("{module}-delete-btn")
+    }
+
+    /// `{module}-field-{field}` — a detail page field value.
+    pub fn entity_field(module: &str, field: &str) -> String {
+        format!("{module}-field-{field}")
+    }
+
+    // ── Detail-page delete dialog (unprefixed, shared per page) ─────────
+
+    /// `confirm-dialog` — the detail page's delete dialog.
+    pub fn confirm_dialog() -> String {
+        "confirm-dialog".to_string()
+    }
+
+    /// `confirm-dialog-confirm` — its confirm button.
+    pub fn confirm_dialog_confirm() -> String {
+        "confirm-dialog-confirm".to_string()
+    }
+
+    // ── Workflow panel (unprefixed, shared across entities) ─────────────
+
+    /// `workflow-panel` — the detail page's workflow panel.
+    pub fn workflow_panel() -> String {
+        "workflow-panel".to_string()
+    }
+
+    /// `workflow-state` — the panel's current-state badge.
+    pub fn workflow_state() -> String {
+        "workflow-state".to_string()
+    }
+
+    // ── IFML family (prefix = the IFML component name) ──────────────────
+
+    /// `{comp}-table` — fallback collection markup root.
+    pub fn ifml_table(comp: &str) -> String {
+        format!("{comp}-table")
+    }
+
+    /// `{comp}-row` — a fallback collection body row.
+    pub fn ifml_row(comp: &str) -> String {
+        format!("{comp}-row")
+    }
+
+    /// `{comp}-form` — fallback form markup root.
+    pub fn ifml_form(comp: &str) -> String {
+        format!("{comp}-form")
+    }
+
+    /// `{comp}-submit` — the fallback form submit button.
+    pub fn ifml_submit(comp: &str) -> String {
+        format!("{comp}-submit")
+    }
+
+    /// `{comp}-error` — the fallback form validation error line.
+    pub fn ifml_error(comp: &str) -> String {
+        format!("{comp}-error")
+    }
+
+    /// `{comp}-details` — fallback details markup root.
+    pub fn ifml_details(comp: &str) -> String {
+        format!("{comp}-details")
+    }
+
+    /// `{comp}-state` — the workflow state badge.
+    pub fn ifml_state(comp: &str) -> String {
+        format!("{comp}-state")
+    }
+
+    /// `{comp}-transition-{to}` — a workflow transition button; `to_kebab`
+    /// is the target state in kebab-case (`codegraph_naming::to_kebab_case`,
+    /// as [`crate::ifml::route_generator`] renders it).
+    pub fn ifml_transition(comp: &str, to_kebab: &str) -> String {
+        format!("{comp}-transition-{to_kebab}")
+    }
+
+    // ── Shared fragments (prefix = entity module name OR IFML comp name) ─
+
+    /// `{prefix}-chip` — a chip-rendered cell value.
+    pub fn chip(prefix: &str) -> String {
+        format!("{prefix}-{CHIP}")
+    }
+
+    /// `{prefix}-copy` — a copy-chip affordance.
+    pub fn copy(prefix: &str) -> String {
+        format!("{prefix}-{COPY}")
+    }
+
+    /// `{prefix}-actions` — the row-actions cell.
+    pub fn actions(prefix: &str) -> String {
+        format!("{prefix}-{ACTIONS}")
+    }
+
+    /// `{prefix}-actions-menu` — the row-actions overflow menu.
+    pub fn actions_menu(prefix: &str) -> String {
+        format!("{prefix}-{ACTIONS_MENU}")
+    }
+
+    /// `{prefix}-timeline` — a timeline collection root.
+    pub fn timeline(prefix: &str) -> String {
+        format!("{prefix}-{TIMELINE}")
+    }
+
+    /// `{prefix}-timeline-item` — one timeline entry.
+    pub fn timeline_item(prefix: &str) -> String {
+        format!("{prefix}-{TIMELINE_ITEM}")
+    }
 }
 
 /// The resolved UX contract for one entity's list/table rendering.
@@ -1259,5 +1503,63 @@ mod tests {
         assert_eq!(ids::COPY, "copy");
         assert_eq!(ids::TIMELINE, "timeline");
         assert_eq!(ids::TIMELINE_ITEM, "timeline-item");
+    }
+
+    #[test]
+    fn ids_full_table_matches_template_literals() {
+        // Entity family — literals as stamped by ui/list_page.tera,
+        // ui/entity_form.tera, ui/detail_page.tera, and
+        // ui/scaffold/workflow_panel.tera.
+        assert_eq!(ids::entity_search("todo_item"), "todo_item-search");
+        assert_eq!(ids::entity_create_btn("todo_item"), "todo_item-create-btn");
+        assert_eq!(ids::entity_empty("todo_item"), "todo_item-empty");
+        assert_eq!(ids::entity_no_results("todo_item"), "todo_item-no-results");
+        assert_eq!(ids::entity_table("todo_item"), "todo_item-table");
+        assert_eq!(ids::entity_row("todo_item"), "todo_item-row");
+        assert_eq!(ids::entity_sort("todo_item", "name"), "todo_item-sort-name");
+        assert_eq!(ids::entity_pagination("todo_item"), "todo_item-pagination");
+        assert_eq!(
+            ids::entity_delete_confirm("todo_item"),
+            "todo_item-delete-confirm"
+        );
+        assert_eq!(
+            ids::entity_delete_confirm_confirm("todo_item"),
+            "todo_item-delete-confirm-confirm"
+        );
+        assert_eq!(ids::entity_form("todo_item"), "todo_item-form");
+        assert_eq!(ids::entity_cancel_btn("todo_item"), "todo_item-cancel-btn");
+        assert_eq!(ids::entity_submit_btn("todo_item"), "todo_item-submit-btn");
+        assert_eq!(ids::entity_edit_btn("todo_item"), "todo_item-edit-btn");
+        assert_eq!(ids::entity_delete_btn("todo_item"), "todo_item-delete-btn");
+        assert_eq!(
+            ids::entity_field("todo_item", "title"),
+            "todo_item-field-title"
+        );
+        assert_eq!(ids::confirm_dialog(), "confirm-dialog");
+        assert_eq!(ids::confirm_dialog_confirm(), "confirm-dialog-confirm");
+        assert_eq!(ids::workflow_panel(), "workflow-panel");
+        assert_eq!(ids::workflow_state(), "workflow-state");
+
+        // IFML family — literals as stamped by ifml/svelte/page.tera and
+        // the selectors() fallbacks.
+        assert_eq!(ids::ifml_table("grid"), "grid-table");
+        assert_eq!(ids::ifml_row("grid"), "grid-row");
+        assert_eq!(ids::ifml_form("editor"), "editor-form");
+        assert_eq!(ids::ifml_submit("editor"), "editor-submit");
+        assert_eq!(ids::ifml_error("editor"), "editor-error");
+        assert_eq!(ids::ifml_details("summary"), "summary-details");
+        assert_eq!(ids::ifml_state("grid"), "grid-state");
+        assert_eq!(
+            ids::ifml_transition("editor", "approved"),
+            "editor-transition-approved"
+        );
+
+        // Shared fragments carry either prefix.
+        assert_eq!(ids::chip("todo_item"), "todo_item-chip");
+        assert_eq!(ids::copy("grid"), "grid-copy");
+        assert_eq!(ids::actions("todo_item"), "todo_item-actions");
+        assert_eq!(ids::actions_menu("grid"), "grid-actions-menu");
+        assert_eq!(ids::timeline("todo_item"), "todo_item-timeline");
+        assert_eq!(ids::timeline_item("grid"), "grid-timeline-item");
     }
 }

@@ -497,87 +497,87 @@ pub struct RenderImport {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PageComponentContext {
-    name: String,
+    pub(crate) name: String,
     /// Sanitized JS identifier (const/handler names).
-    js_name: String,
-    component_type: String,
+    pub(crate) js_name: String,
+    pub(crate) component_type: String,
     /// Semantic slot role of the whole component (`collection`, `display`,
     /// `selection-field`); forms keep `None` — their inputs carry roles.
-    role: Option<SemanticRole>,
-    entity: String,
-    fields: Vec<String>,
-    fields_with_types: Vec<(String, String)>,
-    filter: String,
-    table: Option<RenderTable>,
-    form: Option<RenderForm>,
-    chart: Option<RenderChart>,
-    mapping: Option<RenderMapping>,
-    events: Vec<RenderEvent>,
+    pub(crate) role: Option<SemanticRole>,
+    pub(crate) entity: String,
+    pub(crate) fields: Vec<String>,
+    pub(crate) fields_with_types: Vec<(String, String)>,
+    pub(crate) filter: String,
+    pub(crate) table: Option<RenderTable>,
+    pub(crate) form: Option<RenderForm>,
+    pub(crate) chart: Option<RenderChart>,
+    pub(crate) mapping: Option<RenderMapping>,
+    pub(crate) events: Vec<RenderEvent>,
     /// Ready-to-render event callback props for mapped components,
     /// e.g. `onselect={comp_grid_select}` (Svelte 5 event-property form —
     /// `on:select` directives are not forwarded to components).
-    event_props: Vec<String>,
+    pub(crate) event_props: Vec<String>,
     /// Ready-to-render data prop for mapped components, e.g. `data={data.items}`.
-    data_prop: String,
+    pub(crate) data_prop: String,
     /// Ready-to-render fields prop for mapped components.
-    fields_prop: String,
+    pub(crate) fields_prop: String,
     /// Ready-to-render submit callback prop for mapped form components.
-    submit_prop: Option<String>,
+    pub(crate) submit_prop: Option<String>,
     /// Joined validation expressions for mapped form components
     /// (`data-validate` attribute).
-    data_validate: Option<String>,
+    pub(crate) data_validate: Option<String>,
     /// First validation message for mapped form components
     /// (`data-validate-message` attribute).
-    data_validate_message: Option<String>,
-    api: Option<ResolvedApi>,
+    pub(crate) data_validate_message: Option<String>,
+    pub(crate) api: Option<ResolvedApi>,
     /// View parameter carrying the entity id (edit mode), when any.
-    id_param: Option<String>,
+    pub(crate) id_param: Option<String>,
     /// Fields passed to a mapped component: declared fields when present,
     /// else derived from the typed spec (table columns / form fields).
-    mapped_fields: Vec<String>,
+    pub(crate) mapped_fields: Vec<String>,
     /// Handler for row-click navigation on list/table fallback markup.
-    row_handler: Option<String>,
-    submit: Option<RenderSubmit>,
-    submit_handler: Option<String>,
+    pub(crate) row_handler: Option<String>,
+    pub(crate) submit: Option<RenderSubmit>,
+    pub(crate) submit_handler: Option<String>,
     /// Mapped submit button replacing the hardcoded fallback `<button>`.
-    submit_button: Option<RenderButton>,
+    pub(crate) submit_button: Option<RenderButton>,
     /// Mapped cancel/back/click buttons rendered after the form.
-    buttons: Vec<RenderButton>,
+    pub(crate) buttons: Vec<RenderButton>,
     /// Workflow state display for the bound entity, resolved from the
     /// owning domain's config; `None` renders no badge (byte-identical).
-    workflow: Option<RenderWorkflow>,
+    pub(crate) workflow: Option<RenderWorkflow>,
     /// Load fetch wiring for this component (mirrors the `+page.ts`
     /// contract: first list/details/form wins, details/form need an id
     /// param). Gates mapped-branch badges and transition buttons on the
     /// component's value path actually being fetch-backed.
-    fetch_list: bool,
-    fetch_item: bool,
-    fetch_form: bool,
+    pub(crate) fetch_list: bool,
+    pub(crate) fetch_item: bool,
+    pub(crate) fetch_form: bool,
     /// Fetch URL (JS template literal) for the component's transition
     /// handler: `{base}/${id}/actions/transition`; `None` when the component
     /// carries no transition buttons.
-    transition_url_expr: Option<String>,
+    pub(crate) transition_url_expr: Option<String>,
     /// Markup gate for the submit control: the view gate AND-composed with
     /// the primary save/submit event's `requires` check. Equals the view
     /// gate (byte-identical) when no event-level requires exist.
-    submit_gate: ControlGateContext,
+    pub(crate) submit_gate: ControlGateContext,
     /// Whether the fallback form branch renders: emits the typed
     /// `{js_name}_form_state` const used by value bindings and the
     /// workflow badge.
-    form_state: bool,
+    pub(crate) form_state: bool,
     /// Ready-to-render typed payload construction lines for the submit
     /// handler (`const payload: ...` + per-field coercions); empty keeps
     /// the untyped `formData` body (byte-identical).
-    form_payload: String,
+    pub(crate) form_payload: String,
     /// Whether the component belongs to a nested view container: suppresses
     /// the page-level `<h1>` heading inside the group.
-    in_container: bool,
+    pub(crate) in_container: bool,
     /// ux-resolved columns for a spec-less list component (issue #300):
     /// the same [`RenderColumn`] shape as typed tables, keyed aligned with
     /// `fields`. Empty (and skipped from the context) when the ux plane is
     /// off — the template keeps its `comp.fields` loop, byte-identical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    ux_list_columns: Vec<RenderColumn>,
+    pub(crate) ux_list_columns: Vec<RenderColumn>,
     /// Uniform timeline view of the collection layout (issue #301):
     /// `Some` exactly when the active fallback branch renders a timeline —
     /// typed tables project their `RenderTable::layout` timeline here,
@@ -586,7 +586,7 @@ pub struct PageComponentContext {
     /// design). `None` (skipped) renders the table — flag-off and
     /// rule-less pages stay byte-identical.
     #[serde(skip_serializing_if = "Option::is_none")]
-    timeline: Option<RenderTimeline>,
+    pub(crate) timeline: Option<RenderTimeline>,
     /// Secondary navigate events (issue #301) for fallback collections
     /// carrying more than one: the first navigate event stays inline (the
     /// row/item click handler), the rest disclose into the per-row actions
@@ -594,7 +594,7 @@ pub struct PageComponentContext {
     /// at most one navigate event, is mapped, or the ux plane is off —
     /// single-event markup stays byte-identical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    row_menu_events: Vec<RenderRowMenuEvent>,
+    pub(crate) row_menu_events: Vec<RenderRowMenuEvent>,
 }
 
 /// Workflow config for a component's bound entity, pre-rendered into the
