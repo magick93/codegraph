@@ -1213,7 +1213,6 @@ pub(crate) fn page_guard_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
-
 async fn build_page_context(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
