@@ -1254,8 +1254,8 @@ fn ux_rules_entity_pipeline_emits_the_ux_spec_with_gated_blocks() {
     let spec = fs::read_to_string(&spec_path)
         .expect("task.ux.test.ts must be emitted beside the other generated specs");
 
-    // Fixture plumbing: persona fixtures + the real list path + the
-    // pack's format baseline.
+    // Fixture plumbing: persona fixtures + the real list path; the POM
+    // page class drives every list-page interaction (#316).
     assert!(
         spec.contains("// UX list-rendering E2E tests for Task (ux-rules epic, #302)."),
         "{spec}"
@@ -1264,9 +1264,20 @@ fn ux_rules_entity_pipeline_emits_the_ux_spec_with_gated_blocks() {
         spec.contains("import { test, expect } from '../../e2e/fixtures/personas';"),
         "{spec}"
     );
+    assert!(
+        spec.contains("import { TaskPage } from './task.page';"),
+        "{spec}"
+    );
+    assert!(spec.contains("new TaskPage(page)"), "{spec}");
     assert!(spec.contains("const BASE_PATH = '/common/task';"), "{spec}");
-    assert!(spec.contains("const UX_LOCALE = 'en-NZ';"), "{spec}");
-    assert!(spec.contains("const UX_CURRENCY = 'NZD';"), "{spec}");
+
+    // The Intl baseline (locale/currency) moved into the POM: the page
+    // class builds UxTable from the plan's [format] and the kernel runs
+    // the formatters.
+    let page = fs::read_to_string(project.join("generated/ui/tests/generated/common/task.page.ts"))
+        .expect("task.page.ts must be emitted beside the specs");
+    assert!(page.contains("locale: 'en-NZ'"), "{page}");
+    assert!(page.contains("currency: 'NZD'"), "{page}");
 
     // Table contract: header count mirrors column_order, readable lead.
     assert!(
@@ -1281,51 +1292,33 @@ fn ux_rules_entity_pipeline_emits_the_ux_spec_with_gated_blocks() {
         spec.contains("test('status chips render with the expected labels'"),
         "{spec}"
     );
-    assert!(spec.contains(".filter({ hasText: 'Draft' })"), "{spec}");
+    assert!(spec.contains("ui.chipFor('Draft')"), "{spec}");
 
-    // Alignment + Intl formatting.
+    // Alignment + Intl formatting through the kernel's mirror.
     assert!(
         spec.contains("test('numeric columns right-align and format through Intl'"),
         "{spec}"
     );
-    assert!(spec.contains("toHaveClass(/text-right/)"), "{spec}");
-    assert!(spec.contains("toHaveClass(/tabular-nums/)"), "{spec}");
-    assert!(
-        spec.contains(
-            "new Intl.NumberFormat(UX_LOCALE, { style: 'currency', currency: UX_CURRENCY })"
-        ),
-        "{spec}"
-    );
-    assert!(
-        spec.contains(
-            "new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium', timeStyle: 'short' })"
-        ),
-        "{spec}"
-    );
+    assert!(spec.contains("ui.expectRightAligned("), "{spec}");
+    assert!(spec.contains("ui.expectFormatted("), "{spec}");
 
-    // Copy chip.
+    // Copy chip (clipboard polling lives in the kernel copyCell).
     assert!(
         spec.contains("test('copy-chip copies the identifier and surfaces a tooltip'"),
         "{spec}"
     );
-    assert!(
-        spec.contains("`[data-testid=\"${MODULE}-copy\"]`"),
-        "{spec}"
-    );
+    assert!(spec.contains("ui.copyCell(row, createdId)"), "{spec}");
+    assert!(spec.contains("ui.copyTrigger(row).hover()"), "{spec}");
+    assert!(spec.contains("ui.tooltipFor(createdId)"), "{spec}");
 
     // Overflow actions + confirm-CANCEL.
     assert!(
         spec.contains("test('row actions open the overflow menu'"),
         "{spec}"
     );
-    assert!(
-        spec.contains("`[data-testid=\"${MODULE}-action-delete\"]`"),
-        "{spec}"
-    );
-    assert!(
-        spec.contains("`[data-testid=\"${MODULE}-delete-confirm\"]`"),
-        "{spec}"
-    );
+    assert!(spec.contains("await ui.openActions();"), "{spec}");
+    assert!(spec.contains("ui.menuDelete()"), "{spec}");
+    assert!(spec.contains("ui.deleteConfirm()"), "{spec}");
     assert!(
         spec.contains("getByRole('button', { name: /cancel/i })"),
         "{spec}"
@@ -1336,6 +1329,7 @@ fn ux_rules_entity_pipeline_emits_the_ux_spec_with_gated_blocks() {
         spec.contains("test('sortable headers toggle aria-sort and validate ?sort'"),
         "{spec}"
     );
+    assert!(spec.contains("ui.sortHeader('name')"), "{spec}");
     assert!(
         spec.contains("toHaveAttribute('aria-sort', 'ascending')"),
         "{spec}"
@@ -1347,7 +1341,7 @@ fn ux_rules_entity_pipeline_emits_the_ux_spec_with_gated_blocks() {
         spec.contains("test('rows keep zebra shading and hover/focus feedback'"),
         "{spec}"
     );
-    assert!(spec.contains("toHaveClass(/bg-muted\\/50/)"), "{spec}");
+    assert!(spec.contains("await ui.expectZebra();"), "{spec}");
 }
 
 /// The IFML pipeline (ux rules active) emits

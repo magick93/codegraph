@@ -790,6 +790,35 @@ fn refund_engine() -> MockEngine {
         .build()
 }
 
+/// Generate all files for one entity (the ux spec, the POM page class and
+/// the shared kernel among them).
+fn all_files(
+    engine: &MockEngine,
+    config: &codegraph_config::DomainConfig,
+    project: &codegraph::generate::ProjectConfig,
+    title: &str,
+    domain: &str,
+) -> Vec<(String, String)> {
+    let output = tempfile::TempDir::new().unwrap();
+    let gen = UiE2eTestGenerator::new(output.path());
+    let files = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(gen.generate(engine, title, domain, config, &tera(), project))
+        .expect("UiE2eTestGenerator failed");
+    files
+        .into_iter()
+        .map(|f| (f.path.to_string_lossy().to_string(), f.content))
+        .collect()
+}
+
+fn ux_project() -> codegraph::generate::ProjectConfig {
+    let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
+    codegraph::generate::ProjectConfig {
+        ux: Some(rules),
+        ..ProjectConfig::default()
+    }
+}
+
 /// Generate and return the `.ux.test.ts` content, or `None` when the spec
 /// was not emitted.
 fn ux_spec(
@@ -799,24 +828,10 @@ fn ux_spec(
     title: &str,
     domain: &str,
 ) -> Option<String> {
-    let output = tempfile::TempDir::new().unwrap();
-    let gen = UiE2eTestGenerator::new(output.path());
-    let files = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(gen.generate(engine, title, domain, config, &tera(), project))
-        .expect("UiE2eTestGenerator failed");
-    files
-        .iter()
-        .find(|f| f.path.to_string_lossy().ends_with(".ux.test.ts"))
-        .map(|f| f.content.clone())
-}
-
-fn ux_project() -> codegraph::generate::ProjectConfig {
-    let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
-    codegraph::generate::ProjectConfig {
-        ux: Some(rules),
-        ..ProjectConfig::default()
-    }
+    all_files(engine, config, project, title, domain)
+        .into_iter()
+        .find(|(p, _)| p.ends_with(".ux.test.ts"))
+        .map(|(_, c)| c)
 }
 
 #[test]
@@ -856,16 +871,186 @@ fn ux_spec_emitted_when_plan_and_list_output_present() {
     let content = ux_spec(&engine, &config, &ux_project(), "RefundType", "hr")
         .expect("flag on + list output must emit the ux spec");
 
-    assert!(content.contains("const MODULE = 'refund';"), "{content}");
-    assert!(content.contains("const UX_LOCALE = 'en-NZ';"), "{content}");
+    // The spec drives the list page through the POM page class (#316).
     assert!(
-        content.contains("const UX_CURRENCY = 'NZD';"),
-        "locale/currency mirrors ride the context:\n{content}"
+        content.contains("import { RefundPage } from './refund.page';"),
+        "{content}"
     );
+    assert!(content.contains("new RefundPage(page)"), "{content}");
     // Fixture creation follows the shared API conventions.
     assert!(
         content.contains("createEntityAsAcme(orgContext, BASE_PATH"),
         "{content}"
+    );
+}
+
+// ── POM emission (issue #316) ───────────────────────────────────────────
+
+#[test]
+fn pom_page_and_kernel_emitted_for_any_op_entities() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let files = all_files(
+        &engine,
+        &config,
+        &ProjectConfig::default(),
+        "RefundType",
+        "hr",
+    );
+    let page = files
+        .iter()
+        .find(|(p, _)| p.ends_with("refund.page.ts"))
+        .expect("spec-emitting entity must emit its page class");
+    let kernel = files
+        .iter()
+        .find(|(p, _)| p.ends_with("_support/pom.ts"))
+        .expect("the shared POM kernel must be emitted");
+
+    // Page class: routes + form fills + the kernel import (the UxTable
+    // import rides the ux mirror — see pom_page_ux_surface_is_plan_driven).
+    assert!(
+        page.1.contains("export class RefundPage extends BasePage"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1
+            .contains("import { BasePage } from '../_support/pom';"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("static readonly apiPath = '/hr/refund';"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("base = '/hr/refund'"),
+        "top-level entities default their base route:\n{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("async fillName(value: string)"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("static readonly detailUrlPattern"),
+        "{}",
+        page.1
+    );
+    // Kernel: BasePage + UxTable with the ids::-mirrored literal families.
+    assert!(kernel.1.contains("export class BasePage"), "{}", kernel.1);
+    assert!(kernel.1.contains("export class UxTable"), "{}", kernel.1);
+    assert!(
+        kernel
+            .1
+            .contains("[data-testid=\"${this.cfg.module}-${suffix}\"]"),
+        "{}",
+        kernel.1
+    );
+    for fragment in [
+        "tid('chip')",
+        "tid('copy')",
+        "tid('actions-menu')",
+        "tid('timeline-item')",
+    ] {
+        assert!(
+            kernel.1.contains(fragment),
+            "missing {fragment}:\n{}",
+            kernel.1
+        );
+    }
+}
+
+#[test]
+fn pom_kernel_emitted_once_per_generator_across_entities() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let output = tempfile::TempDir::new().unwrap();
+    let gen = UiE2eTestGenerator::new(output.path());
+    let run = |gen: &UiE2eTestGenerator| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(gen.generate(
+                &engine,
+                "RefundType",
+                "hr",
+                &config,
+                &tera(),
+                &ProjectConfig::default(),
+            ))
+            .unwrap()
+    };
+    let first = run(&gen);
+    let second = run(&gen);
+
+    assert!(
+        first
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("_support/pom.ts")),
+        "the first spec-emitting entity renders the kernel"
+    );
+    assert!(
+        !second
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("_support/pom.ts")),
+        "subsequent entities must not duplicate the kernel"
+    );
+}
+
+#[test]
+fn pom_page_ux_surface_is_plan_driven() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    // Flag ON: sortable/copy/actions/zebra forwarders ride the plan.
+    let files = all_files(&engine, &config, &ux_project(), "RefundType", "hr");
+    let page = &files
+        .iter()
+        .find(|(p, _)| p.ends_with("refund.page.ts"))
+        .expect("page class")
+        .1;
+    assert!(
+        page.contains("readonly table = new UxTable(this.page, {"),
+        "{page}"
+    );
+    assert!(page.contains("locale: 'en-NZ'"), "{page}");
+    assert!(page.contains("currency: 'NZD'"), "{page}");
+    for forwarder in [
+        "async sortBy(field: string, dir: 'asc' | 'desc')",
+        "async copyCell(row: Locator, expected: string)",
+        "async openActions(row?: Locator)",
+        "async expectZebra()",
+        "async expectFormatted(",
+        "chipFor(text: string)",
+    ] {
+        assert!(page.contains(forwarder), "missing {forwarder}:\n{page}");
+    }
+
+    // Flag OFF: no ux mirror, no table — but the page class still exists
+    // (the POM is spec-infra, NOT ux-gated).
+    let files = all_files(
+        &engine,
+        &config,
+        &ProjectConfig::default(),
+        "RefundType",
+        "hr",
+    );
+    let page = &files
+        .iter()
+        .find(|(p, _)| p.ends_with("refund.page.ts"))
+        .expect("page class")
+        .1;
+    assert!(
+        !page.contains("UxTable"),
+        "flag off must not build a table:\n{page}"
+    );
+    assert!(
+        !page.contains("async sortBy("),
+        "flag off must not expose ux forwarders:\n{page}"
     );
 }
 
@@ -940,8 +1125,8 @@ fn ux_spec_codelist_column_emits_chip_block_with_known_value() {
 
     assert!(content.contains("status chips render"), "{content}");
     assert!(
-        content.contains("hasText: 'draft'"),
-        "fixture uses the codelist's first value:\n{content}"
+        content.contains("ui.chipFor('draft')"),
+        "fixture uses the codelist's first value through the POM:\n{content}"
     );
 }
 
@@ -977,7 +1162,10 @@ fn ux_spec_timeline_rule_emits_timeline_block_skips_table_blocks() {
         content.contains("timeline renders entries newest-first"),
         "{content}"
     );
-    assert!(content.contains("-timeline\""), "{content}");
+    assert!(
+        content.contains("ui.timelineRoot()"),
+        "timeline access flows through the POM:\n{content}"
+    );
     // Table-only blocks stay out.
     assert!(
         !content.contains("list renders the ux table contract"),
@@ -1035,19 +1223,12 @@ fn ux_spec_copy_chip_block_uses_created_row_id() {
         "{content}"
     );
     assert!(
-        content.contains("grantPermissions(['clipboard-read', 'clipboard-write'])"),
-        "{content}"
+        content.contains("ui.copyCell(row, createdId)"),
+        "clipboard polling lives in the kernel copyCell:\n{content}"
     );
-    assert!(
-        content.contains("navigator.clipboard.readText()"),
-        "{content}"
-    );
-    assert!(
-        content.contains("-copy\"]"),
-        "the copy testid is the interaction hook:\n{content}"
-    );
+    assert!(content.contains("ui.copyTrigger(row).hover()"), "{content}");
     // The identifier cell truncates → tooltip assertion rides along.
-    assert!(content.contains("tooltip-content"), "{content}");
+    assert!(content.contains("ui.tooltipFor(createdId)"), "{content}");
 }
 
 #[test]
@@ -1059,26 +1240,16 @@ fn ux_spec_alignment_and_format_blocks_reference_plan_columns() {
         ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
 
     assert!(content.contains("numeric columns right-align"), "{content}");
-    // Money/quantity/time-point expectations are computed in-spec with
-    // the SAME Intl formatters the page runs.
+    // Money/quantity/time-point expectations run through the kernel's
+    // Intl mirror — the SAME formatters the page computes.
+    assert!(content.contains("'money', 42)"), "{content}");
+    assert!(content.contains("'quantity', 42)"), "{content}");
     assert!(
-        content.contains(
-            "new Intl.NumberFormat(UX_LOCALE, { style: 'currency', currency: UX_CURRENCY })"
-        ),
-        "{content}"
-    );
-    assert!(content.contains("fmt.format(42)"), "{content}");
-    assert!(
-        content.contains(
-            "new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium', timeStyle: 'short' })"
-        ),
-        "{content}"
-    );
-    assert!(
-        content.contains("new Date('2025-01-15T10:30:00Z')"),
+        content.contains("'time-point', '2025-01-15T10:30:00Z')"),
         "{content}"
     );
     // The readable lead column assertion pins column order row 17.
+    assert!(content.contains("ui.firstCell()"), "{content}");
     assert!(
         content.contains("toHaveText('Test Name')"),
         "first rendered column is the readable field:\n{content}"

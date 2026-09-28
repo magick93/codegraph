@@ -125,9 +125,9 @@ pub struct UiE2eTestContext {
     /// or no list/create output) — no `.ux.test.ts` file is emitted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ux_spec: Option<UxE2eSpecCtx>,
-    /// POM (Playwright Object Model) inputs (issue #315). Inert until
-    /// step 3 (#316) populates it — always `None` for now, and skipped
-    /// from the serialized context, so emitted bytes are unchanged.
+    /// POM (Playwright Object Model) inputs (issue #316). Populated for
+    /// every spec-emitting (any-op) entity — spec-infra gated, NOT
+    /// ux-flag gated; `None` only when the entity emits no spec files.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pom: Option<super::pom_ctx::PomCtx>,
 }

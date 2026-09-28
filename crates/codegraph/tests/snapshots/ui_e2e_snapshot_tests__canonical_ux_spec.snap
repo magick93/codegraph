@@ -1,6 +1,5 @@
 ---
 source: crates/codegraph/tests/ui_e2e_snapshot_tests.rs
-assertion_line: 346
 expression: content
 ---
 
@@ -8,23 +7,18 @@ expression: content
 // UX list-rendering E2E tests for Refund (ux-rules epic, #302).
 
 
+
+
 import { test, expect } from '../../e2e/fixtures/personas';
 import type { OrgContext } from '../../e2e/fixtures/personas';
 import {
   createEntityAsAcme,
   deleteEntityAsAcme,
-  waitForHydration,
 } from '../../e2e/helpers';
+import { RefundPage } from './refund.page';
 
 
 const BASE_PATH = '/hr/refund';
-const LIST_PATH = BASE_PATH;
-
-
-const MODULE = 'refund';
-const UX_LOCALE = 'en-NZ';
-
-const UX_CURRENCY = 'NZD';
 
 
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
@@ -98,20 +92,20 @@ test.describe('Refund UX list rendering', () => {
 
 
   test('list renders the ux table contract', async ({ ownerPage: page, orgContext }) => {
+    const ui = new RefundPage(page);
     await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-    await expect(page.locator(`[data-testid="${MODULE}-table"]`)).toBeVisible();
+    await ui.openList();
+    await expect(ui.tableRoot()).toBeVisible();
     // The header sequence mirrors the plan's column_order — no extra or
     // missing columns. A plan with no resolvable columns renders the
     // id fallback column, so expect exactly that one.
-    const headerCount = await page.locator('thead th').count();
+    const headerCount = await ui.headerCount();
     expect(headerCount).toBe(7);
 
     // The first rendered column is the human-readable field, not the
     // system id (plan rows 17/25).
     {
-      const firstCell = page.locator('tbody tr:first-child td:first-child');
+      const firstCell = ui.firstCell();
       await expect(firstCell).toHaveText('Test Name');
     }
 
@@ -120,15 +114,12 @@ test.describe('Refund UX list rendering', () => {
 
 
   test('status chips render with the expected labels', async ({ ownerPage: page, orgContext }) => {
+    const ui = new RefundPage(page);
     await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
+    await ui.openList();
 
     {
-      const chip = page
-        .locator(`[data-testid="${MODULE}-chip"]`)
-        .filter({ hasText: 'draft' })
-        .first();
+      const chip = ui.chipFor('draft');
       await expect(chip).toBeVisible();
       await expect(chip).toHaveText('draft');
     }
@@ -138,128 +129,66 @@ test.describe('Refund UX list rendering', () => {
 
 
   test('numeric columns right-align and format through Intl', async ({ ownerPage: page, orgContext }) => {
+    const ui = new RefundPage(page);
     await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
+    await ui.openList();
 
-    {
-      const td = page.locator('tbody tr:first-child td:nth-child(4)');
-      await expect(td).toHaveClass(/text-right/);
-      await expect(td).toHaveClass(/tabular-nums/);
-    }
+    await ui.expectRightAligned(4, 'headcount');
 
-    {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-headcount"])`);
-      await expect(th).toHaveClass(/text-right/);
-      await expect(th).toHaveClass(/tabular-nums/);
-    }
+    await ui.expectRightAligned(5, 'total_amount');
 
 
-    {
-      const td = page.locator('tbody tr:first-child td:nth-child(5)');
-      await expect(td).toHaveClass(/text-right/);
-      await expect(td).toHaveClass(/tabular-nums/);
-    }
+    // The default ordering puts the fresh fixture row first; the POM
+    // skips the em-dash placeholder (a null cell on that row — the
+    // column isn't fixture-controlled for this page).
+    await ui.expectFormatted(4, 'quantity', 42);
 
-    {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-total_amount"])`);
-      await expect(th).toHaveClass(/text-right/);
-      await expect(th).toHaveClass(/tabular-nums/);
-    }
+    // The default ordering puts the fresh fixture row first; the POM
+    // skips the em-dash placeholder (a null cell on that row — the
+    // column isn't fixture-controlled for this page).
+    await ui.expectFormatted(5, 'money', 42);
 
-
-
-    {
-      const td = page.locator('tbody tr:first-child td:nth-child(4)');
-      // The default ordering puts the fresh fixture row first, but a
-      // null cell (—) on that row means the asserted column isn't
-      // fixture-controlled for this page — skip rather than mis-assert.
-      if (((await td.textContent()) ?? '').trim() !== '\u2014') {
-
-      const fmt = new Intl.NumberFormat(UX_LOCALE);
-      await expect(td).toHaveText(fmt.format(42));
-
-      }
-    }
-
-    {
-      const td = page.locator('tbody tr:first-child td:nth-child(5)');
-      // The default ordering puts the fresh fixture row first, but a
-      // null cell (—) on that row means the asserted column isn't
-      // fixture-controlled for this page — skip rather than mis-assert.
-      if (((await td.textContent()) ?? '').trim() !== '\u2014') {
-
-      const fmt = new Intl.NumberFormat(UX_LOCALE, { style: 'currency', currency: UX_CURRENCY });
-      await expect(td).toHaveText(fmt.format(42));
-
-      }
-    }
-
-    {
-      const td = page.locator('tbody tr:first-child td:nth-child(6)');
-      // The default ordering puts the fresh fixture row first, but a
-      // null cell (—) on that row means the asserted column isn't
-      // fixture-controlled for this page — skip rather than mis-assert.
-      if (((await td.textContent()) ?? '').trim() !== '\u2014') {
-
-      const fmt = new Intl.DateTimeFormat(UX_LOCALE, { dateStyle: 'medium', timeStyle: 'short' });
-      await expect(td).toHaveText(fmt.format(new Date('2025-01-15T10:30:00Z')));
-
-      }
-    }
+    // The default ordering puts the fresh fixture row first; the POM
+    // skips the em-dash placeholder (a null cell on that row — the
+    // column isn't fixture-controlled for this page).
+    await ui.expectFormatted(6, 'time-point', '2025-01-15T10:30:00Z');
 
   });
 
 
 
   test('copy-chip copies the identifier and surfaces a tooltip', async ({ ownerPage: page, orgContext }) => {
+    const ui = new RefundPage(page);
     const createdId = await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
+    await ui.openList();
     // The copy cell truncates, so scope to the row carrying the fixture
     // value prefix rather than trusting row order.
-    const row = page
-      .locator('tbody tr')
-      .filter({ hasText: (createdId).slice(0, 8) })
-      .first();
-    const copyTrigger = row.locator(`[data-testid="${MODULE}-copy"]`).first();
-    await copyTrigger.click();
-
-    await expect
-      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-      .toBe(createdId);
-
+    const row = ui.table.rowFor((createdId).slice(0, 8));
+    await ui.copyCell(row, createdId);
 
     // Hover (or focus) surfaces the FULL value through the Tooltip. Radix
     // closes the tooltip on trigger click, and a hover() over an element
     // the pointer already occupies fires no new pointerenter — move the
     // pointer away first so the reopen is deterministic.
     await page.mouse.move(0, 0);
-    await copyTrigger.hover();
-    const tooltip = page
-      .locator('[data-slot="tooltip-content"]')
-      .filter({ hasText: createdId });
-    await expect(tooltip).toBeVisible();
+    await ui.copyTrigger(row).hover();
+    await expect(ui.tooltipFor(createdId)).toBeVisible();
 
   });
 
 
 
   test('row actions open the overflow menu', async ({ ownerPage: page, orgContext }) => {
+    const ui = new RefundPage(page);
     await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-    const trigger = page.locator(`[data-testid="${MODULE}-actions"]`).first();
-    await trigger.click();
-    const menu = page.locator(`[data-testid="${MODULE}-actions-menu"]`);
-    await expect(menu).toBeVisible();
+    await ui.openList();
+    await ui.openActions();
 
     // Delete opens the confirmation dialog; CANCEL keeps the row.
-    await page.locator(`[data-testid="${MODULE}-action-delete"]`).click();
-    const confirm = page.locator(`[data-testid="${MODULE}-delete-confirm"]`);
+    await ui.menuDelete().click();
+    const confirm = ui.deleteConfirm();
     await expect(confirm).toBeVisible();
-    const rows = page.locator('tbody tr');
+    const rows = ui.table.rows();
     const rowsBefore = await rows.count();
     await confirm.getByRole('button', { name: /cancel/i }).click();
     await expect(confirm).toBeHidden();
@@ -275,13 +204,13 @@ test.describe('Refund UX list rendering', () => {
     // Three full sort navigations over potentially large seeded tables —
     // the 45s project default is too tight under parallel workers.
     test.setTimeout(120_000);
+    const ui = new RefundPage(page);
     await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
+    await ui.openList();
 
     {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-name"])`);
-      const btn = page.locator(`[data-testid="${MODULE}-sort-name"]`);
+      const th = ui.sortHeader('name');
+      const btn = ui.sortButton('name');
       await expect(btn).toBeVisible();
       await expect(th).toHaveAttribute('aria-sort', 'none');
       await btn.click();
@@ -293,8 +222,8 @@ test.describe('Refund UX list rendering', () => {
     }
 
     {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-headcount"])`);
-      const btn = page.locator(`[data-testid="${MODULE}-sort-headcount"]`);
+      const th = ui.sortHeader('headcount');
+      const btn = ui.sortButton('headcount');
       await expect(btn).toBeVisible();
       await expect(th).toHaveAttribute('aria-sort', 'none');
       await btn.click();
@@ -306,8 +235,8 @@ test.describe('Refund UX list rendering', () => {
     }
 
     {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-total_amount"])`);
-      const btn = page.locator(`[data-testid="${MODULE}-sort-total_amount"]`);
+      const th = ui.sortHeader('total_amount');
+      const btn = ui.sortButton('total_amount');
       await expect(btn).toBeVisible();
       await expect(th).toHaveAttribute('aria-sort', 'none');
       await btn.click();
@@ -319,8 +248,8 @@ test.describe('Refund UX list rendering', () => {
     }
 
     {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-due_at"])`);
-      const btn = page.locator(`[data-testid="${MODULE}-sort-due_at"]`);
+      const th = ui.sortHeader('due_at');
+      const btn = ui.sortButton('due_at');
       await expect(btn).toBeVisible();
       await expect(th).toHaveAttribute('aria-sort', 'none');
       await btn.click();
@@ -332,8 +261,8 @@ test.describe('Refund UX list rendering', () => {
     }
 
     {
-      const th = page.locator(`th:has([data-testid="${MODULE}-sort-created_at"])`);
-      const btn = page.locator(`[data-testid="${MODULE}-sort-created_at"]`);
+      const th = ui.sortHeader('created_at');
+      const btn = ui.sortButton('created_at');
       await expect(btn).toBeVisible();
       await expect(th).toHaveAttribute('aria-sort', 'none');
       await btn.click();
@@ -350,44 +279,29 @@ test.describe('Refund UX list rendering', () => {
       const headerOrder: number[] = [];
 
       headerOrder.push(
-        await page
-          .locator('thead th')
-          .filter({ has: page.locator(`[data-testid="${MODULE}-sort-name"]`) })
-          .evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
+        await ui.sortHeader('name').evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
       );
 
       headerOrder.push(
-        await page
-          .locator('thead th')
-          .filter({ has: page.locator(`[data-testid="${MODULE}-sort-headcount"]`) })
-          .evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
+        await ui.sortHeader('headcount').evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
       );
 
       headerOrder.push(
-        await page
-          .locator('thead th')
-          .filter({ has: page.locator(`[data-testid="${MODULE}-sort-total_amount"]`) })
-          .evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
+        await ui.sortHeader('total_amount').evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
       );
 
       headerOrder.push(
-        await page
-          .locator('thead th')
-          .filter({ has: page.locator(`[data-testid="${MODULE}-sort-due_at"]`) })
-          .evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
+        await ui.sortHeader('due_at').evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
       );
 
       headerOrder.push(
-        await page
-          .locator('thead th')
-          .filter({ has: page.locator(`[data-testid="${MODULE}-sort-created_at"]`) })
-          .evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
+        await ui.sortHeader('created_at').evaluate((th) => Array.from(th.parentElement?.children ?? []).indexOf(th))
       );
 
       const sortedOrder = [...headerOrder].sort((a, b) => a - b);
       expect(headerOrder).toEqual(sortedOrder);
     }
-    // Invalid sort fields are rejected with the allow-list.
+    // Invalid sort fields are rejected with the allow-list (API-level).
     {
       const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
       const res = await fetch(`${baseUrl}/api/v1${BASE_PATH}?sort=__nope__`, {
@@ -406,12 +320,10 @@ test.describe('Refund UX list rendering', () => {
     {
       await createUxFixture(orgContext);
       await createUxFixture(orgContext, { 'name': 'Test Name B' });
-      await page.goto(`${LIST_PATH}?sort=name&order=asc`);
-      await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-      const cell = page.locator('tbody tr:first-child td:nth-child(1)');
+      await ui.openListAt('?sort=name&order=asc');
+      const cell = ui.cell(1);
       const asc = ((await cell.textContent()) ?? '').trim();
-      await page.goto(`${LIST_PATH}?sort=name&order=desc`);
-      await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
+      await ui.openListAt('?sort=name&order=desc');
       const desc = ((await cell.textContent()) ?? '').trim();
       if (asc !== '\u2014' && desc !== '\u2014' && asc !== '' && desc !== '') {
         expect(desc).not.toBe(asc);
@@ -423,16 +335,11 @@ test.describe('Refund UX list rendering', () => {
 
 
   test('rows keep zebra shading and hover/focus feedback', async ({ ownerPage: page, orgContext }) => {
+    const ui = new RefundPage(page);
     await createUxFixture(orgContext);
     await createUxFixture(orgContext);
-    await page.goto(LIST_PATH);
-    await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);
-    const firstRow = page.locator('tbody tr').first();
-    await expect(firstRow).toHaveClass(/hover:bg-muted\/50/);
-    await expect(firstRow).toHaveClass(/focus-visible:ring-2/);
-    // Second visual row carries the zebra band (odd row index).
-    const secondRow = page.locator('tbody tr').nth(1);
-    await expect(secondRow).toHaveClass(/bg-muted\/50/);
+    await ui.openList();
+    await ui.expectZebra();
   });
 
 });

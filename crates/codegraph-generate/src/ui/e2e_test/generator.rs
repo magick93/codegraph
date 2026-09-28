@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use async_trait::async_trait;
 use codegraph_config::DomainConfig;
@@ -18,6 +19,7 @@ use super::deps::build_required_dependencies;
 use super::fixtures::build_test_data_json;
 use super::include::resolve_e2e_include_config;
 use super::page::UiField;
+use super::pom_ctx::PomCtx;
 use super::refs::apply_convention_refs;
 use super::store::UiParentInfo;
 use super::ux_spec::build_ux_e2e_spec;
@@ -25,6 +27,12 @@ use super::ux_spec::build_ux_e2e_spec;
 pub struct UiE2eTestGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<codegraph_core::types::ParentCandidate>,
+    /// The shared POM kernel (`ui/tests/generated/_support/pom.ts`) is
+    /// entity-independent content emitted ONCE per generation run: the
+    /// first entity whose generation emits any spec file renders it (the
+    /// e2e generator is Entity-kind, so this is the once-per-run hook —
+    /// content is stable and the file is regenerated every run, #316).
+    kernel_emitted: AtomicBool,
 }
 
 impl UiE2eTestGenerator {
@@ -32,6 +40,7 @@ impl UiE2eTestGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            kernel_emitted: AtomicBool::new(false),
         }
     }
 
@@ -298,29 +307,47 @@ impl EntityGenerator for UiE2eTestGenerator {
         // ux-rules spec contract (issue #302): emitted only when the
         // entity's plan is active AND the list fixture path exists (the
         // blocks assert API-created fixtures against the list page).
-        let ux_spec = if has_list && has_create {
-            let list_include = dto_config
-                .map(|d| d.list_include.clone())
-                .unwrap_or_default();
-            let list_exclude = dto_config
-                .map(|d| d.list_exclude.clone())
-                .unwrap_or_default();
-            build_ux_e2e_spec(
-                db,
-                config,
-                project,
-                schema_title,
-                &domain,
-                &fields,
-                &create_fields,
-                &list_include,
-                &list_exclude,
-                &operations,
-                &initial_state,
+        let list_include = dto_config
+            .map(|d| d.list_include.clone())
+            .unwrap_or_default();
+        let list_exclude = dto_config
+            .map(|d| d.list_exclude.clone())
+            .unwrap_or_default();
+        let ux_inputs = (has_list && has_create).then(|| {
+            (
+                list_include.clone(),
+                list_exclude.clone(),
+                fields.clone(),
+                create_fields.clone(),
+                operations.clone(),
+                initial_state.clone(),
             )
-            .await?
-        } else {
-            None
+        });
+        let ux_spec = match &ux_inputs {
+            Some((
+                list_include,
+                list_exclude,
+                fields,
+                create_fields,
+                operations,
+                initial_state,
+            )) => {
+                build_ux_e2e_spec(
+                    db,
+                    config,
+                    project,
+                    schema_title,
+                    &domain,
+                    fields,
+                    create_fields,
+                    list_include,
+                    list_exclude,
+                    operations,
+                    initial_state,
+                )
+                .await?
+            }
+            None => None,
         };
 
         // Build the required entity-ref dependency closure (leaf-first).
@@ -525,6 +552,56 @@ impl EntityGenerator for UiE2eTestGenerator {
             String::new()
         };
 
+        // POM inputs (issue #316): spec-infra gated — populated whenever
+        // ANY spec file is emitted (any-op entities), NOT ux-flag gated.
+        // The ux plan mirror is the SAME struct both sides render from:
+        // the `.ux.test.ts` spec reads `ux_spec`, the page class reads
+        // `pom.ux` — the deterministic builder produces both instances,
+        // so they can never drift.
+        let any_op = has_list || has_create || has_read || has_update || has_delete;
+        let mut pom = None;
+        if any_op {
+            let pom_ux = match &ux_inputs {
+                Some((
+                    list_include,
+                    list_exclude,
+                    fields,
+                    create_fields,
+                    operations,
+                    initial_state,
+                )) => {
+                    build_ux_e2e_spec(
+                        db,
+                        config,
+                        project,
+                        schema_title,
+                        &domain,
+                        fields,
+                        create_fields,
+                        list_include,
+                        list_exclude,
+                        operations,
+                        initial_state,
+                    )
+                    .await?
+                }
+                None => None,
+            };
+            pom = Some(PomCtx::build(
+                &module_name,
+                &domain,
+                &path_segment,
+                &crate::api::router::param_name_from_path_segment(&path_segment),
+                parent.as_ref(),
+                &create_fields,
+                has_workflow,
+                &workflow_states,
+                &initial_state,
+                &terminal_states,
+                pom_ux,
+            ));
+        }
+
         let ctx = UiE2eTestContext {
             entity_name,
             entity_label,
@@ -559,7 +636,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             grandparent_test_data_json,
             e2e_include,
             ux_spec,
-            pom: None,
+            pom,
         };
 
         let tests_dir = self
@@ -570,6 +647,39 @@ impl EntityGenerator for UiE2eTestGenerator {
             .join(&domain);
 
         let mut files = Vec::new();
+
+        // Shared POM kernel — entity-independent content, emitted ONCE per
+        // generation run (first spec-emitting entity wins the flag). Always
+        // rewritten, stable bytes, imported from every `{domain}/` depth.
+        if ctx.pom.is_some()
+            && self
+                .kernel_emitted
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            let content =
+                render_template_with_project(tera, "ui/test/_pom_kernel.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("ui")
+                    .join("tests")
+                    .join("generated")
+                    .join("_support")
+                    .join("pom.ts"),
+                content,
+            });
+        }
+
+        // Per-entity page class (`{seg}.page.ts`) — every spec family
+        // drives UI interaction through it.
+        if ctx.pom.is_some() {
+            let content = render_template_with_project(tera, "ui/test/page.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.page.ts", path_segment)),
+                content,
+            });
+        }
 
         // CRUD test
         if has_list || has_create || has_read || has_update || has_delete {
