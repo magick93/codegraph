@@ -272,6 +272,9 @@ test.describe('Refund UX list rendering', () => {
 
 
   test('sortable headers toggle aria-sort and validate ?sort', async ({ ownerPage: page, orgContext }) => {
+    // Three full sort navigations over potentially large seeded tables —
+    // the 45s project default is too tight under parallel workers.
+    test.setTimeout(120_000);
     await createUxFixture(orgContext);
     await page.goto(LIST_PATH);
     await waitForHydration(page, `[data-testid="${MODULE}-pagination"]`);

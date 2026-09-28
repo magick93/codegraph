@@ -1695,14 +1695,24 @@ async fn build_ux_e2e_spec(
             is_audit: is_audit_stamp(name),
         });
 
-        // Chip assertions: a chip column whose fixture label is known.
-        // Booleans are excluded — they render through the boolean Badge
-        // branch, which carries no chip testid.
+        // Chip assertions: a chip column whose fixture label is known AND
+        // whose value the fixture body actually controls. Columns omitted
+        // from the create body (entity refs, VO nests) render their DB
+        // default — asserting the fixture label against them is vacuous
+        // (e.g. position_opening.approval_status_code). Booleans are
+        // excluded — they render through the boolean Badge branch, which
+        // carries no chip testid.
         if col.display == Display::Chip {
-            if let Some(text) =
-                chip_fixture_text(field, workflow_status_field.as_deref(), name, initial_state)
-            {
-                chip_checks.push(UxE2eChipCheck { text });
+            let body_controlled = create_by_name
+                .get(name.as_str())
+                .map(|f| !f.is_entity_ref && f.nested_type_name.is_none())
+                .unwrap_or(false);
+            if body_controlled {
+                if let Some(text) =
+                    chip_fixture_text(field, workflow_status_field.as_deref(), name, initial_state)
+                {
+                    chip_checks.push(UxE2eChipCheck { text });
+                }
             }
         }
 
