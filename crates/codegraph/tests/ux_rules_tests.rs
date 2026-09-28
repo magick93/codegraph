@@ -1481,16 +1481,22 @@ entities = ["CustomerType"]
         "{spec}"
     );
 
-    // Chip tone block: seeded value + ToneMap-resolved variant.
+    // Chip tone block: seeded value + ToneMap-resolved variant, driven
+    // through the page class's UxTable component object (#317).
     assert!(
         spec.contains("test('ux chips render with tone variants'"),
         "{spec}"
     );
-    assert!(spec.contains("getByTestId('grid-chip')"), "{spec}");
+    assert!(spec.contains("ui.grid.chipFor('Test status')"), "{spec}");
     assert!(
         spec.contains("toHaveAttribute('data-chip-variant', 'outline')"),
         "{spec}"
     );
+    let page = fs::read_to_string(output.join("svelte/tests/pages/customer-list-page.ts"))
+        .expect("the view page class is emitted");
+    assert!(page.contains("module: 'grid'"), "{page}");
+    assert!(page.contains("locale: 'en-NZ'"), "{page}");
+    assert!(page.contains("currency: 'NZD'"), "{page}");
 
     // Numeric/date formatting block: right-aligned cells through the SAME
     // Intl formatters the page runs.
@@ -1510,16 +1516,24 @@ entities = ["CustomerType"]
     );
 
     // Overflow menu block: trigger → menu → first item navigates to the
-    // secondary event's target.
+    // secondary event's target — openActions is the kernel contract, so
+    // the trigger/menu testids stay in the kernel/page class.
     assert!(
         spec.contains("test('ux row actions open the overflow menu'"),
         "{spec}"
     );
-    assert!(spec.contains("getByTestId('grid-actions')"), "{spec}");
-    assert!(spec.contains("getByTestId('grid-actions-menu')"), "{spec}");
+    assert!(spec.contains("await ui.grid.openActions();"), "{spec}");
+    assert!(
+        spec.contains("await menu.getByRole('button').first().click();"),
+        "{spec}"
+    );
     assert!(
         spec.contains("waitForURL(new RegExp('/customertrash$'))"),
         "{spec}"
+    );
+    assert!(
+        !spec.contains("getByTestId("),
+        "zero raw testid construction in spec bodies: {spec}"
     );
 }
 

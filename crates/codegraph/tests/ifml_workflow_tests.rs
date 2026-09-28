@@ -127,12 +127,22 @@ async fn workflow_spec_gains_transition_round_trip() {
         "the spec must gain a transition test from the initial state to the first valid target:\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('info-transition-submitted')"),
-        "the test clicks the enabled transition button (draft → submitted):\n{spec}"
+        spec.contains("await ui.transitionInfoTo('submitted');"),
+        "the test clicks the enabled transition button through the page class (draft → submitted):\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('info-state')") && spec.contains("toContainText('submitted')"),
+        spec.contains("await ui.expectInfoState('submitted');"),
         "the state badge must show the new state after the click:\n{spec}"
+    );
+    let detail_page = std::fs::read_to_string(svelte.join("tests/pages/customer-detail-page.ts"))
+        .expect("the details view page class is emitted");
+    assert!(
+        detail_page.contains("'info-transition-submitted'"),
+        "the transition button testid lives in the page class's transition map (#317):\n{detail_page}"
+    );
+    assert!(
+        detail_page.contains("getByTestId('info-state')"),
+        "the state badge testid lives in the page class:\n{detail_page}"
     );
     assert!(
         spec.contains(".status).toBe('submitted')"),
@@ -177,8 +187,14 @@ testids = { root = "detail-card" }
         "the mapped component's initial-state assertion is un-skipped:\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('info-transition-submitted')"),
+        spec.contains("await ui.transitionInfoTo('submitted');"),
         "the mapped component's transition round trip is un-skipped:\n{spec}"
+    );
+    let detail_page = std::fs::read_to_string(svelte.join("tests/pages/customer-detail-page.ts"))
+        .expect("the details view page class is emitted");
+    assert!(
+        detail_page.contains("'info-transition-submitted'"),
+        "the mapped component's transition testid lives in the page class's transition map:\n{detail_page}"
     );
 }
 
@@ -204,15 +220,21 @@ async fn workflow_spec_emitted_for_collections() {
         "the collection's initial-state assertion is un-skipped:\n{spec}"
     );
     assert!(
-        spec.contains("toContainText('draft')"),
+        spec.contains("await ui.expectGridState('draft');"),
         "the created row materializes the configured initial state:\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('grid-state').first()"),
-        "list badges render per row, so the assertion is .first()-scoped:\n{spec}"
+        spec.contains("await ui.expectGridState('draft');"),
+        "the list badge assertion drives the page class:\n{spec}"
+    );
+    let list_page = std::fs::read_to_string(svelte.join("tests/pages/customer-list-page.ts"))
+        .expect("the list view page class is emitted");
+    assert!(
+        list_page.contains("StateBadge().first()"),
+        "list badges render per row, so the page class scopes the assertion with .first():\n{list_page}"
     );
     assert!(
-        !spec.contains("transition"),
+        !spec.contains("test('transitions "),
         "collections stay badge-only — no transition round trip:\n{spec}"
     );
 }

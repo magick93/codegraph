@@ -389,37 +389,60 @@ async fn emits_render_click_through_and_form_tests_with_schemas() {
 
     let files = generate(&engine, dir.path(), None).await;
 
+    // The POM (issue #317): page classes carry every testid; specs drive
+    // them through the page object.
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
+    assert!(
+        list_page.contains("static readonly route = '/customerlist';"),
+        "{list_page}"
+    );
+    assert!(list_page.contains("primaryRoot(): Locator"), "{list_page}");
+    assert!(
+        list_page.contains("getByTestId('grid-table')"),
+        "{list_page}"
+    );
+    assert!(
+        list_page.contains("getByRole('heading', { name: 'Customer Management' })"),
+        "{list_page}"
+    );
+    assert!(
+        list_page.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"),
+        "{list_page}"
+    );
+    assert!(
+        content_of(&files, "tests/pages/support/base-page.ts").contains("export class BasePage"),
+        "kernel base-page.ts must be emitted"
+    );
+    assert!(
+        content_of(&files, "tests/pages/support/ux-table.ts").contains("export class UxTable"),
+        "kernel ux-table.ts must be emitted"
+    );
+    assert!(
+        content_of(&files, "tests/pages/customer-detail-page.ts").contains("infoName(): Locator"),
+        "every view container gets a page class"
+    );
+
     let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
     assert!(
         list_spec.contains("test('renders Customer Management'"),
         "{list_spec}"
     );
     assert!(
-        list_spec.contains("page.goto('/customerlist')"),
+        list_spec.contains("const ui = new CustomerListPage(page);"),
+        "{list_spec}"
+    );
+    assert!(list_spec.contains("await ui.open();"), "{list_spec}");
+    assert!(
+        list_spec.contains("await expect(ui.heading()).toBeVisible();"),
         "{list_spec}"
     );
     assert!(
-        list_spec.contains("page.getByRole('heading', { name: 'Customer Management' })"),
+        list_spec.contains("await ui.navigateToCustomerDetail();"),
         "{list_spec}"
     );
     assert!(
-        list_spec.contains("getByTestId('grid-table')"),
-        "{list_spec}"
-    );
-
-    assert!(
-        list_spec.contains("request.post('/api/v1/sales/customer'"),
-        "{list_spec}"
-    );
-    assert!(list_spec.contains("'name': 'Test name'"), "{list_spec}");
-    assert!(list_spec.contains("'age': 42"), "{list_spec}");
-    assert!(
-        list_spec.contains("page.getByTestId('grid-row').first().click()"),
-        "{list_spec}"
-    );
-    assert!(
-        list_spec.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"),
-        "{list_spec}"
+        !list_spec.contains("getByTestId("),
+        "zero raw testid construction in spec bodies: {list_spec}"
     );
 
     let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
@@ -433,24 +456,27 @@ async fn emits_render_click_through_and_form_tests_with_schemas() {
         edit_spec.contains("test('form validation blocks empty submit', async ({ page }) => {"),
         "{edit_spec}"
     );
+    assert!(edit_spec.contains("await ui.open();"), "{edit_spec}");
     assert!(
-        edit_spec.contains("await page.goto('/customeredit');"),
+        edit_spec.contains("await ui.submitEditor();"),
         "{edit_spec}"
     );
     assert!(
-        edit_spec.contains("page.getByTestId('editor-submit').click()"),
-        "{edit_spec}"
-    );
-    assert!(
-        edit_spec
-            .contains("locator('[name=\"name\"]')).toHaveJSProperty('validity.valid', false);"),
+        edit_spec.contains(
+            "await expect(ui.editorInput('name')).toHaveJSProperty('validity.valid', false);"
+        ),
         "invalid-state assertions use the Playwright JS-property matcher: {edit_spec}"
     );
     assert!(!edit_spec.contains("toBeInvalid"), "{edit_spec}");
-    assert!(edit_spec.contains("fill('Updated name')"), "{edit_spec}");
     assert!(
-        edit_spec.contains("waitForURL(new RegExp('/customerlist$'))"),
+        edit_spec.contains("await ui.fillEditorName('Updated name');"),
         "{edit_spec}"
+    );
+    assert!(edit_spec.contains("await ui.saveEditor();"), "{edit_spec}");
+    let edit_page = content_of(&files, "tests/pages/customer-edit-page.ts");
+    assert!(
+        edit_page.contains("waitForURL(new RegExp('/customerlist$'))"),
+        "the save navigation pattern lives in the page class: {edit_page}"
     );
     assert!(
         edit_spec.contains("expect((persisted.data ?? persisted).name).toBe('Updated name')"),
@@ -474,9 +500,10 @@ async fn without_schemas_emits_render_tests_only() {
         list_spec.contains("test('renders Customer Management'"),
         "{list_spec}"
     );
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
     assert!(
-        list_spec.contains("getByTestId('grid-table')"),
-        "{list_spec}"
+        list_page.contains("getByTestId('grid-table')"),
+        "the render assertion target lives in the page class: {list_page}"
     );
     assert!(
         !files.iter().any(|f| f.content.contains("request.post")),
@@ -513,14 +540,23 @@ testids = { root = "data-table", row = "data-row" }
     .unwrap();
 
     let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
+    assert!(
+        list_page.contains("getByTestId('data-table')"),
+        "the mapped root testid lands in the page class: {list_page}"
+    );
+    assert!(
+        list_page.contains("getByTestId('data-row').first()"),
+        "the mapped row testid lands in the page class: {list_page}"
+    );
     let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
     assert!(
-        list_spec.contains("getByTestId('data-table')"),
+        list_spec.contains("await ui.navigateToCustomerDetail();"),
         "{list_spec}"
     );
     assert!(
-        list_spec.contains("page.getByTestId('data-row').first().click()"),
-        "{list_spec}"
+        !list_spec.contains("getByTestId("),
+        "zero raw testid construction in spec bodies: {list_spec}"
     );
 }
 
@@ -572,22 +608,36 @@ testids = { root = "customer-modal" }
     let dir = tempfile::tempdir().unwrap();
 
     let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
+    assert!(
+        list_page.contains("async navigateToCustomerDialog()"),
+        "{list_page}"
+    );
+    assert!(
+        list_page
+            .contains("waitForURL(new RegExp('/customerdialog\\\\?customerId=[^&]+&dialog=open'))"),
+        "{list_page}"
+    );
+    assert!(
+        list_page.contains("async closeCustomerDialogModal()"),
+        "{list_page}"
+    );
+    assert!(
+        list_page.contains("await expect(this.page.getByTestId('customer-modal')).toBeVisible();"),
+        "{list_page}"
+    );
+    assert!(
+        list_page.contains("await this.page.getByTestId('customerdialog-modal-close').click();"),
+        "{list_page}"
+    );
+    assert!(
+        list_page.contains("waitForURL(new RegExp('/customerlist$'))"),
+        "{list_page}"
+    );
     let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
     assert!(
-        list_spec
-            .contains("waitForURL(new RegExp('/customerdialog\\\\?customerId=[^&]+&dialog=open'))"),
-        "{list_spec}"
-    );
-    assert!(
-        list_spec.contains("expect(page.getByTestId('customer-modal')).toBeVisible()"),
-        "{list_spec}"
-    );
-    assert!(
-        list_spec.contains("page.getByTestId('customerdialog-modal-close').click()"),
-        "{list_spec}"
-    );
-    assert!(
-        list_spec.contains("waitForURL(new RegExp('/customerlist$'))"),
+        list_spec.contains("await ui.navigateToCustomerDialog();")
+            && list_spec.contains("await ui.closeCustomerDialogModal();"),
         "{list_spec}"
     );
 }
@@ -609,14 +659,19 @@ path = "$lib/components/Button.svelte"
     let dir = tempfile::tempdir().unwrap();
 
     let files = generate(&engine, dir.path(), Some(mappings)).await;
-    let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
     assert!(
-        list_spec.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"),
-        "{list_spec}"
+        list_page.contains("waitForURL(new RegExp('/customerdetail\\\\?customerId=[^&]+'))"),
+        "{list_page}"
     );
     assert!(
-        !list_spec.contains("dialog=open"),
-        "non-modal targets must not gain the dialog param: {list_spec}"
+        !list_page.contains("dialog=open"),
+        "non-modal targets must not gain the dialog param: {list_page}"
+    );
+    let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
+    assert!(
+        list_spec.contains("await ui.navigateToCustomerDetail();"),
+        "{list_spec}"
     );
 }
 
@@ -639,14 +694,23 @@ testids = { root = "ui-save-btn" }
     let dir = tempfile::tempdir().unwrap();
 
     let files = generate(&engine, dir.path(), Some(mappings)).await;
+    let edit_page = content_of(&files, "tests/pages/customer-edit-page.ts");
+    assert!(
+        edit_page.contains("getByTestId('ui-save-btn')"),
+        "the mapped button testid lands in the page class: {edit_page}"
+    );
+    assert!(
+        !edit_page.contains("getByTestId('editor-submit')"),
+        "mapped button testid must replace the fallback: {edit_page}"
+    );
     let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
     assert!(
-        edit_spec.contains("page.getByTestId('ui-save-btn').click()"),
+        edit_spec.contains("await ui.submitEditor();"),
         "{edit_spec}"
     );
     assert!(
-        !edit_spec.contains("getByTestId('editor-submit')"),
-        "mapped button testid must replace the fallback: {edit_spec}"
+        !edit_spec.contains("editor-submit"),
+        "specs never carry testids: {edit_spec}"
     );
 }
 
@@ -725,8 +789,13 @@ testids = { root = "side-nav" }
     let files = generate(&engine, dir.path(), Some(mappings)).await;
     let list_spec = content_of(&files, "tests/ifml/customer-list.spec.ts");
     assert!(
-        list_spec.contains("await expect(page.getByTestId('side-nav')).toBeVisible();"),
+        list_spec.contains("await expect(ui.navRoot()).toBeVisible();"),
         "{list_spec}"
+    );
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
+    assert!(
+        list_page.contains("getByTestId('side-nav')"),
+        "the shell nav testid lives in the page class: {list_page}"
     );
 }
 
@@ -780,8 +849,13 @@ testids = { root = "card" }
     let files = generate(&engine, dir.path(), Some(mappings)).await;
     let spec = content_of(&files, "tests/ifml/checkout.spec.ts");
     assert!(
-        spec.contains("await expect(page.getByTestId('card')).toBeVisible();"),
+        spec.contains("await expect(ui.containerRoot()).toBeVisible();"),
         "{spec}"
+    );
+    let page = content_of(&files, "tests/pages/checkout-page.ts");
+    assert!(
+        page.contains("getByTestId('card')"),
+        "the wrapper testid lives in the page class: {page}"
     );
 }
 
@@ -890,10 +964,18 @@ async fn stale_specs_are_removed_on_regeneration() {
     ingest_ifml_model(&engine).await;
     let dir = tempfile::tempdir().unwrap();
     let specs_dir = dir.path().join("tests").join("ifml");
+    let pages_dir = dir.path().join("tests").join("pages");
+    let support_dir = pages_dir.join("support");
     std::fs::create_dir_all(&specs_dir).unwrap();
+    std::fs::create_dir_all(&support_dir).unwrap();
     std::fs::write(specs_dir.join("removed-view.spec.ts"), "// stale").unwrap();
     std::fs::write(specs_dir.join("removed-view.workflow.spec.ts"), "// stale").unwrap();
     std::fs::write(specs_dir.join("customer-list.spec.ts"), "// existing").unwrap();
+    // Stale POM page classes (#317): removed views lose their page class;
+    // the kernel support files and non-page files stay.
+    std::fs::write(pages_dir.join("removed-view-page.ts"), "// stale").unwrap();
+    std::fs::write(pages_dir.join("customer-list-page.ts"), "// existing").unwrap();
+    std::fs::write(support_dir.join("base-page.ts"), "// kernel").unwrap();
     std::fs::write(dir.path().join("unrelated.txt"), "keep").unwrap();
 
     generate(&engine, dir.path(), None).await;
@@ -909,6 +991,18 @@ async fn stale_specs_are_removed_on_regeneration() {
     assert!(
         specs_dir.join("customer-list.spec.ts").exists(),
         "active view specs are regenerated"
+    );
+    assert!(
+        !pages_dir.join("removed-view-page.ts").exists(),
+        "stale page classes must be removed"
+    );
+    assert!(
+        pages_dir.join("customer-list-page.ts").exists(),
+        "active page classes are not stale-removed"
+    );
+    assert!(
+        support_dir.join("base-page.ts").exists(),
+        "the kernel support files are never stale-cleaned"
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("unrelated.txt")).unwrap(),
@@ -965,35 +1059,38 @@ async fn workflow_spec_emitted_for_schema_backed_workflow_entity() {
     );
     assert!(list_spec.contains("'name': 'Test name'"), "{list_spec}");
     assert!(list_spec.contains("'age': 42"), "{list_spec}");
+    assert!(list_spec.contains("await ui.open();"), "{list_spec}");
     assert!(
-        list_spec.contains("page.goto('/customerlist')"),
-        "{list_spec}"
-    );
-    assert!(
-        list_spec.contains("page.getByTestId('grid-state')"),
-        "{list_spec}"
-    );
-    assert!(
-        list_spec.contains("toContainText('received')"),
+        list_spec.contains("await ui.expectGridState('received');"),
         "{list_spec}"
     );
 
     let detail_spec = content_of(&files, "tests/ifml/customer-detail.workflow.spec.ts");
     assert!(
-        detail_spec
-            .contains("page.goto(`/customerdetail?customerId=${created.data?.id ?? created.id}`)"),
-        "workflow specs must read the fixture id through the API envelope: {detail_spec}"
+        detail_spec.contains("await ui.open({ customerId: created.data?.id ?? created.id });"),
+        "workflow specs read the fixture id through the API envelope: {detail_spec}"
     );
     assert!(
-        detail_spec.contains("page.getByTestId('info-state')"),
+        detail_spec.contains("await ui.expectInfoState('received');"),
         "{detail_spec}"
     );
 
     let edit_spec = content_of(&files, "tests/ifml/customer-edit.workflow.spec.ts");
     assert!(
-        edit_spec
-            .contains("page.goto(`/customeredit?customerId=${created.data?.id ?? created.id}`)"),
+        edit_spec.contains("await ui.open({ customerId: created.data?.id ?? created.id });"),
         "{edit_spec}"
+    );
+
+    // The state-badge testids live in the page classes (#317).
+    let list_page = content_of(&files, "tests/pages/customer-list-page.ts");
+    assert!(
+        list_page.contains("getByTestId('grid-state')"),
+        "{list_page}"
+    );
+    let detail_page = content_of(&files, "tests/pages/customer-detail-page.ts");
+    assert!(
+        detail_page.contains("getByTestId('info-state')"),
+        "{detail_page}"
     );
 }
 
@@ -1070,9 +1167,9 @@ async fn persona_tests_emitted_per_human_actor_with_policy() {
         spec.contains("(globalThis as any).__USER_ROLES__ = ['Admin'];"),
         "{spec}"
     );
-    assert!(spec.contains("page.goto('/adminconsole')"), "{spec}");
+    assert!(spec.contains("await ui.open();"), "{spec}");
     assert!(
-        spec.contains("page.getByRole('heading', { name: 'Admin Console' })"),
+        spec.contains("await expect(ui.heading()).toBeVisible();"),
         "{spec}"
     );
 
@@ -1086,7 +1183,12 @@ async fn persona_tests_emitted_per_human_actor_with_policy() {
         spec.contains("(globalThis as any).__USER_ROLES__ = ['Intern'];"),
         "{spec}"
     );
-    assert!(spec.contains("page.waitForURL('/customerlist')"), "{spec}");
+    assert!(spec.contains("await ui.expectDenied();"), "{spec}");
+    let page = content_of(&files, "tests/pages/admin-console-page.ts");
+    assert!(
+        page.contains("waitForURL('/customerlist')"),
+        "the denial target lives in the page class: {page}"
+    );
 
     assert!(
         !spec.contains("Helper"),
@@ -1193,13 +1295,18 @@ async fn persona_test_asserts_gated_submit_for_permitted_actor_only() {
         .unwrap_or(spec.len());
     let admin_block = &spec[admin_start..intern_start];
     assert!(
-        admin_block.contains("await expect(page.getByTestId('editor-submit')).toBeVisible();"),
+        admin_block.contains("await expect(ui.editorSubmit()).toBeVisible();"),
         "permitted persona must assert the gated control is visible: {spec}"
     );
     let intern_block = &spec[intern_start..intern_end];
     assert!(
-        !intern_block.contains("editor-submit"),
+        !intern_block.contains("editorSubmit"),
         "denied persona redirects before any control assertion: {intern_block}"
+    );
+    let page = content_of(&files, "tests/pages/refund-edit-page.ts");
+    assert!(
+        page.contains("getByTestId('editor-submit')"),
+        "the control testid lives in the page class: {page}"
     );
 }
 
@@ -1225,11 +1332,16 @@ testids = { root = "refund-form" }
     let spec = content_of(&files, "tests/ifml/refund-edit.spec.ts");
 
     assert!(
-        spec.contains("await expect(page.getByTestId('refund-form')).toBeVisible();"),
-        "mapped form root is still asserted: {spec}"
+        spec.contains("await expect(ui.primaryRoot()).toBeVisible();"),
+        "mapped form root is still asserted through the page class: {spec}"
     );
     assert!(
-        !spec.contains("editor-submit"),
+        !spec.contains("editorSubmit"),
         "mapped forms own their internals — no fallback control assertion: {spec}"
+    );
+    let page = content_of(&files, "tests/pages/refund-edit-page.ts");
+    assert!(
+        page.contains("getByTestId('refund-form')"),
+        "the mapped root lands in the page class: {page}"
     );
 }
