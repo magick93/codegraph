@@ -50,6 +50,8 @@ fn candidate_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -84,6 +86,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "familyName".to_string(),
@@ -114,6 +117,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
         PropertyNode {
             name: "recruiterId".to_string(),
@@ -144,6 +148,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         },
     ]
 }
@@ -823,6 +828,8 @@ async fn cli_scaffold_handles_multiple_domains() {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let mock = MockEngine::builder()

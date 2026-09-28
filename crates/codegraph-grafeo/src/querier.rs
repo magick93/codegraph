@@ -18,13 +18,14 @@ use codegraph_core::types::{
 };
 use std::collections::{HashMap, VecDeque};
 
-/// The RETURN clause for all SchemaNode queries — keeps the 23 columns in one place.
+/// The RETURN clause for all SchemaNode queries — keeps the 25 columns in one place.
 const SCHEMA_RETURN_COLS: &str = "\
     s.schema_id, s.title, s.description, \
     s.schema_type, s.classification, s.domain, s.namespace, s.rel_path, s.pg_type, s.rust_type, \
     s.sea_orm_type, s.rust_type_name, s.pg_table_name, s.api_path_segment, \
     s.parent_schema, s.is_entity, s.is_codelist, s.is_primitive_wrapper, \
-    s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations";
+    s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations, \
+    s.access, s.annotations";
 
 /// The RETURN clause for all PropertyNode queries — keeps the 21 columns in one place.
 const PROPERTY_RETURN_COLS: &str = "\
@@ -1042,6 +1043,7 @@ impl GraphQuerier for GrafeoEngine {
                 spec: reader.get_opt_string(row, "comp.spec")?,
                 conditional_expression: reader
                     .get_opt_string(row, "comp.conditional_expression")?,
+                expr_json: None,
                 domain: reader.get_opt_string(row, "comp.domain")?,
             });
         }
@@ -1072,6 +1074,7 @@ impl GraphQuerier for GrafeoEngine {
                 event_type: reader.get_string(row, "evt.event_type")?,
                 params,
                 conditional_expression: reader.get_opt_string(row, "evt.conditional_expression")?,
+                expr_json: None,
                 requires,
                 domain: reader.get_opt_string(row, "evt.domain")?,
             });
@@ -1812,6 +1815,7 @@ impl GraphQuerier for GrafeoEngine {
                 capability: reader.get_string(row, "c.name")?,
                 effect: reader.get_string(row, "g.effect")?,
                 when: reader.get_opt_string(row, "g.when_expr")?,
+                expr_json: None,
                 obligations,
             });
         }
@@ -2323,6 +2327,7 @@ fn view_container_from_row(
         is_landmark: reader.get_bool(row, &col("is_landmark"))?,
         is_modal: reader.get_bool(row, &col("is_modal"))?,
         conditional_expression: reader.get_opt_string(row, &col("conditional_expression"))?,
+        expr_json: None,
         domain: reader.get_opt_string(row, &col("domain"))?,
         module_uses,
         roles,

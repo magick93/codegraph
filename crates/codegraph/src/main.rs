@@ -100,8 +100,9 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_components,
             ifml_design_system,
             ux_rules,
-        } => {
-            codegraph::driver::run(codegraph::driver::RunArgs {
+            graph_cache,
+        } => codegraph::driver::run_with_graph_cache(
+            codegraph::driver::RunArgs {
                 schemas: schemas.as_deref(),
                 classifier: classifier.as_deref(),
                 config_path: &config,
@@ -121,9 +122,11 @@ async fn main() -> codegraph::error::Result<()> {
                 ifml_design_system: ifml_design_system.as_deref(),
                 ux_rules: ux_rules.as_deref(),
                 codegraph_rev: None,
-            })
-            .await
-        }
+            },
+            graph_cache.as_deref(),
+        )
+        .await
+        .map(|_| ()),
         cli::Commands::IfmlGenerate {
             config,
             output,

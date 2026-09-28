@@ -43,6 +43,20 @@ rls_from_policy = false
 # (`cdm.base.datetime` → `cdm/base/datetime/...`) for the entity/DTO/db
 # module outputs. Default OFF = flat domain layout, byte-identical output.
 namespace_layout = false
+# Canonical expression IR (issue #278). When true, IFML view guards render
+# from the persisted `expr_json` AST via the TypeScript lowering
+# (crates/codegraph-generate/src/ifml/expr_ts.rs); conditions outside the
+# closed subset are hard errors naming the view. Default OFF =
+# byte-identical output.
+expr_ir = false
+# Public-operations consumer (issue #279). When true, add
+# "public_operations_rls" to an [api] generators list; schemas carrying
+# `access = Public` (from JSON `x-access: "public"`; mox/rosetta connect
+# upstream) whose entity config declares `public_operations` emit
+# 021000_public_operations_rls.sql — permissive TO PUBLIC RLS policies —
+# and mount routes without permission layers when the ENTIRE operation set
+# is public (Postgres only; sqlite is a no-op). Off = byte-identical output.
+public_operations_rls = false
 # Constraint-plane validations (issue #261). When true, add
 # "condition_validations" to an [api] generators list; emits per-domain
 # src/domain/<domain>/validations.rs from array minItems/maxItems and the

@@ -33,6 +33,12 @@ pub struct GrantEdge {
     pub effect: String,
     pub when: Option<String>,
     pub obligations: Vec<String>,
+    /// Canonical AST JSON of `when` (issue #278), produced at ingest by
+    /// parsing the source with rex-expr; `None` for unconditional grants
+    /// and when the source does not parse. Purely additive: legacy
+    /// payloads without this field deserialize to `None`.
+    #[serde(default)]
+    pub expr_json: Option<String>,
 }
 
 /// A pair of (or group of) capabilities that must never be held together.
@@ -176,6 +182,7 @@ mod tests {
             capability: capability.to_string(),
             effect: effect.to_string(),
             when: None,
+            expr_json: None,
             obligations: vec![],
         }
     }

@@ -147,6 +147,12 @@ pub enum Commands {
         /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
         #[arg(long)]
         ux_rules: Option<PathBuf>,
+        /// Directory for the persistent graph cache. When set, a run whose
+        /// inputs (mox/schema/IFML/config files) hash unchanged since the
+        /// previous run reopens the persisted graph instead of re-ingesting
+        /// (issue #275). Default: off (fresh in-memory graph).
+        #[arg(long)]
+        graph_cache: Option<PathBuf>,
     },
     /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
     IfmlGenerate {

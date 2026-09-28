@@ -37,6 +37,8 @@ fn mock_schema() -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -65,6 +67,8 @@ fn make_entity_schema(title: &str, domain: &str) -> SchemaNode {
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 
@@ -98,6 +102,7 @@ fn make_entity_ref_property(name: &str, ref_target: &str) -> PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -632,6 +637,7 @@ async fn mock_engine_does_not_produce_phantom_fk_for_array_entity_ref() {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let engine = MockEngine::builder()

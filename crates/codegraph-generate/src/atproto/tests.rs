@@ -686,6 +686,8 @@ mod integration_tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -719,6 +721,7 @@ mod integration_tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -1026,6 +1029,8 @@ mod atproto_client_tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -1059,6 +1064,7 @@ mod atproto_client_tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 
@@ -1486,6 +1492,8 @@ mod atproto_types_tests {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         }
     }
 
@@ -1519,6 +1527,7 @@ mod atproto_types_tests {
             ui_override_list_cell: None,
             ui_override_form: None,
             ui_override_inline: None,
+            type_expr: None,
         }
     }
 

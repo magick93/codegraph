@@ -48,6 +48,7 @@ fn property(name: &str, pg_type: &str) -> codegraph_core::types::PropertyNode {
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }
 }
 
@@ -77,6 +78,8 @@ fn engine_with_candidate() -> MockEngine {
             has_any_of: false,
             has_definitions: false,
             custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
         })
         .with_properties(
             "CandidateType",
@@ -112,6 +115,7 @@ fn grant(actor: &str, capability: &str, effect: &str, when: Option<&str>) -> Gra
         capability: capability.to_string(),
         effect: effect.to_string(),
         when: when.map(|w| w.to_string()),
+        expr_json: None,
         obligations: vec![],
     }
 }
@@ -143,6 +147,7 @@ fn domain_config() -> DomainConfig {
             schema_dir: "schemas/recruiting".into(),
             postgres_schema: "recruiting".into(),
             depends_on: vec!["common".into()],
+            dependencies: Vec::new(),
             entities: vec!["CandidateType".into()],
             entity_config: HashMap::new(),
             auto_discover: None,

@@ -306,6 +306,7 @@ mod tests {
             format: None,
             is_required: false,
             is_nullable: false,
+            type_expr: None,
             is_array: false,
             min_items: None,
             max_items: None,

@@ -1,3 +1,4 @@
+mod annotation;
 mod api;
 mod atproto;
 mod authorization;
@@ -10,6 +11,7 @@ mod edge;
 mod field_def;
 mod function;
 mod ifml;
+mod incompleteness;
 mod mox;
 mod namespace;
 mod persistence;
@@ -22,6 +24,7 @@ mod schema;
 mod security;
 mod stats;
 
+pub use annotation::{Annotation, AnnotationArg};
 pub use api::{
     ApiOperationNode, ApiResourceNode, ErrorDefinitionNode, HttpEndpointNode, InteractionNode,
     PermissionNode, PipelineNode,
@@ -56,6 +59,7 @@ pub use ifml::{
     ModuleUseRecord, NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode,
     ViewComponentNode, ViewContainerNode,
 };
+pub use incompleteness::{Incompleteness, IncompletenessReason};
 pub use mox::{
     MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
     MoxParam, MoxVocabularyNode,
@@ -83,7 +87,7 @@ pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
 pub use rule::{RuleKind, RuleNode, RuleRefRecord};
-pub use schema::{SchemaClassificationData, SchemaNode, MOX_SOURCE};
+pub use schema::{Access, SchemaClassificationData, SchemaNode, MOX_SOURCE};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
 };

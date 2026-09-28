@@ -571,6 +571,8 @@ fn bridge_schema(title: &str, ns: Option<&str>) -> codegraph_core::types::Schema
         has_any_of: false,
         has_definitions: false,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     }
 }
 

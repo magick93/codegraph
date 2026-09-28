@@ -16,6 +16,9 @@ codegraph-core = { path = "../codegraph-core" }
 codegraph-backend = { path = "../codegraph-backend" }
 codegraph-ext-points = { path = "../codegraph-ext-points" }
 codegraph-ops = { path = "../codegraph-ops" }
+# Direct engine access for the artifact export/import + graph cache (issue #275).
+codegraph-grafeo = { path = "../codegraph-grafeo" }
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -44,6 +47,7 @@ tree-sitter-svelte-next = "0.1.1"
 rex-ir = { workspace = true }
 rex-driver = { workspace = true }
 rex-ifml = { workspace = true }
+rex-expr = { workspace = true }
 # Sigil (Rune DSL) — issue #255: workspace rev-pins, codegraph-crate-only.
 # Provenance for rosetta-derived graph data rides custom_annotations under a
 # distinct `origin=rosetta` key (never the mox `source` key).
@@ -59,4 +63,3 @@ tempfile = "3"
 insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"
-sha2 = "0.10"

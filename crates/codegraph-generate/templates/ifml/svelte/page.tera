@@ -43,6 +43,10 @@
 
 	{{ control_gate.consts }}
 {%- endif %}
+{%- if guard_expr %}
+
+	const view_guard = $derived(Boolean({{ guard_expr }}));
+{%- endif %}
 {%- if modal %}
 	let dialog_open = $state(true);
 

@@ -98,8 +98,15 @@ impl DomainGenerator for ApiContractGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         // Reuse the router generator's context resolution so the contract
         // reflects the exact entity set + path segments the router mounts.
-        let ctx = build_router_context(db, domain, entity_titles, config, &self.parent_candidates)
-            .await?;
+        let ctx = build_router_context(
+            db,
+            domain,
+            entity_titles,
+            config,
+            &self.parent_candidates,
+            project,
+        )
+        .await?;
         let contract = build_api_contract(&ctx);
 
         let ts = render_template_with_project(tera, "api/contract.tera", &contract, project)?;

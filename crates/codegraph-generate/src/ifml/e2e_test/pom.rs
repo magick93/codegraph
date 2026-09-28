@@ -553,6 +553,7 @@ mod surface_tests {
             is_default: false,
             is_landmark: false,
             is_modal: false,
+            conditional_expr_json: None,
             conditional_expression: None,
             roles: Vec::new(),
             requires: Vec::new(),

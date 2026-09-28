@@ -350,6 +350,7 @@ impl<'a> IfmlGraphQuerier<'a> {
             is_landmark: vc.is_landmark,
             is_modal: vc.is_modal,
             conditional_expression: vc.conditional_expression.clone(),
+            conditional_expr_json: vc.expr_json.clone(),
             roles: vc.roles.clone().unwrap_or_default(),
             requires: vc.requires.clone().unwrap_or_default(),
             params,
@@ -490,6 +491,7 @@ mod tests {
             is_landmark: landmark,
             is_modal: false,
             conditional_expression: None,
+            expr_json: None,
             domain: None,
             module_uses: None,
             roles: None,
@@ -510,6 +512,7 @@ mod tests {
             api_operation: None,
             spec: None,
             conditional_expression: None,
+            expr_json: None,
             domain: None,
         })
         .await
@@ -530,6 +533,7 @@ mod tests {
             event_type: event_type.to_string(),
             params: None,
             conditional_expression: None,
+            expr_json: None,
             requires: Vec::new(),
             domain: None,
         })
@@ -729,6 +733,7 @@ mod tests {
                 is_landmark: false,
                 is_modal: false,
                 conditional_expression: None,
+                expr_json: None,
                 domain: None,
                 module_uses: None,
                 roles: Some(vec!["admin".to_string(), "manager".to_string()]),
@@ -797,6 +802,7 @@ mod tests {
                         capability: "manage_refunds".to_string(),
                         effect: "permit".to_string(),
                         when: None,
+                        expr_json: None,
                         obligations: vec![],
                     },
                     GrantEdge {
@@ -804,6 +810,7 @@ mod tests {
                         capability: "approve_expense".to_string(),
                         effect: "permit".to_string(),
                         when: None,
+                        expr_json: None,
                         obligations: vec![],
                     },
                     GrantEdge {
@@ -811,6 +818,7 @@ mod tests {
                         capability: "approve_expense".to_string(),
                         effect: "forbid".to_string(),
                         when: None,
+                        expr_json: None,
                         obligations: vec![],
                     },
                 ],
@@ -858,6 +866,7 @@ mod tests {
             is_landmark: false,
             is_modal: false,
             conditional_expression: None,
+            expr_json: None,
             domain: None,
             module_uses: None,
             roles: None,
@@ -910,6 +919,7 @@ mod tests {
                 event_type: "click".to_string(),
                 params: None,
                 conditional_expression: None,
+                expr_json: None,
                 requires: Vec::new(),
                 domain: None,
             })
@@ -977,6 +987,7 @@ mod tests {
                 is_landmark: false,
                 is_modal: false,
                 conditional_expression: Some("user.subscribed == true".to_string()),
+                expr_json: None,
                 domain: None,
                 module_uses: None,
                 roles: None,

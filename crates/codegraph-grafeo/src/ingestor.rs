@@ -273,10 +273,19 @@ impl GraphIngestor for GrafeoEngine {
             is_primitive_wrapper: $is_primitive_wrapper, \
             has_all_of: $has_all_of, has_one_of: $has_one_of, \
             has_any_of: $has_any_of, has_definitions: $has_definitions, \
-            custom_annotations: $custom_annotations\
+            custom_annotations: $custom_annotations, \
+            access: $access, annotations: $annotations\
         })";
         let custom_annotations_str =
             serde_json::to_string(&node.custom_annotations).unwrap_or_else(|_| "{}".to_string());
+        let annotations_str = node
+            .annotations
+            .as_ref()
+            .map(|a| serde_json::to_string(a).unwrap_or_default());
+        let access_str = node.access.as_ref().map(|a| match a {
+            codegraph_core::types::Access::Public => "public".to_string(),
+            codegraph_core::types::Access::Private => "private".to_string(),
+        });
         let params = HashMap::from([
             (
                 "schema_id".into(),
@@ -346,6 +355,8 @@ impl GraphIngestor for GrafeoEngine {
                 "custom_annotations".into(),
                 grafeo::Value::String(custom_annotations_str.into()),
             ),
+            ("access".into(), opt_to_grafeo_value(&access_str)),
+            ("annotations".into(), opt_to_grafeo_value(&annotations_str)),
         ]);
         session
             .execute_with_params(gql, params)

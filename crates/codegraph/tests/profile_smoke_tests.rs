@@ -374,6 +374,8 @@ fn mock_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let props = vec![PropertyNode {
@@ -405,6 +407,7 @@ fn mock_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let engine = codegraph_core::mock::MockEngine::builder()
@@ -961,6 +964,8 @@ async fn run_routing_generators(
         deployment_topology: topology,
         namespace_layout: false,
         ux_rules: false,
+        expr_ir: false,
+        public_operations_rls: false,
         features: toml::Table::new(),
     };
 
@@ -969,6 +974,7 @@ async fn run_routing_generators(
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: topology.to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
 
@@ -1177,6 +1183,8 @@ fn workers_scaffold_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let code = SchemaNode {
         namespace: None,
@@ -1202,6 +1210,8 @@ fn workers_scaffold_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let props = vec![PropertyNode {
@@ -1233,6 +1243,7 @@ fn workers_scaffold_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     }];
 
     let engine = codegraph_core::mock::MockEngine::builder()
@@ -1314,12 +1325,15 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
         deployment_topology: codegraph::profile::DeploymentTopology::Workers,
         namespace_layout: false,
         ux_rules: false,
+        expr_ir: false,
+        public_operations_rls: false,
         features: toml::Table::new(),
     };
 
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
 
@@ -1555,6 +1569,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let pay_line = SchemaNode {
         namespace: None,
@@ -1580,6 +1596,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let code = SchemaNode {
         namespace: None,
@@ -1605,6 +1623,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
     let work_item = SchemaNode {
         namespace: None,
@@ -1630,6 +1650,8 @@ async fn workers_codelist_test_setup() -> (
         has_any_of: false,
         has_definitions: true,
         custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
     };
 
     let name_prop = PropertyNode {
@@ -1661,6 +1683,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let gender_prop = PropertyNode {
         name: "gender".to_string(),
@@ -1691,6 +1714,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let pay_line_ref_prop = PropertyNode {
         name: "pay_line".to_string(),
@@ -1721,6 +1745,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let code_ref_prop = PropertyNode {
         name: "code".to_string(),
@@ -1751,6 +1776,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
     let work_item_ref_prop = PropertyNode {
         name: "work_item".to_string(),
@@ -1781,6 +1807,7 @@ async fn workers_codelist_test_setup() -> (
         ui_override_list_cell: None,
         ui_override_form: None,
         ui_override_inline: None,
+        type_expr: None,
     };
 
     let engine = codegraph_core::mock::MockEngine::builder()
@@ -1909,6 +1936,8 @@ async fn run_routing_generators_with_parts(
         deployment_topology: topology,
         namespace_layout: false,
         ux_rules: false,
+        expr_ir: false,
+        public_operations_rls: false,
         features: toml::Table::new(),
     };
 
@@ -1957,6 +1986,7 @@ async fn workers_topology_emits_per_worker_codelist_reexports() {
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2109,6 +2139,7 @@ async fn monolith_topology_keeps_root_codelist_reexport() {
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "monolith".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2190,6 +2221,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let project = codegraph::generate::ProjectConfig {
         deployment_topology: "workers".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         hooks_api_crate: "hr_hooks_api".to_string(),
         hooks_api_base: "crates/hr-hooks-api".to_string(),
         ..Default::default()
@@ -2290,6 +2322,7 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let project2 = codegraph::generate::ProjectConfig {
         deployment_topology: "monolith".to_string(),
         namespace_layout: false,
+        expr_ir: false,
         hooks_api_crate: "hr_hooks_api".to_string(),
         ..Default::default()
     };
