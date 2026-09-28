@@ -49,8 +49,11 @@ pub struct UiPageContext {
     /// (`ui_detail_extensions`, #162 phase 3). Empty = no extension blocks.
     pub detail_extensions: Vec<UiDetailExtension>,
     /// ux-rules resolved list columns, in `column_order` sequence (issue
-    /// #297). Empty = the `ux_rules` plane is inactive.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// #297). Empty = no resolved columns for this entity (e.g. codelists);
+    /// the plane may still be active, so the field is always serialized
+    /// when the context exists — a `for` over an absent variable is a
+    /// render error, while an empty one falls through to the template's
+    /// `list_fields` fallback.
     pub ux_columns: Vec<UxColumnCtx>,
     /// ux-rules row-action partition (present only with a plan).
     #[serde(skip_serializing_if = "Option::is_none")]

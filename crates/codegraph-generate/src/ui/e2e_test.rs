@@ -1695,14 +1695,24 @@ async fn build_ux_e2e_spec(
             is_audit: is_audit_stamp(name),
         });
 
-        // Chip assertions: a chip column whose fixture label is known.
-        // Booleans are excluded — they render through the boolean Badge
-        // branch, which carries no chip testid.
+        // Chip assertions: a chip column whose fixture label is known AND
+        // whose value the fixture body actually controls. Columns omitted
+        // from the create body (entity refs, VO nests) render their DB
+        // default — asserting the fixture label against them is vacuous
+        // (e.g. position_opening.approval_status_code). Booleans are
+        // excluded — they render through the boolean Badge branch, which
+        // carries no chip testid.
         if col.display == Display::Chip {
-            if let Some(text) =
-                chip_fixture_text(field, workflow_status_field.as_deref(), name, initial_state)
-            {
-                chip_checks.push(UxE2eChipCheck { text });
+            let body_controlled = create_by_name
+                .get(name.as_str())
+                .map(|f| !f.is_entity_ref && f.nested_type_name.is_none())
+                .unwrap_or(false);
+            if body_controlled {
+                if let Some(text) =
+                    chip_fixture_text(field, workflow_status_field.as_deref(), name, initial_state)
+                {
+                    chip_checks.push(UxE2eChipCheck { text });
+                }
             }
         }
 
@@ -1728,7 +1738,13 @@ async fn build_ux_e2e_spec(
         // Audit stamps are excluded — they may be server-stamped, so their
         // cell values are not fixture-controlled.
         if !is_audit_stamp(name) {
-            if let Some(fixture) = create_field.and_then(stable_fixture_literal) {
+            // Range fixtures are interval literals ('[a,b)'), array and
+            // structured fixtures are JSONB — none is a valid Intl
+            // formatter input, and the rendered cell transforms them.
+            if let Some(fixture) = create_field
+                .filter(|f| !f.is_range && !f.is_array && f.structured_sub_fields.is_empty())
+                .and_then(stable_fixture_literal)
+            {
                 let kind = match col.dimension {
                     codegraph_config::ux::Dimension::Money => Some("money"),
                     codegraph_config::ux::Dimension::Quantity => Some("quantity"),
@@ -1764,7 +1780,15 @@ async fn build_ux_e2e_spec(
             && col.display == Display::Raw
             && !is_audit_stamp(name)
         {
-            if let Some(literal) = create_field.and_then(stable_fixture_literal) {
+            // StructuredWrapper fixture literals are JSONB object literals
+            // ('{ value: ... }', or '[{ ... }]' when array-typed) for the
+            // create body — the rendered cell is the wrapper's stringified
+            // form, so a toHaveText(object) is invalid Playwright. The
+            // assertion simply doesn't apply.
+            if let Some(literal) = create_field
+                .filter(|f| !f.is_array && f.structured_sub_fields.is_empty())
+                .and_then(stable_fixture_literal)
+            {
                 first_column = Some(UxE2eFirstColumnCtx {
                     key: name.clone(),
                     expected_literal: literal,

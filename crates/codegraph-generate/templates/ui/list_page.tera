@@ -226,6 +226,16 @@
 		return cls;
 	}
 {% if ux_actions %}
+	// Row-action partition (issue #297), mirrored into the component so
+	// the `_ux_cell` actions cell can iterate it at runtime.
+	const ux_actions = {
+		primary: [
+{% for a in ux_actions.primary %}			{ action: '{{ a.action }}', label: '{{ a.label }}' }{% if not loop.last %},{% endif %}
+{% endfor %}		],
+		menu: [
+{% for a in ux_actions.menu %}			{ action: '{{ a.action }}', label: '{{ a.label }}' }{% if not loop.last %},{% endif %}
+{% endfor %}		],
+	};
 	function actionLabel(action: string, fallback: string): string {
 		if (action === 'open') return m.common_open();
 		if (action === 'edit') return m.common_edit();
