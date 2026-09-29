@@ -2,7 +2,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Global verbose flag — when set, failure paths dump log tails.
+/// Global verbose flag — with `--verbose`, quiet stages (dependency
+/// compilation, browser downloads) also stream their child output inline.
+/// Failure tails print unconditionally either way.
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 
 const RED: &str = "\x1b[0;31m";
@@ -42,6 +44,17 @@ pub fn print_tail(text: &str, n: usize) {
     for line in &lines[start..] {
         println!("    {line}");
     }
+}
+
+/// Print one streamed child-process line (already label-prefixed by the
+/// caller), dimmed so harness progress lines stay visually distinct.
+pub fn stream_line(prefixed: &str) {
+    println!("{DIM}{prefixed}{NC}");
+}
+
+/// Stage-start line for a streamed command: `[label] $ program args…`.
+pub fn stream_start(prefixed: &str) {
+    println!("{DIM}{prefixed}{NC}");
 }
 
 pub fn bold(msg: impl AsRef<str>) -> String {

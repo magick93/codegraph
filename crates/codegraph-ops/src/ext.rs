@@ -15,6 +15,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
 use crate::output;
+use crate::proc::run_streaming;
 
 /// Context passed to a [`TestExtension`].
 pub struct OpsContext<'a> {
@@ -74,7 +75,7 @@ pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> O
                     "extension {name} requires the API running"
                 )));
             }
-            return run_exec(exec, &entry.args, &config.root_dir).await;
+            return run_exec(&format!("ext:{name}"), exec, &entry.args, &config.root_dir).await;
         }
         // No exec: fall through to the in-process registry.
     }
@@ -112,8 +113,10 @@ pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> O
 /// Run all manifest hooks whose `on` matches `point`.
 /// Points: pre_generate, post_generate, post_migrate, pre_e2e, post_e2e,
 /// pre_api, post_api, pre_playwright.
-/// Each hook: `sh -c "{exec} {args...}"` in config.root_dir. Failures abort
-/// with Err(Command) including stderr/stdout tail. If no hooks match, Ok.
+/// Each hook: `sh -c "{exec} {args...}"` in config.root_dir, streamed under
+/// `[hook:<name>]` and timed (`hook <name> (3s)` via config.metrics, without
+/// splitting an enclosing suite stage). Failures abort with Err(Command)
+/// including an output tail. If no hooks match, Ok.
 pub async fn run_hooks(config: &OpsConfig, point: &str) -> OpsResult<()> {
     let mut ran = 0usize;
     for hook in config
@@ -122,7 +125,18 @@ pub async fn run_hooks(config: &OpsConfig, point: &str) -> OpsResult<()> {
         .filter(|h| h.on.as_deref() == Some(point))
     {
         output::info(format!("hook {} ({point})", hook.name));
-        run_exec(&hook.exec, &hook.args, &config.root_dir).await?;
+        let paused = config.metrics.pause();
+        config.metrics.begin(format!("hook {}", hook.name));
+        let result = run_exec(
+            &format!("hook:{}", hook.name),
+            &hook.exec,
+            &hook.args,
+            &config.root_dir,
+        )
+        .await;
+        config.metrics.end();
+        config.metrics.resume(paused);
+        result?;
         ran += 1;
     }
     if ran > 0 {
@@ -141,30 +155,25 @@ pub fn extension_names() -> Vec<String> {
         .collect()
 }
 
-/// Run `sh -c "{exec} {args...}"` in `cwd`, capturing output. Non-zero exit
-/// yields `OpsError::Command` with stdout/stderr tails.
-async fn run_exec(exec: &str, args: &[String], cwd: &Path) -> OpsResult<()> {
+/// Run `sh -c "{exec} {args...}"` in `cwd`, streaming output under
+/// `[label]` (success output stays visible instead of being discarded).
+/// Non-zero exit yields `OpsError::Command` with an output tail.
+async fn run_exec(label: &str, exec: &str, args: &[String], cwd: &Path) -> OpsResult<()> {
     let script = if args.is_empty() {
         exec.to_string()
     } else {
         format!("{exec} {}", args.join(" "))
     };
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(&script)
-        .current_dir(cwd)
-        .output()
-        .map_err(|e| OpsError::Command(format!("failed to spawn hook '{script}': {e}")))?;
-    if output.status.success() {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(&script).current_dir(cwd);
+    let out = run_streaming(&mut cmd, label)?;
+    if out.success() {
         return Ok(());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     Err(OpsError::Command(format!(
-        "hook failed (exit {:?}): {script}\nstdout: {}\nstderr: {}",
-        output.status.code(),
-        tail(&stdout, 400),
-        tail(&stderr, 400)
+        "{label}: `{script}` failed (exit {:?}):\n{}",
+        out.status.code(),
+        tail(&out.captured, 400)
     )))
 }
 
@@ -432,6 +441,45 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with(manifest, dir.path());
         run_hooks(&cfg, "pre_e2e").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_hooks_records_hook_timing() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "timed".into(),
+            exec: "true".into(),
+            args: vec![],
+            on: Some("pre_api".into()),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        run_hooks(&cfg, "pre_api").await.unwrap();
+        let stages = cfg.metrics.stages();
+        assert!(
+            stages.iter().any(|s| s.name == "hook timed"),
+            "hook duration must be recorded: {stages:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_hooks_preserves_enclosing_stage() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "nested".into(),
+            exec: "true".into(),
+            args: vec![],
+            on: Some("pre_api".into()),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        cfg.metrics.begin("Generate + build");
+        run_hooks(&cfg, "pre_api").await.unwrap();
+        cfg.metrics.end();
+        let stages = cfg.metrics.stages();
+        assert_eq!(stages.len(), 2, "hook + enclosing stage: {stages:?}");
+        assert_eq!(stages[0].name, "hook nested");
+        assert_eq!(stages[1].name, "Generate + build");
     }
 
     #[test]

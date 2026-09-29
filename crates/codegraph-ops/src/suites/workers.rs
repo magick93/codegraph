@@ -621,19 +621,10 @@ fn regenerate(config: &OpsConfig, graph: &str, workers_out: &Path) -> (bool, Str
         output::warn(hint);
     }
     let cargo_args = regenerate_args(config, graph, workers_out);
-    match Command::new("cargo")
-        .args(&cargo_args)
-        .current_dir(&config.workspace_root)
-        .output()
-    {
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (out.status.success(), text)
-        }
+    let mut cmd = Command::new("cargo");
+    cmd.args(&cargo_args).current_dir(&config.workspace_root);
+    match crate::proc::run_streaming(&mut cmd, "generate") {
+        Ok(out) => (out.status.success(), out.captured),
         Err(e) => (false, e.to_string()),
     }
 }
@@ -711,15 +702,9 @@ fn cargo_build(build_dir: &Path, release: bool, cornucopia_db_url: &str) -> (boo
         cmd.arg("--release");
     }
     cmd.env("CORNUCOPIA_DATABASE_URL", cornucopia_db_url);
-    match cmd.current_dir(build_dir).output() {
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (out.status.success(), text)
-        }
+    cmd.current_dir(build_dir);
+    match crate::proc::run_streaming(&mut cmd, "build") {
+        Ok(out) => (out.status.success(), out.captured),
         Err(e) => (false, e.to_string()),
     }
 }

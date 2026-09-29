@@ -13,7 +13,7 @@ use crate::error::{OpsError, OpsResult};
 use crate::ext::run_hooks;
 use crate::migrate::run_api_migrations_with_options;
 use crate::output;
-use crate::proc::{ManagedProcess, Supervisor};
+use crate::proc::{run_streaming, ManagedProcess, Supervisor};
 use crate::results::{ResultsReport, SuiteFailure};
 use crate::wait::wait_for_url;
 
@@ -1630,16 +1630,11 @@ fn regex_free_has_error_count(gen_output: &str) -> bool {
 
 fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
     let args = regenerate_args(config, graph_binary);
-    let out = Command::new("cargo")
-        .args(&args)
-        .current_dir(&config.root_dir)
-        .output()
-        .map_err(|e| OpsError::Command(format!("failed to spawn cargo: {e}")))?;
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let mut cmd = Command::new("cargo");
+    cmd.args(&args).current_dir(&config.root_dir);
+    // Streams live under [generate] — a 56-minute regen is never silent.
+    let out = run_streaming(&mut cmd, "generate")?;
+    let combined = out.captured;
     if !out.status.success() {
         return Err(OpsError::Command(format!(
             "`cargo run -p {graph_binary} -- run` failed with {}: \n{}",
@@ -1662,16 +1657,9 @@ fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
     if let Some((key, value)) = cornucopia_db_env(config) {
         cmd.env(key, value);
     }
-    match cmd.current_dir(&config.app_dir).output() {
+    match run_streaming(&mut cmd, "build") {
         Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            Err(tail_lines(&text, 20))
-        }
+        Ok(out) => Err(tail_lines(&out.captured, 20)),
         Err(e) => Err(format!("failed to spawn cargo: {e}")),
     }
 }
@@ -1684,13 +1672,12 @@ fn cargo_check_in(config: &OpsConfig) -> Result<(), String> {
     if let Some((key, value)) = cornucopia_db_env(config) {
         cmd.env(key, value);
     }
-    match cmd.output() {
+    match run_streaming(&mut cmd, "check") {
         Ok(out) => {
-            let text = String::from_utf8_lossy(&out.stdout).into_owned();
-            if out.status.success() && !text.contains("^error") {
+            if out.status.success() && !out.captured.contains("^error") {
                 Ok(())
             } else {
-                Err(tail_lines(&text, 20))
+                Err(tail_lines(&out.captured, 20))
             }
         }
         Err(e) => Err(format!("failed to spawn cargo: {e}")),

@@ -69,7 +69,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     release: bool,
 
-    /// Show server logs on failure.
+    /// Also stream quiet stages (dependency installs, browser downloads) and
+    /// echo each stage's full captured output inline. Default: stage starts,
+    /// labeled child-process output ([build] Compiling foo), and durations on
+    /// stage end. Failure tails print regardless of this flag.
     #[arg(long, global = true)]
     verbose: bool,
 

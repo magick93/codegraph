@@ -8,7 +8,7 @@ use std::process::Command;
 use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
 use crate::output;
-use crate::proc::{ManagedProcess, Supervisor};
+use crate::proc::{run_streaming, run_streaming_quiet, ManagedProcess, Supervisor};
 use crate::wait::wait_for_url;
 
 /// Where the UI suite persists the provisioned API key (shared with the cli
@@ -138,10 +138,10 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
         cmd.env(key, value);
     }
     cmd.current_dir(&config.ui_dir);
-    let status = cmd
-        .status()
+    // Streamed with uniform tails (previously raw `.status()` passthrough).
+    let out = run_streaming(&mut cmd, "playwright")
         .map_err(|e| OpsError::Command(format!("failed to spawn playwright: {e}")))?;
-    let passed = status.success();
+    let passed = out.status.success();
 
     // 9. Summary + shutdown.
     output::section("=== UI E2E Summary ===");
@@ -309,27 +309,20 @@ async fn http_ok(url: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Run a command, returning its output on success or Err(Command) with a
-/// tail on failure (used for best-effort steps where callers decide).
-fn run_quiet(bin: &str, args: &[&str], cwd: &Path) -> OpsResult<String> {
-    let out = Command::new(bin)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .map_err(|e| OpsError::Command(format!("failed to spawn {bin}: {e}")))?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+/// Run a command, streaming its output (quiet: capture only unless
+/// `--verbose`) and returning Err(Command) with a tail on failure (used for
+/// best-effort steps where callers decide).
+fn run_quiet(bin: &str, args: &[&str], cwd: &Path) -> OpsResult<()> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args).current_dir(cwd);
+    let out = run_streaming_quiet(&mut cmd, bin)?;
     if out.status.success() {
-        Ok(text)
-    } else {
-        Err(OpsError::Command(format!(
-            "{bin} {args:?} failed: {}",
-            tail(&text, 400)
-        )))
+        return Ok(());
     }
+    Err(OpsError::Command(format!(
+        "{bin} {args:?} failed: {}",
+        tail(&out.captured, 400)
+    )))
 }
 
 fn print_log_tail(path: &str) {
