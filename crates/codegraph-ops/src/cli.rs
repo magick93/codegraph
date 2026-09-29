@@ -3,8 +3,9 @@
 //! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `workers`, `clean`,
 //! `smoke`, `quality`, `ext <name>`. Global flags: `--config`, `--keep`,
 //! `--skip-build`, `--skip-generate`, `--release`, `--verbose`, `--metrics`,
-//! `--metrics-format`, `--retry`, `--headed`, `--grep`. The `e2e`
-//! subcommand additionally takes `--skip-ui-build`.
+//! `--metrics-format`, `--retry`, `--headed`, `--grep`, `--reuse`,
+//! `--clear-cache`. The `e2e` subcommand additionally takes `--skip-ui-build`;
+//! `clean` takes `--deep`.
 //!
 //! The generated `testkit` binary wraps `codegraph_ops::cli::main()`.
 
@@ -110,6 +111,19 @@ pub struct Cli {
     /// for hooks and generated path-dep normalization.
     #[arg(long, global = true, value_name = "PATH")]
     codegraph_root: Option<PathBuf>,
+
+    /// Reuse a registry-known service already running on a needed port
+    /// (.testkit/services.json) instead of killing it and rebinding.
+    /// CAVEAT: the harness assumes the running service serves the current
+    /// build — generate/build still run, but the OLD server keeps serving.
+    #[arg(long, global = true)]
+    reuse: bool,
+
+    /// Clear the Playwright transpile cache (/tmp/playwright-transform-cache-*)
+    /// at run start. The e2e and ui suites clear it before Playwright anyway;
+    /// this forces the clear up front for every other suite.
+    #[arg(long, global = true)]
+    clear_cache: bool,
 }
 
 #[derive(Subcommand)]
@@ -155,7 +169,13 @@ enum Cmd {
     /// regenerate -> migrate plain Postgres -> build -> boot -> smoke + hurl.
     Workers,
     /// Stop services and remove generated output.
-    Clean,
+    Clean {
+        /// Also remove Playwright triage artifacts ({root}/test-results).
+        /// Default clean KEEPS them — failed-run screenshots/traces stay
+        /// available for debugging.
+        #[arg(long)]
+        deep: bool,
+    },
     /// One-shot state report: generated tree, binaries, databases, ports.
     Doctor,
     /// Smoke-test a remote deployment.
@@ -194,6 +214,9 @@ enum Cmd {
 pub async fn main() -> i32 {
     let cli = Cli::parse();
     output::set_verbose(cli.verbose);
+    if cli.clear_cache {
+        crate::pwcache::clear_and_report();
+    }
     if let Some(root) = &cli.codegraph_root {
         // Child processes (hooks, cargo, the generated app) inherit this, so
         // generated manifests and hooks can reference the checkout via
@@ -242,6 +265,7 @@ pub async fn main() -> i32 {
                 retry: cli.retry,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                 allow_gen_errors: cli.allow_gen_errors,
+                reuse: cli.reuse,
             };
             output::bold("Running API integration tests");
             run_api(&config, &args).await
@@ -262,6 +286,7 @@ pub async fn main() -> i32 {
                     retry: cli.retry,
                     results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                     allow_gen_errors: cli.allow_gen_errors,
+                    reuse: cli.reuse,
                 };
                 if let Err(e) = run_api(&config, &args).await {
                     return report_error("api", e);
@@ -287,6 +312,7 @@ pub async fn main() -> i32 {
                 skip_ui_build: *skip_ui_build,
                 retry_failed: *retry_failed,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+                reuse: cli.reuse,
                 playwright_args: build_playwright_args(&cli, extra),
             };
             output::bold("Running end-to-end tests");
@@ -296,6 +322,7 @@ pub async fn main() -> i32 {
             let args = UiArgs {
                 keep: cli.keep,
                 headed: cli.headed,
+                reuse: cli.reuse,
                 playwright_args: build_playwright_args(&cli, extra),
             };
             output::bold("Running UI Playwright tests");
@@ -312,12 +339,13 @@ pub async fn main() -> i32 {
                 skip_generate: cli.skip_generate,
                 release: cli.release,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+                reuse: cli.reuse,
             };
             output::bold("Running workers-topology tests");
             run_workers(&config, &args).await
         }
-        Cmd::Clean => {
-            cmd_clean(&config).await;
+        Cmd::Clean { deep } => {
+            cmd_clean(&config, *deep).await;
             Ok(())
         }
         Cmd::Doctor => {
@@ -384,6 +412,7 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         retry: cli.retry,
         results_file: cli.results.as_ref().map(|p| p.display().to_string()),
         allow_gen_errors: cli.allow_gen_errors,
+        reuse: cli.reuse,
     };
     let api_code = match run_api(config, &api_args).await {
         Ok(()) => None,
@@ -401,6 +430,7 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         skip_ui_build: false,
         retry_failed: false,
         results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+        reuse: cli.reuse,
         playwright_args: build_playwright_args(cli, &[]),
     };
     let e2e_code = match run_e2e(config, &e2e_args).await {
@@ -449,7 +479,7 @@ fn subcommand_name(cmd: &Cmd) -> &'static str {
         Cmd::Ui { .. } => "ui",
         Cmd::Full => "full",
         Cmd::Workers => "workers",
-        Cmd::Clean => "clean",
+        Cmd::Clean { .. } => "clean",
         Cmd::Doctor => "doctor",
         Cmd::Smoke { .. } => "smoke",
         Cmd::Quality { .. } => "quality",
@@ -521,15 +551,32 @@ fn walk_up(start: &Path) -> impl Iterator<Item = &Path> {
     std::iter::successors(Some(start), |dir| dir.parent())
 }
 
-/// Stop services and remove generated output (mirrors bash `cmd_clean`).
-async fn cmd_clean(config: &OpsConfig) {
+/// Stop services and remove generated output (mirrors bash `cmd_clean`,
+/// extended by #356: registry teardown, workers ports, sveltekit logs, and
+/// the opt-in `--deep` removal of Playwright triage artifacts).
+async fn cmd_clean(config: &OpsConfig, deep: bool) {
     use crate::migrate::remove_supabase_links;
 
+    // 1. Registry teardown: kill every service a previous `--keep` run left
+    // behind (by pid), then drop the registry file. Unknown orphans still
+    // fall to the fuser port sweep below.
+    output::info("Stopping registered services...");
+    let killed = crate::registry::teardown(&config.root_dir);
+    if killed > 0 {
+        output::ok(format!("{killed} registered service(s) stopped"));
+    }
+
+    // 2. Port sweep: api + ui ports, plus the workers topology (gateway +
+    // per-domain worker range — constants shared with suites::workers while
+    // the workers-suite generalization is deferred).
     output::info("Stopping app processes...");
-    for port in [
+    let mut ports = vec![
         config.manifest.servers.api_port,
         config.manifest.servers.ui_port,
-    ] {
+    ];
+    ports.push(crate::suites::workers::GATEWAY_PORT);
+    ports.extend(crate::suites::workers::worker_ports());
+    for port in ports {
         let _ = std::process::Command::new("fuser")
             .arg("-k")
             .arg(format!("{port}/tcp"))
@@ -571,7 +618,35 @@ async fn cmd_clean(config: &OpsConfig) {
     ] {
         let _ = std::fs::remove_file(f);
     }
+    // All SvelteKit preview logs (ui suite + e2e suite variants), which the
+    // fixed list above missed.
+    let logs = remove_sveltekit_logs(Path::new("/tmp"));
+    if logs > 0 {
+        output::info(format!("Removed {logs} sveltekit log(s)"));
+    }
+    // Playwright triage artifacts: KEPT by default (failed-run screenshots/
+    // traces stay debuggable); `--deep` opts into their removal.
+    if deep {
+        output::info("Removing Playwright triage artifacts (test-results/) — --deep");
+        let _ = std::fs::remove_dir_all(config.root_dir.join("test-results"));
+    }
     output::ok("Clean complete");
+}
+
+/// Remove `codegraph-ops-sveltekit*.log` files from `dir` (the /tmp dir in
+/// production; injectable for tests). Returns the count removed.
+fn remove_sveltekit_logs(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.starts_with("codegraph-ops-sveltekit") && name.ends_with(".log")
+        })
+        .filter_map(|e| std::fs::remove_file(e.path()).ok())
+        .count()
 }
 
 #[cfg(test)]
@@ -658,5 +733,76 @@ mod tests {
         assert_eq!(combine_codes(Some(1), Some(1)), 1);
         assert_eq!(combine_codes(Some(1), Some(2)), 2);
         assert_eq!(combine_codes(Some(2), Some(1)), 2);
+    }
+
+    #[test]
+    fn clean_parses_deep_flag() {
+        let plain = Cli::try_parse_from(["testkit", "clean"]).unwrap();
+        assert!(matches!(plain.command, Cmd::Clean { deep: false }));
+        let deep = Cli::try_parse_from(["testkit", "clean", "--deep"]).unwrap();
+        assert!(matches!(deep.command, Cmd::Clean { deep: true }));
+    }
+
+    #[test]
+    fn global_flags_reuse_and_clear_cache_parse_on_subcommands() {
+        let cli = Cli::try_parse_from(["testkit", "api", "--reuse", "--clear-cache"]).unwrap();
+        assert!(cli.reuse);
+        assert!(cli.clear_cache);
+        let cli = Cli::try_parse_from(["testkit", "ui", "--reuse"]).unwrap();
+        assert!(cli.reuse && !cli.clear_cache);
+    }
+
+    #[test]
+    fn remove_sveltekit_logs_scopes_to_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "codegraph-ops-sveltekit.log",
+            "codegraph-ops-sveltekit-e2e.log",
+            "codegraph-ops-app.log",
+            "sveltekit-other.log",
+        ] {
+            std::fs::write(dir.path().join(name), "log").unwrap();
+        }
+        assert_eq!(remove_sveltekit_logs(dir.path()), 2);
+        assert!(!dir.path().join("codegraph-ops-sveltekit.log").exists());
+        assert!(!dir.path().join("codegraph-ops-sveltekit-e2e.log").exists());
+        assert!(dir.path().join("codegraph-ops-app.log").exists());
+        assert!(dir.path().join("sveltekit-other.log").exists());
+        // Missing dir is harmless.
+        assert_eq!(remove_sveltekit_logs(Path::new("/nonexistent-cg-tmp")), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_registry_teardown_kills_leaked_services() {
+        use crate::registry::{record_service, ServiceEntry, ServiceRegistry};
+
+        let dir = tempfile::tempdir().unwrap();
+        // A detached long-running sleep standing in for a leaked `--keep`
+        // server (reparented to init, so it dies and is reaped cleanly).
+        let pid = crate::registry::spawn_detached_sleep();
+        record_service(
+            dir.path(),
+            ServiceEntry {
+                name: "api".to_string(),
+                pid,
+                port: 3000,
+                health: Some("/health".to_string()),
+                started_at: "2026-09-29T12:00:00Z".to_string(),
+                profile: Some("debug".to_string()),
+                suite: Some("api".to_string()),
+            },
+        )
+        .unwrap();
+
+        let killed = crate::registry::teardown(dir.path());
+        assert_eq!(killed, 1, "the leaked service must be killed");
+        assert!(!crate::registry::pid_alive(pid), "pid {pid} must be gone");
+        assert!(
+            !ServiceRegistry::path(dir.path()).exists(),
+            "registry file must be removed by clean"
+        );
+        // Idempotent: a second teardown finds nothing.
+        assert_eq!(crate::registry::teardown(dir.path()), 0);
     }
 }

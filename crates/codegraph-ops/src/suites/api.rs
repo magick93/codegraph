@@ -33,6 +33,9 @@ pub struct ApiArgs {
     pub results_file: Option<String>,
     /// Tolerate generation errors (skipped entities) instead of failing.
     pub allow_gen_errors: bool,
+    /// Reuse a registry-known server already running on the api port instead
+    /// of taking it over (the old server keeps serving — possibly stale).
+    pub reuse: bool,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -132,14 +135,17 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     stage_generate_build(config, args).await?;
 
     // ---- 1. Preflight ----
-    let binary = stage_preflight(config, args, &mut counters).await?;
+    // Returns whether the api port is served by a reused registry server
+    // (`--reuse`) — stage_server then skips booting its own instance.
+    let server_reused = stage_preflight(config, args, &mut counters).await?;
 
     // ---- 2. Database ----
     let (migration_dir, auth_header, api_key_b, api_key_limited) =
         stage_database(config, args, &mut counters).await?;
 
     // ---- 3. Server ----
-    let mut supervisor = stage_server(config, args, &binary, &mut counters).await?;
+    let binary = app_binary_path(config, args);
+    let mut supervisor = stage_server(config, args, &binary, server_reused, &mut counters).await?;
 
     // ---- 4. Hurl API tests ----
     stage_hurl(
@@ -231,7 +237,7 @@ async fn stage_preflight(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
-) -> OpsResult<PathBuf> {
+) -> OpsResult<bool> {
     output::section("1. Preflight");
     config.metrics.begin("Preflight");
 
@@ -287,11 +293,39 @@ async fn stage_preflight(
     // Port preflight: the api server binds `{api_port}` later in the suite;
     // an unrelated process holding it used to fail the run ten minutes in
     // with the real error buried in the app log. Fail in seconds instead.
-    if let Err(e) = crate::preflight::ensure_port_free(config.manifest.servers.api_port) {
-        counters.fail_test(e.to_string());
-        return Err(e);
-    }
-    counters.pass(format!("Port {} free", config.manifest.servers.api_port));
+    // Registry-known prior servers (`--keep` leaks) are taken over by
+    // default, or reused with `--reuse`.
+    let server_reused = match crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.api_port,
+        args.reuse,
+    ) {
+        Ok(outcome) => {
+            let reused = outcome.reused();
+            match &outcome {
+                crate::preflight::PortOutcome::Free => {
+                    counters.pass(format!("Port {} free", config.manifest.servers.api_port));
+                }
+                crate::preflight::PortOutcome::Reused { name } => {
+                    counters.pass(format!(
+                        "Port {} served by reused registry service {name} (--reuse)",
+                        config.manifest.servers.api_port
+                    ));
+                }
+                crate::preflight::PortOutcome::TookOver { name, pid } => {
+                    counters.pass(format!(
+                        "Port {} freed (took over {name}, pid {pid})",
+                        config.manifest.servers.api_port
+                    ));
+                }
+            }
+            reused
+        }
+        Err(e) => {
+            counters.fail_test(e.to_string());
+            return Err(e);
+        }
+    };
 
     // Output-tree completeness: a wiped/partial generated dir (interrupted
     // regen) used to surface only as baffling auth/migration failures deep
@@ -303,12 +337,7 @@ async fn stage_preflight(
     counters.pass("Generated output tree complete (src/, migrations/)");
 
     // Binary smoke tests (only when the admin CLI exists in the scaffold).
-    let bin_dir = if args.release || args.skip_build && is_release_binary(config) {
-        config.app_dir.join("target/release")
-    } else {
-        config.app_dir.join("target/debug")
-    };
-    let binary = bin_dir.join(config.app_binary_name());
+    let binary = app_binary_path(config, args);
     // Stale-binary guard: a binary older than the newest source file means
     // the suite would silently test an app that doesn't match the current
     // generator output. Fail fast with an actionable hint.
@@ -475,7 +504,7 @@ async fn stage_preflight(
     }
     config.metrics.end();
 
-    Ok(binary)
+    Ok(server_reused)
 }
 
 async fn stage_database(
@@ -601,6 +630,7 @@ async fn stage_server(
     config: &OpsConfig,
     args: &ApiArgs,
     binary: &Path,
+    server_reused: bool,
     counters: &mut TestCounters,
 ) -> OpsResult<Supervisor> {
     // ---- 3. Server ----
@@ -608,6 +638,18 @@ async fn stage_server(
     config.metrics.begin("Start Axum");
 
     let mut supervisor = Supervisor::new(args.keep);
+    if server_reused {
+        // --reuse: the registry-known instance keeps serving (documented
+        // caveat: it may be a stale build). All HTTP checks below run
+        // against it as usual; the graceful-shutdown stage finds no managed
+        // process and degrades to a warning.
+        output::warn(
+            "--reuse: not booting the app server — the running registry service keeps serving",
+        );
+        counters.pass("Server reused (--reuse)");
+        config.metrics.end();
+        return Ok(supervisor);
+    }
     let bind = format!(
         "{}:{}",
         config.manifest.servers.bind_addr, config.manifest.servers.api_port
@@ -628,13 +670,29 @@ async fn stage_server(
     if let Some((key, value)) = cornucopia_db_env(config) {
         server_cmd.env(key, value);
     }
-    let api_proc = ManagedProcess::spawn(server_cmd, "Axum (API)", &config.log_file)?;
-    supervisor.add(api_proc);
+    let mut api_proc = ManagedProcess::spawn(server_cmd, "Axum (API)", &config.log_file)?;
+    api_proc.set_registration(crate::proc::ServiceRegistration::new(
+        config.root_dir.clone(),
+        "api",
+        config.manifest.servers.api_port,
+        Some("/health"),
+        "api",
+        Some(if args.release {
+            "release".to_string()
+        } else {
+            "debug".to_string()
+        }),
+    ));
 
     if let Err(e) = wait_for_url(&format!("{}/swagger-ui/", config.api_url()), 30, "Axum").await {
         print_log_tail(&config.log_file, 20);
         return Err(e);
     }
+    // Health OK → record the service so `clean`/the next preflight can find
+    // it even after a `--keep` leak. The entry is removed again on graceful
+    // shutdown; a `--keep` leak deliberately leaves it behind.
+    api_proc.record_service();
+    supervisor.add(api_proc);
     counters.pass("Server started");
     if let Ok(200) = http_status(&format!("{}/swagger-ui/", config.api_url()), &[]).await {
         counters.pass("Swagger UI reachable");
@@ -1142,6 +1200,17 @@ fn write_api_report(config: &OpsConfig, args: &ApiArgs, counters: &TestCounters,
         report.exit = i32::from(!ok);
         let _ = report.write(Path::new(results_file));
     }
+}
+
+/// The app binary to boot: release when `--release` (or `--skip-build` with
+/// only a release binary present), debug otherwise.
+fn app_binary_path(config: &OpsConfig, args: &ApiArgs) -> PathBuf {
+    let bin_dir = if args.release || args.skip_build && is_release_binary(config) {
+        config.app_dir.join("target/release")
+    } else {
+        config.app_dir.join("target/debug")
+    };
+    bin_dir.join(config.app_binary_name())
 }
 
 /// Whether the release binary is the one to use.

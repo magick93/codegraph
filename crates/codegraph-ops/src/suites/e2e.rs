@@ -32,6 +32,9 @@ pub struct E2eArgs {
     pub retry_failed: bool,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Reuse registry-known servers on the api/ui ports instead of taking
+    /// them over (documented caveat: they may serve a stale build).
+    pub reuse: bool,
     pub playwright_args: Vec<String>,
 }
 
@@ -84,8 +87,18 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
 
     // Port preflight: the suite binds both ports itself, and a leftover dev
     // server must fail the run in seconds instead of after supabase/build.
-    crate::preflight::ensure_port_free(config.manifest.servers.api_port)?;
-    crate::preflight::ensure_port_free(config.manifest.servers.ui_port)?;
+    // Registry-known prior servers (`--keep` leaks) are taken over by
+    // default or reused with `--reuse`.
+    let api_port_state = crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.api_port,
+        args.reuse,
+    )?;
+    let ui_port_state = crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.ui_port,
+        args.reuse,
+    )?;
 
     let mut supervisor = Supervisor::new(args.keep);
 
@@ -105,7 +118,16 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     let binary = e2e_build(config, args).await?;
 
     // 6. Services.
-    e2e_start_services(config, args, &binary, api_key.as_deref(), &mut supervisor).await?;
+    e2e_start_services(
+        config,
+        args,
+        &binary,
+        api_key.as_deref(),
+        api_port_state.reused(),
+        ui_port_state.reused(),
+        &mut supervisor,
+    )
+    .await?;
 
     // 7. Playwright.
     let outcome = e2e_playwright(config, args, api_key.as_deref()).await?;
@@ -269,16 +291,23 @@ async fn e2e_start_services(
     args: &E2eArgs,
     binary: &Path,
     api_key: Option<&str>,
+    api_reused: bool,
+    ui_reused: bool,
     supervisor: &mut Supervisor,
 ) -> OpsResult<()> {
     output::section("E2E 5. Start Services");
     let api_url = config.api_url();
-    let db_url = config
-        .e2e_app_db
-        .as_ref()
-        .map(|t| t.url())
-        .unwrap_or_else(|| config.api_db.url());
-    {
+    if api_reused {
+        output::warn(
+            "--reuse: not booting the app server — the running registry service keeps serving \
+             (it may be a stale build)",
+        );
+    } else {
+        let db_url = config
+            .e2e_app_db
+            .as_ref()
+            .map(|t| t.url())
+            .unwrap_or_else(|| config.api_db.url());
         let mut cmd = Command::new(binary);
         cmd.arg("start")
             .arg("--bind-addr")
@@ -288,20 +317,31 @@ async fn e2e_start_services(
         cmd.env("CORS_ALLOWED_ORIGINS", config.ui_url());
         cmd.env("SUPABASE_JWT_SECRET", &config.jwt_secret);
         cmd.env("SUPABASE_URL", super::ui::supabase_base_url(config));
-        match ManagedProcess::spawn(cmd, "Axum app", Path::new(APP_LOG)) {
-            Ok(proc) => supervisor.add(proc),
+        let mut proc = match ManagedProcess::spawn(cmd, "Axum app", Path::new(APP_LOG)) {
+            Ok(proc) => proc,
             Err(e) => {
                 return Err(OpsError::Command(format!(
                     "failed to spawn app server: {e}"
                 )));
             }
+        };
+        proc.set_registration(crate::proc::ServiceRegistration::new(
+            config.root_dir.clone(),
+            "api",
+            config.manifest.servers.api_port,
+            Some("/health"),
+            "e2e",
+            args.release.then(|| "release".to_string()),
+        ));
+        if let Err(e) = wait_for_url(&format!("{api_url}/health"), 30, "Axum").await {
+            print_log_tail(APP_LOG);
+            return Err(e);
         }
+        // Health OK → record; removed again on shutdown, left behind on --keep.
+        proc.record_service();
+        supervisor.add(proc);
+        output::ok("Axum API running");
     }
-    if let Err(e) = wait_for_url(&format!("{api_url}/health"), 30, "Axum").await {
-        print_log_tail(APP_LOG);
-        return Err(e);
-    }
-    output::ok("Axum API running");
 
     // pre_playwright hooks (e.g. UI-sync rsync steps) must land BEFORE the
     // SvelteKit production build so synced sources get compiled.
@@ -332,6 +372,13 @@ async fn e2e_start_services(
         built?;
     }
     let ui_url = config.ui_url();
+    if ui_reused {
+        output::warn(
+            "--reuse: not booting vite preview — the running registry service keeps serving \
+             (it may serve a stale bundle even though dist/ was just rebuilt)",
+        );
+        return Ok(());
+    }
     {
         let mut cmd = Command::new("pnpm");
         cmd.arg("exec")
@@ -344,18 +391,29 @@ async fn e2e_start_services(
         if let Some(key) = api_key {
             cmd.env("PUBLIC_API_KEY", key);
         }
-        match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
-            Ok(proc) => supervisor.add(proc),
-            Err(e) => {
-                return Err(OpsError::Command(format!(
-                    "failed to spawn vite preview: {e}"
-                )));
-            }
+        let mut proc =
+            match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
+                Ok(proc) => proc,
+                Err(e) => {
+                    return Err(OpsError::Command(format!(
+                        "failed to spawn vite preview: {e}"
+                    )));
+                }
+            };
+        proc.set_registration(crate::proc::ServiceRegistration::new(
+            config.root_dir.clone(),
+            "ui",
+            config.manifest.servers.ui_port,
+            None,
+            "e2e",
+            None,
+        ));
+        if let Err(e) = wait_for_url(&ui_url, 45, "SvelteKit").await {
+            print_log_tail(SVELTEKIT_LOG);
+            return Err(e);
         }
-    }
-    if let Err(e) = wait_for_url(&ui_url, 45, "SvelteKit").await {
-        print_log_tail(SVELTEKIT_LOG);
-        return Err(e);
+        proc.record_service();
+        supervisor.add(proc);
     }
     output::ok(format!("SvelteKit preview running at {ui_url}"));
     Ok(())
@@ -386,6 +444,10 @@ async fn e2e_playwright(
             "playwright install chromium failed (continuing): {e}"
         ));
     }
+    // Stale transpile-cache hygiene: the cache once served OLD transpiled
+    // specs after regeneration (Playwright executing code matching no file
+    // on disk). Whole-dir clear — see pwcache for the scoping decision.
+    crate::pwcache::clear_and_report();
     let mut cmd = Command::new("npx");
     cmd.arg("playwright").arg("test");
     if args.headed {

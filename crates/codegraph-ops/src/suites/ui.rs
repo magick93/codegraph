@@ -21,6 +21,9 @@ const SVELTEKIT_LOG: &str = "/tmp/codegraph-ops-sveltekit.log";
 pub struct UiArgs {
     pub keep: bool,
     pub headed: bool,
+    /// Reuse a registry-known preview server already running on the UI port
+    /// instead of taking it over (documented caveat: possibly stale bundle).
+    pub reuse: bool,
     pub playwright_args: Vec<String>,
 }
 
@@ -54,9 +57,14 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
 
     // Port preflight: the preview server binds the UI port below (the API
     // port is intentionally occupied — the running API is this suite's
-    // precondition), and a stale process holding the port must fail fast.
-    crate::preflight::ensure_port_free(config.manifest.servers.ui_port)?;
-    output::ok(format!("Port {} free", config.manifest.servers.ui_port));
+    // precondition). A stale process holding the port must fail fast;
+    // a registry-known prior preview is taken over by default or reused
+    // with `--reuse`.
+    let port_state = crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.ui_port,
+        args.reuse,
+    )?;
 
     // 3. Install dependencies if needed (best-effort).
     if !config.ui_dir.join("node_modules").is_dir() {
@@ -90,7 +98,12 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
     // 6. Start SvelteKit preview server.
     let mut supervisor = Supervisor::new(args.keep);
     let ui_url = config.ui_url();
-    {
+    if port_state.reused() {
+        output::warn(
+            "--reuse: not booting vite preview — the running registry service keeps serving \
+             (it may serve a stale bundle)",
+        );
+    } else {
         let mut cmd = Command::new("pnpm");
         cmd.arg("exec")
             .arg("vite")
@@ -100,18 +113,30 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
         cmd.current_dir(&config.ui_dir);
         cmd.env("PUBLIC_API_URL", &api_url);
         cmd.env("PUBLIC_API_KEY", &api_key);
-        match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
-            Ok(proc) => supervisor.add(proc),
-            Err(e) => {
-                return Err(OpsError::Command(format!(
-                    "failed to spawn vite preview: {e}"
-                )));
-            }
+        let mut proc =
+            match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
+                Ok(proc) => proc,
+                Err(e) => {
+                    return Err(OpsError::Command(format!(
+                        "failed to spawn vite preview: {e}"
+                    )));
+                }
+            };
+        proc.set_registration(crate::proc::ServiceRegistration::new(
+            config.root_dir.clone(),
+            "ui",
+            config.manifest.servers.ui_port,
+            None,
+            "ui",
+            None,
+        ));
+        if let Err(e) = wait_for_url(&ui_url, 45, "SvelteKit").await {
+            print_log_tail(SVELTEKIT_LOG);
+            return Err(e);
         }
-    }
-    if let Err(e) = wait_for_url(&ui_url, 45, "SvelteKit").await {
-        print_log_tail(SVELTEKIT_LOG);
-        return Err(e);
+        // Health OK → record; removed again on shutdown, left behind on --keep.
+        proc.record_service();
+        supervisor.add(proc);
     }
     output::ok(format!("SvelteKit preview ready at {ui_url}"));
 
@@ -125,6 +150,10 @@ pub async fn run_ui(config: &OpsConfig, args: &UiArgs) -> OpsResult<()> {
             "playwright install chromium failed (continuing): {e}"
         ));
     }
+    // Stale transpile-cache hygiene (whole-dir clear — see pwcache for the
+    // scoping decision): Playwright once executed OLD transpiled specs after
+    // a regeneration.
+    crate::pwcache::clear_and_report();
 
     // 8. Run the Playwright suite.
     output::section("Playwright tests");

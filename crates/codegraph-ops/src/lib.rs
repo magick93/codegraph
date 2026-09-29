@@ -33,6 +33,8 @@ pub mod output;
 pub mod pg;
 pub mod preflight;
 pub mod proc;
+pub mod pwcache;
+pub mod registry;
 pub mod results;
 pub mod suites;
 pub mod wait;

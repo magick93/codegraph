@@ -172,12 +172,57 @@ pub enum ShutdownOutcome {
     ForceKilled { seconds: u64 },
 }
 
+/// Registry metadata for a managed service (advisory — see [`crate::registry`]).
+/// Recorded in `.testkit/services.json` once the service is healthy, removed
+/// on graceful shutdown; a `--keep` leak deliberately leaves the entry behind
+/// so the next run (or `clean`) can find the server.
+#[derive(Debug, Clone)]
+pub struct ServiceRegistration {
+    /// Manifest root the registry lives under (`{root}/.testkit/services.json`).
+    pub root_dir: PathBuf,
+    /// Logical service name ("api", "ui").
+    pub name: String,
+    pub port: u16,
+    /// Health path ("/health"), when the service has one.
+    pub health: Option<String>,
+    /// Suite that started the service ("api", "e2e", "ui").
+    pub suite: &'static str,
+    /// Build profile, when known.
+    pub profile: Option<String>,
+    /// Pid captured by [`ManagedProcess::record_service`].
+    pid: Option<u32>,
+}
+
+impl ServiceRegistration {
+    /// New registration; the pid is captured later by
+    /// [`ManagedProcess::record_service`].
+    pub fn new(
+        root_dir: PathBuf,
+        name: impl Into<String>,
+        port: u16,
+        health: Option<&str>,
+        suite: &'static str,
+        profile: Option<String>,
+    ) -> Self {
+        Self {
+            root_dir,
+            name: name.into(),
+            port,
+            health: health.map(str::to_string),
+            suite,
+            profile,
+            pid: None,
+        }
+    }
+}
+
 /// A spawned child whose stdout+stderr are redirected to a log file and which
 /// can be shut down gracefully. Killing on drop guarantees no orphaned
 /// processes even on early returns.
 pub struct ManagedProcess {
     pub label: String,
     pub log_path: PathBuf,
+    registration: Option<ServiceRegistration>,
     child: Option<Child>,
 }
 
@@ -200,8 +245,53 @@ impl ManagedProcess {
         Ok(Self {
             label: label.to_string(),
             log_path: log_path.to_path_buf(),
+            registration: None,
             child: Some(child),
         })
+    }
+
+    /// Attach registry metadata; call [`ManagedProcess::record_service`] once
+    /// the service answered its health probe.
+    pub fn set_registration(&mut self, registration: ServiceRegistration) {
+        self.registration = Some(registration);
+    }
+
+    /// Write this service into `.testkit/services.json` (best-effort; the
+    /// registry is advisory). No-op without a registration or a knowable pid.
+    pub fn record_service(&mut self) {
+        let Some(reg) = self.registration.as_mut() else {
+            return;
+        };
+        let Some(pid) = self.child.as_ref().and_then(|c| c.id()) else {
+            return;
+        };
+        reg.pid = Some(pid);
+        let entry = crate::registry::ServiceEntry {
+            name: reg.name.clone(),
+            pid,
+            port: reg.port,
+            health: reg.health.clone(),
+            started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            profile: reg.profile.clone(),
+            suite: Some(reg.suite.to_string()),
+        };
+        if let Err(e) = crate::registry::record_service(&reg.root_dir, entry) {
+            output::warn(format!("could not update services registry: {e}"));
+        }
+    }
+
+    /// Remove this service's registry entry (best-effort). `pid_hint` is the
+    /// child's pid before it was reaped, when known.
+    fn deregister_service(&self, pid_hint: Option<u32>) {
+        let Some(reg) = &self.registration else {
+            return;
+        };
+        let Some(pid) = pid_hint.or(reg.pid) else {
+            return;
+        };
+        if let Err(e) = crate::registry::remove_service(&reg.root_dir, pid) {
+            output::warn(format!("could not update services registry: {e}"));
+        }
     }
 
     /// True if the process is still running (checks try_wait).
@@ -214,16 +304,20 @@ impl ManagedProcess {
 
     /// Send SIGTERM (via libc::kill on unix), poll child.try_wait() every second
     /// up to `timeout_secs`; on timeout send SIGKILL and wait up to 5 more secs.
-    /// Returns ShutdownOutcome describing what happened.
+    /// Returns ShutdownOutcome describing what happened. A recorded registry
+    /// entry is removed once the process is gone.
     pub async fn graceful_shutdown(&mut self, timeout_secs: u64) -> ShutdownOutcome {
         let Some(child) = self.child.as_mut() else {
+            self.deregister_service(None);
             return ShutdownOutcome::AlreadyExited;
         };
+        let pid = child.id();
         if matches!(child.try_wait(), Ok(Some(_))) {
             self.child = None;
+            self.deregister_service(pid);
             return ShutdownOutcome::AlreadyExited;
         }
-        let pid = child.id().map(|p| p.to_string()).unwrap_or_default();
+        let pid_str = pid.map(|p| p.to_string()).unwrap_or_default();
         #[cfg(unix)]
         send_signal(child, term_signal());
         let grace_secs = if cfg!(unix) { timeout_secs } else { 0 };
@@ -237,6 +331,7 @@ impl ManagedProcess {
                     self.label, waited
                 ));
                 self.child = None;
+                self.deregister_service(pid);
                 return ShutdownOutcome::Graceful { seconds: waited };
             }
         }
@@ -256,6 +351,7 @@ impl ManagedProcess {
                     self.label, timeout_secs
                 ));
                 self.child = None;
+                self.deregister_service(pid);
                 return ShutdownOutcome::ForceKilled {
                     seconds: timeout_secs,
                 };
@@ -265,7 +361,10 @@ impl ManagedProcess {
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
-        warn(format!("{} (pid {pid}) could not be killed", self.label));
+        warn(format!(
+            "{} (pid {pid_str}) could not be killed",
+            self.label
+        ));
         self.child = None;
         ShutdownOutcome::ForceKilled {
             seconds: timeout_secs,
@@ -313,7 +412,9 @@ impl Supervisor {
 
     /// Shutdown all managed processes (graceful, 10s timeout each). With
     /// keep=true the processes are intentionally leaked so they survive the
-    /// guard, matching `bash --keep`.
+    /// guard, matching `bash --keep`; their registry entries are deliberately
+    /// LEFT BEHIND so the next run's preflight can offer `--reuse`/takeover
+    /// and `clean` can kill them by pid.
     pub async fn shutdown_all(&mut self) {
         if self.keep {
             info("Services still running (--keep)");
@@ -524,5 +625,57 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(gone, "pid {pid} still alive after drop");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn registry_entry_recorded_then_removed_on_shutdown() {
+        use crate::registry::ServiceRegistry;
+
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("server.log");
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("30");
+        let mut proc = ManagedProcess::spawn(cmd, "api-server", &log_path).unwrap();
+        proc.set_registration(ServiceRegistration::new(
+            dir.path().to_path_buf(),
+            "api",
+            3000,
+            Some("/health"),
+            "api",
+            Some("release".to_string()),
+        ));
+        proc.record_service();
+        let recorded = ServiceRegistry::load(dir.path());
+        assert_eq!(recorded.services.len(), 1);
+        let entry = &recorded.services[0];
+        assert_eq!(entry.name, "api");
+        assert_eq!(entry.port, 3000);
+        assert_eq!(entry.suite.as_deref(), Some("api"));
+        assert!(crate::registry::pid_alive(entry.pid));
+
+        // Graceful shutdown removes the entry (registry file back to empty).
+        proc.graceful_shutdown(2).await;
+        let after = ServiceRegistry::load(dir.path());
+        assert!(
+            after.services.is_empty(),
+            "entry must be removed on shutdown: {:?}",
+            after.services
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn record_service_without_registration_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("server.log");
+        let mut cmd = std::process::Command::new("sleep");
+        cmd.arg("30");
+        let mut proc = ManagedProcess::spawn(cmd, "bare", &log_path).unwrap();
+        proc.record_service();
+        assert!(
+            !crate::registry::ServiceRegistry::path(dir.path()).exists(),
+            "no registration → no registry file"
+        );
     }
 }
