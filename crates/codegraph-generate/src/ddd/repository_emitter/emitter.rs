@@ -368,8 +368,65 @@ impl RepositoryImplEmitter {
             let mut seen = std::collections::HashSet::new();
             include_type_names.retain(|n| seen.insert(n.clone()));
             let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
+            let mut resolved_names: std::collections::HashSet<String> = imports.iter()
+                .map(|u| u.rsplit("::").next().unwrap_or(u)
+                    .trim_end_matches(';').rsplit(' ').next().unwrap_or(u).to_string())
+                .collect();
             for import in &imports {
                 wln!(code, "{}", import);
+            }
+            // Entity-native include targets (e.g. `CompanyServiceResponse`) may
+            // not be registered yet when repositories emit ahead of the DTO
+            // generator's type registration; the registry silently resolves
+            // nothing and the repository fails with E0425. The include path
+            // itself knows the target module — emit the direct import for any
+            // single-segment entity response the registry could not resolve.
+            // Names already imported via the caller/target child walks
+            // (`use super::dto_response::…` and the target-tree block below)
+            // are skipped to keep E0252 away.
+            let mut already_imported_children: std::collections::HashSet<String> =
+                flatten_child_tables(&tree.child_tables)
+                    .into_iter()
+                    .map(|c| format!("{}Response", c.struct_name))
+                    .collect();
+            for ttree in include_target_trees.iter().flatten() {
+                for child in flatten_child_tables(&ttree.child_tables) {
+                    already_imported_children.insert(format!("{}Response", child.struct_name));
+                }
+            }
+            for path in &include_paths {
+                if path.segments.len() != 1 {
+                    continue;
+                }
+                let resp = &path.response_rust_type;
+                if already_imported_children.contains(resp) {
+                    continue;
+                }
+                // Same-module targets (a VO child of this very entity) are
+                // already imported via `super::dto_response`; compare against
+                // the caller's real module path — tree.module_name can be the
+                // plural table name while the segment uses the schema module.
+                let target_mod = format!(
+                    "crate::domain::{}::{}",
+                    path.segments[0].domain, path.segments[0].module_name
+                );
+                let caller_mod = caller_base
+                    .strip_suffix(&["repository_impl".to_string()][..])
+                    .map(|b| b.join("::"))
+                    .unwrap_or_default();
+                let is_self_target =
+                    path.segments[0].domain == domain
+                        && path.segments[0].entity_name == tree.entity_name;
+                if resolved_names.insert(resp.clone())
+                    && resp.ends_with("Response")
+                    && !is_self_target
+                    && target_mod != caller_mod
+                {
+                    wln!(
+                        code,
+                        "use {target_mod}::dto_response::{resp};"
+                    );
+                }
             }
             // Also add direct imports for enriched types from dto_included module.
             // These types (e.g. DeploymentCombinedResponse) are generated in the
@@ -434,6 +491,15 @@ impl RepositoryImplEmitter {
                         continue;
                     }
                     let last = path.segments.last().unwrap();
+                    // A self-targeting include path (the entity's own tree,
+                    // e.g. a self-referencing FK) already had every child
+                    // imported via `use super::dto_response::…` in the
+                    // header — emitting the full-path form again is an E0252
+                    // duplicate. Compare entity identity: module names can
+                    // diverge (schema module vs plural table name).
+                    if last.domain == domain && last.entity_name == tree.entity_name {
+                        continue;
+                    }
                     // Issue #268: namespace-derived target module path
                     // under namespace_layout (must match dto.rs's
                     // registered module paths for the target entity).

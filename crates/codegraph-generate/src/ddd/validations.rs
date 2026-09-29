@@ -208,6 +208,23 @@ impl DomainGenerator for ConditionValidationsGenerator {
                     }
                 }
             }
+            // Entity-reference properties surface on the create DTO as
+            // `{field}_id` columns; Rosetta conditions reference the
+            // relationship symbol (`professionalProfile`), so the transpiled
+            // `dto.{base}` fragments are rewritten to `dto.{base}_id`.
+            let mut entity_ref_fields: Vec<(String, String)> = props
+                .iter()
+                .filter(|p| p.effective_kind() == Some(RefClassificationKind::EntityReference))
+                .map(|p| {
+                    // DTOs append `_id` to entity-reference columns
+                    // (resolve_field contract); conditions reference the
+                    // bare relationship symbol.
+                    let base = p.rust_field_name.clone();
+                    let full = format!("{base}_id");
+                    (base, full)
+                })
+                .collect();
+            entity_ref_fields.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
             let conditions: Vec<ConditionEmission> = db
                 .get_conditions_for_schema(title)
                 .await?
@@ -226,7 +243,12 @@ impl DomainGenerator for ConditionValidationsGenerator {
                                     enum_types: &enum_types,
                                 };
                                 match transpile(&payload, &ctx) {
-                                    Ok(code) => ConditionExpr::Transpiled(code),
+                                    Ok(mut code) => {
+                                        for (base, full) in &entity_ref_fields {
+                                            code = rewrite_dto_ref(&code, base, full);
+                                        }
+                                        ConditionExpr::Transpiled(code)
+                                    }
                                     Err(e) => ConditionExpr::Unsupported {
                                         kind: e.kind,
                                         detail: e.detail,
@@ -448,6 +470,36 @@ fn emit_condition_markers(code: &mut CodeWriter, entity: &EntityValidations, pad
             }
         }
     }
+}
+
+/// Rewrite `dto.{base}` fragments to `dto.{full}` on symbol boundaries
+/// (entity-reference fields carry an `_id` suffix on DTOs).
+fn rewrite_dto_ref(expr: &str, base: &str, full: &str) -> String {
+    let from = format!("dto.{base}");
+    let to = format!("dto.{full}");
+    if base == full {
+        return expr.to_string();
+    }
+    let mut out = String::with_capacity(expr.len());
+    let mut rest = expr;
+    while let Some(idx) = rest.find(&from) {
+        let after = &rest[idx + from.len()..];
+        let boundary = after
+            .chars()
+            .next()
+            .map(|c| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(true);
+        out.push_str(&rest[..idx]);
+        if boundary {
+            out.push_str(&to);
+            rest = after;
+        } else {
+            out.push_str(&from);
+            rest = &rest[idx + from.len()..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Emit one standalone `validate_{condition}` function per transpiled

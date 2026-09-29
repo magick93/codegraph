@@ -179,7 +179,7 @@ mod tests {
             },
             dto: make_dto_projections(),
         };
-        assert_eq!(projection.format_rust_type(true), "Uuid");
+        assert_eq!(projection.format_rust_type(true), "uuid::Uuid");
     }
 
     #[test]
@@ -196,6 +196,6 @@ mod tests {
             },
             dto: make_dto_projections(),
         };
-        assert_eq!(projection.format_rust_type(false), "Option<Uuid>");
+        assert_eq!(projection.format_rust_type(false), "Option<uuid::Uuid>");
     }
 }
