@@ -2999,6 +2999,15 @@ fn write_output(file: &GeneratedFile) -> Result<()> {
     if let Some(parent) = file.path.parent() {
         fs::create_dir_all(parent)?;
     }
+    // Write-if-changed: deterministic generators re-emit identical bytes on
+    // every run; skipping identical writes preserves consumer mtimes so
+    // downstream staleness checks (ops e2e binary-vs-src freshness) and
+    // build caches stay accurate across regenerations.
+    if fs::metadata(&file.path).is_ok_and(|m| m.is_file())
+        && fs::read(&file.path).is_ok_and(|existing| existing == file.content.as_bytes())
+    {
+        return Ok(());
+    }
     fs::write(&file.path, &file.content)?;
     Ok(())
 }
