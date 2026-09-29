@@ -203,8 +203,8 @@ async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<(
             match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
                 (Some(graph), Some(_)) => {
                     run_hooks(config, "pre_generate").await?;
-                    let gen_output =
-                        regenerate(config, graph).inspect_err(|e| output::fail(e.to_string()))?;
+                    let gen_output = regenerate(config, graph, args.release)
+                        .inspect_err(|e| output::fail(e.to_string()))?;
                     if !args.allow_gen_errors {
                         assert_generation_clean(&gen_output)?;
                     }
@@ -1100,7 +1100,7 @@ async fn stage_regeneration(
             // dirty tree left stale files behind and broke the compile check
             // with 290 errors in a real incident.
             crate::ext::run_hooks(config, "pre_generate").await?;
-            match regenerate(config, graph) {
+            match regenerate(config, graph, args.release) {
                 Ok(_) => {
                     counters.pass("Templates regenerated");
                     match cargo_check_in(config) {
@@ -1628,8 +1628,13 @@ fn regex_free_has_error_count(gen_output: &str) -> bool {
     false
 }
 
-fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
-    let args = regenerate_args(config, graph_binary);
+fn regenerate(config: &OpsConfig, graph_binary: &str, release: bool) -> OpsResult<String> {
+    let mut args = regenerate_args(config, graph_binary);
+    if release {
+        // Build/run the graph binary in the requested profile; a stale debug
+        // binary otherwise silently regenerates with old generator code.
+        args.insert(1, "--release".to_string());
+    }
     let out = Command::new("cargo")
         .args(&args)
         .current_dir(&config.root_dir)
