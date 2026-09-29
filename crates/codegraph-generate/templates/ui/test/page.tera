@@ -33,11 +33,11 @@ export class {{ entity_name }}Page extends BasePage {
   /** The create-form submit redirect target (edit asserts the same). */
   static readonly detailUrlPattern = new RegExp(
     {%- if parent and parent.grandparent %}
-    `/\\/{{ parent.grandparent.domain }}\\/{{ parent.grandparent.path_segment }}\\/[0-9a-f-]+\\/{{ parent.path_segment }}\\/[0-9a-f-]+\\/{{ path_segment }}\\/[0-9a-f-]+$`,
+    `/\/{{ parent.grandparent.domain }}\/{{ parent.grandparent.path_segment }}\/[0-9a-f-]+\/{{ parent.path_segment }}\/[0-9a-f-]+\/{{ path_segment }}\/[0-9a-f-]+$`,
     {%- elif parent %}
-    `/\\/{{ parent.domain }}\\/{{ parent.path_segment }}\\/[0-9a-f-]+\\/{{ path_segment }}\\/[0-9a-f-]+$`,
+    `/\/{{ parent.domain }}\/{{ parent.path_segment }}\/[0-9a-f-]+\/{{ path_segment }}\/[0-9a-f-]+$`,
     {%- else %}
-    `/\\/{{ domain }}\\/{{ path_segment }}\\/[0-9a-f-]+$`,
+    `/\/{{ domain }}\/{{ path_segment }}\/[0-9a-f-]+$`,
     {%- endif %}
   );
 
