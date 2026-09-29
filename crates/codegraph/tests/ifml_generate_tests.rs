@@ -125,6 +125,7 @@ fn make_args<'a>(
         template_dir: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
     }
 }
 
@@ -242,6 +243,7 @@ async fn ifml_generate_with_schemas_enriches_entity_resolution() {
         template_dir: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -336,6 +338,7 @@ async fn ifml_generate_multiple_frameworks() {
         template_dir: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .unwrap();

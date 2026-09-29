@@ -32,10 +32,14 @@ view "RefundRequestList" {
     component "grid" {
         type: list;
         data: RefundRequest;
-        fields: [title, status, amount, urgent];
+        fields: [title, status, amount, urgent, submittedAt];
         pagination: true;
 
         on select(row) -> navigate("RefundRequestDetail", {
+            id: row.id
+        });
+
+        on review(row) -> navigate("RefundRequestDetail", {
             id: row.id
         });
     }

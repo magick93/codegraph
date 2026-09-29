@@ -458,6 +458,7 @@ async fn consumer_generates_against_pinned_face() {
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
         codegraph_rev: None,
     })
     .await

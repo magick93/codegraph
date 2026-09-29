@@ -436,6 +436,7 @@ async fn run_generator_pipeline(
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     })
     .await?;
     Ok(())
@@ -573,6 +574,7 @@ generators = ["dto", "regulatory_reports"]
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     })
     .await;
 

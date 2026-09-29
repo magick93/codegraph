@@ -272,6 +272,11 @@ pub struct BuildPlan {
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
     /// domain layout. Default OFF = byte-identical flat output.
     pub namespace_layout: bool,
+    /// UX rules plane (issue #293): when true, the built-in `ux-default`
+    /// pack resolves into `ProjectConfig.ux` for every template and
+    /// generator. Default OFF = `ProjectConfig.ux` stays `None`,
+    /// byte-identical output.
+    pub ux_rules: bool,
     /// Canonical expression IR (issue #278): when true, IFML guards render
     /// from the persisted `expr_json` AST via the TypeScript lowering
     /// instead of raw source interpolation. Default OFF = byte-identical.
@@ -436,6 +441,17 @@ impl BuildPlan {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Parse ux_rules from features (default: false = byte-identical).
+        // Unlike namespace_layout's lenient swallow, a non-bool value is a
+        // parse error naming the key (the flag gates an output plane, so a
+        // typo'd `ux_rules = "yes"` must not silently disable it).
+        let ux_rules = match profile.features.get("ux_rules") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"ux_rules\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
         // Parse expr_ir from features (issue #278; default: false).
         let expr_ir = profile
             .features
@@ -467,6 +483,7 @@ impl BuildPlan {
             dto_key_casing,
             deployment_topology,
             namespace_layout,
+            ux_rules,
             expr_ir,
             public_operations_rls,
             features: profile.features.clone(),
@@ -524,6 +541,7 @@ impl BuildPlan {
             dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
             namespace_layout: false,
+            ux_rules: false,
             expr_ir: false,
             public_operations_rls: false,
             features,
@@ -1889,6 +1907,54 @@ generators = ["ddl"]
         assert!(
             err.contains("must be a string"),
             "expected clear error message, got: {err}"
+        );
+    }
+
+    // ── ux_rules feature (issue #293) ──
+
+    fn plan_with_features(features_toml: &str) -> Result<BuildPlan> {
+        let registry = CapabilityRegistry::new();
+        let toml = format!(
+            r#"
+[profiles.f.meta]
+name = "f"
+version = "1.0.0"
+description = ""
+
+[profiles.f.features]
+{features_toml}
+
+[profiles.f.api]
+generators = ["ddl"]
+"#
+        );
+        let config: ProfilesConfig = toml::from_str(&toml).unwrap();
+        let def = &config.profiles["f"];
+        let resolved = resolve_profile(def, None).unwrap();
+        BuildPlan::from_profile(&resolved, &registry)
+    }
+
+    #[test]
+    fn build_plan_ux_rules_defaults_to_false() {
+        let plan = plan_with_features("auth = true").unwrap();
+        assert!(!plan.ux_rules);
+    }
+
+    #[test]
+    fn build_plan_ux_rules_parses_bool_values() {
+        let plan = plan_with_features("ux_rules = true").unwrap();
+        assert!(plan.ux_rules);
+        let plan = plan_with_features("ux_rules = false").unwrap();
+        assert!(!plan.ux_rules);
+    }
+
+    #[test]
+    fn build_plan_ux_rules_non_bool_errors_naming_the_key() {
+        let err = plan_with_features("ux_rules = \"yes\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("ux_rules") && msg.contains("boolean"),
+            "expected ux_rules type error, got: {msg}"
         );
     }
 }

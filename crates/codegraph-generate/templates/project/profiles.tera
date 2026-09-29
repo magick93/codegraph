@@ -26,6 +26,9 @@ grpc_backend = {{ features.grpc }}
 ifml_backend = {{ features.ifml }}
 {% if features.rosetta %}rosetta_backend = true
 {% endif %}has_admin_cli = true
+# UX rules plane (issue #293): the built-in ux-default pack resolves into
+# ProjectConfig.ux; override per project with `--ux-rules <file>`.
+ux_rules = true
 
 [profiles.default.api]
 generators = [

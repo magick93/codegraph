@@ -55,6 +55,7 @@ impl<'a> GeneratorTest<'a> {
                 build_plan: None,
                 ifml_frameworks: Vec::new(),
                 ifml_components: None,
+                ux_rules: None,
                 project_config: Some(&project),
                 emdash_plugins: None,
                 domain_config_dir: None,

@@ -16,4 +16,5 @@ pub(crate) use dto::{emit_child_field_population, emit_entity_to_dto_field};
 pub use emitter::RepositoryImplEmitter;
 pub use types::{
     ChildColumn, ChildTableInfo, EntityTree, JunctionTableInfo, TreeColumn, TreeIncludeResolved,
+    UxSortColumn,
 };

@@ -1,5 +1,6 @@
 use crate::code_writer::CodeWriter;
 
+use super::query_search::emit_sort_ordering;
 use super::*;
 
 fn make_column(
@@ -182,4 +183,102 @@ fn child_population_empty() {
     let mut code = CodeWriter::new();
     emit_child_field_population(&mut code, &[], "    ");
     assert_eq!(code.as_str(), "");
+}
+
+// --- emit_sort_ordering tests (issue #306) ---
+
+fn sort_test_tree(is_auditable: bool) -> EntityTree {
+    EntityTree {
+        entity_name: "Task".into(),
+        module_name: "task".into(),
+        schema_name: "common".into(),
+        table_name: "task".into(),
+        entity_module: "common_task".into(),
+        namespace: None,
+        direct_columns: vec![],
+        child_tables: vec![],
+        junction_tables: vec![],
+        has_create: false,
+        has_read: true,
+        has_update: false,
+        has_delete: false,
+        has_workflow: false,
+        has_fts: false,
+        has_embeddings: false,
+        fts_language: "english".into(),
+        is_auditable,
+        soft_delete_visibility: "exclude_by_default".into(),
+        soft_delete_column: None,
+        soft_delete_cascade: "restrict".into(),
+        track_updated_user: false,
+        track_deleted_user: false,
+        append_only: false,
+        filter_fields: vec![],
+        nested_filter_fields: vec![],
+        parent_ref: None,
+        hierarchy_field: None,
+        tree_include: vec![],
+    }
+}
+
+/// The sort-aware ordering names the validated column (fully quoted
+/// through sea_query aliases) with the requested direction and the `id`
+/// tiebreaker; the else arm keeps `created_at DESC`.
+#[test]
+fn sort_ordering_quotes_columns_and_appends_id_tiebreaker() {
+    let tree = sort_test_tree(false);
+    let sort_columns = vec![
+        UxSortColumn {
+            key: "name".into(),
+            column: "name".into(),
+        },
+        UxSortColumn {
+            key: "total_amount".into(),
+            column: "total_amount".into(),
+        },
+    ];
+    let mut code = CodeWriter::new();
+    emit_sort_ordering(&tree, &sort_columns, &mut code);
+    let out = code.as_str();
+
+    assert!(
+        out.contains("let query = if let Some((sort_field, sort_desc)) = sort {"),
+        "{out}"
+    );
+    assert!(
+        out.contains("let dir = if sort_desc {\n                sea_orm::sea_query::Order::Desc\n            } else {\n                sea_orm::sea_query::Order::Asc\n            };"),
+        "{out}"
+    );
+    // Schema/table/column fully qualified and quoted by sea_query Alias.
+    assert!(
+        out.contains("Alias::new(\"common\"), sea_orm::sea_query::Alias::new(\"task\"), sea_orm::sea_query::Alias::new(\"name\")"),
+        "{out}"
+    );
+    assert!(out.contains("Alias::new(\"total_amount\")"), "{out}");
+    // Deterministic `, id ASC` tiebreaker for stable pagination.
+    assert!(
+        out.contains("ordered.order_by_asc(sea_orm::sea_query::Expr::col((sea_orm::sea_query::Alias::new(\"common\"), sea_orm::sea_query::Alias::new(\"task\"), sea_orm::sea_query::Alias::new(\"id\"))))"),
+        "{out}"
+    );
+    // Default arm keeps today's ordering.
+    assert!(
+        out.contains("query.order_by_desc(crate::entity::common_task::Column::CreatedAt)"),
+        "{out}"
+    );
+}
+
+/// The `id` tiebreaker applies in both directions (the match arm runs
+/// before the shared tiebreaker line).
+#[test]
+fn sort_ordering_tiebreaker_is_direction_independent() {
+    let tree = sort_test_tree(true);
+    let sort_columns = vec![UxSortColumn {
+        key: "due_date".into(),
+        column: "due_date".into(),
+    }];
+    let mut code = CodeWriter::new();
+    emit_sort_ordering(&tree, &sort_columns, &mut code);
+    let out = code.as_str();
+    assert_eq!(out.matches("order_by_asc").count(), 1, "{out}");
+    assert!(out.contains("\"due_date\""), "{out}");
 }

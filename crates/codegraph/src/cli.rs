@@ -43,6 +43,9 @@ pub enum Commands {
         /// Overrides the profiles.toml `ifml_design_system` feature.
         #[arg(long)]
         ifml_design_system: Option<String>,
+        /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
+        #[arg(long)]
+        ux_rules: Option<PathBuf>,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -141,6 +144,9 @@ pub enum Commands {
         /// Overrides the profiles.toml `ifml_design_system` feature.
         #[arg(long)]
         ifml_design_system: Option<String>,
+        /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
+        #[arg(long)]
+        ux_rules: Option<PathBuf>,
         /// Directory for the persistent graph cache. When set, a run whose
         /// inputs (mox/schema/IFML/config files) hash unchanged since the
         /// previous run reopens the persisted graph instead of re-ingesting
@@ -181,6 +187,9 @@ pub enum Commands {
         /// Overrides the profiles.toml `ifml_design_system` feature.
         #[arg(long)]
         ifml_design_system: Option<String>,
+        /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
+        #[arg(long)]
+        ux_rules: Option<PathBuf>,
     },
     /// Scaffold a starter IFML DSL file (CRUD views + navigation) from JSON schemas
     IfmlScaffold {

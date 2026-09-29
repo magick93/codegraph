@@ -17,6 +17,14 @@ pub struct UiScaffoldContext {
     pub domains: Vec<UiDomain>,
     pub has_integrations: bool,
     pub has_webhooks: bool,
+    /// The ux-rules plane is active (`project.ux` resolved, issue #293).
+    /// Gates ux-only i18n message keys so flag-off scaffold output stays
+    /// byte-identical.
+    pub has_ux_rules: bool,
+    /// The shadcn-svelte primitives generated pages import (issue #299).
+    /// Drives the emitted `ui/PRIMITIVES.md` install surface; the surface
+    /// itself is gated on [`Self::has_ux_rules`].
+    pub shadcn_primitives: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +50,41 @@ pub struct UiNavField {
     pub name: String,
     pub label: String,
 }
+
+/// The shadcn-svelte primitive set a generated app's UI is built on
+/// (`#lib/components/ui/<name>/index.js` imports). Existing generated pages
+/// already import the first entries; the ux-rules list page (#297) and the
+/// detail-page child sections (#299) add `dropdown-menu` and `tooltip`.
+/// The generator does NOT vendor these components — exactly like the
+/// pre-existing primitives (`table`, `dialog`, `badge`, …), real projects
+/// obtain them with the shadcn-svelte CLI against the emitted
+/// `components.json`. Issue #299 makes this constant drive the emitted
+/// `ui/PRIMITIVES.md` install surface (gated on the ux plane) so the
+/// component set is documented and one command away instead of inferred
+/// from page imports.
+pub const SHADCN_PRIMITIVES: &[&str] = &[
+    "alert-dialog",
+    "avatar",
+    "badge",
+    "breadcrumb",
+    "button",
+    "card",
+    "checkbox",
+    "collapsible",
+    "dialog",
+    "dropdown-menu",
+    "empty",
+    "input",
+    "label",
+    "popover",
+    "select",
+    "separator",
+    "sheet",
+    "sidebar",
+    "sonner",
+    "table",
+    "tooltip",
+];
 
 pub struct UiScaffoldGenerator {
     output_dir: PathBuf,
@@ -80,6 +123,8 @@ impl GlobalGenerator for UiScaffoldGenerator {
             domains,
             has_integrations: self.has_integrations,
             has_webhooks: self.has_webhooks,
+            has_ux_rules: project.ux.is_some(),
+            shadcn_primitives: SHADCN_PRIMITIVES.to_vec(),
         };
 
         let ui = self.output_dir.join("ui");
@@ -102,6 +147,13 @@ impl GlobalGenerator for UiScaffoldGenerator {
             )
             .await?,
         );
+
+        // Issue #299: the primitive install surface (see
+        // `SHADCN_PRIMITIVES`). Gated on the ux plane so flag-off scaffold
+        // output stays byte-identical.
+        if ctx.has_ux_rules {
+            files.extend(render_template_set(tera, &ctx, project, primitive_docs(&ui)).await?);
+        }
 
         // Webhook UI templates (conditional on has_webhooks)
         if self.has_webhooks {
@@ -218,6 +270,15 @@ async fn render_template_set(
         files.push(GeneratedFile { path, content });
     }
     Ok(files)
+}
+
+/// The shadcn primitive install surface (issue #299): one emitted
+/// `PRIMITIVES.md` carrying the copy-paste `npx shadcn-svelte add` command
+/// for the full [`SHADCN_PRIMITIVES`] set. Emitted only under the ux
+/// plane (see the caller) so flag-off scaffold output stays
+/// byte-identical.
+fn primitive_docs(ui: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![("ui/scaffold/primitives_md.tera", ui.join("PRIMITIVES.md"))]
 }
 
 fn core_scaffold_templates(ui: &Path, src: &Path, lib: &Path) -> Vec<(&'static str, PathBuf)> {
@@ -474,4 +535,25 @@ fn integration_scaffold_templates(src: &Path, lib: &Path) -> Vec<(&'static str, 
             edit_dir.join("+page.svelte"),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Issue #297: the ux-rules list page's row-actions menu and
+    /// truncated-cell tooltips require the two new primitives in every
+    /// generated app's component set.
+    #[test]
+    fn shadcn_primitive_set_covers_ux_list_page_requirements() {
+        for primitive in ["dropdown-menu", "tooltip"] {
+            assert!(
+                SHADCN_PRIMITIVES.contains(&primitive),
+                "primitive {primitive:?} must be declared in SHADCN_PRIMITIVES"
+            );
+        }
+        // Pre-existing primitives stay declared (no duplicates).
+        let unique: std::collections::HashSet<_> = SHADCN_PRIMITIVES.iter().collect();
+        assert_eq!(unique.len(), SHADCN_PRIMITIVES.len());
+    }
 }

@@ -5,7 +5,56 @@ use super::child::emit_child_reads;
 use super::dto::{emit_child_field_population, emit_entity_to_dto_field};
 use super::helpers::q;
 use super::junction::{emit_junction_field_population, emit_junction_reads};
-use super::{EntityTree, RepositoryImplEmitter};
+use super::{EntityTree, RepositoryImplEmitter, UxSortColumn};
+
+/// Emit the sort-aware ORDER BY for the list query (issue #306): the
+/// validated sort column — schema/table/column fully quoted through
+/// `sea_query::Alias` — in the requested direction, followed by a
+/// deterministic `, id ASC` tiebreaker so pagination is stable under
+/// non-unique sort keys. The else arm keeps today's `created_at DESC`.
+pub(crate) fn emit_sort_ordering(
+    tree: &EntityTree,
+    sort_columns: &[UxSortColumn],
+    code: &mut CodeWriter,
+) {
+    wln!(
+        code,
+        "        let query = if let Some((sort_field, sort_desc)) = sort {{"
+    );
+    wln!(code, "            let dir = if sort_desc {{");
+    wln!(code, "                sea_orm::sea_query::Order::Desc");
+    wln!(code, "            }} else {{");
+    wln!(code, "                sea_orm::sea_query::Order::Asc");
+    wln!(code, "            }};");
+    wln!(code, "            let mut ordered = query;");
+    wln!(code, "            match sort_field.as_str() {{");
+    for col in sort_columns {
+        wln!(code, "                \"{key}\" => {{", key = col.key);
+        wln!(
+            code,
+            "                    ordered = ordered.order_by(sea_orm::sea_query::Expr::col((sea_orm::sea_query::Alias::new(\"{schema}\"), sea_orm::sea_query::Alias::new(\"{table}\"), sea_orm::sea_query::Alias::new(\"{column}\"))), dir);",
+            schema = tree.schema_name,
+            table = tree.table_name,
+            column = col.column
+        );
+        wln!(code, "                }}");
+    }
+    wln!(code, "                _ => {{}}");
+    wln!(code, "            }}");
+    wln!(
+        code,
+        "            ordered.order_by_asc(sea_orm::sea_query::Expr::col((sea_orm::sea_query::Alias::new(\"{schema}\"), sea_orm::sea_query::Alias::new(\"{table}\"), sea_orm::sea_query::Alias::new(\"id\"))))",
+        schema = tree.schema_name,
+        table = tree.table_name
+    );
+    wln!(code, "        }} else {{");
+    wln!(
+        code,
+        "            query.order_by_desc(crate::entity::{}::Column::CreatedAt)",
+        tree.entity_module
+    );
+    wln!(code, "        }};");
+}
 
 /// Emit type-safe value parsing for a nested filter field and return the
 /// Rust expression that holds the parsed value (e.g. `"parsed"` or `"val.clone()"`).
@@ -100,7 +149,13 @@ fn emit_nested_filter_parse(code: &mut CodeWriter, nf: &NestedFilterFieldInfo) -
 }
 
 impl RepositoryImplEmitter {
-    pub(crate) fn emit_list_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
+    pub(crate) fn emit_list_fn(
+        &self,
+        tree: &EntityTree,
+        has_sort_plan: bool,
+        sort_columns: &[UxSortColumn],
+        code: &mut CodeWriter,
+    ) {
         wln!(code);
         wln!(
             code,
@@ -118,6 +173,16 @@ impl RepositoryImplEmitter {
         );
         if tree.is_auditable {
             wln!(code, "        include_deleted: bool,");
+        }
+        // Issue #306: the trait (repository.tera), the query handler and
+        // the cornucopia adapter carry the sort parameter whenever the ux
+        // sort plan is non-empty — the impl must match, or the generated
+        // crate diverges (trait 7 params vs impl 6). When no plan field
+        // maps onto a direct column the ordering below degrades to the
+        // `id` tiebreaker (unknown keys are ignored), mirroring the
+        // cornucopia adapter's accept-and-ignore contract.
+        if has_sort_plan {
+            wln!(code, "        sort: Option<(String, bool)>,");
         }
         wln!(
             code,
@@ -273,13 +338,14 @@ impl RepositoryImplEmitter {
             if tree.is_auditable { " mut" } else { "" },
             tree.entity_module
         );
+        let sort_aware = has_sort_plan;
         if has_any_filters {
-            if tree.is_auditable {
+            if tree.is_auditable || sort_aware {
                 wln!(code, "            .filter(condition);");
             } else {
                 wln!(code, "            .filter(condition)");
             }
-        } else if tree.is_auditable {
+        } else if tree.is_auditable || sort_aware {
             wln!(code, ";");
         }
         if tree.is_auditable {
@@ -290,6 +356,14 @@ impl RepositoryImplEmitter {
                 tree.entity_module
             );
             wln!(code, "        }}");
+        }
+        if sort_aware {
+            // Issue #306: `?sort=` orders by the validated column (quoted
+            // through sea_query aliases) with a deterministic `, id`
+            // tiebreaker so pagination is stable under non-unique keys.
+            // Absent params keep today's `created_at DESC` ordering.
+            emit_sort_ordering(tree, sort_columns, code);
+        } else if tree.is_auditable {
             wln!(
                 code,
                 "        let query = query.order_by_desc(crate::entity::{}::Column::CreatedAt);",

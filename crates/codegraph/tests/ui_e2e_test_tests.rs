@@ -705,3 +705,585 @@ fn unresolved_required_uuid_emits_valid_uuid_literal() {
         "unresolved required uuid must emit a UUID-shaped literal:\n{content}"
     );
 }
+
+// ── Slice F: ux-rules spec emission + per-block gating (issue #302) ─────
+
+/// A codelist-backed column (CodelistReference prop + graph enum values).
+fn codelist(name: &str, ref_target: &str, is_required: bool) -> PropertyNode {
+    PropertyNode {
+        name: name.into(),
+        prop_type: "string".into(),
+        description: None,
+        format: None,
+        is_required,
+        is_nullable: !is_required,
+        is_array: false,
+        min_items: None,
+        max_items: None,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: name.into(),
+        pg_column_type: "TEXT".into(),
+        rust_field_name: name.into(),
+        rust_field_type: "String".into(),
+        sea_orm_type: "Text".into(),
+        render_strategy: "direct_column".into(),
+        ref_target: Some(ref_target.into()),
+        classification: Some("codelist_reference".into()),
+        projection: None,
+        classification_kind: Some(RefClassificationKind::CodelistReference),
+        type_expr: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }
+}
+
+/// A numeric column (quantity / money depending on the name).
+fn numeric(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
+    PropertyNode {
+        rust_field_type: if pg_type.starts_with("NUMERIC") {
+            "Decimal".into()
+        } else {
+            "i32".into()
+        },
+        ..scalar(name, pg_type, is_required)
+    }
+}
+
+/// A timestamp column.
+fn timestamp(name: &str, is_required: bool) -> PropertyNode {
+    PropertyNode {
+        rust_field_type: "DateTime<Utc>".into(),
+        ..scalar(name, "TIMESTAMPTZ", is_required)
+    }
+}
+
+fn enum_value(value: &str) -> codegraph_core::types::EnumValue {
+    codegraph_core::types::EnumValue {
+        value: value.into(),
+        display_name: None,
+        sort_order: 0,
+    }
+}
+
+/// The canonical ux fixture entity: id, readable lead name, codelist
+/// status, quantity, money, time point and an audit stamp.
+fn refund_engine() -> MockEngine {
+    let refund = schema("RefundType", "refund", "Refund", "hr", "refund");
+    MockEngine::builder()
+        .with_schema(refund)
+        .with_properties(
+            "RefundType",
+            vec![
+                plain_uuid("id", true),
+                scalar("name", "TEXT", true),
+                codelist("status", "hr/json/refund_status.json", true),
+                numeric("headcount", "INTEGER", true),
+                numeric("total_amount", "NUMERIC(10,2)", true),
+                timestamp("due_at", true),
+                timestamp("created_at", true),
+            ],
+        )
+        .with_enum_values(
+            "refund_status",
+            vec![enum_value("draft"), enum_value("approved")],
+        )
+        .build()
+}
+
+/// Generate all files for one entity (the ux spec, the POM page class and
+/// the shared kernel among them).
+fn all_files(
+    engine: &MockEngine,
+    config: &codegraph_config::DomainConfig,
+    project: &codegraph::generate::ProjectConfig,
+    title: &str,
+    domain: &str,
+) -> Vec<(String, String)> {
+    let output = tempfile::TempDir::new().unwrap();
+    let gen = UiE2eTestGenerator::new(output.path());
+    let files = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(gen.generate(engine, title, domain, config, &tera(), project))
+        .expect("UiE2eTestGenerator failed");
+    files
+        .into_iter()
+        .map(|f| (f.path.to_string_lossy().to_string(), f.content))
+        .collect()
+}
+
+fn ux_project() -> codegraph::generate::ProjectConfig {
+    let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
+    codegraph::generate::ProjectConfig {
+        ux: Some(rules),
+        ..ProjectConfig::default()
+    }
+}
+
+/// Generate and return the `.ux.test.ts` content, or `None` when the spec
+/// was not emitted.
+fn ux_spec(
+    engine: &MockEngine,
+    config: &codegraph_config::DomainConfig,
+    project: &codegraph::generate::ProjectConfig,
+    title: &str,
+    domain: &str,
+) -> Option<String> {
+    all_files(engine, config, project, title, domain)
+        .into_iter()
+        .find(|(p, _)| p.ends_with(".ux.test.ts"))
+        .map(|(_, c)| c)
+}
+
+#[test]
+fn ux_spec_absent_when_flag_off() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let files = {
+        let output = tempfile::TempDir::new().unwrap();
+        let gen = UiE2eTestGenerator::new(output.path());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(gen.generate(
+                &engine,
+                "RefundType",
+                "hr",
+                &config,
+                &tera(),
+                &ProjectConfig::default(),
+            ))
+            .unwrap()
+    };
+
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with(".ux.test.ts")),
+        "flag off must not emit a ux spec:\n{files:?}"
+    );
+}
+
+#[test]
+fn ux_spec_emitted_when_plan_and_list_output_present() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content = ux_spec(&engine, &config, &ux_project(), "RefundType", "hr")
+        .expect("flag on + list output must emit the ux spec");
+
+    // The spec drives the list page through the POM page class (#316).
+    assert!(
+        content.contains("import { RefundPage } from './refund.page';"),
+        "{content}"
+    );
+    assert!(content.contains("new RefundPage(page)"), "{content}");
+    // Fixture creation follows the shared API conventions.
+    assert!(
+        content.contains("createEntityAsAcme(orgContext, BASE_PATH"),
+        "{content}"
+    );
+}
+
+// ── POM emission (issue #316) ───────────────────────────────────────────
+
+#[test]
+fn pom_page_and_kernel_emitted_for_any_op_entities() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let files = all_files(
+        &engine,
+        &config,
+        &ProjectConfig::default(),
+        "RefundType",
+        "hr",
+    );
+    let page = files
+        .iter()
+        .find(|(p, _)| p.ends_with("refund.page.ts"))
+        .expect("spec-emitting entity must emit its page class");
+    let kernel = files
+        .iter()
+        .find(|(p, _)| p.ends_with("_support/pom.ts"))
+        .expect("the shared POM kernel must be emitted");
+
+    // Page class: routes + form fills + the kernel import (the UxTable
+    // import rides the ux mirror — see pom_page_ux_surface_is_plan_driven).
+    assert!(
+        page.1.contains("export class RefundPage extends BasePage"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1
+            .contains("import { BasePage } from '../_support/pom';"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("static readonly apiPath = '/hr/refund';"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("base = '/hr/refund'"),
+        "top-level entities default their base route:\n{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("async fillName(value: string)"),
+        "{}",
+        page.1
+    );
+    assert!(
+        page.1.contains("static readonly detailUrlPattern"),
+        "{}",
+        page.1
+    );
+    // Kernel: BasePage + UxTable with the ids::-mirrored literal families.
+    assert!(kernel.1.contains("export class BasePage"), "{}", kernel.1);
+    assert!(kernel.1.contains("export class UxTable"), "{}", kernel.1);
+    assert!(
+        kernel
+            .1
+            .contains("[data-testid=\"${this.cfg.module}-${suffix}\"]"),
+        "{}",
+        kernel.1
+    );
+    for fragment in [
+        "tid('chip')",
+        "tid('copy')",
+        "tid('actions-menu')",
+        "tid('timeline-item')",
+    ] {
+        assert!(
+            kernel.1.contains(fragment),
+            "missing {fragment}:\n{}",
+            kernel.1
+        );
+    }
+}
+
+#[test]
+fn pom_kernel_emitted_once_per_generator_across_entities() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let output = tempfile::TempDir::new().unwrap();
+    let gen = UiE2eTestGenerator::new(output.path());
+    let run = |gen: &UiE2eTestGenerator| {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(gen.generate(
+                &engine,
+                "RefundType",
+                "hr",
+                &config,
+                &tera(),
+                &ProjectConfig::default(),
+            ))
+            .unwrap()
+    };
+    let first = run(&gen);
+    let second = run(&gen);
+
+    assert!(
+        first
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("_support/pom.ts")),
+        "the first spec-emitting entity renders the kernel"
+    );
+    assert!(
+        !second
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("_support/pom.ts")),
+        "subsequent entities must not duplicate the kernel"
+    );
+}
+
+#[test]
+fn pom_page_ux_surface_is_plan_driven() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    // Flag ON: sortable/copy/actions/zebra forwarders ride the plan.
+    let files = all_files(&engine, &config, &ux_project(), "RefundType", "hr");
+    let page = &files
+        .iter()
+        .find(|(p, _)| p.ends_with("refund.page.ts"))
+        .expect("page class")
+        .1;
+    assert!(
+        page.contains("readonly table = new UxTable(this.page, {"),
+        "{page}"
+    );
+    assert!(page.contains("locale: 'en-NZ'"), "{page}");
+    assert!(page.contains("currency: 'NZD'"), "{page}");
+    for forwarder in [
+        "async sortBy(field: string, dir: 'asc' | 'desc')",
+        "async copyCell(row: Locator, expected: string)",
+        "async openActions(row?: Locator)",
+        "async expectZebra()",
+        "async expectFormatted(",
+        "chipFor(text: string)",
+    ] {
+        assert!(page.contains(forwarder), "missing {forwarder}:\n{page}");
+    }
+
+    // Flag OFF: no ux mirror, no table — but the page class still exists
+    // (the POM is spec-infra, NOT ux-gated).
+    let files = all_files(
+        &engine,
+        &config,
+        &ProjectConfig::default(),
+        "RefundType",
+        "hr",
+    );
+    let page = &files
+        .iter()
+        .find(|(p, _)| p.ends_with("refund.page.ts"))
+        .expect("page class")
+        .1;
+    assert!(
+        !page.contains("UxTable"),
+        "flag off must not build a table:\n{page}"
+    );
+    assert!(
+        !page.contains("async sortBy("),
+        "flag off must not expose ux forwarders:\n{page}"
+    );
+}
+
+#[test]
+fn ux_spec_no_list_or_no_create_emits_no_file() {
+    // operations without `list` — the list page contract is absent.
+    let engine = refund_engine();
+    let mut toml =
+        String::from("[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\"]\n\n");
+    toml.push_str(
+        "[domains.hr]\nlabel = \"hr\"\nschema_dir = \"hr\"\npostgres_schema = \"hr\"\nentities = [\"RefundType\"]\n\n[domains.hr.entity_config.RefundType]\nrole = \"root\"\n",
+    );
+    let config = parse_domain_config_str(&toml).unwrap();
+
+    let files = {
+        let output = tempfile::TempDir::new().unwrap();
+        let gen = UiE2eTestGenerator::new(output.path());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(gen.generate(&engine, "RefundType", "hr", &config, &tera(), &ux_project()))
+            .unwrap()
+    };
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with(".ux.test.ts")),
+        "no list output must not emit a ux spec:\n{files:?}"
+    );
+}
+
+#[test]
+fn ux_spec_without_codelists_has_no_chip_block() {
+    let refund = schema("RefundType", "refund", "Refund", "hr", "refund");
+    let engine = MockEngine::builder()
+        .with_schema(refund)
+        .with_properties(
+            "RefundType",
+            vec![
+                plain_uuid("id", true),
+                scalar("name", "TEXT", true),
+                numeric("headcount", "INTEGER", true),
+            ],
+        )
+        .build();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content =
+        ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
+
+    assert!(
+        !content.contains("status chips render"),
+        "no codelist ⇒ no chip block:\n{content}"
+    );
+    assert!(
+        !content.contains("-chip\""),
+        "no codelist ⇒ no chip testid in the spec:\n{content}"
+    );
+    // Other blocks still fire.
+    assert!(
+        content.contains("sortable headers toggle aria-sort"),
+        "{content}"
+    );
+}
+
+#[test]
+fn ux_spec_codelist_column_emits_chip_block_with_known_value() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content =
+        ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
+
+    assert!(content.contains("status chips render"), "{content}");
+    assert!(
+        content.contains("ui.chipFor('draft')"),
+        "fixture uses the codelist's first value through the POM:\n{content}"
+    );
+}
+
+#[test]
+fn ux_spec_timeline_rule_emits_timeline_block_skips_table_blocks() {
+    let refund = schema("RefundType", "refund", "Refund", "hr", "refund");
+    let engine = MockEngine::builder()
+        .with_schema(refund)
+        .with_properties(
+            "RefundType",
+            vec![
+                plain_uuid("id", true),
+                scalar("name", "TEXT", true),
+                timestamp("due_at", true),
+            ],
+        )
+        .build();
+    let config = config(&[("hr", "RefundType")]);
+    let rules = codegraph_config::parse_ux_rules_str(
+        "[[collection]]\nentity_pattern = \"Refund*\"\ndisplay = \"timeline\"\norder_by = \"due_at\"\n",
+    )
+    .unwrap()
+    .rules;
+    let project = codegraph::generate::ProjectConfig {
+        ux: Some(rules),
+        ..ProjectConfig::default()
+    };
+
+    let content = ux_spec(&engine, &config, &project, "RefundType", "hr")
+        .expect("timeline entity emits the ux spec");
+
+    assert!(
+        content.contains("timeline renders entries newest-first"),
+        "{content}"
+    );
+    assert!(
+        content.contains("ui.timelineRoot()"),
+        "timeline access flows through the POM:\n{content}"
+    );
+    // Table-only blocks stay out.
+    assert!(
+        !content.contains("list renders the ux table contract"),
+        "{content}"
+    );
+    assert!(
+        !content.contains("zebra shading"),
+        "zebra is table-only:\n{content}"
+    );
+    assert!(
+        !content.contains("aria-sort"),
+        "timelines keep their fixed DESC order — no sort block:\n{content}"
+    );
+}
+
+#[test]
+fn ux_spec_sort_block_pins_allow_list_and_flip() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content =
+        ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
+
+    assert!(
+        content.contains("sortable headers toggle aria-sort"),
+        "{content}"
+    );
+    // The allow-list follows the plan's column_order (name leads, audit
+    // stamp last) — mirrored from the API 400 message.
+    assert!(
+        content.contains("name, headcount, total_amount, due_at, created_at"),
+        "{content}"
+    );
+    assert!(content.contains("sort=__nope__"), "{content}");
+    assert!(content.contains("Unknown sort field"), "{content}");
+    // The flip overrides the readable lead field with a distinct value.
+    assert!(
+        content.contains("{ 'name': 'Test Name B' }"),
+        "asc/desc flip creates two distinct fixture rows:\n{content}"
+    );
+    assert!(content.contains("order=asc"), "{content}");
+    assert!(content.contains("order=desc"), "{content}");
+}
+
+#[test]
+fn ux_spec_copy_chip_block_uses_created_row_id() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content =
+        ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
+
+    assert!(
+        content.contains("copy-chip copies the identifier"),
+        "{content}"
+    );
+    assert!(
+        content.contains("ui.copyCell(row, createdId)"),
+        "clipboard polling lives in the kernel copyCell:\n{content}"
+    );
+    assert!(content.contains("ui.copyTrigger(row).hover()"), "{content}");
+    // The identifier cell truncates → tooltip assertion rides along.
+    assert!(content.contains("ui.tooltipFor(createdId)"), "{content}");
+}
+
+#[test]
+fn ux_spec_alignment_and_format_blocks_reference_plan_columns() {
+    let engine = refund_engine();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content =
+        ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
+
+    assert!(content.contains("numeric columns right-align"), "{content}");
+    // Money/quantity/time-point expectations run through the kernel's
+    // Intl mirror — the SAME formatters the page computes.
+    assert!(content.contains("'money', 42)"), "{content}");
+    assert!(content.contains("'quantity', 42)"), "{content}");
+    assert!(
+        content.contains("'time-point', '2025-01-15T10:30:00Z')"),
+        "{content}"
+    );
+    // The readable lead column assertion pins column order row 17.
+    assert!(content.contains("ui.firstCell()"), "{content}");
+    assert!(
+        content.contains("toHaveText('Test Name')"),
+        "first rendered column is the readable field:\n{content}"
+    );
+}
+
+#[test]
+fn ux_spec_random_valued_columns_never_get_copy_or_flip_assertions() {
+    // A required plain uuid that is NOT the id column resolves a random
+    // fixture value — the spec must not predict it.
+    let refund = schema("RefundType", "refund", "Refund", "hr", "refund");
+    let engine = MockEngine::builder()
+        .with_schema(refund)
+        .with_properties(
+            "RefundType",
+            vec![
+                scalar("name", "TEXT", true),
+                plain_uuid("external_ref", true),
+            ],
+        )
+        .build();
+    let config = config(&[("hr", "RefundType")]);
+
+    let content =
+        ux_spec(&engine, &config, &ux_project(), "RefundType", "hr").expect("spec emitted");
+
+    assert!(
+        !content.contains("copy-chip copies the identifier"),
+        "random uuid fixture ⇒ no clipboard prediction:\n{content}"
+    );
+}

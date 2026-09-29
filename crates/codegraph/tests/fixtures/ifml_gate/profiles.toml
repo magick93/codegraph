@@ -20,7 +20,14 @@ persistence_provider = "sea_orm"
 deployment_topology = "monolith"
 ifml_backend = true
 framework_svelte = true
-ifml_design_system = "shadcn-svelte"
+# ux-rules plane ON (issue #303): the gate proves the fallback ux markup
+# (chips, money alignment/formatting, overflow actions) against the real
+# API. No `ifml_design_system` here DELIBERATELY: the fixture's
+# ifml-components.toml owns the non-collection mappings (Button, Dialog,
+# Card, NavigationMenu, Tabs) and maps NO collection slot, so the fallback
+# tables render — a design-system pack would map every list to <Table> and
+# replace the fallback markup the ux specs assert.
+ux_rules = true
 
 [profiles.gate.api]
 generators = [

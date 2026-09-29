@@ -3,6 +3,7 @@ pub mod error;
 pub mod ifml_components;
 pub mod ops_manifest;
 pub mod registry;
+pub mod ux;
 pub mod workflow_loader;
 
 pub use config::{
@@ -21,4 +22,9 @@ pub use ops_manifest::{
     OpsServers, OpsSmoke, OpsSupabase,
 };
 pub use registry::{DomainContext, DomainRegistry};
+pub use ux::{
+    builtin_ux_rules, glob_match, load_ux_rules, merge, parse_ux_rules_str, ActionRules, Align,
+    CollectionRule, ColumnRule, Dimension, Display, FormatConfig, ParsedUxRules, ToneMap,
+    UxParseError, UxRules, VALID_TONE_VALUES,
+};
 pub use workflow_loader::resolve_workflow_config;

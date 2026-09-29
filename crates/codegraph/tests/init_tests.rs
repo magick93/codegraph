@@ -319,6 +319,7 @@ async fn init_scaffold_runs_mox_first() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -944,6 +945,7 @@ async fn init_rosetta_scaffold_runs_rosetta_first() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     })
     .await
     .unwrap();

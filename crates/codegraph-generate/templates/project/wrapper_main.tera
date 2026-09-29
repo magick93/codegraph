@@ -65,6 +65,9 @@ enum Commands {
         /// Rosetta (Rune DSL) .rosetta model files (primary model source).
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
+        /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
+        #[arg(long)]
+        ux_rules: Option<PathBuf>,
     },
     /// Show entity/VO classification decisions for the .mox model.
     Classify {
@@ -98,6 +101,9 @@ enum Commands {
         /// Extension points config path.
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
+        #[arg(long)]
+        ux_rules: Option<PathBuf>,
     },
     /// Validate project layout and configuration.
     Doctor {
@@ -154,6 +160,7 @@ async fn main() -> Result<()> {
             openapi_files,
             mox_files,
             rosetta_files,
+            ux_rules,
         } => {
             let dirs = template_dirs(&template_dir);
             codegraph::driver::run(codegraph::driver::RunArgs {
@@ -174,6 +181,7 @@ async fn main() -> Result<()> {
                 ifml_framework: &[],
                 ifml_components: None,
                 ifml_design_system: None,
+                ux_rules: ux_rules.as_deref(),
                 codegraph_rev: if CODEGRAPH_REV.is_empty() {
                     None
                 } else {
@@ -210,6 +218,7 @@ async fn main() -> Result<()> {
             config,
             output,
             extension_points,
+            ux_rules,
         } => {
             let dirs = template_dirs(&[]);
             codegraph::driver::generate(
@@ -220,6 +229,7 @@ async fn main() -> Result<()> {
                 &[],
                 None,
                 None,
+                ux_rules.as_deref(),
             )
             .await
             .map_err(|e| codegraph::error::Error::Config(format!("generate failed: {e}")))

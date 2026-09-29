@@ -27,6 +27,7 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_framework,
             ifml_components,
             ifml_design_system,
+            ux_rules,
         } => {
             codegraph::driver::generate(
                 &config,
@@ -36,6 +37,7 @@ async fn main() -> codegraph::error::Result<()> {
                 &ifml_framework,
                 ifml_components.as_deref(),
                 ifml_design_system.as_deref(),
+                ux_rules.as_deref(),
             )
             .await
         }
@@ -97,6 +99,7 @@ async fn main() -> codegraph::error::Result<()> {
             ifml_framework,
             ifml_components,
             ifml_design_system,
+            ux_rules,
             graph_cache,
         } => codegraph::driver::run_with_graph_cache(
             codegraph::driver::RunArgs {
@@ -117,6 +120,7 @@ async fn main() -> codegraph::error::Result<()> {
                 ifml_framework: &ifml_framework,
                 ifml_components: ifml_components.as_deref(),
                 ifml_design_system: ifml_design_system.as_deref(),
+                ux_rules: ux_rules.as_deref(),
                 codegraph_rev: None,
             },
             graph_cache.as_deref(),
@@ -134,6 +138,7 @@ async fn main() -> codegraph::error::Result<()> {
             template_dir,
             ifml_components,
             ifml_design_system,
+            ux_rules,
         } => {
             codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
                 config_path: &config,
@@ -146,6 +151,7 @@ async fn main() -> codegraph::error::Result<()> {
                 template_dir: &template_dir,
                 ifml_components: ifml_components.as_deref(),
                 ifml_design_system: ifml_design_system.as_deref(),
+                ux_rules: ux_rules.as_deref(),
             })
             .await
         }

@@ -1,5 +1,19 @@
 use crate::filter_fields::{FilterFieldInfo, NestedFilterFieldInfo};
 
+/// One validated `?sort=` key mapped to its ORDER BY column (issue #306).
+///
+/// The `key` is the response-field name the API allow-list accepts (the
+/// same keys the list page's sort buttons emit); the `column` is the
+/// entity's PostgreSQL column, emitted double-quoted through
+/// `sea_query::Alias` so reserved words stay safe.
+#[derive(Debug, Clone)]
+pub struct UxSortColumn {
+    /// The `?sort=` key (response field name).
+    pub key: String,
+    /// The PostgreSQL column name backing the field.
+    pub column: String,
+}
+
 /// Resolved tree_include entry with concrete table/column names.
 #[derive(Debug)]
 pub struct TreeIncludeResolved {

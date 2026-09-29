@@ -224,17 +224,46 @@ impl GraphQuerier for GrafeoEngine {
     async fn get_child_schemas(&self, schema_title: &str) -> Result<Vec<SchemaNode>, GraphError> {
         let params =
             HashMap::from([("ps".to_string(), grafeo::Value::String(schema_title.into()))]);
-        let result = query_gql_params(
+        // Route 1: inline #/$defs children (parent_schema back-pointer).
+        let inline = query_gql_params(
             self,
             &format!("MATCH (s:Schema {{parent_schema: $ps}}) RETURN {SCHEMA_RETURN_COLS}"),
+            params.clone(),
+        )?;
+        // Route 2 (issue #312): derived refers children — array-of-entity-ref
+        // properties whose ItemsOf target is an entity (the FK-on-child
+        // lowering, child table carries `{parent}_id`). `is_entity` keeps
+        // value-object (`contains`) and codelist arrays on their own planes;
+        // the title comparison excludes self-references.
+        let derived = query_gql_params(
+            self,
+            &format!(
+                "MATCH (:Schema {{title: $ps}})-[:HasProperty]->(:Property {{is_array: true}}) \
+                 -[:ItemsOf]->(s:Schema {{is_entity: true}}) RETURN DISTINCT {SCHEMA_RETURN_COLS}"
+            ),
             params,
         )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
+        let reader = RowReader::from_columns(&inline.columns);
+        let mut children: Vec<SchemaNode> = inline
             .rows
             .iter()
             .map(|row| row_to_schema_node(&reader, row))
-            .collect()
+            .collect::<Result<_, _>>()?;
+        let derived_reader = RowReader::from_columns(&derived.columns);
+        let mut seen: std::collections::HashSet<String> =
+            children.iter().map(|c| c.title.clone()).collect();
+        for row in &derived.rows {
+            let node = row_to_schema_node(&derived_reader, row)?;
+            // A self-referential ItemsOf target is not a child of itself.
+            if node.title == schema_title {
+                continue;
+            }
+            if seen.insert(node.title.clone()) {
+                children.push(node);
+            }
+        }
+        children.sort_by(|a, b| a.title.cmp(&b.title));
+        Ok(children)
     }
 
     async fn get_classification_data(&self) -> Result<Vec<SchemaClassificationData>, GraphError> {

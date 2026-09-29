@@ -1,10 +1,47 @@
-# Gate-owned mapping override (issue #200): sibling xor groups must share
-# ONE mapped presentation-container wrapper. Mapping the role to a Tabs stub
-# (instead of the shadcn pack's Card, which the display slots also use) keeps
-# the "exactly one wrapper" gate assertion unambiguous. Loaded by the gate
-# harness and merged BEFORE the built-in pack, so this entry shadows it.
+# Fixture component mappings for the IFML codegen gate.
+#
+# Issue #200: sibling xor groups must share ONE mapped presentation-container
+# wrapper — mapping the role to a Tabs stub (instead of the Card the built-in
+# pack would use, which the display slots also resolve to) keeps the
+# "exactly one wrapper" gate assertion unambiguous.
+#
+# Issue #303: this file now owns ALL mapped slots the gate needs — the gate
+# harness loads it WITHOUT the built-in shadcn-svelte pack. The pack's
+# `collection` entries are deliberately NOT replicated: collection
+# components must stay UNMAPPED so the fallback tables render, whose chips /
+# money alignment / overflow actions the ux specs (and the structural gate
+# asserts) pin. Everything else mirrors the pack's resolutions testid for
+# testid, so the pre-#303 assertions (Dialog modal, Card details, Button
+# controls, NavigationMenu shell) hold unchanged.
+
 [[component]]
 role = "presentation-container"
 path = "$lib/components/ui/tabs/tabs.svelte"
 export = "Tabs"
 testids = { root = "tabs" }
+
+[[component]]
+role = "action-control"
+kind = "button"
+path = "$lib/components/ui/button/button.svelte"
+export = "Button"
+testids = { root = "button" }
+
+[[component]]
+role = "modal-view"
+path = "$lib/components/ui/dialog/dialog.svelte"
+export = "Dialog"
+testids = { root = "dialog" }
+
+[[component]]
+role = "display"
+kind = "details"
+path = "$lib/components/ui/card/card.svelte"
+export = "Card"
+testids = { root = "card" }
+
+[[component]]
+role = "shell"
+path = "$lib/components/ui/navigation-menu/navigation-menu.svelte"
+export = "NavigationMenu"
+testids = { root = "navigation-menu" }
