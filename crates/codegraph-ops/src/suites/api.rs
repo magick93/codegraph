@@ -1668,7 +1668,30 @@ fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
         cmd.env(key, value);
     }
     match cmd.current_dir(&config.app_dir).output() {
-        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) if out.status.success() => {
+            // A successful build is a freshness statement: pre_generate
+            // clean hooks may have wiped + fully regenerated src (fresh
+            // mtimes on byte-identical files), and cargo skips the relink
+            // when nothing changed — leaving the binary's mtime older than
+            // src even though the bytes match. Touch it so mtime-based
+            // freshness checks reflect the build that just succeeded.
+            let binary = config
+                .app_dir
+                .join("target")
+                .join(release.then_some("release").unwrap_or("debug"))
+                .join(config.app_binary_name());
+            if binary.is_file() {
+                let _ = std::fs::File::options()
+                    .write(true)
+                    .open(&binary)
+                    .and_then(|f| {
+                        f.set_times(
+                            std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()),
+                        )
+                    });
+            }
+            Ok(())
+        }
         Ok(out) => {
             let text = format!(
                 "{}{}",
