@@ -750,26 +750,11 @@ async fn http_ok(url: &str) -> bool {
 /// `build.rs` connects to Postgres at build time to compile the SQL-first
 /// repositories (the api and workers suites export the same env).
 fn cargo_build_app(config: &OpsConfig, release: bool) -> Result<(), String> {
-    let mut cmd = Command::new("cargo");
-    cmd.arg("build");
-    if release {
-        cmd.arg("--release");
-    }
-    if let Some((key, value)) = super::api::cornucopia_db_env(config) {
-        cmd.env(key, value);
-    }
-    match cmd.current_dir(&config.app_dir).output() {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            Err(tail(&text, 800))
-        }
-        Err(e) => Err(format!("failed to spawn cargo: {e}")),
-    }
+    // Delegate to the shared builder: it post-build touches the app binary
+    // so mtime-based freshness (ensure_binary_fresh) passes even when the
+    // pre_generate clean hook wiped src and cargo skipped the relink on
+    // byte-identical regeneration.
+    super::api::cargo_build_in(config, release)
 }
 
 /// Run a blocking command to completion, returning Err(Command) with a

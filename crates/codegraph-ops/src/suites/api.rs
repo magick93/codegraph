@@ -1658,7 +1658,7 @@ fn regenerate(config: &OpsConfig, graph_binary: &str, release: bool) -> OpsResul
 /// `cargo build` inside the generated app. Exports `CORNUCOPIA_DATABASE_URL`
 /// for the cornucopia provider (its `build.rs` connects to Postgres at build
 /// time). `Ok` only on a clean exit; `Err` carries the output tail.
-fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
+pub(super) fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
     if release {
