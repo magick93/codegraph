@@ -266,24 +266,34 @@ async fn append_only_ddl_is_insert_only_including_child_tables() {
         "child table has no updated_at: {child_section}"
     );
 
-    // Triggers: the BEFORE UPDATE trigger file is gone; the domain event
-    // trigger fires INSERT-only.
-    let updated_at_trigger = format!(
-        "{schema}_{table}_trigger.sql",
-        schema = "recruiting",
-        table = "snapshot"
-    );
-    assert!(
-        !files.iter().any(|f| f
-            .path
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy() == updated_at_trigger)),
-        "no updated_at trigger file: {:?}",
-        files
-            .iter()
-            .map(|f| f.path.to_string_lossy())
-            .collect::<Vec<_>>()
-    );
+    // Triggers: the BEFORE UPDATE mutability surface is gone — the trigger
+    // file, when present (tenant-scoped entities keep it for the set_org_id
+    // INSERT trigger), must not contain any updated_at trigger. The domain
+    // event trigger fires INSERT-only.
+    let trigger_file = files.iter().find(|f| {
+        f.path.file_name().is_some_and(|n| {
+            n.to_string_lossy()
+                == format!(
+                    "{schema}_{table}_trigger.sql",
+                    schema = "recruiting",
+                    table = "snapshot"
+                )
+        })
+    });
+    if let Some(trigger_file) = trigger_file {
+        let content = &trigger_file.content;
+        assert!(
+            content.contains("trg_snapshot_set_org_id")
+                && content.contains("BEFORE INSERT ON recruiting.snapshot"),
+            "tenant-scoped append-only entity keeps the set_org_id INSERT trigger: {content}"
+        );
+        assert!(
+            !content.contains("set_updated_at")
+                && !content.contains("BEFORE UPDATE")
+                && !content.contains("trg_snapshot_updated_at"),
+            "append-only trigger file carries no updated_at trigger: {content}"
+        );
+    }
     let event = files
         .iter()
         .find(|f| f.path.to_string_lossy().contains("_event_trigger.sql"))

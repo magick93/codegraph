@@ -190,7 +190,7 @@ async fn data_entity_round_trips_through_graph() {
     assert!(id.is_required && !id.is_nullable && !id.is_array);
     assert_eq!(id.pg_column_name, "id");
     assert_eq!(id.pg_column_type, "UUID");
-    assert_eq!(id.rust_field_type, "Uuid");
+    assert_eq!(id.rust_field_type, "uuid::Uuid");
     assert_eq!(id.sea_orm_type, "Uuid");
     assert_eq!(
         id.classification_kind,

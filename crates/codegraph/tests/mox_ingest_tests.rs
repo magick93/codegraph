@@ -686,7 +686,7 @@ async fn mox_datatype_format_maps_to_pg_types() {
     let props = engine.get_properties("CustomerType").await.unwrap();
     let external = props.iter().find(|p| p.name == "externalRef").unwrap();
     assert_eq!(external.pg_column_type, "UUID");
-    assert_eq!(external.rust_field_type, "Uuid");
+    assert_eq!(external.rust_field_type, "uuid::Uuid");
     assert_eq!(external.format.as_deref(), Some("uuid"));
 
     let created = props.iter().find(|p| p.name == "createdAt").unwrap();
