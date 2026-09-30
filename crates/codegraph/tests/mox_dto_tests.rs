@@ -110,13 +110,22 @@ async fn run_generation_and_read_dtos(
     let plan = codegraph::profile::BuildPlan::from_profile(&resolved, &registry).unwrap();
 
     let project_config = codegraph::generate::ProjectConfig {
-        app_name: "test-app".into(),
-        domain_types_crate: "domain_types".into(),
-        generator_name: "codegraph-test".into(),
-        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
-        codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
-        domain_types_base: "domain-types".into(),
-        types_import_prefix: "crate::types".into(),
+        identity: codegraph::generate::IdentityConfig {
+            app_name: "test-app".into(),
+            domain_types_crate: "domain_types".into(),
+            generator_name: "codegraph-test".into(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+            codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
+            domain_types_base: "domain-types".into(),
+            ..Default::default()
+        },
+        codegen: codegraph::generate::CodegenConfig {
+            types_import_prefix: "crate::types".into(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

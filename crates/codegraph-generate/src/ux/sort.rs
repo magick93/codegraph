@@ -230,7 +230,7 @@ pub async fn resolve_ux_sort_plan(
     schema_title: &str,
     domain: &str,
 ) -> Result<UxSortPlan> {
-    let Some(rules) = project.ux.as_ref() else {
+    let Some(rules) = project.ux.ux.as_ref() else {
         return Ok(UxSortPlan::default());
     };
 

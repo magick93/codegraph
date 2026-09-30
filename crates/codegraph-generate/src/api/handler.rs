@@ -10,7 +10,7 @@ use crate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::type_registry;
 use crate::ProjectConfig;
 use codegraph_config::{DomainConfig, EntityConfig};
@@ -114,8 +114,8 @@ impl HandlerGenerator {
 
 #[async_trait]
 impl EntityGenerator for HandlerGenerator {
-    fn name(&self) -> &str {
-        "handler"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Handler
     }
 
     async fn generate(

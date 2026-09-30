@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::capabilities::Capability;
 use crate::context::GeneratorContext;
 use crate::output::{
     generator_base, is_worker_routed_domain_generator, is_worker_routed_entity_generator,
@@ -211,7 +212,7 @@ pub(crate) fn build_domain_generators(
     ];
     // EmDash plugin packages — only when the profile enables the feature
     // AND the plugins.toml config was loaded by the CLI wrapper.
-    if ctx.has_emdash {
+    if ctx.capabilities.has(Capability::EmDash) {
         if let Some(ref plugins) = ctx.emdash_plugins {
             gens.push(Box::new(emdash::plugin_gen::EmdashPluginGenerator::new(
                 output_dir.to_path_buf(),
@@ -279,26 +280,26 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         global_gens.push(Box::new(
             scaffold::gen::ScaffoldGenerator::new(
                 output_dir,
-                ctx.has_webhooks,
-                ctx.has_reports,
-                ctx.has_grpc,
-                ctx.has_atproto,
-                ctx.has_cli,
-                ctx.has_test_gen,
-                ctx.has_fern,
-                ctx.has_auth_rate_limit,
-                ctx.has_admin_cli,
-                ctx.has_labels,
+                ctx.capabilities.has(Capability::Webhooks),
+                ctx.capabilities.has(Capability::Reports),
+                ctx.capabilities.has(Capability::Grpc),
+                ctx.capabilities.has(Capability::Atproto),
+                ctx.capabilities.has(Capability::Cli),
+                ctx.capabilities.has(Capability::TestGen),
+                ctx.capabilities.has(Capability::Fern),
+                ctx.capabilities.has(Capability::AuthRateLimit),
+                ctx.capabilities.has(Capability::AdminCli),
+                ctx.capabilities.has(Capability::Labels),
                 &ctx.migration_strategy,
             )
-            .with_seed(ctx.has_seed),
+            .with_seed(ctx.capabilities.has(Capability::Seed)),
         ) as Box<dyn GlobalGenerator>);
     }
 
     global_gens.push(Box::new(ui::scaffold::UiScaffoldGenerator::new(
         output_dir,
         ctx.ext_points.is_some(),
-        ctx.has_webhooks,
+        ctx.capabilities.has(Capability::Webhooks),
     )) as Box<dyn GlobalGenerator>);
     global_gens
         .push(Box::new(ui::types::UiTypeGenerator::new(output_dir)) as Box<dyn GlobalGenerator>);
@@ -350,7 +351,7 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         )) as Box<dyn GlobalGenerator>,
     );
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
-    if ctx.has_seed {
+    if ctx.capabilities.has(Capability::Seed) {
         global_gens.push(
             Box::new(seed::provision::SeedProvisionGenerator::new(output_dir))
                 as Box<dyn GlobalGenerator>,
@@ -399,7 +400,7 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             as Box<dyn GlobalGenerator>);
     // EmDash plugin family scaffold — only when the profile enables the
     // feature AND the plugins.toml config was loaded by the CLI wrapper.
-    if ctx.has_emdash {
+    if ctx.capabilities.has(Capability::EmDash) {
         if let Some(ref plugins) = ctx.emdash_plugins {
             global_gens.push(
                 Box::new(emdash::scaffold_gen::EmdashPluginScaffoldGenerator::new(
@@ -412,10 +413,10 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     // ops harness manifest + testkit crate
     global_gens.push(Box::new(ops::OpsManifestGenerator::new(
         output_dir,
-        ctx.has_cli,
-        ctx.has_ui,
-        ctx.has_admin_cli,
-        ctx.has_grpc,
+        ctx.capabilities.has(Capability::Cli),
+        ctx.capabilities.has(Capability::Ui),
+        ctx.capabilities.has(Capability::AdminCli),
+        ctx.capabilities.has(Capability::Grpc),
     )) as Box<dyn GlobalGenerator>);
 
     let mut global_gens: Vec<Box<dyn GlobalGenerator>> = global_gens

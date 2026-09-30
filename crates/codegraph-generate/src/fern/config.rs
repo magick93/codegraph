@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
@@ -31,8 +31,8 @@ impl FernConfigGenerator {
 
 #[async_trait]
 impl GlobalGenerator for FernConfigGenerator {
-    fn name(&self) -> &str {
-        "fern_config"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::FernConfig
     }
 
     async fn generate(
@@ -44,13 +44,14 @@ impl GlobalGenerator for FernConfigGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let languages = project
+            .integration
             .fern_sdk_languages
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
 
         let ctx = FernConfigContext {
-            organization: project.app_name.clone(),
+            organization: project.identity.app_name.clone(),
             languages,
         };
 

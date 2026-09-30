@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
@@ -35,8 +35,8 @@ impl CornucopiaConfigGenerator {
 
 #[async_trait]
 impl GlobalGenerator for CornucopiaConfigGenerator {
-    fn name(&self) -> &str {
-        "cornucopia_config"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::CornucopiaConfig
     }
 
     async fn generate(

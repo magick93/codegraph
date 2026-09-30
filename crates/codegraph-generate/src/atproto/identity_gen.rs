@@ -5,8 +5,10 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+#[cfg(test)]
+use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
@@ -50,8 +52,8 @@ impl AtprotoIdentityEmitter {
 
 #[async_trait]
 impl GlobalGenerator for AtprotoIdentityEmitter {
-    fn name(&self) -> &str {
-        "atproto_identity"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::AtprotoIdentity
     }
 
     async fn generate(
@@ -62,11 +64,11 @@ impl GlobalGenerator for AtprotoIdentityEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
-        let authority = &project.atproto_authority;
+        let authority = &project.atproto.atproto_authority;
         let parts: Vec<&str> = authority.rsplitn(2, '.').collect();
         let host = if parts.len() == 2 {
             format!("{}.{}", parts[1], parts[0])
@@ -155,7 +157,10 @@ mod tests {
 
     fn make_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -255,7 +260,10 @@ mod tests {
         let engine = MockEngine::builder().build();
         let tera = make_tera();
         let project = ProjectConfig {
-            atproto_authority: "".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let emitter = AtprotoIdentityEmitter::new(&PathBuf::from("/tmp/test-out"));

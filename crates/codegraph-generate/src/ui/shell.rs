@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::api::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -36,8 +36,8 @@ impl UiShellGenerator {
 
 #[async_trait]
 impl EntityGenerator for UiShellGenerator {
-    fn name(&self) -> &str {
-        "ui-shell"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::UiShell
     }
 
     async fn generate(

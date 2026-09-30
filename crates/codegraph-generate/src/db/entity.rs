@@ -15,7 +15,7 @@ use serde::Serialize;
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::pg_cast_for_type;
@@ -95,8 +95,8 @@ impl SeaOrmEntityGenerator {
 
 #[async_trait]
 impl EntityGenerator for SeaOrmEntityGenerator {
-    fn name(&self) -> &str {
-        "sea_orm_entity"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::SeaOrmEntity
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {

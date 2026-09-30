@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -104,8 +104,8 @@ impl UiScaffoldGenerator {
 
 #[async_trait]
 impl GlobalGenerator for UiScaffoldGenerator {
-    fn name(&self) -> &str {
-        "ui-scaffold"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::UiScaffold
     }
 
     async fn generate(
@@ -123,7 +123,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             domains,
             has_integrations: self.has_integrations,
             has_webhooks: self.has_webhooks,
-            has_ux_rules: project.ux.is_some(),
+            has_ux_rules: project.ux.ux.is_some(),
             shadcn_primitives: SHADCN_PRIMITIVES.to_vec(),
         };
 

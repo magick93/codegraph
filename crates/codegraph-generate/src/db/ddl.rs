@@ -12,7 +12,7 @@ use serde::Serialize;
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::{Error, Result};
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::{DomainConfig, SearchConfig};
 
 /// PostgreSQL reserved words that must be double-quoted when used as column names.
@@ -2047,8 +2047,8 @@ fn apply_dialect_type_mapping(dialect: &dyn SqlDialect, ctx: &mut DdlContext) ->
 
 #[async_trait]
 impl EntityGenerator for DdlGenerator {
-    fn name(&self) -> &str {
-        "ddl"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Ddl
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {

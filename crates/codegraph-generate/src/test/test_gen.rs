@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -38,8 +38,8 @@ impl TestGenerator {
 
 #[async_trait]
 impl EntityGenerator for TestGenerator {
-    fn name(&self) -> &str {
-        "test"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Test
     }
 
     async fn generate(
@@ -76,7 +76,7 @@ impl EntityGenerator for TestGenerator {
             table_name: module_name.clone(),
             schema_name,
             has_create,
-            app_crate_name: project.app_name.replace('-', "_"),
+            app_crate_name: project.identity.app_name.replace('-', "_"),
         };
 
         let mut files = Vec::new();

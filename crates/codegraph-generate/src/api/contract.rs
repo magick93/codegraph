@@ -9,7 +9,9 @@ use serde::Serialize;
 
 use crate::api::router::{build_router_context, RouterContext, RouterEntity};
 use crate::error::Result;
-use crate::traits::{DomainGenerator, GeneratedFile, GlobalGenerator};
+use crate::traits::{
+    DomainGenerator, DomainGeneratorKind, GeneratedFile, GlobalGenerator, GlobalGeneratorKind,
+};
 use crate::{render_template_with_project, ProjectConfig};
 
 /// One HTTP endpoint in the plugin API contract.
@@ -83,8 +85,8 @@ impl ApiContractGenerator {
 
 #[async_trait]
 impl DomainGenerator for ApiContractGenerator {
-    fn name(&self) -> &str {
-        "api_contract"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::ApiContract
     }
 
     async fn generate(
@@ -143,8 +145,8 @@ impl ApiContractIndexGenerator {
 
 #[async_trait]
 impl GlobalGenerator for ApiContractIndexGenerator {
-    fn name(&self) -> &str {
-        "api_contract_index"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::ApiContractIndex
     }
 
     async fn generate(

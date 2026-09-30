@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -196,8 +196,8 @@ impl RouterGenerator {
 
 #[async_trait]
 impl DomainGenerator for RouterGenerator {
-    fn name(&self) -> &str {
-        "router"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::Router
     }
 
     async fn generate(
@@ -221,7 +221,8 @@ impl DomainGenerator for RouterGenerator {
             .map(|d| d.custom_routes)
             .unwrap_or(false);
         if is_custom_routes_domain
-            && project.deployment_topology_enum() == crate::profile::DeploymentTopology::Monolith
+            && project.deployment.deployment_topology
+                == crate::profile::DeploymentTopology::Monolith
         {
             return Ok(Vec::new());
         }
@@ -295,7 +296,7 @@ impl DomainGenerator for RouterGenerator {
                         .unwrap_or_default();
                     let permission_scope = permissions.scope.clone().unwrap_or_default();
                     let public_skip = route_auth_is_public(
-                        project.public_operations_rls,
+                        project.integration.public_operations_rls,
                         schema.access,
                         entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
                         &operations,
@@ -646,7 +647,7 @@ pub async fn build_router_context(
                     .unwrap_or_default();
                 let permission_scope = permissions.scope.clone().unwrap_or_default();
                 let public_skip = route_auth_is_public(
-                    project.public_operations_rls,
+                    project.integration.public_operations_rls,
                     schema.access,
                     entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
                     &operations,

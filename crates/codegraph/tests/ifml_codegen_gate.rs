@@ -296,27 +296,44 @@ async fn run_pipeline() -> Result<(), String> {
     };
 
     let project_config = codegraph::generate::ProjectConfig {
-        app_name: "ifml-gate-app".into(),
-        lib_name: "cosmos".into(),
-        domain_types_crate: "gate_domain_types".into(),
-        api_title: "IFML Gate API".into(),
-        generator_name: "codegraph-gate".into(),
-        domain_types_base: "domain-types".into(),
-        type_contracts_base: type_contracts.to_string_lossy().to_string(),
-        codegraph_workflow_base: workflow.to_string_lossy().to_string(),
-        database_target: "postgres".into(),
-        persistence_provider: "sea_orm".into(),
-        deployment_topology: "monolith".into(),
-        api_version: config.defaults.api_version.clone(),
-        types_import_prefix: config.defaults.types_import_prefix.clone(),
-        codegraph_rev: String::new(),
-        extra_dependencies: format!(
-            "codegraph-workflow = {{ path = \"{}\" }}\n\
-             codegraph-type-contracts = {{ path = \"{}\" }}",
-            workflow.display(),
-            type_contracts.display(),
-        ),
-        ux: ux_rules.clone(),
+        identity: codegraph::generate::IdentityConfig {
+            app_name: "ifml-gate-app".into(),
+            lib_name: "cosmos".into(),
+            domain_types_crate: "gate_domain_types".into(),
+            api_title: "IFML Gate API".into(),
+            generator_name: "codegraph-gate".into(),
+            api_version: config.defaults.api_version.clone(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            domain_types_base: "domain-types".into(),
+            type_contracts_base: type_contracts.to_string_lossy().to_string(),
+            codegraph_workflow_base: workflow.to_string_lossy().to_string(),
+            ..Default::default()
+        },
+        database: codegraph::generate::DatabaseConfig {
+            database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+            persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        },
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        },
+        codegen: codegraph::generate::CodegenConfig {
+            types_import_prefix: config.defaults.types_import_prefix.clone(),
+            ..Default::default()
+        },
+        cargo: codegraph::generate::CargoConfig {
+            extra_dependencies: format!(
+                "codegraph-workflow = {{ path = \"{}\" }}\n\
+                 codegraph-type-contracts = {{ path = \"{}\" }}",
+                workflow.display(),
+                type_contracts.display(),
+            ),
+            ..Default::default()
+        },
+        ux: codegraph::generate::UxConfig {
+            ux: ux_rules.clone(),
+        },
         ..Default::default()
     };
 

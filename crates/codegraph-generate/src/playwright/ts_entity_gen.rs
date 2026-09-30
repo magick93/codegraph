@@ -15,7 +15,7 @@ use heck::ToLowerCamelCase;
 use super::{e2e_tests_root, TsEntityContext, TsFieldDef, TsFkField};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 
 /// Scalar (non-array) ValueObject / CompositeWrapper / MediaWrapper properties
 /// are stored as flattened child columns on the main table (the Create DTO
@@ -254,8 +254,8 @@ impl TsEntityGenerator {
 
 #[async_trait]
 impl EntityGenerator for TsEntityGenerator {
-    fn name(&self) -> &str {
-        "playwright_ts_entity"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::PlaywrightTsEntity
     }
 
     async fn generate(
@@ -267,9 +267,14 @@ impl EntityGenerator for TsEntityGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let model =
-            build_entity_model(db, schema_title, domain, config, &project.atproto_authority)
-                .await?;
+        let model = build_entity_model(
+            db,
+            schema_title,
+            domain,
+            config,
+            &project.atproto.atproto_authority,
+        )
+        .await?;
 
         if model.entity_module.is_empty() {
             return Ok(Vec::new());

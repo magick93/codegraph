@@ -11,7 +11,7 @@ use crate::ddd::repository_emitter::RepositoryImplEmitter;
 use crate::error::Result;
 use crate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -66,8 +66,8 @@ impl QueryGenerator {
 
 #[async_trait]
 impl EntityGenerator for QueryGenerator {
-    fn name(&self) -> &str {
-        "query"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Query
     }
 
     async fn generate(

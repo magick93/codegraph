@@ -30,7 +30,7 @@ use serde::Serialize;
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::{Error, Result};
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -102,8 +102,8 @@ fn action_for_operation(operation: &str) -> Option<(&'static str, bool, bool)> {
 
 #[async_trait]
 impl GlobalGenerator for PublicOperationsRlsGenerator {
-    fn name(&self) -> &str {
-        "public_operations_rls"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::PublicOperationsRls
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {
@@ -119,7 +119,7 @@ impl GlobalGenerator for PublicOperationsRlsGenerator {
         project: &crate::ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Documented no-ops: sqlite has no RLS; flag off = byte-identical.
-        if !project.public_operations_rls || !self.dialect.has_rls() {
+        if !project.integration.public_operations_rls || !self.dialect.has_rls() {
             return Ok(vec![]);
         }
 

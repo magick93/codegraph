@@ -11,7 +11,7 @@ use crate::api::include_path::resolve_include_paths_for_topology;
 use crate::error::Result;
 use crate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::repository_emitter::RepositoryImplEmitter;
@@ -72,8 +72,8 @@ impl RepositoryTraitGenerator {
 
 #[async_trait]
 impl EntityGenerator for RepositoryTraitGenerator {
-    fn name(&self) -> &str {
-        "repository"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Repository
     }
 
     async fn generate(

@@ -6,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::common::{collect_child_sections, collect_ui_fields};
@@ -27,8 +27,8 @@ impl CosmosEntityFormGenerator {
 
 #[async_trait]
 impl EntityGenerator for CosmosEntityFormGenerator {
-    fn name(&self) -> &str {
-        "cosmos_entity_form"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::CosmosEntityForm
     }
 
     async fn generate(

@@ -20,13 +20,15 @@ fn project_ux_is_reachable_in_tera_templates() {
         .unwrap();
 
     let project = ProjectConfig {
-        ux: Some(codegraph_config::UxRules {
-            format: codegraph_config::FormatConfig {
-                locale: "de-DE".into(),
-                currency: Some("EUR".into()),
-            },
-            ..codegraph_config::UxRules::default()
-        }),
+        ux: UxConfig {
+            ux: Some(codegraph_config::UxRules {
+                format: codegraph_config::FormatConfig {
+                    locale: "de-DE".into(),
+                    currency: Some("EUR".into()),
+                },
+                ..codegraph_config::UxRules::default()
+            }),
+        },
         ..ProjectConfig::default()
     };
     let rendered =
@@ -35,7 +37,7 @@ fn project_ux_is_reachable_in_tera_templates() {
 
     // None keeps the key out of the context entirely (render errors).
     let project = ProjectConfig {
-        ux: None,
+        ux: UxConfig { ux: None },
         ..project
     };
     assert!(

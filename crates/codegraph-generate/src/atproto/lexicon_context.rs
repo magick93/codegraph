@@ -83,7 +83,7 @@ impl LexiconContext {
         properties: &[PropertyNode],
         project: &ProjectConfig,
     ) -> Result<Self> {
-        let authority = &project.atproto_authority;
+        let authority = &project.atproto.atproto_authority;
 
         let namespaces = db
             .get_atproto_namespaces()

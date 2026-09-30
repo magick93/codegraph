@@ -5,7 +5,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 
 static LINKS_MODULE: &str = include_str!("../../templates/api/links.tera");
@@ -24,8 +24,8 @@ impl LinksGenerator {
 
 #[async_trait]
 impl DomainGenerator for LinksGenerator {
-    fn name(&self) -> &str {
-        "links"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::Links
     }
 
     async fn generate(

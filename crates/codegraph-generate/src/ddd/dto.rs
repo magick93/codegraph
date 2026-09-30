@@ -10,7 +10,7 @@ use crate::api::api_model::resolve_entity_operations;
 use crate::api::include_path::{resolve_include_paths_for_topology, ResolvedIncludePath};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::type_registry;
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
@@ -985,8 +985,8 @@ impl DtoGenerator {
 
 #[async_trait]
 impl EntityGenerator for DtoGenerator {
-    fn name(&self) -> &str {
-        "dto"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Dto
     }
 
     async fn generate(

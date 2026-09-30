@@ -328,7 +328,7 @@ role = "root"
     let config = parse_domain_config_str(toml).unwrap();
     let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
     let project = ProjectConfig {
-        ux: Some(rules),
+        ux: codegraph::generate::UxConfig { ux: Some(rules) },
         ..ProjectConfig::default()
     };
 

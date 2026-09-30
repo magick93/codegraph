@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -38,8 +38,8 @@ impl SeedProvisionGenerator {
 
 #[async_trait]
 impl GlobalGenerator for SeedProvisionGenerator {
-    fn name(&self) -> &str {
-        "seed_provision"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::SeedProvision
     }
 
     async fn generate(
@@ -52,7 +52,7 @@ impl GlobalGenerator for SeedProvisionGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let domains = build_scaffold_domains(db, config, generation_order).await;
         let ctx = SeedCliContext {
-            app_name: project.app_name.clone(),
+            app_name: project.identity.app_name.clone(),
             domains,
         };
 

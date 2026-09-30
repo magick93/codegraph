@@ -168,19 +168,31 @@ async fn run_fixture_generation(output_dir: &Path) -> BTreeMap<String, Vec<u8>> 
     let hooks_tmp = tempfile::TempDir::new().unwrap();
 
     let project_config = ProjectConfig {
-        app_name: "test-app".into(),
-        domain_types_crate: "domain_types".into(),
-        generator_name: "codegraph-test".into(),
-        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
-        codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
-        domain_types_base: "domain-types".into(),
-        types_import_prefix: config.defaults.types_import_prefix.clone(),
-        extra_dependencies: format!(
-            "codegraph-workflow = {{ path = \"{}\" }}\n\
-             codegraph-type-contracts = {{ path = \"{}\" }}",
-            workflow_path.display(),
-            type_contracts_path.display(),
-        ),
+        identity: codegraph::generate::IdentityConfig {
+            app_name: "test-app".into(),
+            domain_types_crate: "domain_types".into(),
+            generator_name: "codegraph-test".into(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+            codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
+            domain_types_base: "domain-types".into(),
+            ..Default::default()
+        },
+        codegen: codegraph::generate::CodegenConfig {
+            types_import_prefix: config.defaults.types_import_prefix.clone(),
+            ..Default::default()
+        },
+        cargo: codegraph::generate::CargoConfig {
+            extra_dependencies: format!(
+                "codegraph-workflow = {{ path = \"{}\" }}\n\
+                 codegraph-type-contracts = {{ path = \"{}\" }}",
+                workflow_path.display(),
+                type_contracts_path.display(),
+            ),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

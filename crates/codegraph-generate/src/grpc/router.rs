@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -43,8 +43,8 @@ impl GrpcRouterGenerator {
 
 #[async_trait]
 impl DomainGenerator for GrpcRouterGenerator {
-    fn name(&self) -> &str {
-        "grpc_router"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::GrpcRouter
     }
 
     async fn generate(

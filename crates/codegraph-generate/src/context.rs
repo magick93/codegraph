@@ -5,6 +5,7 @@ use codegraph_core::caching_querier::CachingQuerier;
 use codegraph_core::traits::GraphQuerier;
 use tera::Tera;
 
+use crate::capabilities::{Capability, CapabilitySet};
 use crate::db;
 use crate::db::dialect::{dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::{Error, Result};
@@ -52,21 +53,11 @@ pub(crate) struct GeneratorContext<'a> {
     pub(crate) ifml_frameworks: Vec<String>,
     /// Optional IFML component mappings (`ifml-components.toml`).
     pub(crate) ifml_components: Option<&'a codegraph_config::IfmlComponentMappings>,
-    pub(crate) has_emdash: bool,
+    /// Per-run feature flags derived from the build plan (each with the
+    /// plan-absent fallback its former boolean flag carried).
+    pub(crate) capabilities: CapabilitySet,
     pub(crate) emdash_plugins: Option<crate::emdash::EmdashPluginsConfig>,
-    pub(crate) has_seed: bool,
-    pub(crate) has_webhooks: bool,
-    pub(crate) has_reports: bool,
-    pub(crate) has_atproto: bool,
-    pub(crate) has_fern: bool,
-    pub(crate) has_grpc: bool,
-    pub(crate) has_ui: bool,
-    pub(crate) has_admin_cli: bool,
-    pub(crate) has_auth_rate_limit: bool,
-    pub(crate) has_labels: bool,
     pub(crate) migration_strategy: String,
-    pub(crate) has_cli: bool,
-    pub(crate) has_test_gen: bool,
     /// Whether generated backend output routes into per-domain worker crates
     /// under `workers/{domain}/`. The build plan is authoritative; falls back
     /// to the project config (default: monolith) when no plan is provided.
@@ -156,7 +147,7 @@ pub(crate) async fn build_generator_context<'a>(
     type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
-    let current_target = DatabaseTarget::from_config(&project.database_target);
+    let current_target = project.database.database_target;
 
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
@@ -174,72 +165,13 @@ pub(crate) async fn build_generator_context<'a>(
     // include DTOs) are resolvable when earlier entities process their imports.
     register_entity_types(config);
 
-    let has_emdash = build_plan.map(|bp| bp.has_emdash).unwrap_or(false);
-    // Seed-provisioning (hr-seed sink + CLI) is strictly opt-in: unlike
-    // webhooks it introduces a workspace-relative path dependency
-    // (`../../hr-seed`), so plan-less runs and profiles that do not list
-    // `seed_provision` must not emit the seed module or `[[bin]]` entry.
-    let has_seed = build_plan
-        .map(|bp| bp.has_global_gen("seed_provision"))
-        .unwrap_or(false);
+    let capabilities = derive_capabilities(build_plan, domain_config_dir);
 
-    // Whether webhook generators are active.  Derived from build_plan when available;
-    // defaults to true for backward compatibility (all existing profiles include
-    // webhook_dispatch and webhook_endpoint_api).
-    let has_webhooks = build_plan
-        .map(|bp| bp.has_global_gen("webhook_dispatch"))
-        .unwrap_or(true);
-    let has_reports = build_plan
-        .map(|bp| bp.has_global_gen("report_views"))
-        .unwrap_or(true)
-        && reports_config_dir(domain_config_dir)
-            .join("reports.toml")
-            .exists();
-    let has_atproto = build_plan
-        .map(|bp| {
-            bp.has_global_gen("atproto_identity")
-                || bp.has_entity_gen("lexicon")
-                || bp.has_global_gen("lexicon_scaffold")
-                || bp.has_entity_gen("atproto_client")
-                || bp.has_global_gen("atproto_client_scaffold")
-        })
-        .unwrap_or(false);
-    let has_fern = build_plan
-        .map(|bp| bp.has_global_gen("fern_config"))
-        .unwrap_or(false);
-    let has_grpc = build_plan
-        .map(|bp| bp.has_global_gen("grpc_scaffold"))
-        .unwrap_or(false);
-    let has_ui = build_plan
-        .map(|bp| bp.has_global_gen("ui_scaffold"))
-        .unwrap_or(true);
-    let has_admin_cli = build_plan
-        .and_then(|bp| bp.features.get("has_admin_cli"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_auth_rate_limit = build_plan
-        .and_then(|bp| bp.features.get("has_auth_rate_limit"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let has_labels = build_plan
-        .and_then(|bp| bp.features.get("has_labels"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let migration_strategy = build_plan
         .and_then(|bp| bp.features.get("migration_strategy"))
         .and_then(|v| v.as_str())
         .unwrap_or("sea-orm")
         .to_string();
-    let has_cli = build_plan
-        .map(|bp| {
-            bp.has_global_gen("cli_scaffold")
-                || bp.has_entity_gen("cli_command")
-                || bp.has_domain_gen("cli_domain")
-        })
-        .unwrap_or(true);
-    let has_test_gen = build_plan
-        .map(|bp| bp.has_entity_gen("test"))
-        .unwrap_or(true);
 
     // Whether generated backend output routes into per-domain worker crates
     // under `workers/{domain}/`.  The build plan is authoritative; fall back
@@ -259,7 +191,7 @@ pub(crate) async fn build_generator_context<'a>(
         ui_domains,
         project,
         project_config,
-        has_emdash,
+        capabilities,
         emdash_plugins,
         current_target,
         schema_base_dir,
@@ -271,22 +203,119 @@ pub(crate) async fn build_generator_context<'a>(
         domain_config_dir,
         ifml_frameworks,
         ifml_components,
-        has_seed,
-        has_webhooks,
-        has_reports,
-        has_atproto,
-        has_fern,
-        has_grpc,
-        has_ui,
-        has_admin_cli,
-        has_auth_rate_limit,
-        has_labels,
         migration_strategy,
-        has_cli,
-        has_test_gen,
         workers_topology,
         capability_registry,
     })
+}
+
+/// Derive the per-run [`CapabilitySet`] from the build plan. Each condition
+/// mirrors its former `has_*` boolean verbatim, including the plan-absent
+/// fallback.
+fn derive_capabilities(
+    build_plan: Option<&crate::profile::BuildPlan>,
+    domain_config_dir: Option<&Path>,
+) -> CapabilitySet {
+    let mut caps = CapabilitySet::default();
+    if build_plan.map(|bp| bp.has_emdash).unwrap_or(false) {
+        caps.insert(Capability::EmDash);
+    }
+    // Seed-provisioning (hr-seed sink + CLI) is strictly opt-in: unlike
+    // webhooks it introduces a workspace-relative path dependency
+    // (`../../hr-seed`), so plan-less runs and profiles that do not list
+    // `seed_provision` must not emit the seed module or `[[bin]]` entry.
+    if build_plan
+        .map(|bp| bp.has_global_gen("seed_provision"))
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::Seed);
+    }
+    // Whether webhook generators are active.  Derived from build_plan when available;
+    // defaults to true for backward compatibility (all existing profiles include
+    // webhook_dispatch and webhook_endpoint_api).
+    if build_plan
+        .map(|bp| bp.has_global_gen("webhook_dispatch"))
+        .unwrap_or(true)
+    {
+        caps.insert(Capability::Webhooks);
+    }
+    if build_plan
+        .map(|bp| bp.has_global_gen("report_views"))
+        .unwrap_or(true)
+        && reports_config_dir(domain_config_dir)
+            .join("reports.toml")
+            .exists()
+    {
+        caps.insert(Capability::Reports);
+    }
+    if build_plan
+        .map(|bp| {
+            bp.has_global_gen("atproto_identity")
+                || bp.has_entity_gen("lexicon")
+                || bp.has_global_gen("lexicon_scaffold")
+                || bp.has_entity_gen("atproto_client")
+                || bp.has_global_gen("atproto_client_scaffold")
+        })
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::Atproto);
+    }
+    if build_plan
+        .map(|bp| bp.has_global_gen("fern_config"))
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::Fern);
+    }
+    if build_plan
+        .map(|bp| bp.has_global_gen("grpc_scaffold"))
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::Grpc);
+    }
+    if build_plan
+        .map(|bp| bp.has_global_gen("ui_scaffold"))
+        .unwrap_or(true)
+    {
+        caps.insert(Capability::Ui);
+    }
+    if build_plan
+        .and_then(|bp| bp.features.get("has_admin_cli"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::AdminCli);
+    }
+    if build_plan
+        .and_then(|bp| bp.features.get("has_auth_rate_limit"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::AuthRateLimit);
+    }
+    if build_plan
+        .and_then(|bp| bp.features.get("has_labels"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        caps.insert(Capability::Labels);
+    }
+    if build_plan
+        .map(|bp| {
+            bp.has_global_gen("cli_scaffold")
+                || bp.has_entity_gen("cli_command")
+                || bp.has_domain_gen("cli_domain")
+        })
+        .unwrap_or(true)
+    {
+        caps.insert(Capability::Cli);
+    }
+    if build_plan
+        .map(|bp| bp.has_entity_gen("test"))
+        .unwrap_or(true)
+    {
+        caps.insert(Capability::TestGen);
+    }
+    caps
 }
 
 /// Pre-register all expected entity types so types from entities later in
@@ -365,7 +394,7 @@ pub(crate) fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
     // plugins config declares) plus the site pages/e2e roots, so
     // `emit_manifests` writes per-package + per-site `.codegraph-manifest.json`
     // files the guard can consume.
-    if ctx.has_emdash {
+    if ctx.capabilities.has(Capability::EmDash) {
         if let Some(ref plugins) = ctx.emdash_plugins {
             for domain_key in plugins.plugins.keys() {
                 roots.push(crate::emdash::emdash_package_root(output_dir, domain_key));
@@ -374,13 +403,13 @@ pub(crate) fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
                 roots.push(crate::emdash::emdash_site_pages_root_with_base(
                     output_dir,
                     &ctx.project_config
-                        .map(|p| p.emdash_site_pages_base.clone())
+                        .map(|p| p.integration.emdash_site_pages_base.clone())
                         .unwrap_or_default(),
                 ));
                 roots.push(crate::emdash::emdash_site_e2e_root_with_base(
                     output_dir,
                     &ctx.project_config
-                        .map(|p| p.emdash_site_e2e_base.clone())
+                        .map(|p| p.integration.emdash_site_e2e_base.clone())
                         .unwrap_or_default(),
                 ));
             }

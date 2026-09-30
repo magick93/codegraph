@@ -8,7 +8,7 @@ use codegraph_core::traits::GraphQuerier;
 use crate::api::api_model::{resolve_entity_operations, resolve_path_segment};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ui::common::collect_ui_fields;
 
 use super::PlaywrightEntityContext;
@@ -27,8 +27,8 @@ impl PlaywrightEntityGenerator {
 
 #[async_trait]
 impl EntityGenerator for PlaywrightEntityGenerator {
-    fn name(&self) -> &str {
-        "playwright-entity"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::PlaywrightEntity
     }
 
     async fn generate(

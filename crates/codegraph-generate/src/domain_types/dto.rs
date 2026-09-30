@@ -7,7 +7,7 @@ use codegraph_core::traits::GraphQuerier;
 use crate::ddd::dto::build_dto_context;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 /// Generates DTO files into the domain-types crate instead of the generated app.
@@ -33,8 +33,8 @@ impl DomainTypesDtoGenerator {
 
 #[async_trait]
 impl EntityGenerator for DomainTypesDtoGenerator {
-    fn name(&self) -> &str {
-        "domain_types_dto"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::DomainTypesDto
     }
 
     async fn generate(

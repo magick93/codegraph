@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -71,8 +71,8 @@ impl WorkflowSeedGenerator {
 
 #[async_trait]
 impl GlobalGenerator for WorkflowSeedGenerator {
-    fn name(&self) -> &str {
-        "workflow_seed"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::WorkflowSeed
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {

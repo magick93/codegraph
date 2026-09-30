@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -31,8 +31,8 @@ impl IfmlNavigationGenerator {
 
 #[async_trait]
 impl GlobalGenerator for IfmlNavigationGenerator {
-    fn name(&self) -> &str {
-        "ifml-navigation"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::IfmlNavigation
     }
 
     async fn generate(

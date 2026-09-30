@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -75,8 +75,8 @@ impl HookRegistryGenerator {
 
 #[async_trait]
 impl GlobalGenerator for HookRegistryGenerator {
-    fn name(&self) -> &str {
-        "hook_registry"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::HookRegistry
     }
 
     async fn generate(

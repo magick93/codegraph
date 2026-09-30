@@ -5,7 +5,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -25,8 +25,8 @@ impl LexiconEmitter {
 
 #[async_trait]
 impl EntityGenerator for LexiconEmitter {
-    fn name(&self) -> &str {
-        "lexicon"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Lexicon
     }
 
     async fn generate(
@@ -61,7 +61,7 @@ impl EntityGenerator for LexiconEmitter {
 
         let content = render_template_with_project(tera, template, &context, project)?;
 
-        let authority = project.atproto_authority.as_str();
+        let authority = project.atproto.atproto_authority.as_str();
         let nsid_parts: Vec<&str> = lexicon
             .nsid
             .strip_prefix(&format!("{}.", authority))

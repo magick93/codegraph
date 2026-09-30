@@ -7,30 +7,14 @@ use tera::Tera;
 use crate::db::dialect::{db_template_for, SqlDialect};
 use crate::error::{Error, Result};
 use crate::project_config::{GenerationEntry, ProjectConfig};
-use crate::traits::GeneratedFile;
+use crate::traits::{DomainGeneratorKind, EntityGeneratorKind, GeneratedFile};
 
 /// Returns true if the generator name is an API-layer entity generator
 /// (handler, workflow, media, test, UI, CLI, gRPC, playwright).
 /// DDD generators (ddl, entity, repo, command, query, event, dto, lifecycle_trait,
 /// domain_types) are NOT considered API generators.
 pub fn is_api_entity_generator(name: &str) -> bool {
-    matches!(
-        name,
-        "handler"
-            | "workflow_action"
-            | "media_route"
-            | "test"
-            | "ui-page"
-            | "ui-form"
-            | "ui-store"
-            | "ui-e2e-test"
-            | "playwright-entity"
-            | "ui-descriptor"
-            | "ui-shell"
-            | "cli_command"
-            | "grpc_proto"
-            | "grpc_service"
-    )
+    EntityGeneratorKind::from_name(name).is_some_and(EntityGeneratorKind::is_api)
 }
 
 /// True for entity generators whose output is backend Rust source scoped to a
@@ -48,26 +32,14 @@ pub fn is_api_entity_generator(name: &str) -> bool {
 /// codegen crate at the output root (`queries/{domain}/{entity}.sql`), which
 /// every worker crate depends on by path.
 pub fn is_worker_routed_entity_generator(name: &str) -> bool {
-    matches!(
-        name,
-        "sea_orm_entity"
-            | "cornucopia_repo"
-            | "repository"
-            | "command"
-            | "query"
-            | "event"
-            | "dto"
-            | "handler"
-            | "workflow_action"
-            | "media_route"
-    )
+    EntityGeneratorKind::from_name(name).is_some_and(EntityGeneratorKind::is_worker_routed)
 }
 
 /// True for domain generators whose output belongs to a single domain's
 /// backend crate (`src/domain/{domain}/`, `src/api/{domain}/`).  UI, CLI and
 /// gRPC domain generators stay anchored at the output root.
 pub fn is_worker_routed_domain_generator(name: &str) -> bool {
-    matches!(name, "errors" | "router" | "links")
+    DomainGeneratorKind::from_name(name).is_some_and(DomainGeneratorKind::is_worker_routed)
 }
 
 /// Resolve the construction-time base directory for a generator.
@@ -137,6 +109,30 @@ pub fn render_template_with_project_and_dialect<C: serde::Serialize>(
 ) -> Result<String> {
     let resolved = db_template_for(dialect, template_name);
     render_template_with_project(tera, &resolved, ctx, project)
+}
+
+/// Partitioned migration sequence bands guaranteeing lexicographic == numeric
+/// order: platform bootstrap files occupy 0..9 (four-digit prefixes), codelists
+/// start at [`MigrationSeq::CODELIST_START`], entities at
+/// [`MigrationSeq::ENTITY_START`]; emitted prefixes are zero-padded to six
+/// digits so ordering stays correct across the five-digit boundary (9999 →
+/// 010000).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MigrationSeq(u32);
+
+impl MigrationSeq {
+    /// First sequence of the codelist band (`CODELIST_START + codelist idx`).
+    pub(crate) const CODELIST_START: MigrationSeq = MigrationSeq(10);
+    /// First sequence of the entity band, clear of the codelist range.
+    pub(crate) const ENTITY_START: MigrationSeq = MigrationSeq(500);
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn plus(self, n: u32) -> Self {
+        MigrationSeq(self.0 + n)
+    }
 }
 
 /// Add a numeric prefix to migration file paths so alphabetical order matches

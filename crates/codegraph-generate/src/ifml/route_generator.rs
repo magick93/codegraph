@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
@@ -100,8 +100,8 @@ impl IfmlRouteGenerator {
 
 #[async_trait]
 impl GlobalGenerator for IfmlRouteGenerator {
-    fn name(&self) -> &str {
-        "ifml-route"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::IfmlRoute
     }
 
     async fn generate(
@@ -141,11 +141,11 @@ impl GlobalGenerator for IfmlRouteGenerator {
         // deduped like the entity pipeline's ui-page generator). Flag off ⇒
         // no plans, no lines, byte-identical output.
         let (ux_plans, ux_diag_lines) =
-            resolve_generation_ux(db, config, &model, project.ux.as_ref()).await?;
+            resolve_generation_ux(db, config, &model, project.ux.ux.as_ref()).await?;
         for line in &ux_diag_lines {
             eprintln!("warning: ux-rules: {line}");
         }
-        let ux_generation = project.ux.as_ref().map(|rules| UxGeneration {
+        let ux_generation = project.ux.ux.as_ref().map(|rules| UxGeneration {
             rules,
             plans: &ux_plans,
         });
@@ -154,7 +154,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
             let ctx = build_page_context(
                 db,
                 config,
-                &project.api_version,
+                &project.identity.api_version,
                 vc,
                 self.mappings.as_ref(),
                 &modal_targets,
@@ -174,7 +174,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
             if let Some(ref route_load_fn) = self.output_paths.route_load {
                 let load_ctx =
-                    build_load_context(&project.api_version, vc, &ctx.components, &denial);
+                    build_load_context(&project.identity.api_version, vc, &ctx.components, &denial);
                 if let Ok(content) = render_template(tera, &load_template, &load_ctx) {
                     files.push(GeneratedFile {
                         path: self.output_dir.join(route_load_fn(&vc.name)),
@@ -1201,7 +1201,7 @@ pub(crate) fn page_guard_expr(
     vc: &IfmlViewContainer,
     project: &ProjectConfig,
 ) -> crate::error::Result<Option<String>> {
-    if !project.expr_ir {
+    if !project.codegen.expr_ir {
         return Ok(None);
     }
     let Some(expr_json) = vc.conditional_expr_json.as_deref() else {
@@ -3041,6 +3041,7 @@ fn guard_consts(vc: &IfmlViewContainer) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project_config::CodegenConfig;
     use crate::template_engine::create_tera;
     use codegraph_core::mock::MockEngine;
     use rex_ifml::InputFieldType;
@@ -6766,7 +6767,10 @@ testids = { root = "side-nav" }
             "expr_ir OFF must never lower a guard"
         );
         let on = ProjectConfig {
-            expr_ir: true,
+            codegen: CodegenConfig {
+                expr_ir: true,
+                ..Default::default()
+            },
             ..ProjectConfig::default()
         };
         assert_eq!(
@@ -6781,7 +6785,10 @@ testids = { root = "side-nav" }
     #[test]
     fn page_guard_is_none_without_expr_json_or_condition() {
         let project = ProjectConfig {
-            expr_ir: true,
+            codegen: CodegenConfig {
+                expr_ir: true,
+                ..Default::default()
+            },
             ..ProjectConfig::default()
         };
         let mut unconditioned = plain_vc("Plain");
@@ -6814,7 +6821,10 @@ testids = { root = "side-nav" }
         );
 
         let on = ProjectConfig {
-            expr_ir: true,
+            codegen: CodegenConfig {
+                expr_ir: true,
+                ..Default::default()
+            },
             ..ProjectConfig::default()
         };
         let mut on_ctx = page_context_for(&vc, None);

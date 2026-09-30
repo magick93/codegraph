@@ -10,7 +10,7 @@ use crate::api::api_model::{
 };
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 
 use super::common::{collect_child_sections, collect_ui_fields};
@@ -146,8 +146,8 @@ impl UiE2eTestGenerator {
 
 #[async_trait]
 impl EntityGenerator for UiE2eTestGenerator {
-    fn name(&self) -> &str {
-        "ui-e2e-test"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::UiE2eTest
     }
 
     async fn generate(

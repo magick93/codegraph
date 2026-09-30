@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 use codegraph_naming;
@@ -39,8 +39,8 @@ impl ErrorGenerator {
 
 #[async_trait]
 impl DomainGenerator for ErrorGenerator {
-    fn name(&self) -> &str {
-        "errors"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::Errors
     }
 
     async fn generate(

@@ -820,7 +820,7 @@ fn all_files(
 fn ux_project() -> codegraph::generate::ProjectConfig {
     let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
     codegraph::generate::ProjectConfig {
-        ux: Some(rules),
+        ux: codegraph::generate::UxConfig { ux: Some(rules) },
         ..ProjectConfig::default()
     }
 }
@@ -1157,7 +1157,7 @@ fn ux_spec_timeline_rule_emits_timeline_block_skips_table_blocks() {
     .unwrap()
     .rules;
     let project = codegraph::generate::ProjectConfig {
-        ux: Some(rules),
+        ux: codegraph::generate::UxConfig { ux: Some(rules) },
         ..ProjectConfig::default()
     };
 

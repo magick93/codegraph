@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -45,8 +45,8 @@ impl CommandGenerator {
 
 #[async_trait]
 impl EntityGenerator for CommandGenerator {
-    fn name(&self) -> &str {
-        "command"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Command
     }
 
     async fn generate(

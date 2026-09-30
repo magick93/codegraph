@@ -11,7 +11,8 @@ use crate::error::{Error, Result};
 ///
 /// Selects which ORM/query framework generates entity models and repository
 /// implementations. The DDL generator is provider-agnostic and always runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PersistenceProvider {
     #[default]
     SeaOrm,
@@ -45,7 +46,8 @@ impl fmt::Display for PersistenceProvider {
 /// Determines whether the generated backend is a single monolithic axum
 /// server (today's default) or a set of Cloudflare Workers — one per
 /// bounded-context domain — behind a gateway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeploymentTopology {
     /// Today's single-crate axum server.
     #[default]

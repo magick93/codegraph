@@ -10,7 +10,7 @@ use crate::filter_fields::{
     resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
 };
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::api::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -56,8 +56,8 @@ impl CliCommandGenerator {
 
 #[async_trait]
 impl EntityGenerator for CliCommandGenerator {
-    fn name(&self) -> &str {
-        "cli_command"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::CliCommand
     }
 
     async fn generate(

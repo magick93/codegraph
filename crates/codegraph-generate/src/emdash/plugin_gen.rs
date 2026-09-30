@@ -22,7 +22,7 @@ use crate::emdash::context::{
 use crate::error::Result;
 use crate::playwright::ts_entity_gen::expand_vo_fields;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 
 /// Template render wrapper: the package context is exposed to templates as
@@ -153,8 +153,14 @@ impl EmdashPluginGenerator {
                 );
                 continue;
             };
-            let model =
-                build_entity_model(db, title, domain, config, &project.atproto_authority).await?;
+            let model = build_entity_model(
+                db,
+                title,
+                domain,
+                config,
+                &project.atproto.atproto_authority,
+            )
+            .await?;
             let properties = db.get_properties_in_domain(title, domain).await?;
             let fields = expand_vo_fields(db, title, &model.fields, &properties).await?;
             let codelists = Self::resolve_codelist_options(db, &properties).await;
@@ -174,8 +180,8 @@ impl EmdashPluginGenerator {
 
 #[async_trait]
 impl DomainGenerator for EmdashPluginGenerator {
-    fn name(&self) -> &str {
-        "emdash_plugin"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::EmdashPlugin
     }
 
     async fn generate(
@@ -296,7 +302,7 @@ impl DomainGenerator for EmdashPluginGenerator {
         if !ctx.entities.is_empty() {
             let pages_root = super::emdash_site_pages_root_with_base(
                 &self.output_dir,
-                &project.emdash_site_pages_base,
+                &project.integration.emdash_site_pages_base,
             );
             let list_entity = ctx
                 .entities
@@ -348,7 +354,7 @@ impl DomainGenerator for EmdashPluginGenerator {
             // Generated Playwright CRUD journey under the site e2e root.
             let e2e_root = super::emdash_site_e2e_root_with_base(
                 &self.output_dir,
-                &project.emdash_site_e2e_base,
+                &project.integration.emdash_site_e2e_base,
             );
             files.push(GeneratedFile {
                 path: e2e_root

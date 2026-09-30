@@ -6,8 +6,12 @@ use serde::Serialize;
 
 use crate::domain_model::build_entity_model;
 use crate::error::Result;
+#[cfg(test)]
+use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, EntityGenerator, GeneratedFile};
+use crate::traits::{
+    DomainGenerator, DomainGeneratorKind, EntityGenerator, EntityGeneratorKind, GeneratedFile,
+};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -103,8 +107,8 @@ impl AtprotoXrpcEmitter {
 
 #[async_trait]
 impl EntityGenerator for AtprotoXrpcEmitter {
-    fn name(&self) -> &str {
-        "atproto_xrpc"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::AtprotoXrpc
     }
 
     async fn generate(
@@ -116,7 +120,7 @@ impl EntityGenerator for AtprotoXrpcEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -125,9 +129,14 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             None => return Ok(Vec::new()),
         };
 
-        let model =
-            build_entity_model(db, schema_title, domain, config, &project.atproto_authority)
-                .await?;
+        let model = build_entity_model(
+            db,
+            schema_title,
+            domain,
+            config,
+            &project.atproto.atproto_authority,
+        )
+        .await?;
 
         let fields: Vec<XrpcField> = model
             .fields
@@ -204,8 +213,8 @@ impl EntityGenerator for AtprotoXrpcEmitter {
 
 #[async_trait]
 impl DomainGenerator for AtprotoXrpcEmitter {
-    fn name(&self) -> &str {
-        "atproto_xrpc_router"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::AtprotoXrpcRouter
     }
 
     async fn generate(
@@ -217,7 +226,7 @@ impl DomainGenerator for AtprotoXrpcEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -307,7 +316,10 @@ mod tests {
 
     fn make_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

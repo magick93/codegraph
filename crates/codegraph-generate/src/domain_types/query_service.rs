@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -37,8 +37,8 @@ impl QueryServiceGenerator {
 
 #[async_trait]
 impl EntityGenerator for QueryServiceGenerator {
-    fn name(&self) -> &str {
-        "domain_types_query_service"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::DomainTypesQueryService
     }
 
     async fn generate(
