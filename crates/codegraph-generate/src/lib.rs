@@ -33,6 +33,7 @@ pub mod test;
 pub mod ui;
 pub mod webhook;
 
+mod capabilities;
 mod context;
 mod fk;
 mod ordering;

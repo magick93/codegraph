@@ -17,7 +17,7 @@ use crate::manifest;
 use crate::ordering::{all_domains_for_generation, compute_generation_order};
 use crate::output::{
     clean_generated_output, clean_stale_ifml_routes, generate_mod_files, generate_test_mod_files,
-    is_api_entity_generator, prefix_migration_path, prune_entity_mod, write_output,
+    is_api_entity_generator, prefix_migration_path, prune_entity_mod, write_output, MigrationSeq,
 };
 use crate::project_config::{GenerationEntry, GeneratorOpts, ProjectConfig};
 use crate::registry::{build_domain_generators, build_entity_generators, build_global_generators};
@@ -249,8 +249,10 @@ fn clean_stale_migrations(ctx: &GeneratorContext<'_>) {
                     .find(|c: char| !c.is_ascii_digit())
                     .unwrap_or(stem.len());
                 if let Ok(seq) = stem[..prefix_end].parse::<usize>() {
-                    // Generated migrations start at seq 10 (codelist, integration, entity).
-                    if seq >= 10 {
+                    // Generated migrations start at the codelist band
+                    // (codelist, integration, entity); platform bootstrap
+                    // files below it are preserved.
+                    if seq >= MigrationSeq::CODELIST_START.get() as usize {
                         let _ = fs::remove_file(&path);
                         removed += 1;
                     }
@@ -343,14 +345,13 @@ fn write_entity_results(
     entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)>,
     report: &mut report::GenerationReport,
 ) -> Result<()> {
-    // Entity migrations start at 500 to avoid overlap with codelist range (10..200).
     // Deduplicate migration files by their unprefixed base name: two different schema
     // titles can produce the same pg_table_name (e.g. "AssessmentAccessType" and a
     // cross-domain ref "AssessmentAccess" both → assessments_assessment_access.sql).
     // Keep only the first occurrence; skip subsequent duplicates.
     let mut seen_migration_names: std::collections::HashSet<String> =
         std::collections::HashSet::new();
-    let mut entity_seq = 500;
+    let mut entity_seq = MigrationSeq::ENTITY_START;
     for (entity_files, errors) in entity_results.into_iter() {
         for file in entity_files {
             // Check for duplicate migration base names before assigning seq number.
@@ -379,8 +380,8 @@ fn write_entity_results(
                     }
                 }
             }
-            let file = prefix_migration_path(file, entity_seq);
-            entity_seq += 1;
+            let file = prefix_migration_path(file, entity_seq.get() as usize);
+            entity_seq = entity_seq.plus(1);
             write_output(&file)?;
             report.files.push(file);
         }
@@ -419,7 +420,8 @@ async fn run_codelist_generators(
                 )
                 .await?;
             for file in files {
-                let file = prefix_migration_path(file, idx + 10);
+                let seq = MigrationSeq::CODELIST_START.plus(idx as u32);
+                let file = prefix_migration_path(file, seq.get() as usize);
                 write_output(&file)?;
                 report.files.push(file);
             }

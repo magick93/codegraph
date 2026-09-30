@@ -139,6 +139,30 @@ pub fn render_template_with_project_and_dialect<C: serde::Serialize>(
     render_template_with_project(tera, &resolved, ctx, project)
 }
 
+/// Partitioned migration sequence bands guaranteeing lexicographic == numeric
+/// order: platform bootstrap files occupy 0..9 (four-digit prefixes), codelists
+/// start at [`MigrationSeq::CODELIST_START`], entities at
+/// [`MigrationSeq::ENTITY_START`]; emitted prefixes are zero-padded to six
+/// digits so ordering stays correct across the five-digit boundary (9999 →
+/// 010000).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MigrationSeq(u32);
+
+impl MigrationSeq {
+    /// First sequence of the codelist band (`CODELIST_START + codelist idx`).
+    pub(crate) const CODELIST_START: MigrationSeq = MigrationSeq(10);
+    /// First sequence of the entity band, clear of the codelist range.
+    pub(crate) const ENTITY_START: MigrationSeq = MigrationSeq(500);
+
+    pub(crate) const fn get(self) -> u32 {
+        self.0
+    }
+
+    pub(crate) const fn plus(self, n: u32) -> Self {
+        MigrationSeq(self.0 + n)
+    }
+}
+
 /// Add a numeric prefix to migration file paths so alphabetical order matches
 /// dependency order. Non-migration files are returned unchanged.
 ///
