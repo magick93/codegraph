@@ -224,7 +224,7 @@ impl DomainGenerator for ConditionValidationsGenerator {
                     (base, full)
                 })
                 .collect();
-            entity_ref_fields.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+            entity_ref_fields.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
             let conditions: Vec<ConditionEmission> = db
                 .get_conditions_for_schema(title)
                 .await?
