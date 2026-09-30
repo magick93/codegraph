@@ -92,6 +92,11 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         ));
     };
 
+    // Fast doctor (#358): npx/pnpm/supabase/chromium/ports/disk in seconds —
+    // a missing npx used to surface only at the supabase stage as
+    // `failed to spawn npx`, after nothing useful had happened yet.
+    crate::doctor::run_fast_doctor(config, crate::doctor::FastDoctorSuite::E2e).await?;
+
     // Port preflight: the suite binds both ports itself, and a leftover dev
     // server must fail the run in seconds instead of after supabase/build.
     // Registry-known prior servers (`--keep` leaks) are taken over by
@@ -499,10 +504,7 @@ async fn e2e_playwright(
     for (key, value) in super::ui::playwright_env(config, api_key) {
         cmd.env(key, value);
     }
-    if let Some(chromium) = find_chromium(&[
-        Path::new("/snap/bin/chromium"),
-        Path::new("/usr/bin/chromium-browser"),
-    ]) {
+    if let Some(chromium) = crate::env::find_chromium() {
         cmd.env("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", chromium);
     }
     cmd.current_dir(&config.ui_dir);
@@ -543,10 +545,7 @@ async fn e2e_playwright(
         for (key, value) in super::ui::playwright_env(config, api_key) {
             retry_cmd.env(key, value);
         }
-        if let Some(chromium) = find_chromium(&[
-            Path::new("/snap/bin/chromium"),
-            Path::new("/usr/bin/chromium-browser"),
-        ]) {
+        if let Some(chromium) = crate::env::find_chromium() {
             retry_cmd.env("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", chromium);
         }
         retry_cmd.current_dir(&config.ui_dir);
@@ -874,14 +873,6 @@ fn supabase_health_url(config: &OpsConfig) -> String {
         .unwrap_or_else(|| "http://localhost:54321/auth/v1/health".to_string())
 }
 
-/// First existing candidate path (system chromium fallback for Playwright).
-fn find_chromium(candidates: &[&Path]) -> Option<PathBuf> {
-    candidates
-        .iter()
-        .find(|p| p.is_file())
-        .map(|p| p.to_path_buf())
-}
-
 /// True when `curl -sf` succeeds against `url`.
 async fn http_ok(url: &str) -> bool {
     Command::new("curl")
@@ -1017,6 +1008,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 
@@ -1102,18 +1095,6 @@ mod tests {
             supabase_health_url(&cfg),
             "http://localhost:54321/auth/v1/health"
         );
-    }
-
-    #[test]
-    fn find_chromium_picks_first_existing() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake = dir.path().join("chromium");
-        std::fs::write(&fake, "x").unwrap();
-        assert_eq!(
-            find_chromium(&[Path::new("/nonexistent/chromium"), &fake]),
-            Some(fake)
-        );
-        assert_eq!(find_chromium(&[Path::new("/nonexistent/chromium")]), None);
     }
 
     #[test]

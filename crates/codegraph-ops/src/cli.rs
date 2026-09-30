@@ -132,6 +132,11 @@ pub struct Cli {
     /// this forces the clear up front for every other suite.
     #[arg(long, global = true)]
     clear_cache: bool,
+
+    /// Skip the automatic failure artifact bundle ({root}/test-results/
+    /// artifacts-*) that suites otherwise assemble on failure (#358).
+    #[arg(long, global = true)]
+    no_bundle: bool,
 }
 
 #[derive(Subcommand)]
@@ -184,8 +189,14 @@ enum Cmd {
         #[arg(long)]
         deep: bool,
     },
-    /// One-shot state report: generated tree, binaries, databases, ports.
+    /// One-shot state report: generated tree, binaries, databases, ports,
+    /// tools, disk.
     Doctor,
+    /// Assemble a failure artifact bundle on demand (server logs, hurl +
+    /// Playwright results, the last run's results/metrics) into
+    /// {root}/test-results/artifacts-*. Suites do this automatically on
+    /// failure unless --no-bundle is given.
+    Bundle,
     /// Smoke-test a remote deployment.
     Smoke {
         #[arg(long, default_value = "http://localhost:3000")]
@@ -364,6 +375,18 @@ pub async fn main() -> i32 {
             output::bold("Running doctor (workspace state report)");
             crate::doctor::run_doctor(&config).await
         }
+        Cmd::Bundle => {
+            output::bold("Assembling artifact bundle");
+            let extras = bundle_extra_files(&cli);
+            let refs: Vec<&Path> = extras.iter().map(|p| p.as_path()).collect();
+            let report = crate::bundle::assemble_for_config(&config, "bundle", &refs);
+            if report.copied == 0 && report.skipped == 0 {
+                output::warn(
+                    "nothing to bundle — no server logs, hurl or Playwright results found",
+                );
+            }
+            Ok(())
+        }
         Cmd::Smoke {
             api_url,
             web_url,
@@ -496,10 +519,22 @@ fn subcommand_name(cmd: &Cmd) -> &'static str {
         Cmd::Workers => "workers",
         Cmd::Clean { .. } => "clean",
         Cmd::Doctor => "doctor",
+        Cmd::Bundle => "bundle",
         Cmd::Smoke { .. } => "smoke",
         Cmd::Quality { .. } => "quality",
         Cmd::Ext { .. } => "ext",
     }
+}
+
+/// The run's own artifact files (`--results` JSON, `--metrics`) that exist on
+/// disk — copied into a failure bundle.
+fn bundle_extra_files(cli: &Cli) -> Vec<PathBuf> {
+    [cli.results.as_ref(), cli.metrics.as_ref()]
+        .into_iter()
+        .flatten()
+        .filter(|p| p.is_file())
+        .cloned()
+        .collect()
 }
 
 fn build_playwright_args(cli: &Cli, extra: &[String]) -> Vec<String> {
@@ -555,6 +590,12 @@ fn failure_exit_code(e: &OpsError) -> i32 {
 /// skip `--results` entirely), then print the error. The stage recorded in
 /// the early report is the most recent ▸-level section title
 /// (`output::current_section`).
+///
+/// On failure the artifact bundler also runs (#358) unless `--no-bundle`:
+/// server logs, hurl logs, the Playwright summary and this run's
+/// results/metrics land in one triage directory, announced by the LAST
+/// summary line (`▸ artifacts: …`). Best-effort — bundling never masks the
+/// real failure.
 fn fail_suite(cli: &Cli, config: &OpsConfig, suite: &str, e: OpsError) -> i32 {
     if let Some(path) = &cli.results {
         if !crate::results::report_written(suite) {
@@ -570,7 +611,20 @@ fn fail_suite(cli: &Cli, config: &OpsConfig, suite: &str, e: OpsError) -> i32 {
             }
         }
     }
-    report_error(suite, e)
+    let code = report_error(suite, e);
+    if !cli.no_bundle && auto_bundles(suite) {
+        let extras = bundle_extra_files(cli);
+        let refs: Vec<&Path> = extras.iter().map(|p| p.as_path()).collect();
+        let _ = crate::bundle::assemble_for_config(config, suite, &refs);
+    }
+    code
+}
+
+/// Suites that assemble a failure artifact bundle automatically (#358).
+/// `doctor`/`smoke`/`quality`/`ext`/`bundle` are reports or one-shots, not
+/// test runs with server logs worth triaging.
+fn auto_bundles(suite: &str) -> bool {
+    matches!(suite, "api" | "cli" | "e2e" | "ui" | "full" | "workers")
 }
 
 /// Locate the manifest when `--config` is absent: walk UP from `cwd`
@@ -790,6 +844,47 @@ mod tests {
         assert!(cli.clear_cache);
         let cli = Cli::try_parse_from(["testkit", "ui", "--reuse"]).unwrap();
         assert!(cli.reuse && !cli.clear_cache);
+    }
+
+    #[test]
+    fn no_bundle_defaults_off_and_parses_globally() {
+        let cli = Cli::try_parse_from(["testkit", "e2e"]).unwrap();
+        assert!(!cli.no_bundle, "bundling on failure is the default");
+        let cli = Cli::try_parse_from(["testkit", "api", "--no-bundle"]).unwrap();
+        assert!(cli.no_bundle);
+        // The bundle subcommand parses standalone.
+        let cli = Cli::try_parse_from(["testkit", "bundle"]).unwrap();
+        assert!(matches!(cli.command, Cmd::Bundle));
+        assert_eq!(subcommand_name(&cli.command), "bundle");
+    }
+
+    #[test]
+    fn auto_bundle_scoped_to_test_suites() {
+        for suite in ["api", "cli", "e2e", "ui", "full", "workers"] {
+            assert!(auto_bundles(suite), "{suite} must auto-bundle on failure");
+        }
+        for suite in ["doctor", "smoke", "quality", "ext", "bundle", "clean"] {
+            assert!(!auto_bundles(suite), "{suite} must NOT auto-bundle");
+        }
+    }
+
+    #[test]
+    fn bundle_extra_files_only_include_existing_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = dir.path().join("results.json");
+        std::fs::write(&results, "{}").unwrap();
+        let missing = dir.path().join("nope.tsv");
+        let cli = Cli::try_parse_from([
+            "testkit",
+            "api",
+            "--results",
+            results.to_str().unwrap(),
+            "--metrics",
+            missing.to_str().unwrap(),
+        ])
+        .unwrap();
+        let extras = bundle_extra_files(&cli);
+        assert_eq!(extras, vec![results]);
     }
 
     #[test]

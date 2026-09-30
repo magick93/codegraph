@@ -80,6 +80,64 @@ pub struct OpsManifest {
     /// External test extensions (consumer-specific integrations).
     #[serde(default)]
     pub extensions: Vec<OpsExtension>,
+    /// Doctor thresholds (`[doctor]`, #358). Additive: manifests without the
+    /// section parse unchanged and take the defaults.
+    #[serde(default)]
+    pub doctor: OpsDoctor,
+    /// Failure artifact bundle settings (`[bundle]`, #358). Additive.
+    #[serde(default)]
+    pub bundle: OpsBundle,
+}
+
+/// `[doctor]` — disk-space thresholds for the expanded doctor (#358).
+///
+/// The harness writes generated output, cargo `target/`, agent scratch and
+/// Playwright artifacts to the manifest root / app target / temp filesystems.
+/// A real consumer run exhausted the /tmp quota and lost hours with no early
+/// signal; these thresholds turn that into a warning and, at the floor, a
+/// blocking problem.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct OpsDoctor {
+    /// Block (non-zero doctor exit / failed fast-doctor subset) when free
+    /// space drops below this many GB. Default: 2.
+    pub min_free_gb: Option<u64>,
+    /// Warn when free space drops below this many GB. Default: 10.
+    pub warn_free_gb: Option<u64>,
+}
+
+impl OpsDoctor {
+    /// Blocking free-space floor in GB (default 2).
+    pub fn min_free_gb_or(&self) -> u64 {
+        self.min_free_gb.unwrap_or(2)
+    }
+
+    /// Free-space warning level in GB (default 10).
+    pub fn warn_free_gb_or(&self) -> u64 {
+        self.warn_free_gb.unwrap_or(10)
+    }
+}
+
+/// `[bundle]` — failure artifact bundle settings (#358).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct OpsBundle {
+    /// Total bundle size cap in MB. Sources that no longer fit are
+    /// tail-copied or skipped, with every skip recorded in the bundle's
+    /// `bundle.json`. Default: 200.
+    pub max_mb: u64,
+    /// How many `artifacts-*` dirs to keep under `test-results/`; older ones
+    /// are pruned after each bundle. Default: 3.
+    pub keep: u32,
+}
+
+impl Default for OpsBundle {
+    fn default() -> Self {
+        Self {
+            max_mb: 200,
+            keep: 3,
+        }
+    }
 }
 
 fn default_output_dir() -> PathBuf {
@@ -355,6 +413,8 @@ mod tests {
                 requires_api: true,
                 args: vec![],
             }],
+            doctor: OpsDoctor::default(),
+            bundle: OpsBundle::default(),
         };
         let toml_str = toml::to_string(&m).unwrap();
         let back: OpsManifest = toml::from_str(&toml_str).unwrap();
@@ -617,5 +677,112 @@ fatal = true
         assert!(!m.hooks[1].fatal_or(true));
         // Explicit escalation.
         assert!(m.hooks[2].fatal_or(true));
+    }
+
+    #[test]
+    fn doctor_section_defaults_and_overrides() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(m.doctor.min_free_gb_or(), 2, "default block floor is 2 GB");
+        assert_eq!(
+            m.doctor.warn_free_gb_or(),
+            10,
+            "default warn level is 10 GB"
+        );
+
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[doctor]
+min_free_gb = 5
+warn_free_gb = 20
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(m.doctor.min_free_gb_or(), 5);
+        assert_eq!(m.doctor.warn_free_gb_or(), 20);
+    }
+
+    #[test]
+    fn bundle_section_defaults_and_overrides() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(m.bundle.max_mb, 200);
+        assert_eq!(m.bundle.keep, 3);
+
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[bundle]
+max_mb = 512
+keep = 10
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(m.bundle.max_mb, 512);
+        assert_eq!(m.bundle.keep, 10);
+        // And it round-trips.
+        let serialized = toml::to_string(&m).unwrap();
+        let back: OpsManifest = toml::from_str(&serialized).unwrap();
+        assert_eq!(back.bundle, m.bundle);
+    }
+
+    #[test]
+    fn doctor_and_bundle_sections_roundtrip() {
+        let m = OpsManifest {
+            app_name: "hr-app".into(),
+            graph_binary: None,
+            schemas_dir: None,
+            mox_files: Vec::new(),
+            rosetta_files: Vec::new(),
+            classifier: None,
+            domain_config: None,
+            profile: None,
+            output_dir: PathBuf::from("generated-app"),
+            ui_dir: None,
+            smoke: None,
+            api_version: "v1".to_string(),
+            servers: OpsServers::default(),
+            database: OpsDatabase {
+                api: OpsDbTarget {
+                    host: "localhost".into(),
+                    port: 5432,
+                    user: "u".into(),
+                    password: "p".into(),
+                    database: "postgres".into(),
+                    reset_sql: None,
+                    seed_sql: None,
+                    grant_role: None,
+                    grant_strict: None,
+                },
+                e2e: None,
+                e2e_app: None,
+            },
+            supabase: None,
+            capabilities: OpsCapabilities::default(),
+            hurl: None,
+            hooks: vec![],
+            extensions: vec![],
+            doctor: OpsDoctor {
+                min_free_gb: Some(1),
+                warn_free_gb: Some(7),
+            },
+            bundle: OpsBundle {
+                max_mb: 64,
+                keep: 5,
+            },
+        };
+        let serialized = toml::to_string(&m).unwrap();
+        let back: OpsManifest = toml::from_str(&serialized).unwrap();
+        assert_eq!(back.doctor.min_free_gb_or(), 1);
+        assert_eq!(back.doctor.warn_free_gb_or(), 7);
+        assert_eq!(back.bundle.max_mb, 64);
+        assert_eq!(back.bundle.keep, 5);
     }
 }

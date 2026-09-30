@@ -196,6 +196,8 @@ impl GlobalGenerator for OpsManifestGenerator {
             hurl: None,
             hooks: Vec::new(),
             extensions: Vec::new(),
+            doctor: Default::default(),
+            bundle: Default::default(),
         };
 
         let manifest_toml = toml::to_string_pretty(&manifest)

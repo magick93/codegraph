@@ -989,6 +989,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 

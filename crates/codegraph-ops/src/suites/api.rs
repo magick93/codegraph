@@ -167,6 +167,12 @@ async fn run_api_inner(
 ) -> OpsResult<(TestCounters, bool)> {
     let mut counters = TestCounters::new();
 
+    // ---- 0. Fast doctor (#358) ----
+    // Cheap tool/filesystem/port checks fail in seconds with hints instead
+    // of after the generate+build stage below (a missing hurl used to
+    // surface only here, minutes into a full rebuild).
+    crate::doctor::run_fast_doctor(config, crate::doctor::FastDoctorSuite::Api).await?;
+
     // ---- 0. Generate + build ----
     // By default the suite regenerates from the manifest's profile and
     // rebuilds the app, so `testkit api` alone is generate → build → test
@@ -1868,6 +1874,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 
