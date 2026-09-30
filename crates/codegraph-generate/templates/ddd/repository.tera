@@ -83,7 +83,8 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% if is_auditable %}
         include_deleted: bool,
 {% endif %}
-    ) -> Result<(Vec<{{ entity_name }}Response>, u64), Box<dyn std::error::Error>>;
+{% if ux_sort %}        sort: Option<(String, bool)>,
+{% endif %}    ) -> Result<(Vec<{{ entity_name }}Response>, u64), Box<dyn std::error::Error>>;
 {% endif %}
 {% if has_fts %}
 

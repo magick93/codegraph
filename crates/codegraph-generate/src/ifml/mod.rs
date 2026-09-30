@@ -9,6 +9,7 @@ pub mod output_paths;
 pub mod profiles;
 pub mod querier;
 pub mod route_generator;
+pub mod selectors;
 pub mod skeleton;
 
 pub use context::*;

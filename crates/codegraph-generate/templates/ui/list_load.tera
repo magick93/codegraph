@@ -22,6 +22,11 @@ export const load: PageServerLoad = async ({ url, locals, fetch: skFetch }) => {
 	const pageSize = Number(url.searchParams.get('page_size') ?? '20');
 {% if has_fts %}
 	const q = url.searchParams.get('q') ?? '';
+{% endif %}{% if ux_sort %}
+	// Column sorting (issue #306): forward the validated-against-the-API
+	// allow-list params verbatim; the API 400s on unknown fields.
+	const sort = url.searchParams.get('sort');
+	const order = url.searchParams.get('order');
 {% endif %}
 
 	const headers: Record<string, string> = {
@@ -42,6 +47,11 @@ export const load: PageServerLoad = async ({ url, locals, fetch: skFetch }) => {
 	if (q) {
 		apiUrl.searchParams.set('q', q);
 	}
+{% endif %}{% if ux_sort %}
+	if (sort) {
+		apiUrl.searchParams.set('sort', sort);
+		apiUrl.searchParams.set('order', order === 'desc' ? 'desc' : 'asc');
+	}
 {% endif %}
 
 	const res = await skFetch(apiUrl.toString(), { headers });
@@ -59,9 +69,12 @@ export const load: PageServerLoad = async ({ url, locals, fetch: skFetch }) => {
 		page,
 		pageSize,
 		total: json.total ?? null,
-		query: q || null,
+		query: q || null,{% if ux_sort %}
+		sort: sort ?? null,
+		order: order === 'desc' ? 'desc' : null,{% endif %}
 	};
 {% else %}
-	return { items: json.data ?? json, page, pageSize };
-{% endif %}
+{% if ux_sort %}	return { items: json.data ?? json, page, pageSize, sort: sort ?? null, order: order === 'desc' ? 'desc' : null };
+{% else %}	return { items: json.data ?? json, page, pageSize };
+{% endif %}{% endif %}
 };

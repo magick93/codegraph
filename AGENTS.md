@@ -242,7 +242,7 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 | **Route generator** | `crates/codegraph-generate/src/ifml/route_generator.rs` | Behavior-wired SvelteKit pages (events → goto/submit handlers, testids) |
 | **Nav generator** | `crates/codegraph-generate/src/ifml/navigation_generator.rs` | Route map + type helpers |
 | **API path resolution** | `crates/codegraph-generate/src/ifml/api_paths.rs` | Entity → real endpoint (API model > ApiResource > legacy guess) |
-| **E2E generator** | `crates/codegraph-generate/src/ifml/e2e_test.rs` | Playwright specs (render/click-through/validation/CRUD) |
+| **E2E generator** | `crates/codegraph-generate/src/ifml/e2e_test/` (module split: `assembly`/`fixtures`/`render`/`spec_payload`/`ux_plans`/`pom`/`pom_render`/`kernel`) | Playwright specs (render/click-through/validation/CRUD) + the POM (kernel + per-view page classes) |
 | **Component mappings** | `crates/codegraph-config/src/ifml_components.rs` | `ifml-components.toml`: IFML element → handcrafted component |
 | **Templates** | `crates/codegraph-generate/templates/ifml/` | Per-framework `page.tera`/`page_load.tera`/`navigation_map.tera` |
 | **Profile caps** | `crates/codegraph-generate/src/ifml/profiles.rs` | `ifml_backend` + `ifml_route_{fw}`/`ifml_navigation_{fw}`/`ifml_e2e_test_{fw}` |
@@ -475,8 +475,11 @@ into `target/ifml-gate/` and asserts the generated app works against a real
 backend: T0 migrations apply + axum boots (`/health`), T1 `svelte-check` zero
 errors, T2 `vite build`, T3 Playwright specs pass (render/click-through/
 validation/CRUD round-trip/create-POST-persists/details values/persona
-allow+deny/workflow) against the API through a vite `/api` proxy, T4 view-removal
-+ regen stays green. Reusable harness lives in `tests/test_framework/`
+allow+deny/workflow/ux — every category driving the app through the POM
+page classes, zero raw testids in spec bodies) against the API through a
+vite `/api` proxy, T4 view-removal + regen stays green (including the
+stale-POM pin: the removed view's `tests/pages/{view}-page.ts` must be
+swept). Reusable harness lives in `tests/test_framework/`
 (`NodeProject`, `postgres.rs` GateDb, `axum_server.rs`, `playwright.rs`,
 `extras.rs` — ui stubs + gate playwright config + key-injecting proxy; the
 SvelteKit skeleton itself is generator-provided). Run:
@@ -491,6 +494,92 @@ container on 127.0.0.1:15432 is bootstrapped as fallback). Unique DB per run,
 dropped on finish; warm run ~110s. Runs locally and on the nightly
 `.github/workflows/ifml-gate.yml` (workflow_dispatch + 03:00 UTC cron, postgres:16
 service, gate logs artifact on failure) — PR CI stays node-free.
+
+## UX Rules (#286 ux-rules branch)
+
+Codified UX rules for generated UIs ("form follows data"): a ux-rules TOML
+document (built-in `ux-default` pack, optionally shadowed by a project
+file via `--ux-rules <file>`) plus Pass-1 dimension inference resolve into
+a per-entity `UxPlan`; the entity UI pipeline and the IFML pipeline both
+render it. Four passes: dimension inference → rules/ordering → action
+tiering → invisible-UI visuals, plus a sort plane (`?sort=` allow-list)
+and advisory diagnostics (money hints, timeline suggestions, overflow
+accounting — printed as `warning: ux-rules: …`, never fatal). Timeline
+rendering is strictly opt-in via `[[collection]] display = "timeline"`.
+Full reference, the 34-row #286 traceability table, testid contract, and
+the deferred ledger: `docs/ux-rules.md`.
+
+| Module | Role |
+|---------|------|
+| `crates/codegraph-config/src/ux/` | Config plane: `dimension.rs` (8 kebab dimensions), `presentation.rs` (Display/Align/FormatConfig/ToneMap), `rule.rs` (ColumnRule/CollectionRule/ActionRules + `glob_match`), `mod.rs` (strict parse with `[[column]] #N`-attributed errors + hint lines, `BUILT_IN_UX_PACK`, `merge`), `packs/ux_default.toml` (en-NZ/NZD pack, doubles as the key reference) |
+| `crates/codegraph-generate/src/ux/` | `dimension.rs` (Pass 1 ordered decision list), `plan.rs` (`build_ux_plan`, `column_order`, `ids` testid consts), `diagnostics.rs`, `sort.rs` (`resolve_ux_sort_plan`) |
+| `crates/codegraph-generate/src/ui/page.rs` | `resolve_ux_context` — plan → list-page context; `crates/codegraph-generate/templates/ui/{list_page,_ux_cell,list_timeline,child_section}.tera` render it |
+| `crates/codegraph-generate/src/ifml/route_generator.rs` | `resolve_column_ux` (lookup tier > rules > pack > inference), `resolve_generation_ux`, `TableLayout::Timeline`, event tiering; `crates/codegraph-generate/templates/ifml/svelte/page.tera` |
+| `crates/codegraph-generate/src/api/handler.rs` + `ddd/repository_emitter/query_search.rs` | `?sort=`/`?order=` validation (allow-list 400s) + quoted ORDER BY with `, id ASC` tiebreaker |
+| `crates/codegraph-generate/src/ui/e2e_test/` (11 families + `pom_ctx.rs`), `crates/codegraph-generate/src/ifml/e2e_test/` (`ux_plans.rs`, spec assembly, `pom.rs`/`pom_render.rs`/`kernel.rs`) | `{seg}.ux.test.ts` / `{view}.ux.spec.ts` emitters (per-feature gated blocks) + the POM emitters (below) |
+
+Flag plumbing: `ux_rules = true` under `[features]` in profiles.toml
+(default/ui/fullstack/ci ON; non-bool is a hard error) →
+`BuildPlan.ux_rules`; `--ux-rules <file>` CLI on generate/run/ifml-generate
+wins over the profile flag (missing file = hard error; plan-less runs
+still honor it); resolved into `GeneratorOpts.ux_rules` +
+`ProjectConfig.ux` (templates read `project.ux.*`). `codegraph init`
+scaffolds `ux_rules = true`. Selector semantics: first-match-wins,
+project-ahead-of-pack; `dimension` is payload (not selector) on rules
+carrying a classification/pg_type/name_pattern selector, and an override
+cancels the column's money hint.
+
+Byte-identity contract: flag off ⇒ no plan, no ux context keys, no sort
+surface, no ux spec files — pinned by committed pre-feature tree snapshots
+(`UX_RULES_BLESS=1` rebless, rev/path/hex normalization). Since the POM
+(#316/#317) the snapshots INCLUDE the test-infra files (kernel + page
+classes) — flag-off output is unchanged *modulo* those reviewed files;
+every rebless carries an enumerated diff. Gates:
+
+```bash
+cargo test -p codegraph --test ux_rules_tests                 # 18, node-free PR-CI net
+cargo test -p codegraph --test ux_rules_byte_identity_tests   # 4, the canary
+cargo test -p codegraph --test ui_e2e_test_tests              # 23, ux spec gating
+cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture  # nightly, ux-ON fixture + `ux` category
+```
+
+POM (Playwright Object Model, #315–#318): every generated spec drives the
+UI through an emitted page-object layer — zero raw testids in spec
+bodies. Entity side (`ui-e2e-test` generator): kernel
+`ui/tests/generated/_support/pom.ts` (from `templates/ui/test/_pom_kernel.tera`,
+emitted once per run by the first spec-emitting entity) + per-entity
+`ui/tests/generated/{domain}/{seg}.page.ts` (from `templates/ui/test/page.tera`),
+imported by all 11 `{seg}.{family}.test.ts` families. IFML side
+(`ifml-e2e-test` generator): Rust-built kernel
+`tests/pages/support/{base-page,ux-table}.ts` (`ifml/e2e_test/kernel.rs`,
+surface parity with the entity kernel pinned by a unit test) + per-view
+`tests/pages/{view-kebab}-page.ts` (`ifml/e2e_test/pom.rs` plan →
+`pom_render.rs`), imported by every `{view}.spec.ts`/`.workflow.spec.ts`/
+`.ux.spec.ts`. Emission is **spec-infra gated, never ux-flag gated**
+(entity: any-op entities; IFML: any view with payloads); removed
+views'/entities' page classes are swept by the next regeneration (T4 pin).
+The kernel contract (`BasePage`/`UxTable`: chips/sort/overflow
+menu/copy/timeline/Intl mirrors/zebra-inactive) is the test-object
+lowering of the ux plane; IFML page classes build from the same
+resolution the route generator renders from (`ComponentSelectors`,
+`workflow_for_entity`, `html_input_for_dsl` typed fills). IFML POM specs
+run live in the nightly gate (T3); the entity POM is pin/snapshot-verified
+plus a typecheck over the regenerated review fixture
+(`grafeo_e2e_tests -- grafeo_candidate_inspect_output`, then tsc over
+`ui/tests/generated/`) — live entity-app e2e runs belong to consumer
+projects. Canonical testid table + POM surface map: `docs/ux-rules.md`
+§5–§6.
+
+Adding a new rule: (1) dimension/display vocabulary if needed
+(`codegraph-config/src/ux/`, closed kebab set), (2) pack default in
+`ux_default.toml`, (3) Pass-1 inference branch or rule selector/payload in
+`codegraph-generate/src/ux/`, (4) BOTH emitters (entity templates + IFML
+`page.tera`), every new block ux-gated so flag-off stays byte-identical,
+(5) `{seg}.ux.test.ts` assertion + Rust pin in `ux_rules_tests.rs`,
+(6) new ux capability ⇒ consider its POM surface + spec assertion (a
+`UxTable` kernel method and/or a page-class section — specs assert
+through the page objects, never raw testids),
+(7) gate category in `ifml_codegen_gate.rs`.
 
 ## gRPC Code Generation
 

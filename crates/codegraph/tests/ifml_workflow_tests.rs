@@ -98,6 +98,7 @@ async fn generate(dir: &Path, ifml: &str, mappings: Option<&Path>) -> std::path:
         template_dir: &[],
         ifml_components: mappings,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -126,12 +127,22 @@ async fn workflow_spec_gains_transition_round_trip() {
         "the spec must gain a transition test from the initial state to the first valid target:\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('info-transition-submitted')"),
-        "the test clicks the enabled transition button (draft → submitted):\n{spec}"
+        spec.contains("await ui.transitionInfoTo('submitted');"),
+        "the test clicks the enabled transition button through the page class (draft → submitted):\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('info-state')") && spec.contains("toContainText('submitted')"),
+        spec.contains("await ui.expectInfoState('submitted');"),
         "the state badge must show the new state after the click:\n{spec}"
+    );
+    let detail_page = std::fs::read_to_string(svelte.join("tests/pages/customer-detail-page.ts"))
+        .expect("the details view page class is emitted");
+    assert!(
+        detail_page.contains("'info-transition-submitted'"),
+        "the transition button testid lives in the page class's transition map (#317):\n{detail_page}"
+    );
+    assert!(
+        detail_page.contains("getByTestId('info-state')"),
+        "the state badge testid lives in the page class:\n{detail_page}"
     );
     assert!(
         spec.contains(".status).toBe('submitted')"),
@@ -176,7 +187,54 @@ testids = { root = "detail-card" }
         "the mapped component's initial-state assertion is un-skipped:\n{spec}"
     );
     assert!(
-        spec.contains("getByTestId('info-transition-submitted')"),
+        spec.contains("await ui.transitionInfoTo('submitted');"),
         "the mapped component's transition round trip is un-skipped:\n{spec}"
+    );
+    let detail_page = std::fs::read_to_string(svelte.join("tests/pages/customer-detail-page.ts"))
+        .expect("the details view page class is emitted");
+    assert!(
+        detail_page.contains("'info-transition-submitted'"),
+        "the mapped component's transition testid lives in the page class's transition map:\n{detail_page}"
+    );
+}
+
+/// Collections get workflow specs too (issue #311 un-skip): the per-row
+/// badge reads the status column, which the DDL DEFAULT now materializes at
+/// the initial state on API creates — the strict assertion is backed by the
+/// API it drives. List specs stay badge-only (no transition buttons on
+/// collections) and assert through `.first()` (strict-mode-safe `{#each}`).
+#[tokio::test]
+async fn workflow_spec_emitted_for_collections() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate(dir.path(), WORKFLOW_APP_IFML, None).await;
+
+    let spec = std::fs::read_to_string(
+        svelte
+            .join("tests/ifml")
+            .join("customer-list.workflow.spec.ts"),
+    )
+    .expect("workflow spec must be emitted for the collection view");
+
+    assert!(
+        spec.contains("test('shows the initial workflow state for grid'"),
+        "the collection's initial-state assertion is un-skipped:\n{spec}"
+    );
+    assert!(
+        spec.contains("await ui.expectGridState('draft');"),
+        "the created row materializes the configured initial state:\n{spec}"
+    );
+    assert!(
+        spec.contains("await ui.expectGridState('draft');"),
+        "the list badge assertion drives the page class:\n{spec}"
+    );
+    let list_page = std::fs::read_to_string(svelte.join("tests/pages/customer-list-page.ts"))
+        .expect("the list view page class is emitted");
+    assert!(
+        list_page.contains("StateBadge().first()"),
+        "list badges render per row, so the page class scopes the assertion with .first():\n{list_page}"
+    );
+    assert!(
+        !spec.contains("test('transitions "),
+        "collections stay badge-only — no transition round trip:\n{spec}"
     );
 }

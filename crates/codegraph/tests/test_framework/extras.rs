@@ -192,6 +192,8 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
         "pagination",
         "input",
         "tabs",
+        "dropdown-menu",
+        "tooltip",
     ] {
         fs::create_dir_all(ui.join(dir)).map_err(|e| e.to_string())?;
     }
@@ -449,6 +451,89 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
 <div data-testid={testid}>
 	{@render children?.()}
 </div>
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Issue #303: stubs for the ux-rules primitives the generated markup can
+    // invoke (the row-actions overflow menu and truncate-tooltip surfaces).
+    // Like the stubs above they render data-testid={testid} plus the
+    // data-slot markers the generated specs' selectors target.
+    fs::write(
+        ui.join("dropdown-menu/dropdown-menu.svelte"),
+        r#"<script lang="ts">
+	// Gate-owned stub of the shadcn-svelte DropdownMenu.
+	let {
+		testid,
+		label = 'Actions',
+		items = [],
+		children
+	}: {
+		testid?: string;
+		label?: string;
+		items?: string[];
+		children?: import('svelte').Snippet;
+	} = $props();
+
+	let open = $state(false);
+</script>
+
+<div class="dropdown-menu" data-testid={testid}>
+	<button
+		type="button"
+		class="chip"
+		data-slot="dropdown-menu-trigger"
+		aria-haspopup="menu"
+		aria-expanded={open}
+		onclick={() => (open = !open)}
+	>
+		{label}
+	</button>
+	{#if open}
+		<div class="row-menu" role="menu" data-slot="dropdown-menu-content">
+			{#each items as item}
+				<button type="button" role="menuitem" onclick={() => (open = false)}>{item}</button>
+			{/each}
+		</div>
+	{/if}
+	{@render children?.()}
+</div>
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    fs::write(
+        ui.join("tooltip/tooltip.svelte"),
+        r#"<script lang="ts">
+	// Gate-owned stub of the shadcn-svelte Tooltip: hover/focus surfaces the
+	// full value through the tooltip-content slot.
+	let {
+		testid,
+		content = '',
+		children
+	}: {
+		testid?: string;
+		content?: string;
+		children?: import('svelte').Snippet;
+	} = $props();
+
+	let open = $state(false);
+</script>
+
+<span class="tooltip" data-testid={testid}>
+	<span
+		data-slot="tooltip-trigger"
+		onmouseover={() => (open = true)}
+		onfocus={() => (open = true)}
+		onmouseleave={() => (open = false)}
+		onblur={() => (open = false)}
+	>
+		{@render children?.()}
+	</span>
+	{#if open}
+		<span role="tooltip" data-slot="tooltip-content">{content}</span>
+	{/if}
+</span>
 "#,
     )
     .map_err(|e| e.to_string())?;

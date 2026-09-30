@@ -5,9 +5,9 @@ use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     CodeList, ColumnInfo, CompositionNode, CompositionTree, DeletionPropagation, DetectionSource,
-    EnumValue, ParentCandidate, PolicyKind, PolicyNode, PropertyNode, SchemaNode, SoftDeleteMarker,
-    SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationPolicy, TenantPropagation,
-    TenantStrategy,
+    EnumValue, FkTarget, ParentCandidate, PolicyKind, PolicyNode, PropertyNode, SchemaNode,
+    SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationPolicy,
+    TenantPropagation, TenantStrategy,
 };
 use codegraph_type_contracts::RefClassificationKind;
 use std::path::Path;
@@ -452,6 +452,103 @@ async fn test_ddl_generator_produces_table_sql() {
     assert!(
         table_file.content.contains("family_name TEXT"),
         "Should contain family_name column"
+    );
+}
+
+/// Issue #311: a workflow entity's status column carries the configured
+/// initial_state as its DDL DEFAULT, so API creates (whose INSERTs omit the
+/// workflow-managed column) materialize the initial state and list badges
+/// work on created rows. Pins the nullable-column shape — the gate fixture's
+/// `status` is a non-required codelist ref, which the pre-fix nullability
+/// guard silently skipped.
+#[tokio::test]
+async fn test_ddl_generator_defaults_workflow_status_column_to_initial_state() {
+    let mock = MockEngine::builder()
+        .with_schema(mock_schema(
+            "refunds/json/RefundRequestType.json",
+            "RefundRequestType",
+            "refund_request",
+            "refunds",
+            "entity_reference",
+        ))
+        .with_properties("RefundRequestType", mock_properties())
+        .with_composition_tree("RefundRequestType", {
+            let mut tree = mock_composition_tree("RefundRequestType", "refund_request", "refunds");
+            tree.root.columns = vec![ColumnInfo {
+                name: "status".to_string(),
+                description: Some("Workflow status of the request".to_string()),
+                rust_type: "String".to_string(),
+                postgres_type: "TEXT".to_string(),
+                is_optional: true,
+                is_codelist_fk: false,
+                composite_columns: vec![],
+                is_array: false,
+                classification: Some(RefClassificationKind::CodelistReference),
+                fk_target: Some(FkTarget {
+                    schema: "common".to_string(),
+                    table: "refund_status_code_list".to_string(),
+                    column: "code".to_string(),
+                    on_delete: "RESTRICT".to_string(),
+                }),
+                check_values: vec![],
+            }];
+            tree
+        })
+        .build();
+
+    let config = codegraph_config::config::parse_domain_config_str(
+        r#"
+[domains.refunds]
+label = "Refunds"
+schema_dir = "refunds"
+postgres_schema = "refunds"
+entities = ["RefundRequestType"]
+
+[domains.refunds.entity_config.RefundRequestType.workflow]
+status_field = "status"
+states = ["draft", "submitted", "approved", "rejected"]
+initial_state = "draft"
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+"#,
+    )
+    .unwrap();
+
+    let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ddl-workflow");
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = generate::template_engine::create_tera(&template_dir).unwrap();
+
+    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = gen
+        .generate(
+            &mock,
+            "RefundRequestType",
+            "refunds",
+            &config,
+            &tera,
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let table_file = files
+        .iter()
+        .find(|f| {
+            f.path
+                .to_string_lossy()
+                .contains("refunds_refund_request.sql")
+        })
+        .expect("Should have a table SQL file");
+
+    assert!(
+        table_file.content.contains("status TEXT DEFAULT 'draft'"),
+        "the nullable status column must DEFAULT to the workflow initial_state:\n{}",
+        table_file.content
+    );
+    assert!(
+        !table_file.content.contains("status TEXT NOT NULL"),
+        "the default must not change the column's nullability:\n{}",
+        table_file.content
     );
 }
 

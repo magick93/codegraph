@@ -714,6 +714,7 @@ async fn run_gate(root: &Path, output: &Path, mox: &[PathBuf], gated: bool) {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        ux_rules: None,
     };
     args.profile_name = "ns";
     codegraph::driver::run(args).await.unwrap();

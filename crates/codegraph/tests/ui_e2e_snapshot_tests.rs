@@ -1,6 +1,11 @@
-//! Snapshot of a canonical generated `owner.crud.test.ts`, guarding the
-//! entity-ref dependency setup emitted by `_dep_setup.tera` (non-empty bodies,
-//! scalar/array `depIds`, transitive required closure, reverse cleanup).
+//! Snapshots of canonical generated Playwright specs:
+//! - `owner.crud.test.ts` — the entity-ref dependency setup from
+//!   `_dep_setup.tera` (non-empty bodies, scalar/array `depIds`,
+//!   transitive required closure, reverse cleanup).
+//! - `ux.test.ts` — the ux-rules list-rendering spec (issue #302): the
+//!   per-feature gated blocks over a canonical column zoo (identifier,
+//!   readable lead, codelist chip, quantity, money, time point, audit
+//!   stamp) with locale/currency mirrors and the sort allow-list.
 
 use std::path::Path;
 
@@ -209,4 +214,139 @@ role = "root"
         .clone();
 
     insta::assert_snapshot!("canonical_owner_crud", content);
+}
+
+/// A numeric column (quantity, or money when the name carries the
+/// keyword and the pg type is NUMERIC).
+fn numeric(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
+    PropertyNode {
+        rust_field_type: if pg_type.starts_with("NUMERIC") {
+            "Decimal".into()
+        } else {
+            "i32".into()
+        },
+        ..scalar(name, pg_type, is_required)
+    }
+}
+
+/// A timestamp column.
+fn timestamp(name: &str, is_required: bool) -> PropertyNode {
+    PropertyNode {
+        rust_field_type: "DateTime<Utc>".into(),
+        ..scalar(name, "TIMESTAMPTZ", is_required)
+    }
+}
+
+/// A codelist-backed column (CodelistReference prop + graph enum values).
+fn codelist(name: &str, ref_target: &str, is_required: bool) -> PropertyNode {
+    PropertyNode {
+        name: name.into(),
+        prop_type: "string".into(),
+        description: None,
+        format: None,
+        is_required,
+        is_nullable: !is_required,
+        is_array: false,
+        min_items: None,
+        max_items: None,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: name.into(),
+        pg_column_type: "TEXT".into(),
+        rust_field_name: name.into(),
+        rust_field_type: "String".into(),
+        sea_orm_type: "Text".into(),
+        render_strategy: "direct_column".into(),
+        ref_target: Some(ref_target.into()),
+        classification: Some("codelist_reference".into()),
+        projection: None,
+        classification_kind: Some(RefClassificationKind::CodelistReference),
+        type_expr: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }
+}
+
+fn enum_value(value: &str) -> codegraph_core::types::EnumValue {
+    codegraph_core::types::EnumValue {
+        value: value.into(),
+        display_name: None,
+        sort_order: 0,
+    }
+}
+
+#[test]
+fn canonical_ux_spec_snapshot() {
+    // A plain `format: uuid` column (the identifier / copy-chip slot).
+    let plain_uuid = |name: &str, is_required: bool| PropertyNode {
+        format: Some("uuid".into()),
+        rust_field_type: "Uuid".into(),
+        sea_orm_type: "Uuid".into(),
+        ..scalar(name, "UUID", is_required)
+    };
+    // The `id`-named uuid column must NOT resolve as a convention FK:
+    // `id` has no `_id` stem, so it stays a plain Identifier column.
+    let refund = schema("RefundType", "refund", "Refund", "hr", "refund");
+    let engine = MockEngine::builder()
+        .with_schema(refund)
+        .with_properties(
+            "RefundType",
+            vec![
+                plain_uuid("id", true),
+                scalar("name", "TEXT", true),
+                codelist("status", "hr/json/refund_status.json", true),
+                numeric("headcount", "INTEGER", true),
+                numeric("total_amount", "NUMERIC(10,2)", true),
+                timestamp("due_at", true),
+                timestamp("created_at", true),
+            ],
+        )
+        .with_enum_values(
+            "refund_status",
+            vec![enum_value("draft"), enum_value("approved")],
+        )
+        .build();
+
+    let toml = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["RefundType"]
+
+[domains.hr.entity_config.RefundType]
+role = "root"
+"#;
+    let config = parse_domain_config_str(toml).unwrap();
+    let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
+    let project = ProjectConfig {
+        ux: Some(rules),
+        ..ProjectConfig::default()
+    };
+
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = codegraph::generate::template_engine::create_tera(&template_dir).unwrap();
+    let output = tempfile::TempDir::new().unwrap();
+    let gen = UiE2eTestGenerator::new(output.path());
+    let files = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(gen.generate(&engine, "RefundType", "hr", &config, &tera, &project))
+        .expect("UiE2eTestGenerator failed");
+
+    let content = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with(".ux.test.ts"))
+        .expect("ux.test.ts should be generated")
+        .content
+        .clone();
+
+    insta::assert_snapshot!("canonical_ux_spec", content);
 }

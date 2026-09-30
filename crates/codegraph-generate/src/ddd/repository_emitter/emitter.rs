@@ -17,10 +17,51 @@ use super::child::flatten_child_tables;
 use super::context::{
     build_columns_and_children, resolve_worker_detail_joins, ClassificationContext,
 };
-use super::{ChildTableInfo, EntityTree, TreeColumn, TreeIncludeResolved};
+use super::{ChildTableInfo, EntityTree, TreeColumn, TreeIncludeResolved, UxSortColumn};
 
 /// Emits repository implementation Rust code by walking the entity's graph subtree.
 pub struct RepositoryImplEmitter;
+
+/// Map the ux sort plan's fields onto the entity's direct columns
+/// (issue #306). Flag off ⇒ no plan, empty mapping. Returns whether the
+/// plan is non-empty at all alongside the mapped columns: the trait, the
+/// query handler and the cornucopia adapter all carry the `sort` param
+/// whenever the plan is non-empty, so the SeaORM impl must too — even
+/// when no plan field maps onto a direct column (the param is then
+/// accepted and ignored, matching the cornucopia adapter's contract).
+/// Mapped columns feed the emitted match arms and stay compile-clean.
+async fn sort_columns_for_tree(
+    tree: &EntityTree,
+    project: &ProjectConfig,
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    schema_title: &str,
+    domain: &str,
+) -> Result<(bool, Vec<UxSortColumn>)> {
+    let plan =
+        crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, domain).await?;
+    let has_sort_plan = !plan.is_empty();
+    let sort_columns: Vec<UxSortColumn> = plan
+        .fields
+        .iter()
+        .filter_map(|field| {
+            tree.direct_columns.iter().find_map(|col| {
+                let bare = col.field_name.strip_prefix("r#").unwrap_or(&col.field_name);
+                let matches = col
+                    .dto_field_name
+                    .as_deref()
+                    .unwrap_or(bare)
+                    .eq_ignore_ascii_case(field)
+                    || bare.eq_ignore_ascii_case(field);
+                matches.then(|| UxSortColumn {
+                    key: field.clone(),
+                    column: col.pg_column_name.clone(),
+                })
+            })
+        })
+        .collect();
+    Ok((has_sort_plan, sort_columns))
+}
 
 impl RepositoryImplEmitter {
     /// Resolve whether `find_tree` returns JOINed `serde_json::Value` rows
@@ -131,7 +172,13 @@ impl RepositoryImplEmitter {
         if tree.has_delete {
             self.emit_delete_fn(&tree, &mut code);
         }
-        self.emit_list_fn(&tree, &mut code);
+        // Issue #306: map the plan's sortable fields onto the entity's
+        // direct columns; fields without a direct column (synthetic or
+        // expanded slots) are dropped so the emitted match arms stay
+        // compile-clean.
+        let (has_sort_plan, sort_columns) =
+            sort_columns_for_tree(&tree, project, db, config, schema_title, domain).await?;
+        self.emit_list_fn(&tree, has_sort_plan, &sort_columns, &mut code);
         if tree.has_fts {
             self.emit_search_fn(&tree, &mut code);
         }
@@ -367,6 +414,36 @@ impl RepositoryImplEmitter {
             // Deduplicate while preserving order.
             let mut seen = std::collections::HashSet::new();
             include_type_names.retain(|n| seen.insert(n.clone()));
+            // Pre-register each include target's `{Entity}Response` with the
+            // exact module path the target's own DTO generator uses. Junction
+            // linked entities impose no generation-order constraint, so this
+            // emitter can run before the target's DTO generator registered
+            // the type — and the import below was nondeterministically
+            // dropped depending on emission order. Registration is
+            // idempotent for identical paths (register_type ignores
+            // conflicts), so a warm registry wins and this only fills gaps.
+            for (idx, path) in include_paths.iter().enumerate() {
+                let Some(last_seg) = path.segments.last() else {
+                    continue;
+                };
+                let ns = crate::namespace_rust_prefix(
+                    include_target_trees
+                        .get(idx)
+                        .and_then(|t| t.as_ref())
+                        .and_then(|t| t.namespace.as_deref()),
+                    project,
+                );
+                let mut module: Vec<String> = match ns {
+                    Some(ns) => format!("crate::domain::{ns}")
+                        .split("::")
+                        .map(str::to_string)
+                        .collect(),
+                    None => vec!["crate".into(), "domain".into(), last_seg.domain.clone()],
+                };
+                module.push(last_seg.module_name.clone());
+                module.push("dto_response".into());
+                type_registry::register_type(&format!("{}Response", last_seg.entity_name), module);
+            }
             let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
             for import in &imports {
                 wln!(code, "{}", import);

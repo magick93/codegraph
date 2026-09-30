@@ -45,7 +45,42 @@
 							<span class="truncate text-foreground">
 								{child.id}
 							</span>
-							<div class="flex shrink-0 items-center gap-1 ml-2">
+							<div class="flex shrink-0 items-center gap-1 ml-2">{% endraw %}{% if ux_actions.child_menu %}{% raw %}
+								<!-- ux-rules (#299): primary open/manage stays inline (the
+								     Manage → link below); Edit/Delete tier into the
+								     per-item actions menu, Delete behind the plan's
+								     confirmation. -->
+								<DropdownMenu.Root>
+									<DropdownMenu.Trigger
+										class="rounded px-2 py-1 text-xs hover:bg-accent transition-colors"
+										data-testid="{% endraw %}{{ section.module_name }}{% raw %}-actions"
+									>
+										{m.common_actions()}
+									</DropdownMenu.Trigger>
+									<DropdownMenu.Portal>
+										<DropdownMenu.Content data-testid="{% endraw %}{{ section.module_name }}{% raw %}-actions-menu" class="w-40">
+											{#each ux_actions.child_menu as item}
+												{#if item.action === 'edit'}
+												<DropdownMenu.Item
+													data-testid="{% endraw %}{{ section.module_name }}{% raw %}-action-edit"
+													onclick={() => editChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}
+												>
+													{m.common_edit()}
+												</DropdownMenu.Item>
+												{:else if item.action === 'delete'}
+												<DropdownMenu.Item
+													class="text-destructive data-[highlighted]:text-destructive"
+													data-testid="{% endraw %}{{ section.module_name }}{% raw %}-action-delete"
+ 													onclick={() => {% endraw %}{% if ux_actions.confirm_delete %}{% raw %}{% endraw %}{{ section.module_name }}{% raw %}DeleteId = child.id}{% endraw %}{% else %}{% raw %} void deleteChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}{% endraw %}{% endif %}{% raw %}
+												>
+													{m.common_delete()}
+												</DropdownMenu.Item>
+												{/if}
+											{/each}
+										</DropdownMenu.Content>
+									</DropdownMenu.Portal>
+								</DropdownMenu.Root>
+								{% endraw %}{% else %}{% raw %}
 								<button
 									class="rounded px-2 py-1 text-xs hover:bg-accent transition-colors"
 									onclick={() => editChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}
@@ -60,7 +95,7 @@
 								>
 									Delete
 								</button>
-								{% endraw %}{% if section.has_children %}{% raw %}
+								{% endraw %}{% endif %}{% if section.has_children %}{% raw %}
 								<button
 									class="rounded px-2 py-1 text-xs hover:bg-accent transition-colors"
 									onclick={() => manageChild('{% endraw %}{{ section.domain }}{% raw %}', '{% endraw %}{{ section.path_segment }}{% raw %}', child.id)}
@@ -76,6 +111,27 @@
 				</ul>
 			{/if}
 		</div>
-	{/if}
+	{/if}{% endraw %}{% if ux_actions %}{% if ux_actions.confirm_delete %}
+	<AlertDialog.Root open={{"{"}}{{ section.module_name }}DeleteId !== null} onOpenChange={(v) => { if (!v) {{ section.module_name }}DeleteId = null; }}>{% raw %}
+		<AlertDialog.Content data-testid="{% endraw %}{{ section.module_name }}{% raw %}-delete-confirm">
+			<AlertDialog.Header>
+				<AlertDialog.Title>{m.common_confirm_delete_title({ entity: '{% endraw %}{{ section.entity_name }}{% raw %}' })}</AlertDialog.Title>
+				<AlertDialog.Description>
+					{m.common_confirm_delete_description()}
+				</AlertDialog.Description>
+			</AlertDialog.Header>
+			<AlertDialog.Footer>
+				<AlertDialog.Cancel>{m.common_cancel()}</AlertDialog.Cancel>
+				<AlertDialog.Action
+					onclick={confirmDelete{% endraw %}{{ section.entity_name }}{% raw %}Child}
+					data-testid="{% endraw %}{{ section.module_name }}{% raw %}-delete-confirm-confirm"
+					class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+				>
+					{m.common_delete()}
+				</AlertDialog.Action>
+			</AlertDialog.Footer>
+		</AlertDialog.Content>
+	</AlertDialog.Root>
+	{% endraw %}{% endif %}{% endif %}{% raw %}
 </div>
 {% endraw %}

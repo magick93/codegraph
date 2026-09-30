@@ -250,8 +250,8 @@ async fn stage_generate_build(
                 (Some(graph), Some(_)) => {
                     hook_failures
                         .extend(run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
-                    let gen_output =
-                        regenerate(config, graph).inspect_err(|e| output::fail(e.to_string()))?;
+                    let gen_output = regenerate(config, graph, args.release)
+                        .inspect_err(|e| output::fail(e.to_string()))?;
                     if !args.allow_gen_errors {
                         assert_generation_clean(&gen_output)?;
                     }
@@ -1217,7 +1217,7 @@ async fn stage_regeneration(
             // with 290 errors in a real incident.
             hook_failures
                 .extend(crate::ext::run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
-            match regenerate(config, graph) {
+            match regenerate(config, graph, args.release) {
                 Ok(_) => {
                     counters.pass("Templates regenerated");
                     // Same generator-rev gate as stage 0 — the regen
@@ -1768,8 +1768,13 @@ fn regex_free_has_error_count(gen_output: &str) -> bool {
     false
 }
 
-fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
-    let args = regenerate_args(config, graph_binary);
+fn regenerate(config: &OpsConfig, graph_binary: &str, release: bool) -> OpsResult<String> {
+    let mut args = regenerate_args(config, graph_binary);
+    if release {
+        // Build/run the graph binary in the requested profile; a stale debug
+        // binary otherwise silently regenerates with old generator code.
+        args.insert(1, "--release".to_string());
+    }
     let mut cmd = Command::new("cargo");
     cmd.args(&args).current_dir(&config.root_dir);
     // Streams live under [generate] — a 56-minute regen is never silent.
@@ -1788,7 +1793,7 @@ fn regenerate(config: &OpsConfig, graph_binary: &str) -> OpsResult<String> {
 /// `cargo build` inside the generated app. Exports `CORNUCOPIA_DATABASE_URL`
 /// for the cornucopia provider (its `build.rs` connects to Postgres at build
 /// time). `Ok` only on a clean exit; `Err` carries the output tail.
-fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
+pub(super) fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
     if release {
@@ -1797,8 +1802,33 @@ fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), String> {
     if let Some((key, value)) = cornucopia_db_env(config) {
         cmd.env(key, value);
     }
+    // Build in the generated app dir (the app resolves its own workspace).
+    cmd.current_dir(&config.app_dir);
     match run_streaming(&mut cmd, "build") {
-        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) if out.status.success() => {
+            // A successful build is a freshness statement: pre_generate
+            // clean hooks may have wiped + fully regenerated src (fresh
+            // mtimes on byte-identical files), and cargo skips the relink
+            // when nothing changed — leaving the binary's mtime older than
+            // src even though the bytes match. Touch it so mtime-based
+            // freshness checks reflect the build that just succeeded.
+            let binary = config
+                .app_dir
+                .join("target")
+                .join(if release { "release" } else { "debug" })
+                .join(config.app_binary_name());
+            if binary.is_file() {
+                let _ = std::fs::File::options()
+                    .write(true)
+                    .open(&binary)
+                    .and_then(|f| {
+                        f.set_times(
+                            std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()),
+                        )
+                    });
+            }
+            Ok(())
+        }
         Ok(out) => Err(tail_lines(&out.captured, 20)),
         Err(e) => Err(format!("failed to spawn cargo: {e}")),
     }

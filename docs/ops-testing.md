@@ -215,8 +215,14 @@ Three independent gates keep a suite from testing stale code:
    `binary <path> is older than <src> — the suite would test stale code;
    rebuild (drop --skip-build) first`. A missing binary or a missing/wiped
    `src/` is equally fatal (the wiped-tree incident produced 15 baffling
-   api failures before this check existed). Regeneration always overwrites
-   generated files, so a fresh generation re-arms the check.
+   api failures before this check existed). Regeneration is
+   write-if-changed — byte-identical output preserves mtimes, so a
+   no-op regeneration does NOT re-arm the check. Instead a successful
+   build post-touches the binary ("a successful build is a freshness
+   statement"): pre_generate clean hooks may wipe + recreate `src/` with
+   fresh mtimes while cargo skips the relink on byte-identical sources,
+   and the touch keeps the mtime comparison truthful for exactly that
+   case.
 2. **Stage-0 fast-fail for `--skip-build`.** With the build skipped the
    binary cannot become fresher later, so the e2e suite checks freshness
    BEFORE Supabase (stage `E2E 0. freshness (pre-check, --skip-build)`) —

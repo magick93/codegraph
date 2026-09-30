@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
-    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
-    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
-    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ref_target_candidate_title, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
+    ApiResourceNode, AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode,
+    CompositeColumn, CompositeRange, CompositionTree, ConditionNode, DataBindingResolution,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
     PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
     RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
@@ -119,20 +119,20 @@ impl<'a> CachingQuerier<'a> {
 
         // 2. Bulk-load all properties → properties_cache
         let all_props = self.inner.list_all_properties().await?;
+        let schema_by_title: HashMap<&str, &SchemaNode> =
+            all_schemas.iter().map(|s| (s.title.as_str(), s)).collect();
         {
             let mut cache = self.properties_cache.write().unwrap();
             // Insert empty vecs for schemas that have no properties
             for schema in &all_schemas {
                 cache.entry(schema.title.clone()).or_default();
             }
-            for (title, props) in all_props {
-                cache.insert(title, props);
+            for (title, props) in &all_props {
+                cache.insert(title.clone(), props.clone());
             }
         }
 
         // 3. Bulk-load all schema references → referenced_cache
-        let schema_by_title: HashMap<&str, &SchemaNode> =
-            all_schemas.iter().map(|s| (s.title.as_str(), s)).collect();
         let all_refs = self.inner.list_all_schema_references().await?;
         {
             let mut cache = self.referenced_cache.write().unwrap();
@@ -155,8 +155,14 @@ impl<'a> CachingQuerier<'a> {
             }
         }
 
-        // 4. Build child_schemas_cache from all_schemas parent_schema field
+        // 4. Build child_schemas_cache: inline #/$defs children (the
+        //    `parent_schema` back-pointer) PLUS derived refers children
+        //    (array-of-entity-ref properties whose ref target is an entity,
+        //    issue #312) — mirroring `get_child_schemas`' two routes so the
+        //    pre-warmed cache agrees with the lazy inner calls.
         {
+            let schema_by_title: HashMap<&str, &SchemaNode> =
+                all_schemas.iter().map(|s| (s.title.as_str(), s)).collect();
             let mut cache = self.child_schemas_cache.write().unwrap();
             let mut children_map: HashMap<String, Vec<SchemaNode>> = HashMap::new();
             for schema in &all_schemas {
@@ -167,7 +173,30 @@ impl<'a> CachingQuerier<'a> {
                         .push(schema.clone());
                 }
             }
-            for (parent, children) in children_map {
+            for (title, props) in &all_props {
+                for prop in props {
+                    if !prop.is_array {
+                        continue;
+                    }
+                    let Some(ref target) = prop.ref_target else {
+                        continue;
+                    };
+                    let candidate = ref_target_candidate_title(target);
+                    if candidate == title {
+                        continue;
+                    }
+                    if let Some(child) = schema_by_title.get(candidate) {
+                        if child.is_entity {
+                            let entry = children_map.entry(title.clone()).or_default();
+                            if !entry.iter().any(|c| c.title == child.title) {
+                                entry.push((*child).clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for (parent, mut children) in children_map {
+                children.sort_by(|a, b| a.title.cmp(&b.title));
                 cache.insert(parent, children);
             }
         }

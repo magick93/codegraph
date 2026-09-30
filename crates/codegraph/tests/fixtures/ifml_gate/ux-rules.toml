@@ -1,0 +1,18 @@
+# Gate ux-rules override (issue #303), merged over the built-in ux-default
+# pack by the gate harness when the profiles.toml `ux_rules` feature is on
+# (the `--ux-rules <file>` path, exercised end to end).
+#
+# The money dimension is PINNED explicitly on `amount` — the keyword
+# heuristic would infer Money from the name anyway, so this rule documents
+# the override path (project rules shadow pack rules per selector tier)
+# without changing the resolution outcome. Locale/currency intentionally
+# stay at the pack defaults (en-NZ / NZD), so the ux specs' in-spec Intl
+# computations run against the pack baseline.
+#
+# NO [[collection]] rules: the gate fixture stays table-shaped for T3
+# click-through stability. Timeline coverage lives in the driver-level
+# tests plus the ux spec kind's unit tests (issue #303 decision).
+
+[[column]]
+name_pattern = "amount"
+dimension = "money"

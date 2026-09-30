@@ -55,6 +55,9 @@ pub struct RunArgs<'a> {
     /// Overrides the profiles.toml `ifml_design_system` feature. Project
     /// `ifml_components` entries take precedence over pack entries.
     pub ifml_design_system: Option<&'a str>,
+    /// Optional `ux-rules.toml` (issue #293). Rules shadow the built-in
+    /// `ux-default` pack. Overrides the profiles.toml `ux_rules` feature.
+    pub ux_rules: Option<&'a Path>,
     /// Git rev to pin in generated Cargo.toml codegraph deps. When None the
     /// driver falls back to `git rev-parse HEAD` of the current directory.
     pub codegraph_rev: Option<String>,
@@ -81,6 +84,9 @@ pub struct IfmlGenerateArgs<'a> {
     /// Overrides the profiles.toml `ifml_design_system` feature. Project
     /// `ifml_components` entries take precedence over pack entries.
     pub ifml_design_system: Option<&'a str>,
+    /// Optional `ux-rules.toml` (issue #293). Rules shadow the built-in
+    /// `ux-default` pack. Overrides the profiles.toml `ux_rules` feature.
+    pub ux_rules: Option<&'a Path>,
 }
 
 fn load_ifml_component_mappings(
@@ -121,6 +127,33 @@ fn effective_design_system<'a>(
             .and_then(|v| v.as_str())
             .filter(|name| !name.is_empty())
     })
+}
+
+/// Effective ux-rules resolution (issue #293), mirroring
+/// `effective_design_system`'s precedence: an explicit `--ux-rules` file
+/// (merged over the built-in pack — project rules shadow pack rules per
+/// selector tier) wins over the profiles.toml `ux_rules` feature (pack
+/// only). Neither ⇒ `None`, keeping generation byte-identical.
+///
+/// An invalid CLI path is a hard error. A parse failure of the embedded
+/// pack is an internal error that tests pin impossible.
+fn effective_ux_rules(
+    cli_flag: Option<&Path>,
+    build_plan: Option<&crate::profile::BuildPlan>,
+) -> Result<Option<codegraph_config::UxRules>> {
+    let pack = codegraph_config::builtin_ux_rules().map_err(|e| {
+        crate::error::Error::Config(format!("built-in ux-default pack failed to parse: {e}"))
+    })?;
+    if let Some(path) = cli_flag {
+        let parsed = codegraph_config::load_ux_rules(path)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        for warning in &parsed.warnings {
+            eprintln!("  WARN ux-rules: {warning}");
+        }
+        return Ok(Some(codegraph_config::merge(&parsed.rules, &pack.rules)));
+    }
+    let enabled = build_plan.is_some_and(|bp| bp.ux_rules);
+    Ok(enabled.then_some(pack.rules))
 }
 
 /// Stderr notice when `--schemas` is the only model source (issue #231).
@@ -183,6 +216,7 @@ pub async fn run_with_graph_cache(
         ifml_framework,
         ifml_components,
         ifml_design_system,
+        ux_rules,
         codegraph_rev,
     } = args;
 
@@ -354,6 +388,7 @@ pub async fn run_with_graph_cache(
             extra_dependencies: String::new(),
             cargo_workspace: false,
             api_version: domain_config.defaults.api_version.clone(),
+            ux: None,
         });
 
         println!(
@@ -668,6 +703,17 @@ pub async fn run_with_graph_cache(
         None => None,
     };
 
+    // Pass 4-ish: resolve ux-rules (issue #293) once — CLI file merged over
+    // the pack, or pack-only when the profile enables the feature. Threaded
+    // into GeneratorOpts for generators and into ProjectConfig.ux so every
+    // template can read `project.ux.*`. Plan-less runs keep
+    // `project_config = None` (its synthesized default would change output);
+    // generators still receive the rules via GeneratorOpts.
+    let ux_resolved = effective_ux_rules(ux_rules, build_plan.as_ref())?;
+    if let Some(pc) = project_config.as_mut() {
+        pc.ux = ux_resolved.clone();
+    }
+
     run_validation(be.querier(), &domain_config).await?;
 
     let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
@@ -689,6 +735,7 @@ pub async fn run_with_graph_cache(
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
         ifml_components: ifml_component_mappings.as_ref(),
+        ux_rules: ux_resolved,
         project_config: project_config.as_ref(),
         emdash_plugins: None,
         domain_config_dir: config_path.parent(),
@@ -749,6 +796,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         template_dir,
         ifml_components,
         ifml_design_system,
+        ux_rules,
     } = args;
 
     if ifml_files.is_empty() {
@@ -973,6 +1021,10 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
 
     let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
 
+    // Issue #293: the IFML-only path renders through ProjectConfig, so the
+    // resolved rules ride there for the route/e2e templates.
+    project_config.ux = effective_ux_rules(ux_rules, build_plan.as_ref())?;
+
     let report = crate::generate::run_ifml_generators(
         be.querier(),
         &domain_config,
@@ -995,6 +1047,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
 }
 
 /// Generate code from an already-ingested backend (no schema ingestion).
+#[allow(clippy::too_many_arguments)]
 pub async fn generate(
     config_path: &Path,
     output: &Path,
@@ -1003,6 +1056,7 @@ pub async fn generate(
     ifml_frameworks: &[String],
     ifml_components: Option<&Path>,
     ifml_design_system: Option<&str>,
+    ux_rules: Option<&Path>,
 ) -> Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
@@ -1042,6 +1096,9 @@ pub async fn generate(
     run_validation(be.querier(), &config).await?;
     let ifml_component_mappings =
         load_ifml_component_mappings(ifml_components, ifml_design_system)?;
+    // Issue #293: plan-less run (no BuildPlan) — a CLI ux-rules file still
+    // reaches generators; ProjectConfig stays None (see `run`).
+    let ux_resolved = effective_ux_rules(ux_rules, None)?;
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
         db: be.querier(),
         config: &config,
@@ -1057,6 +1114,7 @@ pub async fn generate(
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
         ifml_components: ifml_component_mappings.as_ref(),
+        ux_rules: ux_resolved,
         project_config: None,
         emdash_plugins: None,
         domain_config_dir: config_path.parent(),
@@ -1360,6 +1418,103 @@ mod tests {
     fn design_system_defaults_to_none_without_flag_or_feature() {
         assert_eq!(effective_design_system(None, None), None);
         assert_eq!(effective_design_system(Some(""), None), None);
+    }
+
+    fn plan_with_ux_rules(enabled: bool) -> crate::profile::BuildPlan {
+        let toml = format!(
+            r#"
+[profiles.default.meta]
+name = "default"
+version = "1.0.0"
+description = ""
+
+[profiles.default.features]
+ux_rules = {enabled}
+
+[profiles.default.api]
+generators = ["ddl"]
+"#
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let profiles = dir.path().join("profiles.toml");
+        std::fs::write(&profiles, toml).unwrap();
+        crate::profile::load_and_resolve_profile(&profiles, "default", None)
+            .map(|resolved| {
+                crate::profile::BuildPlan::from_profile(
+                    &resolved,
+                    &crate::profile::CapabilityRegistry::new(),
+                )
+                .unwrap()
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn ux_rules_cli_file_merges_over_pack() {
+        use codegraph_config::Dimension;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("ux-rules.toml");
+        std::fs::write(
+            &project,
+            "[format]\nlocale = \"de-DE\"\n\n[[column]]\ndimension = \"money\"\ndisplay = \"raw\"\n",
+        )
+        .unwrap();
+
+        let resolved = effective_ux_rules(Some(&project), None).unwrap().unwrap();
+        // Project locale wins; the pack's currency default is replaced.
+        assert_eq!(resolved.format.locale, "de-DE");
+        assert_eq!(resolved.format.currency, None);
+        // Project rule prepended: shadows the pack's money rule.
+        assert_eq!(resolved.columns[0].dimension, Some(Dimension::Money));
+        assert_eq!(
+            resolved.columns[0].display,
+            Some(codegraph_config::Display::Raw)
+        );
+        // Pack rules still reachable behind the project's.
+        assert!(resolved
+            .columns
+            .iter()
+            .any(|c| c.dimension == Some(Dimension::Identifier)));
+    }
+
+    #[test]
+    fn ux_rules_profile_flag_resolves_pack_only() {
+        let plan = plan_with_ux_rules(true);
+        let resolved = effective_ux_rules(None, Some(&plan)).unwrap().unwrap();
+        assert_eq!(resolved.format.locale, "en-NZ");
+        assert_eq!(resolved.format.currency.as_deref(), Some("NZD"));
+        assert_eq!(resolved.actions.confirm, vec!["delete".to_string()]);
+    }
+
+    #[test]
+    fn ux_rules_defaults_to_none_without_flag_or_feature() {
+        assert!(effective_ux_rules(None, None).unwrap().is_none());
+        let plan = plan_with_ux_rules(false);
+        assert!(effective_ux_rules(None, Some(&plan)).unwrap().is_none());
+    }
+
+    #[test]
+    fn ux_rules_cli_flag_wins_over_disabled_feature() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("ux-rules.toml");
+        std::fs::write(&project, "").unwrap();
+        let plan = plan_with_ux_rules(false);
+        assert!(effective_ux_rules(Some(&project), Some(&plan))
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn ux_rules_missing_cli_file_is_a_hard_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.toml");
+        let plan = plan_with_ux_rules(true);
+        let err = effective_ux_rules(Some(&missing), Some(&plan)).unwrap_err();
+        assert!(
+            err.to_string().contains("missing.toml"),
+            "bad path must error naming the file: {err}"
+        );
     }
 
     #[test]

@@ -29,8 +29,28 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      # Debug info dominates the target dir for a full-workspace test
+      # build; CI doesn't consume backtraces. Halves disk usage and keeps
+      # lld under the runner's disk ceiling (SIGBUS-on-link when ENOSPC).
+      RUSTFLAGS: -C debuginfo=0
     steps:
       - uses: actions/checkout@v4
+      # ubuntu-latest ships ~25 GB of preinstalled tooling the build never
+      # touches. `cargo test --workspace` on this workspace produces tens
+      # of GB under target/, and an ENOSPC mid-link surfaces as
+      # `collect2: fatal error: ld terminated with signal 7 [Bus error]`.
+      # Swap is kept: rustc/lld OOM without it shows up as SIGKILL instead.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace

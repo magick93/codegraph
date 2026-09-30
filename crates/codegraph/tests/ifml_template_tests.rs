@@ -158,6 +158,7 @@ async fn generate_svelte_with_pack(
         template_dir: template_dirs,
         ifml_components: mappings,
         ifml_design_system: design_system,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -1883,6 +1884,7 @@ async fn transition_handler_posts_to_the_resolved_transition_endpoint() {
         template_dir: &[],
         ifml_components: None,
         ifml_design_system: None,
+        ux_rules: None,
     })
     .await
     .unwrap();
@@ -1936,5 +1938,557 @@ testids = { root = "data-table", row = "data-row" }
     assert!(
         list[invocation..].contains("data-workflow-state={item.status}"),
         "the sibling badge keeps the same attrs contract as fallback markup: {list}"
+    );
+}
+
+// ── ux-rules fallback tables (issue #300) ────────────────────────────
+
+/// Schema with one property per dimension the fallback tables format:
+/// uuid id (Identifier), enum status (StatusCategory), numeric money name
+/// (Money), integer quantity (Quantity), datetime (TimePoint), text name.
+const UX_CUSTOMER_SCHEMA: &str = r#"{
+  "$id": "CustomerType.json",
+  "title": "CustomerType",
+  "description": "A customer",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid", "description": "Unique identifier" },
+    "name": { "type": "string", "description": "Customer name" },
+    "status": { "type": "string", "enum": ["draft", "active"], "description": "Status" },
+    "total_amount": { "type": "number", "description": "Total billed" },
+    "quantity": { "type": "integer", "description": "Units ordered" },
+    "created_at": { "type": "string", "format": "date-time", "description": "Created" }
+  }
+}"#;
+
+/// Typed table covering the lookup gap plus every formatting dimension.
+const UX_TABLE_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerTable" {
+    label "Customers";
+
+    component "grid" {
+        type: table;
+        data: Customer;
+        pagination: true;
+
+        column "Name"    -> field Customer.name;
+        column "Status"  -> lookup Customer.status via status_labels;
+        column "Total"   -> field Customer.total_amount;
+        column "Count"   -> field Customer.quantity;
+        column "Created" -> field Customer.created_at;
+        column "Id"      -> field Customer.id;
+    }
+}
+"#;
+
+/// A project ux file that only pins [format]: rules merge ahead of the
+/// built-in pack, so the pack's per-dimension defaults still apply.
+fn write_ux_rules_file(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("ux-rules.toml");
+    std::fs::write(&path, "[format]\nlocale = \"en-NZ\"\ncurrency = \"NZD\"\n").unwrap();
+    path
+}
+
+#[tokio::test]
+async fn ux_on_fallback_table_renders_chips_alignment_and_formatting() {
+    let dir = tempfile::tempdir().unwrap();
+    let schemas_dir = dir.path().join("schemas");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(schemas_dir.join("CustomerType.json"), UX_CUSTOMER_SCHEMA).unwrap();
+    let classifier_path = dir.path().join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, UX_TABLE_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_without_workflow()).unwrap();
+    let ux_rules_path = write_ux_rules_file(dir.path());
+    let schemas = dir.path().join("schemas");
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .unwrap();
+
+    let page = read(
+        &output.join("svelte"),
+        "src/routes/customertable/+page.svelte",
+    );
+
+    // Lookup column: chip with tone lookup (the #300 lookup gap, closed).
+    assert!(
+        page.contains(
+            "<span class=\"chip\" data-chip={item.status} data-chip-variant={toneFor('grid.status', item.status)} data-testid=\"grid-chip\">{item.status}</span>"
+        ),
+        "lookup column must render as a tone-mapped chip:\n{page}"
+    );
+
+    // Money: right-aligned tabular figures + currency formatting.
+    assert!(
+        page.contains(
+            "<td class=\"text-right tabular-nums\">{formatMoney(item.total_amount)}</td>"
+        ),
+        "money column must be right-aligned currency:\n{page}"
+    );
+    assert!(
+        page.contains("<th class=\"text-right\">Total</th>"),
+        "headers align with cells:\n{page}"
+    );
+    assert!(
+        page.contains("currency: 'NZD'"),
+        "the money formatter carries the configured currency:\n{page}"
+    );
+
+    // Quantity: right-aligned, plain number formatting.
+    assert!(
+        page.contains("<td class=\"text-right tabular-nums\">{formatNumber(item.quantity)}</td>"),
+        "quantity column must be right-aligned number:\n{page}"
+    );
+
+    // Time point: localized date formatting.
+    assert!(
+        page.contains("{formatDate(item.created_at)}"),
+        "datetime column must render localized:\n{page}"
+    );
+
+    // Identifier: copy-chip button.
+    assert!(
+        page.contains(
+            "<td><button type=\"button\" class=\"chip chip-copy\" data-testid=\"grid-copy\" onclick={(e) => copyChip(e, item.id)}>{item.id}</button></td>"
+        ),
+        "identifier column must render a copy chip:\n{page}"
+    );
+
+    // Plain text column stays raw.
+    assert!(page.contains("<td>{item.name}</td>"), "{page}");
+    assert!(page.contains("<th>Name</th>"), "{page}");
+
+    // The tone map for the chip column is in the script (BTreeMap order).
+    assert!(
+        page.contains("'grid.status': { active: 'default', approved: 'default', draft: 'secondary', pending: 'secondary', }"),
+        "the toneFor map mirrors the pack tone table:\n{page}"
+    );
+}
+
+#[tokio::test]
+async fn ux_on_lookup_chip_survives_schemaless_runs() {
+    // Without schemas there are no graph props — the lookup tier still
+    // pins StatusCategory + chip (that is the point of tier 0), while
+    // unresolvable fields stay raw.
+    let dir = tempfile::tempdir().unwrap();
+    let ux_rules_path = write_ux_rules_file(dir.path());
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, UX_TABLE_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_without_workflow()).unwrap();
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: None,
+        classifier: None,
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .unwrap();
+
+    let page = read(
+        &output.join("svelte"),
+        "src/routes/customertable/+page.svelte",
+    );
+    assert!(
+        page.contains("data-testid=\"grid-chip\""),
+        "lookup chip must not depend on graph props:\n{page}"
+    );
+    assert!(
+        page.contains("<td>{item.name}</td>"),
+        "signal-less fields stay raw:\n{page}"
+    );
+    assert!(
+        !page.contains("text-right tabular-nums"),
+        "no money inference without a pg type:\n{page}"
+    );
+}
+
+// ── Timeline layout + event tiering + diagnostics (issue #301) ───────
+
+/// Typed table over the Customer fixture carrying THREE navigate events.
+/// Navigation flows resolve only to views that exist in the model, and
+/// the graph returns events in `evt.name` order — so the inline event is
+/// named `click` (sorts first), with `delete` and `select` disclosing.
+const UX_TIMELINE_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerTable" {
+    label "Customers";
+
+    component "grid" {
+        type: table;
+        data: Customer;
+
+        column "Name"    -> field Customer.name;
+        column "Created" -> field Customer.created_at;
+
+        on click(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+        on delete(row) -> navigate("CustomerTrash");
+        on select(row) -> navigate("CustomerCard");
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerTrash" {
+    component "trash" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerCard" {
+    component "card" {
+        type: details;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+/// Spec-less list with two events (click inline, delete disclosed) and NO
+/// timeline rule: the table stays.
+const UX_MENU_LIST_IFML: &str = r#"
+domain "sales" {
+    schema "sales";
+}
+
+view "CustomerList" {
+    label "Customers";
+
+    component "grid" {
+        type: list;
+        data: Customer;
+        fields: [name, status];
+
+        on click(row) -> navigate("CustomerDetail", {
+            customerId: row.id
+        });
+        on delete(row) -> navigate("CustomerTrash");
+    }
+}
+
+view "CustomerDetail" {
+    params { customerId: Uuid };
+
+    component "info" {
+        type: details;
+        data: Customer;
+        fields: [name];
+    }
+}
+
+view "CustomerTrash" {
+    component "trash" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+/// Timeline rule + format baseline merged over the built-in pack.
+const TIMELINE_UX_RULES: &str = r#"
+[format]
+locale = "en-NZ"
+currency = "NZD"
+
+[[collection]]
+entity_pattern = "Customer*"
+display = "timeline"
+order_by = "created_at"
+title_field = "name"
+preview = ["status", "total_amount"]
+"#;
+
+const MENU_UX_RULES: &str = "[format]\nlocale = \"en-NZ\"\ncurrency = \"NZD\"\n";
+
+/// Driver run with schemas + a ux rules file (the #300 ux-on shape).
+async fn generate_svelte_with_ux(
+    dir: &Path,
+    ifml: &str,
+    ux_rules_toml: &str,
+) -> std::path::PathBuf {
+    let schemas_dir = dir.join("schemas");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(schemas_dir.join("CustomerType.json"), UX_CUSTOMER_SCHEMA).unwrap();
+    let classifier_path = dir.join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+    let ifml_path = dir.join("app.ifml");
+    std::fs::write(&ifml_path, ifml).unwrap();
+    let output = dir.join("out");
+    let domains_toml_path = dir.join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_without_workflow()).unwrap();
+    let ux_rules_path = dir.join("ux-rules.toml");
+    std::fs::write(&ux_rules_path, ux_rules_toml).unwrap();
+    let schemas = dir.join("schemas");
+
+    codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .unwrap();
+
+    output.join("svelte")
+}
+
+#[tokio::test]
+async fn ux_on_timeline_rule_replaces_the_table_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_ux(dir.path(), UX_TIMELINE_IFML, TIMELINE_UX_RULES).await;
+    let page = read(&svelte, "src/routes/customertable/+page.svelte");
+
+    // Timeline markup with the pinned testids.
+    assert!(
+        page.contains("<ol class=\"timeline\" data-testid=\"grid-timeline\">"),
+        "{page}"
+    );
+    assert!(
+        page.contains("data-testid=\"grid-timeline-item\""),
+        "{page}"
+    );
+
+    // Newest-first sort on the order binding, `<time>` + the shared
+    // date-only Intl helper.
+    assert!(
+        page.contains("{#each grid_timeline_items as item}"),
+        "{page}"
+    );
+    assert!(
+        page.contains("timeOf(b['created_at']) - timeOf(a['created_at'])"),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "<time class=\"timeline-time\" datetime={item.created_at}>{formatDate(item.created_at)}</time>"
+        ),
+        "{page}"
+    );
+
+    // The row onclick fires from the item body; the title carries the
+    // row-handler target convention.
+    assert!(
+        page.contains(
+            "<li class=\"timeline-item\" data-testid=\"grid-timeline-item\" onclick={() => comp_grid_click(item)}>"
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "<button type=\"button\" class=\"timeline-title\" data-testid=\"grid-timeline-title\" onclick={() => comp_grid_click(item)}>{item.name}</button>"
+        ),
+        "{page}"
+    );
+
+    // Preview fields render through the shared #300 formatters: chip
+    // testid present, money through Intl.
+    assert!(
+        page.contains(
+            "<span class=\"timeline-meta\" data-testid=\"grid-timeline-meta\"><span class=\"chip\" data-chip={item.status} data-chip-variant={toneFor('grid.status', item.status)} data-testid=\"grid-chip\">{item.status}</span></span>"
+        ),
+        "{page}"
+    );
+    assert!(page.contains("{formatMoney(item.total_amount)}"), "{page}");
+    assert!(
+        page.contains("'grid.status': {"),
+        "preview chips join the page tone map:\n{page}"
+    );
+
+    // The table block is replaced, not duplicated.
+    assert!(
+        !page.contains("<table data-testid=\"grid-table\""),
+        "{page}"
+    );
+
+    // Event tiering: the first (graph-order) event stays inline on the
+    // item, the secondary events land in the actions menu with the SAME
+    // handler bodies (one function definition each, referenced from the
+    // menu).
+    assert!(page.contains("data-testid=\"grid-actions\""), "{page}");
+    assert!(page.contains("data-testid=\"grid-actions-menu\""), "{page}");
+    assert!(
+        page.contains(
+            "onclick={(e) => { e.stopPropagation(); comp_grid_delete(item); }}>Delete</button>"
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains(
+            "onclick={(e) => { e.stopPropagation(); comp_grid_select(item); }}>Select</button>"
+        ),
+        "{page}"
+    );
+    assert_eq!(
+        page.matches("function comp_grid_delete(row: Record<string, unknown>) {")
+            .count(),
+        1,
+        "each secondary handler body is emitted exactly once:\n{page}"
+    );
+    assert!(page.contains("goto(\"/customertrash\");"), "{page}");
+    assert!(page.contains("goto(\"/customercard\");"), "{page}");
+}
+
+#[tokio::test]
+async fn ux_on_secondary_events_menu_renders_on_plain_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte_with_ux(dir.path(), UX_MENU_LIST_IFML, MENU_UX_RULES).await;
+    let page = read(&svelte, "src/routes/customerlist/+page.svelte");
+
+    // No timeline rule ⇒ the table stays.
+    assert!(
+        page.contains("<table data-testid=\"grid-table\">"),
+        "{page}"
+    );
+    assert!(!page.contains("grid-timeline"), "{page}");
+
+    // The FIRST (graph-order) navigate event stays inline byte-equal.
+    assert!(
+        page.contains("<tr data-testid=\"grid-row\" onclick={() => comp_grid_click(item)}>"),
+        "{page}"
+    );
+
+    // The secondary event discloses into the per-row menu.
+    assert!(page.contains("data-testid=\"grid-actions\""), "{page}");
+    assert!(page.contains("data-testid=\"grid-actions-menu\""), "{page}");
+    assert!(
+        page.contains(
+            "onclick={(e) => { e.stopPropagation(); comp_grid_delete(item); }}>Delete</button>"
+        ),
+        "{page}"
+    );
+    assert!(
+        page.contains("let grid_actions_open = $state(false);"),
+        "{page}"
+    );
+
+    // Handler parity: one definition, called from the inline row handler
+    // and from the menu item.
+    assert_eq!(
+        page.matches("function comp_grid_click(row: Record<string, unknown>) {")
+            .count(),
+        1,
+        "{page}"
+    );
+    assert_eq!(
+        page.matches("function comp_grid_delete(row: Record<string, unknown>) {")
+            .count(),
+        1,
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn ux_off_renders_no_menu_and_no_timeline() {
+    // Flag OFF: the same list with two events renders exactly as before —
+    // no actions testid, no menu (the committed specless fixture pins the
+    // full byte-identical page).
+    let dir = tempfile::tempdir().unwrap();
+    let svelte = generate_svelte(dir.path(), SPECLESS_IFML).await;
+    let page = read(&svelte, "src/routes/customerlist/+page.svelte");
+    assert!(!page.contains("grid-actions"), "{page}");
+    assert!(!page.contains("actions_open"), "{page}");
+    assert!(!page.contains("timeline"), "{page}");
+    assert!(
+        page.contains("<tr data-testid=\"grid-row\" onclick={() => comp_grid_select(item)}>"),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn timeline_rule_with_unresolvable_order_by_fails_generation_naming_candidates() {
+    let dir = tempfile::tempdir().unwrap();
+    let schemas_dir = dir.path().join("schemas");
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::write(schemas_dir.join("CustomerType.json"), UX_CUSTOMER_SCHEMA).unwrap();
+    let classifier_path = dir.path().join("classifier.toml");
+    std::fs::write(&classifier_path, "# minimal classifier config\n").unwrap();
+    let ifml_path = dir.path().join("app.ifml");
+    std::fs::write(&ifml_path, UX_TIMELINE_IFML).unwrap();
+    let output = dir.path().join("out");
+    let domains_toml_path = dir.path().join("domains.toml");
+    std::fs::write(&domains_toml_path, domains_toml_without_workflow()).unwrap();
+    let ux_rules_path = dir.path().join("ux-rules.toml");
+    std::fs::write(
+        &ux_rules_path,
+        "[[collection]]\nentity_pattern = \"Customer*\"\ndisplay = \"timeline\"\norder_by = \"deleted_at\"\n",
+    )
+    .unwrap();
+    let schemas = dir.path().join("schemas");
+
+    let err = codegraph::driver::ifml_generate(codegraph::driver::IfmlGenerateArgs {
+        config_path: &domains_toml_path,
+        output: &output,
+        ifml_files: &[ifml_path],
+        schemas: Some(&schemas),
+        classifier: Some(&classifier_path),
+        frameworks: &["svelte".to_string()],
+        profiles_config_path: None,
+        template_dir: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: Some(&ux_rules_path),
+    })
+    .await
+    .expect_err("an unresolvable order_by must fail generation");
+
+    let message = err.to_string();
+    assert!(message.contains("deleted_at"), "{message}");
+    assert!(message.contains("Customer"), "{message}");
+    assert!(
+        message.contains("created_at"),
+        "the error names the candidate time-point fields: {message}"
     );
 }

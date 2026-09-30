@@ -38,6 +38,11 @@ pub struct QueryContext {
     /// (tree_include configured) versus typed `{Entity}Response` rows.
     #[serde(default)]
     pub tree_include: bool,
+    /// Whether the list query accepts the ux sort param (issue #306).
+    /// When false, `list_filtered` keeps its pre-#306 signature so
+    /// flag-off output stays byte-identical.
+    #[serde(default)]
+    pub ux_sort: bool,
 }
 
 pub struct QueryGenerator {
@@ -161,6 +166,15 @@ impl EntityGenerator for QueryGenerator {
                 .any(|p| matches!(&p.kind, PolicyKind::Audit(a) if a.track_deleted))
         }) && !append_only;
 
+        // ux sort plane (issue #306): thread the param only when the
+        // allow-list is non-empty, so the trait/query/repository
+        // signatures stay in sync and flag-off output is byte-identical.
+        let ux_sort = operations.iter().any(|op| op == "list")
+            && crate::ux::sort::resolve_ux_sort_plan(db, config, project, schema_title, &domain)
+                .await
+                .map(|plan| !plan.is_empty())
+                .unwrap_or(false);
+
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
             has_create: operations.contains(&"create".to_string()),
@@ -175,6 +189,7 @@ impl EntityGenerator for QueryGenerator {
             is_auditable,
             hierarchy_field,
             tree_include,
+            ux_sort,
         };
 
         let content = render_template_with_project(tera, "ddd/query.tera", &ctx, project)?;

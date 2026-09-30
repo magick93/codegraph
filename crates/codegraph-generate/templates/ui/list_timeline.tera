@@ -1,0 +1,37 @@
+{%- import "ui/_ux_cell.tera" as ux_cell -%}
+{# Timeline collections keep their fixed DESC date order (issue #306 v1): no sort buttons, no aria-sort. If/when IFML parity lands, a RenderColumn-style per-entry contract would mirror the table's header-button pattern — deliberately not built here (ledger item, #291). #}
+{% raw %}
+		<ol class="timeline" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline">
+			{#each displayRowsSorted as row}
+				<li class="timeline-item" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline-item"{% endraw %}{% if ux.inactive_shading %}{% raw %} class:timeline-inactive={isInactiveRow(row as Record<string, unknown>)}{% endraw %}{% endif %}{% raw %}>
+					<time class="timeline-time">{formatDate((row as Record<string, unknown>)[orderKey])}</time>
+					<div class="timeline-rail" aria-hidden="true"></div>
+					<div class="timeline-body">
+						<h3 class="timeline-title">
+							<a href={`${basePath}/${row['id']}`}>{String((row as Record<string, unknown>)[titleKey] ?? (row as Record<string, unknown>)['id'])}</a>
+						</h3>
+						{#if previewColumns.length > 0}
+							<div class="timeline-meta-list">
+								{#each previewColumns as col}
+									{@const value = (row as Record<string, unknown>)[col.key]}
+									<span class="timeline-meta" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline-meta">{col.label}: {% endraw %}{{ ux_cell::cell() }}{% raw %}</span>
+								{/each}
+							</div>
+						{/if}
+{% endraw %}
+{% if has_workflow and ux.workflow_status_field %}
+{% raw %}						<Badge variant={workflowVariant(String((row as Record<string, unknown>)['{% endraw %}{{ ux.workflow_status_field }}{% raw %}'] ?? ''))} data-testid="{% endraw %}{{ module_name }}{% raw %}-workflow-state">
+							{String((row as Record<string, unknown>)['{% endraw %}{{ ux.workflow_status_field }}{% raw %}'] ?? '')}
+						</Badge>
+{% endraw %}
+{% endif %}
+{% raw %}					</div>
+{% endraw %}
+{% if ux_actions %}
+{% raw %}					<div class="timeline-actions">{% endraw %}{{ ux_cell::actions() }}{% raw %}</div>
+{% endraw %}
+{% endif %}
+{% raw %}				</li>
+			{/each}
+		</ol>
+{% endraw %}
