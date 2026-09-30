@@ -1842,7 +1842,7 @@ still AND on top.
 - gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
 - Cornucopia-specific generators in `crates/codegraph/src/generate/db/cornucopia_*.rs` and `crates/codegraph/src/generate/ddd/cornucopia_repo.rs`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.
-- New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier.
+- New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier. In codegraph-grafeo both live as directory modules: `src/querier/` and `src/ingestor/` — family files hold inherent `query_*`/`insert_*` methods (one per domain family, `pub(super)`), and the single trait impl in each `mod.rs` is a thin delegation adapter (coherence forbids split trait impls). New trait methods: add the inherent method to the right family file + one adapter delegation.
 - New gRPC generators need registration in `generate/mod.rs`, a capability entry in `profile.rs`, and an entry in `profiles.toml`.
 - New persistence provider generators need a `PersistenceProvider` variant, generator capability entries, and registration in `generate/mod.rs`.
 - New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
