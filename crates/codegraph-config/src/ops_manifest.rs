@@ -259,6 +259,24 @@ pub struct OpsHook {
     pub args: Vec<String>,
     #[serde(default)]
     pub on: Option<String>,
+    /// Whether a failure aborts the suite. MISSING means fatal (`true`) —
+    /// hooks are pipeline gates (#357 made this explicit; previously the api
+    /// suite's `post_migrate` was warn-only and `post_api` was ignored).
+    /// Consumers with warn-only expectations (e.g. hr-specs' api
+    /// `post_migrate` view refresh) set `fatal = false` explicitly.
+    /// `post_e2e` is always warn-only regardless of this flag (cleanup hooks
+    /// must never mask the real failure).
+    #[serde(default)]
+    pub fatal: Option<bool>,
+}
+
+impl OpsHook {
+    /// Resolved fatality: the explicit `fatal` flag, or `default` when unset.
+    /// The harness passes `true` (missing flag = fatal) everywhere except
+    /// `post_e2e`, which is warn-only regardless of the flag.
+    pub fn fatal_or(&self, default: bool) -> bool {
+        self.fatal.unwrap_or(default)
+    }
 }
 
 /// An external test extension. Either a trait-backed extension registered by
@@ -329,6 +347,7 @@ mod tests {
                 exec: "rsync -a src/ dst/".into(),
                 args: vec![],
                 on: Some("post_generate".into()),
+                fatal: None,
             }],
             extensions: vec![OpsExtension {
                 name: "xero".into(),
@@ -562,5 +581,41 @@ limited_key = true
             hurl.org_id_b.as_deref(),
             Some("00000000-0000-0000-0000-000000000002")
         );
+    }
+
+    #[test]
+    fn hook_fatal_defaults_missing_and_opts_out_explicitly() {
+        let raw = r#"
+app_name = "demo-app"
+database.api = { host = "localhost", port = 5432, user = "u", password = "p", database = "postgres" }
+
+[[hooks]]
+name = "repin"
+exec = "./scripts/repin.sh"
+on = "post_generate"
+
+[[hooks]]
+name = "refresh-views"
+exec = "./scripts/views.sh"
+on = "post_migrate"
+fatal = false
+
+[[hooks]]
+name = "strict-gate"
+exec = "./scripts/gate.sh"
+on = "pre_api"
+fatal = true
+"#;
+        let m: OpsManifest = toml::from_str(raw).unwrap();
+        assert_eq!(m.hooks.len(), 3);
+        // MISSING flag: parses fine and resolves to fatal (pipeline gate).
+        assert!(m.hooks[0].fatal.is_none());
+        assert!(m.hooks[0].fatal_or(true));
+        assert!(!m.hooks[0].fatal_or(false));
+        // Explicit opt-out: warn-only.
+        assert_eq!(m.hooks[1].fatal, Some(false));
+        assert!(!m.hooks[1].fatal_or(true));
+        // Explicit escalation.
+        assert!(m.hooks[2].fatal_or(true));
     }
 }

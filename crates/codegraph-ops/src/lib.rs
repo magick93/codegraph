@@ -27,6 +27,7 @@ pub mod doctor;
 pub mod env;
 pub mod error;
 pub mod ext;
+pub mod freshness;
 pub mod metrics;
 pub mod migrate;
 pub mod output;

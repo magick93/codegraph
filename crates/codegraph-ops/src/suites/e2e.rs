@@ -6,6 +6,7 @@ use std::process::Command;
 
 use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
+use crate::ext::HookPolicy;
 use crate::metrics::Metrics;
 use crate::output;
 use crate::proc::{run_streaming, run_streaming_quiet, ManagedProcess, Supervisor};
@@ -32,6 +33,9 @@ pub struct E2eArgs {
     pub retry_failed: bool,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Warn instead of failing when the generator rev in the app's
+    /// `.codegraph-manifest.json` differs from this testkit's pinned rev.
+    pub allow_gen_rev_mismatch: bool,
     /// Reuse registry-known servers on the api/ui ports instead of taking
     /// them over (documented caveat: they may serve a stale build).
     pub reuse: bool,
@@ -42,11 +46,14 @@ pub struct E2eArgs {
 /// Requires manifest.supabase and manifest.database.e2e to be set (else
 /// Err(Config) explaining what's missing).
 ///
-/// `post_e2e` hooks fire on EVERY path (success and failure) — best-effort,
-/// with failures warned, so consumer cleanup steps always run.
+/// `post_e2e` hooks fire on EVERY path (success and failure) with
+/// [`HookPolicy::WarnOnly`] — cleanup hooks must always run and never mask
+/// the real failure, and `fatal = true` cannot escalate past this
+/// (documented contract). All other hook points follow each hook's manifest
+/// `fatal` flag (missing = fatal).
 pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     let result = run_e2e_inner(config, args).await;
-    if let Err(e) = crate::ext::run_hooks(config, "post_e2e").await {
+    if let Err(e) = crate::ext::run_hooks(config, "post_e2e", HookPolicy::WarnOnly).await {
         output::warn(format!("post_e2e hook failed: {e}"));
     }
     result
@@ -102,6 +109,23 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
 
     let mut supervisor = Supervisor::new(args.keep);
 
+    // 0. Freshness pre-check (--skip-build only): with the build skipped the
+    // binary cannot become fresher later, so an early stale verdict is final
+    // and costs seconds — instead of surfacing after supabase up, generation,
+    // `db reset` + seed and API-key provisioning (~10 minutes of DB work).
+    // When build is ENABLED the check stays post-build (`e2e_build`), since
+    // building may fix staleness.
+    if freshness_precheck_required(args.skip_build) {
+        if let Some(binary) = pick_binary(&config.app_dir, &config.app_binary_name(), args.release)
+        {
+            output::section("E2E 0. freshness (pre-check, --skip-build)");
+            config.metrics.begin("Freshness pre-check");
+            let verdict = crate::preflight::ensure_binary_fresh(&config.app_dir, &binary);
+            config.metrics.end();
+            verdict?;
+        }
+    }
+
     // 1. Supabase.
     e2e_supabase_up(config, supabase_dir).await?;
 
@@ -144,6 +168,15 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     }
 }
 
+/// Whether the e2e suite must run its binary-freshness check at stage 0
+/// (before Supabase) instead of after the build stage: with `--skip-build`
+/// the binary cannot become fresher later, so an early stale verdict is
+/// final and cheap; with a build enabled the post-build check in
+/// [`e2e_build`] stays authoritative.
+pub fn freshness_precheck_required(skip_build: bool) -> bool {
+    skip_build
+}
+
 async fn e2e_supabase_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     output::section("E2E 1. Supabase");
     timed(&config.metrics, "Supabase", async {
@@ -158,7 +191,9 @@ async fn e2e_supabase_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<(
         // pre_e2e hooks (e.g. the pgmq patch) need the supabase container
         // running and must complete BEFORE the migration symlink + `supabase
         // db reset`.
-        crate::ext::run_hooks(config, "pre_e2e").await
+        crate::ext::run_hooks(config, "pre_e2e", HookPolicy::PerHook)
+            .await
+            .map(|_| ())
     })
     .await
 }
@@ -180,7 +215,7 @@ async fn e2e_generate(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
             config.metrics.end_with("no model source");
             return Ok(());
         };
-        crate::ext::run_hooks(config, "pre_generate").await?;
+        crate::ext::run_hooks(config, "pre_generate", HookPolicy::PerHook).await?;
         output::info(format!("Building {binary} (release)..."));
         run_blocking(
             "build",
@@ -210,8 +245,13 @@ async fn e2e_generate(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
                 "code generation produced no output (src/ui/migrations empty)".to_string(),
             ));
         }
+        // #357: the freshly written manifest names the generator rev — a
+        // stale graph binary is a hard error here, before DB work starts.
+        crate::freshness::check_generator_rev(&config.app_dir, args.allow_gen_rev_mismatch)?;
         output::ok("App generated");
-        crate::ext::run_hooks(config, "post_generate").await
+        crate::ext::run_hooks(config, "post_generate", HookPolicy::PerHook)
+            .await
+            .map(|_| ())
     })
     .await
 }
@@ -247,7 +287,9 @@ async fn e2e_migrate(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
             }
         }
 
-        crate::ext::run_hooks(config, "post_migrate").await
+        crate::ext::run_hooks(config, "post_migrate", HookPolicy::PerHook)
+            .await
+            .map(|_| ())
     })
     .await
 }
@@ -345,7 +387,7 @@ async fn e2e_start_services(
 
     // pre_playwright hooks (e.g. UI-sync rsync steps) must land BEFORE the
     // SvelteKit production build so synced sources get compiled.
-    crate::ext::run_hooks(config, "pre_playwright").await?;
+    crate::ext::run_hooks(config, "pre_playwright", HookPolicy::PerHook).await?;
 
     // Web build stage covers dependency install + the production bundle.
     config.metrics.begin("Web build");
@@ -999,6 +1041,16 @@ mod tests {
             pick_binary(dir.path(), "demo-app", false),
             Some(dbg.join("demo-app"))
         );
+    }
+
+    #[test]
+    fn freshness_precheck_runs_only_with_skip_build() {
+        // --skip-build: the binary cannot become fresher later, so the
+        // freshness check must fire at stage 0 (before Supabase).
+        assert!(freshness_precheck_required(true));
+        // Build enabled: the post-build check in e2e_build stays
+        // authoritative (building may fix staleness).
+        assert!(!freshness_precheck_required(false));
     }
 
     #[test]

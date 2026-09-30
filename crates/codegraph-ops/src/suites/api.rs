@@ -10,7 +10,7 @@ use std::process::Command;
 use crate::config::OpsConfig;
 use crate::db::{psql_exec, psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
-use crate::ext::run_hooks;
+use crate::ext::{run_hooks, HookPolicy};
 use crate::migrate::run_api_migrations_with_options;
 use crate::output;
 use crate::proc::{run_streaming, ManagedProcess, Supervisor};
@@ -33,6 +33,9 @@ pub struct ApiArgs {
     pub results_file: Option<String>,
     /// Tolerate generation errors (skipped entities) instead of failing.
     pub allow_gen_errors: bool,
+    /// Warn instead of failing when the generator rev in the app's
+    /// `.codegraph-manifest.json` differs from this testkit's pinned rev.
+    pub allow_gen_rev_mismatch: bool,
     /// Reuse a registry-known server already running on the api port instead
     /// of taking it over (the old server keeps serving — possibly stale).
     pub reuse: bool,
@@ -116,14 +119,52 @@ impl TestCounters {
 }
 
 /// Run the API integration suite. Returns Err(TestFailure) if any check failed.
+///
+/// Hook fatality (#357): every hook point routes through the hook's manifest
+/// `fatal` flag (missing = fatal). `post_api` is now REPORTED — previously
+/// its result was silently dropped (`let _ =`); a non-fatal failure warns
+/// and is recorded in the results JSON, a fatal failure aborts the suite.
 pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
-    run_hooks(config, "pre_api").await?;
-    let result = run_api_inner(config, args).await;
-    let _ = run_hooks(config, "post_api").await;
-    result
+    let mut hook_failures: Vec<String> = Vec::new();
+    hook_failures.extend(run_hooks(config, "pre_api", HookPolicy::PerHook).await?);
+    let (counters, ok) = match run_api_inner(config, args, &mut hook_failures).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            // Early suite failure: post_api still fires (as before), but its
+            // failures never mask the inner error. No summary report was
+            // written — the CLI-level early-failure writer covers this path.
+            let _ = run_hooks(config, "post_api", HookPolicy::PerHook).await;
+            return Err(e);
+        }
+    };
+    let post_api_fatal: Option<OpsError> =
+        match run_hooks(config, "post_api", HookPolicy::PerHook).await {
+            Ok(failed) => {
+                hook_failures.extend(failed);
+                None
+            }
+            Err(e) => Some(e),
+        };
+    write_api_report(config, args, &counters, ok, &hook_failures);
+    if !ok {
+        // The inner failure wins over a fatal post_api failure.
+        return Err(OpsError::TestFailure(format!(
+            "{} of {} API tests failed",
+            counters.failures,
+            counters.passes + counters.failures
+        )));
+    }
+    if let Some(e) = post_api_fatal {
+        return Err(e);
+    }
+    Ok(())
 }
 
-async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
+async fn run_api_inner(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    hook_failures: &mut Vec<String>,
+) -> OpsResult<(TestCounters, bool)> {
     let mut counters = TestCounters::new();
 
     // ---- 0. Generate + build ----
@@ -132,7 +173,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     // (provider parity: the cornucopia manifest gets its profile passed to
     // the graph binary and CORNUCOPIA_DATABASE_URL exported for the build).
     // --skip-build skips both; --skip-generate skips only generation.
-    stage_generate_build(config, args).await?;
+    stage_generate_build(config, args, hook_failures).await?;
 
     // ---- 1. Preflight ----
     // Returns whether the api port is served by a reused registry server
@@ -141,7 +182,7 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
 
     // ---- 2. Database ----
     let (migration_dir, auth_header, api_key_b, api_key_limited) =
-        stage_database(config, args, &mut counters).await?;
+        stage_database(config, args, &mut counters, hook_failures).await?;
 
     // ---- 3. Server ----
     let binary = app_binary_path(config, args);
@@ -183,38 +224,41 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     stage_graceful_shutdown(config, &mut supervisor, &mut counters).await;
 
     // ---- 11. Regeneration (optional) ----
-    stage_regeneration(config, args, &mut counters).await?;
+    stage_regeneration(config, args, &mut counters, hook_failures).await?;
 
     // ---- Summary ----
     let ok = counters.summary();
-    write_api_report(config, args, &counters, ok);
     supervisor.shutdown_all().await;
-
-    if ok {
-        Ok(())
-    } else {
-        Err(OpsError::TestFailure(format!(
-            "{} of {} API tests failed",
-            counters.failures,
-            counters.passes + counters.failures
-        )))
-    }
+    Ok((counters, ok))
 }
 
-async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
+async fn stage_generate_build(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    hook_failures: &mut Vec<String>,
+) -> OpsResult<()> {
     if !args.skip_build {
         output::section("0. Generate + build");
         config.metrics.begin("Generate + build");
         if !args.skip_generate {
             match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
                 (Some(graph), Some(_)) => {
-                    run_hooks(config, "pre_generate").await?;
+                    hook_failures
+                        .extend(run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
                     let gen_output =
                         regenerate(config, graph).inspect_err(|e| output::fail(e.to_string()))?;
                     if !args.allow_gen_errors {
                         assert_generation_clean(&gen_output)?;
                     }
-                    run_hooks(config, "post_generate").await?;
+                    hook_failures
+                        .extend(run_hooks(config, "post_generate", HookPolicy::PerHook).await?);
+                    // #357: the freshly written manifest names the generator
+                    // rev — a stale graph binary is a hard error here, not a
+                    // drift discovered after ~10 minutes of suite work.
+                    crate::freshness::check_generator_rev(
+                        &config.app_dir,
+                        args.allow_gen_rev_mismatch,
+                    )?;
                     output::ok("Templates regenerated");
                 }
                 (Some(_), None) => output::warn("schemas_dir not configured — skipping generation"),
@@ -511,6 +555,7 @@ async fn stage_database(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
+    hook_failures: &mut Vec<String>,
 ) -> OpsResult<(PathBuf, Option<String>, Option<String>, Option<String>)> {
     // ---- 2. Database ----
     output::section("2. Database");
@@ -536,10 +581,12 @@ async fn stage_database(
             let _ = psql_exec_file_ok(&config.api_db, &seed_path).await;
         }
         // Consumer-provided post-migration steps (e.g. hr-reports views).
-        // Hook failures are warnings — hooks are consumer-owned.
-        if let Err(e) = crate::ext::run_hooks(config, "post_migrate").await {
-            output::warn(format!("post_migrate hook failed: {e}"));
-        }
+        // Fatality follows the hook's manifest `fatal` flag (missing =
+        // fatal) — #357 replaced the blanket warn-only behavior; consumers
+        // with warn-only expectations (e.g. hr-specs' api post_migrate) set
+        // `fatal = false` explicitly.
+        hook_failures
+            .extend(crate::ext::run_hooks(config, "post_migrate", HookPolicy::PerHook).await?);
     } else {
         output::info("--no-migrate: skipping reset + migration");
     }
@@ -1147,6 +1194,7 @@ async fn stage_regeneration(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
+    hook_failures: &mut Vec<String>,
 ) -> OpsResult<()> {
     // ---- 11. Regeneration (optional) ----
     if args.regen {
@@ -1157,10 +1205,19 @@ async fn stage_regeneration(
             // before regeneration — switching persistence providers with a
             // dirty tree left stale files behind and broke the compile check
             // with 290 errors in a real incident.
-            crate::ext::run_hooks(config, "pre_generate").await?;
+            hook_failures
+                .extend(crate::ext::run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
             match regenerate(config, graph) {
                 Ok(_) => {
                     counters.pass("Templates regenerated");
+                    // Same generator-rev gate as stage 0 — the regen
+                    // validation must not silently pass on stale output.
+                    if let Err(e) = crate::freshness::check_generator_rev(
+                        &config.app_dir,
+                        args.allow_gen_rev_mismatch,
+                    ) {
+                        counters.fail_test(e.to_string());
+                    }
                     match cargo_check_in(config) {
                         Ok(()) => counters.pass("Regenerated code compiles"),
                         Err(tail) => {
@@ -1183,7 +1240,13 @@ async fn stage_regeneration(
     Ok(())
 }
 
-fn write_api_report(config: &OpsConfig, args: &ApiArgs, counters: &TestCounters, ok: bool) {
+fn write_api_report(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    counters: &TestCounters,
+    ok: bool,
+    hook_failures: &[String],
+) {
     if let Some(metrics_file) = &args.metrics_file {
         let _ = config.metrics.append_tsv(Path::new(metrics_file), "api");
     }
@@ -1197,6 +1260,7 @@ fn write_api_report(config: &OpsConfig, args: &ApiArgs, counters: &TestCounters,
         report.passed = counters.passes;
         report.failed = counters.failures;
         report.failures = counters.failure_log.clone();
+        report.hook_failures = hook_failures.to_vec();
         report.exit = i32::from(!ok);
         let _ = report.write(Path::new(results_file));
     }

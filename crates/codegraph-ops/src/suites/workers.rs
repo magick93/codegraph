@@ -17,7 +17,7 @@ use crate::db::{
     psql_exec, psql_exec_file, psql_exec_file_ok, psql_exec_file_with_vars, psql_query,
 };
 use crate::error::{OpsError, OpsResult};
-use crate::ext::run_hooks;
+use crate::ext::{run_hooks, HookPolicy};
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
 use crate::suites::api::{
@@ -123,6 +123,9 @@ pub struct WorkersArgs {
     pub release: bool,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Warn instead of failing when the generator rev in the workers output's
+    /// `.codegraph-manifest.json` differs from this testkit's pinned rev.
+    pub allow_gen_rev_mismatch: bool,
     /// Reuse registry-known services already running on needed ports instead
     /// of taking them over.
     pub reuse: bool,
@@ -245,7 +248,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
                     .to_string(),
             ));
         };
-        run_hooks(config, "pre_generate").await?;
+        run_hooks(config, "pre_generate", HookPolicy::PerHook).await?;
         // The manifest's clean-generated hook targets generated-candidate
         // paths, so wipe the workers output here (dual-test.sh B1).
         for rel in REGEN_WIPE {
@@ -271,9 +274,18 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
             ));
         }
         counters.pass("Workers output regenerated");
+        // #357: the freshly written manifest names the generator rev — a
+        // stale graph binary is a hard error before the build/DB stages.
+        if let Err(e) =
+            crate::freshness::check_generator_rev(&workers_out, args.allow_gen_rev_mismatch)
+        {
+            counters.fail_test(e.to_string());
+            return Err(e);
+        }
         // post_generate hooks may be monolith-specific (the hr-specs repin
-        // hook only touches generated-candidate) — warn, never abort.
-        if let Err(e) = run_hooks(config, "post_generate").await {
+        // hook only touches generated-candidate) — warn, never abort
+        // (WarnOnly: `fatal = true` cannot escalate past this).
+        if let Err(e) = run_hooks(config, "post_generate", HookPolicy::WarnOnly).await {
             output::warn(format!("post_generate hook failed (continuing): {e}"));
         }
         config.metrics.end();

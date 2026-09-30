@@ -62,6 +62,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     allow_gen_errors: bool,
 
+    /// Warn instead of failing when the generator rev recorded in the app's
+    /// .codegraph-manifest.json (codegraphCommit) differs from the rev this
+    /// testkit was built from — i.e. the tested output was produced by a
+    /// stale graph binary. Default: a mismatch is a hard error right after
+    /// generation.
+    #[arg(long, global = true)]
+    allow_gen_rev_mismatch: bool,
+
     /// Skip generation only.
     #[arg(long, global = true)]
     skip_generate: bool,
@@ -265,6 +273,7 @@ pub async fn main() -> i32 {
                 retry: cli.retry,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                 allow_gen_errors: cli.allow_gen_errors,
+                allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                 reuse: cli.reuse,
             };
             output::bold("Running API integration tests");
@@ -286,10 +295,11 @@ pub async fn main() -> i32 {
                     retry: cli.retry,
                     results_file: cli.results.as_ref().map(|p| p.display().to_string()),
                     allow_gen_errors: cli.allow_gen_errors,
+                    allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                     reuse: cli.reuse,
                 };
                 if let Err(e) = run_api(&config, &args).await {
-                    return report_error("api", e);
+                    return fail_suite(&cli, &config, "api", e);
                 }
             }
             let args = CliArgs {
@@ -312,6 +322,7 @@ pub async fn main() -> i32 {
                 skip_ui_build: *skip_ui_build,
                 retry_failed: *retry_failed,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+                allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                 reuse: cli.reuse,
                 playwright_args: build_playwright_args(&cli, extra),
             };
@@ -339,6 +350,7 @@ pub async fn main() -> i32 {
                 skip_generate: cli.skip_generate,
                 release: cli.release,
                 results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+                allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                 reuse: cli.reuse,
             };
             output::bold("Running workers-topology tests");
@@ -389,9 +401,10 @@ pub async fn main() -> i32 {
         }
     };
 
+    let suite = subcommand_name(&cli.command);
     match result {
-        Ok(()) => finish_ok(&cli, &config, subcommand_name(&cli.command)),
-        Err(e) => report_error(subcommand_name(&cli.command), e),
+        Ok(()) => finish_ok(&cli, &config, suite),
+        Err(e) => fail_suite(&cli, &config, suite, e),
     }
 }
 
@@ -412,11 +425,12 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         retry: cli.retry,
         results_file: cli.results.as_ref().map(|p| p.display().to_string()),
         allow_gen_errors: cli.allow_gen_errors,
+        allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
         reuse: cli.reuse,
     };
     let api_code = match run_api(config, &api_args).await {
         Ok(()) => None,
-        Err(e) => Some(report_error("api", e)),
+        Err(e) => Some(fail_suite(cli, config, "api", e)),
     };
     println!();
     output::bold("════════════════════════════════════════════");
@@ -430,12 +444,13 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         skip_ui_build: false,
         retry_failed: false,
         results_file: cli.results.as_ref().map(|p| p.display().to_string()),
+        allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
         reuse: cli.reuse,
         playwright_args: build_playwright_args(cli, &[]),
     };
     let e2e_code = match run_e2e(config, &e2e_args).await {
         Ok(()) => None,
-        Err(e) => Some(report_error("e2e", e)),
+        Err(e) => Some(fail_suite(cli, config, "e2e", e)),
     };
     let code = combine_codes(api_code, e2e_code);
     if code == 0 {
@@ -517,20 +532,45 @@ fn api_health_ok(config: &OpsConfig) -> bool {
 }
 
 fn report_error(subcommand: &str, e: OpsError) -> i32 {
-    let code = match &e {
-        OpsError::TestFailure(_) => {
-            output::fail(format!("{subcommand}: {e}"));
-            1
-        }
-        _ => {
-            output::fail(format!("{subcommand}: {e}"));
-            e.exit_code()
-        }
-    };
+    let code = failure_exit_code(&e);
+    output::fail(format!("{subcommand}: {e}"));
     if let Some(h) = crate::error::hint(&e) {
         println!("  {}", output::dim(format!("hint: {h}")));
     }
     code
+}
+
+/// Exit code for a suite failure: test failures are 1 like every other
+/// fatal error except timeouts (2, matching bash `exit 2`).
+fn failure_exit_code(e: &OpsError) -> i32 {
+    match e {
+        OpsError::TestFailure(_) => 1,
+        _ => e.exit_code(),
+    }
+}
+
+/// Fail a suite: write the early-failure results JSON when the suite returned
+/// Err WITHOUT having written its completed-run report (#357 — port
+/// conflicts, missing tools, stale binaries and supabase failures used to
+/// skip `--results` entirely), then print the error. The stage recorded in
+/// the early report is the most recent ▸-level section title
+/// (`output::current_section`).
+fn fail_suite(cli: &Cli, config: &OpsConfig, suite: &str, e: OpsError) -> i32 {
+    if let Some(path) = &cli.results {
+        if !crate::results::report_written(suite) {
+            let report = crate::results::EarlyFailureReport {
+                suite: suite.to_string(),
+                manifest: config.manifest_path.display().to_string(),
+                stage: output::current_section(),
+                error: e.to_string(),
+                exit: failure_exit_code(&e),
+            };
+            if let Err(write_err) = report.write(Path::new(path)) {
+                output::warn(format!("could not write early results: {write_err}"));
+            }
+        }
+    }
+    report_error(suite, e)
 }
 
 /// Locate the manifest when `--config` is absent: walk UP from `cwd`
@@ -750,6 +790,20 @@ mod tests {
         assert!(cli.clear_cache);
         let cli = Cli::try_parse_from(["testkit", "ui", "--reuse"]).unwrap();
         assert!(cli.reuse && !cli.clear_cache);
+    }
+
+    #[test]
+    fn allow_gen_rev_mismatch_is_a_global_flag_defaulting_off() {
+        let cli = Cli::try_parse_from(["testkit", "e2e", "--allow-gen-rev-mismatch"]).unwrap();
+        assert!(cli.allow_gen_rev_mismatch);
+        let cli = Cli::try_parse_from(["testkit", "workers"]).unwrap();
+        assert!(!cli.allow_gen_rev_mismatch);
+        // Documented in --help.
+        let help = Cli::command().render_help().to_string();
+        assert!(
+            help.contains("--allow-gen-rev-mismatch"),
+            "flag must appear in --help: {help}"
+        );
     }
 
     #[test]
