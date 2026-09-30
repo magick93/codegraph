@@ -14,25 +14,30 @@
 //! ```
 //!
 //! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `workers`, `clean`,
-//! `smoke`, `quality`, `ext <name>`, `doctor`.
+//! `smoke`, `quality`, `ext <name>`, `doctor`, `bundle`.
 //!
 //! External integrations (Xero, Stripe, IRD, ...) plug in via the
 //! [`ext::TestExtension`] trait or manifest `[[extensions]]` exec entries —
 //! codegraph itself stays agnostic to consumer-specific integrations.
 
+pub mod bundle;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod disk;
 pub mod doctor;
 pub mod env;
 pub mod error;
 pub mod ext;
+pub mod freshness;
 pub mod metrics;
 pub mod migrate;
 pub mod output;
 pub mod pg;
 pub mod preflight;
 pub mod proc;
+pub mod pwcache;
+pub mod registry;
 pub mod results;
 pub mod suites;
 pub mod wait;

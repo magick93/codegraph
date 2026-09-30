@@ -8,6 +8,7 @@
 //! instead of being skipped silently, the gateway port and the worker port
 //! range are preflight-checked, and every hurl skip carries its reason.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -16,7 +17,7 @@ use crate::db::{
     psql_exec, psql_exec_file, psql_exec_file_ok, psql_exec_file_with_vars, psql_query,
 };
 use crate::error::{OpsError, OpsResult};
-use crate::ext::run_hooks;
+use crate::ext::{run_hooks, HookPolicy};
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
 use crate::suites::api::{
@@ -36,17 +37,19 @@ const OUTPUT_DIR: &str = "generated-workers";
 /// Cargo workspace inside the generated output producing the binaries.
 const WORKERS_SUBDIR: &str = "workers";
 
-/// Gateway listen port (mirrors dual-test.sh).
-const GATEWAY_PORT: u16 = 8787;
+/// Gateway listen port (mirrors dual-test.sh). Also swept by `clean` — the
+/// workers-suite generalization is deferred, so `clean` shares these
+/// constants rather than manifest plumbing.
+pub const GATEWAY_PORT: u16 = 8787;
 
 /// First per-domain worker port; worker *i* binds `3001 + i`.
-const WORKER_BASE_PORT: u16 = 3001;
+pub const WORKER_BASE_PORT: u16 = 3001;
 
 /// Generated binary prefix: `hr-app-{domain}` per worker, `hr-app-gateway`.
 const BINARY_PREFIX: &str = "hr-app";
 
 /// Domain worker crates in generation (port) order.
-const WORKER_DOMAINS: &[&str] = &[
+pub const WORKER_DOMAINS: &[&str] = &[
     "assessments",
     "benefits",
     "common",
@@ -120,10 +123,16 @@ pub struct WorkersArgs {
     pub release: bool,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Warn instead of failing when the generator rev in the workers output's
+    /// `.codegraph-manifest.json` differs from this testkit's pinned rev.
+    pub allow_gen_rev_mismatch: bool,
+    /// Reuse registry-known services already running on needed ports instead
+    /// of taking them over.
+    pub reuse: bool,
 }
 
 /// Port for the worker at 0-based index `i`: `3001 + i`.
-fn worker_port(i: u16) -> u16 {
+pub fn worker_port(i: u16) -> u16 {
     WORKER_BASE_PORT + i
 }
 
@@ -197,16 +206,33 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         ));
     }
 
+    // Registry-aware preflight: a leaked `--keep` worker/gateway is taken
+    // over by default (killed via its registry pid) or reused with --reuse.
+    let mut reused_ports: HashSet<u16> = HashSet::new();
     for port in std::iter::once(GATEWAY_PORT).chain(worker_ports()) {
-        if let Err(e) = crate::preflight::ensure_port_free(port) {
-            counters.fail_test(e.to_string());
-            return Err(e);
+        match crate::preflight::ensure_port_available(&config.root_dir, port, args.reuse) {
+            Ok(outcome) => {
+                if outcome.reused() {
+                    reused_ports.insert(port);
+                }
+            }
+            Err(e) => {
+                counters.fail_test(e.to_string());
+                return Err(e);
+            }
         }
     }
-    counters.pass(format!(
-        "Ports free (gateway {GATEWAY_PORT}, workers {WORKER_BASE_PORT}..{})",
-        worker_port(WORKER_DOMAINS.len() as u16 - 1)
-    ));
+    if reused_ports.is_empty() {
+        counters.pass(format!(
+            "Ports free (gateway {GATEWAY_PORT}, workers {WORKER_BASE_PORT}..{})",
+            worker_port(WORKER_DOMAINS.len() as u16 - 1)
+        ));
+    } else {
+        counters.pass(format!(
+            "Ports resolved ({} reused via --reuse)",
+            reused_ports.len()
+        ));
+    }
     config.metrics.end();
 
     // ---- 2. Regenerate (workers profile) ----
@@ -222,7 +248,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
                     .to_string(),
             ));
         };
-        run_hooks(config, "pre_generate").await?;
+        run_hooks(config, "pre_generate", HookPolicy::PerHook).await?;
         // The manifest's clean-generated hook targets generated-candidate
         // paths, so wipe the workers output here (dual-test.sh B1).
         for rel in REGEN_WIPE {
@@ -248,9 +274,18 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
             ));
         }
         counters.pass("Workers output regenerated");
+        // #357: the freshly written manifest names the generator rev — a
+        // stale graph binary is a hard error before the build/DB stages.
+        if let Err(e) =
+            crate::freshness::check_generator_rev(&workers_out, args.allow_gen_rev_mismatch)
+        {
+            counters.fail_test(e.to_string());
+            return Err(e);
+        }
         // post_generate hooks may be monolith-specific (the hr-specs repin
-        // hook only touches generated-candidate) — warn, never abort.
-        if let Err(e) = run_hooks(config, "post_generate").await {
+        // hook only touches generated-candidate) — warn, never abort
+        // (WarnOnly: `fatal = true` cannot escalate past this).
+        if let Err(e) = run_hooks(config, "post_generate", HookPolicy::WarnOnly).await {
             output::warn(format!("post_generate hook failed (continuing): {e}"));
         }
         config.metrics.end();
@@ -344,7 +379,14 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
 
     // ---- 5-7. Boot + smoke + hurl (teardown runs on every path) ----
     let mut supervisor = Supervisor::new(args.keep);
-    let stages = run_boot_and_tests(config, &mut counters, &bin_dir, &mut supervisor).await;
+    let stages = run_boot_and_tests(
+        config,
+        &mut counters,
+        &bin_dir,
+        &reused_ports,
+        &mut supervisor,
+    )
+    .await;
     supervisor.shutdown_all().await;
     stages?;
 
@@ -376,11 +418,14 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
 
 /// Boot the per-domain workers + gateway, then run the gateway smoke checks
 /// and the hurl contract tests. The caller owns the supervisor and tears
-/// everything down afterwards (both success and failure paths).
+/// everything down afterwards (both success and failure paths). `reused_ports`
+/// (`--reuse`) lists ports served by registry-known prior processes — those
+/// are NOT spawned, but the gateway still routes to them.
 async fn run_boot_and_tests(
     config: &OpsConfig,
     counters: &mut TestCounters,
     bin_dir: &Path,
+    reused_ports: &HashSet<u16>,
     supervisor: &mut Supervisor,
 ) -> OpsResult<()> {
     // ---- 5. Boot workers + gateway ----
@@ -389,6 +434,14 @@ async fn run_boot_and_tests(
 
     let mut upstreams: Vec<(String, u16)> = Vec::with_capacity(WORKER_DOMAINS.len());
     for (i, domain) in WORKER_DOMAINS.iter().enumerate() {
+        let port = worker_port(i as u16);
+        if reused_ports.contains(&port) {
+            output::warn(format!(
+                "--reuse: worker {domain} already running on port {port} — not booting a new one"
+            ));
+            upstreams.push(((*domain).to_string(), port));
+            continue;
+        }
         let binary = bin_dir.join(format!("{BINARY_PREFIX}-{domain}"));
         if !binary.is_file() {
             // Unlike dual-test.sh, which skipped missing binaries silently
@@ -399,11 +452,11 @@ async fn run_boot_and_tests(
                 WORKER_DOMAINS.len()
             )));
         }
-        let port = worker_port(i as u16);
         let mut cmd = Command::new(&binary);
         cmd.env("DATABASE_URL", config.api_db.url())
             .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone())
             .env("BIND_ADDR", format!("127.0.0.1:{port}"));
+        cmd.current_dir(&config.root_dir);
         let log_path = PathBuf::from(format!("/tmp/codegraph-ops-worker-{domain}.log"));
         let proc = ManagedProcess::spawn(cmd, &format!("worker {domain}"), &log_path)?;
         supervisor.add(proc);
@@ -413,18 +466,25 @@ async fn run_boot_and_tests(
         ));
     }
 
-    let gateway_bin = bin_dir.join(format!("{BINARY_PREFIX}-gateway"));
-    let mut gw_cmd = Command::new(&gateway_bin);
-    gw_cmd.env("BIND_ADDR", format!("127.0.0.1:{GATEWAY_PORT}"));
-    for (domain, port) in &upstreams {
-        gw_cmd.env(gateway_env_name(domain), format!("http://127.0.0.1:{port}"));
+    if reused_ports.contains(&GATEWAY_PORT) {
+        output::warn(format!(
+            "--reuse: gateway already running on port {GATEWAY_PORT} — not booting a new one"
+        ));
+    } else {
+        let gateway_bin = bin_dir.join(format!("{BINARY_PREFIX}-gateway"));
+        let mut gw_cmd = Command::new(&gateway_bin);
+        gw_cmd.env("BIND_ADDR", format!("127.0.0.1:{GATEWAY_PORT}"));
+        for (domain, port) in &upstreams {
+            gw_cmd.env(gateway_env_name(domain), format!("http://127.0.0.1:{port}"));
+        }
+        gw_cmd.current_dir(&config.root_dir);
+        let gateway = ManagedProcess::spawn(
+            gw_cmd,
+            "gateway",
+            Path::new("/tmp/codegraph-ops-gateway.log"),
+        )?;
+        supervisor.add(gateway);
     }
-    let gateway = ManagedProcess::spawn(
-        gw_cmd,
-        "gateway",
-        Path::new("/tmp/codegraph-ops-gateway.log"),
-    )?;
-    supervisor.add(gateway);
 
     if let Err(e) = wait_for_url(
         &format!("http://127.0.0.1:{GATEWAY_PORT}/health"),
@@ -601,8 +661,9 @@ async fn run_boot_and_tests(
     Ok(())
 }
 
-/// Worker ports in domain order (3001 .. 3001+N-1).
-fn worker_ports() -> impl Iterator<Item = u16> {
+/// Worker ports in domain order (3001 .. 3001+N-1). Also used by `clean`'s
+/// port sweep.
+pub fn worker_ports() -> impl Iterator<Item = u16> {
     (0..WORKER_DOMAINS.len() as u16).map(worker_port)
 }
 
@@ -621,19 +682,10 @@ fn regenerate(config: &OpsConfig, graph: &str, workers_out: &Path) -> (bool, Str
         output::warn(hint);
     }
     let cargo_args = regenerate_args(config, graph, workers_out);
-    match Command::new("cargo")
-        .args(&cargo_args)
-        .current_dir(&config.workspace_root)
-        .output()
-    {
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (out.status.success(), text)
-        }
+    let mut cmd = Command::new("cargo");
+    cmd.args(&cargo_args).current_dir(&config.workspace_root);
+    match crate::proc::run_streaming(&mut cmd, "generate") {
+        Ok(out) => (out.status.success(), out.captured),
         Err(e) => (false, e.to_string()),
     }
 }
@@ -711,15 +763,9 @@ fn cargo_build(build_dir: &Path, release: bool, cornucopia_db_url: &str) -> (boo
         cmd.arg("--release");
     }
     cmd.env("CORNUCOPIA_DATABASE_URL", cornucopia_db_url);
-    match cmd.current_dir(build_dir).output() {
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            (out.status.success(), text)
-        }
+    cmd.current_dir(build_dir);
+    match crate::proc::run_streaming(&mut cmd, "build") {
+        Ok(out) => (out.status.success(), out.captured),
         Err(e) => (false, e.to_string()),
     }
 }
@@ -945,6 +991,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 

@@ -10,10 +10,10 @@ use std::process::Command;
 use crate::config::OpsConfig;
 use crate::db::{psql_exec, psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
-use crate::ext::run_hooks;
+use crate::ext::{run_hooks, HookPolicy};
 use crate::migrate::run_api_migrations_with_options;
 use crate::output;
-use crate::proc::{ManagedProcess, Supervisor};
+use crate::proc::{run_streaming, ManagedProcess, Supervisor};
 use crate::results::{ResultsReport, SuiteFailure};
 use crate::wait::wait_for_url;
 
@@ -26,13 +26,18 @@ pub struct ApiArgs {
     pub rebuild: bool,
     pub regen: bool,
     pub release: bool,
-    pub metrics_file: Option<String>,
     /// Retry failed hurl files up to this many times (0 = no retries).
     pub retry: u32,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
     /// Tolerate generation errors (skipped entities) instead of failing.
     pub allow_gen_errors: bool,
+    /// Warn instead of failing when the generator rev in the app's
+    /// `.codegraph-manifest.json` differs from this testkit's pinned rev.
+    pub allow_gen_rev_mismatch: bool,
+    /// Reuse a registry-known server already running on the api port instead
+    /// of taking it over (the old server keeps serving — possibly stale).
+    pub reuse: bool,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -113,15 +118,59 @@ impl TestCounters {
 }
 
 /// Run the API integration suite. Returns Err(TestFailure) if any check failed.
+///
+/// Hook fatality (#357): every hook point routes through the hook's manifest
+/// `fatal` flag (missing = fatal). `post_api` is now REPORTED — previously
+/// its result was silently dropped (`let _ =`); a non-fatal failure warns
+/// and is recorded in the results JSON, a fatal failure aborts the suite.
 pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
-    run_hooks(config, "pre_api").await?;
-    let result = run_api_inner(config, args).await;
-    let _ = run_hooks(config, "post_api").await;
-    result
+    let mut hook_failures: Vec<String> = Vec::new();
+    hook_failures.extend(run_hooks(config, "pre_api", HookPolicy::PerHook).await?);
+    let (counters, ok) = match run_api_inner(config, args, &mut hook_failures).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            // Early suite failure: post_api still fires (as before), but its
+            // failures never mask the inner error. No summary report was
+            // written — the CLI-level early-failure writer covers this path.
+            let _ = run_hooks(config, "post_api", HookPolicy::PerHook).await;
+            return Err(e);
+        }
+    };
+    let post_api_fatal: Option<OpsError> =
+        match run_hooks(config, "post_api", HookPolicy::PerHook).await {
+            Ok(failed) => {
+                hook_failures.extend(failed);
+                None
+            }
+            Err(e) => Some(e),
+        };
+    write_api_report(config, args, &counters, ok, &hook_failures);
+    if !ok {
+        // The inner failure wins over a fatal post_api failure.
+        return Err(OpsError::TestFailure(format!(
+            "{} of {} API tests failed",
+            counters.failures,
+            counters.passes + counters.failures
+        )));
+    }
+    if let Some(e) = post_api_fatal {
+        return Err(e);
+    }
+    Ok(())
 }
 
-async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
+async fn run_api_inner(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    hook_failures: &mut Vec<String>,
+) -> OpsResult<(TestCounters, bool)> {
     let mut counters = TestCounters::new();
+
+    // ---- 0. Fast doctor (#358) ----
+    // Cheap tool/filesystem/port checks fail in seconds with hints instead
+    // of after the generate+build stage below (a missing hurl used to
+    // surface only here, minutes into a full rebuild).
+    crate::doctor::run_fast_doctor(config, crate::doctor::FastDoctorSuite::Api).await?;
 
     // ---- 0. Generate + build ----
     // By default the suite regenerates from the manifest's profile and
@@ -129,17 +178,20 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     // (provider parity: the cornucopia manifest gets its profile passed to
     // the graph binary and CORNUCOPIA_DATABASE_URL exported for the build).
     // --skip-build skips both; --skip-generate skips only generation.
-    stage_generate_build(config, args).await?;
+    stage_generate_build(config, args, hook_failures).await?;
 
     // ---- 1. Preflight ----
-    let binary = stage_preflight(config, args, &mut counters).await?;
+    // Returns whether the api port is served by a reused registry server
+    // (`--reuse`) — stage_server then skips booting its own instance.
+    let server_reused = stage_preflight(config, args, &mut counters).await?;
 
     // ---- 2. Database ----
     let (migration_dir, auth_header, api_key_b, api_key_limited) =
-        stage_database(config, args, &mut counters).await?;
+        stage_database(config, args, &mut counters, hook_failures).await?;
 
     // ---- 3. Server ----
-    let mut supervisor = stage_server(config, args, &binary, &mut counters).await?;
+    let binary = app_binary_path(config, args);
+    let mut supervisor = stage_server(config, args, &binary, server_reused, &mut counters).await?;
 
     // ---- 4. Hurl API tests ----
     stage_hurl(
@@ -177,38 +229,41 @@ async fn run_api_inner(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     stage_graceful_shutdown(config, &mut supervisor, &mut counters).await;
 
     // ---- 11. Regeneration (optional) ----
-    stage_regeneration(config, args, &mut counters).await?;
+    stage_regeneration(config, args, &mut counters, hook_failures).await?;
 
     // ---- Summary ----
     let ok = counters.summary();
-    write_api_report(config, args, &counters, ok);
     supervisor.shutdown_all().await;
-
-    if ok {
-        Ok(())
-    } else {
-        Err(OpsError::TestFailure(format!(
-            "{} of {} API tests failed",
-            counters.failures,
-            counters.passes + counters.failures
-        )))
-    }
+    Ok((counters, ok))
 }
 
-async fn stage_generate_build(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
+async fn stage_generate_build(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    hook_failures: &mut Vec<String>,
+) -> OpsResult<()> {
     if !args.skip_build {
         output::section("0. Generate + build");
         config.metrics.begin("Generate + build");
         if !args.skip_generate {
             match (&config.manifest.graph_binary, &config.manifest.schemas_dir) {
                 (Some(graph), Some(_)) => {
-                    run_hooks(config, "pre_generate").await?;
+                    hook_failures
+                        .extend(run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
                     let gen_output = regenerate(config, graph, args.release)
                         .inspect_err(|e| output::fail(e.to_string()))?;
                     if !args.allow_gen_errors {
                         assert_generation_clean(&gen_output)?;
                     }
-                    run_hooks(config, "post_generate").await?;
+                    hook_failures
+                        .extend(run_hooks(config, "post_generate", HookPolicy::PerHook).await?);
+                    // #357: the freshly written manifest names the generator
+                    // rev — a stale graph binary is a hard error here, not a
+                    // drift discovered after ~10 minutes of suite work.
+                    crate::freshness::check_generator_rev(
+                        &config.app_dir,
+                        args.allow_gen_rev_mismatch,
+                    )?;
                     output::ok("Templates regenerated");
                 }
                 (Some(_), None) => output::warn("schemas_dir not configured — skipping generation"),
@@ -231,7 +286,7 @@ async fn stage_preflight(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
-) -> OpsResult<PathBuf> {
+) -> OpsResult<bool> {
     output::section("1. Preflight");
     config.metrics.begin("Preflight");
 
@@ -287,11 +342,39 @@ async fn stage_preflight(
     // Port preflight: the api server binds `{api_port}` later in the suite;
     // an unrelated process holding it used to fail the run ten minutes in
     // with the real error buried in the app log. Fail in seconds instead.
-    if let Err(e) = crate::preflight::ensure_port_free(config.manifest.servers.api_port) {
-        counters.fail_test(e.to_string());
-        return Err(e);
-    }
-    counters.pass(format!("Port {} free", config.manifest.servers.api_port));
+    // Registry-known prior servers (`--keep` leaks) are taken over by
+    // default, or reused with `--reuse`.
+    let server_reused = match crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.api_port,
+        args.reuse,
+    ) {
+        Ok(outcome) => {
+            let reused = outcome.reused();
+            match &outcome {
+                crate::preflight::PortOutcome::Free => {
+                    counters.pass(format!("Port {} free", config.manifest.servers.api_port));
+                }
+                crate::preflight::PortOutcome::Reused { name } => {
+                    counters.pass(format!(
+                        "Port {} served by reused registry service {name} (--reuse)",
+                        config.manifest.servers.api_port
+                    ));
+                }
+                crate::preflight::PortOutcome::TookOver { name, pid } => {
+                    counters.pass(format!(
+                        "Port {} freed (took over {name}, pid {pid})",
+                        config.manifest.servers.api_port
+                    ));
+                }
+            }
+            reused
+        }
+        Err(e) => {
+            counters.fail_test(e.to_string());
+            return Err(e);
+        }
+    };
 
     // Output-tree completeness: a wiped/partial generated dir (interrupted
     // regen) used to surface only as baffling auth/migration failures deep
@@ -303,12 +386,7 @@ async fn stage_preflight(
     counters.pass("Generated output tree complete (src/, migrations/)");
 
     // Binary smoke tests (only when the admin CLI exists in the scaffold).
-    let bin_dir = if args.release || args.skip_build && is_release_binary(config) {
-        config.app_dir.join("target/release")
-    } else {
-        config.app_dir.join("target/debug")
-    };
-    let binary = bin_dir.join(config.app_binary_name());
+    let binary = app_binary_path(config, args);
     // Stale-binary guard: a binary older than the newest source file means
     // the suite would silently test an app that doesn't match the current
     // generator output. Fail fast with an actionable hint.
@@ -475,13 +553,14 @@ async fn stage_preflight(
     }
     config.metrics.end();
 
-    Ok(binary)
+    Ok(server_reused)
 }
 
 async fn stage_database(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
+    hook_failures: &mut Vec<String>,
 ) -> OpsResult<(PathBuf, Option<String>, Option<String>, Option<String>)> {
     // ---- 2. Database ----
     output::section("2. Database");
@@ -507,10 +586,12 @@ async fn stage_database(
             let _ = psql_exec_file_ok(&config.api_db, &seed_path).await;
         }
         // Consumer-provided post-migration steps (e.g. hr-reports views).
-        // Hook failures are warnings — hooks are consumer-owned.
-        if let Err(e) = crate::ext::run_hooks(config, "post_migrate").await {
-            output::warn(format!("post_migrate hook failed: {e}"));
-        }
+        // Fatality follows the hook's manifest `fatal` flag (missing =
+        // fatal) — #357 replaced the blanket warn-only behavior; consumers
+        // with warn-only expectations (e.g. hr-specs' api post_migrate) set
+        // `fatal = false` explicitly.
+        hook_failures
+            .extend(crate::ext::run_hooks(config, "post_migrate", HookPolicy::PerHook).await?);
     } else {
         output::info("--no-migrate: skipping reset + migration");
     }
@@ -601,6 +682,7 @@ async fn stage_server(
     config: &OpsConfig,
     args: &ApiArgs,
     binary: &Path,
+    server_reused: bool,
     counters: &mut TestCounters,
 ) -> OpsResult<Supervisor> {
     // ---- 3. Server ----
@@ -608,6 +690,18 @@ async fn stage_server(
     config.metrics.begin("Start Axum");
 
     let mut supervisor = Supervisor::new(args.keep);
+    if server_reused {
+        // --reuse: the registry-known instance keeps serving (documented
+        // caveat: it may be a stale build). All HTTP checks below run
+        // against it as usual; the graceful-shutdown stage finds no managed
+        // process and degrades to a warning.
+        output::warn(
+            "--reuse: not booting the app server — the running registry service keeps serving",
+        );
+        counters.pass("Server reused (--reuse)");
+        config.metrics.end();
+        return Ok(supervisor);
+    }
     let bind = format!(
         "{}:{}",
         config.manifest.servers.bind_addr, config.manifest.servers.api_port
@@ -628,13 +722,34 @@ async fn stage_server(
     if let Some((key, value)) = cornucopia_db_env(config) {
         server_cmd.env(key, value);
     }
-    let api_proc = ManagedProcess::spawn(server_cmd, "Axum (API)", &config.log_file)?;
-    supervisor.add(api_proc);
+    // Pin the app's cwd to the manifest root: generated apps resolve their
+    // integration config relative to the cwd (`config/default`), and the old
+    // bash suite always ran from the repo root. Inheriting the caller's cwd
+    // made the suite only work when invoked from the right directory.
+    server_cmd.current_dir(&config.root_dir);
+    let mut api_proc = ManagedProcess::spawn(server_cmd, "Axum (API)", &config.log_file)?;
+    api_proc.set_registration(crate::proc::ServiceRegistration::new(
+        config.root_dir.clone(),
+        "api",
+        config.manifest.servers.api_port,
+        Some("/health"),
+        "api",
+        Some(if args.release {
+            "release".to_string()
+        } else {
+            "debug".to_string()
+        }),
+    ));
 
     if let Err(e) = wait_for_url(&format!("{}/swagger-ui/", config.api_url()), 30, "Axum").await {
         print_log_tail(&config.log_file, 20);
         return Err(e);
     }
+    // Health OK → record the service so `clean`/the next preflight can find
+    // it even after a `--keep` leak. The entry is removed again on graceful
+    // shutdown; a `--keep` leak deliberately leaves it behind.
+    api_proc.record_service();
+    supervisor.add(api_proc);
     counters.pass("Server started");
     if let Ok(200) = http_status(&format!("{}/swagger-ui/", config.api_url()), &[]).await {
         counters.pass("Swagger UI reachable");
@@ -1089,6 +1204,7 @@ async fn stage_regeneration(
     config: &OpsConfig,
     args: &ApiArgs,
     counters: &mut TestCounters,
+    hook_failures: &mut Vec<String>,
 ) -> OpsResult<()> {
     // ---- 11. Regeneration (optional) ----
     if args.regen {
@@ -1099,10 +1215,19 @@ async fn stage_regeneration(
             // before regeneration — switching persistence providers with a
             // dirty tree left stale files behind and broke the compile check
             // with 290 errors in a real incident.
-            crate::ext::run_hooks(config, "pre_generate").await?;
+            hook_failures
+                .extend(crate::ext::run_hooks(config, "pre_generate", HookPolicy::PerHook).await?);
             match regenerate(config, graph, args.release) {
                 Ok(_) => {
                     counters.pass("Templates regenerated");
+                    // Same generator-rev gate as stage 0 — the regen
+                    // validation must not silently pass on stale output.
+                    if let Err(e) = crate::freshness::check_generator_rev(
+                        &config.app_dir,
+                        args.allow_gen_rev_mismatch,
+                    ) {
+                        counters.fail_test(e.to_string());
+                    }
                     match cargo_check_in(config) {
                         Ok(()) => counters.pass("Regenerated code compiles"),
                         Err(tail) => {
@@ -1125,10 +1250,13 @@ async fn stage_regeneration(
     Ok(())
 }
 
-fn write_api_report(config: &OpsConfig, args: &ApiArgs, counters: &TestCounters, ok: bool) {
-    if let Some(metrics_file) = &args.metrics_file {
-        let _ = config.metrics.append_tsv(Path::new(metrics_file), "api");
-    }
+fn write_api_report(
+    config: &OpsConfig,
+    args: &ApiArgs,
+    counters: &TestCounters,
+    ok: bool,
+    hook_failures: &[String],
+) {
     if let Some(results_file) = &args.results_file {
         let mut report = ResultsReport::new(
             "api",
@@ -1139,9 +1267,21 @@ fn write_api_report(config: &OpsConfig, args: &ApiArgs, counters: &TestCounters,
         report.passed = counters.passes;
         report.failed = counters.failures;
         report.failures = counters.failure_log.clone();
+        report.hook_failures = hook_failures.to_vec();
         report.exit = i32::from(!ok);
         let _ = report.write(Path::new(results_file));
     }
+}
+
+/// The app binary to boot: release when `--release` (or `--skip-build` with
+/// only a release binary present), debug otherwise.
+fn app_binary_path(config: &OpsConfig, args: &ApiArgs) -> PathBuf {
+    let bin_dir = if args.release || args.skip_build && is_release_binary(config) {
+        config.app_dir.join("target/release")
+    } else {
+        config.app_dir.join("target/debug")
+    };
+    bin_dir.join(config.app_binary_name())
 }
 
 /// Whether the release binary is the one to use.
@@ -1635,16 +1775,11 @@ fn regenerate(config: &OpsConfig, graph_binary: &str, release: bool) -> OpsResul
         // binary otherwise silently regenerates with old generator code.
         args.insert(1, "--release".to_string());
     }
-    let out = Command::new("cargo")
-        .args(&args)
-        .current_dir(&config.root_dir)
-        .output()
-        .map_err(|e| OpsError::Command(format!("failed to spawn cargo: {e}")))?;
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let mut cmd = Command::new("cargo");
+    cmd.args(&args).current_dir(&config.root_dir);
+    // Streams live under [generate] — a 56-minute regen is never silent.
+    let out = run_streaming(&mut cmd, "generate")?;
+    let combined = out.captured;
     if !out.status.success() {
         return Err(OpsError::Command(format!(
             "`cargo run -p {graph_binary} -- run` failed with {}: \n{}",
@@ -1667,7 +1802,9 @@ pub(super) fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), St
     if let Some((key, value)) = cornucopia_db_env(config) {
         cmd.env(key, value);
     }
-    match cmd.current_dir(&config.app_dir).output() {
+    // Build in the generated app dir (the app resolves its own workspace).
+    cmd.current_dir(&config.app_dir);
+    match run_streaming(&mut cmd, "build") {
         Ok(out) if out.status.success() => {
             // A successful build is a freshness statement: pre_generate
             // clean hooks may have wiped + fully regenerated src (fresh
@@ -1678,7 +1815,7 @@ pub(super) fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), St
             let binary = config
                 .app_dir
                 .join("target")
-                .join(release.then_some("release").unwrap_or("debug"))
+                .join(if release { "release" } else { "debug" })
                 .join(config.app_binary_name());
             if binary.is_file() {
                 let _ = std::fs::File::options()
@@ -1692,14 +1829,7 @@ pub(super) fn cargo_build_in(config: &OpsConfig, release: bool) -> Result<(), St
             }
             Ok(())
         }
-        Ok(out) => {
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            Err(tail_lines(&text, 20))
-        }
+        Ok(out) => Err(tail_lines(&out.captured, 20)),
         Err(e) => Err(format!("failed to spawn cargo: {e}")),
     }
 }
@@ -1712,13 +1842,12 @@ fn cargo_check_in(config: &OpsConfig) -> Result<(), String> {
     if let Some((key, value)) = cornucopia_db_env(config) {
         cmd.env(key, value);
     }
-    match cmd.output() {
+    match run_streaming(&mut cmd, "check") {
         Ok(out) => {
-            let text = String::from_utf8_lossy(&out.stdout).into_owned();
-            if out.status.success() && !text.contains("^error") {
+            if out.status.success() && !out.captured.contains("^error") {
                 Ok(())
             } else {
-                Err(tail_lines(&text, 20))
+                Err(tail_lines(&out.captured, 20))
             }
         }
         Err(e) => Err(format!("failed to spawn cargo: {e}")),
@@ -1776,6 +1905,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 

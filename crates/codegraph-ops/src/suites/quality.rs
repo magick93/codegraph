@@ -199,31 +199,29 @@ fn generate_args(
     args
 }
 
-/// Run `{command} {args}` in `dir`, returning stdout on success. On failure
-/// returns `OpsError::TestFailure` with a tail of stdout+stderr (max
+/// Run `{command} {args}` in `dir`, streaming its output live under
+/// `[command]` (cargo test/clippy can run for many minutes — never silent).
+/// Returns the captured output on success. On failure returns
+/// `OpsError::TestFailure` with a tail of stdout+stderr (max
 /// [`TAIL_CHARS`] chars).
 fn run_step(command: &str, args: &[String], dir: &Path) -> OpsResult<String> {
-    let output = std::process::Command::new(command)
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(|e| {
-            OpsError::Command(format!(
-                "failed to spawn {command} in {}: {e}",
-                dir.display()
-            ))
-        })?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        let tail = tail(&format!("{stdout}\n{stderr}"), TAIL_CHARS);
+    let mut cmd = std::process::Command::new(command);
+    cmd.args(args).current_dir(dir);
+    let out = crate::proc::run_streaming(&mut cmd, command).map_err(|e| {
+        OpsError::Command(format!(
+            "failed to spawn {command} in {}: {e}",
+            dir.display()
+        ))
+    })?;
+    if !out.status.success() {
+        let tail = tail(&out.captured, TAIL_CHARS);
         return Err(OpsError::TestFailure(format!(
             "{command} {args:?} failed in {} (exit {:?}):\n{tail}",
             dir.display(),
-            output.status.code()
+            out.status.code()
         )));
     }
-    Ok(stdout.into_owned())
+    Ok(out.captured)
 }
 
 /// Last `max` chars of `s`, prefixed with a truncation marker (UTF-8 safe).
@@ -294,6 +292,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 

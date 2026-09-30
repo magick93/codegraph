@@ -122,6 +122,38 @@ fn is_executable(p: &Path) -> bool {
     p.is_file()
 }
 
+/// Well-known system chromium locations (first existing wins).
+pub const CHROMIUM_CANDIDATES: &[&str] = &["/snap/bin/chromium", "/usr/bin/chromium-browser"];
+
+/// First existing candidate path — shared by the e2e suite (it exports the
+/// result as `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` for Playwright) and the
+/// doctor's chromium presence check (#358).
+pub fn find_chromium_in(candidates: &[&Path]) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .find(|p| p.is_file())
+        .map(|p| p.to_path_buf())
+}
+
+/// Resolve the chromium binary Playwright should use: an existing
+/// `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` override wins, then the system
+/// candidates ([`CHROMIUM_CANDIDATES`]). `None` means neither is present —
+/// the suites fall back to `npx playwright install chromium`.
+pub fn find_chromium() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    find_chromium_in(
+        &CHROMIUM_CANDIDATES
+            .iter()
+            .map(Path::new)
+            .collect::<Vec<_>>(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +168,29 @@ mod tests {
     fn resolve_npx_falls_back_gracefully() {
         // Should not panic; returns Some only if npx/fnm/nvm present.
         let _ = resolve_npx();
+    }
+
+    #[test]
+    fn find_chromium_picks_first_existing_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("chromium");
+        std::fs::write(&fake, "x").unwrap();
+        assert_eq!(
+            find_chromium_in(&[Path::new("/nonexistent/chromium"), &fake]),
+            Some(fake)
+        );
+        assert_eq!(
+            find_chromium_in(&[Path::new("/nonexistent/chromium")]),
+            None
+        );
+    }
+
+    #[test]
+    fn find_chromium_never_panics_without_a_browser() {
+        // Cannot assert None (a system chromium may exist); the contract is
+        // only that the probe is safe and returns an existing file when Some.
+        if let Some(path) = find_chromium() {
+            assert!(path.is_file(), "{path:?} must exist");
+        }
     }
 }

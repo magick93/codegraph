@@ -28,6 +28,15 @@ struct ActiveStage {
     start: Instant,
 }
 
+/// An in-flight stage removed from the timer by [`Metrics::pause`] and
+/// restored by [`Metrics::resume`] — used to time nested work (hooks) without
+/// splitting the enclosing suite stage.
+#[derive(Debug)]
+pub struct PausedStage {
+    name: String,
+    start: Instant,
+}
+
 /// Tracks stage durations for a single subcommand run.
 #[derive(Debug, Default)]
 pub struct Metrics {
@@ -95,6 +104,27 @@ impl Metrics {
                 duration_secs: 0,
             });
             output::ok(format!("{name} {}", output::dim(format!("({label})"))));
+        }
+    }
+
+    /// Take the in-flight stage off the timer (no duration recorded). Pair
+    /// with [`Metrics::resume`] to time nested work — e.g. hooks inside a
+    /// suite stage — without ending or splitting the enclosing stage.
+    pub fn pause(&self) -> Option<PausedStage> {
+        self.current.borrow_mut().take().map(|a| PausedStage {
+            name: a.name,
+            start: a.start,
+        })
+    }
+
+    /// Restore a stage paused with [`Metrics::pause`] (its elapsed time keeps
+    /// accumulating; `None` restores nothing).
+    pub fn resume(&self, paused: Option<PausedStage>) {
+        if let Some(p) = paused {
+            *self.current.borrow_mut() = Some(ActiveStage {
+                name: p.name,
+                start: p.start,
+            });
         }
     }
 
@@ -168,25 +198,41 @@ impl Metrics {
         Ok(())
     }
 
-    /// Append one run-level object to a JSON metrics file as an array:
+    /// Append one run to a JSON metrics file as an array: one object PER
+    /// STAGE plus a TOTAL row —
     ///
     /// ```json
-    /// {"subcommand": "api", "stage": "TOTAL", "duration_secs": 12, "total": 30}
+    /// [
+    ///   {"subcommand": "e2e", "stage": "Supabase", "duration_secs": 42},
+    ///   {"subcommand": "api", "stage": "TOTAL", "duration_secs": 12, "total": 30}
+    /// ]
     /// ```
     ///
-    /// where `duration_secs` is the sum of recorded stage durations and
-    /// `total` the wall-clock elapsed. If the file does not exist it is
-    /// created as `[]`; an existing file must parse as a JSON array (or be
-    /// empty), and the new object is pushed onto it.
+    /// where the TOTAL row's `duration_secs` is the sum of recorded stage
+    /// durations and `total` the wall-clock elapsed. If the file does not
+    /// exist it is created as `[]`; an existing file must parse as a JSON
+    /// array (or be empty), and the new rows are pushed onto it.
     pub fn append_json(&self, path: &Path, subcommand: &str) -> OpsResult<()> {
-        let duration_secs: u64 = self.stages.borrow().iter().map(|s| s.duration_secs).sum();
+        let stages = self.stages.borrow();
+        let mut rows: Vec<serde_json::Value> = stages
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "subcommand": subcommand,
+                    "stage": s.name,
+                    "duration_secs": s.duration_secs,
+                })
+            })
+            .collect();
+        let duration_secs: u64 = stages.iter().map(|s| s.duration_secs).sum();
+        drop(stages);
         let total = self.total_elapsed_secs();
-        let obj = serde_json::json!({
+        rows.push(serde_json::json!({
             "subcommand": subcommand,
             "stage": "TOTAL",
             "duration_secs": duration_secs,
             "total": total,
-        });
+        }));
         let mut array: serde_json::Value = if path.is_file() {
             let content = std::fs::read_to_string(path)?;
             if content.trim().is_empty() {
@@ -208,7 +254,7 @@ impl Metrics {
                 path.display()
             ))
         })?;
-        items.push(obj);
+        items.extend(rows);
         std::fs::write(
             path,
             serde_json::to_string_pretty(&array)
@@ -269,9 +315,11 @@ mod tests {
     }
 
     #[test]
-    fn json_output_appends_one_object_per_run() {
+    fn json_output_appends_per_stage_rows_plus_total() {
         let m = Metrics::new();
         m.begin("first");
+        m.end();
+        m.begin("second");
         m.end();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("m.json");
@@ -280,15 +328,43 @@ mod tests {
         let array: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let items = array.as_array().unwrap();
-        assert_eq!(items.len(), 2);
+        // Per-stage rows RETAINED: 2 runs x (2 stages + TOTAL).
+        assert_eq!(items.len(), 6);
         for item in items {
             assert_eq!(item.get("subcommand").unwrap(), "api");
-            assert_eq!(item.get("stage").unwrap(), "TOTAL");
             assert!(item.get("duration_secs").unwrap().is_u64());
-            assert!(item.get("total").unwrap().is_u64());
         }
+        // Per-stage rows carry the stage name and no wall-clock total.
+        assert_eq!(items[0]["stage"], "first");
+        assert!(items[0].get("total").is_none());
+        assert_eq!(items[1]["stage"], "second");
+        // The TOTAL row closes each run, with the wall-clock elapsed.
+        assert_eq!(items[2]["stage"], "TOTAL");
+        assert!(items[2].get("total").unwrap().is_u64());
+        assert_eq!(items[5]["stage"], "TOTAL");
         // A non-array file is rejected rather than silently rewritten.
         std::fs::write(&path, "{\"not\": \"an array\"}").unwrap();
         assert!(m.append_json(&path, "api").is_err());
+        // As is any other invalid JSON.
+        std::fs::write(&path, "not json at all").unwrap();
+        assert!(m.append_json(&path, "api").is_err());
+    }
+
+    #[test]
+    fn pause_resume_times_nested_work_without_splitting_the_stage() {
+        let m = Metrics::new();
+        m.begin("outer");
+        let paused = m.pause();
+        m.begin("hook");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        m.end();
+        m.resume(paused);
+        m.end();
+        let stages = m.stages();
+        assert_eq!(
+            stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            vec!["hook", "outer"],
+            "nested hook first, enclosing stage preserved"
+        );
     }
 }

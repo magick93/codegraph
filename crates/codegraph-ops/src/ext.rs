@@ -15,6 +15,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
 use crate::output;
+use crate::proc::run_streaming;
 
 /// Context passed to a [`TestExtension`].
 pub struct OpsContext<'a> {
@@ -74,7 +75,7 @@ pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> O
                     "extension {name} requires the API running"
                 )));
             }
-            return run_exec(exec, &entry.args, &config.root_dir).await;
+            return run_exec(&format!("ext:{name}"), exec, &entry.args, &config.root_dir).await;
         }
         // No exec: fall through to the in-process registry.
     }
@@ -109,26 +110,74 @@ pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> O
     result
 }
 
+/// Failure policy for a hook point (#357 made hook fatality explicit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookPolicy {
+    /// Each hook's manifest `fatal` flag decides; a MISSING flag means fatal
+    /// (failures abort the suite). Consumers with warn-only expectations
+    /// (e.g. hr-specs' api `post_migrate`) set `fatal = false` explicitly in
+    /// their manifests.
+    PerHook,
+    /// Failures only warn, regardless of the flag (and `fatal = true` cannot
+    /// escalate past this). Used exclusively by `post_e2e`: cleanup hooks
+    /// must always run and never mask the real failure — the documented
+    /// best-effort contract.
+    WarnOnly,
+}
+
 /// Run all manifest hooks whose `on` matches `point`.
 /// Points: pre_generate, post_generate, post_migrate, pre_e2e, post_e2e,
 /// pre_api, post_api, pre_playwright.
-/// Each hook: `sh -c "{exec} {args...}"` in config.root_dir. Failures abort
-/// with Err(Command) including stderr/stdout tail. If no hooks match, Ok.
-pub async fn run_hooks(config: &OpsConfig, point: &str) -> OpsResult<()> {
+/// Each hook: `sh -c "{exec} {args...}"` in config.root_dir, streamed under
+/// `[hook:<name>]` and timed (`hook <name> (3s)` via config.metrics, without
+/// splitting an enclosing suite stage).
+///
+/// Failure handling follows `policy`: a failing fatal hook aborts with
+/// Err(Command) including an output tail; a failing non-fatal hook warns and
+/// its name is collected into the returned Vec (suites surface these in the
+/// results JSON's `hook_failures`). If no hooks match, Ok(empty).
+pub async fn run_hooks(
+    config: &OpsConfig,
+    point: &str,
+    policy: HookPolicy,
+) -> OpsResult<Vec<String>> {
     let mut ran = 0usize;
+    let mut non_fatal_failures: Vec<String> = Vec::new();
     for hook in config
         .hooks
         .iter()
         .filter(|h| h.on.as_deref() == Some(point))
     {
         output::info(format!("hook {} ({point})", hook.name));
-        run_exec(&hook.exec, &hook.args, &config.root_dir).await?;
+        let paused = config.metrics.pause();
+        config.metrics.begin(format!("hook {}", hook.name));
+        let result = run_exec(
+            &format!("hook:{}", hook.name),
+            &hook.exec,
+            &hook.args,
+            &config.root_dir,
+        )
+        .await;
+        config.metrics.end();
+        config.metrics.resume(paused);
+        if let Err(e) = result {
+            let fatal = policy == HookPolicy::PerHook && hook.fatal_or(true);
+            if !fatal {
+                output::warn(format!(
+                    "hook {} ({point}) failed (fatal = false — continuing): {e}",
+                    hook.name
+                ));
+                non_fatal_failures.push(hook.name.clone());
+            } else {
+                return Err(e);
+            }
+        }
         ran += 1;
     }
     if ran > 0 {
         output::ok(format!("{ran} hook(s) ran at '{point}'"));
     }
-    Ok(())
+    Ok(non_fatal_failures)
 }
 
 /// List registered extension names (for `ext --list`).
@@ -141,30 +190,25 @@ pub fn extension_names() -> Vec<String> {
         .collect()
 }
 
-/// Run `sh -c "{exec} {args...}"` in `cwd`, capturing output. Non-zero exit
-/// yields `OpsError::Command` with stdout/stderr tails.
-async fn run_exec(exec: &str, args: &[String], cwd: &Path) -> OpsResult<()> {
+/// Run `sh -c "{exec} {args...}"` in `cwd`, streaming output under
+/// `[label]` (success output stays visible instead of being discarded).
+/// Non-zero exit yields `OpsError::Command` with an output tail.
+async fn run_exec(label: &str, exec: &str, args: &[String], cwd: &Path) -> OpsResult<()> {
     let script = if args.is_empty() {
         exec.to_string()
     } else {
         format!("{exec} {}", args.join(" "))
     };
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(&script)
-        .current_dir(cwd)
-        .output()
-        .map_err(|e| OpsError::Command(format!("failed to spawn hook '{script}': {e}")))?;
-    if output.status.success() {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c").arg(&script).current_dir(cwd);
+    let out = run_streaming(&mut cmd, label)?;
+    if out.success() {
         return Ok(());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     Err(OpsError::Command(format!(
-        "hook failed (exit {:?}): {script}\nstdout: {}\nstderr: {}",
-        output.status.code(),
-        tail(&stdout, 400),
-        tail(&stderr, 400)
+        "{label}: `{script}` failed (exit {:?}):\n{}",
+        out.status.code(),
+        tail(&out.captured, 400)
     )))
 }
 
@@ -257,6 +301,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 
@@ -378,17 +424,23 @@ mod tests {
             exec: "echo hi".into(),
             args: vec![],
             on: Some("pre_e2e".into()),
+            fatal: None,
         });
         manifest.hooks.push(OpsHook {
             name: "other".into(),
             exec: "echo other".into(),
             args: vec![],
             on: Some("post_generate".into()),
+            fatal: None,
         });
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with(manifest, dir.path());
-        run_hooks(&cfg, "pre_e2e").await.unwrap();
-        run_hooks(&cfg, "never-called-point").await.unwrap();
+        run_hooks(&cfg, "pre_e2e", HookPolicy::PerHook)
+            .await
+            .unwrap();
+        run_hooks(&cfg, "never-called-point", HookPolicy::PerHook)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -399,10 +451,13 @@ mod tests {
             exec: "printf".into(),
             args: vec!["arg-from-hook".into()],
             on: Some("pre_e2e".into()),
+            fatal: None,
         });
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with(manifest, dir.path());
-        run_hooks(&cfg, "pre_e2e").await.unwrap();
+        run_hooks(&cfg, "pre_e2e", HookPolicy::PerHook)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -413,10 +468,13 @@ mod tests {
             exec: "false".into(),
             args: vec![],
             on: Some("pre_e2e".into()),
+            fatal: None,
         });
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with(manifest, dir.path());
-        let err = run_hooks(&cfg, "pre_e2e").await.unwrap_err();
+        let err = run_hooks(&cfg, "pre_e2e", HookPolicy::PerHook)
+            .await
+            .unwrap_err();
         assert!(matches!(err, OpsError::Command(_)), "got {err:?}");
     }
 
@@ -428,10 +486,137 @@ mod tests {
             exec: "false".into(),
             args: vec![],
             on: None,
+            fatal: None,
         });
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_with(manifest, dir.path());
-        run_hooks(&cfg, "pre_e2e").await.unwrap();
+        run_hooks(&cfg, "pre_e2e", HookPolicy::PerHook)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_hooks_records_hook_timing() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "timed".into(),
+            exec: "true".into(),
+            args: vec![],
+            on: Some("pre_api".into()),
+            fatal: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        run_hooks(&cfg, "pre_api", HookPolicy::PerHook)
+            .await
+            .unwrap();
+        let stages = cfg.metrics.stages();
+        assert!(
+            stages.iter().any(|s| s.name == "hook timed"),
+            "hook duration must be recorded: {stages:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_hooks_preserves_enclosing_stage() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "nested".into(),
+            exec: "true".into(),
+            args: vec![],
+            on: Some("pre_api".into()),
+            fatal: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        cfg.metrics.begin("Generate + build");
+        run_hooks(&cfg, "pre_api", HookPolicy::PerHook)
+            .await
+            .unwrap();
+        cfg.metrics.end();
+        let stages = cfg.metrics.stages();
+        assert_eq!(stages.len(), 2, "hook + enclosing stage: {stages:?}");
+        assert_eq!(stages[0].name, "hook nested");
+        assert_eq!(stages[1].name, "Generate + build");
+    }
+
+    #[tokio::test]
+    async fn missing_fatal_flag_defaults_to_fatal() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "gate".into(),
+            exec: "false".into(),
+            args: vec![],
+            on: Some("post_migrate".into()),
+            fatal: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        let err = run_hooks(&cfg, "post_migrate", HookPolicy::PerHook)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OpsError::Command(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn fatal_false_opts_out_and_collects_the_name() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "warn-only".into(),
+            exec: "echo boom; exit 3".into(),
+            args: vec![],
+            on: Some("post_migrate".into()),
+            fatal: Some(false),
+        });
+        manifest.hooks.push(OpsHook {
+            name: "after".into(),
+            exec: "true".into(),
+            args: vec![],
+            on: Some("post_migrate".into()),
+            fatal: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        let failed = run_hooks(&cfg, "post_migrate", HookPolicy::PerHook)
+            .await
+            .unwrap();
+        assert_eq!(failed, vec!["warn-only".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn warn_only_policy_never_aborts_even_for_fatal_hooks() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "cleanup".into(),
+            exec: "false".into(),
+            args: vec![],
+            on: Some("post_e2e".into()),
+            fatal: Some(true),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        let failed = run_hooks(&cfg, "post_e2e", HookPolicy::WarnOnly)
+            .await
+            .unwrap();
+        assert_eq!(failed, vec!["cleanup".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn per_hook_returns_empty_on_success() {
+        let mut manifest = minimal_manifest();
+        manifest.hooks.push(OpsHook {
+            name: "fine".into(),
+            exec: "true".into(),
+            args: vec![],
+            on: Some("post_api".into()),
+            fatal: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config_with(manifest, dir.path());
+        let failed = run_hooks(&cfg, "post_api", HookPolicy::PerHook)
+            .await
+            .unwrap();
+        assert!(failed.is_empty());
     }
 
     #[test]

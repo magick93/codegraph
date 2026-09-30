@@ -6,8 +6,10 @@ use std::process::Command;
 
 use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
+use crate::ext::HookPolicy;
+use crate::metrics::Metrics;
 use crate::output;
-use crate::proc::{ManagedProcess, Supervisor};
+use crate::proc::{run_streaming, run_streaming_quiet, ManagedProcess, Supervisor};
 use crate::results::{ResultsReport, SuiteFailure};
 use crate::wait::wait_for_url;
 
@@ -31,6 +33,12 @@ pub struct E2eArgs {
     pub retry_failed: bool,
     /// Write a machine-readable `--results` JSON report to this path.
     pub results_file: Option<String>,
+    /// Warn instead of failing when the generator rev in the app's
+    /// `.codegraph-manifest.json` differs from this testkit's pinned rev.
+    pub allow_gen_rev_mismatch: bool,
+    /// Reuse registry-known servers on the api/ui ports instead of taking
+    /// them over (documented caveat: they may serve a stale build).
+    pub reuse: bool,
     pub playwright_args: Vec<String>,
 }
 
@@ -38,14 +46,30 @@ pub struct E2eArgs {
 /// Requires manifest.supabase and manifest.database.e2e to be set (else
 /// Err(Config) explaining what's missing).
 ///
-/// `post_e2e` hooks fire on EVERY path (success and failure) — best-effort,
-/// with failures warned, so consumer cleanup steps always run.
+/// `post_e2e` hooks fire on EVERY path (success and failure) with
+/// [`HookPolicy::WarnOnly`] — cleanup hooks must always run and never mask
+/// the real failure, and `fatal = true` cannot escalate past this
+/// (documented contract). All other hook points follow each hook's manifest
+/// `fatal` flag (missing = fatal).
 pub async fn run_e2e(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     let result = run_e2e_inner(config, args).await;
-    if let Err(e) = crate::ext::run_hooks(config, "post_e2e").await {
+    if let Err(e) = crate::ext::run_hooks(config, "post_e2e", HookPolicy::WarnOnly).await {
         output::warn(format!("post_e2e hook failed: {e}"));
     }
     result
+}
+
+/// Time a fallible e2e stage: `metrics.begin(name)` → run → `metrics.end()`.
+/// The stage is recorded on BOTH paths, so the results-JSON `stages` array
+/// stays complete even when a stage fails.
+async fn timed<F, T>(metrics: &Metrics, name: &str, body: F) -> OpsResult<T>
+where
+    F: std::future::Future<Output = OpsResult<T>>,
+{
+    metrics.begin(name);
+    let res = body.await;
+    metrics.end();
+    res
 }
 
 async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
@@ -68,12 +92,44 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
         ));
     };
 
+    // Fast doctor (#358): npx/pnpm/supabase/chromium/ports/disk in seconds —
+    // a missing npx used to surface only at the supabase stage as
+    // `failed to spawn npx`, after nothing useful had happened yet.
+    crate::doctor::run_fast_doctor(config, crate::doctor::FastDoctorSuite::E2e).await?;
+
     // Port preflight: the suite binds both ports itself, and a leftover dev
     // server must fail the run in seconds instead of after supabase/build.
-    crate::preflight::ensure_port_free(config.manifest.servers.api_port)?;
-    crate::preflight::ensure_port_free(config.manifest.servers.ui_port)?;
+    // Registry-known prior servers (`--keep` leaks) are taken over by
+    // default or reused with `--reuse`.
+    let api_port_state = crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.api_port,
+        args.reuse,
+    )?;
+    let ui_port_state = crate::preflight::ensure_port_available(
+        &config.root_dir,
+        config.manifest.servers.ui_port,
+        args.reuse,
+    )?;
 
     let mut supervisor = Supervisor::new(args.keep);
+
+    // 0. Freshness pre-check (--skip-build only): with the build skipped the
+    // binary cannot become fresher later, so an early stale verdict is final
+    // and costs seconds — instead of surfacing after supabase up, generation,
+    // `db reset` + seed and API-key provisioning (~10 minutes of DB work).
+    // When build is ENABLED the check stays post-build (`e2e_build`), since
+    // building may fix staleness.
+    if freshness_precheck_required(args.skip_build) {
+        if let Some(binary) = pick_binary(&config.app_dir, &config.app_binary_name(), args.release)
+        {
+            output::section("E2E 0. freshness (pre-check, --skip-build)");
+            config.metrics.begin("Freshness pre-check");
+            let verdict = crate::preflight::ensure_binary_fresh(&config.app_dir, &binary);
+            config.metrics.end();
+            verdict?;
+        }
+    }
 
     // 1. Supabase.
     e2e_supabase_up(config, supabase_dir).await?;
@@ -91,7 +147,16 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     let binary = e2e_build(config, args).await?;
 
     // 6. Services.
-    e2e_start_services(config, args, &binary, api_key.as_deref(), &mut supervisor).await?;
+    e2e_start_services(
+        config,
+        args,
+        &binary,
+        api_key.as_deref(),
+        api_port_state.reused(),
+        ui_port_state.reused(),
+        &mut supervisor,
+    )
+    .await?;
 
     // 7. Playwright.
     let outcome = e2e_playwright(config, args, api_key.as_deref()).await?;
@@ -108,124 +173,164 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     }
 }
 
+/// Whether the e2e suite must run its binary-freshness check at stage 0
+/// (before Supabase) instead of after the build stage: with `--skip-build`
+/// the binary cannot become fresher later, so an early stale verdict is
+/// final and cheap; with a build enabled the post-build check in
+/// [`e2e_build`] stays authoritative.
+pub fn freshness_precheck_required(skip_build: bool) -> bool {
+    skip_build
+}
+
 async fn e2e_supabase_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     output::section("E2E 1. Supabase");
-    let health_url = supabase_health_url(config);
-    if http_ok(&health_url).await {
-        output::ok(format!("Supabase already running ({health_url})"));
-    } else {
-        output::info("Starting Supabase (npx supabase start)...");
-        run_blocking("npx", &["supabase", "start"], supabase_dir)?;
-        output::ok("Supabase started");
-    }
-    // pre_e2e hooks (e.g. the pgmq patch) need the supabase container running
-    // and must complete BEFORE the migration symlink + `supabase db reset`.
-    crate::ext::run_hooks(config, "pre_e2e").await?;
-    Ok(())
+    timed(&config.metrics, "Supabase", async {
+        let health_url = supabase_health_url(config);
+        if http_ok(&health_url).await {
+            output::ok(format!("Supabase already running ({health_url})"));
+        } else {
+            output::info("Starting Supabase (npx supabase start)...");
+            run_blocking("supabase", "npx", &["supabase", "start"], supabase_dir)?;
+            output::ok("Supabase started");
+        }
+        // pre_e2e hooks (e.g. the pgmq patch) need the supabase container
+        // running and must complete BEFORE the migration symlink + `supabase
+        // db reset`.
+        crate::ext::run_hooks(config, "pre_e2e", HookPolicy::PerHook)
+            .await
+            .map(|_| ())
+    })
+    .await
 }
 
 async fn e2e_generate(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     output::section("E2E 2. Generate");
-    if args.skip_generate {
-        output::info("Generation skipped (--skip-generate)");
-        return Ok(());
-    }
-    let Some(binary) = generation_binary(config) else {
-        if config.manifest.graph_binary.is_none() {
-            output::warn("no graph_binary configured — skipping generation");
-        } else {
-            output::warn("schemas_dir not configured — skipping generation");
+    timed(&config.metrics, "Generate", async {
+        if args.skip_generate {
+            output::info("Generation skipped (--skip-generate)");
+            config.metrics.end_with("skipped");
+            return Ok(());
         }
-        return Ok(());
-    };
-    crate::ext::run_hooks(config, "pre_generate").await?;
-    output::info(format!("Building {binary} (release)..."));
-    run_blocking(
-        "cargo",
-        &["build", "-p", &binary, "--release"],
-        &config.workspace_root,
-    )
-    .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
-    let gen_bin = config
-        .workspace_root
-        .join("target")
-        .join("release")
-        .join(&binary);
-    if !gen_bin.is_file() {
-        return Err(OpsError::TestFailure(format!(
-            "{binary} build produced no binary at {}",
-            gen_bin.display()
-        )));
-    }
-    let gen_args = generate_args(config);
-    output::info("Generating app...");
-    let gen_bin_str = gen_bin.to_string_lossy().into_owned();
-    let gen_arg_refs: Vec<&str> = gen_args.iter().map(String::as_str).collect();
-    run_blocking(&gen_bin_str, &gen_arg_refs, &config.root_dir)?;
-    if !generation_outputs(config) {
-        return Err(OpsError::TestFailure(
-            "code generation produced no output (src/ui/migrations empty)".to_string(),
-        ));
-    }
-    output::ok("App generated");
-    crate::ext::run_hooks(config, "post_generate").await?;
-    Ok(())
+        let Some(binary) = generation_binary(config) else {
+            if config.manifest.graph_binary.is_none() {
+                output::warn("no graph_binary configured — skipping generation");
+            } else {
+                output::warn("schemas_dir not configured — skipping generation");
+            }
+            config.metrics.end_with("no model source");
+            return Ok(());
+        };
+        crate::ext::run_hooks(config, "pre_generate", HookPolicy::PerHook).await?;
+        output::info(format!("Building {binary} (release)..."));
+        run_blocking(
+            "build",
+            "cargo",
+            &["build", "-p", &binary, "--release"],
+            &config.workspace_root,
+        )
+        .map_err(|e| OpsError::TestFailure(format!("graph binary build failed: {e}")))?;
+        let gen_bin = config
+            .workspace_root
+            .join("target")
+            .join("release")
+            .join(&binary);
+        if !gen_bin.is_file() {
+            return Err(OpsError::TestFailure(format!(
+                "{binary} build produced no binary at {}",
+                gen_bin.display()
+            )));
+        }
+        let gen_args = generate_args(config);
+        output::info("Generating app...");
+        let gen_bin_str = gen_bin.to_string_lossy().into_owned();
+        let gen_arg_refs: Vec<&str> = gen_args.iter().map(String::as_str).collect();
+        run_blocking("generate", &gen_bin_str, &gen_arg_refs, &config.root_dir)?;
+        if !generation_outputs(config) {
+            return Err(OpsError::TestFailure(
+                "code generation produced no output (src/ui/migrations empty)".to_string(),
+            ));
+        }
+        // #357: the freshly written manifest names the generator rev — a
+        // stale graph binary is a hard error here, before DB work starts.
+        crate::freshness::check_generator_rev(&config.app_dir, args.allow_gen_rev_mismatch)?;
+        output::ok("App generated");
+        crate::ext::run_hooks(config, "post_generate", HookPolicy::PerHook)
+            .await
+            .map(|_| ())
+    })
+    .await
 }
 
 async fn e2e_migrate(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     output::section("E2E 3. Database");
-    let app_migrations = config.app_dir.join("migrations");
-    let supabase_migrations = supabase_dir.join("supabase").join("migrations");
-    if app_migrations.is_dir() {
-        crate::migrate::link_migrations_to_supabase(&app_migrations, &supabase_migrations)?;
-    } else {
-        output::warn(format!(
-            "no migrations dir at {} — skipping symlink",
-            app_migrations.display()
-        ));
-    }
-    output::info("Resetting database (npx supabase db reset)...");
-    run_blocking("npx", &["supabase", "db", "reset"], supabase_dir)
-        .map_err(|e| OpsError::TestFailure(format!("supabase db reset failed: {e}")))?;
-    output::ok("Database reset with migrations");
-
-    let seed = supabase_dir.join("supabase").join("seed.sql");
-    if seed.is_file() {
-        if let Some(e2e) = &config.e2e_db {
-            crate::db::psql_exec_file_ok(e2e, &seed).await?;
-            output::ok("seed.sql applied");
+    timed(&config.metrics, "DB reset + seed", async {
+        let app_migrations = config.app_dir.join("migrations");
+        let supabase_migrations = supabase_dir.join("supabase").join("migrations");
+        if app_migrations.is_dir() {
+            crate::migrate::link_migrations_to_supabase(&app_migrations, &supabase_migrations)?;
+        } else {
+            output::warn(format!(
+                "no migrations dir at {} — skipping symlink",
+                app_migrations.display()
+            ));
         }
-    }
+        output::info("Resetting database (npx supabase db reset)...");
+        run_blocking(
+            "supabase",
+            "npx",
+            &["supabase", "db", "reset"],
+            supabase_dir,
+        )
+        .map_err(|e| OpsError::TestFailure(format!("supabase db reset failed: {e}")))?;
+        output::ok("Database reset with migrations");
 
-    crate::ext::run_hooks(config, "post_migrate").await?;
-    Ok(())
+        let seed = supabase_dir.join("supabase").join("seed.sql");
+        if seed.is_file() {
+            if let Some(e2e) = &config.e2e_db {
+                crate::db::psql_exec_file_ok(e2e, &seed).await?;
+                output::ok("seed.sql applied");
+            }
+        }
+
+        crate::ext::run_hooks(config, "post_migrate", HookPolicy::PerHook)
+            .await
+            .map(|_| ())
+    })
+    .await
 }
 
 async fn e2e_provision_api_key(config: &OpsConfig) -> OpsResult<Option<String>> {
-    let api_key = super::ui::read_or_provision_api_key(config).await?;
-    match &api_key {
-        Some(_) => output::ok("API key provisioned"),
-        None => output::warn("API key not provisioned — auth-dependent tests will fail"),
-    }
-    Ok(api_key)
+    timed(&config.metrics, "API key", async {
+        let api_key = super::ui::read_or_provision_api_key(config).await?;
+        match &api_key {
+            Some(_) => output::ok("API key provisioned"),
+            None => output::warn("API key not provisioned — auth-dependent tests will fail"),
+        }
+        Ok(api_key)
+    })
+    .await
 }
 
 async fn e2e_build(config: &OpsConfig, args: &E2eArgs) -> OpsResult<PathBuf> {
     output::section("E2E 4. Build");
-    if !args.skip_build {
-        cargo_build_app(config, args.release)
-            .map_err(|e| OpsError::TestFailure(format!("app build failed: {e}")))?;
-    }
-    let binary =
-        pick_binary(&config.app_dir, &config.app_binary_name(), args.release).ok_or_else(|| {
-            OpsError::TestFailure(format!(
-                "no app binary under {} — run without --skip-build",
-                config.app_dir.join("target").display()
-            ))
-        })?;
-    crate::preflight::ensure_binary_fresh(&config.app_dir, &binary)?;
-    output::ok(format!("Using binary {}", binary.display()));
-    Ok(binary)
+    timed(&config.metrics, "App build", async {
+        if args.skip_build {
+            config.metrics.end_with("skipped (--skip-build)");
+        } else if let Err(e) = cargo_build_app(config, args.release) {
+            return Err(OpsError::TestFailure(format!("app build failed: {e}")));
+        }
+        let binary = pick_binary(&config.app_dir, &config.app_binary_name(), args.release)
+            .ok_or_else(|| {
+                OpsError::TestFailure(format!(
+                    "no app binary under {} — run without --skip-build",
+                    config.app_dir.join("target").display()
+                ))
+            })?;
+        crate::preflight::ensure_binary_fresh(&config.app_dir, &binary)?;
+        output::ok(format!("Using binary {}", binary.display()));
+        Ok(binary)
+    })
+    .await
 }
 
 async fn e2e_start_services(
@@ -233,16 +338,23 @@ async fn e2e_start_services(
     args: &E2eArgs,
     binary: &Path,
     api_key: Option<&str>,
+    api_reused: bool,
+    ui_reused: bool,
     supervisor: &mut Supervisor,
 ) -> OpsResult<()> {
     output::section("E2E 5. Start Services");
     let api_url = config.api_url();
-    let db_url = config
-        .e2e_app_db
-        .as_ref()
-        .map(|t| t.url())
-        .unwrap_or_else(|| config.api_db.url());
-    {
+    if api_reused {
+        output::warn(
+            "--reuse: not booting the app server — the running registry service keeps serving \
+             (it may be a stale build)",
+        );
+    } else {
+        let db_url = config
+            .e2e_app_db
+            .as_ref()
+            .map(|t| t.url())
+            .unwrap_or_else(|| config.api_db.url());
         let mut cmd = Command::new(binary);
         cmd.arg("start")
             .arg("--bind-addr")
@@ -252,27 +364,44 @@ async fn e2e_start_services(
         cmd.env("CORS_ALLOWED_ORIGINS", config.ui_url());
         cmd.env("SUPABASE_JWT_SECRET", &config.jwt_secret);
         cmd.env("SUPABASE_URL", super::ui::supabase_base_url(config));
-        match ManagedProcess::spawn(cmd, "Axum app", Path::new(APP_LOG)) {
-            Ok(proc) => supervisor.add(proc),
+        // Same contract as the api suite: the app resolves `config/` relative
+        // to its cwd — pin it to the manifest root instead of inheriting the
+        // caller's cwd.
+        cmd.current_dir(&config.root_dir);
+        let mut proc = match ManagedProcess::spawn(cmd, "Axum app", Path::new(APP_LOG)) {
+            Ok(proc) => proc,
             Err(e) => {
                 return Err(OpsError::Command(format!(
                     "failed to spawn app server: {e}"
                 )));
             }
+        };
+        proc.set_registration(crate::proc::ServiceRegistration::new(
+            config.root_dir.clone(),
+            "api",
+            config.manifest.servers.api_port,
+            Some("/health"),
+            "e2e",
+            args.release.then(|| "release".to_string()),
+        ));
+        if let Err(e) = wait_for_url(&format!("{api_url}/health"), 30, "Axum").await {
+            print_log_tail(APP_LOG);
+            return Err(e);
         }
+        // Health OK → record; removed again on shutdown, left behind on --keep.
+        proc.record_service();
+        supervisor.add(proc);
+        output::ok("Axum API running");
     }
-    if let Err(e) = wait_for_url(&format!("{api_url}/health"), 30, "Axum").await {
-        print_log_tail(APP_LOG);
-        return Err(e);
-    }
-    output::ok("Axum API running");
 
     // pre_playwright hooks (e.g. UI-sync rsync steps) must land BEFORE the
     // SvelteKit production build so synced sources get compiled.
-    crate::ext::run_hooks(config, "pre_playwright").await?;
+    crate::ext::run_hooks(config, "pre_playwright", HookPolicy::PerHook).await?;
 
+    // Web build stage covers dependency install + the production bundle.
+    config.metrics.begin("Web build");
     if !config.ui_dir.join("node_modules").is_dir() {
-        if let Err(e) = run_blocking("pnpm", &["install"], &config.ui_dir) {
+        if let Err(e) = run_blocking_quiet("web", "pnpm", &["install"], &config.ui_dir) {
             output::warn(format!("pnpm install failed (continuing): {e}"));
         }
     }
@@ -280,17 +409,27 @@ async fn e2e_start_services(
         output::warn(
             "--skip-ui-build: skipping SvelteKit build — preview may serve a STALE bundle",
         );
+        config.metrics.end_with("skipped (--skip-ui-build)");
     } else {
         output::info("Building SvelteKit production bundle...");
         // A failed build is fatal: a stale UI bundle produces baffling test
         // failures far removed from the real cause.
-        run_blocking("pnpm", &["run", "build"], &config.ui_dir).map_err(|e| {
+        let built = run_blocking("web", "pnpm", &["run", "build"], &config.ui_dir).map_err(|e| {
             OpsError::TestFailure(format!(
                 "SvelteKit build failed (use --skip-ui-build to override): {e}"
             ))
-        })?;
+        });
+        config.metrics.end();
+        built?;
     }
     let ui_url = config.ui_url();
+    if ui_reused {
+        output::warn(
+            "--reuse: not booting vite preview — the running registry service keeps serving \
+             (it may serve a stale bundle even though dist/ was just rebuilt)",
+        );
+        return Ok(());
+    }
     {
         let mut cmd = Command::new("pnpm");
         cmd.arg("exec")
@@ -303,18 +442,29 @@ async fn e2e_start_services(
         if let Some(key) = api_key {
             cmd.env("PUBLIC_API_KEY", key);
         }
-        match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
-            Ok(proc) => supervisor.add(proc),
-            Err(e) => {
-                return Err(OpsError::Command(format!(
-                    "failed to spawn vite preview: {e}"
-                )));
-            }
+        let mut proc =
+            match ManagedProcess::spawn(cmd, "SvelteKit preview", Path::new(SVELTEKIT_LOG)) {
+                Ok(proc) => proc,
+                Err(e) => {
+                    return Err(OpsError::Command(format!(
+                        "failed to spawn vite preview: {e}"
+                    )));
+                }
+            };
+        proc.set_registration(crate::proc::ServiceRegistration::new(
+            config.root_dir.clone(),
+            "ui",
+            config.manifest.servers.ui_port,
+            None,
+            "e2e",
+            None,
+        ));
+        if let Err(e) = wait_for_url(&ui_url, 45, "SvelteKit").await {
+            print_log_tail(SVELTEKIT_LOG);
+            return Err(e);
         }
-    }
-    if let Err(e) = wait_for_url(&ui_url, 45, "SvelteKit").await {
-        print_log_tail(SVELTEKIT_LOG);
-        return Err(e);
+        proc.record_service();
+        supervisor.add(proc);
     }
     output::ok(format!("SvelteKit preview running at {ui_url}"));
     Ok(())
@@ -335,7 +485,8 @@ async fn e2e_playwright(
     api_key: Option<&str>,
 ) -> OpsResult<PlaywrightOutcome> {
     output::section("E2E 6. Playwright Tests");
-    if let Err(e) = run_blocking(
+    if let Err(e) = run_blocking_quiet(
+        "web",
         "npx",
         &["playwright", "install", "chromium"],
         &config.ui_dir,
@@ -344,6 +495,10 @@ async fn e2e_playwright(
             "playwright install chromium failed (continuing): {e}"
         ));
     }
+    // Stale transpile-cache hygiene: the cache once served OLD transpiled
+    // specs after regeneration (Playwright executing code matching no file
+    // on disk). Whole-dir clear — see pwcache for the scoping decision.
+    crate::pwcache::clear_and_report();
     let mut cmd = Command::new("npx");
     cmd.arg("playwright").arg("test");
     if args.headed {
@@ -353,26 +508,27 @@ async fn e2e_playwright(
     for (key, value) in super::ui::playwright_env(config, api_key) {
         cmd.env(key, value);
     }
-    if let Some(chromium) = find_chromium(&[
-        Path::new("/snap/bin/chromium"),
-        Path::new("/usr/bin/chromium-browser"),
-    ]) {
+    if let Some(chromium) = crate::env::find_chromium() {
         cmd.env("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", chromium);
     }
     cmd.current_dir(&config.ui_dir);
-    let out = cmd
-        .output()
-        .map_err(|e| OpsError::Command(format!("failed to spawn playwright: {e}")))?;
-    // stdout/stderr are captured (needed for the per-project tally and the
-    // failed-test titles); print them through after completion so the full
-    // run log stays visible.
-    let stdout_text = String::from_utf8_lossy(&out.stdout).into_owned();
-    print!("{stdout_text}");
-    eprint!("{}", String::from_utf8_lossy(&out.stderr));
+    // Streams list-format result lines LIVE (tests visibly finish) while
+    // capturing for the per-project tally and failed-title parsing.
+    config.metrics.begin("Playwright");
+    let out = match run_streaming(&mut cmd, "playwright") {
+        Ok(out) => out,
+        Err(e) => {
+            config.metrics.end();
+            return Err(OpsError::Command(format!(
+                "failed to spawn playwright: {e}"
+            )));
+        }
+    };
     let mut passed = out.status.success();
-    let tallies = tally_playwright_projects(&stdout_text);
-    let mut failed_titles = failed_test_titles(&stdout_text);
+    let tallies = tally_playwright_projects(&out.captured);
+    let mut failed_titles = failed_test_titles(&out.captured);
     let mut transient_resolved = 0usize;
+    config.metrics.end();
 
     // Retry just the failures, in-session: `--last-failed` reuses
     // Playwright's own record of what failed, so the caller doesn't have to
@@ -393,19 +549,14 @@ async fn e2e_playwright(
         for (key, value) in super::ui::playwright_env(config, api_key) {
             retry_cmd.env(key, value);
         }
-        if let Some(chromium) = find_chromium(&[
-            Path::new("/snap/bin/chromium"),
-            Path::new("/usr/bin/chromium-browser"),
-        ]) {
+        if let Some(chromium) = crate::env::find_chromium() {
             retry_cmd.env("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", chromium);
         }
         retry_cmd.current_dir(&config.ui_dir);
-        match retry_cmd.output() {
+        config.metrics.begin("Retry failed");
+        match run_streaming(&mut retry_cmd, "playwright") {
             Ok(retry_out) => {
-                let retry_text = String::from_utf8_lossy(&retry_out.stdout).into_owned();
-                print!("{retry_text}");
-                eprint!("{}", String::from_utf8_lossy(&retry_out.stderr));
-                failed_titles = failed_test_titles(&retry_text);
+                failed_titles = failed_test_titles(&retry_out.captured);
                 if retry_out.status.success() {
                     transient_resolved = raw_failure_count;
                     passed = true;
@@ -416,6 +567,7 @@ async fn e2e_playwright(
             }
             Err(e) => output::warn(format!("retry run could not start: {e}")),
         }
+        config.metrics.end();
     }
 
     Ok(PlaywrightOutcome {
@@ -725,14 +877,6 @@ fn supabase_health_url(config: &OpsConfig) -> String {
         .unwrap_or_else(|| "http://localhost:54321/auth/v1/health".to_string())
 }
 
-/// First existing candidate path (system chromium fallback for Playwright).
-fn find_chromium(candidates: &[&Path]) -> Option<PathBuf> {
-    candidates
-        .iter()
-        .find(|p| p.is_file())
-        .map(|p| p.to_path_buf())
-}
-
 /// True when `curl -sf` succeeds against `url`.
 async fn http_ok(url: &str) -> bool {
     Command::new("curl")
@@ -750,36 +894,50 @@ async fn http_ok(url: &str) -> bool {
 /// `build.rs` connects to Postgres at build time to compile the SQL-first
 /// repositories (the api and workers suites export the same env).
 fn cargo_build_app(config: &OpsConfig, release: bool) -> Result<(), String> {
-    // Delegate to the shared builder: it post-build touches the app binary
-    // so mtime-based freshness (ensure_binary_fresh) passes even when the
-    // pre_generate clean hook wiped src and cargo skipped the relink on
-    // byte-identical regeneration.
+    // Delegate to the shared builder: it streams under [build], pins the
+    // app dir as cwd, and post-build touches the app binary so mtime-based
+    // freshness (ensure_binary_fresh) passes even when the pre_generate
+    // clean hook wiped src and cargo skipped the relink on byte-identical
+    // regeneration.
     super::api::cargo_build_in(config, release)
 }
 
-/// Run a blocking command to completion, returning Err(Command) with a
-/// stdout/stderr tail on non-zero exit.
-fn run_blocking(bin: &str, args: &[&str], cwd: &Path) -> OpsResult<()> {
-    let out = Command::new(bin)
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .map_err(|e| {
-            OpsError::Command(format!("failed to spawn {bin} in {}: {e}", cwd.display()))
-        })?;
+/// Run a blocking command to completion, streaming its output under
+/// `[label]` (never a silent stage), and returning Err(Command) with an
+/// output tail on non-zero exit.
+fn run_blocking(label: &str, bin: &str, args: &[&str], cwd: &Path) -> OpsResult<()> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args).current_dir(cwd);
+    let out = run_streaming(&mut cmd, label).map_err(|e| {
+        OpsError::Command(format!("failed to spawn {bin} in {}: {e}", cwd.display()))
+    })?;
     if out.status.success() {
         return Ok(());
     }
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
     Err(OpsError::Command(format!(
         "{bin} {args:?} failed in {} (exit {:?}):\n{}",
         cwd.display(),
         out.status.code(),
-        tail(&text, 800)
+        tail(&out.captured, 800)
+    )))
+}
+
+/// [`run_blocking`] for noise-heavy stages (dependency installs, browser
+/// downloads): captured but not echoed per-line unless `--verbose`.
+fn run_blocking_quiet(label: &str, bin: &str, args: &[&str], cwd: &Path) -> OpsResult<()> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args).current_dir(cwd);
+    let out = run_streaming_quiet(&mut cmd, label).map_err(|e| {
+        OpsError::Command(format!("failed to spawn {bin} in {}: {e}", cwd.display()))
+    })?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(OpsError::Command(format!(
+        "{bin} {args:?} failed in {} (exit {:?}):\n{}",
+        cwd.display(),
+        out.status.code(),
+        tail(&out.captured, 800)
     )))
 }
 
@@ -847,6 +1005,8 @@ mod tests {
             hurl: None,
             hooks: vec![],
             extensions: vec![],
+            doctor: Default::default(),
+            bundle: Default::default(),
         }
     }
 
@@ -871,6 +1031,16 @@ mod tests {
             pick_binary(dir.path(), "demo-app", false),
             Some(dbg.join("demo-app"))
         );
+    }
+
+    #[test]
+    fn freshness_precheck_runs_only_with_skip_build() {
+        // --skip-build: the binary cannot become fresher later, so the
+        // freshness check must fire at stage 0 (before Supabase).
+        assert!(freshness_precheck_required(true));
+        // Build enabled: the post-build check in e2e_build stays
+        // authoritative (building may fix staleness).
+        assert!(!freshness_precheck_required(false));
     }
 
     #[test]
@@ -922,18 +1092,6 @@ mod tests {
             supabase_health_url(&cfg),
             "http://localhost:54321/auth/v1/health"
         );
-    }
-
-    #[test]
-    fn find_chromium_picks_first_existing() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake = dir.path().join("chromium");
-        std::fs::write(&fake, "x").unwrap();
-        assert_eq!(
-            find_chromium(&[Path::new("/nonexistent/chromium"), &fake]),
-            Some(fake)
-        );
-        assert_eq!(find_chromium(&[Path::new("/nonexistent/chromium")]), None);
     }
 
     #[test]

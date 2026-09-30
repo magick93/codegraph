@@ -367,22 +367,14 @@ fn prepare_cli_binary(config: &OpsConfig, skip_build: bool) -> OpsResult<PathBuf
         )));
     }
     output::info("Building CLI (cargo build)...");
-    let out = Command::new("cargo")
-        .arg("build")
-        .current_dir(&cli_dir)
-        .output()
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").current_dir(&cli_dir);
+    let out = crate::proc::run_streaming(&mut cmd, "build")
         .map_err(|e| OpsError::Command(format!("failed to spawn cargo build: {e}")))?;
     if !out.status.success() {
         return Err(OpsError::TestFailure(format!(
             "CLI build failed\n{}",
-            tail(
-                &format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                ),
-                800
-            )
+            tail(&out.captured, 800)
         )));
     }
     cli_binary_path(config).ok_or_else(|| {
