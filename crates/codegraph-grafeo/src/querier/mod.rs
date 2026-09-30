@@ -3,6 +3,7 @@ mod atproto;
 mod composition;
 mod governance;
 mod ifml;
+mod query;
 mod schema;
 
 use std::collections::{HashMap, VecDeque};
@@ -21,6 +22,7 @@ use codegraph_core::types::{
     SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
+use self::query::{query_gql, query_many};
 use crate::conversions::{row_to_property_node, RowReader};
 use crate::engine::GrafeoEngine;
 
@@ -39,42 +41,6 @@ pub(super) const PROPERTY_RETURN_COLS: &str = "\
     p.pg_column_name, p.pg_column_type, p.rust_field_name, p.rust_field_type, \
     p.sea_orm_type, p.render_strategy, p.ref_target, p.classification, \
     p.classification_kind";
-
-/// Query result wrapper holding columns and rows from Grafeo.
-pub(super) struct QResult {
-    columns: Vec<String>,
-    rows: Vec<Vec<grafeo::Value>>,
-}
-
-pub(super) fn query_gql(engine: &GrafeoEngine, gql: &str) -> Result<QResult, GraphError> {
-    let session = engine.db().session();
-    let result = session
-        .execute(gql)
-        .map_err(|e| GraphError::Query(format!("{e}")))?;
-    let rows = result.rows().to_vec();
-    Ok(QResult {
-        columns: result.columns,
-        rows,
-    })
-}
-
-/// Execute a parameterized GQL query. Grafeo can cache query plans for
-/// parameterized queries, avoiding repeated parsing of the same template.
-pub(super) fn query_gql_params(
-    engine: &GrafeoEngine,
-    gql: &str,
-    params: HashMap<String, grafeo::Value>,
-) -> Result<QResult, GraphError> {
-    let result = engine
-        .db()
-        .execute_with_params(gql, params)
-        .map_err(|e| GraphError::Query(format!("{e}")))?;
-    let rows = result.rows().to_vec();
-    Ok(QResult {
-        columns: result.columns,
-        rows,
-    })
-}
 
 impl GrafeoEngine {
     pub(super) async fn query_generation_order(&self) -> Result<Vec<String>, GraphError> {
@@ -147,17 +113,18 @@ impl GrafeoEngine {
     pub(super) async fn query_all_schema_references(
         &self,
     ) -> Result<Vec<(String, String)>, GraphError> {
-        let gql = "MATCH (s:Schema)-[:HasProperty]->(:Property)-[:ReferencesSchema]->(t:Schema) \
-                   RETURN DISTINCT s.title, t.title";
-        let result = query_gql(self, gql)?;
-        let reader = RowReader::from_columns(&result.columns);
-        let mut refs = Vec::new();
-        for row in &result.rows {
-            let src = reader.get_string(row, "s.title")?;
-            let tgt = reader.get_string(row, "t.title")?;
-            refs.push((src, tgt));
-        }
-        Ok(refs)
+        query_many(
+            self,
+            "MATCH (s:Schema)-[:HasProperty]->(:Property)-[:ReferencesSchema]->(t:Schema) \
+               RETURN DISTINCT s.title, t.title",
+            |reader, row| {
+                Ok((
+                    reader.get_string(row, "s.title")?,
+                    reader.get_string(row, "t.title")?,
+                ))
+            },
+        )
+        .await
     }
 
     pub(super) async fn query_all_properties(

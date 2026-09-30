@@ -6,7 +6,8 @@ use codegraph_core::types::{
     SchemaNode,
 };
 
-use super::{query_gql, query_gql_params, PROPERTY_RETURN_COLS, SCHEMA_RETURN_COLS};
+use super::query::{query_gql, query_gql_params, query_many, query_many_params, query_one_params};
+use super::{PROPERTY_RETURN_COLS, SCHEMA_RETURN_COLS};
 use crate::conversions::{
     row_to_codelist, row_to_enum_value, row_to_property_node, row_to_schema_node, RowReader,
 };
@@ -42,16 +43,13 @@ impl GrafeoEngine {
         schema_id: &str,
     ) -> Result<Option<SchemaNode>, GraphError> {
         let params = HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             &format!("MATCH (s:Schema {{schema_id: $sid}}) RETURN {SCHEMA_RETURN_COLS}"),
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_schema_in_domain(
@@ -63,18 +61,15 @@ impl GrafeoEngine {
             ("title".to_string(), grafeo::Value::String(title.into())),
             ("domain".to_string(), grafeo::Value::String(domain.into())),
         ]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             &format!(
                 "MATCH (s:Schema {{title: $title, domain: $domain}}) RETURN {SCHEMA_RETURN_COLS}"
             ),
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_schemas(
@@ -112,20 +107,16 @@ impl GrafeoEngine {
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             &format!(
                 "MATCH (:Schema {{title: $title}})-[:HasProperty]->(p:Property) \
                  RETURN {PROPERTY_RETURN_COLS} ORDER BY p.name"
             ),
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_property_node(&reader, row))
-            .collect()
+            row_to_property_node,
+        )
+        .await
     }
 
     pub(super) async fn query_properties_in_domain(
@@ -144,7 +135,7 @@ impl GrafeoEngine {
             self,
             &format!(
                 "MATCH (:Schema {{title: $title, domain: $domain}})-[:HasProperty]->(p:Property) \
-             RETURN {PROPERTY_RETURN_COLS} ORDER BY p.name"
+              RETURN {PROPERTY_RETURN_COLS} ORDER BY p.name"
             ),
             params,
         )?;
@@ -166,17 +157,13 @@ impl GrafeoEngine {
     ) -> Result<Vec<SchemaNode>, GraphError> {
         let params =
             HashMap::from([("ps".to_string(), grafeo::Value::String(schema_title.into()))]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             &format!("MATCH (s:Schema {{parent_schema: $ps}}) RETURN {SCHEMA_RETURN_COLS}"),
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_schema_node(&reader, row))
-            .collect()
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_classification_data(
@@ -273,13 +260,12 @@ impl GrafeoEngine {
     }
 
     pub(super) async fn query_entity_names(&self) -> Result<Vec<String>, GraphError> {
-        let result = query_gql(self, "MATCH (s:Schema {is_entity: true}) RETURN s.title")?;
-        let reader = RowReader::from_columns(&result.columns);
-        let mut names: Vec<String> = result
-            .rows
-            .iter()
-            .map(|row| reader.get_string(row, "s.title"))
-            .collect::<Result<_, _>>()?;
+        let mut names: Vec<String> = query_many(
+            self,
+            "MATCH (s:Schema {is_entity: true}) RETURN s.title",
+            |reader, row| reader.get_string(row, "s.title"),
+        )
+        .await?;
         names.sort();
         names.dedup();
         Ok(names)
@@ -303,17 +289,15 @@ impl GrafeoEngine {
     }
 
     pub(super) async fn query_value_object_schemas(&self) -> Result<Vec<SchemaNode>, GraphError> {
-        let gql = &format!(
-            "MATCH (s:Schema) WHERE s.is_entity = false AND s.is_codelist = false AND s.schema_type = 'object' \
-             RETURN {SCHEMA_RETURN_COLS}"
-        );
-        let result = query_gql(self, gql)?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_schema_node(&reader, row))
-            .collect()
+        query_many(
+            self,
+            &format!(
+                "MATCH (s:Schema) WHERE s.is_entity = false AND s.is_codelist = false AND s.schema_type = 'object' \
+                 RETURN {SCHEMA_RETURN_COLS}"
+            ),
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_parent_candidates(&self) -> Result<Vec<ParentCandidate>, GraphError> {
@@ -361,29 +345,23 @@ impl GrafeoEngine {
 
     pub(super) async fn query_codelist(&self, name: &str) -> Result<Option<CodeList>, GraphError> {
         let params = HashMap::from([("name".to_string(), grafeo::Value::String(name.into()))]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             "MATCH (c:CodeList {name: $name}) RETURN c.name, c.description, \
              c.pg_table_name, c.render_as, c.check_expression",
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        Ok(Some(row_to_codelist(&reader, &result.rows[0])?))
+            row_to_codelist,
+        )
+        .await
     }
 
     pub(super) async fn query_codelists(&self) -> Result<Vec<CodeList>, GraphError> {
-        let gql =
-            "MATCH (c:CodeList) RETURN c.name, c.description, c.pg_table_name, c.render_as, c.check_expression";
-        let result = query_gql(self, gql)?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_codelist(&reader, row))
-            .collect()
+        query_many(
+            self,
+            "MATCH (c:CodeList) RETURN c.name, c.description, c.pg_table_name, c.render_as, c.check_expression",
+            row_to_codelist,
+        )
+        .await
     }
 
     pub(super) async fn query_enum_values(
@@ -394,17 +372,13 @@ impl GrafeoEngine {
             "name".to_string(),
             grafeo::Value::String(codelist_name.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             "MATCH (:CodeList {name: $name})-[:HasEnumValue]->(v:EnumValue) \
              RETURN v.value, v.display_name, v.sort_order",
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_enum_value(&reader, row))
-            .collect()
+            row_to_enum_value,
+        )
+        .await
     }
 }
