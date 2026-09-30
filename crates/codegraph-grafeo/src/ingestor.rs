@@ -18,9 +18,12 @@ use std::collections::HashMap;
 
 use crate::engine::GrafeoEngine;
 
-/// Escape single quotes in GQL string literals.
+/// Escape a value for a GQL string literal: backslashes first (the GQL
+/// parser processes backslash escapes, so a literal `\` must be doubled or
+/// sequences like `\"` inside JSON payloads are silently corrupted on
+/// store), then single quotes.
 pub(crate) fn escape_gql(s: &str) -> String {
-    s.replace('\'', "\\'")
+    s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 /// The GQL for one regulatory reference edge (issue #265). Owners match by
