@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 use codegraph_backend::{create_backend, Backend, BackendConfig};
 
 use crate::error::Result;
-use crate::generate::ProjectConfig;
+use crate::generate::{
+    AtprotoConfig, CargoConfig, CodegenConfig, DatabaseConfig, DeploymentConfig, DtoKeyCasing,
+    IdentityConfig, IntegrationFlags, PathsConfig, ProjectConfig, UxConfig,
+};
 
 /// Output format for the `classify` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,65 +333,76 @@ pub async fn run_with_graph_cache(
         // Build project config from profile meta (optional fields override defaults).
         let meta = &resolved.meta;
         domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
-        let database_target_str = plan.database_target().to_string();
-        let persistence_provider_str = plan.persistence_provider().to_string();
-        let deployment_topology_str = plan.deployment_topology().to_string();
         project_config = Some(ProjectConfig {
-            app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
-            lib_name: "cosmos".into(),
-            domain_types_crate: meta
-                .domain_types_crate
-                .clone()
-                .unwrap_or_else(|| "domain_types".into()),
-            hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
-            api_title: meta
-                .api_title
-                .clone()
-                .unwrap_or_else(|| "HR Open API".into()),
-            generator_name: meta
-                .generator_name
-                .clone()
-                .unwrap_or_else(|| "codegraph".into()),
-            domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
-            hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
-            extensions_base: meta.extensions_base.clone().unwrap_or_default(),
-            app_config_base: meta.app_config_base.clone().unwrap_or_default(),
-            decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
-            codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
-            type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
-            database_target: database_target_str,
-            persistence_provider: persistence_provider_str,
-            dto_key_casing: plan.dto_key_casing.clone(),
-            deployment_topology: deployment_topology_str,
-            namespace_layout: plan.namespace_layout,
-            expr_ir: plan.expr_ir,
-            public_operations_rls: plan.public_operations_rls,
-            types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
-            codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
-            has_atproto: plan.has_atproto,
-            has_fern: plan.has_fern,
-            fern_sdk_languages: plan.fern_sdk_languages.clone(),
-            has_emdash: plan.has_emdash,
-            has_function_postconditions: resolved
-                .features
-                .get("function_postconditions")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-            emdash_site_pages_base: String::new(),
-            emdash_site_e2e_base: String::new(),
-            atproto_authority: String::new(),
-            atproto_tenancy: plan.atproto_tenancy.clone(),
-            atproto_float_policy: resolved
-                .features
-                .get("atproto_float_policy")
-                .and_then(|v| v.as_str())
-                .unwrap_or("integer_scaled")
-                .to_string(),
-            cargo_patch: String::new(),
-            extra_dependencies: String::new(),
-            cargo_workspace: false,
-            api_version: domain_config.defaults.api_version.clone(),
-            ux: None,
+            identity: IdentityConfig {
+                app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
+                lib_name: "cosmos".into(),
+                domain_types_crate: meta
+                    .domain_types_crate
+                    .clone()
+                    .unwrap_or_else(|| "domain_types".into()),
+                hooks_api_crate: meta.hooks_api_crate.clone().unwrap_or_default(),
+                api_title: meta
+                    .api_title
+                    .clone()
+                    .unwrap_or_else(|| "HR Open API".into()),
+                generator_name: meta
+                    .generator_name
+                    .clone()
+                    .unwrap_or_else(|| "codegraph".into()),
+                api_version: domain_config.defaults.api_version.clone(),
+            },
+            paths: PathsConfig {
+                domain_types_base: meta.domain_types_base.clone().unwrap_or_default(),
+                hooks_api_base: meta.hooks_api_base.clone().unwrap_or_default(),
+                extensions_base: meta.extensions_base.clone().unwrap_or_default(),
+                app_config_base: meta.app_config_base.clone().unwrap_or_default(),
+                decision_engine_base: meta.decision_engine_base.clone().unwrap_or_default(),
+                codegraph_workflow_base: meta.codegraph_workflow_base.clone().unwrap_or_default(),
+                type_contracts_base: meta.type_contracts_base.clone().unwrap_or_default(),
+            },
+            database: DatabaseConfig {
+                database_target: plan.database_target(),
+                persistence_provider: plan.persistence_provider(),
+            },
+            codegen: CodegenConfig {
+                dto_key_casing: DtoKeyCasing::from_config(&plan.dto_key_casing),
+                namespace_layout: plan.namespace_layout,
+                expr_ir: plan.expr_ir,
+                types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
+            },
+            deployment: DeploymentConfig {
+                deployment_topology: plan.deployment_topology(),
+            },
+            cargo: CargoConfig {
+                codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
+                ..CargoConfig::default()
+            },
+            integration: IntegrationFlags {
+                has_atproto: plan.has_atproto,
+                has_fern: plan.has_fern,
+                fern_sdk_languages: plan.fern_sdk_languages.clone(),
+                has_emdash: plan.has_emdash,
+                public_operations_rls: plan.public_operations_rls,
+                has_function_postconditions: resolved
+                    .features
+                    .get("function_postconditions")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+                emdash_site_pages_base: String::new(),
+                emdash_site_e2e_base: String::new(),
+            },
+            atproto: AtprotoConfig {
+                atproto_authority: String::new(),
+                atproto_tenancy: plan.atproto_tenancy.clone(),
+                atproto_float_policy: resolved
+                    .features
+                    .get("atproto_float_policy")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("integer_scaled")
+                    .to_string(),
+            },
+            ux: UxConfig { ux: None },
         });
 
         println!(
@@ -652,7 +666,7 @@ pub async fn run_with_graph_cache(
 
         // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
         if let Some(ref pc) = project_config {
-            if pc.has_atproto {
+            if pc.integration.has_atproto {
                 crate::ingest::atproto_projection::project_atproto_lexicons(
                     be.ingestor(),
                     be.querier(),
@@ -711,7 +725,7 @@ pub async fn run_with_graph_cache(
     // generators still receive the rules via GeneratorOpts.
     let ux_resolved = effective_ux_rules(ux_rules, build_plan.as_ref())?;
     if let Some(pc) = project_config.as_mut() {
-        pc.ux = ux_resolved.clone();
+        pc.ux.ux = ux_resolved.clone();
     }
 
     run_validation(be.querier(), &domain_config).await?;
@@ -944,8 +958,14 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
     // `--framework` is authoritative and the plan falls back to ifml_only.
     let registry = crate::profile::CapabilityRegistry::new();
     let mut project_config = crate::generate::ProjectConfig {
-        api_version: domain_config.defaults.api_version.clone(),
-        types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
+        identity: IdentityConfig {
+            api_version: domain_config.defaults.api_version.clone(),
+            ..IdentityConfig::default()
+        },
+        codegen: CodegenConfig {
+            types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
+            ..CodegenConfig::default()
+        },
         ..crate::generate::ProjectConfig::default()
     };
     let build_plan = if let Some(ref profiles_path) = profiles_config_path {
@@ -959,30 +979,38 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         let plan = crate::profile::BuildPlan::from_profile(&resolved, &registry)?;
 
         let meta = &resolved.meta;
-        project_config.app_name = meta.app_name.clone().unwrap_or(project_config.app_name);
-        project_config.domain_types_crate = meta
+        project_config.identity.app_name = meta
+            .app_name
+            .clone()
+            .unwrap_or(project_config.identity.app_name);
+        project_config.identity.domain_types_crate = meta
             .domain_types_crate
             .clone()
-            .unwrap_or(project_config.domain_types_crate);
-        project_config.hooks_api_crate = meta.hooks_api_crate.clone().unwrap_or_default();
-        project_config.api_title = meta.api_title.clone().unwrap_or(project_config.api_title);
-        project_config.generator_name = meta
+            .unwrap_or(project_config.identity.domain_types_crate);
+        project_config.identity.hooks_api_crate = meta.hooks_api_crate.clone().unwrap_or_default();
+        project_config.identity.api_title = meta
+            .api_title
+            .clone()
+            .unwrap_or(project_config.identity.api_title);
+        project_config.identity.generator_name = meta
             .generator_name
             .clone()
-            .unwrap_or(project_config.generator_name);
-        project_config.domain_types_base = meta.domain_types_base.clone().unwrap_or_default();
-        project_config.hooks_api_base = meta.hooks_api_base.clone().unwrap_or_default();
-        project_config.extensions_base = meta.extensions_base.clone().unwrap_or_default();
-        project_config.app_config_base = meta.app_config_base.clone().unwrap_or_default();
-        project_config.decision_engine_base = meta.decision_engine_base.clone().unwrap_or_default();
-        project_config.codegraph_workflow_base =
+            .unwrap_or(project_config.identity.generator_name);
+        project_config.paths.domain_types_base = meta.domain_types_base.clone().unwrap_or_default();
+        project_config.paths.hooks_api_base = meta.hooks_api_base.clone().unwrap_or_default();
+        project_config.paths.extensions_base = meta.extensions_base.clone().unwrap_or_default();
+        project_config.paths.app_config_base = meta.app_config_base.clone().unwrap_or_default();
+        project_config.paths.decision_engine_base =
+            meta.decision_engine_base.clone().unwrap_or_default();
+        project_config.paths.codegraph_workflow_base =
             meta.codegraph_workflow_base.clone().unwrap_or_default();
-        project_config.type_contracts_base = meta.type_contracts_base.clone().unwrap_or_default();
-        project_config.database_target = plan.database_target().to_string();
-        project_config.persistence_provider = plan.persistence_provider().to_string();
-        project_config.deployment_topology = plan.deployment_topology().to_string();
-        project_config.expr_ir = plan.expr_ir;
-        project_config.public_operations_rls = plan.public_operations_rls;
+        project_config.paths.type_contracts_base =
+            meta.type_contracts_base.clone().unwrap_or_default();
+        project_config.database.database_target = plan.database_target();
+        project_config.database.persistence_provider = plan.persistence_provider();
+        project_config.deployment.deployment_topology = plan.deployment_topology();
+        project_config.codegen.expr_ir = plan.expr_ir;
+        project_config.integration.public_operations_rls = plan.public_operations_rls;
 
         println!(
             "Using profile \"{}\" — {} global generators",
@@ -1023,7 +1051,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
 
     // Issue #293: the IFML-only path renders through ProjectConfig, so the
     // resolved rules ride there for the route/e2e templates.
-    project_config.ux = effective_ux_rules(ux_rules, build_plan.as_ref())?;
+    project_config.ux.ux = effective_ux_rules(ux_rules, build_plan.as_ref())?;
 
     let report = crate::generate::run_ifml_generators(
         be.querier(),

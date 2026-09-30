@@ -123,7 +123,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             domains,
             has_integrations: self.has_integrations,
             has_webhooks: self.has_webhooks,
-            has_ux_rules: project.ux.is_some(),
+            has_ux_rules: project.ux.ux.is_some(),
             shadcn_primitives: SHADCN_PRIMITIVES.to_vec(),
         };
 

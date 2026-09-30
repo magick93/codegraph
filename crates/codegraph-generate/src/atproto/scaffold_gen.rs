@@ -49,7 +49,7 @@ impl GlobalGenerator for LexiconScaffoldEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let authority = &project.atproto_authority;
+        let authority = &project.atproto.atproto_authority;
         if authority.is_empty() {
             return Ok(Vec::new());
         }

@@ -119,7 +119,7 @@ impl GlobalGenerator for PublicOperationsRlsGenerator {
         project: &crate::ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Documented no-ops: sqlite has no RLS; flag off = byte-identical.
-        if !project.public_operations_rls || !self.dialect.has_rls() {
+        if !project.integration.public_operations_rls || !self.dialect.has_rls() {
             return Ok(vec![]);
         }
 

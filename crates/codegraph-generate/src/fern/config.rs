@@ -44,13 +44,14 @@ impl GlobalGenerator for FernConfigGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let languages = project
+            .integration
             .fern_sdk_languages
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
 
         let ctx = FernConfigContext {
-            organization: project.app_name.clone(),
+            organization: project.identity.app_name.clone(),
             languages,
         };
 

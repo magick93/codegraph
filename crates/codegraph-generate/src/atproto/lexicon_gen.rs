@@ -61,7 +61,7 @@ impl EntityGenerator for LexiconEmitter {
 
         let content = render_template_with_project(tera, template, &context, project)?;
 
-        let authority = project.atproto_authority.as_str();
+        let authority = project.atproto.atproto_authority.as_str();
         let nsid_parts: Vec<&str> = lexicon
             .nsid
             .strip_prefix(&format!("{}.", authority))

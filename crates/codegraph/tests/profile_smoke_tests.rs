@@ -972,9 +972,9 @@ async fn run_routing_generators(
     // Mirror main.rs: the project config carries the topology string so
     // templates can read `project.deployment_topology`.
     let project = codegraph::generate::ProjectConfig {
-        deployment_topology: topology.to_string(),
-        namespace_layout: false,
-        expr_ir: false,
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: topology,
+        },
         ..Default::default()
     };
 
@@ -1331,9 +1331,9 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
     };
 
     let project = codegraph::generate::ProjectConfig {
-        deployment_topology: "workers".to_string(),
-        namespace_layout: false,
-        expr_ir: false,
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
         ..Default::default()
     };
 
@@ -1984,9 +1984,9 @@ async fn workers_topology_emits_per_worker_codelist_reexports() {
     let (mock, config, tera, output_dir) = workers_codelist_test_setup().await;
 
     let project = codegraph::generate::ProjectConfig {
-        deployment_topology: "workers".to_string(),
-        namespace_layout: false,
-        expr_ir: false,
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2137,9 +2137,9 @@ async fn monolith_topology_keeps_root_codelist_reexport() {
     let (mock, config, tera, output_dir) = workers_codelist_test_setup().await;
 
     let project = codegraph::generate::ProjectConfig {
-        deployment_topology: "monolith".to_string(),
-        namespace_layout: false,
-        expr_ir: false,
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        },
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2219,11 +2219,17 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     let (mock, config, tera, output_dir) = workers_scaffold_test_setup();
 
     let project = codegraph::generate::ProjectConfig {
-        deployment_topology: "workers".to_string(),
-        namespace_layout: false,
-        expr_ir: false,
-        hooks_api_crate: "hr_hooks_api".to_string(),
-        hooks_api_base: "crates/hr-hooks-api".to_string(),
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
+        identity: codegraph::generate::IdentityConfig {
+            hooks_api_crate: "hr_hooks_api".to_string(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            hooks_api_base: "crates/hr-hooks-api".to_string(),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let (report, output_dir) = run_routing_generators_with_parts(
@@ -2320,10 +2326,13 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
     // Monolith topology stays root-only.
     let (mock2, config2, tera2, output_dir2) = workers_scaffold_test_setup();
     let project2 = codegraph::generate::ProjectConfig {
-        deployment_topology: "monolith".to_string(),
-        namespace_layout: false,
-        expr_ir: false,
-        hooks_api_crate: "hr_hooks_api".to_string(),
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        },
+        identity: codegraph::generate::IdentityConfig {
+            hooks_api_crate: "hr_hooks_api".to_string(),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let (report2, _output_dir2) = run_routing_generators_with_parts(

@@ -4,17 +4,56 @@ use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
 use codegraph_core::traits::GraphQuerier;
 use tera::Tera;
 
+use crate::db::dialect::DatabaseTarget;
 use crate::emdash;
+use crate::profile::{DeploymentTopology, PersistenceProvider};
 
 // =============================================================================
 // Project-level configuration for template rendering.
 // Threaded explicitly: `run_generators_with_opts` receives a
 // `ProjectConfig` (from `GeneratorOpts.project_config` or the default)
 // and passes it to every generator and helper that needs it.
+//
+// The config is composed of cohesive sub-configs. Every sub-config field is
+// `#[serde(flatten)]`-ed into the parent so the serialized `project` map the
+// Tera templates see stays key-for-key FLAT (`{{ project.app_name }}`, …) —
+// templates must never be edited for this structure.
 // =============================================================================
 
+/// DTO serde key casing for domain-types DTOs.
+///
+/// `Snake` (default) keeps keys at the Rust field names; `Camel` emits
+/// `#[serde(rename_all = "camelCase")]` on create/update/response DTOs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DtoKeyCasing {
+    #[default]
+    Snake,
+    Camel,
+}
+
+impl DtoKeyCasing {
+    /// Parse from the normalized `BuildPlan.dto_key_casing` string.
+    /// Unknown values fall back to `Snake` — worst case the wire keys stay
+    /// at the Rust field names (the historical contract).
+    pub fn from_config(s: &str) -> Self {
+        match s {
+            "camel" => Self::Camel,
+            _ => Self::Snake,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Snake => "snake",
+            Self::Camel => "camel",
+        }
+    }
+}
+
+/// What the generated app is called: crate names, API title, generator tag.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ProjectConfig {
+pub struct IdentityConfig {
     pub app_name: String,
     /// Rust crate name of the generated library (the `[lib] name` in the
     /// generated Cargo.toml). Test templates reference the crate by this name.
@@ -24,6 +63,28 @@ pub struct ProjectConfig {
     pub hooks_api_crate: String,
     pub api_title: String,
     pub generator_name: String,
+    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
+    #[serde(default)]
+    pub api_version: String,
+}
+
+impl Default for IdentityConfig {
+    fn default() -> Self {
+        Self {
+            app_name: "app".into(),
+            lib_name: "cosmos".into(),
+            domain_types_crate: "domain_types".into(),
+            hooks_api_crate: String::new(),
+            api_title: "HR Open API".into(),
+            generator_name: "codegraph".into(),
+            api_version: "v1".into(),
+        }
+    }
+}
+
+/// Repo-relative target directories for the generated companion crates.
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct PathsConfig {
     /// Path to the domain-types crate root (e.g. "crates/placekit-domain-types").
     /// Used by the scaffold generator to add a path dependency in Cargo.toml.
     /// Empty string means "no separate domain-types crate" (types live in the app).
@@ -34,18 +95,35 @@ pub struct ProjectConfig {
     pub decision_engine_base: String,
     pub codegraph_workflow_base: String,
     pub type_contracts_base: String,
-    /// Database target dialect for SQL generation ("postgres" or "sqlite").
-    /// Used by DB templates to branch on dialect-specific syntax.
-    pub database_target: String,
-    /// Persistence provider for entity/repository code generation ("sea_orm" or "cornucopia").
-    /// Used by templates to select provider-specific rendering paths.
-    pub persistence_provider: String,
-    /// DTO serde key casing for domain-types DTOs: "snake" (default — keys stay
-    /// at the Rust field names) or "camel" (`rename_all = "camelCase"`).
-    pub dto_key_casing: String,
-    /// Deployment topology for the generated application ("monolith" or "workers").
-    /// Used by templates to select topology-specific rendering paths.
-    pub deployment_topology: String,
+}
+
+/// Database generation targets: dialect and persistence provider.
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct DatabaseConfig {
+    /// Database target dialect for SQL generation. Used by DB templates to
+    /// branch on dialect-specific syntax (serializes as "postgres"/"sqlite").
+    pub database_target: DatabaseTarget,
+    /// Persistence provider for entity/repository code generation. Used by
+    /// templates to select provider-specific rendering paths (serializes as
+    /// "sea_orm"/"cornucopia").
+    pub persistence_provider: PersistenceProvider,
+}
+
+/// Deployment shape of the generated application.
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct DeploymentConfig {
+    /// Deployment topology for the generated application. Used by templates
+    /// to select topology-specific rendering paths (serializes as
+    /// "monolith"/"workers").
+    pub deployment_topology: DeploymentTopology,
+}
+
+/// Code-emission toggles that are not tied to one generator.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CodegenConfig {
+    /// DTO serde key casing for domain-types DTOs (serializes as
+    /// "snake"/"camel").
+    pub dto_key_casing: DtoKeyCasing,
     /// Namespace-aware module layout (issue #268): schemas carrying a
     /// namespace emit under namespace-derived module paths
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`). Default false =
@@ -57,56 +135,31 @@ pub struct ProjectConfig {
     /// = byte-identical output.
     #[serde(default)]
     pub expr_ir: bool,
-    /// Public-operations consumer (issue #279): schemas carrying
-    /// `access = Public` whose entity config declares `public_operations`
-    /// emit `TO PUBLIC` RLS policies and mount routes without permission
-    /// layers. Default false = byte-identical output.
-    #[serde(default)]
-    pub public_operations_rls: bool,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
     pub types_import_prefix: String,
-    /// API version prefix used in URL path construction (e.g. "v1" → `/api/v1/...`).
-    #[serde(default)]
-    pub api_version: String,
+}
+
+impl Default for CodegenConfig {
+    fn default() -> Self {
+        Self {
+            dto_key_casing: DtoKeyCasing::default(),
+            namespace_layout: false,
+            expr_ir: false,
+            types_import_prefix: "codegraph_type_contracts".into(),
+        }
+    }
+}
+
+/// Cargo manifest emission: rev pins, patch section, extra dependencies.
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct CargoConfig {
     /// Git revision SHA used for fallback path dependencies in generated Cargo.toml.
     /// When domain_types_base is empty, the domain types Cargo.toml uses this rev
     /// to reference codegraph-type-contracts as a git dependency.
     #[serde(default)]
     pub codegraph_rev: String,
-    /// Whether atproto generators are enabled via profile feature flag.
-    pub has_atproto: bool,
-    /// Whether Fern SDK generation is enabled via profile feature flag.
-    #[serde(default)]
-    pub has_fern: bool,
-    /// Fern SDK languages to generate (e.g. ["typescript", "rust"]).
-    #[serde(default)]
-    pub fern_sdk_languages: Vec<String>,
-    /// Whether EmDash plugin generation is enabled via profile feature flag.
-    #[serde(default)]
-    pub has_emdash: bool,
-    /// Whether function post-conditions emit `debug_assert!` checks
-    /// (issue #263). Gated by the `function_postconditions` profile
-    /// feature; default OFF = the emitted functions module carries none.
-    #[serde(default)]
-    pub has_function_postconditions: bool,
-    /// Repo-relative base path for the community site's public pages
-    /// (emdash plugin generator). Default: "apps/community-site/src/pages".
-    #[serde(default = "default_emdash_site_pages_base")]
-    pub emdash_site_pages_base: String,
-    /// Repo-relative base path for the community site's e2e suite
-    /// (emdash plugin generator). Default: "apps/community-site/e2e".
-    #[serde(default = "default_emdash_site_e2e_base")]
-    pub emdash_site_e2e_base: String,
-    /// AT Protocol namespace authority (e.g. "nz.gravy").
-    /// Read from domain config or hard-coded default. Empty string = atproto disabled.
-    pub atproto_authority: String,
-    /// AT Protocol tenancy mode: "shared_pds" or "per_org_pds".
-    pub atproto_tenancy: String,
-    /// AT Protocol float policy: what to do with JSON Schema "number" types.
-    /// "reject", "string", "integer_scaled", or "unknown"
-    pub atproto_float_policy: String,
     /// Raw `[patch.'https://github.com/magick93/codegraph.git']` entries emitted
     /// into the generated Cargo.toml (dev environments pin the local codegraph
     /// checkout via path overrides). Empty string = no patch section.
@@ -121,12 +174,118 @@ pub struct ProjectConfig {
     /// `cli_scaffold` generator). Defaults to false.
     #[serde(default)]
     pub cargo_workspace: bool,
-    /// Resolved ux-rules (issue #293): the built-in `ux-default` pack,
-    /// optionally merged with a project `--ux-rules` file. `None` = flag
-    /// off / plan-less run without a CLI file — templates see `project.ux`
-    /// only when rules resolved, so unset keeps output byte-identical.
+}
+
+/// Integration feature flags and their per-integration settings.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IntegrationFlags {
+    /// Whether atproto generators are enabled via profile feature flag.
+    pub has_atproto: bool,
+    /// Whether Fern SDK generation is enabled via profile feature flag.
+    #[serde(default)]
+    pub has_fern: bool,
+    /// Fern SDK languages to generate (e.g. ["typescript", "rust"]).
+    #[serde(default)]
+    pub fern_sdk_languages: Vec<String>,
+    /// Whether EmDash plugin generation is enabled via profile feature flag.
+    #[serde(default)]
+    pub has_emdash: bool,
+    /// Public-operations consumer (issue #279): schemas carrying
+    /// `access = Public` whose entity config declares `public_operations`
+    /// emit `TO PUBLIC` RLS policies and mount routes without permission
+    /// layers. Default false = byte-identical output.
+    #[serde(default)]
+    pub public_operations_rls: bool,
+    /// Whether function post-conditions emit `debug_assert!` checks
+    /// (issue #263). Gated by the `function_postconditions` profile
+    /// feature; default OFF = the emitted functions module carries none.
+    #[serde(default)]
+    pub has_function_postconditions: bool,
+    /// Repo-relative base path for the community site's public pages
+    /// (emdash plugin generator). Default: "apps/community-site/src/pages".
+    #[serde(default = "default_emdash_site_pages_base")]
+    pub emdash_site_pages_base: String,
+    /// Repo-relative base path for the community site's e2e suite
+    /// (emdash plugin generator). Default: "apps/community-site/e2e".
+    #[serde(default = "default_emdash_site_e2e_base")]
+    pub emdash_site_e2e_base: String,
+}
+
+impl Default for IntegrationFlags {
+    fn default() -> Self {
+        Self {
+            has_atproto: false,
+            has_fern: false,
+            fern_sdk_languages: vec!["typescript".into()],
+            has_emdash: false,
+            public_operations_rls: false,
+            has_function_postconditions: false,
+            emdash_site_pages_base: default_emdash_site_pages_base(),
+            emdash_site_e2e_base: default_emdash_site_e2e_base(),
+        }
+    }
+}
+
+/// AT Protocol integration settings.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AtprotoConfig {
+    /// AT Protocol namespace authority (e.g. "nz.gravy").
+    /// Read from domain config or hard-coded default. Empty string = atproto disabled.
+    pub atproto_authority: String,
+    /// AT Protocol tenancy mode: "shared_pds" or "per_org_pds" (raw passthrough
+    /// from profile features — not a closed set at construction).
+    pub atproto_tenancy: String,
+    /// AT Protocol float policy: what to do with JSON Schema "number" types.
+    /// "reject", "string", "integer_scaled", or "unknown" (raw passthrough
+    /// from profile features — not a closed set at construction).
+    pub atproto_float_policy: String,
+}
+
+impl Default for AtprotoConfig {
+    fn default() -> Self {
+        Self {
+            atproto_authority: String::new(),
+            atproto_tenancy: "shared_pds".to_string(),
+            atproto_float_policy: "integer_scaled".to_string(),
+        }
+    }
+}
+
+/// UX rules integration (issue #293).
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct UxConfig {
+    /// Resolved ux-rules: the built-in `ux-default` pack, optionally merged
+    /// with a project `--ux-rules` file. `None` = flag off / plan-less run
+    /// without a CLI file — templates see `project.ux` only when rules
+    /// resolved, so unset keeps output byte-identical (the key is absent
+    /// from the serialized map when `None`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ux: Option<codegraph_config::UxRules>,
+}
+
+/// Project-level configuration injected into every template context as
+/// `project`. Sub-configs are flattened on serialize so the template-visible
+/// map keeps the historical flat keys.
+#[derive(Debug, Clone, serde::Serialize, Default)]
+pub struct ProjectConfig {
+    #[serde(flatten)]
+    pub identity: IdentityConfig,
+    #[serde(flatten)]
+    pub paths: PathsConfig,
+    #[serde(flatten)]
+    pub database: DatabaseConfig,
+    #[serde(flatten)]
+    pub deployment: DeploymentConfig,
+    #[serde(flatten)]
+    pub codegen: CodegenConfig,
+    #[serde(flatten)]
+    pub cargo: CargoConfig,
+    #[serde(flatten)]
+    pub integration: IntegrationFlags,
+    #[serde(flatten)]
+    pub atproto: AtprotoConfig,
+    #[serde(flatten)]
+    pub ux: UxConfig,
 }
 
 fn default_emdash_site_pages_base() -> String {
@@ -138,33 +297,19 @@ fn default_emdash_site_e2e_base() -> String {
 }
 
 impl ProjectConfig {
-    /// The persistence provider as a typed enum (parsed from the config string).
-    pub fn persistence_provider_enum(&self) -> crate::profile::PersistenceProvider {
-        crate::profile::PersistenceProvider::from_config(&self.persistence_provider)
-    }
-
     /// True when entity/repository code generation targets the Cornucopia backend.
     pub fn is_cornucopia(&self) -> bool {
         matches!(
-            self.persistence_provider_enum(),
-            crate::profile::PersistenceProvider::Cornucopia
+            self.database.persistence_provider,
+            PersistenceProvider::Cornucopia
         )
-    }
-
-    /// The deployment topology as a typed enum (parsed from the config string).
-    ///
-    /// The string is validated at `BuildPlan` construction time, so an invalid
-    /// value here falls back to the default (Monolith).
-    pub fn deployment_topology_enum(&self) -> crate::profile::DeploymentTopology {
-        crate::profile::DeploymentTopology::from_config(&self.deployment_topology)
-            .unwrap_or_default()
     }
 
     /// True when the generated app is split into per-domain Cloudflare Workers.
     pub fn is_workers_topology(&self) -> bool {
         matches!(
-            self.deployment_topology_enum(),
-            crate::profile::DeploymentTopology::Workers
+            self.deployment.deployment_topology,
+            DeploymentTopology::Workers
         )
     }
 }
@@ -180,7 +325,7 @@ pub fn namespace_module_dir(
     schema: &codegraph_core::types::SchemaNode,
     project: &ProjectConfig,
 ) -> Option<(String, String)> {
-    if !project.namespace_layout {
+    if !project.codegen.namespace_layout {
         return None;
     }
     let ns = schema.namespace.as_deref()?.trim();
@@ -198,7 +343,7 @@ pub fn namespace_module_dir(
 /// flat (gate off / namespace-less). Path-form counterpart of
 /// [`namespace_rust_prefix`].
 pub fn namespace_dir_prefix(ns: Option<&str>, project: &ProjectConfig) -> Option<String> {
-    if !project.namespace_layout {
+    if !project.codegen.namespace_layout {
         return None;
     }
     let ns = ns?.trim();
@@ -209,54 +354,81 @@ pub fn namespace_dir_prefix(ns: Option<&str>, project: &ProjectConfig) -> Option
 /// under the `namespace_layout` gate (`Some("cdm::base::datetime")`),
 /// `None` when flat.
 pub fn namespace_rust_prefix(ns: Option<&str>, project: &ProjectConfig) -> Option<String> {
-    if !project.namespace_layout {
+    if !project.codegen.namespace_layout {
         return None;
     }
     let ns = ns?.trim();
     (!ns.is_empty()).then(|| codegraph_core::types::namespace_module_rust(ns))
 }
 
-impl Default for ProjectConfig {
-    fn default() -> Self {
-        Self {
-            app_name: "app".into(),
-            lib_name: "cosmos".into(),
-            domain_types_crate: "domain_types".into(),
-            hooks_api_crate: String::new(),
-            api_title: "HR Open API".into(),
-            generator_name: "codegraph".into(),
-            domain_types_base: String::new(),
-            hooks_api_base: String::new(),
-            extensions_base: String::new(),
-            app_config_base: String::new(),
-            decision_engine_base: String::new(),
-            codegraph_workflow_base: String::new(),
-            type_contracts_base: String::new(),
-            codegraph_rev: String::new(),
-            database_target: "postgres".to_string(),
-            persistence_provider: "sea_orm".to_string(),
-            dto_key_casing: "snake".to_string(),
-            deployment_topology: "monolith".to_string(),
-            namespace_layout: false,
-            expr_ir: false,
-            public_operations_rls: false,
-            types_import_prefix: "codegraph_type_contracts".into(),
-            has_atproto: false,
-            has_fern: false,
-            fern_sdk_languages: vec!["typescript".into()],
-            has_emdash: false,
-            has_function_postconditions: false,
-            emdash_site_pages_base: default_emdash_site_pages_base(),
-            emdash_site_e2e_base: default_emdash_site_e2e_base(),
-            atproto_authority: String::new(),
-            atproto_tenancy: "shared_pds".to_string(),
-            atproto_float_policy: "integer_scaled".to_string(),
-            cargo_patch: String::new(),
-            extra_dependencies: String::new(),
-            cargo_workspace: false,
-            api_version: "v1".into(),
-            ux: None,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The serialized shape of `ProjectConfig` is FROZEN: templates read the
+    /// `project` map FLAT (`{{ project.database_target }}`, …), so the
+    /// `#[serde(flatten)]` sub-configs must keep producing exactly the
+    /// historical key set with the historical values. `ux` is absent when
+    /// `None` (`skip_serializing_if`), matching the pre-composition shape.
+    #[test]
+    fn serialized_shape_stays_flat_and_unchanged() {
+        let json = serde_json::to_value(ProjectConfig::default()).unwrap();
+        let obj = json.as_object().unwrap();
+        let expected: serde_json::Map<String, serde_json::Value> = [
+            ("app_name", serde_json::json!("app")),
+            ("lib_name", serde_json::json!("cosmos")),
+            ("domain_types_crate", serde_json::json!("domain_types")),
+            ("hooks_api_crate", serde_json::json!("")),
+            ("api_title", serde_json::json!("HR Open API")),
+            ("generator_name", serde_json::json!("codegraph")),
+            ("api_version", serde_json::json!("v1")),
+            ("domain_types_base", serde_json::json!("")),
+            ("hooks_api_base", serde_json::json!("")),
+            ("extensions_base", serde_json::json!("")),
+            ("app_config_base", serde_json::json!("")),
+            ("decision_engine_base", serde_json::json!("")),
+            ("codegraph_workflow_base", serde_json::json!("")),
+            ("type_contracts_base", serde_json::json!("")),
+            ("database_target", serde_json::json!("postgres")),
+            ("persistence_provider", serde_json::json!("sea_orm")),
+            ("dto_key_casing", serde_json::json!("snake")),
+            ("deployment_topology", serde_json::json!("monolith")),
+            ("namespace_layout", serde_json::json!(false)),
+            ("expr_ir", serde_json::json!(false)),
+            ("public_operations_rls", serde_json::json!(false)),
+            (
+                "types_import_prefix",
+                serde_json::json!("codegraph_type_contracts"),
+            ),
+            ("codegraph_rev", serde_json::json!("")),
+            ("has_atproto", serde_json::json!(false)),
+            ("has_fern", serde_json::json!(false)),
+            ("fern_sdk_languages", serde_json::json!(["typescript"])),
+            ("has_emdash", serde_json::json!(false)),
+            ("has_function_postconditions", serde_json::json!(false)),
+            (
+                "emdash_site_pages_base",
+                serde_json::json!("apps/community-site/src/pages"),
+            ),
+            (
+                "emdash_site_e2e_base",
+                serde_json::json!("apps/community-site/e2e"),
+            ),
+            ("atproto_authority", serde_json::json!("")),
+            ("atproto_tenancy", serde_json::json!("shared_pds")),
+            ("atproto_float_policy", serde_json::json!("integer_scaled")),
+            ("cargo_patch", serde_json::json!("")),
+            ("extra_dependencies", serde_json::json!("")),
+            ("cargo_workspace", serde_json::json!(false)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        assert_eq!(*obj, expected);
+        assert!(
+            !obj.contains_key("ux"),
+            "`ux` must stay absent from the default serialized map (skip_serializing_if)"
+        );
     }
 }
 

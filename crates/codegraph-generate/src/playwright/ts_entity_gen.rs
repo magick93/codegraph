@@ -267,9 +267,14 @@ impl EntityGenerator for TsEntityGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let model =
-            build_entity_model(db, schema_title, domain, config, &project.atproto_authority)
-                .await?;
+        let model = build_entity_model(
+            db,
+            schema_title,
+            domain,
+            config,
+            &project.atproto.atproto_authority,
+        )
+        .await?;
 
         if model.entity_module.is_empty() {
             return Ok(Vec::new());

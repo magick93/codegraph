@@ -5,6 +5,8 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+#[cfg(test)]
+use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator};
 use crate::{GenerationEntry, ProjectConfig};
@@ -59,7 +61,7 @@ impl GlobalGenerator for AtprotoXrpcMergeEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -140,7 +142,10 @@ mod tests {
         )
         .unwrap();
         let project = ProjectConfig {
-            atproto_authority: "community.os".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "community.os".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -209,7 +214,10 @@ mod tests {
         )
         .unwrap();
         let project = ProjectConfig {
-            atproto_authority: "community.os".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "community.os".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
 

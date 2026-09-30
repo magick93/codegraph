@@ -155,18 +155,27 @@ async fn regenerate_fixture() -> Result<(), String> {
         BuildPlan::from_profile(&resolved, &registry).map_err(|e| format!("build plan: {e}"))?;
 
     let project_config = ProjectConfig {
-        app_name: "app".into(),
-        domain_types_crate: "domain_types".into(),
-        generator_name: "codegraph-review-gate".into(),
-        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
-        codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
-        domain_types_base: "domain-types".into(),
-        extra_dependencies: format!(
-            "codegraph-workflow = {{ path = \"{}\" }}\n\
-             codegraph-type-contracts = {{ path = \"{}\" }}",
-            workflow_path.display(),
-            type_contracts_path.display()
-        ),
+        identity: codegraph::generate::IdentityConfig {
+            app_name: "app".into(),
+            domain_types_crate: "domain_types".into(),
+            generator_name: "codegraph-review-gate".into(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+            codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
+            domain_types_base: "domain-types".into(),
+            ..Default::default()
+        },
+        cargo: codegraph::generate::CargoConfig {
+            extra_dependencies: format!(
+                "codegraph-workflow = {{ path = \"{}\" }}\n\
+                 codegraph-type-contracts = {{ path = \"{}\" }}",
+                workflow_path.display(),
+                type_contracts_path.display()
+            ),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

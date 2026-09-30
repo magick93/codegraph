@@ -506,7 +506,7 @@ async fn resolve_ux_context(
         operations,
         user_pinned_list_order,
     } = *info;
-    let Some(rules) = project.ux.as_ref() else {
+    let Some(rules) = project.ux.ux.as_ref() else {
         return Ok((Vec::new(), None, None, None, Vec::new()));
     };
 

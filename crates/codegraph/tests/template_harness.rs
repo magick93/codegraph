@@ -41,7 +41,10 @@ fn test_project_config() -> codegraph::generate::ProjectConfig {
 
 fn sqlite_project_config() -> codegraph::generate::ProjectConfig {
     codegraph::generate::ProjectConfig {
-        database_target: "sqlite".to_string(),
+        database: codegraph::generate::DatabaseConfig {
+            database_target: codegraph::generate::db::dialect::DatabaseTarget::Sqlite,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }

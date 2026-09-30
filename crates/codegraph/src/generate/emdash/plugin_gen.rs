@@ -154,7 +154,7 @@ impl EmdashPluginGenerator {
                 continue;
             };
             let model =
-                build_entity_model(db, title, domain, config, &project.atproto_authority).await?;
+                build_entity_model(db, title, domain, config, &project.atproto.atproto_authority).await?;
             let properties = db.get_properties_in_domain(title, domain).await?;
             let fields = expand_vo_fields(db, title, &model.fields, &properties).await?;
             let codelists = Self::resolve_codelist_options(db, &properties).await;
@@ -296,7 +296,7 @@ impl DomainGenerator for EmdashPluginGenerator {
         if !ctx.entities.is_empty() {
             let pages_root = super::emdash_site_pages_root_with_base(
                 &self.output_dir,
-                &project.emdash_site_pages_base,
+                &project.integration.emdash_site_pages_base,
             );
             let list_entity = ctx
                 .entities
@@ -348,7 +348,7 @@ impl DomainGenerator for EmdashPluginGenerator {
             // Generated Playwright CRUD journey under the site e2e root.
             let e2e_root = super::emdash_site_e2e_root_with_base(
                 &self.output_dir,
-                &project.emdash_site_e2e_base,
+                &project.integration.emdash_site_e2e_base,
             );
             files.push(GeneratedFile {
                 path: e2e_root

@@ -147,7 +147,7 @@ pub(crate) async fn build_generator_context<'a>(
     type_registry::init_type_registry();
 
     // Create the database dialect based on project config.
-    let current_target = DatabaseTarget::from_config(&project.database_target);
+    let current_target = project.database.database_target;
 
     // Wrap the querier in a caching layer to avoid redundant graph queries
     // across the 15+ generators that each independently query the same schemas.
@@ -403,13 +403,13 @@ pub(crate) fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
                 roots.push(crate::emdash::emdash_site_pages_root_with_base(
                     output_dir,
                     &ctx.project_config
-                        .map(|p| p.emdash_site_pages_base.clone())
+                        .map(|p| p.integration.emdash_site_pages_base.clone())
                         .unwrap_or_default(),
                 ));
                 roots.push(crate::emdash::emdash_site_e2e_root_with_base(
                     output_dir,
                     &ctx.project_config
-                        .map(|p| p.emdash_site_e2e_base.clone())
+                        .map(|p| p.integration.emdash_site_e2e_base.clone())
                         .unwrap_or_default(),
                 ));
             }

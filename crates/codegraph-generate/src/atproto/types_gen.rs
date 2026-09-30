@@ -111,7 +111,7 @@ impl GlobalGenerator for GeneratedTypesEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 

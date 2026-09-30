@@ -10,6 +10,8 @@ use codegraph_naming::{strip_suffix, to_snake_case};
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::generate::ProjectConfig;
+#[cfg(test)]
+use crate::generate::{AtprotoConfig, IntegrationFlags};
 
 pub async fn project_atproto_lexicons(
     ingestor: &dyn GraphIngestor,
@@ -17,7 +19,7 @@ pub async fn project_atproto_lexicons(
     config: &DomainConfig,
     project: &ProjectConfig,
 ) -> Result<(), GraphError> {
-    let authority = &project.atproto_authority;
+    let authority = &project.atproto.atproto_authority;
     if authority.is_empty() {
         return Ok(());
     }
@@ -176,14 +178,14 @@ pub async fn project_atproto_lexicons(
         }
     }
 
-    if project.atproto_tenancy == "shared_pds" {
+    if project.atproto.atproto_tenancy == "shared_pds" {
         let org_name = authority.rsplit('.').next().unwrap_or(authority);
         let repo = RepositoryNode {
             did: format!("did:plc:{}", authority),
             handle: Some(format!("{}.bsky.social", authority)),
             pds_endpoint: format!("https://pds.{}.bsky.social", authority),
             org_name: org_name.to_string(),
-            tenancy_mode: project.atproto_tenancy.clone(),
+            tenancy_mode: project.atproto.atproto_tenancy.clone(),
         };
         let repo_did = ingestor.ingest_repository(&repo).await?;
 
@@ -279,9 +281,15 @@ mod tests {
 
     fn make_project_config(authority: &str) -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: authority.to_string(),
-            atproto_tenancy: "shared_pds".to_string(),
-            has_atproto: true,
+            atproto: AtprotoConfig {
+                atproto_authority: authority.to_string(),
+                atproto_tenancy: "shared_pds".to_string(),
+                ..Default::default()
+            },
+            integration: IntegrationFlags {
+                has_atproto: true,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -333,7 +341,10 @@ mod tests {
         let engine = MockEngine::new();
         let config = make_domain_config();
         let project = ProjectConfig {
-            atproto_authority: String::new(),
+            atproto: AtprotoConfig {
+                atproto_authority: String::new(),
+                ..Default::default()
+            },
             ..Default::default()
         };
 

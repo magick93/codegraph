@@ -52,7 +52,7 @@ impl GlobalGenerator for SeedProvisionGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let domains = build_scaffold_domains(db, config, generation_order).await;
         let ctx = SeedCliContext {
-            app_name: project.app_name.clone(),
+            app_name: project.identity.app_name.clone(),
             domains,
         };
 

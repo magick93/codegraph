@@ -109,7 +109,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         // ux-rules plane (issue #303): one plan per bound entity plus one
         // ux spec per view with an eligible fallback list. Flag off → no
         // plans, no ux specs (byte-identical output).
-        let ux_rules = project.ux.as_ref();
+        let ux_rules = project.ux.ux.as_ref();
         let ux_plans = match ux_rules {
             Some(rules) => build_ux_plans(db, config, &model, rules).await?,
             None => HashMap::new(),
@@ -129,7 +129,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         let denial = denial_target(&model);
         for vc in &model.view_containers {
             let mut spec = self
-                .build_view_spec(db, config, &project.api_version, &model, vc)
+                .build_view_spec(db, config, &project.identity.api_version, &model, vc)
                 .await;
             if let Some(policy) = &model.policy {
                 spec.personas = self.build_persona_tests(policy, &human_actors, vc, &denial);
@@ -139,14 +139,21 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             }
             if let Some(rules) = ux_rules {
                 if let Some(ux_test) = self
-                    .build_view_ux_test(db, config, &project.api_version, vc, rules, &ux_plans)
+                    .build_view_ux_test(
+                        db,
+                        config,
+                        &project.identity.api_version,
+                        vc,
+                        rules,
+                        &ux_plans,
+                    )
                     .await
                 {
                     ux_specs.push((vc.name.clone(), ux_test));
                 }
             }
             let workflow_tests = self
-                .build_view_workflow_tests(db, config, &project.api_version, vc)
+                .build_view_workflow_tests(db, config, &project.identity.api_version, vc)
                 .await;
             if !workflow_tests.is_empty() {
                 workflow_specs.push((vc.name.clone(), workflow_tests));

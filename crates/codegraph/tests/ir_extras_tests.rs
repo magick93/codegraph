@@ -222,7 +222,10 @@ async fn generate_public_rls(flag: bool) -> Vec<codegraph::generate::traits::Gen
     let config = domain_config_with_public_operations();
     let tera = codegraph::generate::template_engine::create_tera(Path::new("")).unwrap();
     let project = codegraph::generate::ProjectConfig {
-        public_operations_rls: flag,
+        integration: codegraph::generate::IntegrationFlags {
+            public_operations_rls: flag,
+            ..Default::default()
+        },
         ..codegraph::generate::ProjectConfig::default()
     };
     let gen = codegraph::generate::db::public_operations_rls::PublicOperationsRlsGenerator::new(

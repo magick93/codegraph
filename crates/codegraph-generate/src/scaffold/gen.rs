@@ -317,13 +317,14 @@ impl GlobalGenerator for ScaffoldGenerator {
                 .join(&self.output_dir)
         };
 
-        let codegraph_workflow_path = resolve_path(&project.codegraph_workflow_base, &abs_output);
-        let type_contracts_path = resolve_path(&project.type_contracts_base, &abs_output);
-        let domain_types_path = resolve_path(&project.domain_types_base, &abs_output);
-        let hooks_api_path = resolve_path(&project.hooks_api_base, &abs_output);
-        let extensions_path = resolve_path(&project.extensions_base, &abs_output);
-        let app_config_path = resolve_path(&project.app_config_base, &abs_output);
-        let decision_engine_path = resolve_path(&project.decision_engine_base, &abs_output);
+        let codegraph_workflow_path =
+            resolve_path(&project.paths.codegraph_workflow_base, &abs_output);
+        let type_contracts_path = resolve_path(&project.paths.type_contracts_base, &abs_output);
+        let domain_types_path = resolve_path(&project.paths.domain_types_base, &abs_output);
+        let hooks_api_path = resolve_path(&project.paths.hooks_api_base, &abs_output);
+        let extensions_path = resolve_path(&project.paths.extensions_base, &abs_output);
+        let app_config_path = resolve_path(&project.paths.app_config_base, &abs_output);
+        let decision_engine_path = resolve_path(&project.paths.decision_engine_base, &abs_output);
         let seed_crate_path = resolve_seed_crate_path(&abs_output);
 
         // Physical Postgres schemas that need app_user grants: every domain
@@ -338,7 +339,7 @@ impl GlobalGenerator for ScaffoldGenerator {
         grant_schemas.dedup();
 
         let ctx = ScaffoldContext {
-            app_name: project.app_name.clone(),
+            app_name: project.identity.app_name.clone(),
             domains,
             grant_schemas,
             codegraph_workflow_path,
@@ -437,7 +438,7 @@ impl GlobalGenerator for ScaffoldGenerator {
                 tera,
                 "scaffold/db_client.tera",
                 &serde_json::json!({
-                    "worker_name": project.app_name,
+                    "worker_name": project.identity.app_name,
                     "name": "monolith",
                 }),
                 project,

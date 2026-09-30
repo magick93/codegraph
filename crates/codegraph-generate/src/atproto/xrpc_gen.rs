@@ -6,6 +6,8 @@ use serde::Serialize;
 
 use crate::domain_model::build_entity_model;
 use crate::error::Result;
+#[cfg(test)]
+use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
 use crate::traits::{DomainGenerator, EntityGenerator, GeneratedFile};
 use crate::ProjectConfig;
@@ -116,7 +118,7 @@ impl EntityGenerator for AtprotoXrpcEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -125,9 +127,14 @@ impl EntityGenerator for AtprotoXrpcEmitter {
             None => return Ok(Vec::new()),
         };
 
-        let model =
-            build_entity_model(db, schema_title, domain, config, &project.atproto_authority)
-                .await?;
+        let model = build_entity_model(
+            db,
+            schema_title,
+            domain,
+            config,
+            &project.atproto.atproto_authority,
+        )
+        .await?;
 
         let fields: Vec<XrpcField> = model
             .fields
@@ -217,7 +224,7 @@ impl DomainGenerator for AtprotoXrpcEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -307,7 +314,10 @@ mod tests {
 
     fn make_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

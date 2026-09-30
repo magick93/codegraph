@@ -5,6 +5,8 @@ use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
 use crate::error::Result;
+#[cfg(test)]
+use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
 use crate::traits::{DomainGenerator, GeneratedFile};
 use crate::ProjectConfig;
@@ -60,7 +62,7 @@ impl DomainGenerator for AtprotoAppviewEmitter {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        if project.atproto_authority.is_empty() {
+        if project.atproto.atproto_authority.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -187,7 +189,10 @@ mod tests {
 
     fn make_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -301,7 +306,10 @@ mod tests {
         let engine = MockEngine::builder().build();
         let tera = make_tera();
         let project = ProjectConfig {
-            atproto_authority: "".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let emitter = AtprotoAppviewEmitter::new(&PathBuf::from("/tmp/test-out"));

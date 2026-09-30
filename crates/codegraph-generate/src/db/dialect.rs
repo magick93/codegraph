@@ -15,7 +15,8 @@ use std::fmt;
 use codegraph_naming::{is_pg_reserved, quote_pg_column, truncate_pg_identifier_with_limit};
 
 /// Supported database targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DatabaseTarget {
     /// PostgreSQL (default, current behavior)
     #[default]

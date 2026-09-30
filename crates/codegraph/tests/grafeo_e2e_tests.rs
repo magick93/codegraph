@@ -91,24 +91,36 @@ async fn generate_full_app(output_dir: &std::path::Path) {
     let hooks_tmp = tempfile::TempDir::new().unwrap();
 
     let project_config = codegraph::generate::ProjectConfig {
-        app_name: "test-app".into(),
-        domain_types_crate: "domain_types".into(),
-        generator_name: "codegraph-test".into(),
-        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
-        codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
-        domain_types_base: "domain-types".into(),
-        types_import_prefix: config.defaults.types_import_prefix.clone(),
-        // The scaffold only emits codegraph-workflow / type-contracts deps as
-        // git+rev deps gated on `codegraph_rev`; with the rev left empty they
-        // are omitted. Inject them as local path deps instead (rendered raw
-        // into [dependencies] by extra_dependencies) so `cargo check` never
-        // touches the network.
-        extra_dependencies: format!(
-            "codegraph-workflow = {{ path = \"{}\" }}\n\
-             codegraph-type-contracts = {{ path = \"{}\" }}",
-            workflow_path.display(),
-            type_contracts_path.display(),
-        ),
+        identity: codegraph::generate::IdentityConfig {
+            app_name: "test-app".into(),
+            domain_types_crate: "domain_types".into(),
+            generator_name: "codegraph-test".into(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+            codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
+            domain_types_base: "domain-types".into(),
+            ..Default::default()
+        },
+        codegen: codegraph::generate::CodegenConfig {
+            types_import_prefix: config.defaults.types_import_prefix.clone(),
+            ..Default::default()
+        },
+        cargo: codegraph::generate::CargoConfig {
+            // The scaffold only emits codegraph-workflow / type-contracts deps as
+            // git+rev deps gated on `codegraph_rev`; with the rev left empty they
+            // are omitted. Inject them as local path deps instead (rendered raw
+            // into [dependencies] by extra_dependencies) so `cargo check` never
+            // touches the network.
+            extra_dependencies: format!(
+                "codegraph-workflow = {{ path = \"{}\" }}\n\
+                 codegraph-type-contracts = {{ path = \"{}\" }}",
+                workflow_path.display(),
+                type_contracts_path.display(),
+            ),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -3092,11 +3104,20 @@ async fn generated_app_compiles_cleanly() {
         .join("codegraph-type-contracts");
 
     let project_config = ProjectConfig {
-        app_name: "test-app".into(),
-        domain_types_crate: "domain_types".into(),
-        generator_name: "codegraph-test".into(),
-        type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
-        types_import_prefix: "codegraph_type_contracts".into(),
+        identity: codegraph::generate::IdentityConfig {
+            app_name: "test-app".into(),
+            domain_types_crate: "domain_types".into(),
+            generator_name: "codegraph-test".into(),
+            ..Default::default()
+        },
+        paths: codegraph::generate::PathsConfig {
+            type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
+            ..Default::default()
+        },
+        codegen: codegraph::generate::CodegenConfig {
+            types_import_prefix: "codegraph_type_contracts".into(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

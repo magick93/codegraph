@@ -272,7 +272,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         // monolith scaffold's Cargo.toml, which sits directly at the output
         // root) would land one level short here because worker crates nest
         // under `workers/{domain}/`.
-        let app_name = project.app_name.clone();
+        let app_name = project.identity.app_name.clone();
         let gateway_name = format!("{app_name}-gateway");
         let gateway_lib_name = codegraph_naming::to_snake_case(&gateway_name);
 
@@ -280,17 +280,18 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         // `workers/` directory, so dependency paths are re-based from there
         // (empty when the consuming project pins them via git rev).
         let workers_abs = abs_output.join("workers");
-        let codegraph_workflow_rel = resolve_path(&project.codegraph_workflow_base, &workers_abs);
-        let type_contracts_rel = resolve_path(&project.type_contracts_base, &workers_abs);
+        let codegraph_workflow_rel =
+            resolve_path(&project.paths.codegraph_workflow_base, &workers_abs);
+        let type_contracts_rel = resolve_path(&project.paths.type_contracts_base, &workers_abs);
 
         let mut domains = build_worker_domains(&app_name, config, scaffold_domains);
         for domain in &mut domains {
             domain.domain_types_path =
-                worker_crate_path(&project.domain_types_base, &abs_output, &domain.name);
-            domain.hooks_api_path = if project.hooks_api_crate.is_empty() {
+                worker_crate_path(&project.paths.domain_types_base, &abs_output, &domain.name);
+            domain.hooks_api_path = if project.identity.hooks_api_crate.is_empty() {
                 String::new()
             } else {
-                worker_crate_path(&project.hooks_api_base, &abs_output, &domain.name)
+                worker_crate_path(&project.paths.hooks_api_base, &abs_output, &domain.name)
             };
         }
         let gateway_observability = domains.iter().any(|d| d.observability);
@@ -535,7 +536,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             // `crate::hooks::HookRegistry`; the registry itself lives in the
             // shared hooks-api crate (single source of truth for all domains'
             // lifecycle traits), so each worker re-exports it from there.
-            if !project.hooks_api_crate.is_empty() {
+            if !project.identity.hooks_api_crate.is_empty() {
                 let hooks_mod = render_template_with_project(
                     tera,
                     "scaffold/worker_hooks_mod.tera",
@@ -568,6 +569,9 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
 mod tests {
     use super::*;
     use codegraph_config::config::parse_domain_config_str;
+
+    use crate::profile::{DeploymentTopology, PersistenceProvider};
+    use crate::project_config::{DatabaseConfig, DeploymentConfig, IdentityConfig};
 
     fn test_config() -> DomainConfig {
         parse_domain_config_str(
@@ -1051,8 +1055,13 @@ entities = ["CodeType"]
         let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let tera = crate::template_engine::create_tera(&template_dir).unwrap();
         let project = ProjectConfig {
-            deployment_topology: "workers".to_string(),
-            hooks_api_crate: "hr_hooks_api".to_string(),
+            deployment: DeploymentConfig {
+                deployment_topology: DeploymentTopology::Workers,
+            },
+            identity: IdentityConfig {
+                hooks_api_crate: "hr_hooks_api".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let config = test_config();
@@ -1123,9 +1132,17 @@ entities = ["CodeType"]
         let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let tera = crate::template_engine::create_tera(&template_dir).unwrap();
         let project = ProjectConfig {
-            deployment_topology: "workers".to_string(),
-            persistence_provider: "cornucopia".to_string(),
-            hooks_api_crate: "hr_hooks_api".to_string(),
+            deployment: DeploymentConfig {
+                deployment_topology: DeploymentTopology::Workers,
+            },
+            database: DatabaseConfig {
+                persistence_provider: PersistenceProvider::Cornucopia,
+                ..Default::default()
+            },
+            identity: IdentityConfig {
+                hooks_api_crate: "hr_hooks_api".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let config = test_config();

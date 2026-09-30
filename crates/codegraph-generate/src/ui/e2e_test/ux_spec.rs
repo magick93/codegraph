@@ -40,7 +40,7 @@ pub(super) async fn build_ux_e2e_spec(
     operations: &[String],
     initial_state: &str,
 ) -> Result<Option<UxE2eSpecCtx>> {
-    let Some(rules) = project.ux.as_ref() else {
+    let Some(rules) = project.ux.ux.as_ref() else {
         return Ok(None);
     };
 

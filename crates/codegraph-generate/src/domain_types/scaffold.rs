@@ -278,7 +278,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         let mut structured_re_exports = String::new();
         let mut sorted_types: Vec<&String> = structured_types.iter().collect();
         sorted_types.sort();
-        let prefix = &project.types_import_prefix;
+        let prefix = &project.codegen.types_import_prefix;
         for ty in &sorted_types {
             structured_re_exports.push_str(&format!("pub use {}::{};\n", prefix, ty));
         }

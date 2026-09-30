@@ -684,7 +684,7 @@ fn write_mod_files(
 /// `.codegraph-manifest.json` at each output root listing every file written
 /// this run (report.files mirrors every `write_output` call), merged with
 /// any manifest already on disk. The pinned generator-source rev
-/// (`project.codegraph_rev`) is recorded so drift/CI can reproduce the exact
+/// (`project.cargo.codegraph_rev`) is recorded so drift/CI can reproduce the exact
 /// checkout the committed tree was produced at.
 fn emit_run_manifests(
     ctx: &GeneratorContext<'_>,
@@ -697,7 +697,11 @@ fn emit_run_manifests(
     }
     report.files.extend(test_mod_files);
 
-    manifest::emit_manifests(manifest_roots, &report.files, &ctx.project.codegraph_rev)?;
+    manifest::emit_manifests(
+        manifest_roots,
+        &report.files,
+        &ctx.project.cargo.codegraph_rev,
+    )?;
 
     Ok(())
 }

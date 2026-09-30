@@ -244,7 +244,7 @@ async fn ops_generator_direct_call_manifest_roundtrips() {
 }
 
 /// The testkit Cargo.toml must pin the codegraph-ops dependency to the
-/// codegraph git rev when `project.codegraph_rev` is set (external consumers
+/// codegraph git rev when `project.cargo.codegraph_rev` is set (external consumers
 /// depend on codegraph crates via git, so the relative path fallback would
 /// not exist in their repo).
 #[tokio::test]
@@ -259,7 +259,10 @@ async fn testkit_cargo_uses_git_rev_when_pinned() {
         true, // has_grpc
     );
     let project = codegraph::generate::ProjectConfig {
-        codegraph_rev: "abc123".into(),
+        cargo: codegraph::generate::CargoConfig {
+            codegraph_rev: "abc123".into(),
+            ..Default::default()
+        },
         ..codegraph::generate::ProjectConfig::default()
     };
     let files = gen
@@ -290,7 +293,7 @@ async fn testkit_cargo_uses_git_rev_when_pinned() {
     );
 }
 
-/// With an empty `project.codegraph_rev` (the default), the testkit Cargo.toml
+/// With an empty `project.cargo.codegraph_rev` (the default), the testkit Cargo.toml
 /// falls back to the path dependency into the codegraph workspace.
 #[tokio::test]
 async fn testkit_cargo_uses_path_when_rev_empty() {

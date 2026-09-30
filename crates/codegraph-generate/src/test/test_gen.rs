@@ -76,7 +76,7 @@ impl EntityGenerator for TestGenerator {
             table_name: module_name.clone(),
             schema_name,
             has_create,
-            app_crate_name: project.app_name.replace('-', "_"),
+            app_crate_name: project.identity.app_name.replace('-', "_"),
         };
 
         let mut files = Vec::new();

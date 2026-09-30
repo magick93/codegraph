@@ -59,6 +59,7 @@ pub use pipeline::{
     run_ifml_generators,
 };
 pub use project_config::{
-    namespace_dir_prefix, namespace_module_dir, namespace_rust_prefix, GenerationEntry,
-    GeneratorOpts, ProjectConfig,
+    namespace_dir_prefix, namespace_module_dir, namespace_rust_prefix, AtprotoConfig, CargoConfig,
+    CodegenConfig, DatabaseConfig, DeploymentConfig, DtoKeyCasing, GenerationEntry, GeneratorOpts,
+    IdentityConfig, IntegrationFlags, PathsConfig, ProjectConfig, UxConfig,
 };

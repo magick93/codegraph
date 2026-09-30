@@ -614,6 +614,7 @@ mod integration_tests {
 
     use super::super::lexicon_gen::LexiconEmitter;
     use super::super::scaffold_gen::LexiconScaffoldEmitter;
+    use crate::project_config::AtprotoConfig;
     use crate::traits::{EntityGenerator, GlobalGenerator};
     use crate::ProjectConfig;
 
@@ -656,7 +657,10 @@ mod integration_tests {
 
     fn make_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -888,7 +892,10 @@ mod integration_tests {
         let tera = make_tera();
 
         let project = ProjectConfig {
-            atproto_authority: "".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let emitter = LexiconScaffoldEmitter::new(&PathBuf::from("/tmp/test-out"));
@@ -983,6 +990,7 @@ mod atproto_client_tests {
     use tera::Tera;
 
     use super::super::client_gen::{AtprotoClientEmitter, AtprotoClientScaffoldEmitter};
+    use crate::project_config::AtprotoConfig;
     use crate::traits::{EntityGenerator, GlobalGenerator};
     use crate::ProjectConfig;
     use codegraph_naming;
@@ -999,7 +1007,10 @@ mod atproto_client_tests {
 
     fn make_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -1290,7 +1301,10 @@ pub enum AtprotoError {
 
         let tera = make_client_tera();
         let project = ProjectConfig {
-            atproto_authority: "".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let emitter = AtprotoClientEmitter::new(&PathBuf::from("/tmp/test-out"));
@@ -1399,7 +1413,10 @@ pub enum AtprotoError {
 
         let tera = make_client_tera();
         let project = ProjectConfig {
-            atproto_authority: "".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let emitter = AtprotoClientScaffoldEmitter::new(&PathBuf::from("/tmp/test-out"));
@@ -1427,6 +1444,7 @@ mod atproto_types_tests {
     use tera::Tera;
 
     use super::super::types_gen::AtprotoTypesEmitter;
+    use crate::project_config::AtprotoConfig;
     use crate::traits::EntityGenerator;
     use crate::ProjectConfig;
 
@@ -1462,7 +1480,10 @@ mod atproto_types_tests {
 
     fn make_types_project() -> ProjectConfig {
         ProjectConfig {
-            atproto_authority: "nz.gravy".to_string(),
+            atproto: AtprotoConfig {
+                atproto_authority: "nz.gravy".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

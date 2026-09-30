@@ -221,7 +221,8 @@ impl DomainGenerator for RouterGenerator {
             .map(|d| d.custom_routes)
             .unwrap_or(false);
         if is_custom_routes_domain
-            && project.deployment_topology_enum() == crate::profile::DeploymentTopology::Monolith
+            && project.deployment.deployment_topology
+                == crate::profile::DeploymentTopology::Monolith
         {
             return Ok(Vec::new());
         }
@@ -295,7 +296,7 @@ impl DomainGenerator for RouterGenerator {
                         .unwrap_or_default();
                     let permission_scope = permissions.scope.clone().unwrap_or_default();
                     let public_skip = route_auth_is_public(
-                        project.public_operations_rls,
+                        project.integration.public_operations_rls,
                         schema.access,
                         entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
                         &operations,
@@ -646,7 +647,7 @@ pub async fn build_router_context(
                     .unwrap_or_default();
                 let permission_scope = permissions.scope.clone().unwrap_or_default();
                 let public_skip = route_auth_is_public(
-                    project.public_operations_rls,
+                    project.integration.public_operations_rls,
                     schema.access,
                     entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
                     &operations,
