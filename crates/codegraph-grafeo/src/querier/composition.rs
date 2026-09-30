@@ -6,7 +6,8 @@ use codegraph_core::types::{
     Extension, FkDirection, FkTarget, PropertyNode, SchemaNode, StructuredSubField,
 };
 
-use super::{query_gql_params, PROPERTY_RETURN_COLS, SCHEMA_RETURN_COLS};
+use super::query::{query_gql_params, query_many_params, query_one_params};
+use super::{PROPERTY_RETURN_COLS, SCHEMA_RETURN_COLS};
 use crate::conversions::{
     row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_extension,
     row_to_property_node, row_to_schema_node, row_to_structured_sub_field, RowReader,
@@ -29,18 +30,14 @@ impl GrafeoEngine {
                 grafeo::Value::String(schema_title.into()),
             ),
         ]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             "MATCH (:Property {name: $pname, _schema_title: $stitle})-[:ExpandsTo]->(cc:CompositeColumn) \
              RETURN cc.suffix, cc.pg_type, cc.rust_type, cc.sea_orm_type, cc.fk_target, cc.dto_rust_type, cc.wrapper_schema",
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_composite_column(&reader, row))
-            .collect()
+            row_to_composite_column,
+        )
+        .await
     }
 
     pub(super) async fn query_structured_sub_fields(
@@ -51,19 +48,15 @@ impl GrafeoEngine {
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             "MATCH (:Schema {title: $title})-[:HasProperty]->(p:Property) \
              RETURN p.name, p.description, p.is_required \
              ORDER BY p.is_required DESC, p.name ASC",
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_structured_sub_field(&reader, row))
-            .collect()
+            row_to_structured_sub_field,
+        )
+        .await
     }
 
     pub(super) async fn query_composite_range(
@@ -166,19 +159,19 @@ impl GrafeoEngine {
                 grafeo::Value::String(schema_title.into()),
             ),
         ]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             "MATCH (:Property {name: $pname, _schema_title: $stitle})-[u:UsesCodeList]->(c:CodeList) \
              RETURN c.name, c.description, c.pg_table_name, c.render_as, c.check_expression, u.render_as",
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        let codelist = row_to_codelist(&reader, &result.rows[0])?;
-        let render_as = reader.get_string(&result.rows[0], "u.render_as")?;
-        Ok(Some((codelist, render_as)))
+            |reader, row| {
+                Ok((
+                    row_to_codelist(reader, row)?,
+                    reader.get_string(row, "u.render_as")?,
+                ))
+            },
+        )
+        .await
     }
 
     pub(super) async fn query_required_extensions(
@@ -189,17 +182,13 @@ impl GrafeoEngine {
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             "MATCH (:Schema {title: $title})-[:RequiresExtension]->(e:Extension) RETURN e.name",
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_extension(&reader, row))
-            .collect()
+            row_to_extension,
+        )
+        .await
     }
 
     pub(super) async fn query_composition_tree(
@@ -214,23 +203,22 @@ impl GrafeoEngine {
         Ok(CompositionTree { root })
     }
 
-    pub(super) async fn query_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+    pub(super) async fn query_allof_targets(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<String>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             "MATCH (:Schema {title: $title})-[:ExtendsSchema {composition_type: 'allOf'}]->(t:Schema) \
              RETURN t.title",
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| reader.get_string(row, "t.title"))
-            .collect()
+            |reader, row| reader.get_string(row, "t.title"),
+        )
+        .await
     }
 
     pub(super) async fn query_schemas_that_extend(
@@ -241,39 +229,34 @@ impl GrafeoEngine {
             "title".to_string(),
             grafeo::Value::String(parent_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             &format!(
                 "MATCH (s:Schema)-[:ExtendsSchema]->(:Schema {{title: $title}}) RETURN {}",
                 SCHEMA_RETURN_COLS
             ),
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_schema_node(&reader, row))
-            .collect()
+            row_to_schema_node,
+        )
+        .await
     }
 
-    pub(super) async fn query_referencing_schemas(&self, schema_title: &str) -> Result<Vec<String>, GraphError> {
+    pub(super) async fn query_referencing_schemas(
+        &self,
+        schema_title: &str,
+    ) -> Result<Vec<String>, GraphError> {
         let params = HashMap::from([(
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             "MATCH (p:Property)-[:ReferencesSchema]->(:Schema {title: $title}) \
              RETURN DISTINCT p._schema_title",
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| reader.get_string(row, "p._schema_title"))
-            .collect()
+            |reader, row| reader.get_string(row, "p._schema_title"),
+        )
+        .await
     }
 
     pub(super) async fn query_referenced_schemas(
@@ -284,20 +267,16 @@ impl GrafeoEngine {
             "title".to_string(),
             grafeo::Value::String(schema_title.into()),
         )]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             &format!(
                 "MATCH (:Schema {{title: $title}})-[:HasProperty]->(p:Property)-[:ReferencesSchema]->(s:Schema) \
                  RETURN DISTINCT {SCHEMA_RETURN_COLS}"
             ),
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_schema_node(&reader, row))
-            .collect()
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_property_ref_target(
@@ -315,19 +294,16 @@ impl GrafeoEngine {
                 grafeo::Value::String(schema_title.into()),
             ),
         ]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             &format!(
                 "MATCH (:Property {{name: $pname, _schema_title: $stitle}})-[:ReferencesSchema]->(s:Schema) \
                  RETURN {SCHEMA_RETURN_COLS}"
             ),
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_property_ref_target_by_id(
@@ -342,19 +318,16 @@ impl GrafeoEngine {
             ),
             ("sid".to_string(), grafeo::Value::String(schema_id.into())),
         ]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             &format!(
                 "MATCH (:Property {{name: $pname, _schema_id: $sid}})-[:ReferencesSchema]->(s:Schema) \
                  RETURN {SCHEMA_RETURN_COLS}"
             ),
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+            row_to_schema_node,
+        )
+        .await
     }
 
     pub(super) async fn query_properties_by_schema_id(
@@ -362,17 +335,13 @@ impl GrafeoEngine {
         schema_id: &str,
     ) -> Result<Vec<PropertyNode>, GraphError> {
         let params = HashMap::from([("sid".to_string(), grafeo::Value::String(schema_id.into()))]);
-        let result = query_gql_params(
+        query_many_params(
             self,
             &format!("MATCH (p:Property {{_schema_id: $sid}}) RETURN {PROPERTY_RETURN_COLS}"),
             params,
-        )?;
-        let reader = RowReader::from_columns(&result.columns);
-        result
-            .rows
-            .iter()
-            .map(|row| row_to_property_node(&reader, row))
-            .collect()
+            row_to_property_node,
+        )
+        .await
     }
 
     pub(super) async fn query_array_item_schema(
@@ -390,21 +359,17 @@ impl GrafeoEngine {
                 grafeo::Value::String(schema_title.into()),
             ),
         ]);
-        let result = query_gql_params(
+        query_one_params(
             self,
             &format!(
                 "MATCH (:Property {{name: $pname, _schema_title: $stitle}})-[:ItemsOf]->(s:Schema) \
                  RETURN {SCHEMA_RETURN_COLS}"
             ),
             params,
-        )?;
-        if result.rows.is_empty() {
-            return Ok(None);
-        }
-        let reader = RowReader::from_columns(&result.columns);
-        Ok(Some(row_to_schema_node(&reader, &result.rows[0])?))
+            row_to_schema_node,
+        )
+        .await
     }
-
 }
 
 /// Maximum nesting depth for recursive composition tree building.
@@ -498,7 +463,11 @@ impl GrafeoEngine {
         let mut children = Vec::new();
 
         // Resolve composite range and consumed fields for this node
-        let composite_range = self.query_composite_range(schema_title).await.ok().flatten();
+        let composite_range = self
+            .query_composite_range(schema_title)
+            .await
+            .ok()
+            .flatten();
         let consumed_fields_raw = self
             .query_consumed_fields(schema_title)
             .await
@@ -520,7 +489,9 @@ impl GrafeoEngine {
                 .query_codelist_for_property(&prop.name, schema_title)
                 .await?
                 .is_some();
-            let composite_columns = self.query_composite_columns(&prop.name, schema_title).await?;
+            let composite_columns = self
+                .query_composite_columns(&prop.name, schema_title)
+                .await?;
             let classification = prop.effective_kind();
 
             // Resolve FK target for reference columns
@@ -1042,7 +1013,8 @@ impl GrafeoEngine {
         // If the schema doesn't exist in the resolved domain, try the default domain
         // as a fallback (cross-domain allOf references).
         if schema_name != default_schema {
-            if let Ok(Some(target_check)) = self.query_schema_in_domain(&table, default_schema).await
+            if let Ok(Some(target_check)) =
+                self.query_schema_in_domain(&table, default_schema).await
             {
                 if target_check.is_entity {
                     return Some(FkTarget {
