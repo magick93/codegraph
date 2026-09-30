@@ -364,13 +364,11 @@ codes (0 only when both pass).
 
 For aggregation:
 
-- `--metrics FILE` appends stage timings: TSV by default
+- `--metrics FILE` appends stage timings once per run: TSV by default
   (`timestamp\tsubcommand\tstage\tduration_secs` plus a `TOTAL` row), or a
   JSON array via `--metrics-format json` (one object per stage plus a
-  `TOTAL` row carrying the wall-clock total). Note: an api run currently
-  appends its stage rows twice on success (the suite-level report writer
-  predates the CLI-level appender); dedupe on `timestamp + stage`, or
-  prefer `--results` for api.
+  `TOTAL` row carrying the wall-clock total). The CLI-level appender
+  (`finish_ok`) is the single writer and honours `--metrics-format`.
 - `--results FILE` (api, e2e, workers) carries pass/fail counts, failing
   titles, per-stage durations, and the exit code — see section 5.
 

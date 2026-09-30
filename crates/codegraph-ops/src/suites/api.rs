@@ -26,7 +26,6 @@ pub struct ApiArgs {
     pub rebuild: bool,
     pub regen: bool,
     pub release: bool,
-    pub metrics_file: Option<String>,
     /// Retry failed hurl files up to this many times (0 = no retries).
     pub retry: u32,
     /// Write a machine-readable `--results` JSON report to this path.
@@ -1253,9 +1252,6 @@ fn write_api_report(
     ok: bool,
     hook_failures: &[String],
 ) {
-    if let Some(metrics_file) = &args.metrics_file {
-        let _ = config.metrics.append_tsv(Path::new(metrics_file), "api");
-    }
     if let Some(results_file) = &args.results_file {
         let mut report = ResultsReport::new(
             "api",
