@@ -722,6 +722,11 @@ async fn stage_server(
     if let Some((key, value)) = cornucopia_db_env(config) {
         server_cmd.env(key, value);
     }
+    // Pin the app's cwd to the manifest root: generated apps resolve their
+    // integration config relative to the cwd (`config/default`), and the old
+    // bash suite always ran from the repo root. Inheriting the caller's cwd
+    // made the suite only work when invoked from the right directory.
+    server_cmd.current_dir(&config.root_dir);
     let mut api_proc = ManagedProcess::spawn(server_cmd, "Axum (API)", &config.log_file)?;
     api_proc.set_registration(crate::proc::ServiceRegistration::new(
         config.root_dir.clone(),

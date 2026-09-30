@@ -364,6 +364,10 @@ async fn e2e_start_services(
         cmd.env("CORS_ALLOWED_ORIGINS", config.ui_url());
         cmd.env("SUPABASE_JWT_SECRET", &config.jwt_secret);
         cmd.env("SUPABASE_URL", super::ui::supabase_base_url(config));
+        // Same contract as the api suite: the app resolves `config/` relative
+        // to its cwd — pin it to the manifest root instead of inheriting the
+        // caller's cwd.
+        cmd.current_dir(&config.root_dir);
         let mut proc = match ManagedProcess::spawn(cmd, "Axum app", Path::new(APP_LOG)) {
             Ok(proc) => proc,
             Err(e) => {

@@ -456,6 +456,7 @@ async fn run_boot_and_tests(
         cmd.env("DATABASE_URL", config.api_db.url())
             .env("SUPABASE_JWT_SECRET", config.jwt_secret.clone())
             .env("BIND_ADDR", format!("127.0.0.1:{port}"));
+        cmd.current_dir(&config.root_dir);
         let log_path = PathBuf::from(format!("/tmp/codegraph-ops-worker-{domain}.log"));
         let proc = ManagedProcess::spawn(cmd, &format!("worker {domain}"), &log_path)?;
         supervisor.add(proc);
@@ -476,6 +477,7 @@ async fn run_boot_and_tests(
         for (domain, port) in &upstreams {
             gw_cmd.env(gateway_env_name(domain), format!("http://127.0.0.1:{port}"));
         }
+        gw_cmd.current_dir(&config.root_dir);
         let gateway = ManagedProcess::spawn(
             gw_cmd,
             "gateway",
