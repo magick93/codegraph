@@ -1,11 +1,14 @@
 //! CLI entry point for the ops harness (clap).
 //!
 //! Subcommands: `api`, `cli`, `e2e`, `ui`, `full`, `workers`, `clean`,
-//! `smoke`, `quality`, `ext <name>`. Global flags: `--config`, `--keep`,
-//! `--skip-build`, `--skip-generate`, `--release`, `--verbose`, `--metrics`,
-//! `--metrics-format`, `--retry`, `--headed`, `--grep`, `--reuse`,
-//! `--clear-cache`. The `e2e` subcommand additionally takes `--skip-ui-build`;
-//! `clean` takes `--deep`.
+//! `smoke`, `quality`, `doctor`, `bundle`, `ext <name>`. Global flags:
+//! `--config`, `--keep`, `--skip-build`, `--skip-generate`, `--release`,
+//! `--verbose`, `--metrics`, `--metrics-format`, `--retry`, `--headed`,
+//! `--grep`, `--results`, `--pw-retries`, `--allow-gen-errors`,
+//! `--allow-gen-rev-mismatch`, `--reuse`, `--clear-cache`, `--no-bundle`,
+//! `--codegraph-root`. The `e2e` subcommand additionally takes
+//! `--skip-ui-build`/`--retry-failed`; `clean` takes `--deep`. Exit codes:
+//! 0 success; 1 harness-reported failure; 2 timeout.
 //!
 //! The generated `testkit` binary wraps `codegraph_ops::cli::main()`.
 
@@ -37,6 +40,13 @@ enum MetricsFormat {
 #[command(
     name = "testkit",
     about = "Test & deploy harness for codegraph-generated apps",
+    after_help = "Exit codes: 0 success; 1 any harness-reported failure (config error, \
+missing tool, failed checks or tests); 2 timeout. Usage errors (unknown \
+flags) exit 2 via clap before the harness runs.\n\n\
+Examples:\n  \
+testkit api --metrics ci.tsv\n  \
+testkit e2e --results e2e.json\n  \
+testkit doctor --config codegraph-ops.toml",
     version
 )]
 pub struct Cli {
@@ -142,6 +152,9 @@ pub struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// API integration tests (preflight, migrate, hurl, curl smoke, RLS...).
+    #[command(after_help = "Examples:\n  \
+testkit api --metrics ci.tsv\n  \
+testkit api --skip-build --retry 2")]
     Api {
         /// Skip DB reset + migration (tables already exist).
         #[arg(long)]
@@ -154,8 +167,14 @@ enum Cmd {
         regen: bool,
     },
     /// CLI e2e tests (starts the API first if not running).
+    #[command(after_help = "Examples:\n  \
+testkit cli")]
     Cli,
     /// Full E2E: Supabase -> generate -> build -> Playwright.
+    #[command(after_help = "Examples:\n  \
+testkit e2e --results e2e.json\n  \
+testkit e2e --retry-failed --grep Owner\n  \
+testkit e2e -- --last-failed")]
     E2e {
         /// Skip the SvelteKit production build (preview may serve a stale
         /// bundle — normally the build failure is fatal).
@@ -171,17 +190,26 @@ enum Cmd {
         extra: Vec<String>,
     },
     /// UI-only Playwright runner (requires the API running).
+    #[command(after_help = "Examples:\n  \
+testkit ui --headed --grep webhooks")]
     Ui {
         /// Extra args passed through to Playwright.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
     },
     /// Run the API suite then the E2E suite.
+    #[command(after_help = "Examples:\n  \
+testkit full --metrics timings.tsv")]
     Full,
     /// Workers topology (per-domain workers + gateway, cornucopia):
     /// regenerate -> migrate plain Postgres -> build -> boot -> smoke + hurl.
+    #[command(after_help = "Examples:\n  \
+testkit workers --results workers.json")]
     Workers,
     /// Stop services and remove generated output.
+    #[command(after_help = "Examples:\n  \
+testkit clean\n  \
+testkit clean --deep")]
     Clean {
         /// Also remove Playwright triage artifacts ({root}/test-results).
         /// Default clean KEEPS them — failed-run screenshots/traces stay
@@ -191,13 +219,20 @@ enum Cmd {
     },
     /// One-shot state report: generated tree, binaries, databases, ports,
     /// tools, disk.
+    #[command(after_help = "Examples:\n  \
+testkit doctor --config codegraph-ops.toml")]
     Doctor,
     /// Assemble a failure artifact bundle on demand (server logs, hurl +
     /// Playwright results, the last run's results/metrics) into
     /// {root}/test-results/artifacts-*. Suites do this automatically on
     /// failure unless --no-bundle is given.
+    #[command(after_help = "Examples:\n  \
+testkit bundle")]
     Bundle,
     /// Smoke-test a remote deployment.
+    #[command(after_help = "Examples:\n  \
+testkit smoke --api-url https://api.example.com --web-url https://app.example.com\n  \
+testkit smoke --expected-commit 9d1e0f --worker https://billing.example.com")]
     Smoke {
         #[arg(long, default_value = "http://localhost:3000")]
         api_url: String,
@@ -212,12 +247,17 @@ enum Cmd {
         workers: Vec<String>,
     },
     /// Run repo quality gates (test, clippy, fmt, generate, check).
+    #[command(after_help = "Examples:\n  \
+testkit quality doc")]
     Quality {
         /// Extra cargo gates to run (e.g. `doc`).
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
     },
     /// Run a test extension (from the manifest or trait registry).
+    #[command(after_help = "Examples:\n  \
+testkit ext --list\n  \
+testkit ext refresh-views")]
     Ext {
         /// List registered extensions.
         #[arg(long)]

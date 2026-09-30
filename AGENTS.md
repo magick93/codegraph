@@ -738,7 +738,7 @@ cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilatio
 cargo test -p codegraph --test profile_smoke_tests
 
 # Ops harness tests (codegraph-ops + ops generator)
-cargo test -p codegraph-ops            # 103 harness tests (suites, proc, db, migrate, ext, metrics)
+cargo test -p codegraph-ops            # 238 harness tests (suites, proc, db, migrate, ext, metrics, doctor, bundle, registry, freshness, results)
 cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
 cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 
@@ -1119,7 +1119,7 @@ and extensions.
 | Layer | Location | Notes |
 |-------|----------|-------|
 | **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity, api version |
-| **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, smoke, quality), `ext.rs` (extension protocol + hooks), `metrics.rs` (stage TSV export), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
+| **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`, `run_streaming` labeled streaming), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, workers, smoke, quality), `ext.rs` (extension protocol + hooks + `HookPolicy`), `metrics.rs` (stage TSV/JSON export), `doctor.rs` (state report + stage-0 fast-doctor subsets), `registry.rs` (`.testkit/services.json` advisory services registry), `freshness.rs` (generator-rev check), `results.rs` (`--results` JSON writers), `bundle.rs` (failure artifact bundles), `pwcache.rs` (Playwright transpile-cache hygiene), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
 | **Generator** | `crates/codegraph/src/generate/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
 | **Templates** | `crates/codegraph-generate/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
 | **Profile gating** | `profiles.toml` + `profile.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
@@ -1132,19 +1132,41 @@ cargo run -p testkit -- api        # preflight, migrate, hurl, curl smoke, RLS, 
 cargo run -p testkit -- cli        # CLI e2e (starts API first)
 cargo run -p testkit -- e2e        # Supabase → generate → migrate → build → Playwright
 cargo run -p testkit -- ui         # Playwright only (API must be running)
-cargo run -p testkit -- full       # api then e2e
+cargo run -p testkit -- full       # api then e2e (always both; worse exit code wins)
+cargo run -p testkit -- workers    # workers topology: regenerate → migrate → build → boot → smoke + hurl
 cargo run -p testkit -- smoke      # remote deployment smoke test
 cargo run -p testkit -- quality    # cargo test/clippy/fmt + generate + check
-cargo run -p testkit -- clean      # stop services, remove generated output
+cargo run -p testkit -- clean      # stop services, remove generated output (keeps test-results/)
+cargo run -p testkit -- clean --deep # also remove test-results/ triage artifacts
+cargo run -p testkit -- doctor     # one-shot state report (tree, binaries, DBs, ports, tools, disk)
+cargo run -p testkit -- bundle     # assemble a failure artifact bundle on demand
 cargo run -p testkit -- ext <name> # run a test extension
 cargo run -p testkit -- ext --list # list registered extensions
 ```
 
+Subcommand flags: `api --no-migrate` / `--rebuild` / `--regen` (stage 11
+regeneration validation), `e2e --skip-ui-build` (degrade a failed SvelteKit
+production build to a warning; the preview may serve a stale bundle) and
+`e2e --retry-failed` (in-session `--last-failed` rerun; a green retry counts
+as transient), `clean --deep`, `smoke` flags below. `e2e`/`ui` pass trailing
+args through to Playwright (`testkit e2e -- --last-failed`).
+
 Global flags: `--config FILE` (manifest path), `--keep`, `--skip-build`,
-`--skip-generate`, `--release`, `--verbose`, `--metrics FILE` (stage timings;
-TSV or JSON via `--metrics-format tsv|json`, default tsv), `--retry N`
-(retry failed hurl files in the api suite up to N times, default 0),
-`--headed`, `--grep PATTERN` (repeatable).
+`--skip-generate`, `--release`, `--verbose` (unmutes quiet stages —
+dependency installs, browser downloads — and echoes each stage's full
+captured output; failure tails print regardless), `--metrics FILE` (stage
+timings; TSV or JSON via `--metrics-format tsv|json`, default tsv),
+`--metrics-format`, `--results FILE` (machine-readable JSON report; api,
+e2e, workers), `--retry N` (retry failed hurl files in the api suite up to
+N times, default 0), `--pw-retries N` (Playwright `--retries=N` for e2e/ui),
+`--allow-gen-errors` (tolerate generation errors instead of failing),
+`--allow-gen-rev-mismatch` (downgrade the generator-rev check to a warning),
+`--clear-cache` (clear the Playwright transform cache at run start),
+`--reuse` (reuse a registry-known service on a needed port instead of
+taking it over), `--no-bundle` (skip the automatic failure artifact
+bundle), `--codegraph-root PATH` (exported as `CODEGRAPH_ROOT` for hooks
+and generated path-dep normalization), `--headed`, `--grep PATTERN`
+(repeatable).
 
 When `--config` is absent the manifest is auto-discovered: walk UP from the
 cwd looking for `codegraph-ops.toml`, then walk UP from the testkit
@@ -1162,6 +1184,54 @@ through unchanged.
 `--auth-health-url`, `--worker URL` (repeatable for worker pings).
 
 `quality` accepts extra cargo gate names (e.g. `doc`) as trailing args.
+
+Exit codes: 0 success; 1 any harness-reported failure (config error, missing
+tool, failed checks or tests); 2 timeout. Usage errors (unknown flags) exit
+2 via clap before the harness runs.
+
+### Runbook (`docs/ops-testing.md`)
+
+The full runbook — per-suite stage maps with expected durations at consumer
+scale, freshness model, artifact-triage guide, env-var reference, and the
+failure-signature → cause → fix playbook (every row from a real hr-specs
+validation-run incident) — lives in `docs/ops-testing.md`. Subsystem map
+(all shipped on the ops-reliability branch):
+
+- **Streaming/timing** (`proc.rs` `run_streaming`): every long spawn streams
+  labeled per-line output (`[build] Compiling …`), stage durations print on
+  completion, failure tails (last 50 lines) ALWAYS show, hooks are timed as
+  separate `hook <name>` metrics rows; `--metrics` JSON gains per-stage rows
+  plus a TOTAL row.
+- **Services registry** (`registry.rs`, `--keep`/`--reuse`): every service a
+  `--keep` run leaves is recorded in `.testkit/services.json` (advisory —
+  corrupt/missing never breaks a run). Port preflight takes over a
+  registry-known prior server by default (SIGTERM→SIGKILL on the recorded
+  pid) or reuses it with `--reuse` (caveat: it may serve a stale build);
+  unknown occupants keep the `fuser -k` error. `clean` kills by registry pid,
+  sweeps api/ui + workers ports (gateway 8787 + worker range), removes
+  sveltekit logs, and KEEPS `test-results/` unless `--deep`.
+- **Freshness** (`freshness.rs`, `preflight.rs`): binary-vs-src mtime check,
+  e2e stage-0 pre-check under `--skip-build`, and the generator-rev check —
+  `.codegraph-manifest.json` `codegraphCommit` vs the testkit's embedded
+  `CODEGRAPH_OPS_REV`; mismatch is a hard error (`--allow-gen-rev-mismatch`
+  downgrades; missing manifest warns).
+- **Playwright cache hygiene** (`pwcache.rs`, `--clear-cache`): the
+  content-hash-addressed transform cache (`/tmp/playwright-transform-cache-*`)
+  is cleared wholesale before Playwright (e2e/ui automatically; the flag
+  forces it for other suites).
+- **Failure bundles** (`bundle.rs`): suites assemble
+  `{root}/test-results/artifacts-<ts>/` on failure (`--no-bundle` skips;
+  `testkit bundle` on demand) with `logs/`, `hurl/`, Playwright summary
+  files, the run's results/metrics, and a `bundle.json` manifest; 200 MB
+  soft cap (tail-copy) + keep-3 pruning (`[doctor]`/`[bundle]` manifest
+  sections tune doctor disk thresholds and bundle caps).
+- **Doctor** (`doctor.rs`): 8 sections (manifest, output tree, binaries,
+  databases, ports, extras, tools, disk & caches); stage-0 `run_fast_doctor`
+  subsets ("Fast doctor" marker) gate api/e2e before long stages.
+- **Results** (`results.rs`): `--results FILE` carries the completed-run
+  `ResultsReport` (passed/failed/failures/stages/`hook_failures`/exit);
+  failures before the summary stage write the flat `EarlyFailureReport`
+  (`suite`/`manifest`/`stage`/`error`/`exit`) instead.
 
 ### Extension protocol
 
@@ -1184,7 +1254,11 @@ api suite hard-fails if the grant role is missing DML on any domain table
 after migration instead of warning), `supabase` dir + keys,
 `hurl.dir`/`skip`/org ids, `smoke.entity` (entity used for the api suite's
 curl CRUD checks) + `api_version` (route prefix, default `v1`), `ui_dir`
-override (for monorepo sync setups), hooks, extensions.
+override (for monorepo sync setups), `[doctor]` (`min_free_gb`, default 2 /
+`warn_free_gb`, default 10 — disk headroom gates), `[bundle]` (`max_mb`,
+default 200 / `keep`, default 3 — failure-bundle cap and pruning), hooks
+(each `[[hooks]]` entry takes `fatal` — missing means fatal, see below),
+extensions.
 
 ### Consumer integration guide
 
@@ -1209,8 +1283,9 @@ override (for monorepo sync setups), hooks, extensions.
    (+ `reset_sql`/`seed_sql`), `supabase` dir + keys, `hurl.dir`/`skip`/org
    ids, `ui_dir` override (monorepo sync setups), and — for e2e generation —
    `graph_binary` + `schemas_dir` + `classifier` + `domain_config`.
-4. Run: `cargo run -p testkit -- api` / `e2e` / `full` / `smoke` / `quality` /
-   `ext <name>`.
+4. Run: `cargo run -p testkit -- api` / `e2e` / `full` / `workers` / `smoke` /
+   `quality` / `doctor` / `bundle` / `clean` / `ext <name>`. Add `--results`
+   and `--metrics` for machine-readable output in CI.
 5. Add project-specifics as `[[hooks]]` and `[[extensions]]` (exec-based
    out-of-process entries) or trait-based extensions (register in the
    `testkit_main.tera` registration hook — `register_extension()` before the
@@ -1220,20 +1295,25 @@ override (for monorepo sync setups), hooks, extensions.
    testkit workspace member registers them; a justfile delegates to the
    harness; the bash suite is deleted.
 
-   Hook points and when they fire:
+   Hook points, suites that fire them, and fatality (#357 — each hook's
+   manifest `fatal` flag decides; MISSING means fatal):
 
-   | Hook | Suite | Fires |
-   |------|-------|-------|
-   | `pre_generate` | e2e | Before the graph binary build/generation |
-   | `post_generate` | e2e | After generation |
-   | `pre_e2e` | e2e | After Supabase start, BEFORE migration symlink + `supabase db reset` |
-   | `post_migrate` | api + e2e | After DB reset/migration (api only when migrate=true) |
-   | `pre_playwright` | e2e | After the API is up, BEFORE the SvelteKit production build |
-   | `post_e2e` | e2e | Every e2e path (success and failure), best-effort |
-   | `pre_api` / `post_api` | api | Around the api suite |
+   | Hook | Suite(s) | Fires | Fatality |
+   |------|----------|-------|----------|
+   | `pre_generate` | api + e2e + workers | Before generation (graph binary build may precede) | per-hook `fatal` |
+   | `post_generate` | api + e2e + workers | After generation (before the app build) | per-hook `fatal`; workers: warn-only |
+   | `pre_e2e` | e2e | After Supabase start, BEFORE migration symlink + `supabase db reset` | per-hook `fatal` |
+   | `post_migrate` | api + e2e | After DB reset/migration (api only when migrate=true) | per-hook `fatal` |
+   | `pre_playwright` | e2e | After the API is up, BEFORE the SvelteKit production build | per-hook `fatal` |
+   | `post_e2e` | e2e | Every e2e path (success and failure) | ALWAYS warn-only (`fatal = true` cannot escalate) |
+   | `pre_api` / `post_api` | api | Around the api suite | per-hook `fatal` |
 
-   Each hook is `sh -c "{exec} {args...}"` in the repo root; failures abort
-   the suite (except `post_e2e`, which warns).
+   Each hook is `sh -c "{exec} {args...}"` in the repo root. A failing fatal
+   hook aborts the suite with the hook's output tail; a failing non-fatal
+   hook warns and its name lands in the results JSON's `hook_failures`.
+   Consumers upgrading from pre-#357 manifests: hooks that previously failed
+   without aborting (blanket warn-only) now need explicit `fatal = false`.
+   Hooks stream under `[hook:<name>]` and are timed as separate metrics rows.
 6. CI wiring: run `cargo run -p testkit -- api --metrics ci.tsv` in a job with
    a Postgres service. The codegraph repo's own `test-ops-integration` job
    (postgres:15 service + the `--ignored` integration tests in `.github/workflows/ci.yml`,
@@ -1258,7 +1338,17 @@ Tool prerequisites (validated per-suite; missing tools error or skip):
 1. Module in `crates/codegraph-ops/src/` (or a new suite in `suites/`).
 2. Wire the subcommand in `cli.rs` + flag plumbing.
 3. Unit tests alongside; `cargo test -p codegraph-ops`.
-4. If the generated manifest needs new seed values, extend
+4. New long-running stages MUST spawn through `proc::run_streaming` /
+   `run_streaming_quiet` (never a bare `Command::output()`) so output
+   streams under `[label]` and failures carry a tail.
+5. Record stage timings with `config.metrics.begin(name)` / `.end()` (hooks
+   and nested work: `pause()`/`resume()`).
+6. Route failures through the results writers: suites write their
+   `ResultsReport` at the summary stage (success AND failure); anything that
+   can fail before the summary is covered by the CLI-level early-failure
+   writer, which records the current `output::section()` as the stage — so
+   keep `output::section` titles meaningful.
+7. If the generated manifest needs new seed values, extend
    `OpsManifest` in `codegraph-config` + the generator in `generate/ops.rs`.
 
 ## Persistence Provider System
