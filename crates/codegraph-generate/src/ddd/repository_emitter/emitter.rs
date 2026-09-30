@@ -445,9 +445,18 @@ impl RepositoryImplEmitter {
                 type_registry::register_type(&format!("{}Response", last_seg.entity_name), module);
             }
             let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
-            let mut resolved_names: std::collections::HashSet<String> = imports.iter()
-                .map(|u| u.rsplit("::").next().unwrap_or(u)
-                    .trim_end_matches(';').rsplit(' ').next().unwrap_or(u).to_string())
+            let mut resolved_names: std::collections::HashSet<String> = imports
+                .iter()
+                .map(|u| {
+                    u.rsplit("::")
+                        .next()
+                        .unwrap_or(u)
+                        .trim_end_matches(';')
+                        .rsplit(' ')
+                        .next()
+                        .unwrap_or(u)
+                        .to_string()
+                })
                 .collect();
             for import in &imports {
                 wln!(code, "{}", import);
@@ -491,18 +500,14 @@ impl RepositoryImplEmitter {
                     .strip_suffix(&["repository_impl".to_string()][..])
                     .map(|b| b.join("::"))
                     .unwrap_or_default();
-                let is_self_target =
-                    path.segments[0].domain == domain
-                        && path.segments[0].entity_name == tree.entity_name;
+                let is_self_target = path.segments[0].domain == domain
+                    && path.segments[0].entity_name == tree.entity_name;
                 if resolved_names.insert(resp.clone())
                     && resp.ends_with("Response")
                     && !is_self_target
                     && target_mod != caller_mod
                 {
-                    wln!(
-                        code,
-                        "use {target_mod}::dto_response::{resp};"
-                    );
+                    wln!(code, "use {target_mod}::dto_response::{resp};");
                 }
             }
             // Also add direct imports for enriched types from dto_included module.

@@ -211,9 +211,8 @@ fn alias_builtin_mapping(
             }
         }
         "string" => {
-            let uuid_shaped = str_arg("pattern").is_some_and(|p| {
-                p.contains("{8}") && p.contains("{12}") && p.contains('-')
-            });
+            let uuid_shaped = str_arg("pattern")
+                .is_some_and(|p| p.contains("{8}") && p.contains("{12}") && p.contains('-'));
             if uuid_shaped {
                 (PgType::Uuid, None, "string")
             } else {
@@ -1997,10 +1996,8 @@ fn attribute_property(
     let (min_items, max_items) = cardinality_items(&attribute.cardinality, is_array);
 
     let (kind, pg_base, rust_base, sea_base, ref_target, format_hint, prop_type) =
-        if let Some((pg, format, json_type)) =
-            builtin_mapping(&target_title).or_else(|| {
-                alias_builtin_mapping(&target_title, alias_types, 0)
-            })
+        if let Some((pg, format, json_type)) = builtin_mapping(&target_title)
+            .or_else(|| alias_builtin_mapping(&target_title, alias_types, 0))
         {
             (
                 RefClassificationKind::PrimitiveWrapper,
