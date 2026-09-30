@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
@@ -37,8 +37,8 @@ impl LexiconScaffoldEmitter {
 
 #[async_trait]
 impl GlobalGenerator for LexiconScaffoldEmitter {
-    fn name(&self) -> &str {
-        "lexicon_scaffold"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::LexiconScaffold
     }
 
     async fn generate(

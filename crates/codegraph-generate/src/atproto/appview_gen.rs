@@ -8,7 +8,7 @@ use crate::error::Result;
 #[cfg(test)]
 use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -49,8 +49,8 @@ impl AtprotoAppviewEmitter {
 
 #[async_trait]
 impl DomainGenerator for AtprotoAppviewEmitter {
-    fn name(&self) -> &str {
-        "atproto_appview"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::AtprotoAppview
     }
 
     async fn generate(

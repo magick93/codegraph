@@ -32,7 +32,7 @@ use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
 use crate::code_writer::{wln, CodeWriter};
 use crate::error::Result;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -97,8 +97,8 @@ impl RegulatoryReportGenerator {
 
 #[async_trait]
 impl DomainGenerator for RegulatoryReportGenerator {
-    fn name(&self) -> &str {
-        "regulatory_reports"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::RegulatoryReports
     }
 
     async fn generate(

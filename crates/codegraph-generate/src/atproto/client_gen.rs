@@ -6,7 +6,9 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile, GlobalGenerator};
+use crate::traits::{
+    EntityGenerator, EntityGeneratorKind, GeneratedFile, GlobalGenerator, GlobalGeneratorKind,
+};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
@@ -54,8 +56,8 @@ impl AtprotoClientEmitter {
 
 #[async_trait]
 impl EntityGenerator for AtprotoClientEmitter {
-    fn name(&self) -> &str {
-        "atproto_client"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::AtprotoClient
     }
 
     async fn generate(
@@ -149,8 +151,8 @@ impl AtprotoClientScaffoldEmitter {
 
 #[async_trait]
 impl GlobalGenerator for AtprotoClientScaffoldEmitter {
-    fn name(&self) -> &str {
-        "atproto_client_scaffold"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::AtprotoClientScaffold
     }
 
     async fn generate(

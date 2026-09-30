@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::api::api_model::{
@@ -160,8 +160,8 @@ impl UiStoreGenerator {
 
 #[async_trait]
 impl EntityGenerator for UiStoreGenerator {
-    fn name(&self) -> &str {
-        "ui-store"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::UiStore
     }
 
     async fn generate(

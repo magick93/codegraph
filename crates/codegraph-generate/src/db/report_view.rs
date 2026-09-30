@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::Result;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
@@ -58,8 +58,8 @@ impl ReportViewGenerator {
 
 #[async_trait]
 impl GlobalGenerator for ReportViewGenerator {
-    fn name(&self) -> &str {
-        "report_views"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::ReportViews
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {

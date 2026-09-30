@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -54,8 +54,8 @@ fn rust_type_for(field_type: ConfigFieldType) -> &'static str {
 
 #[async_trait]
 impl GlobalGenerator for IntegrationConfigGenerator {
-    fn name(&self) -> &str {
-        "integration_config"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::IntegrationConfig
     }
 
     async fn generate(

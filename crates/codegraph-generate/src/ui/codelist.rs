@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -79,8 +79,8 @@ impl UiCodelistGenerator {
 
 #[async_trait]
 impl GlobalGenerator for UiCodelistGenerator {
-    fn name(&self) -> &str {
-        "ui-codelist"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::UiCodelist
     }
 
     async fn generate(

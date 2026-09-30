@@ -9,7 +9,7 @@ use super::common::collect_ui_fields;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
@@ -66,8 +66,8 @@ impl UiTypeGenerator {
 
 #[async_trait]
 impl GlobalGenerator for UiTypeGenerator {
-    fn name(&self) -> &str {
-        "ui-types"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::UiTypes
     }
 
     async fn generate(

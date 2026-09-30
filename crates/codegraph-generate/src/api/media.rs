@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -36,8 +36,8 @@ impl MediaRouteGenerator {
 
 #[async_trait]
 impl EntityGenerator for MediaRouteGenerator {
-    fn name(&self) -> &str {
-        "media_route"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::MediaRoute
     }
 
     async fn generate(

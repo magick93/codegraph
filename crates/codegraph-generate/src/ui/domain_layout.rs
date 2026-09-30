@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::api::api_model::resolve_path_segment;
@@ -41,8 +41,8 @@ impl UiDomainLayoutGenerator {
 
 #[async_trait]
 impl DomainGenerator for UiDomainLayoutGenerator {
-    fn name(&self) -> &str {
-        "ui-domain-layout"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::UiDomainLayout
     }
 
     async fn generate(

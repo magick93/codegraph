@@ -38,7 +38,7 @@ use codegraph_naming::{escape_rust_keyword, to_snake_case};
 use crate::code_writer::{wln, CodeWriter};
 use crate::error::Result;
 use crate::rosetta_expr::{transpile_scoped, ExprContext};
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -111,8 +111,8 @@ impl FunctionsGenerator {
 
 #[async_trait]
 impl DomainGenerator for FunctionsGenerator {
-    fn name(&self) -> &str {
-        "functions"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::Functions
     }
 
     async fn generate(

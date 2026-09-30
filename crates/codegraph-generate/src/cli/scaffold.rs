@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -44,8 +44,8 @@ impl CliScaffoldGenerator {
 
 #[async_trait]
 impl GlobalGenerator for CliScaffoldGenerator {
-    fn name(&self) -> &str {
-        "cli_scaffold"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::CliScaffold
     }
 
     async fn generate(

@@ -5,7 +5,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::code_writer::{wln, CodeWriter};
 use crate::error::Result;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -44,8 +44,8 @@ impl CornucopiaRepoGenerator {
 
 #[async_trait]
 impl EntityGenerator for CornucopiaRepoGenerator {
-    fn name(&self) -> &str {
-        "cornucopia_repo"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::CornucopiaRepo
     }
 
     fn supported_targets(&self) -> Option<Vec<crate::db::dialect::DatabaseTarget>> {

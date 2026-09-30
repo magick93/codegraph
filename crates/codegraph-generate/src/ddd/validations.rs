@@ -31,7 +31,7 @@ use codegraph_type_contracts::RefClassificationKind;
 use crate::code_writer::{wln, CodeWriter};
 use crate::error::Result;
 use crate::rosetta_expr::{transpile, ExprContext};
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -123,8 +123,8 @@ impl ConditionValidationsGenerator {
 
 #[async_trait]
 impl DomainGenerator for ConditionValidationsGenerator {
-    fn name(&self) -> &str {
-        "condition_validations"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::ConditionValidations
     }
 
     async fn generate(

@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -42,8 +42,8 @@ impl LifecycleTraitGenerator {
 
 #[async_trait]
 impl EntityGenerator for LifecycleTraitGenerator {
-    fn name(&self) -> &str {
-        "lifecycle_trait"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::LifecycleTrait
     }
 
     async fn generate(

@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -294,8 +294,8 @@ pub async fn build_scaffold_domains(
 
 #[async_trait]
 impl GlobalGenerator for ScaffoldGenerator {
-    fn name(&self) -> &str {
-        "scaffold"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::Scaffold
     }
 
     async fn generate(

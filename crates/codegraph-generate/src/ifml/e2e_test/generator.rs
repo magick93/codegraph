@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use crate::ProjectConfig;
 use async_trait::async_trait;
@@ -79,8 +79,8 @@ impl IfmlE2eTestGenerator {
 
 #[async_trait]
 impl GlobalGenerator for IfmlE2eTestGenerator {
-    fn name(&self) -> &str {
-        "ifml-e2e-test"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::IfmlE2eTest
     }
 
     async fn generate(

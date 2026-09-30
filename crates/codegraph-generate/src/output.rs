@@ -7,30 +7,14 @@ use tera::Tera;
 use crate::db::dialect::{db_template_for, SqlDialect};
 use crate::error::{Error, Result};
 use crate::project_config::{GenerationEntry, ProjectConfig};
-use crate::traits::GeneratedFile;
+use crate::traits::{DomainGeneratorKind, EntityGeneratorKind, GeneratedFile};
 
 /// Returns true if the generator name is an API-layer entity generator
 /// (handler, workflow, media, test, UI, CLI, gRPC, playwright).
 /// DDD generators (ddl, entity, repo, command, query, event, dto, lifecycle_trait,
 /// domain_types) are NOT considered API generators.
 pub fn is_api_entity_generator(name: &str) -> bool {
-    matches!(
-        name,
-        "handler"
-            | "workflow_action"
-            | "media_route"
-            | "test"
-            | "ui-page"
-            | "ui-form"
-            | "ui-store"
-            | "ui-e2e-test"
-            | "playwright-entity"
-            | "ui-descriptor"
-            | "ui-shell"
-            | "cli_command"
-            | "grpc_proto"
-            | "grpc_service"
-    )
+    EntityGeneratorKind::from_name(name).is_some_and(EntityGeneratorKind::is_api)
 }
 
 /// True for entity generators whose output is backend Rust source scoped to a
@@ -48,26 +32,14 @@ pub fn is_api_entity_generator(name: &str) -> bool {
 /// codegen crate at the output root (`queries/{domain}/{entity}.sql`), which
 /// every worker crate depends on by path.
 pub fn is_worker_routed_entity_generator(name: &str) -> bool {
-    matches!(
-        name,
-        "sea_orm_entity"
-            | "cornucopia_repo"
-            | "repository"
-            | "command"
-            | "query"
-            | "event"
-            | "dto"
-            | "handler"
-            | "workflow_action"
-            | "media_route"
-    )
+    EntityGeneratorKind::from_name(name).is_some_and(EntityGeneratorKind::is_worker_routed)
 }
 
 /// True for domain generators whose output belongs to a single domain's
 /// backend crate (`src/domain/{domain}/`, `src/api/{domain}/`).  UI, CLI and
 /// gRPC domain generators stay anchored at the output root.
 pub fn is_worker_routed_domain_generator(name: &str) -> bool {
-    matches!(name, "errors" | "router" | "links")
+    DomainGeneratorKind::from_name(name).is_some_and(DomainGeneratorKind::is_worker_routed)
 }
 
 /// Resolve the construction-time base directory for a generator.

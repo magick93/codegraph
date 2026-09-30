@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -196,8 +196,8 @@ impl RouterGenerator {
 
 #[async_trait]
 impl DomainGenerator for RouterGenerator {
-    fn name(&self) -> &str {
-        "router"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::Router
     }
 
     async fn generate(

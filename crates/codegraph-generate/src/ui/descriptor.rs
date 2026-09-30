@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::config::{UiDomainConfig, UiOverrideConfig};
 use codegraph_config::DomainConfig;
 
@@ -129,8 +129,8 @@ impl UiDescriptorGenerator {
 
 #[async_trait]
 impl EntityGenerator for UiDescriptorGenerator {
-    fn name(&self) -> &str {
-        "ui-descriptor"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::UiDescriptor
     }
 
     async fn generate(

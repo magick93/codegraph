@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::api_model::resolve_path_segment;
@@ -89,8 +89,8 @@ impl WorkflowActionGenerator {
 
 #[async_trait]
 impl EntityGenerator for WorkflowActionGenerator {
-    fn name(&self) -> &str {
-        "workflow_action"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::WorkflowAction
     }
 
     async fn generate(

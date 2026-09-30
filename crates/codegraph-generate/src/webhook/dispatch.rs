@@ -6,7 +6,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
@@ -24,8 +24,8 @@ impl WebhookDispatchGenerator {
 
 #[async_trait]
 impl GlobalGenerator for WebhookDispatchGenerator {
-    fn name(&self) -> &str {
-        "webhook_dispatch"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::WebhookDispatch
     }
 
     async fn generate(

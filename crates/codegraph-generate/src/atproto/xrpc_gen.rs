@@ -9,7 +9,9 @@ use crate::error::Result;
 #[cfg(test)]
 use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, EntityGenerator, GeneratedFile};
+use crate::traits::{
+    DomainGenerator, DomainGeneratorKind, EntityGenerator, EntityGeneratorKind, GeneratedFile,
+};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -105,8 +107,8 @@ impl AtprotoXrpcEmitter {
 
 #[async_trait]
 impl EntityGenerator for AtprotoXrpcEmitter {
-    fn name(&self) -> &str {
-        "atproto_xrpc"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::AtprotoXrpc
     }
 
     async fn generate(
@@ -211,8 +213,8 @@ impl EntityGenerator for AtprotoXrpcEmitter {
 
 #[async_trait]
 impl DomainGenerator for AtprotoXrpcEmitter {
-    fn name(&self) -> &str {
-        "atproto_xrpc_router"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::AtprotoXrpcRouter
     }
 
     async fn generate(

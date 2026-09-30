@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
@@ -167,8 +167,8 @@ impl UiFormGenerator {
 
 #[async_trait]
 impl EntityGenerator for UiFormGenerator {
-    fn name(&self) -> &str {
-        "ui-form"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::UiForm
     }
 
     async fn generate(

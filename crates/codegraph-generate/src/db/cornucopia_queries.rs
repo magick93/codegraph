@@ -5,7 +5,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::persistence::build_persistence_entity;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -47,8 +47,8 @@ impl CornucopiaQueryGenerator {
 
 #[async_trait]
 impl EntityGenerator for CornucopiaQueryGenerator {
-    fn name(&self) -> &str {
-        "cornucopia_queries"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::CornucopiaQueries
     }
 
     fn supported_targets(&self) -> Option<Vec<crate::db::dialect::DatabaseTarget>> {

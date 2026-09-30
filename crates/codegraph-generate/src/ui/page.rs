@@ -12,7 +12,7 @@ use crate::api::api_model::{
 };
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ux::plan::{build_ux_plan, ActionSpec, RowAction};
 use codegraph_config::ux::{Align, Display};
 use codegraph_config::DomainConfig;
@@ -291,8 +291,8 @@ impl UiPageGenerator {
 
 #[async_trait]
 impl EntityGenerator for UiPageGenerator {
-    fn name(&self) -> &str {
-        "ui-page"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::UiPage
     }
 
     async fn generate(

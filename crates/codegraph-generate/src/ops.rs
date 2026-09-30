@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use crate::ProjectConfig;
 use codegraph_config::ops_manifest::{
@@ -130,8 +130,8 @@ impl OpsManifestGenerator {
 
 #[async_trait]
 impl GlobalGenerator for OpsManifestGenerator {
-    fn name(&self) -> &str {
-        "ops"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::Ops
     }
 
     async fn generate(

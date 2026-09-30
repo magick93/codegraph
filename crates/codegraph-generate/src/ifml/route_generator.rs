@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 
 use super::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
@@ -100,8 +100,8 @@ impl IfmlRouteGenerator {
 
 #[async_trait]
 impl GlobalGenerator for IfmlRouteGenerator {
-    fn name(&self) -> &str {
-        "ifml-route"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::IfmlRoute
     }
 
     async fn generate(

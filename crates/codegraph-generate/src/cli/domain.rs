@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::api::api_model::resolve_path_segment;
@@ -40,8 +40,8 @@ impl CliDomainGenerator {
 
 #[async_trait]
 impl DomainGenerator for CliDomainGenerator {
-    fn name(&self) -> &str {
-        "cli_domain"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::CliDomain
     }
 
     async fn generate(

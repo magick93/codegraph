@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -60,8 +60,8 @@ impl GrpcServiceGenerator {
 
 #[async_trait]
 impl EntityGenerator for GrpcServiceGenerator {
-    fn name(&self) -> &str {
-        "grpc_service"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::GrpcService
     }
 
     async fn generate(

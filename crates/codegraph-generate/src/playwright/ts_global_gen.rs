@@ -9,7 +9,7 @@ use codegraph_core::traits::GraphQuerier;
 use super::{e2e_tests_root, TsDomainSummary, TsEntitySummary, TsGlobalContext};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 
 pub struct TsGlobalGenerator {
@@ -26,8 +26,8 @@ impl TsGlobalGenerator {
 
 #[async_trait]
 impl GlobalGenerator for TsGlobalGenerator {
-    fn name(&self) -> &str {
-        "playwright_ts_global"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::PlaywrightTsGlobal
     }
 
     async fn generate(

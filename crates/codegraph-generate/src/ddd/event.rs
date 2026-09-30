@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -37,8 +37,8 @@ impl EventGenerator {
 
 #[async_trait]
 impl EntityGenerator for EventGenerator {
-    fn name(&self) -> &str {
-        "event"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Event
     }
 
     async fn generate(

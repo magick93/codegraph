@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile};
+use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -48,8 +48,8 @@ impl CodelistGenerator {
 
 #[async_trait]
 impl EntityGenerator for CodelistGenerator {
-    fn name(&self) -> &str {
-        "codelist"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::Codelist
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {

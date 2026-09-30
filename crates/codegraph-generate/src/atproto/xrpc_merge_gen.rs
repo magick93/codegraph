@@ -8,7 +8,7 @@ use crate::error::Result;
 #[cfg(test)]
 use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
@@ -49,8 +49,8 @@ impl AtprotoXrpcMergeEmitter {
 
 #[async_trait]
 impl GlobalGenerator for AtprotoXrpcMergeEmitter {
-    fn name(&self) -> &str {
-        "atproto_xrpc_merge"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::AtprotoXrpcMerge
     }
 
     async fn generate(

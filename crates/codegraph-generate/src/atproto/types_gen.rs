@@ -5,7 +5,9 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{EntityGenerator, GeneratedFile, GlobalGenerator};
+use crate::traits::{
+    EntityGenerator, EntityGeneratorKind, GeneratedFile, GlobalGenerator, GlobalGeneratorKind,
+};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;
 
@@ -25,8 +27,8 @@ impl AtprotoTypesEmitter {
 
 #[async_trait]
 impl EntityGenerator for AtprotoTypesEmitter {
-    fn name(&self) -> &str {
-        "atproto_types"
+    fn kind(&self) -> EntityGeneratorKind {
+        EntityGeneratorKind::AtprotoTypes
     }
 
     async fn generate(
@@ -99,8 +101,8 @@ impl GeneratedTypesEmitter {
 
 #[async_trait]
 impl GlobalGenerator for GeneratedTypesEmitter {
-    fn name(&self) -> &str {
-        "atproto_generated_types"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::AtprotoGeneratedTypes
     }
 
     async fn generate(

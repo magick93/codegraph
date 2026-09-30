@@ -8,7 +8,7 @@ use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 
 use super::{PlaywrightCrateContext, PlaywrightDomainSummary, PlaywrightEntitySummary};
@@ -27,8 +27,8 @@ impl PlaywrightGlobalGenerator {
 
 #[async_trait]
 impl GlobalGenerator for PlaywrightGlobalGenerator {
-    fn name(&self) -> &str {
-        "playwright-global"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::PlaywrightGlobal
     }
 
     async fn generate(

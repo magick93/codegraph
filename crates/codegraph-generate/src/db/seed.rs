@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
 use crate::error::Result;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
@@ -248,8 +248,8 @@ impl SeedDataGenerator {
 
 #[async_trait]
 impl GlobalGenerator for SeedDataGenerator {
-    fn name(&self) -> &str {
-        "seed_data"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::SeedData
     }
 
     fn supported_targets(&self) -> Option<Vec<DatabaseTarget>> {

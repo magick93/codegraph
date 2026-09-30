@@ -17,7 +17,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
 use crate::error::Result;
-use crate::traits::{GeneratedFile, GlobalGenerator};
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 
 /// Global generator emitting the SvelteKit skeleton (svelte only).
@@ -37,8 +37,8 @@ impl IfmlSkeletonGenerator {
 
 #[async_trait]
 impl GlobalGenerator for IfmlSkeletonGenerator {
-    fn name(&self) -> &str {
-        "ifml-skeleton"
+    fn kind(&self) -> GlobalGeneratorKind {
+        GlobalGeneratorKind::IfmlSkeleton
     }
 
     fn sequential_first(&self) -> bool {

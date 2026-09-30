@@ -22,7 +22,7 @@ use crate::emdash::context::{
 use crate::error::Result;
 use crate::playwright::ts_entity_gen::expand_vo_fields;
 use crate::render_template_with_project;
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 
 /// Template render wrapper: the package context is exposed to templates as
@@ -180,8 +180,8 @@ impl EmdashPluginGenerator {
 
 #[async_trait]
 impl DomainGenerator for EmdashPluginGenerator {
-    fn name(&self) -> &str {
-        "emdash_plugin"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::EmdashPlugin
     }
 
     async fn generate(

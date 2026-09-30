@@ -51,7 +51,7 @@ use crate::api::api_model::{normalized_resource_name, resolve_entity_operations}
 use crate::code_writer::{wln, CodeWriter};
 use crate::error::Result;
 use crate::rosetta_expr::{transpile, ExprContext};
-use crate::traits::{DomainGenerator, GeneratedFile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
@@ -186,8 +186,8 @@ impl RulesGenerator {
 
 #[async_trait]
 impl DomainGenerator for RulesGenerator {
-    fn name(&self) -> &str {
-        "rules"
+    fn kind(&self) -> DomainGeneratorKind {
+        DomainGeneratorKind::Rules
     }
 
     async fn generate(
