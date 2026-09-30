@@ -38,7 +38,7 @@ impl RustType {
     pub fn as_rust_str(&self) -> std::string::String {
         match self {
             RustType::String => "String".to_owned(),
-            RustType::Uuid => "Uuid".to_owned(),
+            RustType::Uuid => "uuid::Uuid".to_owned(),
             RustType::Bool => "bool".to_owned(),
             RustType::I16 => "i16".to_owned(),
             RustType::I32 => "i32".to_owned(),
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_as_rust_str_primitives() {
         assert_eq!(RustType::String.as_rust_str(), "String");
-        assert_eq!(RustType::Uuid.as_rust_str(), "Uuid");
+        assert_eq!(RustType::Uuid.as_rust_str(), "uuid::Uuid");
         assert_eq!(RustType::Bool.as_rust_str(), "bool");
         assert_eq!(RustType::I16.as_rust_str(), "i16");
         assert_eq!(RustType::I32.as_rust_str(), "i32");
