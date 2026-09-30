@@ -417,7 +417,12 @@ impl Supervisor {
     /// and `clean` can kill them by pid.
     pub async fn shutdown_all(&mut self) {
         if self.keep {
-            info("Services still running (--keep)");
+            // Only claim services survive when some actually did — the api
+            // suite's SIGTERM stage consumes its own server, so `--keep` can
+            // legitimately end with an empty supervisor.
+            if !self.procs.is_empty() {
+                info("Services still running (--keep)");
+            }
             std::mem::forget(std::mem::take(&mut self.procs));
             return;
         }
