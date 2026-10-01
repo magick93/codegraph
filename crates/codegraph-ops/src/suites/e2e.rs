@@ -182,17 +182,26 @@ pub fn freshness_precheck_required(skip_build: bool) -> bool {
     skip_build
 }
 
+/// Ensure the Supabase CLI stack is running: health check first, then
+/// `npx supabase start` when down. Every suite (e2e, api, workers) targets
+/// the same Supabase-provisioned database, so they all run this before any
+/// DB-touching stage.
+pub(crate) async fn supabase_ensure_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
+    let health_url = supabase_health_url(config);
+    if http_ok(&health_url).await {
+        output::ok(format!("Supabase already running ({health_url})"));
+    } else {
+        output::info("Starting Supabase (npx supabase start)...");
+        run_blocking("supabase", "npx", &["supabase", "start"], supabase_dir)?;
+        output::ok("Supabase started");
+    }
+    Ok(())
+}
+
 async fn e2e_supabase_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     output::section("E2E 1. Supabase");
     timed(&config.metrics, "Supabase", async {
-        let health_url = supabase_health_url(config);
-        if http_ok(&health_url).await {
-            output::ok(format!("Supabase already running ({health_url})"));
-        } else {
-            output::info("Starting Supabase (npx supabase start)...");
-            run_blocking("supabase", "npx", &["supabase", "start"], supabase_dir)?;
-            output::ok("Supabase started");
-        }
+        supabase_ensure_up(config, supabase_dir).await?;
         // pre_e2e hooks (e.g. the pgmq patch) need the supabase container
         // running and must complete BEFORE the migration symlink + `supabase
         // db reset`.

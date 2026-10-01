@@ -2721,6 +2721,12 @@ $sql_HIcAsXf8tHECkGrX$);
 
 -- Delete existing extension if installed
 drop extension if exists "basejump@basejump_core";
+-- DROP EXTENSION leaves the payload-created `basejump` schema behind (it is
+-- not an extension member after the drop), and re-creating the extension
+-- then fails: "schema basejump is not a member of extension". Migrations
+-- re-run on every suite pass (no tracking table), so drop the orphan
+-- before re-creating to keep this file idempotent.
+drop schema if exists basejump cascade;
 -- Create the extension
 create extension "basejump@basejump_core" schema "extensions" version '2.0.1';
 -- Setting default version to:2.0.1

@@ -146,6 +146,21 @@ impl TestCounters {
 pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     let mut hook_failures: Vec<String> = Vec::new();
     hook_failures.extend(run_hooks(config, "pre_api", HookPolicy::PerHook).await?);
+    // The api suite targets the same Supabase-provisioned database as e2e
+    // ([database.api] == [database.e2e]): the stack must be up before any
+    // DB-touching stage. pre_db hooks (e.g. the pgmq after-create patch)
+    // need the container running, so they fire right after it is up.
+    output::section("Supabase stack");
+    config.metrics.begin("Supabase");
+    let ensured = match config.supabase_dir.as_ref() {
+        Some(dir) => crate::suites::e2e::supabase_ensure_up(config, dir).await,
+        None => Err(OpsError::TestFailure(
+            "[supabase] dir missing in manifest — the api suite needs the stack".into(),
+        )),
+    };
+    config.metrics.end();
+    ensured?;
+    hook_failures.extend(run_hooks(config, "pre_db", HookPolicy::PerHook).await?);
     let (counters, ok) = match run_api_inner(config, args, &mut hook_failures).await {
         Ok(pair) => pair,
         Err(e) => {

@@ -1,7 +1,7 @@
 //! Workers-topology suite (port of hr-platform `dual-test.sh` Test B):
 //! regenerate the `workers-cornucopia` profile (one Cloudflare Worker crate
-//! per domain + a gateway) → reset/migrate/seed plain Postgres → build the
-//! worker workspace → boot per-domain workers + gateway → gateway smoke +
+//! per domain + a gateway) → reset/migrate/seed the Supabase database → build
+//! the worker workspace → boot per-domain workers + gateway → gateway smoke +
 //! hurl contract tests through the gateway → teardown.
 //!
 //! Deviations from the bash original: missing worker binaries fail the run
@@ -66,10 +66,6 @@ pub const WORKER_DOMAINS: &[&str] = &[
 /// Infrastructure schemas created before migrations on plain Postgres (the
 /// Supabase stack normally provides `api_keys_private` via basejump setup).
 const INFRA_SCHEMAS: &[&str] = &["platform", "api_keys_private"];
-
-/// Migration file name tokens skipped on plain Postgres (they install
-/// Supabase/pgmq-only infrastructure; mirrors dual-test.sh B2).
-const MIGRATION_SKIP_TOKENS: &[&str] = &["basejump", "pgmq"];
 
 /// hurl files skipped by default on the workers topology, with the reason
 /// logged for each. RLS isolation and webhooks are covered by the monolith
@@ -145,13 +141,6 @@ fn gateway_env_name(domain: &str) -> String {
     )
 }
 
-/// Whether a generated migration file must be skipped on plain Postgres.
-fn is_skipped_migration(file_name: &str) -> bool {
-    MIGRATION_SKIP_TOKENS
-        .iter()
-        .any(|token| file_name.contains(token))
-}
-
 /// Skip reason for a hurl file on the workers topology: `Some(reason)` when
 /// the file must not run. Default skips carry their specific explanation;
 /// other manifest `hurl.skip` entries fall back to the generic reason.
@@ -174,6 +163,23 @@ pub async fn run_workers(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<()
 async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<()> {
     let mut counters = TestCounters::new();
     let workers_out = config.root_dir.join(OUTPUT_DIR);
+
+    // ---- 0. Supabase stack ----
+    // The workers topology targets the same Supabase-provisioned database as
+    // the api and e2e suites ([database.api]); all migrations, including the
+    // basejump/pgmq platform files, apply against it.
+    output::section("0. Supabase stack");
+    config.metrics.begin("Supabase");
+    match config.supabase_dir.as_ref() {
+        Some(dir) => crate::suites::e2e::supabase_ensure_up(config, dir).await?,
+        None => {
+            return Err(OpsError::TestFailure(
+                "[supabase] dir missing in manifest — the workers suite needs the stack".into(),
+            ))
+        }
+    }
+    config.metrics.end();
+    run_hooks(config, "pre_db", HookPolicy::PerHook).await?;
 
     // ---- 1. Preflight ----
     output::section("1. Preflight");
@@ -317,13 +323,12 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         Err(e) => output::warn(format!("schema creation failed (continuing): {e}")),
     }
 
-    let (applied, failed, skipped) =
-        apply_migrations(&workers_out.join("migrations"), &config.api_db).await;
+    let (applied, failed) = apply_migrations(&workers_out.join("migrations"), &config.api_db).await;
     if failed > 0 {
         output::warn(format!("{failed} migration file(s) failed (tolerated)"));
     }
     counters.pass(format!(
-        "Migrations: {applied} applied, {skipped} skipped (basejump/pgmq), {failed} failed"
+        "Migrations: {applied} applied, {failed} failed"
     ));
 
     let org_a = hurl_org_id(config, "org_id_a", DEFAULT_ORG_A);
@@ -770,14 +775,13 @@ fn cargo_build(build_dir: &Path, release: bool, cornucopia_db_url: &str) -> (boo
     }
 }
 
-/// Apply generated migrations to the plain-Postgres target, one psql invocation
-/// per file (mirrors dual-test.sh B2): basejump/pgmq files are skipped, and
-/// per-file failures are tolerated but counted. Returns
-/// (applied, failed, skipped).
-async fn apply_migrations(dir: &Path, target: &crate::pg::PgTarget) -> (usize, usize, usize) {
+/// Apply generated migrations to the database target, one psql invocation
+/// per file (mirrors dual-test.sh B2); per-file failures are tolerated but
+/// counted. Returns (applied, failed).
+async fn apply_migrations(dir: &Path, target: &crate::pg::PgTarget) -> (usize, usize) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         output::warn(format!("no migrations dir at {} — skipping", dir.display()));
-        return (0, 0, 0);
+        return (0, 0);
     };
     let mut files: Vec<PathBuf> = entries
         .flatten()
@@ -787,13 +791,8 @@ async fn apply_migrations(dir: &Path, target: &crate::pg::PgTarget) -> (usize, u
     files.sort();
     let mut applied = 0usize;
     let mut failed = 0usize;
-    let mut skipped = 0usize;
     for f in files {
         let name = file_name(&f);
-        if is_skipped_migration(&name) {
-            skipped += 1;
-            continue;
-        }
         match psql_exec_file(target, &f).await {
             Ok(()) => applied += 1,
             Err(e) => {
@@ -802,7 +801,7 @@ async fn apply_migrations(dir: &Path, target: &crate::pg::PgTarget) -> (usize, u
             }
         }
     }
-    (applied, failed, skipped)
+    (applied, failed)
 }
 
 /// Org id from `manifest.hurl` with a fallback default.
@@ -921,14 +920,6 @@ mod tests {
         let skip = vec!["08_rls_isolation.hurl".to_string()];
         let reason = skip_reason("08_rls_isolation.hurl", &skip).unwrap();
         assert!(!reason.contains("manifest"), "got: {reason}");
-    }
-
-    #[test]
-    fn plain_postgres_skips_basejump_and_pgmq_migrations_only() {
-        assert!(is_skipped_migration("0001_basejump_install.sql"));
-        assert!(is_skipped_migration("0003_pgmq_setup.sql"));
-        assert!(!is_skipped_migration("0002_platform_schema.sql"));
-        assert!(!is_skipped_migration("0066_recruiting_candidate.sql"));
     }
 
     #[test]
