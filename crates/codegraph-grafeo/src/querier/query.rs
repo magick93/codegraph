@@ -1,9 +1,30 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use codegraph_core::error::GraphError;
 
 use crate::conversions::RowReader;
 use crate::engine::GrafeoEngine;
+
+/// Process-wide count of GQL executions (issue #389 instrumentation).
+/// Every helper in this module funnels through `query_gql`/`query_gql_params`,
+/// so this measures the true query volume of any graph read path.
+static QUERY_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Total GQL executions since process start (or the last `reset_query_count`).
+// Read/reset are test-only today (composition query-count pin, issue #389);
+// the counter itself is live in production builds.
+#[allow(dead_code)]
+pub(crate) fn query_count() -> u64 {
+    QUERY_COUNT.load(Ordering::Relaxed)
+}
+
+/// Zero the GQL execution counter (used by the composition query-count pin
+/// test to measure a single `get_composition_tree` call in isolation).
+#[allow(dead_code)]
+pub(crate) fn reset_query_count() {
+    QUERY_COUNT.store(0, Ordering::Relaxed);
+}
 
 /// Query result wrapper holding columns and rows from Grafeo.
 pub(super) struct QResult {
@@ -12,6 +33,7 @@ pub(super) struct QResult {
 }
 
 pub(super) fn query_gql(engine: &GrafeoEngine, gql: &str) -> Result<QResult, GraphError> {
+    QUERY_COUNT.fetch_add(1, Ordering::Relaxed);
     let session = engine.db().session();
     let result = session
         .execute(gql)
@@ -30,6 +52,7 @@ pub(super) fn query_gql_params(
     gql: &str,
     params: HashMap<String, grafeo::Value>,
 ) -> Result<QResult, GraphError> {
+    QUERY_COUNT.fetch_add(1, Ordering::Relaxed);
     let result = engine
         .db()
         .execute_with_params(gql, params)

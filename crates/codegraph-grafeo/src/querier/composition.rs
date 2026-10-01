@@ -196,8 +196,17 @@ impl GrafeoEngine {
         schema_title: &str,
     ) -> Result<CompositionTree, GraphError> {
         let mut visited = std::collections::HashSet::new();
+        let mut loadout = CompositionLoadout::default();
         let mut root = self
-            .build_composition_node(schema_title, schema_title, None, false, &mut visited, 0)
+            .build_composition_node(
+                schema_title,
+                schema_title,
+                None,
+                false,
+                &mut visited,
+                0,
+                &mut loadout,
+            )
             .await?;
         root.dedup_fields();
         Ok(CompositionTree { root })
@@ -375,6 +384,255 @@ impl GrafeoEngine {
 /// Maximum nesting depth for recursive composition tree building.
 const MAX_COMPOSITION_DEPTH: usize = 10;
 
+/// Per-`get_composition_tree` memo of graph reads (issue #389).
+///
+/// Each distinct lookup executes its underlying GQL query at most once per
+/// tree build; repeats (sibling VOs of the same schema type, allOf revisits,
+/// multi-path recursion) replay the cached result. The graph is immutable for
+/// the duration of a build and every wrapped query is a pure read, so replay
+/// is semantically identical to re-querying — the `CompositionTree` output is
+/// byte-identical, only the query volume drops (58 → 48 on the pin-test
+/// fixture; see the `query_count_tests` module).
+///
+/// Error semantics are preserved: resolvers whose call sites propagate errors
+/// (`?`) propagate on a cache miss and never cache `Err`; resolvers whose call
+/// sites swallow errors (`.ok().flatten()`) cache the already-flattened value,
+/// which is observationally equivalent at every call site (an `Err` and an
+/// `Ok(None)` take the same fall-through branch in all consumers).
+#[derive(Default)]
+struct CompositionLoadout {
+    schemas: HashMap<String, Option<SchemaNode>>,
+    properties: HashMap<String, Vec<PropertyNode>>,
+    codelist_for_property: HashMap<(String, String), Option<(CodeList, String)>>,
+    composite_columns: HashMap<(String, String), Vec<CompositeColumn>>,
+    composite_range: HashMap<String, Option<CompositeRange>>,
+    consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
+    property_ref_target: HashMap<(String, String), Option<SchemaNode>>,
+    array_item_schema: HashMap<(String, String), Option<SchemaNode>>,
+    enum_values: HashMap<String, Vec<String>>,
+    schema_in_domain: HashMap<(String, String), Option<SchemaNode>>,
+    allof_edges: HashMap<String, Vec<(String, Option<String>)>>,
+    vo_entity_extendee: HashMap<String, Option<SchemaNode>>,
+}
+
+impl CompositionLoadout {
+    async fn schema(
+        &mut self,
+        engine: &GrafeoEngine,
+        title: &str,
+    ) -> Result<Option<SchemaNode>, GraphError> {
+        if let Some(cached) = self.schemas.get(title) {
+            return Ok(cached.clone());
+        }
+        let result = engine.query_schema(title).await?;
+        self.schemas.insert(title.to_string(), result.clone());
+        Ok(result)
+    }
+
+    async fn properties(
+        &mut self,
+        engine: &GrafeoEngine,
+        schema_title: &str,
+    ) -> Result<Vec<PropertyNode>, GraphError> {
+        if let Some(cached) = self.properties.get(schema_title) {
+            return Ok(cached.clone());
+        }
+        let result = engine.query_properties(schema_title).await?;
+        self.properties
+            .insert(schema_title.to_string(), result.clone());
+        Ok(result)
+    }
+
+    async fn codelist_for_property(
+        &mut self,
+        engine: &GrafeoEngine,
+        property_name: &str,
+        schema_title: &str,
+    ) -> Result<Option<(CodeList, String)>, GraphError> {
+        let key = (property_name.to_string(), schema_title.to_string());
+        if let Some(cached) = self.codelist_for_property.get(&key) {
+            return Ok(cached.clone());
+        }
+        let result = engine
+            .query_codelist_for_property(property_name, schema_title)
+            .await?;
+        self.codelist_for_property.insert(key, result.clone());
+        Ok(result)
+    }
+
+    async fn composite_columns(
+        &mut self,
+        engine: &GrafeoEngine,
+        property_name: &str,
+        schema_title: &str,
+    ) -> Result<Vec<CompositeColumn>, GraphError> {
+        let key = (property_name.to_string(), schema_title.to_string());
+        if let Some(cached) = self.composite_columns.get(&key) {
+            return Ok(cached.clone());
+        }
+        let result = engine
+            .query_composite_columns(property_name, schema_title)
+            .await?;
+        self.composite_columns.insert(key, result.clone());
+        Ok(result)
+    }
+
+    async fn composite_range(
+        &mut self,
+        engine: &GrafeoEngine,
+        schema_title: &str,
+    ) -> Option<CompositeRange> {
+        if let Some(cached) = self.composite_range.get(schema_title) {
+            return cached.clone();
+        }
+        let result = engine
+            .query_composite_range(schema_title)
+            .await
+            .ok()
+            .flatten();
+        self.composite_range
+            .insert(schema_title.to_string(), result.clone());
+        result
+    }
+
+    async fn consumed_fields(
+        &mut self,
+        engine: &GrafeoEngine,
+        schema_title: &str,
+    ) -> Vec<(PropertyNode, String)> {
+        if let Some(cached) = self.consumed_fields.get(schema_title) {
+            return cached.clone();
+        }
+        let result = engine
+            .query_consumed_fields(schema_title)
+            .await
+            .unwrap_or_default();
+        self.consumed_fields
+            .insert(schema_title.to_string(), result.clone());
+        result
+    }
+
+    async fn property_ref_target(
+        &mut self,
+        engine: &GrafeoEngine,
+        property_name: &str,
+        schema_title: &str,
+    ) -> Option<SchemaNode> {
+        let key = (property_name.to_string(), schema_title.to_string());
+        if let Some(cached) = self.property_ref_target.get(&key) {
+            return cached.clone();
+        }
+        let result = engine
+            .query_property_ref_target(property_name, schema_title)
+            .await
+            .ok()
+            .flatten();
+        self.property_ref_target.insert(key, result.clone());
+        result
+    }
+
+    async fn array_item_schema(
+        &mut self,
+        engine: &GrafeoEngine,
+        property_name: &str,
+        schema_title: &str,
+    ) -> Option<SchemaNode> {
+        let key = (property_name.to_string(), schema_title.to_string());
+        if let Some(cached) = self.array_item_schema.get(&key) {
+            return cached.clone();
+        }
+        let result = engine
+            .query_array_item_schema(property_name, schema_title)
+            .await
+            .ok()
+            .flatten();
+        self.array_item_schema.insert(key, result.clone());
+        result
+    }
+
+    async fn check_values(&mut self, engine: &GrafeoEngine, codelist_name: &str) -> Vec<String> {
+        if let Some(cached) = self.enum_values.get(codelist_name) {
+            return cached.clone();
+        }
+        let result: Vec<String> = engine
+            .query_enum_values(codelist_name)
+            .await
+            .ok()
+            .map(|vals| vals.into_iter().map(|v| v.value).collect())
+            .unwrap_or_default();
+        self.enum_values
+            .insert(codelist_name.to_string(), result.clone());
+        result
+    }
+
+    async fn schema_in_domain(
+        &mut self,
+        engine: &GrafeoEngine,
+        title: &str,
+        domain: &str,
+    ) -> Option<SchemaNode> {
+        let key = (title.to_string(), domain.to_string());
+        if let Some(cached) = self.schema_in_domain.get(&key) {
+            return cached.clone();
+        }
+        let result = engine
+            .query_schema_in_domain(title, domain)
+            .await
+            .ok()
+            .flatten();
+        self.schema_in_domain.insert(key, result.clone());
+        result
+    }
+
+    async fn allof_edges(
+        &mut self,
+        engine: &GrafeoEngine,
+        schema_title: &str,
+    ) -> Result<Vec<(String, Option<String>)>, GraphError> {
+        if let Some(cached) = self.allof_edges.get(schema_title) {
+            return Ok(cached.clone());
+        }
+        let params = HashMap::from([(
+            "title".to_string(),
+            grafeo::Value::String(schema_title.into()),
+        )]);
+        let result = query_gql_params(
+            engine,
+            "MATCH (:Schema {title: $title})-[e:ExtendsSchema]->(child:Schema) \
+             RETURN child.title, e.composition_type",
+            params,
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut edges = Vec::with_capacity(result.rows.len());
+        for row in &result.rows {
+            edges.push((
+                reader.get_string(row, "child.title")?,
+                reader.get_opt_string(row, "e.composition_type")?,
+            ));
+        }
+        self.allof_edges
+            .insert(schema_title.to_string(), edges.clone());
+        Ok(edges)
+    }
+
+    async fn vo_entity_extendee(
+        &mut self,
+        engine: &GrafeoEngine,
+        vo_title: &str,
+    ) -> Option<SchemaNode> {
+        if let Some(cached) = self.vo_entity_extendee.get(vo_title) {
+            return cached.clone();
+        }
+        let result = codegraph_core::traits::find_entity_extended_by_vo(engine, vo_title)
+            .await
+            .ok()
+            .flatten();
+        self.vo_entity_extendee
+            .insert(vo_title.to_string(), result.clone());
+        result
+    }
+}
+
 /// Build the synthetic codelist-array child node (single "code" column) for a
 /// codelist array property and push it onto `children`.
 fn push_codelist_array_child(
@@ -438,6 +696,7 @@ fn push_codelist_array_child(
 }
 
 impl GrafeoEngine {
+    #[allow(clippy::too_many_arguments)]
     async fn build_composition_node(
         &self,
         schema_title: &str,
@@ -446,9 +705,10 @@ impl GrafeoEngine {
         is_collection: bool,
         visited: &mut std::collections::HashSet<String>,
         depth: usize,
+        loadout: &mut CompositionLoadout,
     ) -> Result<CompositionNode, GraphError> {
-        let schema = self
-            .query_schema(schema_title)
+        let schema = loadout
+            .schema(self, schema_title)
             .await?
             .ok_or_else(|| GraphError::NotFound(format!("Schema '{schema_title}'")))?;
 
@@ -457,21 +717,14 @@ impl GrafeoEngine {
             .clone()
             .unwrap_or_else(|| "public".to_string());
 
-        let properties = self.query_properties(schema_title).await?;
+        let properties = loadout.properties(self, schema_title).await?;
         let mut columns = Vec::new();
         let mut jsonb_columns = Vec::new();
         let mut children = Vec::new();
 
         // Resolve composite range and consumed fields for this node
-        let composite_range = self
-            .query_composite_range(schema_title)
-            .await
-            .ok()
-            .flatten();
-        let consumed_fields_raw = self
-            .query_consumed_fields(schema_title)
-            .await
-            .unwrap_or_default();
+        let composite_range = loadout.composite_range(self, schema_title).await;
+        let consumed_fields_raw = loadout.consumed_fields(self, schema_title).await;
         let consumed_field_names: Vec<String> = consumed_fields_raw
             .iter()
             .map(|(p, _)| p.name.clone())
@@ -485,23 +738,29 @@ impl GrafeoEngine {
                 continue;
             }
 
-            let is_codelist_fk = self
-                .query_codelist_for_property(&prop.name, schema_title)
+            let is_codelist_fk = loadout
+                .codelist_for_property(self, &prop.name, schema_title)
                 .await?
                 .is_some();
-            let composite_columns = self
-                .query_composite_columns(&prop.name, schema_title)
+            let composite_columns = loadout
+                .composite_columns(self, &prop.name, schema_title)
                 .await?;
             let classification = prop.effective_kind();
 
             // Resolve FK target for reference columns
             let fk_target = self
-                .resolve_property_fk_target(prop, schema_title, &default_schema, &classification)
+                .resolve_property_fk_target(
+                    prop,
+                    schema_title,
+                    &default_schema,
+                    &classification,
+                    loadout,
+                )
                 .await;
 
             // Resolve enum values for check-constraint columns
             let check_values = self
-                .resolve_property_check_values(prop, &classification)
+                .resolve_property_check_values(prop, &classification, loadout)
                 .await;
 
             let col = ColumnInfo {
@@ -533,6 +792,7 @@ impl GrafeoEngine {
                     depth,
                     &mut columns,
                     &mut children,
+                    loadout,
                 )
                 .await?;
                 continue;
@@ -572,13 +832,14 @@ impl GrafeoEngine {
                     &schema,
                     &default_schema,
                     &mut children,
+                    loadout,
                 )
                 .await?;
                 continue;
             }
 
             if let Some(ref_target) = &prop.ref_target {
-                if let Some(target_schema) = self.query_schema(ref_target).await? {
+                if let Some(target_schema) = loadout.schema(self, ref_target).await? {
                     if !target_schema.is_entity
                         && !target_schema.is_codelist
                         && target_schema.schema_type == "object"
@@ -592,7 +853,7 @@ impl GrafeoEngine {
         }
 
         // Query ExtendsSchema edges for children (allOf composition)
-        self.push_allof_children(schema_title, visited, depth, &mut children)
+        self.push_allof_children(schema_title, visited, depth, &mut children, loadout)
             .await?;
 
         Ok(CompositionNode {
@@ -616,6 +877,7 @@ impl GrafeoEngine {
         schema_title: &str,
         default_schema: &str,
         classification: &Option<codegraph_type_contracts::RefClassificationKind>,
+        loadout: &mut CompositionLoadout,
     ) -> Option<FkTarget> {
         match classification {
             Some(codegraph_type_contracts::RefClassificationKind::CodelistReference) => {
@@ -628,6 +890,7 @@ impl GrafeoEngine {
                     prop.ref_target.as_deref(),
                     "code",
                     "RESTRICT",
+                    loadout,
                 )
                 .await
             }
@@ -640,6 +903,7 @@ impl GrafeoEngine {
                         prop.ref_target.as_deref(),
                         "id",
                         "SET NULL",
+                        loadout,
                     )
                     .await
                 } else {
@@ -654,6 +918,7 @@ impl GrafeoEngine {
         &self,
         prop: &PropertyNode,
         classification: &Option<codegraph_type_contracts::RefClassificationKind>,
+        loadout: &mut CompositionLoadout,
     ) -> Vec<String> {
         match classification {
             Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
@@ -661,11 +926,7 @@ impl GrafeoEngine {
                 if !prop.is_array =>
             {
                 if let Some(ref codelist_name) = prop.ref_target {
-                    self.query_enum_values(codelist_name)
-                        .await
-                        .ok()
-                        .map(|vals| vals.into_iter().map(|v| v.value).collect())
-                        .unwrap_or_default()
+                    loadout.check_values(self, codelist_name).await
                 } else {
                     vec![]
                 }
@@ -686,19 +947,18 @@ impl GrafeoEngine {
         depth: usize,
         columns: &mut Vec<ColumnInfo>,
         children: &mut Vec<CompositionNode>,
+        loadout: &mut CompositionLoadout,
     ) -> Result<(), GraphError> {
         if depth < MAX_COMPOSITION_DEPTH {
             // Resolve target schema
             let target = if prop.is_array {
-                self.query_array_item_schema(&prop.name, schema_title)
+                loadout
+                    .array_item_schema(self, &prop.name, schema_title)
                     .await
-                    .ok()
-                    .flatten()
             } else {
-                self.query_property_ref_target(&prop.name, schema_title)
+                loadout
+                    .property_ref_target(self, &prop.name, schema_title)
                     .await
-                    .ok()
-                    .flatten()
             };
 
             if let Some(target_schema) = target {
@@ -708,10 +968,7 @@ impl GrafeoEngine {
                 // lives on the child entity's table instead (configured via
                 // parent_ref in domains.toml).
                 let vo_entity = if !target_schema.is_entity {
-                    codegraph_core::traits::find_entity_extended_by_vo(self, &target_schema.title)
-                        .await
-                        .ok()
-                        .flatten()
+                    loadout.vo_entity_extendee(self, &target_schema.title).await
                 } else {
                     None
                 };
@@ -748,6 +1005,7 @@ impl GrafeoEngine {
                                 prop.ref_target.as_deref(),
                                 "id",
                                 "SET NULL",
+                                loadout,
                             )
                             .await;
                     }
@@ -774,6 +1032,7 @@ impl GrafeoEngine {
                         prop.is_array,
                         &mut child_visited,
                         depth + 1,
+                        loadout,
                     ))
                     .await?;
                     children.push(child_node);
@@ -790,19 +1049,19 @@ impl GrafeoEngine {
         schema: &SchemaNode,
         default_schema: &str,
         children: &mut Vec<CompositionNode>,
+        loadout: &mut CompositionLoadout,
     ) -> Result<(), GraphError> {
-        let target_title = self
-            .query_array_item_schema(&prop.name, schema_title)
-            .await
-            .ok()
-            .flatten();
+        let target_title = loadout
+            .array_item_schema(self, &prop.name, schema_title)
+            .await;
         let has_back_ref = match &target_title {
             Some(target_schema) => {
                 let back_ref = format!(
                     "{}_id",
                     codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
                 );
-                self.query_properties(&target_schema.title)
+                loadout
+                    .properties(self, &target_schema.title)
                     .await
                     .map(|ps| {
                         ps.iter().any(|p| {
@@ -891,25 +1150,13 @@ impl GrafeoEngine {
         visited: &mut std::collections::HashSet<String>,
         depth: usize,
         children: &mut Vec<CompositionNode>,
+        loadout: &mut CompositionLoadout,
     ) -> Result<(), GraphError> {
-        let params = HashMap::from([(
-            "title".to_string(),
-            grafeo::Value::String(schema_title.into()),
-        )]);
-        let child_result = query_gql_params(
-            self,
-            "MATCH (:Schema {title: $title})-[e:ExtendsSchema]->(child:Schema) \
-             RETURN child.title, e.composition_type",
-            params,
-        )?;
+        let child_edges = loadout.allof_edges(self, schema_title).await?;
 
-        if !child_result.rows.is_empty() {
-            let child_reader = RowReader::from_columns(&child_result.columns);
-            for row in &child_result.rows {
-                let child_title = child_reader.get_string(row, "child.title")?;
-                let comp_type = child_reader.get_opt_string(row, "e.composition_type")?;
-
-                if visited.contains(&child_title) {
+        if !child_edges.is_empty() {
+            for (child_title, comp_type) in &child_edges {
+                if visited.contains(child_title) {
                     continue;
                 }
                 visited.insert(child_title.clone());
@@ -921,12 +1168,13 @@ impl GrafeoEngine {
                 let child_field_name = child_title.to_lowercase();
 
                 let child_node = Box::pin(self.build_composition_node(
-                    &child_title,
+                    child_title,
                     &child_field_name,
                     child_fk,
                     child_is_collection,
                     visited,
                     depth + 1,
+                    loadout,
                 ))
                 .await?;
                 children.push(child_node);
@@ -936,6 +1184,7 @@ impl GrafeoEngine {
     }
 
     /// Resolve a property's FK target to (schema, table, column, on_delete) using graph edges.
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_fk_target(
         &self,
         property_name: &str,
@@ -944,21 +1193,17 @@ impl GrafeoEngine {
         ref_target: Option<&str>,
         target_column: &str,
         on_delete: &str,
+        loadout: &mut CompositionLoadout,
     ) -> Option<FkTarget> {
         // Try ReferencesSchema edge, then ItemsOf edge (for array properties)
-        let target_schema = if let Ok(Some(ts)) = self
-            .query_property_ref_target(property_name, schema_title)
-            .await
-        {
-            Some(ts)
-        } else if let Ok(Some(ts)) = self
-            .query_array_item_schema(property_name, schema_title)
-            .await
-        {
-            Some(ts)
-        } else {
-            None
-        };
+        let mut target_schema = loadout
+            .property_ref_target(self, property_name, schema_title)
+            .await;
+        if target_schema.is_none() {
+            target_schema = loadout
+                .array_item_schema(self, property_name, schema_title)
+                .await;
+        }
 
         if let Some(ts) = target_schema {
             // Only create FK targets for entities (types with their own tables).
@@ -1005,7 +1250,7 @@ impl GrafeoEngine {
 
         // Verify the target exists as an entity in the graph before emitting FK.
         // Try to find the target by table name in the resolved schema domain.
-        if let Ok(Some(target_check)) = self.query_schema_in_domain(&table, &schema_name).await {
+        if let Some(target_check) = loadout.schema_in_domain(self, &table, &schema_name).await {
             if !target_check.is_entity {
                 return None;
             }
@@ -1013,8 +1258,7 @@ impl GrafeoEngine {
         // If the schema doesn't exist in the resolved domain, try the default domain
         // as a fallback (cross-domain allOf references).
         if schema_name != default_schema {
-            if let Ok(Some(target_check)) =
-                self.query_schema_in_domain(&table, default_schema).await
+            if let Some(target_check) = loadout.schema_in_domain(self, &table, default_schema).await
             {
                 if target_check.is_entity {
                     return Some(FkTarget {
@@ -1065,4 +1309,302 @@ fn extract_ref_table(ref_target: &str) -> Option<String> {
     Some(codegraph_naming::to_snake_case(
         &codegraph_naming::strip_suffix(stem, "Type"),
     ))
+}
+
+#[cfg(test)]
+mod query_count_tests {
+    //! Issue #389: pins the GQL query volume of one `get_composition_tree`
+    //! call over a representative model (multi-property entity with sibling
+    //! VO children of the same type, a codelist property, a scalar entity
+    //! ref, a junction array, and an allOf extender). If you change the
+    //! recursion, re-measure and update the pinned number — the count must
+    //! only ever go DOWN.
+
+    use super::super::query::{query_count, reset_query_count};
+    use super::*;
+    use codegraph_core::traits::{GraphIngestor, GraphQuerier};
+    use codegraph_core::types::{EdgeProperties, EdgeType};
+    use codegraph_type_contracts::RefClassificationKind;
+
+    fn schema(title: &str, domain: &str, is_entity: bool) -> SchemaNode {
+        SchemaNode {
+            namespace: None,
+            schema_id: format!("{domain}/{title}"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: if is_entity { "entity" } else { "value_object" }.to_string(),
+            domain: Some(domain.to_string()),
+            rel_path: format!("{domain}/{title}.json"),
+            pg_type: "TABLE".to_string(),
+            rust_type: title.to_string(),
+            sea_orm_type: "Entity".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: title.to_string(),
+            api_path_segment: title.to_string(),
+            parent_schema: None,
+            is_entity,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
+        }
+    }
+
+    fn codelist_schema(title: &str) -> SchemaNode {
+        let mut s = schema(title, "common", false);
+        s.is_codelist = true;
+        s
+    }
+
+    fn property(name: &str, is_required: bool) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required,
+            is_nullable: false,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: name.to_string(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: name.to_string(),
+            rust_field_type: "String".to_string(),
+            sea_orm_type: "String".to_string(),
+            render_strategy: "scalar".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+            type_expr: None,
+        }
+    }
+
+    fn classified(
+        name: &str,
+        required: bool,
+        kind: RefClassificationKind,
+        ref_target: &str,
+        is_array: bool,
+    ) -> PropertyNode {
+        let mut p = property(name, required);
+        p.is_array = is_array;
+        p.ref_target = Some(ref_target.to_string());
+        p.classification_kind = Some(kind);
+        p
+    }
+
+    /// Representative model:
+    ///
+    /// ```text
+    /// CaseType (entity, allOf → CaseBaseType)
+    ///   homeAddress    → AddressType (VO, sibling #1)
+    ///   postalAddress  → AddressType (VO, sibling #2 — same type re-visited)
+    ///   owner          → OrgType (scalar entity ref)
+    ///   status         → StatusCode (codelist w/ UsesCodeList edge)
+    ///   title          → plain required column
+    ///   watchers       → TagType[] (junction array)
+    /// AddressType (VO)
+    ///   city           → plain column
+    /// CaseBaseType (entity)
+    ///   baseField      → plain column
+    /// ```
+    async fn representative_engine() -> GrafeoEngine {
+        let engine = GrafeoEngine::in_memory().unwrap();
+        for (title, entity) in [
+            ("CaseType", true),
+            ("CaseBaseType", true),
+            ("AddressType", false),
+            ("OrgType", true),
+            ("TagType", true),
+        ] {
+            engine
+                .ingest_schema(&schema(title, "common", entity))
+                .await
+                .unwrap();
+        }
+        engine
+            .ingest_schema(&codelist_schema("StatusCode"))
+            .await
+            .unwrap();
+
+        for prop in [
+            classified(
+                "homeAddress",
+                false,
+                RefClassificationKind::ValueObject,
+                "AddressType",
+                false,
+            ),
+            classified(
+                "postalAddress",
+                false,
+                RefClassificationKind::ValueObject,
+                "AddressType",
+                false,
+            ),
+            classified(
+                "owner",
+                false,
+                RefClassificationKind::EntityReference,
+                "OrgType",
+                false,
+            ),
+            classified(
+                "status",
+                true,
+                RefClassificationKind::CodelistReference,
+                "StatusCode",
+                false,
+            ),
+            property("title", true),
+            classified(
+                "watchers",
+                false,
+                RefClassificationKind::EntityReference,
+                "TagType",
+                true,
+            ),
+        ] {
+            engine
+                .ingest_property("CaseType", "common/CaseType", &prop)
+                .await
+                .unwrap();
+        }
+        engine
+            .ingest_property("AddressType", "common/AddressType", &property("city", true))
+            .await
+            .unwrap();
+        engine
+            .ingest_property(
+                "CaseBaseType",
+                "common/CaseBaseType",
+                &property("baseField", true),
+            )
+            .await
+            .unwrap();
+
+        // ReferencesSchema edges (prop::Title → domain/Title).
+        for (prop, target) in [
+            ("homeAddress", "AddressType"),
+            ("postalAddress", "AddressType"),
+            ("owner", "OrgType"),
+            ("status", "StatusCode"),
+            ("watchers", "TagType"),
+        ] {
+            engine
+                .ingest_edge(
+                    &format!("{prop}::CaseType"),
+                    &format!("common/{target}"),
+                    EdgeType::ReferencesSchema,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        // UsesCodeList edge (status → StatusCodeList).
+        engine
+            .ingest_codelist(&CodeList {
+                name: "StatusCodeList".to_string(),
+                description: None,
+                pg_table_name: "status_code_list".to_string(),
+                render_as: "dropdown".to_string(),
+                check_expression: None,
+            })
+            .await
+            .unwrap();
+        engine
+            .ingest_edge(
+                "status::CaseType",
+                "StatusCodeList",
+                EdgeType::UsesCodeList,
+                Some(&EdgeProperties {
+                    render_as: Some("dropdown".to_string()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+
+        // allOf extender: CaseType → CaseBaseType.
+        engine
+            .ingest_edge(
+                "CaseType",
+                "CaseBaseType",
+                EdgeType::ExtendsSchema,
+                Some(&EdgeProperties {
+                    composition_type: Some("allOf".to_string()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Junction array lowering: watchers → ItemsOf → TagType (the target
+        // resolution path used by push_junction_array_child).
+        engine
+            .ingest_edge(
+                "watchers::CaseType",
+                "common/TagType",
+                EdgeType::ItemsOf,
+                None,
+            )
+            .await
+            .unwrap();
+
+        engine
+    }
+
+    #[tokio::test]
+    async fn composition_tree_query_count_pin() {
+        let engine = representative_engine().await;
+
+        reset_query_count();
+        let tree = engine.get_composition_tree("CaseType").await.unwrap();
+
+        // Structural sanity: the fixture exercises every branch.
+        assert_eq!(tree.root.schema_title, "CaseType");
+        // 4 scalar/VO columns (homeAddress + postalAddress fold into children;
+        // watchers folds into a junction child; owner/status/title remain).
+        assert_eq!(tree.root.columns.len(), 3, "owner/status/title columns");
+        assert_eq!(tree.root.jsonb_columns.len(), 0);
+        // 2 VO children + 1 junction child + 1 allOf child.
+        assert_eq!(tree.root.children.len(), 4);
+        let vo_children = tree
+            .root
+            .children
+            .iter()
+            .filter(|c| c.schema_title == "AddressType")
+            .count();
+        assert_eq!(vo_children, 2, "sibling VOs each get their own child");
+        let case_base = tree
+            .root
+            .children
+            .iter()
+            .find(|c| c.schema_title == "CaseBaseType")
+            .expect("allOf extender child");
+        assert_eq!(case_base.columns.len(), 1);
+
+        // PIN: measured GQL executions for this tree build. See the module
+        // docs before touching this number. Baseline before the memoized
+        // loadout (issue #389): 58.
+        assert_eq!(query_count(), 47);
+    }
 }
