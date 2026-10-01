@@ -65,9 +65,9 @@ pub use mox::{
     MoxParam, MoxVocabularyNode,
 };
 pub use namespace::{
-    derive_namespace_depends, disambiguate_schema_ids, namespace_module_path,
-    namespace_module_rust, qualified_schema_id, topological_namespace_order, NamespaceImport,
-    NamespaceNode,
+    derive_namespace_depends, descendants, disambiguate_schema_ids, namespace_module_path,
+    namespace_module_rust, qualified_schema_id, topological_namespace_order, topological_order,
+    NamespaceImport, NamespaceNode,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,

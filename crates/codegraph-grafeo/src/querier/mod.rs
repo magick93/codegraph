@@ -6,22 +6,22 @@ mod ifml;
 mod query;
 mod schema;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
-    topological_namespace_order, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
-    ApiResourceNode, AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, CompositionTree, ConditionNode, DataBindingResolution,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    descendants, topological_namespace_order, topological_order, ActionNode, ActorNode,
+    ActorPolicyNode, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode, CapabilityNode,
+    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
+    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode,
+    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use self::query::{query_gql, query_gql_params, query_many, query_many_params};
@@ -63,55 +63,20 @@ impl GrafeoEngine {
             "MATCH (a:Schema)-[:DependsOn]->(b:Schema) RETURN a.title, b.title",
         )?;
         let edge_reader = RowReader::from_columns(&edge_result.columns);
-
-        // Build adjacency and in-degree
-        let mut in_degree: HashMap<String, usize> = HashMap::new();
-        let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
-
-        for title in &all_titles {
-            in_degree.insert(title.clone(), 0);
-            adjacency.entry(title.clone()).or_default();
-        }
-
-        for row in &edge_result.rows {
-            let from = edge_reader.get_string(row, "a.title")?;
-            let to = edge_reader.get_string(row, "b.title")?;
-            // from depends on to, so to must come first
-            adjacency.entry(to.clone()).or_default().push(from.clone());
-            *in_degree.entry(from).or_default() += 1;
-        }
-
-        // Kahn's algorithm
-        let mut queue: VecDeque<String> = in_degree
+        let edges: Vec<(String, String)> = edge_result
+            .rows
             .iter()
-            .filter(|(_, &deg)| deg == 0)
-            .map(|(t, _)| t.clone())
-            .collect();
-        queue.make_contiguous().sort(); // deterministic ordering
+            .map(|row| {
+                Ok((
+                    edge_reader.get_string(row, "a.title")?,
+                    edge_reader.get_string(row, "b.title")?,
+                ))
+            })
+            .collect::<Result<Vec<(String, String)>, GraphError>>()?;
 
-        let mut order = Vec::new();
-        while let Some(current) = queue.pop_front() {
-            order.push(current.clone());
-            if let Some(dependents) = adjacency.get(&current) {
-                for dep in dependents {
-                    if let Some(deg) = in_degree.get_mut(dep) {
-                        *deg -= 1;
-                        if *deg == 0 {
-                            queue.push_back(dep.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Append any remaining (cycles)
-        for title in &all_titles {
-            if !order.contains(title) {
-                order.push(title.clone());
-            }
-        }
-
-        Ok(order)
+        // Pure ordering (dependency before dependent, lexicographic
+        // tie-break); a dependency cycle is an error naming the members.
+        topological_order(&all_titles, &edges).map_err(GraphError::Query)
     }
 
     pub(super) async fn query_all_schema_references(
@@ -193,15 +158,7 @@ impl GrafeoEngine {
                     ))
                 })
                 .collect::<Result<Vec<(String, String)>, GraphError>>()?;
-            let mut frontier = vec![fqn.to_string()];
-            while let Some(current) = frontier.pop() {
-                for (child, parent) in &edges {
-                    if parent == &current && !wanted.contains(child) {
-                        wanted.push(child.clone());
-                        frontier.push(child.clone());
-                    }
-                }
-            }
+            wanted.extend(descendants(fqn, &edges));
         }
         wanted.sort();
 
