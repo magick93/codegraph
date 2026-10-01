@@ -175,17 +175,9 @@ impl MockEngine {
     fn namespace_closure(&self, fqn: &str, recursive: bool) -> Vec<String> {
         let mut wanted: Vec<String> = vec![fqn.to_string()];
         if recursive {
-            let edges = self.namespace_parent_edges.lock().unwrap();
             // Walk down from fqn: children are edges (child → parent).
-            let mut frontier: Vec<String> = vec![fqn.to_string()];
-            while let Some(current) = frontier.pop() {
-                for (child, parent) in edges.iter() {
-                    if parent == &current && !wanted.contains(child) {
-                        wanted.push(child.clone());
-                        frontier.push(child.clone());
-                    }
-                }
-            }
+            let edges = self.namespace_parent_edges.lock().unwrap();
+            wanted.extend(descendants(fqn, &edges));
         }
         wanted
     }

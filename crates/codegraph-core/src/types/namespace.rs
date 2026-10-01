@@ -91,34 +91,53 @@ pub fn disambiguate_schema_ids(entries: &[(Option<String>, String, String)]) -> 
 /// (issue #267, `GraphQuerier::namespace_generation_order`).
 ///
 /// An import edge `(a, b)` means `a` imports `b`, so `b` must be ordered
-/// BEFORE `a`. Kahn's algorithm with a **lexicographic tie-break on FQN**
-/// makes the output fully deterministic for the same input set. A cycle is
-/// an error naming the cycle members (sorted, so the message is stable
-/// too).
+/// BEFORE `a`. Delegates to [`topological_order`]; a cycle is an error
+/// naming the cycle members with the namespace-specific prefix, e.g.
+/// `namespace import cycle detected involving: a, b, c`.
 pub fn topological_namespace_order(
     fqns: &[String],
     imports: &[(String, String)],
 ) -> Result<Vec<String>, String> {
+    topological_order(fqns, imports).map_err(|err| format!("namespace import {err}"))
+}
+
+/// Deterministic topological order over an arbitrary dependency graph
+/// (issue #388: pure graph algorithms live in codegraph-core, testable
+/// without a database).
+///
+/// A dependency edge `(from, to)` means `from` depends on `to`, so `to`
+/// must be ordered BEFORE `from`. Kahn's algorithm with a **lexicographic
+/// tie-break** makes the output fully deterministic for the same input
+/// set. Nodes not mentioned by any edge (orphans) are included, in
+/// lexicographic position. Edges whose endpoints are not in `nodes` are
+/// ignored; duplicate edges are deduplicated so in-degree is not
+/// double-counted; self-edges are skipped. A cycle is an error naming the
+/// cycle members (sorted, so the message is stable too):
+/// `cycle detected involving: a, b, c`.
+pub fn topological_order(
+    nodes: &[String],
+    edges: &[(String, String)],
+) -> Result<Vec<String>, String> {
     let mut in_degree: HashMap<&str, usize> = HashMap::new();
     let mut dependents: HashMap<&str, BTreeSet<&str>> = HashMap::new();
-    for fqn in fqns {
-        in_degree.entry(fqn.as_str()).or_insert(0);
+    for node in nodes {
+        in_degree.entry(node.as_str()).or_insert(0);
     }
-    // Deduplicate edges: a repeated import must not double-count in-degree.
-    let mut edges: BTreeSet<(&str, &str)> = BTreeSet::new();
-    for (from, to) in imports {
+    // Deduplicate edges: a repeated dependency must not double-count in-degree.
+    let mut unique: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for (from, to) in edges {
         if from == to {
             continue;
         }
-        if !fqns.iter().any(|f| f.as_str() == from.as_str())
-            || !fqns.iter().any(|f| f.as_str() == to.as_str())
+        if !nodes.iter().any(|n| n.as_str() == from.as_str())
+            || !nodes.iter().any(|n| n.as_str() == to.as_str())
         {
             continue;
         }
-        edges.insert((from.as_str(), to.as_str()));
+        unique.insert((from.as_str(), to.as_str()));
     }
-    for (from, to) in &edges {
-        // `from` imports `to` ⇒ `to` first; `from`'s in-degree grows.
+    for (from, to) in &unique {
+        // `from` depends on `to` ⇒ `to` first; `from`'s in-degree grows.
         *in_degree.entry(from).or_insert(0) += 1;
         dependents.entry(to).or_default().insert(from);
     }
@@ -127,9 +146,9 @@ pub fn topological_namespace_order(
     let mut ready: BTreeSet<&str> = in_degree
         .iter()
         .filter(|(_, &deg)| deg == 0)
-        .map(|(fqn, _)| *fqn)
+        .map(|(node, _)| *node)
         .collect();
-    let mut order = Vec::with_capacity(fqns.len());
+    let mut order = Vec::with_capacity(nodes.len());
     while let Some(current) = ready.pop_first() {
         order.push(current.to_string());
         if let Some(deps) = dependents.get(current) {
@@ -148,16 +167,47 @@ pub fn topological_namespace_order(
         let ordered: HashSet<&str> = order.iter().map(|s| s.as_str()).collect();
         let mut cycle: Vec<String> = in_degree
             .keys()
-            .filter(|fqn| !ordered.contains(**fqn))
-            .map(|fqn| fqn.to_string())
+            .filter(|node| !ordered.contains(**node))
+            .map(|node| node.to_string())
             .collect();
         cycle.sort();
-        return Err(format!(
-            "namespace import cycle detected involving: {}",
-            cycle.join(", ")
-        ));
+        return Err(format!("cycle detected involving: {}", cycle.join(", ")));
     }
     Ok(order)
+}
+
+/// The set of namespaces strictly below `root` in the `NamespaceParent`
+/// hierarchy (issue #267/#388: pure transitive-closure helper).
+///
+/// `edges` are `(child, parent)` pairs — the `NamespaceParent` edge
+/// orientation (child → parent). Returns every node reachable from `root`
+/// by walking child-ward (parent → child), EXCLUDING `root` itself,
+/// sorted lexicographically. The `seen` guard makes the walk terminate on
+/// parent cycles, and duplicate edges are harmless.
+pub fn descendants(root: &str, edges: &[(String, String)]) -> Vec<String> {
+    let mut children_of: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for (child, parent) in edges {
+        children_of
+            .entry(parent.as_str())
+            .or_default()
+            .insert(child.as_str());
+    }
+    let mut seen: HashSet<&str> = HashSet::new();
+    seen.insert(root);
+    let mut out: Vec<String> = Vec::new();
+    let mut frontier: Vec<&str> = vec![root];
+    while let Some(current) = frontier.pop() {
+        if let Some(children) = children_of.get(current) {
+            for child in children {
+                if seen.insert(child) {
+                    out.push((*child).to_string());
+                    frontier.push(child);
+                }
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Rust module path for a namespace (issue #268): `cdm.base.datetime` →
@@ -359,6 +409,132 @@ mod tests {
         let err = topological_namespace_order(&fqns, &imports).unwrap_err();
         assert!(err.contains("cycle"), "{err}");
         assert!(err.contains("a, b, c"), "{err}");
+    }
+
+    // ── topological_order (generic, issue #388) ──────────────────────────
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| (*x).to_string()).collect()
+    }
+
+    fn e(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn generic_topological_order_empty_inputs() {
+        assert_eq!(topological_order(&[], &[]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn generic_topological_order_linear_chain() {
+        // c depends on b depends on a ⇒ a, b, c.
+        let nodes = s(&["a", "b", "c"]);
+        let edges = e(&[("c", "b"), ("b", "a")]);
+        assert_eq!(
+            topological_order(&nodes, &edges).unwrap(),
+            s(&["a", "b", "c"])
+        );
+    }
+
+    #[test]
+    fn generic_topological_order_diamond() {
+        // d → b → a and d → c → a: a first, d last, b/c tie-broken.
+        let nodes = s(&["d", "c", "b", "a"]);
+        let edges = e(&[("d", "b"), ("d", "c"), ("b", "a"), ("c", "a")]);
+        assert_eq!(
+            topological_order(&nodes, &edges).unwrap(),
+            s(&["a", "b", "c", "d"])
+        );
+    }
+
+    #[test]
+    fn generic_topological_order_tie_break_is_lexicographic() {
+        // Both b and c are ready after a; lexicographic picks b first.
+        let nodes = s(&["a", "c", "b"]);
+        let edges = e(&[("c", "a"), ("b", "a")]);
+        assert_eq!(
+            topological_order(&nodes, &edges).unwrap(),
+            s(&["a", "b", "c"])
+        );
+    }
+
+    #[test]
+    fn generic_topological_order_includes_orphans() {
+        // No edges: pure lexicographic order, orphans included.
+        let nodes = s(&["zeta", "alpha"]);
+        assert_eq!(
+            topological_order(&nodes, &[]).unwrap(),
+            s(&["alpha", "zeta"])
+        );
+    }
+
+    #[test]
+    fn generic_topological_order_cycle_names_members() {
+        let nodes = s(&["a", "b", "c"]);
+        let edges = e(&[("a", "b"), ("b", "c"), ("c", "a")]);
+        let err = topological_order(&nodes, &edges).unwrap_err();
+        assert!(err.contains("cycle"), "{err}");
+        assert!(err.contains("a, b, c"), "{err}");
+    }
+
+    #[test]
+    fn generic_topological_order_deduplicates_and_skips_foreign_edges() {
+        // Repeated edges must not double-count in-degree; edges touching
+        // nodes outside `nodes` are ignored.
+        let nodes = s(&["a", "b"]);
+        let edges = e(&[("a", "b"), ("a", "b"), ("a", "ghost"), ("ghost", "b")]);
+        assert_eq!(topological_order(&nodes, &edges).unwrap(), s(&["b", "a"]));
+    }
+
+    #[test]
+    fn namespace_wrapper_error_message_is_byte_identical() {
+        let fqns = vec![fqn("a"), fqn("b")];
+        let imports = vec![
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "a".to_string()),
+        ];
+        assert_eq!(
+            topological_namespace_order(&fqns, &imports).unwrap_err(),
+            "namespace import cycle detected involving: a, b"
+        );
+    }
+
+    // ── descendants (issue #388) ─────────────────────────────────────────
+
+    #[test]
+    fn descendants_direct_children() {
+        let edges = e(&[("a", "root"), ("b", "root"), ("x", "y")]);
+        assert_eq!(descendants("root", &edges), s(&["a", "b"]));
+    }
+
+    #[test]
+    fn descendants_transitive_chain() {
+        let edges = e(&[("a", "root"), ("b", "a"), ("c", "b")]);
+        assert_eq!(descendants("root", &edges), s(&["a", "b", "c"]));
+    }
+
+    #[test]
+    fn descendants_excludes_unrelated_roots() {
+        // Two disjoint trees: only root's subtree comes back.
+        let edges = e(&[("a", "root"), ("b", "other"), ("c", "b")]);
+        assert_eq!(descendants("root", &edges), s(&["a"]));
+        assert_eq!(descendants("other", &edges), s(&["b", "c"]));
+    }
+
+    #[test]
+    fn descendants_terminates_on_parent_cycles() {
+        // root ⇄ a must not loop forever; root is excluded from the output.
+        let edges = e(&[("a", "root"), ("root", "a"), ("a", "root")]);
+        assert_eq!(descendants("root", &edges), s(&["a"]));
+    }
+
+    #[test]
+    fn descendants_empty_without_edges() {
+        assert!(descendants("root", &[]).is_empty());
     }
 
     #[test]
