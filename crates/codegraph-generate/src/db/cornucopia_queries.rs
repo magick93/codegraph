@@ -231,6 +231,7 @@ fn render_entity_sql(
         soft_delete_col,
         &row_cols,
         pg_types,
+        tree.append_only,
     );
 
     // ── get by id ──────────────────────────────────────────────────────
@@ -241,6 +242,7 @@ fn render_entity_sql(
         soft_delete_col,
         &row_cols,
         pg_types,
+        tree.append_only,
     );
     if let Some(ref parent_fk) = tree.parent_ref {
         write_get_scoped_queries(
@@ -251,6 +253,7 @@ fn render_entity_sql(
             &row_cols,
             parent_fk,
             pg_types,
+            tree.append_only,
         );
     }
 
@@ -301,7 +304,15 @@ fn render_entity_sql(
         }
     }
     if let Some(ref hf) = tree.hierarchy_field {
-        write_tree_query(&mut sql, &table, &entity_name, hf, &row_cols, pg_types);
+        write_tree_query(
+            &mut sql,
+            &table,
+            &entity_name,
+            hf,
+            &row_cols,
+            pg_types,
+            tree.append_only,
+        );
     }
 
     sql
@@ -310,6 +321,7 @@ fn render_entity_sql(
 fn row_col_list(
     cols: &[&TreeColumn],
     pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
 ) -> String {
     let mut names: Vec<String> = vec!["\"id\"".to_string()];
     for c in cols {
@@ -320,7 +332,10 @@ fn row_col_list(
         }
     }
     names.push("\"created_at\"".to_string());
-    names.push("\"updated_at\"".to_string());
+    // Append-only entities (#284) carry no updated_at column.
+    if !append_only {
+        names.push("\"updated_at\"".to_string());
+    }
     names.join(", ")
 }
 
@@ -344,7 +359,7 @@ fn needs_text_cast(col: &TreeColumn, pg_types: &std::collections::HashMap<String
         || pg_upper.contains("NUMERIC")
 }
 
-fn row_hints(cols: &[&TreeColumn]) -> String {
+fn row_hints(cols: &[&TreeColumn], append_only: bool) -> String {
     let mut hints: Vec<String> = vec!["id".to_string()];
     for c in cols {
         let name = c.field_name.trim_start_matches("r#");
@@ -355,7 +370,10 @@ fn row_hints(cols: &[&TreeColumn]) -> String {
         });
     }
     hints.push("created_at".to_string());
-    hints.push("updated_at".to_string());
+    // Append-only entities (#284) carry no updated_at column.
+    if !append_only {
+        hints.push("updated_at".to_string());
+    }
     hints.join(", ")
 }
 
@@ -366,9 +384,10 @@ fn write_list_queries(
     soft_delete_col: Option<&str>,
     row_cols: &[&TreeColumn],
     pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
 ) {
-    let cols = row_col_list(row_cols, pg_types);
-    let hints = row_hints(row_cols);
+    let cols = row_col_list(row_cols, pg_types, append_only);
+    let hints = row_hints(row_cols, append_only);
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
         let where_clause = if !include_deleted {
@@ -402,6 +421,7 @@ fn write_list_queries(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_get_scoped_queries(
     sql: &mut String,
     table: &str,
@@ -410,9 +430,10 @@ fn write_get_scoped_queries(
     row_cols: &[&TreeColumn],
     parent_fk: &str,
     pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
 ) {
-    let cols = row_col_list(row_cols, pg_types);
-    let hints = row_hints(row_cols);
+    let cols = row_col_list(row_cols, pg_types, append_only);
+    let hints = row_hints(row_cols, append_only);
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
         let mut clauses = vec![
@@ -442,9 +463,10 @@ fn write_get_queries(
     soft_delete_col: Option<&str>,
     row_cols: &[&TreeColumn],
     pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
 ) {
-    let cols = row_col_list(row_cols, pg_types);
-    let hints = row_hints(row_cols);
+    let cols = row_col_list(row_cols, pg_types, append_only);
+    let hints = row_hints(row_cols, append_only);
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
         let mut clauses = vec!["\"id\" = :id".to_string()];
@@ -563,6 +585,13 @@ fn write_update_query(
         .iter()
         .filter(|c| is_writable_col(c))
         .collect();
+
+    // Append-only entities (#284) have no UPDATE path — the repository never
+    // calls update for them, so no query is emitted (the table carries no
+    // updated_at column to no-op-touch either).
+    if tree.append_only {
+        return;
+    }
 
     if updatable.is_empty() {
         sql.push_str(&format!(
@@ -923,6 +952,7 @@ fn write_embedding_queries(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_tree_query(
     sql: &mut String,
     table: &str,
@@ -930,8 +960,9 @@ fn write_tree_query(
     hierarchy_field: &str,
     row_cols: &[&TreeColumn],
     pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
 ) {
-    let cols = row_col_list(row_cols, pg_types);
+    let cols = row_col_list(row_cols, pg_types, append_only);
     let prefixed: Vec<String> = std::iter::once("c.\"id\"".to_string())
         .chain(row_cols.iter().map(|c| {
             if needs_text_cast(c, pg_types) {
@@ -941,9 +972,9 @@ fn write_tree_query(
             }
         }))
         .chain(std::iter::once("c.\"created_at\"".to_string()))
-        .chain(std::iter::once("c.\"updated_at\"".to_string()))
+        .chain(std::iter::once("c.\"updated_at\"".to_string()).filter(|_| !append_only))
         .collect();
-    let hints = row_hints(row_cols);
+    let hints = row_hints(row_cols, append_only);
     sql.push_str(&format!(
         "--! tree_{entity_name} (root_id, max_depth?) : ({hints})\n\
          --- Recursive subtree rooted at a {entity_name}.\n\
