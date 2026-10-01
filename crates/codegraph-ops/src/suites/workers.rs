@@ -351,9 +351,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
     if failed > 0 {
         output::warn(format!("{failed} migration file(s) failed (tolerated)"));
     }
-    counters.pass(format!(
-        "Migrations: {applied} applied, {failed} failed"
-    ));
+    counters.pass(format!("Migrations: {applied} applied, {failed} failed"));
 
     let org_a = hurl_org_id(config, "org_id_a", DEFAULT_ORG_A);
     let org_b = hurl_org_id(config, "org_id_b", DEFAULT_ORG_B);
