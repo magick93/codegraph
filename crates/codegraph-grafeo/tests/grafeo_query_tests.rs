@@ -1382,3 +1382,107 @@ async fn test_schema_access_and_annotations_round_trip() {
     assert_eq!(plain.access, None);
     assert_eq!(plain.annotations, None);
 }
+
+/// `get_interactions` is operation-scoped via the HasInteraction edge
+/// (issue #387): each ApiOperation returns only its own interactions;
+/// an unknown operation returns empty. Pinned on BOTH engines so the
+/// mock stays in lockstep with Grafeo.
+async fn exercise_interactions_scoped<E: GraphIngestor + GraphQuerier + ?Sized>(
+    engine: &E,
+) -> Result<(), codegraph_core::error::GraphError> {
+    let resource = engine
+        .ingest_api_resource(&ApiResourceNode {
+            name: "candidates".to_string(),
+            schema_title: "Candidate".to_string(),
+            domain: "recruiting".to_string(),
+            label: None,
+            path_segment: "candidates".to_string(),
+        })
+        .await?;
+    let op_create = engine
+        .ingest_api_operation(&ApiOperationNode {
+            name: "create_candidate".to_string(),
+            kind: "create".to_string(),
+            input_schema: None,
+            output_schema: "Candidate".to_string(),
+            paging: false,
+            sorting: false,
+            filtering: false,
+            domain: None,
+        })
+        .await?;
+    let op_list = engine
+        .ingest_api_operation(&ApiOperationNode {
+            name: "list_candidates".to_string(),
+            kind: "list".to_string(),
+            input_schema: None,
+            output_schema: "CandidateList".to_string(),
+            paging: true,
+            sorting: false,
+            filtering: false,
+            domain: None,
+        })
+        .await?;
+    let ia_http = engine
+        .ingest_interaction(&InteractionNode {
+            transport: "http".to_string(),
+            domain: Some("recruiting".to_string()),
+        })
+        .await?;
+    let ia_grpc = engine
+        .ingest_interaction(&InteractionNode {
+            transport: "grpc".to_string(),
+            domain: None,
+        })
+        .await?;
+
+    engine
+        .ingest_edge(&resource, &op_create, EdgeType::HasOperation, None)
+        .await?;
+    engine
+        .ingest_edge(&resource, &op_list, EdgeType::HasOperation, None)
+        .await?;
+    engine
+        .ingest_edge(&op_create, &ia_http, EdgeType::HasInteraction, None)
+        .await?;
+    engine
+        .ingest_edge(&op_list, &ia_grpc, EdgeType::HasInteraction, None)
+        .await?;
+
+    let create = engine.get_interactions("create_candidate").await?;
+    assert_eq!(
+        create,
+        vec![InteractionNode {
+            transport: "http".to_string(),
+            domain: Some("recruiting".to_string()),
+        }]
+    );
+    let list = engine.get_interactions("list_candidates").await?;
+    assert_eq!(
+        list,
+        vec![InteractionNode {
+            transport: "grpc".to_string(),
+            domain: None,
+        }]
+    );
+    assert!(
+        engine
+            .get_interactions("missing_operation")
+            .await?
+            .is_empty(),
+        "unknown operation returns no interactions"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_get_interactions_scoped_to_operation_grafeo() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    exercise_interactions_scoped(&engine).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_get_interactions_scoped_to_operation_mock() {
+    let engine = codegraph_core::mock::MockEngine::new();
+    exercise_interactions_scoped(&engine).await.unwrap();
+}

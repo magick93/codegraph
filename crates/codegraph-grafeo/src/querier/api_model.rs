@@ -136,11 +136,17 @@ impl GrafeoEngine {
 
     pub(super) async fn query_interactions(
         &self,
-        _operation_name: &str,
+        operation_name: &str,
     ) -> Result<Vec<InteractionNode>, GraphError> {
-        query_many(
+        let params = HashMap::from([(
+            "name".to_string(),
+            grafeo::Value::String(operation_name.into()),
+        )]);
+        query_many_params(
             self,
-            "MATCH (ia:Interaction) RETURN ia.transport, ia.domain ORDER BY ia.transport",
+            "MATCH (op:ApiOperation {name: $name})-[:HasInteraction]->(ia:Interaction) \
+             RETURN ia.transport, ia.domain ORDER BY ia.transport",
+            params,
             |reader, row| {
                 Ok(InteractionNode {
                     transport: reader.get_string(row, "ia.transport")?,
