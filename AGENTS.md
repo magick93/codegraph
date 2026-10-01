@@ -44,7 +44,7 @@ parse-verified). Key files: `crates/codegraph/src/ingest/mox_ingest.rs`
 (bridge + import scan + `wire_alias_refs`), `ingest/async_ingest.rs`
 (`ingest_schemas_with_skips`, `ingest_imported_schemas`),
 `classify/mod.rs` (priority-0 mox bypass), `migrate.rs` + embedded
-`codegraph_stdlib.mox`. Equivalence gate:
+`migrate/stdlib.mox`. Equivalence gate:
 `crates/codegraph/tests/mox_equivalence_tests.rs` pins full-tree
 byte-identity between equivalent JSON Schema and `.mox` models.
 `docs/mox-simplification-ledger.md` is the deletion roadmap for the
@@ -159,7 +159,7 @@ Producers now populate the #267 plane; generation consumes it behind the
   equivalence gate pins that this changes NO generated output (flat layout is
   namespace-inert). New `MoxIngestStats::namespaces` counter (displayed only
   when non-zero).
-- **rosetta** (`ingest/rosetta_ingest.rs`): `namespace a.b` → NamespaceNode
+- **rosetta** (`ingest/rosetta_ingest/`): `namespace a.b` → NamespaceNode
   (source `"rosetta"`); `import a.b.*` / `import a.b as x` → NamespaceImports
   edges (wildcard/alias payload; the lowered `imported_namespace` string
   embeds `.*` — strip it). Import-only targets (e.g. the sigil builtins'
@@ -190,7 +190,7 @@ Producers now populate the #267 plane; generation consumes it behind the
   flat/byte-identical): helpers `namespace_module_path`/`namespace_module_rust`
   in codegraph-core (`cdm.base.datetime` → `cdm/base/datetime` /
   `cdm::base::datetime`), threaded via `BuildPlan.namespace_layout` →
-  `ProjectConfig.namespace_layout`. When ON and the schema carries a
+  `ProjectConfig.codegen.namespace_layout`. When ON and the schema carries a
   namespace: `sea_orm_entity` emits `src/entity/{ns}/{module}.rs`, `dto` +
   `dto_included` + `repository` emit under `src/domain/{ns}/{module}/`, the
   repository emitter references `crate::entity::{ns}::{module}` and
@@ -230,8 +230,8 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 | **Tree-sitter grammar** | `codegraph-vscode/grammar/grammar.js` → `crates/tree-sitter-ifml/src/parser.c` | LSP/editor parsing; regenerate with `npx tree-sitter-cli generate --abi 14` |
 | **Graph model** | `crates/codegraph-core/src/types/ifml.rs` | 7 node types, 16 edge types, `NavigationFlowRecord`, `ModuleUseRecord` |
 | **Grafeo DDL** | `crates/codegraph-grafeo/src/schema_ddl.rs` | GQL CREATE statements |
-| **Grafeo ingestor** | `crates/codegraph-grafeo/src/ingestor.rs` | GQL INSERT for IFML nodes (extra node props like `conditional_expression`/`module_uses`/`roles` persist without DDL changes) |
-| **Grafeo querier** | `crates/codegraph-grafeo/src/querier.rs` | GQL MATCH queries for IFML (nav flows resolve component → owning ViewContainer) |
+| **Grafeo ingestor** | `crates/codegraph-grafeo/src/ingestor/` | GQL INSERT for IFML nodes (extra node props like `conditional_expression`/`module_uses`/`roles` persist without DDL changes) |
+| **Grafeo querier** | `crates/codegraph-grafeo/src/querier/` | GQL MATCH queries for IFML (nav flows resolve component → owning ViewContainer) |
 | **GraphIngestor trait** | `crates/codegraph-core/src/traits/ingestor.rs` | 6 IFML ingest methods |
 | **GraphQuerier trait** | `crates/codegraph-core/src/traits/querier.rs` | 9 IFML query methods (incl. `get_ifml_action_triggers`, `get_parameters_for_view`) |
 | **CachingQuerier** | `crates/codegraph-core/src/caching_querier.rs` | Delegates IFML queries |
@@ -239,7 +239,7 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 | **Scaffold CLI** | `crates/codegraph/src/ifml_scaffold.rs` | schemas + classifier → starter `.ifml` (parse-verifies its own output) |
 | **IfmlQuerier** | `crates/codegraph-generate/src/ifml/querier.rs` | Lossless model assembly (real event actions, params, bindings) |
 | **Dependency sort** | `crates/codegraph-generate/src/ifml/dependency_graph.rs` | Kahn's algorithm (drives emit order) |
-| **Route generator** | `crates/codegraph-generate/src/ifml/route_generator.rs` | Behavior-wired SvelteKit pages (events → goto/submit handlers, testids) |
+| **Route generator** | `crates/codegraph-generate/src/ifml/route_generator/` | Behavior-wired SvelteKit pages (events → goto/submit handlers, testids) |
 | **Nav generator** | `crates/codegraph-generate/src/ifml/navigation_generator.rs` | Route map + type helpers |
 | **API path resolution** | `crates/codegraph-generate/src/ifml/api_paths.rs` | Entity → real endpoint (API model > ApiResource > legacy guess) |
 | **E2E generator** | `crates/codegraph-generate/src/ifml/e2e_test/` (module split: `assembly`/`fixtures`/`render`/`spec_payload`/`ux_plans`/`pom`/`pom_render`/`kernel`) | Playwright specs (render/click-through/validation/CRUD) + the POM (kernel + per-view page classes) |
@@ -514,7 +514,7 @@ the deferred ledger: `docs/ux-rules.md`.
 | `crates/codegraph-config/src/ux/` | Config plane: `dimension.rs` (8 kebab dimensions), `presentation.rs` (Display/Align/FormatConfig/ToneMap), `rule.rs` (ColumnRule/CollectionRule/ActionRules + `glob_match`), `mod.rs` (strict parse with `[[column]] #N`-attributed errors + hint lines, `BUILT_IN_UX_PACK`, `merge`), `packs/ux_default.toml` (en-NZ/NZD pack, doubles as the key reference) |
 | `crates/codegraph-generate/src/ux/` | `dimension.rs` (Pass 1 ordered decision list), `plan.rs` (`build_ux_plan`, `column_order`, `ids` testid consts), `diagnostics.rs`, `sort.rs` (`resolve_ux_sort_plan`) |
 | `crates/codegraph-generate/src/ui/page.rs` | `resolve_ux_context` — plan → list-page context; `crates/codegraph-generate/templates/ui/{list_page,_ux_cell,list_timeline,child_section}.tera` render it |
-| `crates/codegraph-generate/src/ifml/route_generator.rs` | `resolve_column_ux` (lookup tier > rules > pack > inference), `resolve_generation_ux`, `TableLayout::Timeline`, event tiering; `crates/codegraph-generate/templates/ifml/svelte/page.tera` |
+| `crates/codegraph-generate/src/ifml/route_generator/` | `resolve_column_ux` (lookup tier > rules > pack > inference), `resolve_generation_ux`, `TableLayout::Timeline`, event tiering; `crates/codegraph-generate/templates/ifml/svelte/page.tera` |
 | `crates/codegraph-generate/src/api/handler.rs` + `ddd/repository_emitter/query_search.rs` | `?sort=`/`?order=` validation (allow-list 400s) + quoted ORDER BY with `, id ASC` tiebreaker |
 | `crates/codegraph-generate/src/ui/e2e_test/` (11 families + `pom_ctx.rs`), `crates/codegraph-generate/src/ifml/e2e_test/` (`ux_plans.rs`, spec assembly, `pom.rs`/`pom_render.rs`/`kernel.rs`) | `{seg}.ux.test.ts` / `{view}.ux.spec.ts` emitters (per-feature gated blocks) + the POM emitters (below) |
 
@@ -600,12 +600,12 @@ Four gRPC generators produce `.proto` files and tonic-based Rust server code alo
 
 | Layer | Location | Notes |
 |-------|----------|-------|
-| **Type mapping** | `crates/codegraph/src/generate/grpc/proto_type.rs` | Maps `RefClassificationKind` → proto/tonic types. 34 unit tests |
-| **Proto context** | `crates/codegraph/src/generate/grpc/proto_context.rs` | Queries graph, builds messages (entity + CRUD + search + tree + transition) |
-| **Proto generator** | `crates/codegraph/src/generate/grpc/proto.rs` | `GrpcProtoGenerator` — renders `proto_message.tera` + `proto_service.tera` |
-| **Service generator** | `crates/codegraph/src/generate/grpc/service.rs` | `GrpcServiceGenerator` — renders `server_impl.tera` + `conversions.tera` |
-| **Router generator** | `crates/codegraph/src/generate/grpc/router.rs` | `GrpcRouterGenerator` — renders `domain_router.tera` |
-| **Scaffold generator** | `crates/codegraph/src/generate/grpc/scaffold.rs` | `GrpcScaffoldGenerator` — shared proto + `mod.rs` + conversion helpers |
+| **Type mapping** | `crates/codegraph-generate/src/grpc/proto_type.rs` | Maps `RefClassificationKind` → proto/tonic types. 34 unit tests |
+| **Proto context** | `crates/codegraph-generate/src/grpc/proto_context.rs` | Queries graph, builds messages (entity + CRUD + search + tree + transition) |
+| **Proto generator** | `crates/codegraph-generate/src/grpc/proto.rs` | `GrpcProtoGenerator` — renders `proto_message.tera` + `proto_service.tera` |
+| **Service generator** | `crates/codegraph-generate/src/grpc/service.rs` | `GrpcServiceGenerator` — renders `server_impl.tera` + `conversions.tera` |
+| **Router generator** | `crates/codegraph-generate/src/grpc/router.rs` | `GrpcRouterGenerator` — renders `domain_router.tera` |
+| **Scaffold generator** | `crates/codegraph-generate/src/grpc/scaffold.rs` | `GrpcScaffoldGenerator` — shared proto + `mod.rs` + conversion helpers |
 | **Templates** | `crates/codegraph-generate/templates/grpc/` | 6 Tera templates (proto, service, shared, conversions, server impl, router) |
 | **Build integration** | `crates/codegraph-generate/templates/scaffold/build_rs.tera` | Conditional proto compilation via `tonic_build`. Generates both server AND client code |
 | **Profile control** | `profiles.toml` | `grpc_backend = true` feature gates the 4 generators |
@@ -1057,9 +1057,9 @@ times; later directories take precedence.
 
 Implemented in `crates/codegraph-generate/src/template_engine.rs`:
 
-1. **`create_tera_with_overrides()`** (line 33) loads the built-in templates embedded via that crate's build.rs first
+1. **`create_tera_with_overrides()`** loads the built-in templates embedded via that crate's build.rs first
 2. It then iterates override directories in order, calling `merge_tera_dir()` for each
-3. **`merge_tera_dir()`** (line 45) walks each directory, reading `.tera` files and registering them by their relative path name
+3. **`merge_tera_dir()`** walks each directory, reading `.tera` files and registering them by their relative path name
 4. A template with the same relative path from a later directory **shadows** the earlier one — no merging, full replacement
 
 ### Available Tera custom filters
@@ -1109,7 +1109,7 @@ trait. Currently two dialects are implemented:
 profiles.toml                           database_target from features
     │                                           │
     ▼                                           ▼
-BuildPlan                             ───►   ProjectConfig.database_target
+BuildPlan                             ───►   ProjectConfig.database.database_target
     │                                           │
     ▼                                           ▼
 DB Generators (ddl, entity, etc.)     ───►   SqlDialect trait
@@ -1137,7 +1137,7 @@ migration file (previously `DATE`, `NUMERIC(10,2)`, and `BYTEA` columns
 passed through raw into STRICT tables and failed at `sqlite3` apply time):
 
 1. **Semantic type check** (`dialect.rs` `SqliteDialect::validate_column_type`,
-   wired into `apply_dialect_type_mapping` in `ddl.rs`): every column type
+   wired into `apply_dialect_type_mapping` in `db/ddl/mod.rs`): every column type
    must either map via `map_pg_type` or be a native STRICT type
    (`INT`/`INTEGER`/`REAL`/`TEXT`/`BLOB`/`ANY`). `DATE` → `TEXT` (ISO-8601,
    lossless), `BYTEA` → `BLOB`, precision-suffixed numerics → `REAL`. Range
@@ -1162,7 +1162,7 @@ database_target = "sqlite"     # default is "postgres"
 
 The `database_target` value is parsed from the `[features]` table in
 `profiles.toml` and stored in `BuildPlan.database_target`. It's propagated
-to all templates via `ProjectConfig.database_target`.
+to all templates via `ProjectConfig.database.database_target`.
 
 ### SQLite templates
 
@@ -1209,9 +1209,9 @@ and extensions.
 |-------|----------|-------|
 | **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity, api version |
 | **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`, `run_streaming` labeled streaming), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, workers, smoke, quality), `ext.rs` (extension protocol + hooks + `HookPolicy`), `metrics.rs` (stage TSV/JSON export), `doctor.rs` (state report + stage-0 fast-doctor subsets), `registry.rs` (`.testkit/services.json` advisory services registry), `freshness.rs` (generator-rev check), `results.rs` (`--results` JSON writers), `bundle.rs` (failure artifact bundles), `pwcache.rs` (Playwright transpile-cache hygiene), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
-| **Generator** | `crates/codegraph/src/generate/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
+| **Generator** | `crates/codegraph-generate/src/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
 | **Templates** | `crates/codegraph-generate/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
-| **Profile gating** | `profiles.toml` + `profile.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
+| **Profile gating** | `profiles.toml` + `profile/capabilities.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
 | **Contract test** | `crates/codegraph/tests/ops_generator_tests.rs` | Emitted manifest must parse via `OpsConfig::load` (cross-crate) |
 
 ### Subcommands (run via the generated testkit binary)
@@ -1362,7 +1362,7 @@ extensions.
    consumer's `profiles.toml` plus `"ops"` in the profile's generator list;
    regenerate. This emits `codegraph-ops.toml` + a `testkit/` crate.
    `smoke.entity` is auto-seeded from the first entity in generation order
-   (`generate/ops.rs`); the codegraph binary stamps `project.codegraph_rev`
+   (codegraph-generate `ops.rs`); the codegraph binary stamps `project.codegraph_rev`
    from its own git rev (`main.rs`) so the testkit `Cargo.toml` pins the same
    rev (see `templates/scaffold/cargo_toml.tera`, `templates/ops/testkit_cargo.tera`).
    Consumers on local path deps (no git rev) keep generated pins working with
@@ -1438,7 +1438,7 @@ Tool prerequisites (validated per-suite; missing tools error or skip):
    writer, which records the current `output::section()` as the stage — so
    keep `output::section` titles meaningful.
 7. If the generated manifest needs new seed values, extend
-   `OpsManifest` in `codegraph-config` + the generator in `generate/ops.rs`.
+   `OpsManifest` in `codegraph-config` + the generator in codegraph-generate `ops.rs`.
 
 ## Persistence Provider System
 
@@ -1473,7 +1473,7 @@ and selected by the `persistence_provider` feature flag.
 
 ### PersistenceProvider enum
 
-Defined at `crates/codegraph/src/profile.rs:15`:
+Defined at `crates/codegraph-generate/src/profile/types.rs`:
 
 | Variant | Config value | Entity model | Repository | Query layer |
 |---------|-------------|--------------|------------|-------------|
@@ -1497,7 +1497,7 @@ generators = ["ddl", "cornucopia_queries", "cornucopia_repo", "cornucopia_config
 
 The `persistence_provider` value is parsed from `[features]` into
 `BuildPlan.persistence_provider` and propagated to generators via
-`ProjectConfig.persistence_provider` (available in all Tera templates).
+`ProjectConfig.database.persistence_provider` (available in all Tera templates).
 
 ### PersistenceEntity IR
 
@@ -1514,7 +1514,7 @@ Defined at `crates/codegraph-core/src/types/persistence.rs`:
 
 ### build_persistence_entity() builder
 
-Defined at `crates/codegraph/src/generate/persistence.rs` — the single source
+Defined at `crates/codegraph-generate/src/persistence.rs` — the single source
 of truth for extracting entity structure + policies from the graph. Both
 `SeaOrmEntityGenerator` and `CornucopiaQueryGenerator` call it.
 
@@ -1523,14 +1523,14 @@ of truth for extracting entity structure + policies from the graph. Both
 | File | Role |
 |------|------|
 | `crates/codegraph-core/src/types/persistence.rs` | IR types: PersistenceEntity, PersistenceColumn, policy effects |
-| `crates/codegraph/src/profile.rs` | `PersistenceProvider` enum + `from_config()` + `BuildPlan` field |
-| `crates/codegraph/src/generate/persistence.rs` | `build_persistence_entity()` — graph → IR builder |
-| `crates/codegraph/src/generate/db/entity.rs` | `SeaOrmEntityGenerator` — SeaORM model emission (existing, unchanged) |
-| `crates/codegraph/src/generate/ddd/repository_emitter.rs` | SeaORM repository impl emitter (existing, unchanged) |
-| `crates/codegraph/src/generate/db/cornucopia_queries.rs` | `CornucopiaQueryGenerator` — annotated SQL file generation |
-| `crates/codegraph/src/generate/db/cornucopia_config.rs` | `CornucopiaConfigGenerator` — `cornucopia.toml` with type mappings |
-| `crates/codegraph/src/generate/ddd/cornucopia_repo.rs` | `CornucopiaRepoGenerator` — repository adapter wrapper |
-| `crates/codegraph/src/generate/mod.rs` | `ProjectConfig.persistence_provider` + generator dispatch |
+| `crates/codegraph-generate/src/profile/types.rs` | `PersistenceProvider` enum + `from_config()` + `BuildPlan` field |
+| `crates/codegraph-generate/src/persistence.rs` | `build_persistence_entity()` — graph → IR builder |
+| `crates/codegraph-generate/src/db/entity.rs` | `SeaOrmEntityGenerator` — SeaORM model emission (existing, unchanged) |
+| `crates/codegraph-generate/src/ddd/repository_emitter/` | SeaORM repository impl emitter (existing, unchanged) |
+| `crates/codegraph-generate/src/db/cornucopia_queries.rs` | `CornucopiaQueryGenerator` — annotated SQL file generation |
+| `crates/codegraph-generate/src/db/cornucopia_config.rs` | `CornucopiaConfigGenerator` — `cornucopia.toml` with type mappings |
+| `crates/codegraph-generate/src/ddd/cornucopia_repo.rs` | `CornucopiaRepoGenerator` — repository adapter wrapper |
+| `crates/codegraph-generate/src/project_config.rs` | `ProjectConfig` — Rust fields composed from `#[serde(flatten)]` sub-configs (`identity`/`paths`/`database`/`deployment`/`codegen`/`cargo`/`integration`/`atproto`/`ux`); the serialized Tera map stays flat + generator dispatch in `registry.rs` |
 | `profiles.toml` | `persistence_provider` feature flag |
 
 ### Policy-aware query generation
@@ -1548,11 +1548,11 @@ struct built from `PolicyNode` graph data. Policy effects drive:
 
 ### Adding a new persistence provider
 
-1. Add a variant to `PersistenceProvider` in `profile.rs`
+1. Add a variant to `PersistenceProvider` in `profile/types.rs`
 2. Create generators that consume `build_persistence_entity()` and emit
    provider-specific output (e.g. `diesel_entity.rs`, `sqlx_repo.rs`)
-3. Register generators in `generate/mod.rs` entity/generator vecs
-4. Add capability entries in `profile.rs` `base_capabilities()`
+3. Register generators in `registry.rs` entity/generator vecs
+4. Add capability entries in `profile/capabilities.rs` `base_capabilities()`
 5. Add `persistence_provider` entry in `profiles.toml` features
 6. Unit tests + snapshot tests for the new output format
 
@@ -1567,7 +1567,7 @@ only for now — generator output behavior is unchanged.
 
 ### DeploymentTopology enum
 
-Defined at `crates/codegraph/src/profile.rs` (next to `PersistenceProvider`):
+Defined at `crates/codegraph-generate/src/profile/types.rs` (next to `PersistenceProvider`):
 
 | Variant | Config value | Backend shape |
 |---------|-------------|---------------|
@@ -1584,12 +1584,12 @@ deployment_topology = "monolith"   # "monolith" (default) | "workers"
 Unlike `persistence_provider` (which silently defaults on unknown values),
 unknown `deployment_topology` values are a hard configuration error in
 `BuildPlan::from_profile()`. The value is stored on `BuildPlan` and propagated
-to generators via `ProjectConfig.deployment_topology` (available in Tera
+to generators via `ProjectConfig.deployment.deployment_topology` (available in Tera
 templates as `project.deployment_topology`).
 
 ### Per-domain worker config (domains.toml)
 
-All keys on `DomainEntry` in `crates/codegraph-config/src/config.rs` are
+All keys on `DomainEntry` in `crates/codegraph-config/src/config/domain.rs` are
 optional (`#[serde(default)]`), so existing domains.toml files parse unchanged:
 
 | Key | Type | Default | Semantics |
@@ -1837,15 +1837,15 @@ still AND on top.
 - No `unwrap()` in production code. Use `thiserror` + `?` propagation.
 - Imports grouped: std → external → internal → current crate, separated by blank lines.
 - Templates in `crates/codegraph-generate/templates/` use Tera syntax.
-- 60+ generators in `crates/codegraph/src/generate/` organized by target (api, db, ddd, ui, cli, etc.).
+- 60+ generators in `crates/codegraph-generate/src/` organized by target (api, db, ddd, ui, cli, etc.).
 - IFML-specific generators in `crates/codegraph-generate/src/ifml/`.
-- gRPC-specific generators in `crates/codegraph/src/generate/grpc/`.
-- Cornucopia-specific generators in `crates/codegraph/src/generate/db/cornucopia_*.rs` and `crates/codegraph/src/generate/ddd/cornucopia_repo.rs`.
+- gRPC-specific generators in `crates/codegraph-generate/src/grpc/`.
+- Cornucopia-specific generators in `crates/codegraph-generate/src/db/cornucopia_*.rs` and `crates/codegraph-generate/src/ddd/cornucopia_repo.rs`.
 - New node/edge types go in `crates/codegraph-core/src/types/` + `crates/codegraph-grafeo/src/schema_ddl.rs`.
 - New GraphIngestor/GraphQuerier trait methods need implementations in Grafeo engine AND MockEngine AND CachingQuerier. In codegraph-grafeo both live as directory modules: `src/querier/` and `src/ingestor/` — family files hold inherent `query_*`/`insert_*` methods (one per domain family, `pub(super)`), and the single trait impl in each `mod.rs` is a thin delegation adapter (coherence forbids split trait impls). New trait methods: add the inherent method to the right family file + one adapter delegation.
-- New gRPC generators need registration in `generate/mod.rs`, a capability entry in `profile.rs`, and an entry in `profiles.toml`.
-- New persistence provider generators need a `PersistenceProvider` variant, generator capability entries, and registration in `generate/mod.rs`.
-- New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph/src/generate/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
+- New gRPC generators need registration in `registry.rs`, a capability entry in `profile/capabilities.rs`, and an entry in `profiles.toml`.
+- New persistence provider generators need a `PersistenceProvider` variant, generator capability entries, and registration in `registry.rs`.
+- New DB generators (or modifications to existing ones) must use the `SqlDialect` trait (see `crates/codegraph-generate/src/db/dialect.rs`) for type mapping and feature gating instead of hardcoding PostgreSQL types.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
 - The `project.database_target` and `project.persistence_provider` variables are available in all Tera templates via `ProjectConfig`.
 
@@ -1853,7 +1853,7 @@ still AND on top.
 
 Generated list/GET handlers support `?include=` eager loading. Paths are
 resolved at generation time by
-`crates/codegraph/src/generate/api/include_path.rs`: `allow_include`
+`crates/codegraph-generate/src/api/include_path.rs`: `allow_include`
 entries in `domains.toml` are explicit paths; everything else comes from
 auto-discovery (config children with `parent`/`parent_ref`, graph
 entity-refs, parent candidates). Heaviest consumer: hr-specs (its
@@ -1924,20 +1924,20 @@ This causes:
 
 Three fixes work together:
 
-1. **`querier.rs:640`** — Call `root.dedup_fields()` on the composition tree
+1. **`querier/composition.rs`** — Call `root.dedup_fields()` on the composition tree
    root in `get_composition_tree()`. Removes duplicate columns and children
    at the source.
 
-2. **`ddl.rs:1210-1220`** — ForeignKey and ColumnComment deduplication in
+2. **`db/ddl/query.rs`** — ForeignKey and ColumnComment deduplication in
    `query_ddl_context()`. FKs deduped by `column_name`, comments by `column`.
 
-3. **`mod.rs:1035-1078`** — `seen_titles` HashSet in `compute_generation_order()`
+3. **`ordering.rs`** — `seen_titles` HashSet in `compute_generation_order()`
    tracks entity titles across domains. A title assigned to a higher-priority
    domain is skipped in subsequent domains.
 
 ### `dedup_fields()` — Critical regression risk
 
-**File**: `crates/codegraph-core/src/types/composition.rs:126-135`
+**File**: `crates/codegraph-core/src/types/composition.rs`
 
 The `dedup_fields()` method MUST use **independent HashSets** per category
 (columns, jsonb_columns, children). A shared set would silently remove child
@@ -2062,9 +2062,9 @@ Key files:
 |------|------|
 | `crates/codegraph-classifier/src/classify.rs` | Classification: ValueObject vs StructuredWrapper vs Entity vs Codelist |
 | `crates/codegraph-core/src/types/composition.rs` | `CompositionNode`, `CompositionTree`, `dedup_fields()` |
-| `crates/codegraph-grafeo/src/querier.rs` | `build_composition_node()`, `get_composition_tree()`, `get_properties()` |
-| `crates/codegraph/src/generate/db/ddl.rs` | `query_ddl_context()`, `column_info_to_ddl()`, `composition_node_to_child_table()`, FK/Comment dedup |
-| `crates/codegraph/src/generate/mod.rs` | `compute_generation_order()`, domain-level entity dedup |
+| `crates/codegraph-grafeo/src/querier/` | `build_composition_node()`, `get_composition_tree()`, `get_properties()` |
+| `crates/codegraph-generate/src/db/ddl/query.rs` | `query_ddl_context()`, `column_info_to_ddl()`, `composition_node_to_child_table()`, FK/Comment dedup |
+| `crates/codegraph-generate/src/ordering.rs` | `compute_generation_order()`, domain-level entity dedup |
 | `crates/codegraph-generate/templates/db/table.tera` | PostgreSQL DDL template with child table rendering |
 
 ### How structured fields become child tables
