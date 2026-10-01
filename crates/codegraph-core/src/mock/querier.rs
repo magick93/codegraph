@@ -679,14 +679,23 @@ impl GraphQuerier for MockEngine {
         &self,
         operation_name: &str,
     ) -> Result<Vec<InteractionNode>, GraphError> {
-        let _ = operation_name;
-        Ok(self
-            .interactions
+        let interaction_id = self
+            .op_interaction
             .lock()
             .unwrap()
-            .values()
-            .cloned()
-            .collect())
+            .get(operation_name)
+            .cloned();
+        Ok(match interaction_id {
+            Some(id) => self
+                .interactions
+                .lock()
+                .unwrap()
+                .get(&id)
+                .cloned()
+                .into_iter()
+                .collect(),
+            None => Vec::new(),
+        })
     }
 
     async fn get_http_endpoints(&self) -> Result<Vec<HttpEndpointNode>, GraphError> {
