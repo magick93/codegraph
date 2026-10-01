@@ -12,12 +12,16 @@ use crate::engine::GrafeoEngine;
 static QUERY_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Total GQL executions since process start (or the last `reset_query_count`).
+// Read/reset are test-only today (composition query-count pin, issue #389);
+// the counter itself is live in production builds.
+#[allow(dead_code)]
 pub(crate) fn query_count() -> u64 {
     QUERY_COUNT.load(Ordering::Relaxed)
 }
 
 /// Zero the GQL execution counter (used by the composition query-count pin
 /// test to measure a single `get_composition_tree` call in isolation).
+#[allow(dead_code)]
 pub(crate) fn reset_query_count() {
     QUERY_COUNT.store(0, Ordering::Relaxed);
 }
