@@ -37,3 +37,9 @@ has_admin_cli = false
 has_grpc = false
 database_target = "postgres"
 persistence_provider = "sea_orm"
+
+[doctor]
+
+[bundle]
+max_mb = 200
+keep = 3
