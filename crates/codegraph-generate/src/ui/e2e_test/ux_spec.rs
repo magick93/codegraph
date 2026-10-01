@@ -178,9 +178,16 @@ pub(super) async fn build_ux_e2e_spec(
             // ('{ value: ... }', or '[{ ... }]' when array-typed) for the
             // create body — the rendered cell is the wrapper's stringified
             // form, so a toHaveText(object) is invalid Playwright. The
-            // assertion simply doesn't apply.
+            // assertion simply doesn't apply. Value-object fields are
+            // omitted from the generated fixture ("serde default"), so
+            // their cells render the null placeholder — the first-column
+            // literal would assert against text the fixture never sets.
             if let Some(literal) = create_field
-                .filter(|f| !f.is_array && f.structured_sub_fields.is_empty())
+                .filter(|f| {
+                    !f.is_array
+                        && f.structured_sub_fields.is_empty()
+                        && f.nested_type_name.is_none()
+                })
                 .and_then(stable_fixture_literal)
             {
                 first_column = Some(UxE2eFirstColumnCtx {
@@ -386,6 +393,12 @@ fn flip_alt_literal(field: &UiField) -> Option<String> {
         return None;
     }
     if !field.structured_sub_fields.is_empty() {
+        return None;
+    }
+    // Value-object fields are omitted from the generated fixture
+    // ("serde default") — every rendered cell is the null placeholder, so
+    // no distinct alt literal can ever appear.
+    if field.nested_type_name.is_some() {
         return None;
     }
     if field.is_codelist {
