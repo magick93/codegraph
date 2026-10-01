@@ -1950,6 +1950,19 @@ blocks the child from being retained.
 
 Fixed in commit `3e82ec6` (independent HashSets per category).
 
+### Composition recursion query budget (issue #389)
+
+`get_composition_tree` (grafeo `querier/composition.rs`) runs per-node graph
+reads through `CompositionLoadout`, a per-tree memo so each distinct lookup
+(schema, properties, codelist/composite/ref-target/array-item, consumed
+fields, allOf edges) executes at most once per tree build — sibling VOs of
+the same type and allOf revisits replay cached results. `dedup_fields` and
+visited/depth semantics are untouched. The query-count pin test
+(`query_count_tests` in composition.rs, AtomicU64 at the `query_gql`/
+`query_gql_params` choke point) asserts 47 GQL executions on its
+representative fixture (was 58 pre-memo) — if you change the recursion,
+re-measure and update the pin; the count must only go down.
+
 ## SeaORM JSONB INSERT Workaround
 
 ### Problem
