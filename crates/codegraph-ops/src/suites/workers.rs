@@ -88,6 +88,30 @@ const DEFAULT_HURL_SKIPS: &[(&str, &str)] = &[
         "11_compliance_check.hurl",
         "compliance routes are hr-extensions monolith-only",
     ),
+    (
+        "12b_ird_sync_review.hurl",
+        "ird suite runs via the monolith api suite (ird mock sidecar + api-key harness vars)",
+    ),
+    (
+        "13_ird_rls_isolation.hurl",
+        "ird suite runs via the monolith api suite (ird mock sidecar + api-key harness vars)",
+    ),
+    (
+        "14_ird_connection_lifecycle.hurl",
+        "ird suite runs via the monolith api suite (ird mock sidecar + api-key harness vars)",
+    ),
+    (
+        "15_ird_employment_sync.hurl",
+        "ird suite runs via the monolith api suite (ird mock sidecar + api-key harness vars)",
+    ),
+    (
+        "16_ird_ei_filing.hurl",
+        "ird suite runs via the monolith api suite (ird mock sidecar + api-key harness vars)",
+    ),
+    (
+        "17_ird_events_inbox.hurl",
+        "ird suite runs via the monolith api suite (ird mock sidecar + api-key harness vars)",
+    ),
 ];
 
 /// Generated output entries wiped before regeneration (mirrors dual-test.sh
