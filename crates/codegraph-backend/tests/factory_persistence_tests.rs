@@ -1,7 +1,7 @@
 //! L1 backend factory persistence (issue #275): `create_backend` with a
 //! `data_dir` reopens the persisted graph instead of starting in-memory.
 
-use codegraph_backend::{create_backend, BackendConfig, BackendKind};
+use codegraph_backend::{BackendConfig, BackendKind, create_backend};
 use codegraph_core::types::SchemaNode;
 
 fn schema(title: &str) -> SchemaNode {

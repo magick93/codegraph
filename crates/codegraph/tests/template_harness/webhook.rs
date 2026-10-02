@@ -14,8 +14,8 @@ async fn webhook_dispatch_generator_produces_dispatch_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-webhook-dispatch");
 
-    let gen = generate::webhook::dispatch::WebhookDispatchGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::webhook::dispatch::WebhookDispatchGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -46,8 +46,8 @@ async fn webhook_endpoint_api_generator_produces_api_and_router() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-webhook-endpoint-api");
 
-    let gen = generate::webhook::endpoint_api::WebhookEndpointApiGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::webhook::endpoint_api::WebhookEndpointApiGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,

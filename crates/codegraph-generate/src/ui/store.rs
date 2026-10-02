@@ -69,34 +69,31 @@ pub async fn resolve_grandparent(
         .domains
         .get(domain)
         .and_then(|d| d.get_entity_config(parent_title))
+        && parent_cfg.role.as_deref() == Some("child")
+        && let Some(ref gp_title) = parent_cfg.parent
+        && let Ok(Some(gp_schema)) = db.get_schema_in_domain(gp_title, domain).await
     {
-        if parent_cfg.role.as_deref() == Some("child") {
-            if let Some(ref gp_title) = parent_cfg.parent {
-                if let Ok(Some(gp_schema)) = db.get_schema_in_domain(gp_title, domain).await {
-                    let gp_domain = if config
-                        .domains
-                        .get(domain)
-                        .map(|d| d.entities.contains(gp_title))
-                        .unwrap_or(false)
-                    {
-                        domain.to_string()
-                    } else {
-                        gp_schema
-                            .domain
-                            .clone()
-                            .unwrap_or_else(|| domain.to_string())
-                    };
-                    return Some(UiGrandparentInfo {
-                        param_name: crate::api::router::param_name_from_path_segment(
-                            &resolve_path_segment_with_config(None, &gp_schema, config),
-                        ),
-                        domain: gp_domain,
-                        path_segment: resolve_path_segment_with_config(None, &gp_schema, config),
-                        entity_name: gp_schema.rust_type_name.clone(),
-                    });
-                }
-            }
-        }
+        let gp_domain = if config
+            .domains
+            .get(domain)
+            .map(|d| d.entities.contains(gp_title))
+            .unwrap_or(false)
+        {
+            domain.to_string()
+        } else {
+            gp_schema
+                .domain
+                .clone()
+                .unwrap_or_else(|| domain.to_string())
+        };
+        return Some(UiGrandparentInfo {
+            param_name: crate::api::router::param_name_from_path_segment(
+                &resolve_path_segment_with_config(None, &gp_schema, config),
+            ),
+            domain: gp_domain,
+            path_segment: resolve_path_segment_with_config(None, &gp_schema, config),
+            entity_name: gp_schema.rust_type_name.clone(),
+        });
     }
 
     // 2. Graph: check if parent_title appears as a child in parent_candidates
@@ -211,51 +208,38 @@ impl EntityGenerator for UiStoreGenerator {
                 .domains
                 .get(&domain)
                 .and_then(|d| d.get_entity_config(schema_title))
+                && ec.role.as_deref() == Some("child")
+                && let Some(ref parent_title) = ec.parent
+                && let Ok(Some(parent_schema)) =
+                    db.get_schema_in_domain(parent_title, &domain).await
             {
-                if ec.role.as_deref() == Some("child") {
-                    if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) =
-                            db.get_schema_in_domain(parent_title, &domain).await
-                        {
-                            let parent_domain = if config
-                                .domains
-                                .get(&domain)
-                                .map(|d| d.entities.contains(parent_title))
-                                .unwrap_or(false)
-                            {
-                                domain.clone()
-                            } else {
-                                parent_schema
-                                    .domain
-                                    .clone()
-                                    .unwrap_or_else(|| domain.clone())
-                            };
-                            let gp = resolve_grandparent(
-                                parent_title,
-                                &domain,
-                                config,
-                                &self.parent_candidates,
-                                db,
-                            )
-                            .await
-                            .map(Box::new);
-                            result = Some(UiParentInfo {
-                                param_name: crate::api::router::param_name_from_path_segment(
-                                    &resolve_path_segment_with_config(None, &parent_schema, config),
-                                ),
-                                domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(
-                                    None,
-                                    &parent_schema,
-                                    config,
-                                ),
-                                module_name: parent_schema.pg_table_name.clone(),
-                                entity_name: parent_schema.rust_type_name.clone(),
-                                grandparent: gp,
-                            });
-                        }
-                    }
-                }
+                let parent_domain = if config
+                    .domains
+                    .get(&domain)
+                    .map(|d| d.entities.contains(parent_title))
+                    .unwrap_or(false)
+                {
+                    domain.clone()
+                } else {
+                    parent_schema
+                        .domain
+                        .clone()
+                        .unwrap_or_else(|| domain.clone())
+                };
+                let gp =
+                    resolve_grandparent(parent_title, &domain, config, &self.parent_candidates, db)
+                        .await
+                        .map(Box::new);
+                result = Some(UiParentInfo {
+                    param_name: crate::api::router::param_name_from_path_segment(
+                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                    ),
+                    domain: parent_domain,
+                    path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                    module_name: parent_schema.pg_table_name.clone(),
+                    entity_name: parent_schema.rust_type_name.clone(),
+                    grandparent: gp,
+                });
             }
 
             // 2. Fall back to graph parent_candidates (only if entity is not explicitly root)

@@ -247,99 +247,96 @@ impl DomainGenerator for RouterGenerator {
                 continue;
             }
 
-            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
-                if !schema.pg_table_name.is_empty() {
-                    // Dedup by module name to prevent duplicate route functions
-                    if let Some(&existing_idx) = module_to_idx.get(&schema.pg_table_name) {
-                        title_to_entity_idx.insert(title.clone(), existing_idx);
-                        continue;
-                    }
-                    let entity_name = &schema.rust_type_name;
-                    let operations =
-                        resolve_entity_operations(db, config, domain, entity_name).await;
-
-                    let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
-                    let has_workflow = workflow
-                        .map(|wf| wf.generate_action_endpoints)
-                        .unwrap_or(false);
-                    let has_approval_status = workflow
-                        .and_then(|wf| wf.approval_status_field.as_ref())
-                        .is_some();
-
-                    let has_embeddings = entity_cfg
-                        .map(|ec| !ec.search.embedding_columns.is_empty())
-                        .unwrap_or(false);
-                    let has_fts = entity_cfg
-                        .and_then(|ec| ec.search.fts_columns.as_ref())
-                        .map(|cols| !cols.is_empty())
-                        .unwrap_or(false);
-                    let fts_rest_mode = entity_cfg
-                        .map(|ec| ec.search.fts_rest_mode.clone())
-                        .unwrap_or_else(|| "query_param".to_string());
-
-                    let media_fields: Vec<String> = db
-                        .get_properties(title)
-                        .await
-                        .unwrap_or_default()
-                        .iter()
-                        .filter(|p| {
-                            p.effective_kind()
-                                == Some(
-                                    codegraph_type_contracts::RefClassificationKind::MediaWrapper,
-                                )
-                        })
-                        .map(|p| p.pg_column_name.clone())
-                        .collect();
-
-                    let permissions = entity_cfg
-                        .map(|ec| ec.permissions.clone())
-                        .unwrap_or_default();
-                    let permission_scope = permissions.scope.clone().unwrap_or_default();
-                    let public_skip = route_auth_is_public(
-                        project.integration.public_operations_rls,
-                        schema.access,
-                        entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
-                        &operations,
-                    );
-                    let has_permissions = !permission_scope.is_empty() && !public_skip;
-
-                    let entity_idx = entities.len();
-                    module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
-                    title_to_entity_idx.insert(title.clone(), entity_idx);
-
-                    entities.push(RouterEntity {
-                        entity_name: entity_name.clone(),
-                        module_name: schema.pg_table_name.clone(),
-                        path_segment: resolve_path_segment(entity_cfg, &schema),
-                        has_create: operations.contains(&"create".to_string()),
-                        has_update: operations.contains(&"update".to_string()),
-                        has_delete: operations.contains(&"delete".to_string()),
-                        has_workflow,
-                        has_approval_status,
-                        has_embeddings,
-                        has_fts,
-                        fts_rest_mode,
-                        role: entity_cfg
-                            .and_then(|ec| ec.role.clone())
-                            .unwrap_or_else(|| "root".into()),
-                        param_name: param_name_from_path_segment(&resolve_path_segment(
-                            entity_cfg, &schema,
-                        )),
-                        parent: None,
-                        children: vec![],
-                        cross_refs: vec![],
-                        media_fields,
-                        hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
-                        pipeline_middleware: Vec::new(),
-                        has_pipeline_layer: false,
-                        has_permissions,
-                        permission_scope,
-                        permission_record_scoped: permissions.record_scoped,
-                        api_key_scope: entity_cfg
-                            .and_then(|ec| ec.api_key_scope.clone())
-                            .unwrap_or_else(|| schema.pg_table_name.clone()),
-                    });
+            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await
+                && !schema.pg_table_name.is_empty()
+            {
+                // Dedup by module name to prevent duplicate route functions
+                if let Some(&existing_idx) = module_to_idx.get(&schema.pg_table_name) {
+                    title_to_entity_idx.insert(title.clone(), existing_idx);
+                    continue;
                 }
+                let entity_name = &schema.rust_type_name;
+                let operations = resolve_entity_operations(db, config, domain, entity_name).await;
+
+                let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
+                let has_workflow = workflow
+                    .map(|wf| wf.generate_action_endpoints)
+                    .unwrap_or(false);
+                let has_approval_status = workflow
+                    .and_then(|wf| wf.approval_status_field.as_ref())
+                    .is_some();
+
+                let has_embeddings = entity_cfg
+                    .map(|ec| !ec.search.embedding_columns.is_empty())
+                    .unwrap_or(false);
+                let has_fts = entity_cfg
+                    .and_then(|ec| ec.search.fts_columns.as_ref())
+                    .map(|cols| !cols.is_empty())
+                    .unwrap_or(false);
+                let fts_rest_mode = entity_cfg
+                    .map(|ec| ec.search.fts_rest_mode.clone())
+                    .unwrap_or_else(|| "query_param".to_string());
+
+                let media_fields: Vec<String> = db
+                    .get_properties(title)
+                    .await
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|p| {
+                        p.effective_kind()
+                            == Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
+                    })
+                    .map(|p| p.pg_column_name.clone())
+                    .collect();
+
+                let permissions = entity_cfg
+                    .map(|ec| ec.permissions.clone())
+                    .unwrap_or_default();
+                let permission_scope = permissions.scope.clone().unwrap_or_default();
+                let public_skip = route_auth_is_public(
+                    project.integration.public_operations_rls,
+                    schema.access,
+                    entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
+                    &operations,
+                );
+                let has_permissions = !permission_scope.is_empty() && !public_skip;
+
+                let entity_idx = entities.len();
+                module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
+                title_to_entity_idx.insert(title.clone(), entity_idx);
+
+                entities.push(RouterEntity {
+                    entity_name: entity_name.clone(),
+                    module_name: schema.pg_table_name.clone(),
+                    path_segment: resolve_path_segment(entity_cfg, &schema),
+                    has_create: operations.contains(&"create".to_string()),
+                    has_update: operations.contains(&"update".to_string()),
+                    has_delete: operations.contains(&"delete".to_string()),
+                    has_workflow,
+                    has_approval_status,
+                    has_embeddings,
+                    has_fts,
+                    fts_rest_mode,
+                    role: entity_cfg
+                        .and_then(|ec| ec.role.clone())
+                        .unwrap_or_else(|| "root".into()),
+                    param_name: param_name_from_path_segment(&resolve_path_segment(
+                        entity_cfg, &schema,
+                    )),
+                    parent: None,
+                    children: vec![],
+                    cross_refs: vec![],
+                    media_fields,
+                    hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+                    pipeline_middleware: Vec::new(),
+                    has_pipeline_layer: false,
+                    has_permissions,
+                    permission_scope,
+                    permission_record_scoped: permissions.record_scoped,
+                    api_key_scope: entity_cfg
+                        .and_then(|ec| ec.api_key_scope.clone())
+                        .unwrap_or_else(|| schema.pg_table_name.clone()),
+                });
             }
         }
 
@@ -354,62 +351,21 @@ impl DomainGenerator for RouterGenerator {
                     .domains
                     .get(domain)
                     .and_then(|d| d.get_entity_config(title))
+                    && ec.role.as_deref() == Some("child")
+                    && let Some(parent_title) = &ec.parent
                 {
-                    if ec.role.as_deref() == Some("child") {
-                        if let Some(parent_title) = &ec.parent {
-                            // Use title_to_entity_idx so hyphenated schema titles
-                            // like "LER-RSType" (rust_type_name "LERRS") resolve
-                            // correctly instead of failing via strip_type_suffix.
-                            if let (Some(&ci), Some(&pi)) = (
-                                title_to_entity_idx.get(title.as_str()),
-                                title_to_entity_idx.get(parent_title.as_str()),
-                            ) {
-                                if entities[ci].parent.is_none() {
-                                    let parent_name =
-                                        strip_suffix(parent_title, &config.defaults.type_suffix);
-                                    let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
-                                        format!(
-                                            "{}_id",
-                                            codegraph_naming::to_snake_case(parent_name)
-                                        )
-                                    });
-                                    let parent_module = entities[pi].module_name.clone();
-                                    let parent_path = entities[pi].path_segment.clone();
-                                    let parent_entity = entities[pi].entity_name.clone();
-
-                                    entities[ci].role = "child".to_string();
-                                    entities[ci].parent = Some(ParentInfo {
-                                        entity_name: parent_entity,
-                                        module_name: parent_module,
-                                        path_segment: parent_path,
-                                        fk_column,
-                                    });
-
-                                    let child_entity = entities[ci].entity_name.clone();
-                                    let child_module = entities[ci].module_name.clone();
-                                    let child_path = entities[ci].path_segment.clone();
-                                    entities[pi].children.push(ChildInfo {
-                                        entity_name: child_entity,
-                                        module_name: child_module,
-                                        path_segment: child_path,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Source 2: graph-detected parent_candidates (only for entities
-            // not already assigned by manual config above)
-            for pc in &self.parent_candidates {
-                let child_idx = title_to_entity_idx.get(pc.child_title.as_str()).copied();
-                let parent_idx = title_to_entity_idx.get(pc.parent_title.as_str()).copied();
-
-                if let (Some(ci), Some(pi)) = (child_idx, parent_idx) {
-                    if entities[ci].parent.is_none() && entities[ci].role != "root" {
-                        let fk_column =
-                            crate::fk_column_for_candidate(pc, &config.defaults.type_suffix);
+                    // Use title_to_entity_idx so hyphenated schema titles
+                    // like "LER-RSType" (rust_type_name "LERRS") resolve
+                    // correctly instead of failing via strip_type_suffix.
+                    if let (Some(&ci), Some(&pi)) = (
+                        title_to_entity_idx.get(title.as_str()),
+                        title_to_entity_idx.get(parent_title.as_str()),
+                    ) && entities[ci].parent.is_none()
+                    {
+                        let parent_name = strip_suffix(parent_title, &config.defaults.type_suffix);
+                        let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
+                            format!("{}_id", codegraph_naming::to_snake_case(parent_name))
+                        });
                         let parent_module = entities[pi].module_name.clone();
                         let parent_path = entities[pi].path_segment.clone();
                         let parent_entity = entities[pi].entity_name.clone();
@@ -433,6 +389,41 @@ impl DomainGenerator for RouterGenerator {
                     }
                 }
             }
+
+            // Source 2: graph-detected parent_candidates (only for entities
+            // not already assigned by manual config above)
+            for pc in &self.parent_candidates {
+                let child_idx = title_to_entity_idx.get(pc.child_title.as_str()).copied();
+                let parent_idx = title_to_entity_idx.get(pc.parent_title.as_str()).copied();
+
+                if let (Some(ci), Some(pi)) = (child_idx, parent_idx)
+                    && entities[ci].parent.is_none()
+                    && entities[ci].role != "root"
+                {
+                    let fk_column =
+                        crate::fk_column_for_candidate(pc, &config.defaults.type_suffix);
+                    let parent_module = entities[pi].module_name.clone();
+                    let parent_path = entities[pi].path_segment.clone();
+                    let parent_entity = entities[pi].entity_name.clone();
+
+                    entities[ci].role = "child".to_string();
+                    entities[ci].parent = Some(ParentInfo {
+                        entity_name: parent_entity,
+                        module_name: parent_module,
+                        path_segment: parent_path,
+                        fk_column,
+                    });
+
+                    let child_entity = entities[ci].entity_name.clone();
+                    let child_module = entities[ci].module_name.clone();
+                    let child_path = entities[ci].path_segment.clone();
+                    entities[pi].children.push(ChildInfo {
+                        entity_name: child_entity,
+                        module_name: child_module,
+                        path_segment: child_path,
+                    });
+                }
+            }
         }
 
         // Warn on entities with nesting depth > 3 (long URLs).
@@ -443,7 +434,8 @@ impl DomainGenerator for RouterGenerator {
                 if depth > 3 {
                     tracing::warn!(
                         "Entity '{}' nesting depth is {} (max 3). URL will be long: consider restructuring.",
-                        entity.entity_name, depth
+                        entity.entity_name,
+                        depth
                     );
                 }
             }
@@ -528,13 +520,11 @@ impl DomainGenerator for RouterGenerator {
             if let Some(endpoint) = endpoints
                 .iter()
                 .find(|ep| ep.path_template.starts_with(&base_path))
-            {
-                if let Ok(Some(pipeline)) =
+                && let Ok(Some(pipeline)) =
                     db.get_pipeline_for_endpoint(&endpoint.path_template).await
-                {
-                    entity.pipeline_middleware = pipeline.middleware.unwrap_or_default();
-                    entity.has_pipeline_layer = !entity.pipeline_middleware.is_empty();
-                }
+            {
+                entity.pipeline_middleware = pipeline.middleware.unwrap_or_default();
+                entity.has_pipeline_layer = !entity.pipeline_middleware.is_empty();
             }
         }
 
@@ -599,98 +589,98 @@ pub async fn build_router_context(
             continue;
         }
 
-        if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
-            if !schema.pg_table_name.is_empty() {
-                // Dedup by module name to prevent duplicate route functions
-                if let Some(&existing_idx) = module_to_idx.get(&schema.pg_table_name) {
-                    title_to_entity_idx.insert(title.clone(), existing_idx);
-                    continue;
-                }
-                let entity_name = &schema.rust_type_name;
-                let operations = resolve_entity_operations(db, config, domain, entity_name).await;
-
-                let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
-                let has_workflow = workflow
-                    .map(|wf| wf.generate_action_endpoints)
-                    .unwrap_or(false);
-                let has_approval_status = workflow
-                    .and_then(|wf| wf.approval_status_field.as_ref())
-                    .is_some();
-
-                let has_embeddings = entity_cfg
-                    .map(|ec| !ec.search.embedding_columns.is_empty())
-                    .unwrap_or(false);
-                let fts_rest_mode = entity_cfg
-                    .map(|ec| ec.search.fts_rest_mode.clone())
-                    .unwrap_or_else(|| "query_param".to_string());
-
-                let search = entity_cfg.map(|ec| &ec.search);
-                let has_fts = search
-                    .and_then(|s| s.fts_columns.as_ref())
-                    .map(|cols| !cols.is_empty())
-                    .unwrap_or(false);
-
-                let media_fields: Vec<String> = db
-                    .get_properties(title)
-                    .await
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|p| {
-                        p.effective_kind()
-                            == Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
-                    })
-                    .map(|p| p.pg_column_name.clone())
-                    .collect();
-
-                let permissions = entity_cfg
-                    .map(|ec| ec.permissions.clone())
-                    .unwrap_or_default();
-                let permission_scope = permissions.scope.clone().unwrap_or_default();
-                let public_skip = route_auth_is_public(
-                    project.integration.public_operations_rls,
-                    schema.access,
-                    entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
-                    &operations,
-                );
-                let has_permissions = !permission_scope.is_empty() && !public_skip;
-
-                let entity_idx = entities.len();
-                module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
-                title_to_entity_idx.insert(title.clone(), entity_idx);
-
-                entities.push(RouterEntity {
-                    entity_name: entity_name.clone(),
-                    module_name: schema.pg_table_name.clone(),
-                    path_segment: resolve_path_segment(entity_cfg, &schema),
-                    has_create: operations.contains(&"create".to_string()),
-                    has_update: operations.contains(&"update".to_string()),
-                    has_delete: operations.contains(&"delete".to_string()),
-                    has_workflow,
-                    has_approval_status,
-                    has_embeddings,
-                    has_fts,
-                    fts_rest_mode,
-                    role: entity_cfg
-                        .and_then(|ec| ec.role.clone())
-                        .unwrap_or_else(|| "root".into()),
-                    param_name: param_name_from_path_segment(&resolve_path_segment(
-                        entity_cfg, &schema,
-                    )),
-                    parent: None,
-                    children: vec![],
-                    cross_refs: vec![],
-                    media_fields,
-                    hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
-                    pipeline_middleware: Vec::new(),
-                    has_pipeline_layer: false,
-                    has_permissions,
-                    permission_scope,
-                    permission_record_scoped: permissions.record_scoped,
-                    api_key_scope: entity_cfg
-                        .and_then(|ec| ec.api_key_scope.clone())
-                        .unwrap_or_else(|| schema.pg_table_name.clone()),
-                });
+        if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await
+            && !schema.pg_table_name.is_empty()
+        {
+            // Dedup by module name to prevent duplicate route functions
+            if let Some(&existing_idx) = module_to_idx.get(&schema.pg_table_name) {
+                title_to_entity_idx.insert(title.clone(), existing_idx);
+                continue;
             }
+            let entity_name = &schema.rust_type_name;
+            let operations = resolve_entity_operations(db, config, domain, entity_name).await;
+
+            let workflow = entity_cfg.and_then(|ec| ec.workflow.as_ref());
+            let has_workflow = workflow
+                .map(|wf| wf.generate_action_endpoints)
+                .unwrap_or(false);
+            let has_approval_status = workflow
+                .and_then(|wf| wf.approval_status_field.as_ref())
+                .is_some();
+
+            let has_embeddings = entity_cfg
+                .map(|ec| !ec.search.embedding_columns.is_empty())
+                .unwrap_or(false);
+            let fts_rest_mode = entity_cfg
+                .map(|ec| ec.search.fts_rest_mode.clone())
+                .unwrap_or_else(|| "query_param".to_string());
+
+            let search = entity_cfg.map(|ec| &ec.search);
+            let has_fts = search
+                .and_then(|s| s.fts_columns.as_ref())
+                .map(|cols| !cols.is_empty())
+                .unwrap_or(false);
+
+            let media_fields: Vec<String> = db
+                .get_properties(title)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter(|p| {
+                    p.effective_kind()
+                        == Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
+                })
+                .map(|p| p.pg_column_name.clone())
+                .collect();
+
+            let permissions = entity_cfg
+                .map(|ec| ec.permissions.clone())
+                .unwrap_or_default();
+            let permission_scope = permissions.scope.clone().unwrap_or_default();
+            let public_skip = route_auth_is_public(
+                project.integration.public_operations_rls,
+                schema.access,
+                entity_cfg.and_then(|ec| ec.public_operations.as_deref()),
+                &operations,
+            );
+            let has_permissions = !permission_scope.is_empty() && !public_skip;
+
+            let entity_idx = entities.len();
+            module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
+            title_to_entity_idx.insert(title.clone(), entity_idx);
+
+            entities.push(RouterEntity {
+                entity_name: entity_name.clone(),
+                module_name: schema.pg_table_name.clone(),
+                path_segment: resolve_path_segment(entity_cfg, &schema),
+                has_create: operations.contains(&"create".to_string()),
+                has_update: operations.contains(&"update".to_string()),
+                has_delete: operations.contains(&"delete".to_string()),
+                has_workflow,
+                has_approval_status,
+                has_embeddings,
+                has_fts,
+                fts_rest_mode,
+                role: entity_cfg
+                    .and_then(|ec| ec.role.clone())
+                    .unwrap_or_else(|| "root".into()),
+                param_name: param_name_from_path_segment(&resolve_path_segment(
+                    entity_cfg, &schema,
+                )),
+                parent: None,
+                children: vec![],
+                cross_refs: vec![],
+                media_fields,
+                hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
+                pipeline_middleware: Vec::new(),
+                has_pipeline_layer: false,
+                has_permissions,
+                permission_scope,
+                permission_record_scoped: permissions.record_scoped,
+                api_key_scope: entity_cfg
+                    .and_then(|ec| ec.api_key_scope.clone())
+                    .unwrap_or_else(|| schema.pg_table_name.clone()),
+            });
         }
     }
 
@@ -703,59 +693,21 @@ pub async fn build_router_context(
                 .domains
                 .get(domain)
                 .and_then(|d| d.get_entity_config(title))
+                && ec.role.as_deref() == Some("child")
+                && let Some(parent_title) = &ec.parent
             {
-                if ec.role.as_deref() == Some("child") {
-                    if let Some(parent_title) = &ec.parent {
-                        // Use title_to_entity_idx so hyphenated schema titles
-                        // like "LER-RSType" (rust_type_name "LERRS") resolve
-                        // correctly instead of failing via strip_type_suffix.
-                        if let (Some(&ci), Some(&pi)) = (
-                            title_to_entity_idx.get(title.as_str()),
-                            title_to_entity_idx.get(parent_title.as_str()),
-                        ) {
-                            if entities[ci].parent.is_none() {
-                                let parent_name =
-                                    strip_suffix(parent_title, &config.defaults.type_suffix);
-                                let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
-                                    format!("{}_id", codegraph_naming::to_snake_case(parent_name))
-                                });
-                                let parent_module = entities[pi].module_name.clone();
-                                let parent_path = entities[pi].path_segment.clone();
-                                let parent_entity = entities[pi].entity_name.clone();
-
-                                entities[ci].role = "child".to_string();
-                                entities[ci].parent = Some(ParentInfo {
-                                    entity_name: parent_entity,
-                                    module_name: parent_module,
-                                    path_segment: parent_path,
-                                    fk_column,
-                                });
-
-                                let child_entity = entities[ci].entity_name.clone();
-                                let child_module = entities[ci].module_name.clone();
-                                let child_path = entities[ci].path_segment.clone();
-                                entities[pi].children.push(ChildInfo {
-                                    entity_name: child_entity,
-                                    module_name: child_module,
-                                    path_segment: child_path,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Source 2: graph-detected parent_candidates (only for entities
-        // not already assigned by manual config above)
-        for pc in parent_candidates {
-            let child_idx = title_to_entity_idx.get(pc.child_title.as_str()).copied();
-            let parent_idx = title_to_entity_idx.get(pc.parent_title.as_str()).copied();
-
-            if let (Some(ci), Some(pi)) = (child_idx, parent_idx) {
-                if entities[ci].parent.is_none() && entities[ci].role != "root" {
-                    let fk_column =
-                        crate::fk_column_for_candidate(pc, &config.defaults.type_suffix);
+                // Use title_to_entity_idx so hyphenated schema titles
+                // like "LER-RSType" (rust_type_name "LERRS") resolve
+                // correctly instead of failing via strip_type_suffix.
+                if let (Some(&ci), Some(&pi)) = (
+                    title_to_entity_idx.get(title.as_str()),
+                    title_to_entity_idx.get(parent_title.as_str()),
+                ) && entities[ci].parent.is_none()
+                {
+                    let parent_name = strip_suffix(parent_title, &config.defaults.type_suffix);
+                    let fk_column = ec.parent_ref.clone().unwrap_or_else(|| {
+                        format!("{}_id", codegraph_naming::to_snake_case(parent_name))
+                    });
                     let parent_module = entities[pi].module_name.clone();
                     let parent_path = entities[pi].path_segment.clone();
                     let parent_entity = entities[pi].entity_name.clone();
@@ -779,6 +731,40 @@ pub async fn build_router_context(
                 }
             }
         }
+
+        // Source 2: graph-detected parent_candidates (only for entities
+        // not already assigned by manual config above)
+        for pc in parent_candidates {
+            let child_idx = title_to_entity_idx.get(pc.child_title.as_str()).copied();
+            let parent_idx = title_to_entity_idx.get(pc.parent_title.as_str()).copied();
+
+            if let (Some(ci), Some(pi)) = (child_idx, parent_idx)
+                && entities[ci].parent.is_none()
+                && entities[ci].role != "root"
+            {
+                let fk_column = crate::fk_column_for_candidate(pc, &config.defaults.type_suffix);
+                let parent_module = entities[pi].module_name.clone();
+                let parent_path = entities[pi].path_segment.clone();
+                let parent_entity = entities[pi].entity_name.clone();
+
+                entities[ci].role = "child".to_string();
+                entities[ci].parent = Some(ParentInfo {
+                    entity_name: parent_entity,
+                    module_name: parent_module,
+                    path_segment: parent_path,
+                    fk_column,
+                });
+
+                let child_entity = entities[ci].entity_name.clone();
+                let child_module = entities[ci].module_name.clone();
+                let child_path = entities[ci].path_segment.clone();
+                entities[pi].children.push(ChildInfo {
+                    entity_name: child_entity,
+                    module_name: child_module,
+                    path_segment: child_path,
+                });
+            }
+        }
     }
 
     // Warn on entities with nesting depth > 3 (long URLs).
@@ -788,9 +774,10 @@ pub async fn build_router_context(
             let depth = calculate_nesting_depth(&title, parent_candidates);
             if depth > 3 {
                 tracing::warn!(
-                        "Entity '{}' nesting depth is {} (max 3). URL will be long: consider restructuring.",
-                        entity.entity_name, depth
-                    );
+                    "Entity '{}' nesting depth is {} (max 3). URL will be long: consider restructuring.",
+                    entity.entity_name,
+                    depth
+                );
             }
         }
     }
@@ -874,12 +861,10 @@ pub async fn build_router_context(
         if let Some(endpoint) = endpoints
             .iter()
             .find(|ep| ep.path_template.starts_with(&base_path))
+            && let Ok(Some(pipeline)) = db.get_pipeline_for_endpoint(&endpoint.path_template).await
         {
-            if let Ok(Some(pipeline)) = db.get_pipeline_for_endpoint(&endpoint.path_template).await
-            {
-                entity.pipeline_middleware = pipeline.middleware.unwrap_or_default();
-                entity.has_pipeline_layer = !entity.pipeline_middleware.is_empty();
-            }
+            entity.pipeline_middleware = pipeline.middleware.unwrap_or_default();
+            entity.has_pipeline_layer = !entity.pipeline_middleware.is_empty();
         }
     }
 

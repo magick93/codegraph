@@ -105,7 +105,7 @@ pub trait GraphQuerier: Send + Sync {
     ) -> Result<Vec<Extension>, GraphError>;
 
     async fn get_composition_tree(&self, schema_title: &str)
-        -> Result<CompositionTree, GraphError>;
+    -> Result<CompositionTree, GraphError>;
     async fn get_allof_targets(&self, schema_title: &str) -> Result<Vec<String>, GraphError>;
     /// Get all schemas that have an ExtendsSchema edge pointing to the given parent
     /// title — the reverse of `get_allof_targets`. Returns full SchemaNode objects

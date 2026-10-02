@@ -7,11 +7,11 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
+use crate::GenerationEntry;
 use crate::api::api_model::resolve_entity_operations;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]

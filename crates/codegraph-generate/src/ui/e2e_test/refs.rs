@@ -29,25 +29,25 @@ pub(super) async fn resolve_ref_schema(
             .ok()
             .flatten()
     };
-    if resolved.is_none() {
-        if let Some(ref target) = prop.ref_target {
-            let last_segment = target.rsplit('/').next().unwrap_or(target);
-            let ref_schema_title = last_segment
-                .strip_suffix(".schema.json")
-                .or_else(|| last_segment.strip_suffix(".json#"))
-                .or_else(|| last_segment.strip_suffix(".json"))
-                .unwrap_or(last_segment);
-            if let Ok(Some(ref_schema)) = db
-                .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
-                .await
-            {
-                resolved = Some(ref_schema);
-            }
-            if resolved.is_none() {
-                if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
-                    resolved = Some(ref_schema);
-                }
-            }
+    if resolved.is_none()
+        && let Some(ref target) = prop.ref_target
+    {
+        let last_segment = target.rsplit('/').next().unwrap_or(target);
+        let ref_schema_title = last_segment
+            .strip_suffix(".schema.json")
+            .or_else(|| last_segment.strip_suffix(".json#"))
+            .or_else(|| last_segment.strip_suffix(".json"))
+            .unwrap_or(last_segment);
+        if let Ok(Some(ref_schema)) = db
+            .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+            .await
+        {
+            resolved = Some(ref_schema);
+        }
+        if resolved.is_none()
+            && let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await
+        {
+            resolved = Some(ref_schema);
         }
     }
     // Final fallback: a required plain `format: uuid` scalar ending in `_id`
@@ -57,14 +57,12 @@ pub(super) async fn resolve_ref_schema(
         resolved = resolve_convention_ref(db, prop, current_domain).await;
     }
     // Prefer a same-domain schema when the resolved one lives elsewhere.
-    if let (Some(cur_domain), Some(found)) = (current_domain, &resolved) {
-        if found.domain.as_deref() != Some(cur_domain) {
-            if let Ok(schemas) = db.list_schemas(Some(cur_domain)).await {
-                if let Some(same_domain) = schemas.iter().find(|s| s.title == found.title) {
-                    resolved = Some(same_domain.clone());
-                }
-            }
-        }
+    if let (Some(cur_domain), Some(found)) = (current_domain, &resolved)
+        && found.domain.as_deref() != Some(cur_domain)
+        && let Ok(schemas) = db.list_schemas(Some(cur_domain)).await
+        && let Some(same_domain) = schemas.iter().find(|s| s.title == found.title)
+    {
+        resolved = Some(same_domain.clone());
     }
     resolved
 }

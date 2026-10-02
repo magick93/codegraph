@@ -1,4 +1,4 @@
-use crate::code_writer::{wln, CodeWriter};
+use crate::code_writer::{CodeWriter, wln};
 
 use super::child::emit_child_reads;
 use super::junction::{emit_junction_field_population, emit_junction_reads};

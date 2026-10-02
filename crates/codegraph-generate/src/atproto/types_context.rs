@@ -4,8 +4,8 @@ use codegraph_core::types::{LexiconNode, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
-use crate::error::Result;
 use crate::ProjectConfig;
+use crate::error::Result;
 
 #[derive(Debug, Serialize)]
 pub struct TypesContext {
@@ -248,24 +248,24 @@ async fn resolve_codelist_enum(
                 if !seen.contains(&enum_name) {
                     let codelist_query_name = codelist_enum_name_from_ref(&prop.ref_target)
                         .unwrap_or_else(|| target.clone());
-                    if let Ok(values) = db.get_enum_values(&codelist_query_name).await {
-                        if !values.is_empty() {
-                            let variants: Vec<EnumVariantContext> = values
-                                .iter()
-                                .map(|v| EnumVariantContext {
-                                    name: codegraph_naming::to_pascal_case(&v.value),
-                                    rename: Some(v.value.clone()),
-                                    display: v.display_name.clone().unwrap_or(v.value.clone()),
-                                })
-                                .collect();
-                            seen.insert(enum_name.clone());
-                            defs.push(EnumDefContext {
-                                enum_name: enum_name.clone(),
-                                description: None,
-                                nsid: String::new(),
-                                variants,
-                            });
-                        }
+                    if let Ok(values) = db.get_enum_values(&codelist_query_name).await
+                        && !values.is_empty()
+                    {
+                        let variants: Vec<EnumVariantContext> = values
+                            .iter()
+                            .map(|v| EnumVariantContext {
+                                name: codegraph_naming::to_pascal_case(&v.value),
+                                rename: Some(v.value.clone()),
+                                display: v.display_name.clone().unwrap_or(v.value.clone()),
+                            })
+                            .collect();
+                        seen.insert(enum_name.clone());
+                        defs.push(EnumDefContext {
+                            enum_name: enum_name.clone(),
+                            description: None,
+                            nsid: String::new(),
+                            variants,
+                        });
                     }
                 }
                 (enum_name, None)

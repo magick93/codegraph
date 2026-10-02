@@ -43,7 +43,7 @@ use test_framework::axum_server;
 use test_framework::extras::write_extras;
 use test_framework::node_project::NodeProject;
 use test_framework::playwright;
-use test_framework::postgres::{resolve_base_target, GateDb};
+use test_framework::postgres::{GateDb, resolve_base_target};
 use test_framework::process::{free_port, have_tool};
 
 /// Serializes the whole gate so concurrent tests never race on the shared

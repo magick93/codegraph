@@ -985,10 +985,10 @@ pub fn build_package_context(
                 admin_bespoke_imports.push(action.handler.clone());
             }
         }
-        if let Some(submit) = &entity.public_submit {
-            if !plugin_bespoke_imports.contains(&submit.handler) {
-                plugin_bespoke_imports.push(submit.handler.clone());
-            }
+        if let Some(submit) = &entity.public_submit
+            && !plugin_bespoke_imports.contains(&submit.handler)
+        {
+            plugin_bespoke_imports.push(submit.handler.clone());
         }
     }
 

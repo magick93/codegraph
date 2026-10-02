@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use codegraph_backend::{create_backend, BackendConfig};
-use codegraph_config::config::{parse_domain_config, DomainConfig};
+use codegraph_backend::{BackendConfig, create_backend};
+use codegraph_config::config::{DomainConfig, parse_domain_config};
 use codegraph_type_contracts::RefClassificationKind;
 
 /// The bridge fixture: a type with builtins, a reference, an enum ref, an

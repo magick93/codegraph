@@ -98,10 +98,10 @@ pub fn built_in_pack_template_dir(name: &str) -> Result<Option<PathBuf>> {
 /// precedence is project template-dir > pack templates > built-ins.
 pub fn create_tera_for_run(design_system: Option<&str>, override_dirs: &[&Path]) -> Result<Tera> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(name) = design_system.filter(|name| !name.is_empty()) {
-        if let Some(dir) = built_in_pack_template_dir(name)? {
-            dirs.push(dir);
-        }
+    if let Some(name) = design_system.filter(|name| !name.is_empty())
+        && let Some(dir) = built_in_pack_template_dir(name)?
+    {
+        dirs.push(dir);
     }
     dirs.extend(override_dirs.iter().map(|p| p.to_path_buf()));
     let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();

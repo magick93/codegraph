@@ -6,16 +6,16 @@ use async_trait::async_trait;
 use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
-    ref_target_candidate_title, ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode,
-    ApiResourceNode, AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode,
-    CompositeColumn, CompositeRange, CompositionTree, ConditionNode, DataBindingResolution,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
+    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
+    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
+    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
     PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
     RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    TenantNode, ViewComponentNode, ViewContainerNode, ref_target_candidate_title,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -185,12 +185,12 @@ impl<'a> CachingQuerier<'a> {
                     if candidate == title {
                         continue;
                     }
-                    if let Some(child) = schema_by_title.get(candidate) {
-                        if child.is_entity {
-                            let entry = children_map.entry(title.clone()).or_default();
-                            if !entry.iter().any(|c| c.title == child.title) {
-                                entry.push((*child).clone());
-                            }
+                    if let Some(child) = schema_by_title.get(candidate)
+                        && child.is_entity
+                    {
+                        let entry = children_map.entry(title.clone()).or_default();
+                        if !entry.iter().any(|c| c.title == child.title) {
+                            entry.push((*child).clone());
                         }
                     }
                 }

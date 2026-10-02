@@ -6,10 +6,10 @@ use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 use super::proto_context::ProtoContext;

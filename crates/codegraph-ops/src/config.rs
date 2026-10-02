@@ -327,8 +327,10 @@ mod tests {
 
     #[test]
     fn resolve_env_expands_set_and_unset_vars() {
-        std::env::set_var("CG_OPS_TEST_SET_VAR", "hunter2");
-        std::env::remove_var("CG_OPS_TEST_UNSET_VAR");
+        unsafe {
+            std::env::set_var("CG_OPS_TEST_SET_VAR", "hunter2");
+            std::env::remove_var("CG_OPS_TEST_UNSET_VAR");
+        }
         // Set variable expands; unset expands to empty.
         assert_eq!(
             resolve_env("user={env:CG_OPS_TEST_SET_VAR}"),
@@ -347,7 +349,9 @@ mod tests {
 
     #[test]
     fn resolve_env_passes_plain_strings_through() {
-        std::env::remove_var("CG_OPS_TEST_UNSET_VAR");
+        unsafe {
+            std::env::remove_var("CG_OPS_TEST_UNSET_VAR");
+        }
         assert_eq!(resolve_env("postgres"), "postgres");
         assert_eq!(resolve_env(""), "");
         // No placeholder → untouched even if it contains braces.
@@ -358,8 +362,10 @@ mod tests {
 
     #[test]
     fn from_manifest_resolves_env_in_db_password_and_keys() {
-        std::env::set_var("CG_OPS_TEST_DB_PW", "pw-from-env");
-        std::env::set_var("CG_OPS_TEST_ANON", "anon-from-env");
+        unsafe {
+            std::env::set_var("CG_OPS_TEST_DB_PW", "pw-from-env");
+            std::env::set_var("CG_OPS_TEST_ANON", "anon-from-env");
+        }
         let manifest = OpsManifest {
             app_name: "demo-app".into(),
             graph_binary: None,

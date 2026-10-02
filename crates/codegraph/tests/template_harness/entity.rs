@@ -2,7 +2,7 @@ use crate::harness::{
     parent_child_mock, setup_mock, test_domain_config, test_project_config, test_tera,
 };
 use codegraph::generate;
-use codegraph::generate::db::dialect::{dialect_for_target, DatabaseTarget};
+use codegraph::generate::db::dialect::{DatabaseTarget, dialect_for_target};
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 
@@ -15,8 +15,8 @@ async fn candidate_entity_model() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-entity");
 
-    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -43,9 +43,9 @@ async fn entity_generator_injects_fk_for_parent_candidate() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-entity-fk-injection");
 
-    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
+    let generator = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -82,9 +82,9 @@ async fn entity_with_sqlite_dialect_uses_sqlite_template() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-entity");
 
-    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
+    let generator = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "CandidateType",

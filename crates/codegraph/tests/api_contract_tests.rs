@@ -310,12 +310,12 @@ fn index_generator_aggregates_every_domain() {
     ];
     let tera = create_tera();
     let project = ProjectConfig::default();
-    let gen = codegraph::generate::api::contract::ApiContractIndexGenerator::new(Path::new(
+    let generator = codegraph::generate::api::contract::ApiContractIndexGenerator::new(Path::new(
         "/tmp/api-contract-index",
     ));
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(&engine, &config, &order, &tera, &project))
+        .block_on(generator.generate(&engine, &config, &order, &tera, &project))
         .expect("ApiContractIndexGenerator failed");
     let index = files
         .iter()

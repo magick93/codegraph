@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::api::api_model::resolve_entity_operations;
 use crate::ddd::repository_emitter::RepositoryImplEmitter;
 use crate::error::Result;
-use crate::filter_fields::{resolve_filter_fields, FilterFieldInfo};
+use crate::filter_fields::{FilterFieldInfo, resolve_filter_fields};
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;

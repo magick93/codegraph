@@ -29,7 +29,7 @@ use auto_lsp::anyhow;
 use auto_lsp::default::db::{BaseDatabase, BaseDb};
 use auto_lsp::lsp_types::*;
 use auto_lsp::tree_sitter::{self, Query, QueryCursor, StreamingIterator};
-use rex_driver::{compile_files_with_imports, SchemaImports};
+use rex_driver::{SchemaImports, compile_files_with_imports};
 use rex_ir::{FeatureKind, TypeRef};
 
 use super::state::{
@@ -552,10 +552,10 @@ fn mox_completion_context(source: &str, position: Position) -> bool {
     let before_cursor = &line[..byte_col.min(line.len())];
     let trimmed = before_cursor.trim();
 
-    if let Some(last_word) = trimmed.split_whitespace().last() {
-        if TYPE_KEYWORD_CONTEXTS.contains(&last_word) {
-            return true;
-        }
+    if let Some(last_word) = trimmed.split_whitespace().last()
+        && TYPE_KEYWORD_CONTEXTS.contains(&last_word)
+    {
+        return true;
     }
 
     // Attribute type being typed: a single word alone on the line (the
@@ -746,26 +746,25 @@ fn mox_hover_markdown(mox: &MoxState, name: &str, resolution: &MoxNameResolution
     let mut md = String::new();
     for (kind, package) in resolution.kinds.iter().zip(&resolution.packages) {
         md.push_str(&format!("**{name}** `{kind}`\n\npackage `{package}`\n\n"));
-        if *kind == "class" {
-            if let Some(class) = mox.classes.iter().find(|c| c.name == name) {
-                if !class.features.is_empty() {
-                    md.push_str("features:\n");
-                    for feature in &class.features {
-                        md.push_str(&format!("- `{}` ({})\n", feature.name, feature.kind));
-                    }
-                    md.push('\n');
+        if *kind == "class"
+            && let Some(class) = mox.classes.iter().find(|c| c.name == name)
+        {
+            if !class.features.is_empty() {
+                md.push_str("features:\n");
+                for feature in &class.features {
+                    md.push_str(&format!("- `{}` ({})\n", feature.name, feature.kind));
                 }
-                if !class.extends.is_empty() {
-                    md.push_str(&format!("extends: {}\n", class.extends.join(", ")));
-                }
+                md.push('\n');
+            }
+            if !class.extends.is_empty() {
+                md.push_str(&format!("extends: {}\n", class.extends.join(", ")));
             }
         }
-        if *kind == "datatype" {
-            if let Some(datatype) = mox.datatypes.iter().find(|d| d.name == name) {
-                if let Some(format) = &datatype.format {
-                    md.push_str(&format!("format: `{format}`\n"));
-                }
-            }
+        if *kind == "datatype"
+            && let Some(datatype) = mox.datatypes.iter().find(|d| d.name == name)
+            && let Some(format) = &datatype.format
+        {
+            md.push_str(&format!("format: `{format}`\n"));
         }
     }
     md

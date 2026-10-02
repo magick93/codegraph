@@ -42,15 +42,15 @@ impl OutputValidator for ProtoCompileValidator {
         for pf in &proto_files {
             let proto_path = proto_dir.join(&pf.path);
             let parent = proto_path.parent().unwrap();
-            if !parent.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    errors.push(format!(
-                        "Failed to create proto dir '{}': {}",
-                        parent.display(),
-                        e
-                    ));
-                    continue;
-                }
+            if !parent.exists()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                errors.push(format!(
+                    "Failed to create proto dir '{}': {}",
+                    parent.display(),
+                    e
+                ));
+                continue;
             }
             if let Err(e) = std::fs::write(&proto_path, &pf.content) {
                 errors.push(format!(

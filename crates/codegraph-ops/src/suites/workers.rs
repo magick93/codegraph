@@ -17,13 +17,12 @@ use crate::db::{
     psql_exec, psql_exec_file, psql_exec_file_ok, psql_exec_file_with_vars, psql_query,
 };
 use crate::error::{OpsError, OpsResult};
-use crate::ext::{run_hooks, HookPolicy};
+use crate::ext::{HookPolicy, run_hooks};
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
 use crate::suites::api::{
-    http_get_body, http_post_body, http_status, hurl_error_excerpt, hurl_log_path,
+    TestCounters, http_get_body, http_post_body, http_status, hurl_error_excerpt, hurl_log_path,
     hurl_suite_passed, parse_requests, pluralize_entity_route, provision_api_key, write_hurl_log,
-    TestCounters,
 };
 use crate::wait::wait_for_url;
 
@@ -199,7 +198,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         None => {
             return Err(OpsError::TestFailure(
                 "[supabase] dir missing in manifest — the workers suite needs the stack".into(),
-            ))
+            ));
         }
     }
     config.metrics.end();
@@ -917,12 +916,16 @@ mod tests {
             );
         }
         // Compliance + RLS + webhooks never run through the gateway.
-        assert!(skip_reason("10_compliance_rules.hurl", &none)
-            .unwrap()
-            .contains("monolith"));
-        assert!(skip_reason("11_compliance_check.hurl", &none)
-            .unwrap()
-            .contains("monolith"));
+        assert!(
+            skip_reason("10_compliance_rules.hurl", &none)
+                .unwrap()
+                .contains("monolith")
+        );
+        assert!(
+            skip_reason("11_compliance_check.hurl", &none)
+                .unwrap()
+                .contains("monolith")
+        );
     }
 
     #[test]

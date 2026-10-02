@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::ProjectConfig;
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::{Error, Result};
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 mod accumulators;

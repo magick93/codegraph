@@ -80,10 +80,11 @@ impl GraphQuerier for MockEngine {
             if candidate == schema_title {
                 continue;
             }
-            if let Some(child) = schemas.get(candidate) {
-                if child.is_entity && seen.insert(child.title.clone()) {
-                    children.push(child.clone());
-                }
+            if let Some(child) = schemas.get(candidate)
+                && child.is_entity
+                && seen.insert(child.title.clone())
+            {
+                children.push(child.clone());
             }
         }
         children.sort_by(|a, b| a.title.cmp(&b.title));

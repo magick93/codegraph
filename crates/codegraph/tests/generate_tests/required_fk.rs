@@ -4,8 +4,8 @@
 
 use crate::fixtures::{mock_schema, prop, test_domain_config, test_project_config};
 use codegraph::generate;
-use codegraph::generate::traits::EntityGenerator;
 use codegraph::generate::ProjectConfig;
+use codegraph::generate::traits::EntityGenerator;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{DetectionSource, ParentCandidate};
 use codegraph_type_contracts::RefClassificationKind;

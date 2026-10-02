@@ -1,4 +1,4 @@
-use crate::code_writer::{w, wln, CodeWriter};
+use crate::code_writer::{CodeWriter, w, wln};
 
 use super::child::{child_insert_sql, emit_child_col_write_value, emit_child_inserts};
 use super::dto::emit_response_construction;
@@ -87,7 +87,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"insert\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn create(");
         wln!(code, "        &self,");
@@ -341,7 +342,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn find_by_id(");
         wln!(code, "        &self,");
@@ -412,7 +414,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select_scoped\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn find_by_id_scoped(");
         wln!(code, "        &self,");
@@ -501,7 +504,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"update\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn update(");
         wln!(code, "        &self,");
@@ -585,7 +589,10 @@ impl RepositoryImplEmitter {
         }
         wln!(code, "        match model.update(tx).await {{");
         wln!(code, "            Ok(_) => {{}}");
-        wln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}");
+        wln!(
+            code,
+            "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}"
+        );
         wln!(code, "            Err(e) => return Err(e.into()),");
         wln!(code, "        }}");
 
@@ -628,9 +635,13 @@ impl RepositoryImplEmitter {
                 let typed_value = typed_value_expr(&col.rust_type, "v");
                 wln!(code, "            if let Some(v) = cmd.{dto_field} {{");
                 let set_expr = if crate::is_geometry_cast(cast) {
-                    format!("                set_clauses.push(format!(\"{pg_col} = ST_GeomFromGeoJSON(${{}})\", values.len() + 1));")
+                    format!(
+                        "                set_clauses.push(format!(\"{pg_col} = ST_GeomFromGeoJSON(${{}})\", values.len() + 1));"
+                    )
                 } else {
-                    format!("                set_clauses.push(format!(\"{pg_col} = ${{}}::{cast}\", values.len() + 1));")
+                    format!(
+                        "                set_clauses.push(format!(\"{pg_col} = ${{}}::{cast}\", values.len() + 1));"
+                    )
                 };
                 wln!(code, "{set_expr}");
                 wln!(code, "                values.push({typed_value});");
@@ -781,7 +792,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"delete\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn delete(");
         wln!(code, "        &self,");
@@ -821,7 +833,10 @@ impl RepositoryImplEmitter {
             );
             wln!(code, "        match active.update(tx).await {{");
             wln!(code, "            Ok(_) => {{}}");
-            wln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}");
+            wln!(
+                code,
+                "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}"
+            );
             wln!(code, "            Err(e) => return Err(e.into()),");
             wln!(code, "        }}");
         } else {

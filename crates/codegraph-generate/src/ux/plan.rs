@@ -31,14 +31,14 @@
 use std::collections::BTreeMap;
 
 use codegraph_config::ux::{
-    glob_match, ColumnRule, Dimension, Display, FormatConfig, ToneMap, UxRules,
+    ColumnRule, Dimension, Display, FormatConfig, ToneMap, UxRules, glob_match,
 };
 use codegraph_core::types::PropertyNode;
 
 use crate::error::{Error, Result};
 use crate::ui::page::UiField;
 
-use super::dimension::{infer_dimension_with_hints, DimensionHints};
+use super::dimension::{DimensionHints, infer_dimension_with_hints};
 
 /// Stable `data-testid` constants for generated UI, shared by the UI
 /// generators, the e2e/ux spec emitters (#302/#304), and the POM
@@ -619,20 +619,20 @@ fn column_rule_matches(
     if rule.dimension.is_some() && !has_other_selectors && rule.dimension != Some(inferred) {
         return false;
     }
-    if let Some(classification) = rule.classification.as_deref() {
-        if !classification_matches(prop, classification) {
-            return false;
-        }
+    if let Some(classification) = rule.classification.as_deref()
+        && !classification_matches(prop, classification)
+    {
+        return false;
     }
-    if let Some(pg_type) = rule.pg_type.as_deref() {
-        if !pg_type_matches(&field.pg_type, pg_type) {
-            return false;
-        }
+    if let Some(pg_type) = rule.pg_type.as_deref()
+        && !pg_type_matches(&field.pg_type, pg_type)
+    {
+        return false;
     }
-    if let Some(pattern) = rule.name_pattern.as_deref() {
-        if !glob_match(pattern, &field.name) {
-            return false;
-        }
+    if let Some(pattern) = rule.name_pattern.as_deref()
+        && !glob_match(pattern, &field.name)
+    {
+        return false;
     }
     true
 }

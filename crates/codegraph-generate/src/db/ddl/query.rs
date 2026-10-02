@@ -8,12 +8,12 @@ use codegraph_type_contracts::RefClassificationKind;
 use crate::error::Result;
 use codegraph_config::{DomainConfig, SearchConfig};
 
+use super::DdlGenerator;
 use super::accumulators::DdlAccumulators;
 use super::types::{
     CheckConstraint, ChildTableDef, ColumnComment, ColumnDef, DdlContext, EmbeddingContext,
     ForeignKeyDef, FtsColumnWeight, FtsContext, IndexDef, RoleMinimum,
 };
-use super::DdlGenerator;
 
 /// PostgreSQL reserved words that must be double-quoted when used as column names.
 static PG_RESERVED_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
@@ -1150,35 +1150,31 @@ async fn add_parent_fk(
         // Resolve the parent's schema and table for the FK constraint.
         // Manual config takes priority over graph detection.
         let mut fk_resolved = false;
-        if let Some(ec) = entity_cfg {
-            if ec.role.as_deref() == Some("child") {
-                if let Some(ref parent_title) = ec.parent {
-                    if let Ok(Some(parent_schema)) =
-                        db.get_schema_in_domain(parent_title, domain).await
-                    {
-                        let parent_domain = if config
-                            .domains
-                            .get(domain)
-                            .map(|d| d.entities.contains(parent_title))
-                            .unwrap_or(false)
-                        {
-                            domain
-                        } else {
-                            parent_schema.domain.as_deref().unwrap_or(domain)
-                        };
-                        artifacts.foreign_keys.push(ForeignKeyDef {
-                            column_name: strip_rsharp(&fk_col),
-                            column: fk_col.clone(),
-                            references_schema: parent_domain.to_string(),
-                            references_table: parent_schema.pg_table_name.clone(),
-                            references_column: "id".to_string(),
-                            on_delete: "CASCADE".to_string(),
-                            is_codelist: false,
-                        });
-                        fk_resolved = true;
-                    }
-                }
-            }
+        if let Some(ec) = entity_cfg
+            && ec.role.as_deref() == Some("child")
+            && let Some(ref parent_title) = ec.parent
+            && let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
+        {
+            let parent_domain = if config
+                .domains
+                .get(domain)
+                .map(|d| d.entities.contains(parent_title))
+                .unwrap_or(false)
+            {
+                domain
+            } else {
+                parent_schema.domain.as_deref().unwrap_or(domain)
+            };
+            artifacts.foreign_keys.push(ForeignKeyDef {
+                column_name: strip_rsharp(&fk_col),
+                column: fk_col.clone(),
+                references_schema: parent_domain.to_string(),
+                references_table: parent_schema.pg_table_name.clone(),
+                references_column: "id".to_string(),
+                on_delete: "CASCADE".to_string(),
+                is_codelist: false,
+            });
+            fk_resolved = true;
         }
         if !fk_resolved {
             let stripped =
@@ -1186,30 +1182,28 @@ async fn add_parent_fk(
             if let Some(pc) = parent_candidates.iter().find(|pc| {
                 crate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix)
                     == stripped
-            }) {
-                if let Ok(Some(parent_schema)) =
-                    db.get_schema_in_domain(&pc.parent_title, domain).await
+            }) && let Ok(Some(parent_schema)) =
+                db.get_schema_in_domain(&pc.parent_title, domain).await
+            {
+                let parent_domain = if config
+                    .domains
+                    .get(domain)
+                    .map(|d| d.entities.contains(&pc.parent_title))
+                    .unwrap_or(false)
                 {
-                    let parent_domain = if config
-                        .domains
-                        .get(domain)
-                        .map(|d| d.entities.contains(&pc.parent_title))
-                        .unwrap_or(false)
-                    {
-                        domain
-                    } else {
-                        parent_schema.domain.as_deref().unwrap_or(domain)
-                    };
-                    artifacts.foreign_keys.push(ForeignKeyDef {
-                        column_name: strip_rsharp(&fk_col),
-                        column: fk_col,
-                        references_schema: parent_domain.to_string(),
-                        references_table: parent_schema.pg_table_name.clone(),
-                        references_column: "id".to_string(),
-                        on_delete: "CASCADE".to_string(),
-                        is_codelist: false,
-                    });
-                }
+                    domain
+                } else {
+                    parent_schema.domain.as_deref().unwrap_or(domain)
+                };
+                artifacts.foreign_keys.push(ForeignKeyDef {
+                    column_name: strip_rsharp(&fk_col),
+                    column: fk_col,
+                    references_schema: parent_domain.to_string(),
+                    references_table: parent_schema.pg_table_name.clone(),
+                    references_column: "id".to_string(),
+                    on_delete: "CASCADE".to_string(),
+                    is_codelist: false,
+                });
             }
         }
     }
@@ -1221,31 +1215,31 @@ fn add_hierarchy_artifacts(
     schema_name: &str,
     table_name: &str,
 ) {
-    if let Some(ec) = entity_cfg {
-        if let Some(ref hierarchy_field) = ec.hierarchy_field {
-            artifacts.columns.push(ColumnDef {
-                name: hierarchy_field.clone(),
-                pg_type: "UUID".to_string(),
-                nullable: true,
-                default: None,
-                is_primary_key: false,
-                is_array: false,
-            });
-            artifacts.foreign_keys.push(ForeignKeyDef {
-                column: hierarchy_field.clone(),
-                column_name: strip_rsharp(hierarchy_field),
-                references_schema: schema_name.to_string(),
-                references_table: table_name.to_string(),
-                references_column: "id".to_string(),
-                is_codelist: false,
-                on_delete: "SET NULL".to_string(),
-            });
-            artifacts.indexes.push(IndexDef {
-                name: format!("idx_{}_{}", table_name, hierarchy_field),
-                columns: vec![hierarchy_field.clone()],
-                unique: false,
-            });
-        }
+    if let Some(ec) = entity_cfg
+        && let Some(ref hierarchy_field) = ec.hierarchy_field
+    {
+        artifacts.columns.push(ColumnDef {
+            name: hierarchy_field.clone(),
+            pg_type: "UUID".to_string(),
+            nullable: true,
+            default: None,
+            is_primary_key: false,
+            is_array: false,
+        });
+        artifacts.foreign_keys.push(ForeignKeyDef {
+            column: hierarchy_field.clone(),
+            column_name: strip_rsharp(hierarchy_field),
+            references_schema: schema_name.to_string(),
+            references_table: table_name.to_string(),
+            references_column: "id".to_string(),
+            is_codelist: false,
+            on_delete: "SET NULL".to_string(),
+        });
+        artifacts.indexes.push(IndexDef {
+            name: format!("idx_{}_{}", table_name, hierarchy_field),
+            columns: vec![hierarchy_field.clone()],
+            unique: false,
+        });
     }
 }
 
@@ -1341,27 +1335,27 @@ async fn add_property_ref_columns(
                 // entities list don't have tables, so FK constraints to them
                 // would fail with "undefined_table".
                 if let Ok(Some(target)) = db.get_property_ref_target(&prop.name, schema_title).await
+                    && !target.pg_table_name.is_empty()
+                    && target.is_entity
                 {
-                    if !target.pg_table_name.is_empty() && target.is_entity {
-                        artifacts.columns.push(ColumnDef {
-                            name: col_name.clone(),
-                            pg_type: "UUID".to_string(),
-                            nullable: true,
-                            default: None,
-                            is_primary_key: false,
-                            is_array: false,
-                        });
-                        let fk_schema = target.domain.as_deref().unwrap_or(schema_name);
-                        artifacts.foreign_keys.push(ForeignKeyDef {
-                            column_name: strip_rsharp(&prop.rust_field_name),
-                            column: col_name,
-                            references_schema: fk_schema.to_string(),
-                            references_table: target.pg_table_name.clone(),
-                            is_codelist: false,
-                            references_column: "id".to_string(),
-                            on_delete: "SET NULL".to_string(),
-                        });
-                    }
+                    artifacts.columns.push(ColumnDef {
+                        name: col_name.clone(),
+                        pg_type: "UUID".to_string(),
+                        nullable: true,
+                        default: None,
+                        is_primary_key: false,
+                        is_array: false,
+                    });
+                    let fk_schema = target.domain.as_deref().unwrap_or(schema_name);
+                    artifacts.foreign_keys.push(ForeignKeyDef {
+                        column_name: strip_rsharp(&prop.rust_field_name),
+                        column: col_name,
+                        references_schema: fk_schema.to_string(),
+                        references_table: target.pg_table_name.clone(),
+                        is_codelist: false,
+                        references_column: "id".to_string(),
+                        on_delete: "SET NULL".to_string(),
+                    });
                 }
             }
         }

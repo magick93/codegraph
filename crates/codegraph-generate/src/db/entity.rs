@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::resolve_field;
 use codegraph_core::types::FieldDefinition;
+use codegraph_core::types::resolve_field;
 use codegraph_core::types::{
     AuditPolicy, PolicyKind, PropertyNode, SoftDeleteMarker, SoftDeletePolicy,
     SoftDeleteVisibility, TenantIsolationPolicy, TenantStrategy,
@@ -12,7 +12,7 @@ use codegraph_core::types::{
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
@@ -990,16 +990,15 @@ async fn build_child_entity_files(
         if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
             // Non-array VOs targeting entities are already handled as FK columns
             // in the main column loop above — skip them here.
-            if !prop.is_array {
-                if let Some(true) = db
+            if !prop.is_array
+                && let Some(true) = db
                     .get_property_ref_target(&prop.name, schema_title)
                     .await
                     .ok()
                     .flatten()
                     .map(|t| entity_titles.contains(&t.title))
-                {
-                    continue;
-                }
+            {
+                continue;
             }
             let mut visited = std::collections::HashSet::new();
             visited.insert(schema_title.to_string());

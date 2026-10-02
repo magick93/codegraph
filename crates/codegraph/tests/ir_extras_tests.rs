@@ -228,11 +228,13 @@ async fn generate_public_rls(flag: bool) -> Vec<codegraph::generate::traits::Gen
         },
         ..codegraph::generate::ProjectConfig::default()
     };
-    let gen = codegraph::generate::db::public_operations_rls::PublicOperationsRlsGenerator::new(
-        Path::new("/tmp/public-rls-test"),
-    );
+    let generator =
+        codegraph::generate::db::public_operations_rls::PublicOperationsRlsGenerator::new(
+            Path::new("/tmp/public-rls-test"),
+        );
     let empty: Vec<codegraph::generate::GenerationEntry> = vec![];
-    gen.generate(&engine, &config, &empty, &tera, &project)
+    generator
+        .generate(&engine, &config, &empty, &tera, &project)
         .await
         .expect("generation failed")
 }
@@ -273,7 +275,7 @@ async fn public_rls_generator_is_inert_when_flag_off() {
 
 #[tokio::test]
 async fn unresolved_import_reports_hole_reason() {
-    use codegraph::ingest::mox_ingest::{wire_alias_refs, MoxIngestStats, PendingAliasRef};
+    use codegraph::ingest::mox_ingest::{MoxIngestStats, PendingAliasRef, wire_alias_refs};
     let engine = MockEngine::new();
     // Seed the declaring schema so only the alias is unresolved.
     engine

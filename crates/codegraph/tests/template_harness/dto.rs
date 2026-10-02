@@ -4,7 +4,7 @@ use crate::harness::{
 };
 use codegraph::generate;
 use codegraph::generate::db::codelist::CodelistGenerator;
-use codegraph::generate::db::dialect::{dialect_for_target, DatabaseTarget};
+use codegraph::generate::db::dialect::{DatabaseTarget, dialect_for_target};
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use codegraph_core::mock::MockEngine;
@@ -196,8 +196,8 @@ async fn candidate_dto_response() {
 
     // App DTOs are re-exports; verify the re-export
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-resp");
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -252,8 +252,8 @@ async fn candidate_test_gen() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-testgen");
 
-    let gen = generate::test::test_gen::TestGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::test::test_gen::TestGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -350,8 +350,9 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
     let tmp = std::env::temp_dir().join("hr-graph-test-entity-ref-dto");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator =
+        generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -579,9 +580,9 @@ allow_include = ["deployment.position"]
     )
     .unwrap();
 
-    let gen = CodelistGenerator::new(&output_dir)
+    let generator = CodelistGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             "GenderCodeList",

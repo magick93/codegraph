@@ -5,10 +5,10 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -45,10 +45,10 @@ fn parse_existing_pub_mods(path: &Path) -> std::collections::HashSet<String> {
     if let Ok(content) = std::fs::read_to_string(path) {
         for line in content.lines() {
             let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("pub mod ") {
-                if let Some(name) = rest.strip_suffix(';') {
-                    mods.insert(name.trim().to_string());
-                }
+            if let Some(rest) = trimmed.strip_prefix("pub mod ")
+                && let Some(name) = rest.strip_suffix(';')
+            {
+                mods.insert(name.trim().to_string());
             }
         }
     }

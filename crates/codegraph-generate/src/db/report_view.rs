@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::GenerationEntry;
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::Result;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
@@ -183,13 +183,13 @@ entities = []
 
         let engine = codegraph_core::mock::MockEngine::new();
         let output_dir = tempfile::TempDir::new().unwrap();
-        let gen =
+        let generator =
             ReportViewGenerator::new(output_dir.path()).with_reports_dir(Some(config_dir.path()));
 
         // The process cwd (the crate root during `cargo test`) contains no
         // reports.toml, so any generated files must have come from the
         // supplied directory — pinning the fix away from cwd discovery.
-        let files = gen
+        let files = generator
             .generate(
                 &engine,
                 &test_domain_config(),
@@ -212,10 +212,10 @@ entities = []
         let config_dir = tempfile::TempDir::new().unwrap();
         let engine = codegraph_core::mock::MockEngine::new();
         let output_dir = tempfile::TempDir::new().unwrap();
-        let gen =
+        let generator =
             ReportViewGenerator::new(output_dir.path()).with_reports_dir(Some(config_dir.path()));
 
-        let files = gen
+        let files = generator
             .generate(
                 &engine,
                 &test_domain_config(),

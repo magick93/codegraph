@@ -51,7 +51,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use codegraph::init::commands::{cmd_init, InitArgs};
+use codegraph::init::commands::{InitArgs, cmd_init};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 

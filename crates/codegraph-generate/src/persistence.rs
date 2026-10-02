@@ -1,10 +1,9 @@
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
-    resolve_field, AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceColumn,
-    PersistenceColumnRole, PersistenceEntity, PersistenceEntityRelation, PersistencePolicies,
-    PolicyKind, RetentionEffect, RowSecurityEffect, SoftDeleteEffect, SoftDeleteMarker,
-    SoftDeletePolicy, SoftDeleteVisibility, TenantIsolationEffect, TenantIsolationPolicy,
-    TenantPropagation, TenantStrategy,
+    AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceColumn, PersistenceColumnRole,
+    PersistenceEntity, PersistenceEntityRelation, PersistencePolicies, PolicyKind, RetentionEffect,
+    RowSecurityEffect, SoftDeleteEffect, SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility,
+    TenantIsolationEffect, TenantIsolationPolicy, TenantPropagation, TenantStrategy, resolve_field,
 };
 use codegraph_type_contracts::RefClassificationKind;
 

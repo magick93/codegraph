@@ -12,9 +12,9 @@ use std::path::Path;
 
 use codegraph::generate::traits::GlobalGenerator;
 use codegraph_core::types::{PropertyNode, SchemaNode};
+use test_framework::GeneratorTest;
 use test_framework::validators::file_presence::FilePresenceValidator;
 use test_framework::validators::string_pattern::StringPatternValidator;
-use test_framework::GeneratorTest;
 
 /// Minimal mock engine + config, same pattern as profile_smoke_tests.
 /// No `depends_on` so the domain registry stays acyclic with one domain.
@@ -165,14 +165,14 @@ fn ops_generator_produces_manifest_and_testkit_in_full_pipeline() {
 async fn ops_generator_direct_call_manifest_roundtrips() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         true, // has_cli
         true, // has_ui
         true, // has_admin_cli
         true, // has_grpc
     );
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             &config,
@@ -251,7 +251,7 @@ async fn ops_generator_direct_call_manifest_roundtrips() {
 async fn testkit_cargo_uses_git_rev_when_pinned() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         true, // has_cli
         true, // has_ui
@@ -265,7 +265,7 @@ async fn testkit_cargo_uses_git_rev_when_pinned() {
         },
         ..codegraph::generate::ProjectConfig::default()
     };
-    let files = gen
+    let files = generator
         .generate(&engine, &config, &[], &tera, &project)
         .await
         .expect("ops generator failed");
@@ -299,14 +299,14 @@ async fn testkit_cargo_uses_git_rev_when_pinned() {
 async fn testkit_cargo_uses_path_when_rev_empty() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         true, // has_cli
         true, // has_ui
         true, // has_admin_cli
         true, // has_grpc
     );
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             &config,
@@ -342,14 +342,14 @@ async fn testkit_cargo_uses_path_when_rev_empty() {
 async fn testkit_crate_compiles() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         true, // has_cli
         true, // has_ui
         true, // has_admin_cli
         true, // has_grpc
     );
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             &config,
@@ -422,7 +422,7 @@ async fn testkit_crate_compiles() {
 async fn ops_generator_seeds_smoke_from_generation_order() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         true,
         true,
@@ -435,7 +435,7 @@ async fn ops_generator_seeds_smoke_from_generation_order() {
         pg_schema: "recruiting".to_string(),
         is_cyclic: false,
     }];
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             &config,
@@ -464,14 +464,14 @@ async fn ops_generator_seeds_smoke_from_generation_order() {
 async fn ops_generator_capability_flags_reflect_constructor() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         false, // has_cli
         false, // has_ui
         false, // has_admin_cli
         false, // has_grpc
     );
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             &config,
@@ -501,14 +501,14 @@ async fn ops_generator_capability_flags_reflect_constructor() {
 async fn emitted_manifest_loads_through_ops_config() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 
-    let gen = codegraph::generate::ops::OpsManifestGenerator::new(
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
         output_dir.path(),
         true,
         true,
         true,
         true,
     );
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             &config,

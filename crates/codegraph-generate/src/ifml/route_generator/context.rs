@@ -6,9 +6,9 @@ use codegraph_core::traits::GraphQuerier;
 use rex_ifml::ComponentSpec;
 use serde::Serialize;
 
-use crate::ifml::api_paths::{id_param_from, resolve_entity_api, ResolvedApi};
-use crate::ifml::context::{IfmlComponent, IfmlViewContainer};
 use crate::ProjectConfig;
+use crate::ifml::api_paths::{ResolvedApi, id_param_from, resolve_entity_api};
+use crate::ifml::context::{IfmlComponent, IfmlViewContainer};
 
 use super::load::form_payload_block;
 use super::render::{
@@ -20,8 +20,8 @@ use super::roles::{
     semantic_container_role, semantic_view_role,
 };
 use super::ux::{
-    apply_table_ux, page_ux_context, resolve_column_ux, timeline_from_plan, ux_props_for_entity,
-    UxGeneration,
+    UxGeneration, apply_table_ux, page_ux_context, resolve_column_ux, timeline_from_plan,
+    ux_props_for_entity,
 };
 use super::workflow::{component_workflow, js_quote, workflow_for_entity};
 
@@ -951,15 +951,13 @@ pub(super) async fn build_page_context(
                 if fetch_backed
                     && workflow.generate_action_endpoints
                     && !workflow.transitions.is_empty()
+                    && let Some(api) = &comp.api
+                    && let Some(param) = &id_param
                 {
-                    if let Some(api) = &comp.api {
-                        if let Some(param) = &id_param {
-                            comp.transition_url_expr = Some(format!(
-                                "`{}/${{viewParams.{param}}}/actions/transition`",
-                                api.base_path
-                            ));
-                        }
-                    }
+                    comp.transition_url_expr = Some(format!(
+                        "`{}/${{viewParams.{param}}}/actions/transition`",
+                        api.base_path
+                    ));
                 }
             }
 
@@ -1102,14 +1100,14 @@ pub(super) async fn page_component_context(
                 &c.fields_with_types,
                 status_field,
             );
-            if let Some(payload) = &timeline {
-                if let Some(table) = table.as_mut() {
-                    table.layout = TableLayout::Timeline {
-                        order_binding: payload.order_binding.clone(),
-                        title_binding: payload.title_binding.clone(),
-                        preview: payload.preview.clone(),
-                    };
-                }
+            if let Some(payload) = &timeline
+                && let Some(table) = table.as_mut()
+            {
+                table.layout = TableLayout::Timeline {
+                    order_binding: payload.order_binding.clone(),
+                    title_binding: payload.title_binding.clone(),
+                    preview: payload.preview.clone(),
+                };
             }
             (ux_list_columns, timeline)
         }

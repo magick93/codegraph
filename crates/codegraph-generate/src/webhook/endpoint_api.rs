@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 pub struct WebhookEndpointApiGenerator {

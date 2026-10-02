@@ -5,9 +5,9 @@ use codegraph_type_contracts::{
     EntityProjection, PgType, RefClassificationKind, RustType, ScalarKind,
 };
 
+use crate::ClassificationResult;
 use crate::config::ClassifierConfig;
 use crate::projection_builder::ProjectionBuilder;
-use crate::ClassificationResult;
 
 /// Build a ClassificationResult for kinds whose pg/rust/sea_orm types come from config.
 fn configured_result(

@@ -8,4 +8,4 @@ pub mod openapi;
 pub mod router;
 pub mod workflow_action;
 
-pub use include_path::{resolve_include_paths, IncludeSegment, ResolvedIncludePath};
+pub use include_path::{IncludeSegment, ResolvedIncludePath, resolve_include_paths};

@@ -8,7 +8,7 @@ use std::process::Command;
 use crate::config::OpsConfig;
 use crate::error::{OpsError, OpsResult};
 use crate::output;
-use crate::proc::{run_streaming, run_streaming_quiet, ManagedProcess, Supervisor};
+use crate::proc::{ManagedProcess, Supervisor, run_streaming, run_streaming_quiet};
 use crate::wait::wait_for_url;
 
 /// Where the UI suite persists the provisioned API key (shared with the cli

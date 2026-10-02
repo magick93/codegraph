@@ -30,10 +30,10 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{RegulatoryKind, RegulatoryNode, RuleRefRecord};
 use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
-use crate::code_writer::{wln, CodeWriter};
+use crate::ProjectConfig;
+use crate::code_writer::{CodeWriter, wln};
 use crate::error::Result;
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 /// One report's dispatch surface, flattened from its `regulatory`

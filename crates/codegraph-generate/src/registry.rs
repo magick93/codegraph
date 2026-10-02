@@ -141,9 +141,10 @@ pub(crate) fn build_entity_generators(
         ))) as Box<dyn EntityGenerator>,
     ]
     .into_iter()
-    .filter(|gen| ctx.plan_has_entity(gen.name()))
-    .filter(|gen| {
-        gen.supported_targets()
+    .filter(|generator| ctx.plan_has_entity(generator.name()))
+    .filter(|generator| {
+        generator
+            .supported_targets()
             .map(|targets| targets.contains(&ctx.current_target))
             .unwrap_or(true)
     })
@@ -212,16 +213,16 @@ pub(crate) fn build_domain_generators(
     ];
     // EmDash plugin packages — only when the profile enables the feature
     // AND the plugins.toml config was loaded by the CLI wrapper.
-    if ctx.capabilities.has(Capability::EmDash) {
-        if let Some(ref plugins) = ctx.emdash_plugins {
-            gens.push(Box::new(emdash::plugin_gen::EmdashPluginGenerator::new(
-                output_dir.to_path_buf(),
-                plugins.clone(),
-            )) as Box<dyn DomainGenerator>);
-        }
+    if ctx.capabilities.has(Capability::EmDash)
+        && let Some(ref plugins) = ctx.emdash_plugins
+    {
+        gens.push(Box::new(emdash::plugin_gen::EmdashPluginGenerator::new(
+            output_dir.to_path_buf(),
+            plugins.clone(),
+        )) as Box<dyn DomainGenerator>);
     }
     gens.into_iter()
-        .filter(|gen| ctx.plan_has_domain(gen.name()))
+        .filter(|generator| ctx.plan_has_domain(generator.name()))
         .collect::<Vec<_>>()
 }
 
@@ -278,7 +279,7 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         );
     } else {
         global_gens.push(Box::new(
-            scaffold::gen::ScaffoldGenerator::new(
+            scaffold::generator::ScaffoldGenerator::new(
                 output_dir,
                 ctx.capabilities.has(Capability::Webhooks),
                 ctx.capabilities.has(Capability::Reports),
@@ -400,15 +401,15 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             as Box<dyn GlobalGenerator>);
     // EmDash plugin family scaffold — only when the profile enables the
     // feature AND the plugins.toml config was loaded by the CLI wrapper.
-    if ctx.capabilities.has(Capability::EmDash) {
-        if let Some(ref plugins) = ctx.emdash_plugins {
-            global_gens.push(
-                Box::new(emdash::scaffold_gen::EmdashPluginScaffoldGenerator::new(
-                    output_dir.to_path_buf(),
-                    plugins.clone(),
-                )) as Box<dyn GlobalGenerator>,
-            );
-        }
+    if ctx.capabilities.has(Capability::EmDash)
+        && let Some(ref plugins) = ctx.emdash_plugins
+    {
+        global_gens.push(
+            Box::new(emdash::scaffold_gen::EmdashPluginScaffoldGenerator::new(
+                output_dir.to_path_buf(),
+                plugins.clone(),
+            )) as Box<dyn GlobalGenerator>,
+        );
     }
     // ops harness manifest + testkit crate
     global_gens.push(Box::new(ops::OpsManifestGenerator::new(
@@ -421,9 +422,10 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
 
     let mut global_gens: Vec<Box<dyn GlobalGenerator>> = global_gens
         .into_iter()
-        .filter(|gen| ctx.plan_has_global(gen.name()))
-        .filter(|gen| {
-            gen.supported_targets()
+        .filter(|generator| ctx.plan_has_global(generator.name()))
+        .filter(|generator| {
+            generator
+                .supported_targets()
                 .map(|targets| targets.contains(&ctx.current_target))
                 .unwrap_or(true)
         })
@@ -481,9 +483,9 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
                 output_dir,
             )),
         ];
-        for gen in integration_gens {
-            if ctx.plan_has_global(gen.name()) {
-                global_gens.push(gen);
+        for generator in integration_gens {
+            if ctx.plan_has_global(generator.name()) {
+                global_gens.push(generator);
             }
         }
     }

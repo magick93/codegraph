@@ -1,5 +1,5 @@
 use crate::api::include_path::ResolvedIncludePath;
-use crate::code_writer::{w, wln, CodeWriter};
+use crate::code_writer::{CodeWriter, w, wln};
 
 use super::dto::emit_child_field_population;
 use super::helpers::{

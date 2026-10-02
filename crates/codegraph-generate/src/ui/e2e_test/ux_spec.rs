@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
 
-use codegraph_config::ux::{Align, Display};
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::{Align, Display};
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::error::Result;
-use crate::ux::plan::{build_ux_plan, CollectionPlan, RowAction};
+use crate::ux::plan::{CollectionPlan, RowAction, build_ux_plan};
 use crate::ux::sort::{
     apply_list_scope, collect_ux_plan_context, list_order_is_pinned, sort_plan_from_plan,
 };
-use crate::ProjectConfig;
 
 use super::context::{
     UxE2eActionsCtx, UxE2eAlignCheck, UxE2eChipCheck, UxE2eColumnCtx, UxE2eCopyCheck,
@@ -101,31 +101,31 @@ pub(super) async fn build_ux_e2e_spec(
                 .get(name.as_str())
                 .map(|f| !f.is_entity_ref && f.nested_type_name.is_none())
                 .unwrap_or(false);
-            if body_controlled {
-                if let Some(text) =
+            if body_controlled
+                && let Some(text) =
                     chip_fixture_text(field, workflow_status_field.as_deref(), name, initial_state)
-                {
-                    chip_checks.push(UxE2eChipCheck { text });
-                }
+            {
+                chip_checks.push(UxE2eChipCheck { text });
             }
         }
 
         // Clipboard/tooltip assertions: the FIRST copy-chip column with a
         // stable (non-random) fixture value.
-        if copy_check.is_none() && col.display == Display::CopyChip {
-            if let Some(expr) = stable_fixture_expr(
+        if copy_check.is_none()
+            && col.display == Display::CopyChip
+            && let Some(expr) = stable_fixture_expr(
                 name,
                 create_field,
                 workflow_status_field.as_deref(),
                 initial_state,
-            ) {
-                copy_check = Some(UxE2eCopyCheck {
-                    key: name.clone(),
-                    td_index,
-                    expected_expr: expr,
-                    truncate_tooltip: col.truncate_tooltip,
-                });
-            }
+            )
+        {
+            copy_check = Some(UxE2eCopyCheck {
+                key: name.clone(),
+                td_index,
+                expected_expr: expr,
+                truncate_tooltip: col.truncate_tooltip,
+            });
         }
 
         // Intl formatting assertions for money/quantity/time-point cells.

@@ -498,7 +498,9 @@ fn check_rosetta_files(
     let sigil = crate::rev::sigil_rev();
     if sigil.is_empty() {
         soft += 1;
-        println!("WARN sigil — this binary carries no sigil rev pin (Cargo.lock has no sigil-model entry)");
+        println!(
+            "WARN sigil — this binary carries no sigil rev pin (Cargo.lock has no sigil-model entry)"
+        );
         println!("     hint: rebuild so Cargo.lock pins the sigil git dependency");
     } else {
         println!("INFO sigil — sigil-model rev {sigil}");
@@ -614,14 +616,14 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     let schemas_dir = args.schemas.as_deref();
     let mut schemas_dir_exists = false;
     let mut schemas_has_json = false;
-    if let Some(dir) = schemas_dir {
-        if dir.is_dir() {
-            schemas_dir_exists = true;
-            schemas_has_json = walkdir::WalkDir::new(dir)
-                .into_iter()
-                .filter_map(|e| e.ok())
-                .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
-        }
+    if let Some(dir) = schemas_dir
+        && dir.is_dir()
+    {
+        schemas_dir_exists = true;
+        schemas_has_json = walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
     }
 
     match &args.classifier {
@@ -770,10 +772,10 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     if let Some(parent) = args.config.parent().filter(|p| !p.as_os_str().is_empty()) {
         manifest_candidates.push(parent.join("codegraph-ops.toml"));
     }
-    if let Some(parent) = args.schemas.as_ref().and_then(|s| s.parent()) {
-        if !parent.as_os_str().is_empty() {
-            manifest_candidates.push(parent.join("codegraph-ops.toml"));
-        }
+    if let Some(parent) = args.schemas.as_ref().and_then(|s| s.parent())
+        && !parent.as_os_str().is_empty()
+    {
+        manifest_candidates.push(parent.join("codegraph-ops.toml"));
     }
     match manifest_candidates.iter().find(|p| p.is_file()) {
         Some(path) => match codegraph_ops::config::OpsConfig::load(path) {

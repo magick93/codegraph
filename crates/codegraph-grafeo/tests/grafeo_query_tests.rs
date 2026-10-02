@@ -1178,9 +1178,11 @@ async fn test_actor_policy_round_trip_and_effective_permits() {
         .find(|p| p.capability == "approve_expense")
         .expect("forbid entry survives");
     assert_eq!(manager_approve.effect, "forbid");
-    assert!(manager_permits
-        .iter()
-        .all(|p| p.capability != "approve_expense" || p.effect == "forbid"));
+    assert!(
+        manager_permits
+            .iter()
+            .all(|p| p.capability != "approve_expense" || p.effect == "forbid")
+    );
 
     // Auditor: no grants at all.
     let auditor_permits = engine.effective_permits("Auditor").await.unwrap();

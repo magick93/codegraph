@@ -152,10 +152,10 @@ impl PropertyNode {
             return Some(kind.clone());
         }
         // Priority 2: classification string
-        if let Some(ref cls) = self.classification {
-            if let Some(kind) = parse_classification_str(cls) {
-                return Some(kind);
-            }
+        if let Some(ref cls) = self.classification
+            && let Some(kind) = parse_classification_str(cls)
+        {
+            return Some(kind);
         }
         // Priority 3: render_strategy string (fallback for legacy ingestion)
         parse_classification_str(&self.render_strategy)
@@ -170,10 +170,10 @@ impl PropertyNode {
             return Some(expr.clone());
         }
         // Priority 2: derived from the pre-computed projection
-        if let Some(ref projection) = self.projection {
-            if let Some(expr) = TypeExpr::from_projection(projection) {
-                return Some(expr);
-            }
+        if let Some(ref projection) = self.projection
+            && let Some(expr) = TypeExpr::from_projection(projection)
+        {
+            return Some(expr);
         }
         None
     }

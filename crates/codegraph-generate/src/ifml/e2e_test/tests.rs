@@ -4,8 +4,8 @@
 //! churn with the POM rewiring (specs now drive the emitted page classes
 //! and carry zero raw testid construction).
 
-use codegraph_config::ux::Display;
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::Display;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
@@ -20,7 +20,7 @@ use super::spec_payload::{
     ClickThroughTest, Fixture, ModalCloseAssertions, RenderTest, UxCellFormat, UxChipCheck,
     UxColumnCheck, UxMenuCheck, UxTimelineCheck, UxViewTest, ViewTestSpec,
 };
-use crate::ux::plan::{build_ux_plan, UxPlanInput};
+use crate::ux::plan::{UxPlanInput, build_ux_plan};
 use std::collections::{BTreeMap, HashMap};
 
 #[test]

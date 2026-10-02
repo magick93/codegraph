@@ -372,7 +372,7 @@ pub fn row_to_condition_node(
         other => {
             return Err(GraphError::Query(format!(
                 "unknown condition kind '{other}'"
-            )))
+            )));
         }
     };
     // `options` persists as a JSON array string (the ingestor serializes the

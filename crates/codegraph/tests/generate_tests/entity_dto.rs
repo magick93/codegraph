@@ -36,8 +36,8 @@ async fn test_entity_generator_produces_model() {
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
-    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -74,8 +74,8 @@ async fn test_dto_generator_produces_create_and_response() {
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -141,7 +141,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     let tmp_dir = std::env::temp_dir().join("hr-graph-test-codelist-enum");
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
-    let gen = DomainTypesCodelistGenerator::new_with_base(tmp_dir.clone());
+    let generator = DomainTypesCodelistGenerator::new_with_base(tmp_dir.clone());
 
     let mut tera = tera::Tera::default();
     tera.add_raw_template(
@@ -150,7 +150,7 @@ async fn test_domain_types_codelist_generates_enum_not_string_alias() {
     )
     .unwrap();
 
-    let files = gen
+    let files = generator
         .generate_all(&mock, &tera, &test_project_config())
         .await
         .unwrap();
@@ -243,10 +243,10 @@ async fn dto_generator_uses_stripped_names_for_codelist_fields() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::ddd::dto::DtoGenerator::new(&std::path::PathBuf::from(
+    let generator = codegraph::generate::ddd::dto::DtoGenerator::new(&std::path::PathBuf::from(
         "/tmp/test-dto-code",
     ));
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -327,10 +327,10 @@ async fn entity_model_uses_stripped_names_for_codelist_fields() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::db::entity::SeaOrmEntityGenerator::new(
+    let generator = codegraph::generate::db::entity::SeaOrmEntityGenerator::new(
         &std::path::PathBuf::from("/tmp/test-entity-code"),
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -405,10 +405,10 @@ async fn domain_types_dto_uses_stripped_names_for_codelist_fields() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+    let generator = codegraph::generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
         std::path::PathBuf::from("/tmp/test-domain-types-dto"),
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -533,8 +533,8 @@ auditable = true
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-policy-entity");
-    let gen = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::entity::SeaOrmEntityGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "TestEntityType",

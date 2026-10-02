@@ -608,11 +608,11 @@ async fn report_residual_content_diffs_between_json_and_mox_models() {
 
     let mut diffs = 0;
     for (name, json) in &json_files {
-        if let Some(mox) = mox_files.get(name) {
-            if json != mox {
-                diffs += 1;
-                eprintln!("{}", first_diffs(name, json, mox, 6));
-            }
+        if let Some(mox) = mox_files.get(name)
+            && json != mox
+        {
+            diffs += 1;
+            eprintln!("{}", first_diffs(name, json, mox, 6));
         }
     }
     eprintln!(

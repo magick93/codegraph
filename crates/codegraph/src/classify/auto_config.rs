@@ -22,8 +22,7 @@ pub fn validate_parent_candidates(candidates: &[ParentCandidate]) -> crate::erro
         if unique.len() > 1 {
             return Err(crate::error::Error::Validation(format!(
                 "ambiguous parent for '{}': detected parents {:?}. Resolve manually in domains.toml entity_config.",
-                child,
-                unique
+                child, unique
             )));
         }
     }

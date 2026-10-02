@@ -47,32 +47,32 @@ pub async fn resolve_entity_api(
         ));
     }
 
-    if let Ok(resources) = db.get_api_resources().await {
-        if !resources.is_empty() {
-            let target = normalized_resource_name(entity);
-            let suffixed = format!("{entity}Type");
-            let resource = resources.iter().find(|r| {
-                r.schema_title == entity || r.schema_title == suffixed || r.name == target
-            });
-            if let Some(resource) = resource {
-                // api_ingest defaults path_segment to the raw entity name
-                // (e.g. "CustomerType"); the actual route uses the normalized
-                // resource name, so only honor an explicit override.
-                let segment = if resource.path_segment == resource.schema_title {
-                    resource.name.to_lowercase()
-                } else {
-                    resource.path_segment.clone()
-                };
-                let ops: Vec<String> = db
-                    .get_api_operations(&resource.name)
-                    .await
-                    .map(|ops| ops.iter().map(|op| op.kind.clone()).collect())
-                    .unwrap_or_else(|_| config.defaults.operations.clone());
-                return Some(from_ops(
-                    &format!("/api/{api_version}/{}/{segment}", resource.domain),
-                    &ops,
-                ));
-            }
+    if let Ok(resources) = db.get_api_resources().await
+        && !resources.is_empty()
+    {
+        let target = normalized_resource_name(entity);
+        let suffixed = format!("{entity}Type");
+        let resource = resources
+            .iter()
+            .find(|r| r.schema_title == entity || r.schema_title == suffixed || r.name == target);
+        if let Some(resource) = resource {
+            // api_ingest defaults path_segment to the raw entity name
+            // (e.g. "CustomerType"); the actual route uses the normalized
+            // resource name, so only honor an explicit override.
+            let segment = if resource.path_segment == resource.schema_title {
+                resource.name.to_lowercase()
+            } else {
+                resource.path_segment.clone()
+            };
+            let ops: Vec<String> = db
+                .get_api_operations(&resource.name)
+                .await
+                .map(|ops| ops.iter().map(|op| op.kind.clone()).collect())
+                .unwrap_or_else(|_| config.defaults.operations.clone());
+            return Some(from_ops(
+                &format!("/api/{api_version}/{}/{segment}", resource.domain),
+                &ops,
+            ));
         }
     }
 

@@ -9,7 +9,7 @@ use codegraph_core::types::{
 use super::query::{query_gql, query_gql_params, query_many, query_many_params, query_one_params};
 use super::{PROPERTY_RETURN_COLS, SCHEMA_RETURN_COLS};
 use crate::conversions::{
-    row_to_codelist, row_to_enum_value, row_to_property_node, row_to_schema_node, RowReader,
+    RowReader, row_to_codelist, row_to_enum_value, row_to_property_node, row_to_schema_node,
 };
 use crate::engine::GrafeoEngine;
 

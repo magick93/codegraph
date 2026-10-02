@@ -4,10 +4,10 @@ use codegraph_core::traits::GraphQuerier;
 use heck::ToUpperCamelCase;
 use serde::Serialize;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::GeneratedFile;
-use crate::ProjectConfig;
 use codegraph_naming::to_snake_case;
 
 /// Rust keywords that cannot be used as enum variant identifiers.
@@ -99,15 +99,15 @@ impl RustCodelistGenerator {
 
         // Remove stale .rs files from previous runs so leftover files
         // don't accumulate when the codelist set changes between generations.
-        if codelist_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&codelist_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "rs")
-                        && path.file_name().is_some_and(|n| n != "mod.rs")
-                    {
-                        let _ = std::fs::remove_file(&path);
-                    }
+        if codelist_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&codelist_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "rs")
+                    && path.file_name().is_some_and(|n| n != "mod.rs")
+                {
+                    let _ = std::fs::remove_file(&path);
                 }
             }
         }
@@ -239,15 +239,15 @@ impl RustCodelistGenerator {
 
         // Remove leftover local codelist .rs files (not mod.rs) so
         // generate_mod_files doesn't pick them up later.
-        if codelist_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&codelist_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "rs")
-                        && path.file_name().is_some_and(|n| n != "mod.rs")
-                    {
-                        let _ = std::fs::remove_file(&path);
-                    }
+        if codelist_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&codelist_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "rs")
+                    && path.file_name().is_some_and(|n| n != "mod.rs")
+                {
+                    let _ = std::fs::remove_file(&path);
                 }
             }
         }
@@ -305,17 +305,17 @@ fn scan_rs_files_for_prefix(
         let path = entry.path();
         if path.is_dir() {
             scan_rs_files_for_prefix(&path, prefix, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                for (idx, _) in content.match_indices(prefix) {
-                    let rest = &content[idx + prefix.len()..];
-                    let ident: String = rest
-                        .chars()
-                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                        .collect();
-                    if !ident.is_empty() {
-                        out.insert(ident);
-                    }
+        } else if path.extension().is_some_and(|e| e == "rs")
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            for (idx, _) in content.match_indices(prefix) {
+                let rest = &content[idx + prefix.len()..];
+                let ident: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !ident.is_empty() {
+                    out.insert(ident);
                 }
             }
         }

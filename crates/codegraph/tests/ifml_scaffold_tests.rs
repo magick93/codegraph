@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::Path;
 
-use codegraph::ifml_scaffold::{ifml_scaffold, IfmlScaffoldArgs};
+use codegraph::ifml_scaffold::{IfmlScaffoldArgs, ifml_scaffold};
 
 const TODO_LIST_SCHEMA: &str = r#"{
   "$schema": "http://json-schema.org/draft-07/schema#",

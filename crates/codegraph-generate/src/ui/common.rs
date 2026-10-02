@@ -273,51 +273,49 @@ pub async fn collect_ui_fields(
                     .ok()
                     .flatten()
             };
-            if resolved.is_none() {
-                if let Some(ref target) = prop.ref_target {
-                    // Extract the type name from various ref formats:
-                    //   "../../common/json/organization.schema.json" -> "organization"
-                    //   "../../common/json/OrganizationType.json#"     -> "OrganizationType"
-                    //   "#/definitions/AssessmentAccessType"           -> "AssessmentAccessType"
-                    //   "SomeType"                                     -> "SomeType"
-                    let last_segment = target.rsplit('/').next().unwrap_or(target);
-                    let ref_schema_title = last_segment
-                        .strip_suffix(".schema.json")
-                        .or_else(|| last_segment.strip_suffix(".json#"))
-                        .or_else(|| last_segment.strip_suffix(".json"))
-                        .unwrap_or(last_segment);
-                    if let Ok(Some(ref_schema)) = db
-                        .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
-                        .await
-                    {
-                        resolved = Some(ref_schema);
-                    }
-                    if resolved.is_none() {
-                        if let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await {
-                            resolved = Some(ref_schema);
-                        }
-                    }
+            if resolved.is_none()
+                && let Some(ref target) = prop.ref_target
+            {
+                // Extract the type name from various ref formats:
+                //   "../../common/json/organization.schema.json" -> "organization"
+                //   "../../common/json/OrganizationType.json#"     -> "OrganizationType"
+                //   "#/definitions/AssessmentAccessType"           -> "AssessmentAccessType"
+                //   "SomeType"                                     -> "SomeType"
+                let last_segment = target.rsplit('/').next().unwrap_or(target);
+                let ref_schema_title = last_segment
+                    .strip_suffix(".schema.json")
+                    .or_else(|| last_segment.strip_suffix(".json#"))
+                    .or_else(|| last_segment.strip_suffix(".json"))
+                    .unwrap_or(last_segment);
+                if let Ok(Some(ref_schema)) = db
+                    .get_schema_in_domain(ref_schema_title, current_domain.unwrap_or(""))
+                    .await
+                {
+                    resolved = Some(ref_schema);
+                }
+                if resolved.is_none()
+                    && let Ok(Some(ref_schema)) = db.get_schema(ref_schema_title).await
+                {
+                    resolved = Some(ref_schema);
                 }
             }
             // If the resolved schema is in a different domain, check if the
             // same type exists in the current domain and prefer it.
-            if let (Some(cur_domain), Some(found)) = (current_domain, &resolved) {
-                if found.domain.as_deref() != Some(cur_domain) {
-                    if let Ok(schemas) = db.list_schemas(Some(cur_domain)).await {
-                        if let Some(same_domain) = schemas.iter().find(|s| s.title == found.title) {
-                            resolved = Some(same_domain.clone());
-                        }
-                    }
-                }
+            if let (Some(cur_domain), Some(found)) = (current_domain, &resolved)
+                && found.domain.as_deref() != Some(cur_domain)
+                && let Ok(schemas) = db.list_schemas(Some(cur_domain)).await
+                && let Some(same_domain) = schemas.iter().find(|s| s.title == found.title)
+            {
+                resolved = Some(same_domain.clone());
             }
-            if let Some(ref_schema) = resolved {
-                if let Some(ref domain) = ref_schema.domain {
-                    field.ref_api_path = Some(format!(
-                        "/{}/{}",
-                        domain,
-                        resolve_path_segment_with_config(None, &ref_schema, config)
-                    ));
-                }
+            if let Some(ref_schema) = resolved
+                && let Some(ref domain) = ref_schema.domain
+            {
+                field.ref_api_path = Some(format!(
+                    "/{}/{}",
+                    domain,
+                    resolve_path_segment_with_config(None, &ref_schema, config)
+                ));
             }
         }
 
@@ -333,38 +331,36 @@ pub async fn collect_ui_fields(
     // codelist entity (enum-only schema with no properties). Inject synthetic
     // fields for code, display_name, and sort_order so the form renders inputs
     // and the CRUD tests can create the entity.
-    if fields.is_empty() {
-        if let Some(domain) = current_domain {
-            if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await {
-                if schema.is_codelist && domain == "common" {
-                    let mut inject =
-                        |name: &str, label: &str, input_type: &str, is_required: bool| {
-                            fields.push(UiField {
-                                name: name.to_string(),
-                                label: label.to_string(),
-                                ts_type: "string".to_string(),
-                                input_type: input_type.to_string(),
-                                is_required,
-                                is_array: false,
-                                is_entity_ref: false,
-                                is_immutable: false,
-                                is_codelist: false,
-                                is_range: false,
-                                codelist_values: vec![],
-                                description: String::new(),
-                                pg_type: "TEXT".to_string(),
-                                open_end: false,
-                                ref_api_path: None,
-                                structured_sub_fields: vec![],
-                                nested_type_name: None,
-                            });
-                        };
-                    inject("code", "Code", "code", true);
-                    inject("display_name", "Display Name", "text", true);
-                    inject("sort_order", "Sort Order", "number", false);
-                }
-            }
-        }
+    if fields.is_empty()
+        && let Some(domain) = current_domain
+        && let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await
+        && schema.is_codelist
+        && domain == "common"
+    {
+        let mut inject = |name: &str, label: &str, input_type: &str, is_required: bool| {
+            fields.push(UiField {
+                name: name.to_string(),
+                label: label.to_string(),
+                ts_type: "string".to_string(),
+                input_type: input_type.to_string(),
+                is_required,
+                is_array: false,
+                is_entity_ref: false,
+                is_immutable: false,
+                is_codelist: false,
+                is_range: false,
+                codelist_values: vec![],
+                description: String::new(),
+                pg_type: "TEXT".to_string(),
+                open_end: false,
+                ref_api_path: None,
+                structured_sub_fields: vec![],
+                nested_type_name: None,
+            });
+        };
+        inject("code", "Code", "code", true);
+        inject("display_name", "Display Name", "text", true);
+        inject("sort_order", "Sort Order", "number", false);
     }
 
     Ok(fields)

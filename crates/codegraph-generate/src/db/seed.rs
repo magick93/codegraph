@@ -6,10 +6,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::GenerationEntry;
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::Result;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
@@ -108,34 +108,34 @@ impl SeedDataGenerator {
     }
 
     fn load_context(&self) -> Option<SeedContext> {
-        if let Some(ref config_path) = self.seed_config_path {
-            if config_path.exists() {
-                match fs::read_to_string(config_path) {
-                    Ok(content) => match toml::from_str::<SeedConfigFile>(&content) {
-                        Ok(config) => {
-                            if !config.defaults.enabled.unwrap_or(true) {
-                                tracing::info!("Seed data generation disabled via config");
-                                return None;
-                            }
-                            return Some(Self::convert_config_to_context(config));
+        if let Some(ref config_path) = self.seed_config_path
+            && config_path.exists()
+        {
+            match fs::read_to_string(config_path) {
+                Ok(content) => match toml::from_str::<SeedConfigFile>(&content) {
+                    Ok(config) => {
+                        if !config.defaults.enabled.unwrap_or(true) {
+                            tracing::info!("Seed data generation disabled via config");
+                            return None;
                         }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to parse seed config at {}: {}. \
-                                 Falling back to hardcoded defaults.",
-                                config_path.display(),
-                                e
-                            );
-                        }
-                    },
+                        return Some(Self::convert_config_to_context(config));
+                    }
                     Err(e) => {
                         tracing::warn!(
-                            "Failed to read seed config at {}: {}. \
-                             Falling back to hardcoded defaults.",
+                            "Failed to parse seed config at {}: {}. \
+                                 Falling back to hardcoded defaults.",
                             config_path.display(),
                             e
                         );
                     }
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to read seed config at {}: {}. \
+                             Falling back to hardcoded defaults.",
+                        config_path.display(),
+                        e
+                    );
                 }
             }
         }

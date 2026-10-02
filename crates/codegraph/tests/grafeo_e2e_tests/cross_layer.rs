@@ -3,11 +3,11 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
 use codegraph::generate::domain_types::dto::DomainTypesDtoGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::EntityGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_type_contracts::RefClassificationKind;
 

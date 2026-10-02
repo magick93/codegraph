@@ -109,10 +109,10 @@ async fn grpc_service_conversions_use_stripped_names_for_codelist() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::grpc::service::GrpcServiceGenerator::new(std::path::Path::new(
-        "/tmp/test-grpc-service-code",
-    ));
-    let files = gen
+    let generator = codegraph::generate::grpc::service::GrpcServiceGenerator::new(
+        std::path::Path::new("/tmp/test-grpc-service-code"),
+    );
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -199,10 +199,10 @@ async fn cli_command_uses_stripped_names_for_codelist() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::cli::command::CliCommandGenerator::new(std::path::Path::new(
-        "/tmp/test-cli-command-code",
-    ));
-    let files = gen
+    let generator = codegraph::generate::cli::command::CliCommandGenerator::new(
+        std::path::Path::new("/tmp/test-cli-command-code"),
+    );
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -283,10 +283,10 @@ async fn ui_form_uses_stripped_names_for_codelist() {
     let config = test_domain_config();
     let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
-    let gen = codegraph::generate::ui::form::UiFormGenerator::new(std::path::Path::new(
+    let generator = codegraph::generate::ui::form::UiFormGenerator::new(std::path::Path::new(
         "/tmp/test-ui-form-code",
     ));
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -381,10 +381,10 @@ async fn ts_fixture_required_entity_ref_is_required() {
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
-    let gen = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
+    let generator = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
         "/tmp/ts-fixture-required-ref",
     ));
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "ApplicationType",
@@ -494,10 +494,10 @@ async fn ts_fixture_optional_entity_ref_stays_optional() {
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
-    let gen = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
+    let generator = generate::playwright::ts_entity_gen::TsEntityGenerator::new(Path::new(
         "/tmp/ts-fixture-optional-ref",
     ));
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "ApplicationType",

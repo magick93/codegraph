@@ -7,9 +7,9 @@ use tera::Tera;
 
 use super::super::client_gen::{AtprotoClientEmitter, AtprotoClientScaffoldEmitter};
 use super::{make_domain_config, make_primitive_prop, make_project, make_schema};
+use crate::ProjectConfig;
 use crate::project_config::AtprotoConfig;
 use crate::traits::{EntityGenerator, GlobalGenerator};
-use crate::ProjectConfig;
 
 fn make_client_tera() -> Tera {
     let mut tera = Tera::default();

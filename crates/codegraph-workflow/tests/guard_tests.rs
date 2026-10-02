@@ -87,9 +87,11 @@ fn complex_expression() {
         "position_opening_id": "abc-123",
         "qualifications": [{"name": "AWS"}]
     });
-    assert!(GuardEvaluator::evaluate(
-        "compensation_expectation > 0 AND position_opening_id IS NOT NULL",
-        &data
-    )
-    .unwrap());
+    assert!(
+        GuardEvaluator::evaluate(
+            "compensation_expectation > 0 AND position_opening_id IS NOT NULL",
+            &data
+        )
+        .unwrap()
+    );
 }
