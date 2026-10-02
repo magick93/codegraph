@@ -45,12 +45,12 @@ impl CliCounters {
     fn fail(&mut self, msg: impl AsRef<str>) {
         self.failures += 1;
         output::fail(format!("FAIL {}", msg.as_ref()));
-        if self.verbose {
-            if let Ok(contents) = std::fs::read_to_string(CLI_LOG) {
-                let t = tail(&contents, 1200);
-                if !t.is_empty() {
-                    output::warn(format!("--- {CLI_LOG} (tail) ---\n{t}"));
-                }
+        if self.verbose
+            && let Ok(contents) = std::fs::read_to_string(CLI_LOG)
+        {
+            let t = tail(&contents, 1200);
+            if !t.is_empty() {
+                output::warn(format!("--- {CLI_LOG} (tail) ---\n{t}"));
             }
         }
     }
@@ -123,14 +123,14 @@ pub async fn run_cli(config: &OpsConfig, args: &CliArgs) -> OpsResult<()> {
     }
 
     // Domain subcommand help, derived from the smoke entity route.
-    if let Some(smoke) = &config.manifest.smoke {
-        if let Some(domain) = domain_from_entity(&smoke.entity) {
-            let (sub_out, code) = invoke_cli(&binary, &api_url, token, &[domain, "--help"], false);
-            if code == 0 && !sub_out.trim().is_empty() {
-                counters.pass(format!("{domain} --help lists subcommands"));
-            } else {
-                counters.fail(format!("{domain} --help unexpected output"));
-            }
+    if let Some(smoke) = &config.manifest.smoke
+        && let Some(domain) = domain_from_entity(&smoke.entity)
+    {
+        let (sub_out, code) = invoke_cli(&binary, &api_url, token, &[domain, "--help"], false);
+        if code == 0 && !sub_out.trim().is_empty() {
+            counters.pass(format!("{domain} --help lists subcommands"));
+        } else {
+            counters.fail(format!("{domain} --help unexpected output"));
         }
     }
 

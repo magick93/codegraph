@@ -99,12 +99,11 @@ fn find_property_assignment<'a>(
         if child.kind() != "property_assignment" {
             continue;
         }
-        if let Some(key_node) = child.child_by_field_name("key") {
-            if let Ok(text) = key_node.utf8_text(source) {
-                if text == key {
-                    return Some(child);
-                }
-            }
+        if let Some(key_node) = child.child_by_field_name("key")
+            && let Ok(text) = key_node.utf8_text(source)
+            && text == key
+        {
+            return Some(child);
         }
     }
     None

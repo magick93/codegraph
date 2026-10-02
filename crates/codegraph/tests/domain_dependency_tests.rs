@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use codegraph::artifact;
-use codegraph::doctor_dependencies::{check_domain_dependencies, DependencyCheckStatus};
+use codegraph::doctor_dependencies::{DependencyCheckStatus, check_domain_dependencies};
 use codegraph::ingest::dependencies::load_dependency_artifacts;
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
@@ -509,7 +509,7 @@ async fn consumer_generates_against_pinned_face() {
 
 #[test]
 fn doctor_command_reports_dependency_outcomes() {
-    use codegraph::init::commands::{cmd_add_domain, cmd_doctor, DoctorArgs};
+    use codegraph::init::commands::{DoctorArgs, cmd_add_domain, cmd_doctor};
 
     let root = tempfile::tempdir().unwrap();
     write_face_artifact(

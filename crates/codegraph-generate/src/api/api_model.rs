@@ -181,12 +181,10 @@ pub async fn resolve_entity_operations(
         if let Some(resource) = resources
             .iter()
             .find(|r| r.domain == domain_name && r.name == resource_name)
+            && let Ok(ops) = querier.get_api_operations(&resource.name).await
+            && !ops.is_empty()
         {
-            if let Ok(ops) = querier.get_api_operations(&resource.name).await {
-                if !ops.is_empty() {
-                    return ops.iter().map(|op| op.kind.clone()).collect();
-                }
-            }
+            return ops.iter().map(|op| op.kind.clone()).collect();
         }
     }
 

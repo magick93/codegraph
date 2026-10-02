@@ -3,15 +3,15 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
-use crate::code_writer::{wln, CodeWriter};
+use crate::ProjectConfig;
+use crate::code_writer::{CodeWriter, wln};
 use crate::error::Result;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 use super::repository_emitter::{
-    emit_child_field_population, emit_entity_to_dto_field, ChildColumn, ChildTableInfo, EntityTree,
-    RepositoryImplEmitter,
+    ChildColumn, ChildTableInfo, EntityTree, RepositoryImplEmitter, emit_child_field_population,
+    emit_entity_to_dto_field,
 };
 
 /// Generates the Cornucopia repository adapter implementing the entity's
@@ -1291,7 +1291,9 @@ fn child_bind_expr(col: &ChildColumn, item_var: &str) -> String {
     if col.rust_type.starts_with("Vec<") {
         if col.dto_rust_type.is_some() {
             if col.is_nullable {
-                format!("&{item_var}.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())")
+                format!(
+                    "&{item_var}.{field}.as_ref().map(|v| v.iter().map(|x| x.to_string()).collect::<Vec<String>>())"
+                )
             } else {
                 format!(
                     "&{item_var}.{field}.iter().map(|x| x.to_string()).collect::<Vec<String>>()"

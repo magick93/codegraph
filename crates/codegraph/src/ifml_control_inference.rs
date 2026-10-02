@@ -14,8 +14,8 @@ use codegraph_type_contracts::RefClassificationKind;
 
 pub use codegraph_generate::ifml::control_core::MAX_CONTROL_VALUES;
 pub use codegraph_generate::ifml::control_core::{
-    control_for_field, ControlInference, ControlInputType, FieldKind, FieldSignals, HtmlInput,
-    NOTE_OPTIONS_ENDPOINT,
+    ControlInference, ControlInputType, FieldKind, FieldSignals, HtmlInput, NOTE_OPTIONS_ENDPOINT,
+    control_for_field,
 };
 
 /// Infer the control for one schema property.

@@ -122,12 +122,12 @@ impl WfRow {
             WfRow::SeaOrm(_) => {
                 return Err(WorkflowError::Internal(
                     "pg_col called on a SeaORM row".into(),
-                ))
+                ));
             }
             WfRow::Memory(_) => {
                 return Err(WorkflowError::Internal(
                     "pg_col called on a memory row".into(),
-                ))
+                ));
             }
         };
         row.columns()
@@ -146,7 +146,7 @@ impl WfRow {
             _ => {
                 return Err(WorkflowError::Internal(
                     "mem_col called on a non-memory row".into(),
-                ))
+                ));
             }
         };
         vals.iter()

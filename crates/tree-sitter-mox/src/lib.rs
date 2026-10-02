@@ -5,7 +5,7 @@
 //! `codegraph-vscode/grammar-mox/grammar.js` (see that file's header for the
 //! node inventory the LSP queries against).
 
-extern "C" {
+unsafe extern "C" {
     fn tree_sitter_mox() -> tree_sitter::Language;
 }
 

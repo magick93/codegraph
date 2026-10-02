@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use codegraph_backend::{create_backend, BackendConfig};
+use codegraph_backend::{BackendConfig, create_backend};
 use codegraph_config::config::parse_domain_config;
 
 const MODEL: &str = r#"
@@ -418,7 +418,7 @@ fn rosetta_never_trips_the_mox_scoring_bypass() {
     // bridge sets origin=rosetta and leaves source unset — assert on the
     // AutoClassifier directly: a rosetta-shaped record must score through
     // the normal path (no override reason), while a mox-shaped one bypasses.
-    use codegraph_core::types::{SchemaClassificationData, MOX_SOURCE};
+    use codegraph_core::types::{MOX_SOURCE, SchemaClassificationData};
     use std::collections::{HashMap, HashSet};
 
     let classifier = codegraph::classify::AutoClassifier::new(HashSet::new(), HashMap::new());

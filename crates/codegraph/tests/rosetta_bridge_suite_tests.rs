@@ -15,8 +15,8 @@
 
 use std::path::{Path, PathBuf};
 
-use codegraph_backend::{create_backend, BackendConfig};
-use codegraph_config::config::{parse_domain_config, DomainConfig};
+use codegraph_backend::{BackendConfig, create_backend};
+use codegraph_config::config::{DomainConfig, parse_domain_config};
 
 const FIXTURE_SRC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/rosetta_bridge");
 

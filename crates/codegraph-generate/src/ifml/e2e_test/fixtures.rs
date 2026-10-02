@@ -3,7 +3,7 @@
 
 use rex_ifml::{ComponentSpec, FormSpec};
 
-use super::super::api_paths::{resolve_entity_api, ResolvedApi};
+use super::super::api_paths::{ResolvedApi, resolve_entity_api};
 use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;

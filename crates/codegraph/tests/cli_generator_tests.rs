@@ -4,9 +4,9 @@
 //! scaffold) produce correct Rust source files from mock schema data.
 
 use codegraph::generate;
+use codegraph::generate::GenerationEntry;
 use codegraph::generate::template_engine;
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
-use codegraph::generate::GenerationEntry;
 use codegraph_config::{UiDomainConfig, UiOverrideConfig};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
@@ -169,8 +169,8 @@ async fn cli_command_generator_includes_filter_fields_in_output() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-filter");
 
-    let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::command::CliCommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -235,8 +235,8 @@ async fn cli_command_generator_produces_entity_commands() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-cmd");
 
-    let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::command::CliCommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -289,8 +289,8 @@ async fn cli_command_generator_includes_workflow_subcommands() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-wf");
 
-    let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::command::CliCommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -326,8 +326,8 @@ async fn cli_command_generator_includes_field_args_for_create() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-fields");
 
-    let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::command::CliCommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -379,8 +379,8 @@ async fn cli_command_generator_includes_api_calls() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-api");
 
-    let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::command::CliCommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -422,8 +422,8 @@ async fn cli_command_generator_skips_empty_table_name() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-skip");
 
-    let gen = generate::cli::command::CliCommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::command::CliCommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -450,8 +450,8 @@ async fn cli_domain_generator_produces_domain_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-domain");
 
-    let gen = generate::cli::domain::CliDomainGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::domain::CliDomainGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -505,8 +505,8 @@ async fn cli_domain_generator_deduplicates_modules() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-cli-dedup");
 
-    let gen = generate::cli::domain::CliDomainGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::domain::CliDomainGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -542,8 +542,8 @@ async fn cli_scaffold_generator_produces_all_files() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -606,8 +606,8 @@ async fn cli_scaffold_main_contains_domain_routing() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -659,8 +659,8 @@ async fn cli_scaffold_cargo_toml_has_correct_deps() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -712,8 +712,8 @@ async fn cli_scaffold_client_has_crud_methods() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -765,8 +765,8 @@ async fn cli_scaffold_output_has_format_options() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -856,8 +856,8 @@ async fn cli_scaffold_handles_multiple_domains() {
         },
     ];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -1110,8 +1110,8 @@ async fn cli_scaffold_cargo_toml_has_shadow_rs() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -1151,8 +1151,8 @@ async fn cli_scaffold_generates_build_rs() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -1188,8 +1188,8 @@ async fn cli_scaffold_main_has_version_subcommand() {
         is_cyclic: false,
     }];
 
-    let gen = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::cli::scaffold::CliScaffoldGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,

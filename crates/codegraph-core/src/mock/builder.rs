@@ -232,28 +232,28 @@ fn build_mock_node(
             && depth < 10
         {
             let target = ref_targets.get(&(p.name.clone(), schema.title.clone()));
-            if let Some(ts) = target {
-                if !visited.contains(&ts.title) {
-                    let child_fk = Some(FkDirection::OnChild {
-                        column: format!(
-                            "{}_id",
-                            codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
-                        ),
-                    });
-                    let child_node = build_mock_node(
-                        ts,
-                        &p.pg_column_name,
-                        child_fk,
-                        p.is_array,
-                        all_properties,
-                        ref_targets,
-                        composite_ranges,
-                        consumed_fields_map,
-                        visited,
-                        depth + 1,
-                    );
-                    children.push(child_node);
-                }
+            if let Some(ts) = target
+                && !visited.contains(&ts.title)
+            {
+                let child_fk = Some(FkDirection::OnChild {
+                    column: format!(
+                        "{}_id",
+                        codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
+                    ),
+                });
+                let child_node = build_mock_node(
+                    ts,
+                    &p.pg_column_name,
+                    child_fk,
+                    p.is_array,
+                    all_properties,
+                    ref_targets,
+                    composite_ranges,
+                    consumed_fields_map,
+                    visited,
+                    depth + 1,
+                );
+                children.push(child_node);
             }
             continue;
         }

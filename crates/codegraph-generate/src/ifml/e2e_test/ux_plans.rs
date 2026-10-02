@@ -5,15 +5,15 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use codegraph_config::ux::UxRules;
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::UxRules;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use rex_ifml::ComponentSpec;
 
 use crate::error::Result;
-use crate::ux::plan::{build_ux_plan, UxPlan, UxPlanInput};
+use crate::ux::plan::{UxPlan, UxPlanInput, build_ux_plan};
 
 use super::super::context::{IfmlComponent, IfmlModel};
 use super::super::route_generator::workflow_for_entity;

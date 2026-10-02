@@ -5,13 +5,13 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::codelist::rust_enum::RustCodelistGenerator;
 use codegraph::generate::domain_types::dto::DomainTypesDtoGenerator;
 use codegraph::generate::domain_types::query_service::QueryServiceGenerator;
 use codegraph::generate::domain_types::scaffold::DomainTypesScaffoldGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::{EntityGenerator, GlobalGenerator};
-use codegraph::generate::ProjectConfig;
 
 use crate::setup::{generate_full_app, setup_grafeo};
 /// Compile gate for the full generated app, including the emitted

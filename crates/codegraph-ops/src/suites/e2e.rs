@@ -9,7 +9,7 @@ use crate::error::{OpsError, OpsResult};
 use crate::ext::HookPolicy;
 use crate::metrics::Metrics;
 use crate::output;
-use crate::proc::{run_streaming, run_streaming_quiet, ManagedProcess, Supervisor};
+use crate::proc::{ManagedProcess, Supervisor, run_streaming, run_streaming_quiet};
 use crate::results::{ResultsReport, SuiteFailure};
 use crate::wait::wait_for_url;
 
@@ -120,15 +120,14 @@ async fn run_e2e_inner(config: &OpsConfig, args: &E2eArgs) -> OpsResult<()> {
     // `db reset` + seed and API-key provisioning (~10 minutes of DB work).
     // When build is ENABLED the check stays post-build (`e2e_build`), since
     // building may fix staleness.
-    if freshness_precheck_required(args.skip_build) {
-        if let Some(binary) = pick_binary(&config.app_dir, &config.app_binary_name(), args.release)
-        {
-            output::section("E2E 0. freshness (pre-check, --skip-build)");
-            config.metrics.begin("Freshness pre-check");
-            let verdict = crate::preflight::ensure_binary_fresh(&config.app_dir, &binary);
-            config.metrics.end();
-            verdict?;
-        }
+    if freshness_precheck_required(args.skip_build)
+        && let Some(binary) = pick_binary(&config.app_dir, &config.app_binary_name(), args.release)
+    {
+        output::section("E2E 0. freshness (pre-check, --skip-build)");
+        config.metrics.begin("Freshness pre-check");
+        let verdict = crate::preflight::ensure_binary_fresh(&config.app_dir, &binary);
+        config.metrics.end();
+        verdict?;
     }
 
     // 1. Supabase.
@@ -294,11 +293,11 @@ async fn e2e_migrate(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
         output::ok("Database reset with migrations");
 
         let seed = supabase_dir.join("supabase").join("seed.sql");
-        if seed.is_file() {
-            if let Some(e2e) = &config.e2e_db {
-                crate::db::psql_exec_file_ok(e2e, &seed).await?;
-                output::ok("seed.sql applied");
-            }
+        if seed.is_file()
+            && let Some(e2e) = &config.e2e_db
+        {
+            crate::db::psql_exec_file_ok(e2e, &seed).await?;
+            output::ok("seed.sql applied");
         }
 
         crate::ext::run_hooks(config, "post_migrate", HookPolicy::PerHook)
@@ -409,10 +408,10 @@ async fn e2e_start_services(
 
     // Web build stage covers dependency install + the production bundle.
     config.metrics.begin("Web build");
-    if !config.ui_dir.join("node_modules").is_dir() {
-        if let Err(e) = run_blocking_quiet("web", "pnpm", &["install"], &config.ui_dir) {
-            output::warn(format!("pnpm install failed (continuing): {e}"));
-        }
+    if !config.ui_dir.join("node_modules").is_dir()
+        && let Err(e) = run_blocking_quiet("web", "pnpm", &["install"], &config.ui_dir)
+    {
+        output::warn(format!("pnpm install failed (continuing): {e}"));
     }
     if args.skip_ui_build {
         output::warn(
@@ -756,10 +755,10 @@ pub fn failed_test_titles(output: &str) -> Vec<String> {
             continue;
         }
         let mut title = title_parts.join(" › ");
-        if let Some(open) = title.rfind(" (") {
-            if title.ends_with(')') {
-                title.truncate(open);
-            }
+        if let Some(open) = title.rfind(" (")
+            && title.ends_with(')')
+        {
+            title.truncate(open);
         }
         let title = title.trim().to_string();
         if !title.is_empty() && !titles.contains(&title) {

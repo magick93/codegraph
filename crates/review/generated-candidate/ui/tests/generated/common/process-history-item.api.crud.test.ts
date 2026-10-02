@@ -76,6 +76,7 @@ test.describe('ProcessHistoryItem CRUD', () => {
 
   test('list page loads with table', async ({ ownerPage: page }) => {
     const ui = new ProcessHistoryItemPage(page);
+    await ui.gotoList();
     // Either the data table or the empty-state placeholder should be visible
     const table = ui.tableRoot();
     const empty = ui.emptyState();

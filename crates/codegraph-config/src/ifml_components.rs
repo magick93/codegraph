@@ -418,18 +418,20 @@ path = "$lib/components/CustomerList.svelte"
             resolved.unwrap().path,
             "$lib/components/CustomerList.svelte"
         );
-        assert!(m
-            .resolve_by_role("OtherView", SemanticRole::Collection)
-            .is_none());
-        assert!(m
-            .resolve_slot(
+        assert!(
+            m.resolve_by_role("OtherView", SemanticRole::Collection)
+                .is_none()
+        );
+        assert!(
+            m.resolve_slot(
                 "OtherView",
                 "grid",
                 "tree",
                 "tree",
                 Some(SemanticRole::Collection)
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -451,9 +453,10 @@ path = "$lib/components/Second.svelte"
                 .path,
             "$lib/components/First.svelte"
         );
-        assert!(m
-            .resolve_by_role("Any", SemanticRole::NavigationControl)
-            .is_none());
+        assert!(
+            m.resolve_by_role("Any", SemanticRole::NavigationControl)
+                .is_none()
+        );
     }
 
     #[test]

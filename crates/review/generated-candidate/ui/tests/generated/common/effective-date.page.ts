@@ -23,7 +23,7 @@ export class EffectiveDatePage extends BasePage {
 
   /** The create-form submit redirect target (edit asserts the same). */
   static readonly detailUrlPattern = new RegExp(
-    `/\/common\/effective-date\/[0-9a-f-]+$`,
+    `/common/effective-date/[0-9a-f-]+$`,
   );
 
   private readonly base: string;
@@ -61,13 +61,26 @@ export class EffectiveDatePage extends BasePage {
   /** List route + the hydration wait the generated specs share. */
   async openList(): Promise<void> {
     await this.gotoList();
-    await this.waitForHydration(`[data-testid="${this.module}-pagination"]`);
+    await this.waitForListReady();
   }
 
   /** List route with a query string (`?sort=` / `?q=`) + hydration. */
   async openListAt(query: string): Promise<void> {
     await this.page.goto(`${this.listUrl()}${query}`);
-    await this.waitForHydration(`[data-testid="${this.module}-pagination"]`);
+    await this.waitForListReady();
+  }
+
+  /**
+   * Hydration + any terminal list state. An empty result set (search with no
+   * matches, org with no rows) renders the empty/no-results markers instead
+   * of the table — and never the pagination — so wait for whichever shows.
+   */
+  async waitForListReady(): Promise<void> {
+    await this.page.waitForSelector('body.hydrated');
+    const table = this.page.locator(`[data-testid="${this.module}-table"]`);
+    const empty = this.page.locator(`[data-testid="${this.module}-empty"]`);
+    const noResults = this.page.locator(`[data-testid="${this.module}-no-results"]`);
+    await table.or(empty).or(noResults).waitFor({ state: 'visible' });
   }
 
   async gotoCreate(): Promise<Response | null> {

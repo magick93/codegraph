@@ -516,17 +516,20 @@ mod tests {
         // Playwright summary: md + last-run copied, binary skipped.
         let md = entry_for(&report, "playwright/render-failed/error-context.md");
         assert!(md.copied_bytes.is_some());
-        assert!(report
-            .dir
-            .join("playwright/render-failed/error-context.md")
-            .is_file());
+        assert!(
+            report
+                .dir
+                .join("playwright/render-failed/error-context.md")
+                .is_file()
+        );
         assert!(report.dir.join("playwright/.last-run.json").is_file());
         let zip = entry_for(&report, "trace.zip");
-        assert!(zip
-            .skipped
-            .as_deref()
-            .unwrap_or_default()
-            .contains("binary"));
+        assert!(
+            zip.skipped
+                .as_deref()
+                .unwrap_or_default()
+                .contains("binary")
+        );
         // Extra file (results JSON) at the bundle root.
         assert!(report.dir.join("results.json").is_file());
         // The manifest itself is written and parses.

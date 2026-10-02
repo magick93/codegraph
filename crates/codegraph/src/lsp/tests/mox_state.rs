@@ -3,9 +3,9 @@
 use auto_lsp::lsp_server::{Connection, Message, Notification, Request, RequestId};
 use auto_lsp::lsp_types::*;
 
-use super::{do_shutdown, parse_init_result, recv_diagnostics, LSP_TEST_LOCK};
+use super::{LSP_TEST_LOCK, do_shutdown, parse_init_result, recv_diagnostics};
 use crate::lsp::mox::build_mox_state;
-use crate::lsp::{run_lsp_server, GrafeoState, MoxState};
+use crate::lsp::{GrafeoState, MoxState, run_lsp_server};
 
 const MOX_DOMAIN_SOURCE: &str = r#"package nz.example.shop
 

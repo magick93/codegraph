@@ -21,13 +21,15 @@ fn resolves_relative_ref() {
             "recruiting/json/CandidateType.json",
         )
         .unwrap();
-    assert!(entry
-        .schema
-        .get("title")
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .contains("PersonBase"));
+    assert!(
+        entry
+            .schema
+            .get("title")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("PersonBase")
+    );
 }
 
 #[test]

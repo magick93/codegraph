@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 
-use codegraph_config::ux::{Display, UxRules};
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::{Display, UxRules};
 use codegraph_core::traits::GraphQuerier;
 
 use super::super::api_paths::id_param_from;
@@ -15,14 +15,14 @@ use super::super::context::{
     IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer, NavigationEdge, PolicyContext,
 };
 use super::super::route_generator::{
-    mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
-    workflow_for_entity, RenderWorkflow,
+    RenderWorkflow, mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
+    workflow_for_entity,
 };
 use super::super::selectors::{component_kind, is_collection, is_details, is_form};
 use super::fixtures::{
-    codelist_fixture_value, escape_regex, fixture_entries, form_spec, js_string, modifiable_field,
-    save_navigation_target, schema_backed_api, url_pattern, url_pattern_with_dialog, view_route,
-    Fixture,
+    Fixture, codelist_fixture_value, escape_regex, fixture_entries, form_spec, js_string,
+    modifiable_field, save_navigation_target, schema_backed_api, url_pattern,
+    url_pattern_with_dialog, view_route,
 };
 use super::generator::IfmlE2eTestGenerator;
 use super::pom::primary_component;
@@ -30,9 +30,9 @@ use super::render::{
     ux_chip_checks, ux_column_checks, ux_fixture_entries, ux_menu_event, ux_money_options,
 };
 use super::spec_payload::{
-    pick_transition, ClickThroughTest, ModalCloseAssertions, PersonaTest, RenderTest,
-    RoundTripTest, TransitionStep, UxCopyCheck, UxMenuCheck, UxTimelineCheck, UxViewTest,
-    ValidationTest, ViewTestSpec, WorkflowTest,
+    ClickThroughTest, ModalCloseAssertions, PersonaTest, RenderTest, RoundTripTest, TransitionStep,
+    UxCopyCheck, UxMenuCheck, UxTimelineCheck, UxViewTest, ValidationTest, ViewTestSpec,
+    WorkflowTest, pick_transition,
 };
 
 impl IfmlE2eTestGenerator {

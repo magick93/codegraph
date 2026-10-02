@@ -103,9 +103,9 @@ fn scratch_db_name() -> String {
 async fn regenerate_fixture() -> Result<(), String> {
     use codegraph::generate::template_engine::create_tera;
     use codegraph::generate::{
-        compute_generation_order, run_generators_with_opts, GeneratorOpts, ProjectConfig,
+        GeneratorOpts, ProjectConfig, compute_generation_order, run_generators_with_opts,
     };
-    use codegraph::profile::{load_and_resolve_profile, BuildPlan, CapabilityRegistry};
+    use codegraph::profile::{BuildPlan, CapabilityRegistry, load_and_resolve_profile};
     use codegraph_classifier::config::parse_classifier_config;
     use codegraph_config::UiOverrideConfig;
     use codegraph_grafeo::GrafeoEngine;

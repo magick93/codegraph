@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 
 use super::capabilities::{CapabilityRegistry, GeneratorKind};
 use super::resolve::{
-    default_framework_target, IfmlFrameworkTarget, ResolvedProfile, ResolvedSection,
+    IfmlFrameworkTarget, ResolvedProfile, ResolvedSection, default_framework_target,
 };
 use super::types::{DeploymentTopology, PersistenceProvider};
 
@@ -353,14 +353,14 @@ impl BuildPlan {
                 let generators: Vec<String> = section
                     .generators
                     .iter()
-                    .flat_map(|gen| match gen.as_str() {
+                    .flat_map(|generator| match generator.as_str() {
                         "ifml_skeleton" | "ifml_route" | "ifml_navigation" | "ifml_e2e_test" => {
                             ifml_frameworks
                                 .iter()
-                                .map(|fw| format!("{}_{}", gen, fw.name))
+                                .map(|fw| format!("{}_{}", generator, fw.name))
                                 .collect::<Vec<_>>()
                         }
-                        _ => vec![gen.clone()],
+                        _ => vec![generator.clone()],
                     })
                     .collect();
 

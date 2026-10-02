@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::api::api_model::resolve_path_segment_with_config;
 use crate::error::Result;
-use crate::ProjectConfig;
 
 use super::context::{E2eIncludeConfig, IncludeSetupStep, IncludeTestPath};
 use super::fixtures::build_test_data_json;
@@ -64,10 +64,10 @@ pub(super) async fn resolve_e2e_include_config(
             // The FK column is the fk_column of the deeper segment — it describes
             // the column on this entity's table that references the deeper entity.
             let mut fk_map: Vec<[String; 2]> = Vec::new();
-            if let Some(ref prev_id) = prev_dep_id {
-                if let Some(ref fk_col) = prev_fk_column {
-                    fk_map.push([fk_col.clone(), prev_id.clone()]);
-                }
+            if let Some(ref prev_id) = prev_dep_id
+                && let Some(ref fk_col) = prev_fk_column
+            {
+                fk_map.push([fk_col.clone(), prev_id.clone()]);
             }
 
             all_steps.push(IncludeSetupStep {

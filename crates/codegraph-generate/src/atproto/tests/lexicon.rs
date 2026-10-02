@@ -8,9 +8,9 @@ use tera::Tera;
 use super::super::lexicon_gen::LexiconEmitter;
 use super::super::scaffold_gen::LexiconScaffoldEmitter;
 use super::{make_domain_config, make_primitive_prop, make_project, make_schema};
+use crate::ProjectConfig;
 use crate::project_config::AtprotoConfig;
 use crate::traits::{EntityGenerator, GlobalGenerator};
-use crate::ProjectConfig;
 
 fn make_tera() -> Tera {
     let mut tera = Tera::default();
@@ -105,10 +105,12 @@ async fn test_lexicon_emitter_produces_valid_json() {
     assert_eq!(json["id"], "nz.gravy.grants.grant");
     assert_eq!(json["type"], "record");
     assert_eq!(json["defs"]["main"]["type"], "record");
-    assert!(json["defs"]["main"]["required"]
-        .as_array()
-        .unwrap()
-        .contains(&serde_json::Value::String("name".to_string())));
+    assert!(
+        json["defs"]["main"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::Value::String("name".to_string()))
+    );
     assert!(json["defs"]["main"]["properties"]["name"].is_object());
     assert!(json["defs"]["main"]["properties"]["amount"].is_object());
 }
@@ -282,8 +284,10 @@ async fn test_lexicon_context_types() {
     let props = &json["defs"]["main"]["properties"];
     assert!(props["email"].is_object());
     assert!(props["score"].is_object());
-    assert!(json["defs"]["main"]["required"]
-        .as_array()
-        .unwrap()
-        .contains(&serde_json::Value::String("email".to_string())));
+    assert!(
+        json["defs"]["main"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::Value::String("email".to_string()))
+    );
 }

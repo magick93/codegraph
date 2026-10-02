@@ -104,9 +104,10 @@ fn entity_to_dto_jsonb_required() {
     let col = make_column("address", "serde_json::Value", false, None, false, true);
     let mut code = CodeWriter::new();
     emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-    assert!(code
-        .as_str()
-        .contains("serde_json::from_value(row.address).unwrap_or_default()"));
+    assert!(
+        code.as_str()
+            .contains("serde_json::from_value(row.address).unwrap_or_default()")
+    );
 }
 
 #[test]
@@ -114,9 +115,10 @@ fn entity_to_dto_jsonb_nullable() {
     let col = make_column("metadata", "serde_json::Value", true, None, false, true);
     let mut code = CodeWriter::new();
     emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-    assert!(code
-        .as_str()
-        .contains(".and_then(|v| serde_json::from_value(v).ok())"));
+    assert!(
+        code.as_str()
+            .contains(".and_then(|v| serde_json::from_value(v).ok())")
+    );
 }
 
 #[test]
@@ -124,9 +126,10 @@ fn entity_to_dto_jsonb_array_required() {
     let col = make_column("tags", "serde_json::Value", false, None, true, true);
     let mut code = CodeWriter::new();
     emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-    assert!(code
-        .as_str()
-        .contains("serde_json::from_value(row.tags).unwrap_or_default()"));
+    assert!(
+        code.as_str()
+            .contains("serde_json::from_value(row.tags).unwrap_or_default()")
+    );
 }
 
 #[test]
@@ -134,9 +137,10 @@ fn entity_to_dto_jsonb_array_nullable() {
     let col = make_column("prefs", "serde_json::Value", true, None, true, true);
     let mut code = CodeWriter::new();
     emit_entity_to_dto_field(&mut code, &col, "row", "    ");
-    assert!(code
-        .as_str()
-        .contains(".and_then(|v| serde_json::from_value(v).ok())"));
+    assert!(
+        code.as_str()
+            .contains(".and_then(|v| serde_json::from_value(v).ok())")
+    );
 }
 
 // --- emit_child_field_population tests ---

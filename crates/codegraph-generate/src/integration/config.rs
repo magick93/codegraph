@@ -6,10 +6,10 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_ext_points::{ConfigFieldType, ExtensionPointsConfig};
 use serde::Serialize;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]

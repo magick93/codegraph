@@ -81,13 +81,12 @@ pub async fn resolve_fk_column_name(
         }
         // ValueObject whose allOf chain reaches an entity.
         if let Ok(Some(entity)) = crate::traits::find_entity_extended_by_vo(db, &target.title).await
+            && entity_titles.contains(&entity.title)
         {
-            if entity_titles.contains(&entity.title) {
-                return Ok(Some((
-                    ensure_id_suffix(&prop.rust_field_name),
-                    ensure_id_suffix(&prop.pg_column_name),
-                )));
-            }
+            return Ok(Some((
+                ensure_id_suffix(&prop.rust_field_name),
+                ensure_id_suffix(&prop.pg_column_name),
+            )));
         }
     }
     // Not an entity reference — no FK column on the parent.

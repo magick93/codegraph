@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::GenerationEntry;
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 /// Generator for the AT Protocol label storage table.

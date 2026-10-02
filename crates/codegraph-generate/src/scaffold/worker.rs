@@ -11,7 +11,7 @@
 //! The monolith scaffold (`ScaffoldGenerator`) is gated off in Workers
 //! topology, so this generator owns everything under `workers/`. It reuses the
 //! exact same domain grouping as the monolith scaffold
-//! ([`build_scaffold_domains`](super::gen::build_scaffold_domains)).
+//! ([`build_scaffold_domains`](super::generator::build_scaffold_domains)).
 
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,9 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::render_template_with_project;
-use crate::scaffold::gen::{build_scaffold_domains, resolve_path, ScaffoldDomain, ScaffoldEntity};
+use crate::scaffold::generator::{
+    ScaffoldDomain, ScaffoldEntity, build_scaffold_domains, resolve_path,
+};
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::{GenerationEntry, ProjectConfig};
 use codegraph_config::DomainConfig;

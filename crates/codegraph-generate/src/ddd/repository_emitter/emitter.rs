@@ -5,17 +5,17 @@ use codegraph_core::types::{
 };
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::ProjectConfig;
 use crate::api::api_model::resolve_entity_operations;
-use crate::api::include_path::{resolve_include_paths_gated, ResolvedIncludePath};
-use crate::code_writer::{wln, CodeWriter};
+use crate::api::include_path::{ResolvedIncludePath, resolve_include_paths_gated};
+use crate::code_writer::{CodeWriter, wln};
 use crate::error::Result;
 use crate::filter_fields::{resolve_filter_fields, resolve_nested_filter_fields};
 use crate::type_registry;
-use crate::ProjectConfig;
 
 use super::child::flatten_child_tables;
 use super::context::{
-    build_columns_and_children, resolve_worker_detail_joins, ClassificationContext,
+    ClassificationContext, build_columns_and_children, resolve_worker_detail_joins,
 };
 use super::{ChildTableInfo, EntityTree, TreeColumn, TreeIncludeResolved, UxSortColumn};
 
@@ -306,15 +306,13 @@ impl RepositoryImplEmitter {
                         // force_value_object — the entity generator skips
                         // composed/inherited properties from allOf chains,
                         // so the Model doesn't have these columns.
-                        if prop.effective_kind().is_some() {
-                            if let Ok(Some(target)) = db
+                        if prop.effective_kind().is_some()
+                            && let Ok(Some(target)) = db
                                 .get_property_ref_target(&prop.name, &seg.schema_title)
                                 .await
-                            {
-                                if !target.is_entity || target.pg_table_name.is_empty() {
-                                    continue;
-                                }
-                            }
+                            && (!target.is_entity || target.pg_table_name.is_empty())
+                        {
+                            continue;
                         }
                         let fd = codegraph_core::types::resolve_field(prop);
                         // Deduplicate by rust_field_name — list_all_properties()
@@ -405,10 +403,10 @@ impl RepositoryImplEmitter {
             let mut include_type_names: Vec<String> = Vec::new();
             for path in &include_paths {
                 include_type_names.push(path.response_rust_type.clone());
-                if path.segments.len() > 1 {
-                    if let Some(last_seg) = path.segments.last() {
-                        include_type_names.push(format!("{}Response", last_seg.entity_name));
-                    }
+                if path.segments.len() > 1
+                    && let Some(last_seg) = path.segments.last()
+                {
+                    include_type_names.push(format!("{}Response", last_seg.entity_name));
                 }
             }
             // Deduplicate while preserving order.
@@ -796,24 +794,24 @@ impl RepositoryImplEmitter {
             build_columns_and_children(db, &props, &cls_ctx).await?;
 
         // Add synthetic hierarchy column (self-referential FK) when configured.
-        if let Some(ref hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.as_ref()) {
-            if !direct_columns.iter().any(|c| c.field_name == **hf) {
-                direct_columns.push(TreeColumn {
-                    field_name: hf.to_string(),
-                    pg_column_name: hf.to_string(),
-                    dto_field_name: None,
-                    rust_type: "Uuid".to_string(),
-                    is_nullable: true,
-                    is_entity_ref: false,
-                    dto_rust_type: None,
-                    is_workflow_managed: false,
-                    is_array: false,
-                    pg_cast: None,
-                    is_composite_range: false,
-                    is_structured_wrapper: false,
-                    is_media: false,
-                });
-            }
+        if let Some(ref hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.as_ref())
+            && !direct_columns.iter().any(|c| c.field_name == **hf)
+        {
+            direct_columns.push(TreeColumn {
+                field_name: hf.to_string(),
+                pg_column_name: hf.to_string(),
+                dto_field_name: None,
+                rust_type: "Uuid".to_string(),
+                is_nullable: true,
+                is_entity_ref: false,
+                dto_rust_type: None,
+                is_workflow_managed: false,
+                is_array: false,
+                pg_cast: None,
+                is_composite_range: false,
+                is_structured_wrapper: false,
+                is_media: false,
+            });
         }
 
         let entity_module = format!("{}_{}", schema_name, module_name);
@@ -877,12 +875,11 @@ impl RepositoryImplEmitter {
                         if let Ok(Some(target)) = db
                             .get_property_ref_target(&prop.name, &entry.via_entity)
                             .await
+                            && target.title == schema_title
                         {
-                            if target.title == schema_title {
-                                let col = codegraph_core::types::resolve_field(prop).column_name;
-                                via_fk = Some(col);
-                                break;
-                            }
+                            let col = codegraph_core::types::resolve_field(prop).column_name;
+                            via_fk = Some(col);
+                            break;
                         }
                     }
 

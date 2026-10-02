@@ -5,10 +5,10 @@ use codegraph::generate::traits::GeneratedFile;
 #[path = "test_framework/mod.rs"]
 mod test_framework;
 
+use test_framework::validators::OutputValidator;
 use test_framework::validators::file_presence::FilePresenceValidator;
 use test_framework::validators::snapshot::SnapshotCollector;
 use test_framework::validators::string_pattern::StringPatternValidator;
-use test_framework::validators::OutputValidator;
 
 fn make_file(rel_path: &str, content: &str) -> GeneratedFile {
     GeneratedFile {

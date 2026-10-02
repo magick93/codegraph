@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use codegraph_backend::{create_backend, BackendConfig};
+use codegraph_backend::{BackendConfig, create_backend};
 use rust_decimal::Decimal;
 
 const WIDGET_JSON: &str = r#"

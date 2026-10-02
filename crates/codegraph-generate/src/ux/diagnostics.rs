@@ -7,10 +7,10 @@
 //! prints: the caller renders [`report`] lines through its existing
 //! warning channel.
 
-use codegraph_config::ux::{glob_match, Dimension, UxRules};
+use codegraph_config::ux::{Dimension, UxRules, glob_match};
 
 use super::dimension::infer_dimension_with_hints;
-use super::plan::{resolve_column, CollectionPlan, UxPlan, UxPlanInput};
+use super::plan::{CollectionPlan, UxPlan, UxPlanInput, resolve_column};
 
 /// Advisory findings for one entity's UX plan.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -106,11 +106,7 @@ fn timeline_suggestion_field(
         }
     }
 
-    if has_time_point {
-        named
-    } else {
-        None
-    }
+    if has_time_point { named } else { None }
 }
 
 /// The human-readable opt-in suggestion (naming the candidate field and
@@ -148,7 +144,7 @@ mod tests {
 
     use codegraph_config::{builtin_ux_rules, parse_ux_rules_str};
 
-    use super::super::plan::{build_ux_plan, CollectionPlan, UxPlanInput};
+    use super::super::plan::{CollectionPlan, UxPlanInput, build_ux_plan};
     use super::*;
     use crate::ui::page::UiField;
 

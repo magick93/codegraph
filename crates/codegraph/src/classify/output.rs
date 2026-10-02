@@ -1,5 +1,5 @@
-use super::scoring::ClassificationScore;
 use super::DomainClassificationResult;
+use super::scoring::ClassificationScore;
 
 pub fn format_table(results: &[DomainClassificationResult], domain_filter: Option<&str>) {
     println!(
@@ -9,10 +9,10 @@ pub fn format_table(results: &[DomainClassificationResult], domain_filter: Optio
     println!("{}", "─".repeat(90));
 
     for result in results {
-        if let Some(filter) = domain_filter {
-            if result.domain != filter {
-                continue;
-            }
+        if let Some(filter) = domain_filter
+            && result.domain != filter
+        {
+            continue;
         }
 
         let mut all_scores: Vec<&ClassificationScore> = result

@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::filter_fields::{
-    resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
+    FilterFieldInfo, NestedFilterFieldInfo, resolve_filter_fields, resolve_nested_filter_fields,
 };
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};

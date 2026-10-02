@@ -1806,9 +1806,8 @@ async fn transition_buttons_render_with_state_gating() {
         "buttons are labeled by the humanized target state: {details}"
     );
     assert!(
-        details
-            .contains("disabled={(data.item?.workflow_state?.current_state"),
-            "the button is disabled client-side unless the current state matches the from-state: {details}"
+        details.contains("disabled={(data.item?.workflow_state?.current_state"),
+        "the button is disabled client-side unless the current state matches the from-state: {details}"
     );
     assert!(
         details.contains("async function transition_info("),

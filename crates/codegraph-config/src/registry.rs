@@ -118,7 +118,7 @@ impl DomainRegistry {
 
         let mut initial: Vec<usize> = in_degree
             .iter()
-            .filter(|(_, &deg)| deg == 0)
+            .filter(|(_, deg)| **deg == 0)
             .map(|(&node, _)| node)
             .collect();
         initial.sort();
@@ -148,7 +148,7 @@ impl DomainRegistry {
             // Find a node involved in the cycle
             let cycle_node = in_degree
                 .iter()
-                .find(|(_, &deg)| deg > 0)
+                .find(|(_, deg)| **deg > 0)
                 .map(|(&node, _)| node)
                 .unwrap_or(0);
             let name = self

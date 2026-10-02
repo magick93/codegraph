@@ -12,7 +12,7 @@ use std::path::Path;
 
 use codegraph_config::config::DomainConfig;
 
-use crate::artifact::{parse_document, NodeRecord};
+use crate::artifact::{NodeRecord, parse_document};
 use crate::ingest::dependencies::{read_dependency_meta, resolve_dependency_path};
 
 /// Outcome of one dependency check.

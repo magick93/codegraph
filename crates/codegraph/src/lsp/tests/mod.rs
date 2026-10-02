@@ -2,7 +2,7 @@ use auto_lsp::lsp_server::{Connection, Message, Notification, Request, RequestId
 use auto_lsp::lsp_types::*;
 use std::sync::Mutex;
 
-use super::{run_lsp_server, GrafeoState};
+use super::{GrafeoState, run_lsp_server};
 
 mod code_action;
 mod completion;

@@ -9,7 +9,7 @@
 //! graph document format lives at
 //! `tests/fixtures/artifact_kit/graph_document_v1.md`.
 
-use codegraph_grafeo::artifact::{canonical_bytes, normalize, parse_document, ArtifactError};
+use codegraph_grafeo::artifact::{ArtifactError, canonical_bytes, normalize, parse_document};
 
 /// One parsed conformance case.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +33,9 @@ pub enum KitError {
     CaseWithoutFences(String),
     #[error("kit case '{name}' has accepted variants but no canonical document")]
     AcceptedWithoutCanonical { name: String },
-    #[error("kit fence {0:?} is not 'json canonical', 'json accepted', or 'json rejected diagnostic=<name>'")]
+    #[error(
+        "kit fence {0:?} is not 'json canonical', 'json accepted', or 'json rejected diagnostic=<name>'"
+    )]
     InvalidFence(String),
     #[error("kit case '{case}': invalid canonical document: {source}")]
     InvalidCanonical {

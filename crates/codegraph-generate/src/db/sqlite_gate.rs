@@ -15,7 +15,7 @@
 //! here — everything else (tables, indexes, virtual FTS5 tables, views,
 //! inserts) must parse.
 
-use sqlglot_rust::{transpile, Dialect};
+use sqlglot_rust::{Dialect, transpile};
 
 use crate::error::{Error, Result};
 use crate::traits::GeneratedFile;

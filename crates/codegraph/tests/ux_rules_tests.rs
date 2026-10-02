@@ -43,7 +43,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use codegraph::init::commands::{cmd_init, InitArgs};
+use codegraph::init::commands::{InitArgs, cmd_init};
 use tempfile::TempDir;
 
 /// Absolute repo root (`<repo>/crates/codegraph` → two parents up).

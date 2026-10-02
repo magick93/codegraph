@@ -11,7 +11,7 @@ use codegraph_type_contracts::{RefClassificationKind, TypeExpr};
 
 use super::mapping::{alias_builtin_mapping, builtin_mapping};
 use super::naming::referenced_title;
-use super::{RosettaIngestStats, ROSETTA_ORIGIN};
+use super::{ROSETTA_ORIGIN, RosettaIngestStats};
 use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
 use crate::ingest::mox_ingest::{build_projection, strip_code_suffix};
 
@@ -132,15 +132,15 @@ pub(super) fn data_schema_node(
     if data.is_choice {
         custom_annotations.insert("rosetta_choice".to_string(), serde_json::Value::Bool(true));
     }
-    if !data.annotations.is_empty() {
-        if let Ok(value) = serde_json::to_value(&data.annotations) {
-            custom_annotations.insert("rosetta_annotations".to_string(), value);
-        }
+    if !data.annotations.is_empty()
+        && let Ok(value) = serde_json::to_value(&data.annotations)
+    {
+        custom_annotations.insert("rosetta_annotations".to_string(), value);
     }
-    if !data.doc_references.is_empty() {
-        if let Ok(value) = serde_json::to_value(&data.doc_references) {
-            custom_annotations.insert("rosetta_doc_references".to_string(), value);
-        }
+    if !data.doc_references.is_empty()
+        && let Ok(value) = serde_json::to_value(&data.doc_references)
+    {
+        custom_annotations.insert("rosetta_doc_references".to_string(), value);
     }
     let attribute_annotations: serde_json::Map<String, serde_json::Value> = data
         .attributes

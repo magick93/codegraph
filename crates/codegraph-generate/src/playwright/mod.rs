@@ -34,10 +34,8 @@ pub fn e2e_tests_root(output_dir: &Path) -> PathBuf {
             .and_then(|n| n.to_str())
             .map(|n| n == "generated")
             .unwrap_or(false);
-    if in_repo_layout {
-        if let Some(repo_root) = output_dir.parent().and_then(Path::parent) {
-            return repo_root.join("e2e-tests");
-        }
+    if in_repo_layout && let Some(repo_root) = output_dir.parent().and_then(Path::parent) {
+        return repo_root.join("e2e-tests");
     }
     output_dir.join("e2e-tests")
 }

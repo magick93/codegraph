@@ -4,7 +4,7 @@ use crate::harness::{
 };
 use codegraph::generate;
 use codegraph::generate::db::basejump_setup::BasejumpSetupGenerator;
-use codegraph::generate::db::dialect::{dialect_for_target, DatabaseTarget};
+use codegraph::generate::db::dialect::{DatabaseTarget, dialect_for_target};
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use codegraph_core::mock::MockEngine;
@@ -20,8 +20,8 @@ async fn candidate_ddl_table() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-ddl");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -148,7 +148,7 @@ async fn scaffold_api_key_migration_grants_app_user_dml() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-grants");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -162,7 +162,7 @@ async fn scaffold_api_key_migration_grants_app_user_dml() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -224,8 +224,8 @@ async fn candidate_ddl_trigger() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-trigger");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -255,8 +255,8 @@ async fn candidate_ddl_rls() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-rls");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -296,8 +296,8 @@ async fn candidate_ddl_rls_has_authenticated_policies() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-rls-auth");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -362,12 +362,12 @@ async fn ddl_with_sqlite_dialect_uses_sqlite_types() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-sqlite-ddl");
 
     // Create DdlGenerator with SQLite dialect
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir)
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
 
     let project = test_project_config();
 
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -484,9 +484,9 @@ async fn array_items_fk_uses_parent_type_name() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-array-items-fk");
 
-    let gen = generate::api::router::RouterGenerator::new(&output_dir)
+    let generator = generate::api::router::RouterGenerator::new(&output_dir)
         .with_parent_candidates(candidates.clone());
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "compensation",
@@ -851,8 +851,8 @@ async fn candidate_ddl_event_trigger() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-event-trigger");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -899,8 +899,8 @@ async fn candidate_ddl_no_tenant_id() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-no-tenant-id");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -943,8 +943,9 @@ async fn ddl_generator_injects_fk_for_parent_candidate() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ddl-fk-injection");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir).with_parent_candidates(candidates);
-    let files = gen
+    let generator =
+        generate::db::ddl::DdlGenerator::new(&output_dir).with_parent_candidates(candidates);
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -989,9 +990,9 @@ async fn pg_only_generators_skipped_for_sqlite_dialect() {
 
     // BasejumpSetupGenerator is PG-only (requires extensions)
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-basejump");
-    let gen = BasejumpSetupGenerator::new(&output_dir)
+    let generator = BasejumpSetupGenerator::new(&output_dir)
         .with_dialect(dialect_for_target(DatabaseTarget::Sqlite));
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,

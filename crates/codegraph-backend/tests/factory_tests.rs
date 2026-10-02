@@ -1,4 +1,4 @@
-use codegraph_backend::{create_backend, BackendConfig, BackendKind};
+use codegraph_backend::{BackendConfig, BackendKind, create_backend};
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 
 #[tokio::test]

@@ -771,16 +771,27 @@ mod tests {
                 "0001_basejump_install.sql",
                 "CREATE SCHEMA IF NOT EXISTS basejump;\nCREATE TABLE basejump.accounts (id uuid primary key);\nALTER TABLE basejump.accounts ADD CONSTRAINT fk_owner FOREIGN KEY (primary_owner_user_id) REFERENCES auth.users(id);\n",
             ),
-            ("0003_pgmq_setup.sql", "CREATE EXTENSION IF NOT EXISTS pgmq;\nSELECT pgmq.create('events_demo');\n"),
-            ("0004_rbac_roles.sql", "ALTER TYPE basejump.account_role ADD VALUE 'manager';\n"),
-            ("0005_platform_schema.sql", "CREATE SCHEMA IF NOT EXISTS platform;\nGRANT USAGE ON SCHEMA pgmq TO app_user;\n"),
+            (
+                "0003_pgmq_setup.sql",
+                "CREATE EXTENSION IF NOT EXISTS pgmq;\nSELECT pgmq.create('events_demo');\n",
+            ),
+            (
+                "0004_rbac_roles.sql",
+                "ALTER TYPE basejump.account_role ADD VALUE 'manager';\n",
+            ),
+            (
+                "0005_platform_schema.sql",
+                "CREATE SCHEMA IF NOT EXISTS platform;\nGRANT USAGE ON SCHEMA pgmq TO app_user;\n",
+            ),
         ]);
         let phases = migration_phases(dir.path()).unwrap();
         assert_eq!(phases.tables.len(), 5);
-        assert!(phases
-            .tables
-            .iter()
-            .all(|p| p.extension().is_some_and(|e| e == "sql")));
+        assert!(
+            phases
+                .tables
+                .iter()
+                .all(|p| p.extension().is_some_and(|e| e == "sql"))
+        );
         assert!(phases.schemas.iter().any(|s| s == "basejump"));
         assert!(phases.schemas.iter().any(|s| s == "platform"));
         assert!(

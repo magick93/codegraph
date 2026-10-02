@@ -7,9 +7,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use codegraph::init::commands::{cmd_add_domain, cmd_doctor, cmd_init, DoctorArgs, InitArgs};
+use codegraph::init::commands::{DoctorArgs, InitArgs, cmd_add_domain, cmd_doctor, cmd_init};
 use codegraph::init::{ProjectFeatures, ProjectTemplateContext};
-use codegraph::profile::{load_and_resolve_profile, BuildPlan, CapabilityRegistry};
+use codegraph::profile::{BuildPlan, CapabilityRegistry, load_and_resolve_profile};
 use tempfile::TempDir;
 
 /// Absolute repo root (`<repo>/crates/codegraph` → two parents up).

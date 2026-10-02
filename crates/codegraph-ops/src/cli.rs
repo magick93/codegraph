@@ -19,13 +19,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crate::config::OpsConfig;
 use crate::error::OpsError;
 use crate::output;
-use crate::suites::api::{run_api, ApiArgs};
-use crate::suites::cli::{run_cli, CliArgs};
-use crate::suites::e2e::{run_e2e, E2eArgs};
+use crate::suites::api::{ApiArgs, run_api};
+use crate::suites::cli::{CliArgs, run_cli};
+use crate::suites::e2e::{E2eArgs, run_e2e};
 use crate::suites::quality::run_quality;
-use crate::suites::smoke::{run_smoke, SmokeArgs};
-use crate::suites::ui::{run_ui, UiArgs};
-use crate::suites::workers::{run_workers, WorkersArgs};
+use crate::suites::smoke::{SmokeArgs, run_smoke};
+use crate::suites::ui::{UiArgs, run_ui};
+use crate::suites::workers::{WorkersArgs, run_workers};
 
 const DEFAULT_MANIFEST: &str = "codegraph-ops.toml";
 
@@ -280,7 +280,9 @@ pub async fn main() -> i32 {
         // Child processes (hooks, cargo, the generated app) inherit this, so
         // generated manifests and hooks can reference the checkout via
         // `{env:CODEGRAPH_ROOT}` instead of a hardcoded absolute path.
-        std::env::set_var("CODEGRAPH_ROOT", root);
+        unsafe {
+            std::env::set_var("CODEGRAPH_ROOT", root);
+        }
         output::info(format!("CODEGRAPH_ROOT={}", root.display()));
     }
 
@@ -634,18 +636,18 @@ fn failure_exit_code(e: &OpsError) -> i32 {
 /// summary line (`▸ artifacts: …`). Best-effort — bundling never masks the
 /// real failure.
 fn fail_suite(cli: &Cli, config: &OpsConfig, suite: &str, e: OpsError) -> i32 {
-    if let Some(path) = &cli.results {
-        if !crate::results::report_written(suite) {
-            let report = crate::results::EarlyFailureReport {
-                suite: suite.to_string(),
-                manifest: config.manifest_path.display().to_string(),
-                stage: output::current_section(),
-                error: e.to_string(),
-                exit: failure_exit_code(&e),
-            };
-            if let Err(write_err) = report.write(Path::new(path)) {
-                output::warn(format!("could not write early results: {write_err}"));
-            }
+    if let Some(path) = &cli.results
+        && !crate::results::report_written(suite)
+    {
+        let report = crate::results::EarlyFailureReport {
+            suite: suite.to_string(),
+            manifest: config.manifest_path.display().to_string(),
+            stage: output::current_section(),
+            error: e.to_string(),
+            exit: failure_exit_code(&e),
+        };
+        if let Err(write_err) = report.write(Path::new(path)) {
+            output::warn(format!("could not write early results: {write_err}"));
         }
     }
     let code = report_error(suite, e);
@@ -961,7 +963,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn clean_registry_teardown_kills_leaked_services() {
-        use crate::registry::{record_service, ServiceEntry, ServiceRegistry};
+        use crate::registry::{ServiceEntry, ServiceRegistry, record_service};
 
         let dir = tempfile::tempdir().unwrap();
         // A detached long-running sleep standing in for a leaked `--keep`

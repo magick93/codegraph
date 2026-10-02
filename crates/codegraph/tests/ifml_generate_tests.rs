@@ -147,12 +147,16 @@ async fn ifml_generate_svelte_produces_routes_only() {
     .await
     .unwrap();
 
-    assert!(output
-        .join("svelte/src/routes/customerlist/+page.svelte")
-        .exists());
-    assert!(output
-        .join("svelte/src/routes/customerdetail/+page.svelte")
-        .exists());
+    assert!(
+        output
+            .join("svelte/src/routes/customerlist/+page.svelte")
+            .exists()
+    );
+    assert!(
+        output
+            .join("svelte/src/routes/customerdetail/+page.svelte")
+            .exists()
+    );
     assert!(output.join("svelte/src/lib/routes.ts").exists());
 
     // IFML E2E tests + Playwright harness scaffold.
@@ -248,12 +252,16 @@ async fn ifml_generate_with_schemas_enriches_entity_resolution() {
     .await
     .unwrap();
 
-    assert!(output
-        .join("svelte/src/routes/customerlist/+page.svelte")
-        .exists());
-    assert!(output
-        .join("svelte/src/routes/customerdetail/+page.svelte")
-        .exists());
+    assert!(
+        output
+            .join("svelte/src/routes/customerlist/+page.svelte")
+            .exists()
+    );
+    assert!(
+        output
+            .join("svelte/src/routes/customerdetail/+page.svelte")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -273,9 +281,11 @@ async fn ifml_generate_removes_stale_routes_incrementally() {
     ))
     .await
     .unwrap();
-    assert!(output
-        .join("svelte/src/routes/customerdetail/+page.svelte")
-        .exists());
+    assert!(
+        output
+            .join("svelte/src/routes/customerdetail/+page.svelte")
+            .exists()
+    );
 
     std::fs::write(&ifml_path, APP_IFML_NO_DETAIL).unwrap();
     codegraph::driver::ifml_generate(make_args(
@@ -291,9 +301,11 @@ async fn ifml_generate_removes_stale_routes_incrementally() {
         !output.join("svelte/src/routes/customerdetail").exists(),
         "stale CustomerDetail route should be removed"
     );
-    assert!(output
-        .join("svelte/src/routes/customerlist/+page.svelte")
-        .exists());
+    assert!(
+        output
+            .join("svelte/src/routes/customerlist/+page.svelte")
+            .exists()
+    );
 }
 
 #[tokio::test]
@@ -343,9 +355,11 @@ async fn ifml_generate_multiple_frameworks() {
     .await
     .unwrap();
 
-    assert!(output
-        .join("svelte/src/routes/customerlist/+page.svelte")
-        .exists());
+    assert!(
+        output
+            .join("svelte/src/routes/customerlist/+page.svelte")
+            .exists()
+    );
     assert!(output.join("react/app/customer-list/page.tsx").exists());
     assert!(output.join("react/app/customer-detail/page.tsx").exists());
 }

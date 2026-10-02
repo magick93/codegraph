@@ -8,14 +8,14 @@ use serde::Serialize;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use codegraph_config::config::{UiDomainConfig, UiOverrideConfig};
 use codegraph_config::DomainConfig;
+use codegraph_config::config::{UiDomainConfig, UiOverrideConfig};
 
 use crate::api::api_model::{resolve_entity_operations, resolve_path_segment};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::wizard_detect::{
-    detect_wizard_candidate, humanize, snake_case, ChildInfo, WizardCandidate,
+    ChildInfo, WizardCandidate, detect_wizard_candidate, humanize, snake_case,
 };
 
 /// Extended field data for descriptor template rendering.

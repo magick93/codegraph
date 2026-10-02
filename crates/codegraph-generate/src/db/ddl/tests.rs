@@ -157,10 +157,11 @@ fn child_table_parent_fk_single_suffix_for_id_named_parent() {
         &HashSet::new(),
     );
     assert_eq!(def.parent_fk_column, "evidence_extracted_field_id");
-    assert!(def
-        .columns
-        .iter()
-        .all(|c| c.name != "evidence_extracted_field_id_id"));
+    assert!(
+        def.columns
+            .iter()
+            .all(|c| c.name != "evidence_extracted_field_id_id")
+    );
 }
 
 #[test]
@@ -508,10 +509,9 @@ fn workflow_default_escapes_quoted_initial_state() {
         .domains
         .get_mut("refunds")
         .and_then(|d| d.entity_config.get_mut("RefundRequestType"))
+        && let Some(wf) = ec.workflow.as_mut()
     {
-        if let Some(wf) = ec.workflow.as_mut() {
-            wf.initial_state = "o'clock".to_string();
-        }
+        wf.initial_state = "o'clock".to_string();
     }
     let mut columns = vec![status_col(true, None)];
     apply_workflow_defaults(&quoted, "refunds", "RefundRequestType", &mut columns);

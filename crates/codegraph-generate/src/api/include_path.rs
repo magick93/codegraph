@@ -1,6 +1,6 @@
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::resolve_field;
 use codegraph_core::types::SchemaNode;
+use codegraph_core::types::resolve_field;
 use codegraph_naming::strip_suffix;
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
@@ -347,40 +347,36 @@ async fn resolve_explicit_paths(
                     if let Ok(Some(ref_target)) = db
                         .get_property_ref_target_by_id(&prop.name, &current_source_schema_id)
                         .await
+                        && (!ref_target.is_entity || ref_target.pg_table_name.is_empty())
                     {
-                        if !ref_target.is_entity || ref_target.pg_table_name.is_empty() {
-                            // It's a VO — does it extend the resolved entity?
-                            if let Ok(Some(entity)) =
-                                find_entity_through_vo(db, &ref_target.title).await
-                            {
-                                if entity.schema_id == target_schema.schema_id {
-                                    let ct_name = codegraph_naming::truncate_pg_identifier(
-                                        &format!("{}_{}", source_module, prop.rust_field_name),
-                                    );
-                                    let ct_module = format!("{}_{}", domain, ct_name);
-                                    let p_fk = format!("{}_id", source_module);
-                                    let child_struct = format!(
-                                        "{}{}",
-                                        strip_suffix(
-                                            source_entity_name,
-                                            &config.defaults.type_suffix
-                                        ),
-                                        strip_suffix(
-                                            &ref_target.rust_type_name,
-                                            &config.defaults.type_suffix
-                                        ),
-                                    );
-                                    child_table_override = Some(ChildTableOverride {
-                                        vo_title: ref_target.title.clone(),
-                                        child_table_name: ct_name,
-                                        child_module: ct_module,
-                                        child_schema: domain.to_string(),
-                                        parent_fk_column: p_fk,
-                                        response_type: format!("{}Response", child_struct),
-                                    });
-                                    break;
-                                }
-                            }
+                        // It's a VO — does it extend the resolved entity?
+                        if let Ok(Some(entity)) =
+                            find_entity_through_vo(db, &ref_target.title).await
+                            && entity.schema_id == target_schema.schema_id
+                        {
+                            let ct_name = codegraph_naming::truncate_pg_identifier(&format!(
+                                "{}_{}",
+                                source_module, prop.rust_field_name
+                            ));
+                            let ct_module = format!("{}_{}", domain, ct_name);
+                            let p_fk = format!("{}_id", source_module);
+                            let child_struct = format!(
+                                "{}{}",
+                                strip_suffix(source_entity_name, &config.defaults.type_suffix),
+                                strip_suffix(
+                                    &ref_target.rust_type_name,
+                                    &config.defaults.type_suffix
+                                ),
+                            );
+                            child_table_override = Some(ChildTableOverride {
+                                vo_title: ref_target.title.clone(),
+                                child_table_name: ct_name,
+                                child_module: ct_module,
+                                child_schema: domain.to_string(),
+                                parent_fk_column: p_fk,
+                                response_type: format!("{}Response", child_struct),
+                            });
+                            break;
                         }
                     }
                 }
@@ -822,14 +818,14 @@ async fn resolve_schema_target(
                     .strip_suffix("Type")
                     .unwrap_or(&pc.child_title)
                     .to_lowercase();
-                if child_stripped == seg_lower {
-                    if let Some(node) = db.get_schema_in_domain(&pc.child_title, domain).await? {
-                        tracing::debug!(target: "resolve_schema", tier=2, child=%node.title, "resolved via parent_candidates");
-                        if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
-                            return Ok(auth_node);
-                        }
-                        return Ok(node);
+                if child_stripped == seg_lower
+                    && let Some(node) = db.get_schema_in_domain(&pc.child_title, domain).await?
+                {
+                    tracing::debug!(target: "resolve_schema", tier=2, child=%node.title, "resolved via parent_candidates");
+                    if let Some(auth_node) = db.get_schema_by_id(&node.schema_id).await? {
+                        return Ok(auth_node);
                     }
+                    return Ok(node);
                 }
             }
         }
@@ -894,10 +890,9 @@ async fn has_graph_evidence(
             if let Ok(Some(target)) = db
                 .get_property_ref_target_by_id(&prop.name, source_schema_id)
                 .await
+                && (target.schema_id == candidate.schema_id || target.title == candidate.title)
             {
-                if target.schema_id == candidate.schema_id || target.title == candidate.title {
-                    return true;
-                }
+                return true;
             }
         }
     }
@@ -945,10 +940,10 @@ async fn parent_holds_child_as_junction(
     for p in props.iter().filter(|p| {
         p.is_array && p.effective_kind() == Some(RefClassificationKind::EntityReference)
     }) {
-        if let Ok(Some(target)) = db.get_property_ref_target(&p.name, parent_title).await {
-            if target.title == child_title {
-                return Ok(true);
-            }
+        if let Ok(Some(target)) = db.get_property_ref_target(&p.name, parent_title).await
+            && target.title == child_title
+        {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -1029,26 +1024,23 @@ async fn resolve_fk_via_graph(
             // the FK column on the entity model uses _id suffix. This mirrors the
             // entity generator's resolve_fk_column_name logic but uses graph data
             // (is_entity flag) instead of domain config (entity_titles).
-            if !col_name.ends_with("_id") {
-                if let Some(ref_title) = prop.ref_target.as_deref().map(|rt| {
+            if !col_name.ends_with("_id")
+                && let Some(ref_title) = prop.ref_target.as_deref().map(|rt| {
                     rt.rsplit('/')
                         .next()
                         .unwrap_or(rt)
                         .strip_suffix(".json#")
                         .or_else(|| rt.strip_suffix(".json"))
                         .unwrap_or(rt)
-                }) {
-                    if let Ok(Some(target)) =
-                        db.get_property_ref_target(&prop.name, source_title).await
-                    {
-                        if target.is_entity && !target.pg_table_name.is_empty() {
-                            col_name = codegraph_core::types::ensure_id_suffix(&col_name);
-                        } else if let Ok(Some(_entity)) =
-                            codegraph_core::traits::find_entity_extended_by_vo(db, ref_title).await
-                        {
-                            col_name = codegraph_core::types::ensure_id_suffix(&col_name);
-                        }
-                    }
+                })
+                && let Ok(Some(target)) = db.get_property_ref_target(&prop.name, source_title).await
+            {
+                if target.is_entity && !target.pg_table_name.is_empty() {
+                    col_name = codegraph_core::types::ensure_id_suffix(&col_name);
+                } else if let Ok(Some(_entity)) =
+                    codegraph_core::traits::find_entity_extended_by_vo(db, ref_title).await
+                {
+                    col_name = codegraph_core::types::ensure_id_suffix(&col_name);
                 }
             }
             return Ok((col_name, prop.is_array));
@@ -1119,12 +1111,10 @@ async fn resolve_child_fk_column(
         .domains
         .get(domain)
         .and_then(|d| d.get_entity_config(child_title))
+        && let Some(fk) = ec.parent_ref.clone()
+        && ec.parent.as_deref().is_some_and(|p| p == parent_title)
     {
-        if let Some(fk) = ec.parent_ref.clone() {
-            if ec.parent.as_deref().is_some_and(|p| p == parent_title) {
-                return Ok(fk);
-            }
-        }
+        return Ok(fk);
     }
 
     // Priority 2: graph properties — find the property on the child that

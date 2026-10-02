@@ -17,7 +17,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use codegraph_config::config::{parse_domain_config_str, DomainConfig};
+use codegraph_config::config::{DomainConfig, parse_domain_config_str};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{NamespaceImport, NamespaceNode};
@@ -240,9 +240,11 @@ postgres_schema = "trade"
     assert_eq!(imports.len(), 2, "{imports:?}");
     assert!(imports.iter().all(|i| i.to_ns == "biz.core"));
     assert!(imports.iter().any(|i| i.wildcard && i.alias.is_none()));
-    assert!(imports
-        .iter()
-        .any(|i| !i.wildcard && i.alias.as_deref() == Some("core")));
+    assert!(
+        imports
+            .iter()
+            .any(|i| !i.wildcard && i.alias.as_deref() == Some("core"))
+    );
     assert_eq!(outcome.stats.namespace_imports, 2);
 
     // Bridged schemas carry the namespace and join it.

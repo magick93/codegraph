@@ -183,10 +183,10 @@ fn classify_identifier(node: &tree_sitter::Node, source: &[u8]) -> (u32, u32) {
                 return (1, 0);
             }
             "binding_pair" => {
-                if let Some(key) = parent.child_by_field_name("key") {
-                    if key == current {
-                        return (4, 0);
-                    }
+                if let Some(key) = parent.child_by_field_name("key")
+                    && key == current
+                {
+                    return (4, 0);
                 }
                 return (5, 0);
             }

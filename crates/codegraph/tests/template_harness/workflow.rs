@@ -16,8 +16,8 @@ async fn workflow_action_calls_service() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-wf-action");
 
-    let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -131,9 +131,9 @@ async fn workflow_action_child_entity_renders() {
         source: codegraph_core::types::DetectionSource::ScalarRef,
     }];
 
-    let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir)
+    let generator = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir)
         .with_parent_candidates(parent_candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -169,8 +169,8 @@ async fn workflow_seed_global() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-wf-seed");
 
-    let gen = generate::db::workflow_seed::WorkflowSeedGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::workflow_seed::WorkflowSeedGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -216,8 +216,8 @@ async fn workflow_action_uses_real_identity() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-workflow-identity");
 
-    let gen = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::workflow_action::WorkflowActionGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",

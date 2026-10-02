@@ -252,10 +252,10 @@ fn enterprise_variant_generators_match_base_profile() {
 
     for (section_name, base_section) in &base.sections {
         let ent_section = &enterprise.sections[section_name.as_str()];
-        for gen in &base_section.generators {
+        for generator in &base_section.generators {
             assert!(
-                ent_section.generators.contains(gen),
-                "enterprise variant is missing generator \"{gen}\" from \
+                ent_section.generators.contains(generator),
+                "enterprise variant is missing generator \"{generator}\" from \
                  base profile's [{section_name}] section. \
                  If the generator was intentionally omitted, update the variant.",
             );

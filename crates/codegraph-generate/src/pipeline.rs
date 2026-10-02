@@ -7,7 +7,7 @@ use codegraph_core::traits::GraphQuerier;
 use tera::Tera;
 
 use crate::codelist;
-use crate::context::{build_generator_context, build_manifest_roots, GeneratorContext};
+use crate::context::{GeneratorContext, build_generator_context, build_manifest_roots};
 use crate::db;
 use crate::domain_types;
 use crate::error::{Error, Result};
@@ -16,8 +16,9 @@ use crate::ifml::IfmlQuerier;
 use crate::manifest;
 use crate::ordering::{all_domains_for_generation, compute_generation_order};
 use crate::output::{
-    clean_generated_output, clean_stale_ifml_routes, generate_mod_files, generate_test_mod_files,
-    is_api_entity_generator, prefix_migration_path, prune_entity_mod, write_output, MigrationSeq,
+    MigrationSeq, clean_generated_output, clean_stale_ifml_routes, generate_mod_files,
+    generate_test_mod_files, is_api_entity_generator, prefix_migration_path, prune_entity_mod,
+    write_output,
 };
 use crate::project_config::{GenerationEntry, GeneratorOpts, ProjectConfig};
 use crate::registry::{build_domain_generators, build_entity_generators, build_global_generators};
@@ -309,11 +310,11 @@ async fn run_entity_phase(
 
         let mut entity_files = Vec::new();
         let mut errors = Vec::new();
-        for gen in entity_gens.iter() {
-            if generation_mode == "ddd_only" && is_api_entity_generator(gen.name()) {
+        for generator in entity_gens.iter() {
+            if generation_mode == "ddd_only" && is_api_entity_generator(generator.name()) {
                 continue;
             }
-            match gen
+            match generator
                 .generate(
                     ctx.db(),
                     &entry.schema_title,
@@ -328,7 +329,7 @@ async fn run_entity_phase(
                 Err(e) => {
                     errors.push(report::GenerationError {
                         entity: entry.schema_title.clone(),
-                        generator: gen.name().to_string(),
+                        generator: generator.name().to_string(),
                         source: e,
                     });
                 }
@@ -360,24 +361,22 @@ fn write_entity_results(
                 .parent()
                 .and_then(|p| p.file_name())
                 .is_some_and(|d| d == "migrations");
-            if is_migration {
-                if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
-                    let base = name
-                        .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
-                        .to_string();
-                    if !seen_migration_names.insert(base.clone()) {
-                        // Two different schema titles produced the same pg_table_name
-                        // (e.g. "AssessmentAccessType" and a cross-domain ref
-                        // "AssessmentAccess" both produce assessments_assessment_access.sql).
-                        // Keep the first occurrence; skip subsequent ones.
-                        tracing::warn!(
-                            migration = %name,
-                            base = %base,
-                            "skipping duplicate migration — same pg_table_name produced by \
-                             multiple schema titles; first occurrence wins"
-                        );
-                        continue;
-                    }
+            if is_migration && let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
+                let base = name
+                    .trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
+                    .to_string();
+                if !seen_migration_names.insert(base.clone()) {
+                    // Two different schema titles produced the same pg_table_name
+                    // (e.g. "AssessmentAccessType" and a cross-domain ref
+                    // "AssessmentAccess" both produce assessments_assessment_access.sql).
+                    // Keep the first occurrence; skip subsequent ones.
+                    tracing::warn!(
+                        migration = %name,
+                        base = %base,
+                        "skipping duplicate migration — same pg_table_name produced by \
+                         multiple schema titles; first occurrence wins"
+                    );
+                    continue;
                 }
             }
             let file = prefix_migration_path(file, entity_seq.get() as usize);
@@ -530,33 +529,11 @@ async fn run_domain_phase(
         for (domain, entity_titles) in domains_with_entities {
             let worker_dir = ctx.output_dir.join("workers").join(domain);
             let domain_gens = build_domain_generators(ctx, parent_candidates, Some(&worker_dir));
-            let per_domain: Vec<_> = futures::future::join_all(domain_gens.iter().map(|gen| {
-                let domain = domain.clone();
-                async move {
-                    let result = gen
-                        .generate(
-                            ctx.db(),
-                            &domain,
-                            entity_titles,
-                            ctx.config,
-                            ctx.tera,
-                            ctx.project,
-                        )
-                        .await;
-                    (domain, gen.name().to_string(), result)
-                }
-            }))
-            .await;
-            results.extend(per_domain);
-        }
-        results
-    } else {
-        futures::future::join_all(domains_with_entities.iter().flat_map(
-            |(domain, entity_titles)| {
-                monolith_domain_gens.iter().map(move |gen| {
+            let per_domain: Vec<_> =
+                futures::future::join_all(domain_gens.iter().map(|generator| {
                     let domain = domain.clone();
                     async move {
-                        let result = gen
+                        let result = generator
                             .generate(
                                 ctx.db(),
                                 &domain,
@@ -566,7 +543,30 @@ async fn run_domain_phase(
                                 ctx.project,
                             )
                             .await;
-                        (domain, gen.name().to_string(), result)
+                        (domain, generator.name().to_string(), result)
+                    }
+                }))
+                .await;
+            results.extend(per_domain);
+        }
+        results
+    } else {
+        futures::future::join_all(domains_with_entities.iter().flat_map(
+            |(domain, entity_titles)| {
+                monolith_domain_gens.iter().map(move |generator| {
+                    let domain = domain.clone();
+                    async move {
+                        let result = generator
+                            .generate(
+                                ctx.db(),
+                                &domain,
+                                entity_titles,
+                                ctx.config,
+                                ctx.tera,
+                                ctx.project,
+                            )
+                            .await;
+                        (domain, generator.name().to_string(), result)
                     }
                 })
             },
@@ -607,10 +607,11 @@ async fn run_global_phase(
     order: &[GenerationEntry],
     report: &mut report::GenerationReport,
 ) -> Result<()> {
-    let (first, parallel): (Vec<_>, Vec<_>) =
-        global_gens.iter().partition(|gen| gen.sequential_first());
-    for gen in &first {
-        let files = gen
+    let (first, parallel): (Vec<_>, Vec<_>) = global_gens
+        .iter()
+        .partition(|generator| generator.sequential_first());
+    for generator in &first {
+        let files = generator
             .generate(ctx.db(), ctx.config, order, ctx.tera, ctx.project)
             .await?;
         for file in &files {
@@ -619,12 +620,11 @@ async fn run_global_phase(
         report.files.extend(files);
     }
 
-    let global_results: Vec<_> = futures::future::join_all(
-        parallel
-            .iter()
-            .map(|gen| gen.generate(ctx.db(), ctx.config, order, ctx.tera, ctx.project)),
-    )
-    .await;
+    let global_results: Vec<_> =
+        futures::future::join_all(parallel.iter().map(|generator| {
+            generator.generate(ctx.db(), ctx.config, order, ctx.tera, ctx.project)
+        }))
+        .await;
 
     for result in global_results {
         let files = result?;
@@ -777,11 +777,12 @@ pub async fn run_ifml_generators(
     // Scaffolding generators (sequential_first) run and write before the
     // parallel wave so later generators' if-absent checks (the e2e
     // generator's package.json stub) resolve in their favor.
-    let (first, parallel): (Vec<_>, Vec<_>) =
-        global_gens.iter().partition(|gen| gen.sequential_first());
+    let (first, parallel): (Vec<_>, Vec<_>) = global_gens
+        .iter()
+        .partition(|generator| generator.sequential_first());
     let mut report = report::GenerationReport::new();
-    for gen in &first {
-        let files = gen.generate(db, config, &[], tera, project).await?;
+    for generator in &first {
+        let files = generator.generate(db, config, &[], tera, project).await?;
         for file in &files {
             write_output(file)?;
         }
@@ -791,7 +792,7 @@ pub async fn run_ifml_generators(
     let global_results: Vec<_> = futures::future::join_all(
         parallel
             .iter()
-            .map(|gen| gen.generate(db, config, &[], tera, project)),
+            .map(|generator| generator.generate(db, config, &[], tera, project)),
     )
     .await;
 

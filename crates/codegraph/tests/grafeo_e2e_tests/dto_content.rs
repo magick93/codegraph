@@ -4,10 +4,10 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::domain_types::dto::DomainTypesDtoGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::EntityGenerator;
-use codegraph::generate::ProjectConfig;
 
 use crate::setup::setup_grafeo;
 // === Task 6: Create DTO content assertions ===
@@ -21,8 +21,8 @@ async fn grafeo_candidate_create_dto_content() {
     let tmp = std::env::temp_dir().join("grafeo-test-create-dto");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -79,8 +79,8 @@ async fn grafeo_candidate_response_dto_content() {
     let tmp = std::env::temp_dir().join("grafeo-test-response-dto");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -135,8 +135,8 @@ async fn grafeo_structured_import_uses_configurable_prefix() {
     let tmp = std::env::temp_dir().join("grafeo-test-structured-import");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -176,8 +176,8 @@ async fn grafeo_structured_import_respects_custom_prefix() {
     let tmp = std::env::temp_dir().join("grafeo-test-structured-import-custom");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -216,8 +216,8 @@ async fn grafeo_candidate_update_dto_excludes_immutable() {
     let tmp = std::env::temp_dir().join("grafeo-test-update-dto");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -266,8 +266,8 @@ async fn dto_output_uses_correct_types_for_array_and_codelist_fields() {
     let tmp = std::env::temp_dir().join("grafeo-test-array-codelist");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -319,8 +319,8 @@ async fn child_dto_fields_use_correct_types_in_generated_output() {
     let tmp = std::env::temp_dir().join("grafeo-test-child-types");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -376,8 +376,8 @@ async fn grafeo_candidate_qualifications_routed_to_child_dtos() {
     let tmp = std::env::temp_dir().join("grafeo-test-qualifications");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -433,8 +433,8 @@ async fn grafeo_candidate_inline_enum_in_dto() {
     let tmp = std::env::temp_dir().join("grafeo-test-inline-enum");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -469,8 +469,8 @@ async fn grafeo_candidate_response_dto_nested_value_objects() {
     let tmp = std::env::temp_dir().join("grafeo-test-nested-vo");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -531,8 +531,8 @@ async fn grafeo_candidate_composite_wrapper_in_dto() {
     let tmp = std::env::temp_dir().join("grafeo-test-composite");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -590,8 +590,8 @@ async fn composite_currency_column_should_use_enum_in_dto() {
     let tmp = std::env::temp_dir().join("grafeo-test-currency-enum");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -640,8 +640,8 @@ async fn grafeo_candidate_child_dtos_via_edges() {
     let tmp = std::env::temp_dir().join("grafeo-test-child-edges");
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let gen = DomainTypesDtoGenerator::new_with_base(tmp.clone());
-    let files = gen
+    let generator = DomainTypesDtoGenerator::new_with_base(tmp.clone());
+    let files = generator
         .generate(
             &engine,
             "CandidateType",

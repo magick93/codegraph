@@ -13,9 +13,9 @@ use crate::api::api_model::{
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ux::plan::{build_ux_plan, ActionSpec, RowAction};
-use codegraph_config::ux::{Align, Display};
+use crate::ux::plan::{ActionSpec, RowAction, build_ux_plan};
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::{Align, Display};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::store::UiParentInfo;
@@ -670,50 +670,37 @@ async fn resolve_parent_info(
         .domains
         .get(domain)
         .and_then(|d| d.get_entity_config(schema_title))
+        && ec.role.as_deref() == Some("child")
+        && let Some(ref parent_title) = ec.parent
+        && let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
     {
-        if ec.role.as_deref() == Some("child") {
-            if let Some(ref parent_title) = ec.parent {
-                if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
-                {
-                    let parent_domain = if config
-                        .domains
-                        .get(domain)
-                        .map(|d| d.entities.contains(parent_title))
-                        .unwrap_or(false)
-                    {
-                        domain.to_string()
-                    } else {
-                        parent_schema
-                            .domain
-                            .clone()
-                            .unwrap_or_else(|| domain.to_string())
-                    };
-                    let gp = super::store::resolve_grandparent(
-                        parent_title,
-                        domain,
-                        config,
-                        parent_candidates,
-                        db,
-                    )
-                    .await
-                    .map(Box::new);
-                    result = Some(UiParentInfo {
-                        param_name: crate::api::router::param_name_from_path_segment(
-                            &resolve_path_segment_with_config(None, &parent_schema, config),
-                        ),
-                        domain: parent_domain,
-                        path_segment: resolve_path_segment_with_config(
-                            None,
-                            &parent_schema,
-                            config,
-                        ),
-                        module_name: parent_schema.pg_table_name.clone(),
-                        entity_name: parent_schema.rust_type_name.clone(),
-                        grandparent: gp,
-                    });
-                }
-            }
-        }
+        let parent_domain = if config
+            .domains
+            .get(domain)
+            .map(|d| d.entities.contains(parent_title))
+            .unwrap_or(false)
+        {
+            domain.to_string()
+        } else {
+            parent_schema
+                .domain
+                .clone()
+                .unwrap_or_else(|| domain.to_string())
+        };
+        let gp =
+            super::store::resolve_grandparent(parent_title, domain, config, parent_candidates, db)
+                .await
+                .map(Box::new);
+        result = Some(UiParentInfo {
+            param_name: crate::api::router::param_name_from_path_segment(
+                &resolve_path_segment_with_config(None, &parent_schema, config),
+            ),
+            domain: parent_domain,
+            path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+            module_name: parent_schema.pg_table_name.clone(),
+            entity_name: parent_schema.rust_type_name.clone(),
+            grandparent: gp,
+        });
     }
 
     // 2. Fall back to graph parent_candidates (only if entity is not explicitly root)

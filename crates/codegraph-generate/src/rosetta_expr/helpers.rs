@@ -93,17 +93,16 @@ pub(super) fn optional_field_error(field: &str) -> TranspileError {
 /// Re-wrap a bare-optional-field error raised for a feature-call receiver:
 /// the optional rule is the same, but the call is the rejected node.
 pub(super) fn optional_receiver_error(call: &str, err: TranspileError) -> TranspileError {
-    if err.kind == "SymbolReference" {
-        if let Some(field) = err
+    if err.kind == "SymbolReference"
+        && let Some(field) = err
             .detail
             .strip_prefix("optional field '")
             .and_then(|rest| rest.split('\'').next())
-        {
-            return TranspileError::new(
-                call,
-                format!("optional receiver requires exists-guard: '{field}'"),
-            );
-        }
+    {
+        return TranspileError::new(
+            call,
+            format!("optional receiver requires exists-guard: '{field}'"),
+        );
     }
     err
 }

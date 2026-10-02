@@ -1,5 +1,5 @@
-use super::builder::strip_api_prefix;
 use super::MockEngine;
+use super::builder::strip_api_prefix;
 use crate::error::GraphError;
 use crate::traits::GraphIngestor;
 use crate::types::*;

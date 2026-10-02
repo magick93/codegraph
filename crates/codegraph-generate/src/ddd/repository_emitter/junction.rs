@@ -1,7 +1,7 @@
-use crate::code_writer::{wln, CodeWriter};
+use crate::code_writer::{CodeWriter, wln};
 
-use super::helpers::q;
 use super::JunctionTableInfo;
+use super::helpers::q;
 
 /// Build the junction INSERT statement text (shared by insert and replace paths).
 fn junction_insert_sql(j: &JunctionTableInfo) -> String {

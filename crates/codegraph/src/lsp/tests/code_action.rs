@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use auto_lsp::lsp_server::{Connection, Message, Request, RequestId};
 use auto_lsp::lsp_types::*;
 
-use super::{do_init_handshake, do_shutdown, open_document, recv_diagnostics, LSP_TEST_LOCK};
-use crate::lsp::{run_lsp_server, GrafeoState};
+use super::{LSP_TEST_LOCK, do_init_handshake, do_shutdown, open_document, recv_diagnostics};
+use crate::lsp::{GrafeoState, run_lsp_server};
 
 #[test]
 fn test_lsp_code_action_missing_entity() {

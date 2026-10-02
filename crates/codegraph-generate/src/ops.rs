@@ -13,15 +13,15 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use crate::GenerationEntry;
+use crate::ProjectConfig;
 use crate::error::{Error, Result};
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
-use crate::ProjectConfig;
+use codegraph_config::DomainConfig;
 use codegraph_config::ops_manifest::{
     OpsCapabilities, OpsDatabase, OpsDbTarget, OpsManifest, OpsServers, OpsSmoke,
 };
-use codegraph_config::DomainConfig;
 
 /// Derive the API path segment for an entity schema title
 /// (`CandidateType` → `candidate`).
@@ -51,10 +51,9 @@ async fn resolve_ops_route_segment(
     if let Ok(Some(node)) = db
         .get_schema_in_domain(&entry.schema_title, &entry.domain)
         .await
+        && !node.api_path_segment.is_empty()
     {
-        if !node.api_path_segment.is_empty() {
-            return node.api_path_segment;
-        }
+        return node.api_path_segment;
     }
     entity_segment(&entry.schema_title)
 }
@@ -109,7 +108,7 @@ impl OpsManifestGenerator {
     /// Resolve the codegraph-ops crate location as a path relative to the
     /// testkit crate directory (where the generated Cargo.toml lives).
     ///
-    /// Mirrors `scaffold/gen.rs::resolve_path` (pathdiff against the output
+    /// Mirrors `scaffold/generator.rs::resolve_path` (pathdiff against the output
     /// dir). The codegraph-ops crate is a sibling of this crate
     /// (`crates/codegraph-ops`) inside the codegraph workspace, so the
     /// compiled-in `CARGO_MANIFEST_DIR` locates it regardless of the output
@@ -207,7 +206,7 @@ impl GlobalGenerator for OpsManifestGenerator {
             project.identity.generator_name, manifest_toml
         );
 
-        // Compute the absolute output dir (mirrors scaffold/gen.rs).
+        // Compute the absolute output dir (mirrors scaffold/generator.rs).
         let abs_output = if self.output_dir.is_absolute() {
             self.output_dir.clone()
         } else {

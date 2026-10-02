@@ -93,10 +93,10 @@ pub struct StageTiming {
 static WRITTEN_SUITES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn mark_written(suite: &str) {
-    if let Ok(mut written) = WRITTEN_SUITES.lock() {
-        if !written.iter().any(|s| s == suite) {
-            written.push(suite.to_string());
-        }
+    if let Ok(mut written) = WRITTEN_SUITES.lock()
+        && !written.iter().any(|s| s == suite)
+    {
+        written.push(suite.to_string());
     }
 }
 

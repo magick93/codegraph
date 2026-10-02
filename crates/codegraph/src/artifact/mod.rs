@@ -20,8 +20,8 @@ pub mod kit;
 use std::path::Path;
 
 pub use codegraph_grafeo::artifact::{
-    canonical_bytes, export_ir, import_ir, normalize, parse_document, sha256_hex, ArtifactError,
-    EdgeRecord, ExportedArtifact, GraphDocument, NodeRecord, PropValue,
+    ArtifactError, EdgeRecord, ExportedArtifact, GraphDocument, NodeRecord, PropValue,
+    canonical_bytes, export_ir, import_ir, normalize, parse_document, sha256_hex,
 };
 pub use codegraph_grafeo::schema_ddl::GRAPH_FORMAT_VERSION as FORMAT_VERSION;
 

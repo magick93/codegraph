@@ -23,10 +23,10 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{PolicyKind, PropertyNode, SoftDeleteMarker};
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::ui::page::UiField;
-use crate::ux::plan::{build_ux_plan, UxPlan, UxPlanInput};
-use crate::ProjectConfig;
+use crate::ux::plan::{UxPlan, UxPlanInput, build_ux_plan};
 
 /// The per-entity sort contract for list endpoints (issue #306).
 #[derive(Debug, Clone, Default, PartialEq)]

@@ -5,11 +5,11 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::codelist::rust_enum::RustCodelistGenerator;
 use codegraph::generate::domain_types::scaffold::DomainTypesScaffoldGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::GlobalGenerator;
-use codegraph::generate::ProjectConfig;
 
 use crate::setup::setup_grafeo;
 #[tokio::test]
@@ -21,11 +21,11 @@ async fn grafeo_scaffold_lib_rs_includes_structured_re_exports() {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
 
-    let gen = DomainTypesScaffoldGenerator::new_with_base(tmp.clone());
+    let generator = DomainTypesScaffoldGenerator::new_with_base(tmp.clone());
     let order = codegraph::generate::compute_generation_order(&engine, &config)
         .await
         .unwrap();
-    let files = gen
+    let files = generator
         .generate(&engine, &config, &order, &tera, &ProjectConfig::default())
         .await
         .unwrap();
@@ -56,11 +56,11 @@ async fn grafeo_scaffold_domain_types_has_cargo_toml() {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
 
-    let gen = DomainTypesScaffoldGenerator::new_with_base(tmp.clone());
+    let generator = DomainTypesScaffoldGenerator::new_with_base(tmp.clone());
     let order = codegraph::generate::compute_generation_order(&engine, &config)
         .await
         .unwrap();
-    let files = gen
+    let files = generator
         .generate(&engine, &config, &order, &tera, &ProjectConfig::default())
         .await
         .unwrap();
@@ -92,8 +92,8 @@ async fn grafeo_rust_codelist_generator_emits_enum() {
     let (engine, _config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
-    let gen = RustCodelistGenerator::new(Path::new("/tmp/out"));
-    let files = gen
+    let generator = RustCodelistGenerator::new(Path::new("/tmp/out"));
+    let files = generator
         .generate_all(&engine, &tera, &ProjectConfig::default())
         .await
         .unwrap();
@@ -165,8 +165,8 @@ async fn grafeo_gender_codelist_variants_no_rename_when_pascal() {
     let (engine, _config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
-    let gen = RustCodelistGenerator::new(Path::new("/tmp/out"));
-    let files = gen
+    let generator = RustCodelistGenerator::new(Path::new("/tmp/out"));
+    let files = generator
         .generate_all(&engine, &tera, &ProjectConfig::default())
         .await
         .unwrap();

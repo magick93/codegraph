@@ -1,4 +1,4 @@
-extern "C" {
+unsafe extern "C" {
     fn tree_sitter_ifml() -> tree_sitter::Language;
 }
 

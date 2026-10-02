@@ -5,10 +5,10 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::error::Result;
-use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use crate::GenerationEntry;
 use crate::ProjectConfig;
+use crate::error::Result;
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMappings};
 use codegraph_core::traits::GraphQuerier;
@@ -137,8 +137,8 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             if has_tests(&spec) {
                 specs.push(spec);
             }
-            if let Some(rules) = ux_rules {
-                if let Some(ux_test) = self
+            if let Some(rules) = ux_rules
+                && let Some(ux_test) = self
                     .build_view_ux_test(
                         db,
                         config,
@@ -148,9 +148,8 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                         &ux_plans,
                     )
                     .await
-                {
-                    ux_specs.push((vc.name.clone(), ux_test));
-                }
+            {
+                ux_specs.push((vc.name.clone(), ux_test));
             }
             let workflow_tests = self
                 .build_view_workflow_tests(db, config, &project.identity.api_version, vc)
@@ -189,50 +188,50 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             .map(|vc| format!("{}-page.ts", to_kebab_case(&vc.name)))
             .collect();
         let specs_dir = self.output_dir.join("tests").join("ifml");
-        if specs_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&specs_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                        continue;
-                    };
-                    if !name.ends_with(".spec.ts") {
-                        continue;
-                    }
-                    if name.strip_suffix(".workflow.spec.ts").is_some() {
-                        if !active_workflow_specs.contains(name) {
-                            let _ = std::fs::remove_file(&path);
-                        }
-                        continue;
-                    }
-                    if name.strip_suffix(".ux.spec.ts").is_some() {
-                        if !active_ux_specs.contains(name) {
-                            let _ = std::fs::remove_file(&path);
-                        }
-                        continue;
-                    }
-                    if !active_specs.contains(name) {
+        if specs_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&specs_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if !name.ends_with(".spec.ts") {
+                    continue;
+                }
+                if name.strip_suffix(".workflow.spec.ts").is_some() {
+                    if !active_workflow_specs.contains(name) {
                         let _ = std::fs::remove_file(&path);
                     }
+                    continue;
+                }
+                if name.strip_suffix(".ux.spec.ts").is_some() {
+                    if !active_ux_specs.contains(name) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    continue;
+                }
+                if !active_specs.contains(name) {
+                    let _ = std::fs::remove_file(&path);
                 }
             }
         }
         let pages_dir = self.output_dir.join("tests").join("pages");
-        if pages_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&pages_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_file() {
-                        continue;
-                    }
-                    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-                        continue;
-                    };
-                    // Only page classes are view-scoped; `support/` holds the
-                    // stable kernel.
-                    if name.ends_with("-page.ts") && !active_pages.contains(name) {
-                        let _ = std::fs::remove_file(&path);
-                    }
+        if pages_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&pages_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                // Only page classes are view-scoped; `support/` holds the
+                // stable kernel.
+                if name.ends_with("-page.ts") && !active_pages.contains(name) {
+                    let _ = std::fs::remove_file(&path);
                 }
             }
         }

@@ -145,10 +145,10 @@ pub(crate) fn function_node(function: &sigil_model::Function, domain: &str) -> F
             })
         }).collect::<Vec<_>>(),
     });
-    if !function.annotations.is_empty() {
-        if let Ok(annotations) = serde_json::to_value(&function.annotations) {
-            properties["annotations"] = annotations;
-        }
+    if !function.annotations.is_empty()
+        && let Ok(annotations) = serde_json::to_value(&function.annotations)
+    {
+        properties["annotations"] = annotations;
     }
     if !function.conditions.is_empty() {
         let conditions: Vec<serde_json::Value> = function

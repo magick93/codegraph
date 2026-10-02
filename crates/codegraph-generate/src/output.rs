@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tera::Tera;
 
-use crate::db::dialect::{db_template_for, SqlDialect};
+use crate::db::dialect::{SqlDialect, db_template_for};
 use crate::error::{Error, Result};
 use crate::project_config::{GenerationEntry, ProjectConfig};
 use crate::traits::{DomainGeneratorKind, EntityGeneratorKind, GeneratedFile};
@@ -149,13 +149,11 @@ pub(crate) fn prefix_migration_path(mut file: GeneratedFile, seq: usize) -> Gene
         .parent()
         .and_then(|p| p.file_name())
         .is_some_and(|d| d == "migrations");
-    if is_migration {
-        if let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
-            // Skip files that already have a numeric prefix (e.g. 000005_pgmq_setup.sql)
-            if !name.starts_with(|c: char| c.is_ascii_digit()) {
-                let prefixed = format!("{:06}_{}", seq, name);
-                file.path = file.path.with_file_name(prefixed);
-            }
+    if is_migration && let Some(name) = file.path.file_name().and_then(|n| n.to_str()) {
+        // Skip files that already have a numeric prefix (e.g. 000005_pgmq_setup.sql)
+        if !name.starts_with(|c: char| c.is_ascii_digit()) {
+            let prefixed = format!("{:06}_{}", seq, name);
+            file.path = file.path.with_file_name(prefixed);
         }
     }
     file
@@ -266,26 +264,26 @@ pub(crate) fn clean_generated_output(
 
         // Clean stale API handler files: src/api/{domain}/*_handler.rs
         let api_domain_dir = backend_base.join("src").join("api").join(domain);
-        if api_domain_dir.is_dir() {
-            if let Ok(api_entries) = fs::read_dir(&api_domain_dir) {
-                for child in api_entries.flatten() {
-                    let path = child.path();
-                    let name = match path.file_name().and_then(|n| n.to_str()) {
-                        Some(n) => n.to_string(),
-                        None => continue,
-                    };
-                    // Only clean *_handler.rs files (not mod.rs, router.rs, etc.)
-                    if let Some(module) = name.strip_suffix("_handler.rs") {
-                        let key = (domain.to_string(), module.to_string());
-                        if !expected.contains(&key) {
-                            tracing::debug!(
-                                domain = %domain,
-                                handler = %name,
-                                path = %path.display(),
-                                "removing stale API handler file"
-                            );
-                            let _ = fs::remove_file(&path);
-                        }
+        if api_domain_dir.is_dir()
+            && let Ok(api_entries) = fs::read_dir(&api_domain_dir)
+        {
+            for child in api_entries.flatten() {
+                let path = child.path();
+                let name = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                // Only clean *_handler.rs files (not mod.rs, router.rs, etc.)
+                if let Some(module) = name.strip_suffix("_handler.rs") {
+                    let key = (domain.to_string(), module.to_string());
+                    if !expected.contains(&key) {
+                        tracing::debug!(
+                            domain = %domain,
+                            handler = %name,
+                            path = %path.display(),
+                            "removing stale API handler file"
+                        );
+                        let _ = fs::remove_file(&path);
                     }
                 }
             }
@@ -298,31 +296,31 @@ pub(crate) fn clean_generated_output(
             .join("routes")
             .join("(app)")
             .join(domain);
-        if ui_route_dir.is_dir() {
-            if let Ok(route_entries) = fs::read_dir(&ui_route_dir) {
-                for child in route_entries.flatten() {
-                    let path = child.path();
-                    if !path.is_dir() {
-                        continue;
-                    }
-                    let seg = match path.file_name().and_then(|n| n.to_str()) {
-                        Some(n) => n.to_string(),
-                        None => continue,
-                    };
-                    // Keep special SvelteKit files like +layout.svelte's directory
-                    if seg.starts_with('+') {
-                        continue;
-                    }
-                    let key = (domain.to_string(), seg.clone());
-                    if !expected_paths.contains(&key) {
-                        tracing::debug!(
-                            domain = %domain,
-                            path_segment = %seg,
-                            path = %path.display(),
-                            "removing stale UI route directory"
-                        );
-                        let _ = fs::remove_dir_all(&path);
-                    }
+        if ui_route_dir.is_dir()
+            && let Ok(route_entries) = fs::read_dir(&ui_route_dir)
+        {
+            for child in route_entries.flatten() {
+                let path = child.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let seg = match path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n.to_string(),
+                    None => continue,
+                };
+                // Keep special SvelteKit files like +layout.svelte's directory
+                if seg.starts_with('+') {
+                    continue;
+                }
+                let key = (domain.to_string(), seg.clone());
+                if !expected_paths.contains(&key) {
+                    tracing::debug!(
+                        domain = %domain,
+                        path_segment = %seg,
+                        path = %path.display(),
+                        "removing stale UI route directory"
+                    );
+                    let _ = fs::remove_dir_all(&path);
                 }
             }
         }
@@ -333,25 +331,25 @@ pub(crate) fn clean_generated_output(
             .join("tests")
             .join("generated")
             .join(domain);
-        if ui_tests_dir.is_dir() {
-            if let Ok(test_entries) = fs::read_dir(&ui_tests_dir) {
-                for child in test_entries.flatten() {
-                    let path = child.path();
-                    if path.is_dir() {
-                        continue;
-                    }
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        // Test file names are like "{path_segment}.api.crud.test.ts"
-                        let path_seg = name.split('.').next().unwrap_or("").to_string();
-                        let key = (domain.to_string(), path_seg);
-                        if !expected_paths.contains(&key) {
-                            tracing::debug!(
-                                domain = %domain,
-                                file = %name,
-                                "removing stale UI test file"
-                            );
-                            let _ = fs::remove_file(&path);
-                        }
+        if ui_tests_dir.is_dir()
+            && let Ok(test_entries) = fs::read_dir(&ui_tests_dir)
+        {
+            for child in test_entries.flatten() {
+                let path = child.path();
+                if path.is_dir() {
+                    continue;
+                }
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Test file names are like "{path_segment}.api.crud.test.ts"
+                    let path_seg = name.split('.').next().unwrap_or("").to_string();
+                    let key = (domain.to_string(), path_seg);
+                    if !expected_paths.contains(&key) {
+                        tracing::debug!(
+                            domain = %domain,
+                            file = %name,
+                            "removing stale UI test file"
+                        );
+                        let _ = fs::remove_file(&path);
                     }
                 }
             }
@@ -363,56 +361,56 @@ pub(crate) fn clean_generated_output(
     // tests/tests.rs) is regenerated from the filesystem after generation, so
     // removed files simply disappear from the declared modules.
     let tests_dir = output_dir.join("tests");
-    if tests_dir.is_dir() {
-        if let Ok(test_domain_entries) = fs::read_dir(&tests_dir) {
-            for child in test_domain_entries.flatten() {
-                let path = child.path();
-                if !path.is_dir() {
-                    continue; // top-level test crates are not per-domain
-                }
-                let domain = match path.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => n.to_string(),
-                    None => continue,
-                };
-                if !domains.contains(domain.as_str()) {
-                    tracing::debug!(
-                        domain = %domain,
-                        path = %path.display(),
-                        "removing stale test domain directory"
-                    );
-                    let _ = fs::remove_dir_all(&path);
-                    continue;
-                }
-                if let Ok(file_entries) = fs::read_dir(&path) {
-                    for child in file_entries.flatten() {
-                        let file_path = child.path();
-                        if file_path.is_dir() {
-                            continue;
-                        }
-                        let name = match child.file_name().to_str() {
-                            Some(n) => n.to_string(),
-                            None => continue,
-                        };
-                        // Only clean the generated per-entity test file
-                        // patterns ({module}_test.rs, {module}_dto_test.rs);
-                        // mod.rs and anything else is left alone.
-                        let module = if let Some(m) = name.strip_suffix("_dto_test.rs") {
-                            m
-                        } else if let Some(m) = name.strip_suffix("_test.rs") {
-                            m
-                        } else {
-                            continue;
-                        };
-                        let key = (domain.clone(), module.to_string());
-                        if !expected.contains(&key) {
-                            tracing::debug!(
-                                domain = %domain,
-                                file = %name,
-                                path = %file_path.display(),
-                                "removing stale entity test file"
-                            );
-                            let _ = fs::remove_file(&file_path);
-                        }
+    if tests_dir.is_dir()
+        && let Ok(test_domain_entries) = fs::read_dir(&tests_dir)
+    {
+        for child in test_domain_entries.flatten() {
+            let path = child.path();
+            if !path.is_dir() {
+                continue; // top-level test crates are not per-domain
+            }
+            let domain = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            if !domains.contains(domain.as_str()) {
+                tracing::debug!(
+                    domain = %domain,
+                    path = %path.display(),
+                    "removing stale test domain directory"
+                );
+                let _ = fs::remove_dir_all(&path);
+                continue;
+            }
+            if let Ok(file_entries) = fs::read_dir(&path) {
+                for child in file_entries.flatten() {
+                    let file_path = child.path();
+                    if file_path.is_dir() {
+                        continue;
+                    }
+                    let name = match child.file_name().to_str() {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    // Only clean the generated per-entity test file
+                    // patterns ({module}_test.rs, {module}_dto_test.rs);
+                    // mod.rs and anything else is left alone.
+                    let module = if let Some(m) = name.strip_suffix("_dto_test.rs") {
+                        m
+                    } else if let Some(m) = name.strip_suffix("_test.rs") {
+                        m
+                    } else {
+                        continue;
+                    };
+                    let key = (domain.clone(), module.to_string());
+                    if !expected.contains(&key) {
+                        tracing::debug!(
+                            domain = %domain,
+                            file = %name,
+                            path = %file_path.display(),
+                            "removing stale entity test file"
+                        );
+                        let _ = fs::remove_file(&file_path);
                     }
                 }
             }
@@ -609,16 +607,16 @@ fn generate_mod_files_recursive(dir: &Path, out: &mut Vec<GeneratedFile>) -> Res
             if subdir_has_content {
                 modules.insert(name);
             }
-        } else if let Some(ext) = path.extension() {
-            if ext == "rs" {
-                has_content = true;
-                // Skip special files that aren't submodules
-                if matches!(name.as_str(), "mod.rs" | "main.rs" | "lib.rs") {
-                    continue;
-                }
-                let module_name = name.strip_suffix(".rs").unwrap_or(&name);
-                modules.insert(module_name.to_string());
+        } else if let Some(ext) = path.extension()
+            && ext == "rs"
+        {
+            has_content = true;
+            // Skip special files that aren't submodules
+            if matches!(name.as_str(), "mod.rs" | "main.rs" | "lib.rs") {
+                continue;
             }
+            let module_name = name.strip_suffix(".rs").unwrap_or(&name);
+            modules.insert(module_name.to_string());
         }
     }
 

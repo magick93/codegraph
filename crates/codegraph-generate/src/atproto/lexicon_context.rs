@@ -3,8 +3,8 @@ use codegraph_core::types::{LexiconNode, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::{Deserialize, Serialize};
 
-use crate::error::Result;
 use crate::ProjectConfig;
+use crate::error::Result;
 
 #[derive(Debug, Serialize)]
 pub struct LexiconContext {
@@ -158,10 +158,10 @@ async fn lexicon_type_from_ref_classification(
             _ => LexiconType::String,
         },
         Some(RefClassificationKind::EntityReference) => {
-            if let Some(ref target) = prop.ref_target {
-                if let Ok(Some(lex)) = db.get_lexicon_by_schema(target).await {
-                    return LexiconType::Ref { ref_name: lex.nsid };
-                }
+            if let Some(ref target) = prop.ref_target
+                && let Ok(Some(lex)) = db.get_lexicon_by_schema(target).await
+            {
+                return LexiconType::Ref { ref_name: lex.nsid };
             }
             LexiconType::String
         }
