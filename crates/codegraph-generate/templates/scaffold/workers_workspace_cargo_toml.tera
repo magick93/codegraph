@@ -29,7 +29,7 @@ serde_qs = "0.13"
 percent-encoding = "2"
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 chrono = { version = "0.4", features = ["serde"] }
-utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid", "decimal"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid", "decimal"] }
 garde = { version = "0.22", features = ["derive"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 jsonwebtoken = "9"
