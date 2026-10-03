@@ -36,7 +36,7 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 futures = "0.3"
-tera = "1"
+tera = { version = "2", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive"] }
 codegraph-config = { path = "crates/codegraph-config" }
 heck = "0.5"

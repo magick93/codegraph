@@ -17,7 +17,7 @@ fn make_tera() -> Tera {
 
     tera.add_raw_template(
             "atproto/lexicon_record.tera",
-            r#"{"lexicon":1,"id":"{{lexicon.nsid}}","type":"{{lexicon.lex_type}}","description":"{{lexicon.description}}","defs":{"main":{"type":"record"{% if record.required_fields|length > 0 %},"required":[{% for field in record.required_fields %}"{{field}}"{% if not loop.last %},{% endif %}{% endfor %}]{% endif %},"properties":{ {% for prop in record.properties %}"{{prop.name}}":{"type":{% if prop.type is object %}"ref"{% else %}"{{prop.type.type}}"{% endif %}}{% if not loop.last %},{% endif %}{% endfor %} }}}}"#,
+            r#"{"lexicon":1,"id":"{{lexicon.nsid}}","type":"{{lexicon.lex_type}}","description":"{{lexicon.description}}","defs":{"main":{"type":"record"{% if record.required_fields|length > 0 %},"required":[{% for field in record.required_fields %}"{{field}}"{% if not loop.last %},{% endif %}{% endfor %}]{% endif %},"properties":{ {% for prop in record.properties %}"{{prop.name}}":{"type":{% if prop.type is map %}"ref"{% else %}"{{prop.type.type}}"{% endif %}}{% if not loop.last %},{% endif %}{% endfor %} }}}}"#,
         )
         .unwrap();
     tera.add_raw_template(

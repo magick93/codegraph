@@ -55,11 +55,15 @@ pub struct UiPageContext {
     /// render error, while an empty one falls through to the template's
     /// `list_fields` fallback.
     pub ux_columns: Vec<UxColumnCtx>,
-    /// ux-rules row-action partition (present only with a plan).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// ux-rules row-action partition (present only with a plan). Serialized
+    /// as null (not omitted) when there is no plan: tera 2 hard-errors on
+    /// absent-variable dereferences like `{% if ux_actions.child_menu %}`
+    /// where tera 1 treated them as falsy, and a null root keeps that
+    /// falsy behavior byte-identical.
     pub ux_actions: Option<UxActionsCtx>,
-    /// ux-rules locale/visual baseline (present only with a plan).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// ux-rules locale/visual baseline (present only with a plan). Null —
+    /// not omitted — when there is no plan, for the same tera 2 reason as
+    /// `ux_actions`.
     pub ux: Option<UxSettingsCtx>,
     /// ux-rules list-sort contract (issue #306): the `?sort=` allow-list,
     /// present only when the plan exposes at least one sortable column and
@@ -887,6 +891,11 @@ mod ux_list_template_tests {
             "list_fields": [{"name": "name", "label": "Name"}],
             "terminal_states": ["archived"],
             "parent": null,
+            // Production serializes these as null when the ux plane is
+            // inactive (tera 2 errors on absent-variable dereferences).
+            "ux_columns": [],
+            "ux_actions": null,
+            "ux": null,
         })
     }
 
@@ -1358,6 +1367,9 @@ mod ux_child_section_template_tests {
             "has_child_sections": true,
             "parent": null,
             "detail_extensions": [],
+            // Null (not absent) mirrors UiPageContext's flag-off serialization.
+            "ux_actions": null,
+            "ux": null,
         });
         if ux {
             let obj = ctx.as_object_mut().unwrap();

@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_templates.rs"));
 
-fn register_filters(tera: &mut Tera) {
+pub(crate) fn register_filters(tera: &mut Tera) {
     tera.register_filter("snake_case", snake_case_filter);
     tera.register_filter("upper_camel", upper_camel_filter);
     tera.register_filter("pascal_case", pascal_case_filter);
@@ -22,8 +22,11 @@ fn register_filters(tera: &mut Tera) {
 /// Initialize the Tera template engine with embedded templates.
 pub fn create_tera(_template_dir: &Path) -> Result<Tera> {
     let mut tera = Tera::default();
-    add_embedded_templates(&mut tera).map_err(|e| Error::Template(e.to_string()))?;
+    // tera 2 validates filter references when templates are added
+    // (finalize_templates at add_raw_template time), so filters must be
+    // registered before any template is added.
     register_filters(&mut tera);
+    add_embedded_templates(&mut tera).map_err(|e| Error::Template(e.to_string()))?;
     Ok(tera)
 }
 
@@ -32,13 +35,14 @@ pub fn create_tera(_template_dir: &Path) -> Result<Tera> {
 /// Later directories take precedence over earlier ones.
 pub fn create_tera_with_overrides(override_dirs: &[&Path]) -> Result<Tera> {
     let mut tera = Tera::default();
+    // Filters first: tera 2 validates filter references at add_raw_template time.
+    register_filters(&mut tera);
     add_embedded_templates(&mut tera).map_err(|e| Error::Template(e.to_string()))?;
     for dir in override_dirs {
         if dir.exists() {
             merge_tera_dir(&mut tera, dir)?;
         }
     }
-    register_filters(&mut tera);
     Ok(tera)
 }
 
@@ -110,66 +114,72 @@ pub fn create_tera_for_run(design_system: Option<&str>, override_dirs: &[&Path])
 
 fn snake_case_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("snake_case filter expects a string"))?;
-    Ok(tera::Value::String(codegraph_naming::to_snake_case(s)))
+        .ok_or_else(|| tera::Error::message("snake_case filter expects a string"))?;
+    Ok(tera::Value::from(codegraph_naming::to_snake_case(s)))
 }
 
 fn upper_camel_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("upper_camel filter expects a string"))?;
+        .ok_or_else(|| tera::Error::message("upper_camel filter expects a string"))?;
     let stripped = codegraph_naming::strip_suffix(s, "Type");
-    Ok(tera::Value::String(codegraph_naming::to_pascal_case(
+    Ok(tera::Value::from(codegraph_naming::to_pascal_case(
         &stripped,
     )))
 }
 
 fn pascal_case_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("pascal_case filter expects a string"))?;
-    Ok(tera::Value::String(codegraph_naming::to_pascal_case(s)))
+        .ok_or_else(|| tera::Error::message("pascal_case filter expects a string"))?;
+    Ok(tera::Value::from(codegraph_naming::to_pascal_case(s)))
 }
 
 fn kebab_case_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("kebab_case filter expects a string"))?;
-    Ok(tera::Value::String(codegraph_naming::to_kebab_case(s)))
+        .ok_or_else(|| tera::Error::message("kebab_case filter expects a string"))?;
+    Ok(tera::Value::from(codegraph_naming::to_kebab_case(s)))
 }
 
 fn truncate_pg_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("truncate_pg filter expects a string"))?;
-    Ok(tera::Value::String(
-        codegraph_naming::truncate_pg_identifier(s),
-    ))
+        .ok_or_else(|| tera::Error::message("truncate_pg filter expects a string"))?;
+    Ok(tera::Value::from(codegraph_naming::truncate_pg_identifier(
+        s,
+    )))
 }
 
 fn pluralize_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("pluralize filter expects a string"))?;
+        .ok_or_else(|| tera::Error::message("pluralize filter expects a string"))?;
     // Simple pluralization: add 's' unless already ends with 's'
     let plural = if s.ends_with('s') {
         format!("{}es", s)
@@ -178,7 +188,7 @@ fn pluralize_filter(
     } else {
         format!("{}s", s)
     };
-    Ok(tera::Value::String(plural))
+    Ok(tera::Value::from(plural))
 }
 
 /// Strip surrounding double-quotes from a PostgreSQL identifier.
@@ -186,39 +196,42 @@ fn pluralize_filter(
 /// must appear without quotes (e.g. `fk_table_language` not `fk_table_"language"`).
 fn strip_pg_quotes_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("strip_pg_quotes filter expects a string"))?;
+        .ok_or_else(|| tera::Error::message("strip_pg_quotes filter expects a string"))?;
     let stripped = s.replace('"', "");
-    Ok(tera::Value::String(stripped))
+    Ok(tera::Value::from(stripped))
 }
 
 /// Double-quote a PostgreSQL identifier if it is a reserved word.
 /// E.g. `order` → `"order"`, `candidate` → `candidate`.
 fn quote_pg_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("quote_pg filter expects a string"))?;
-    Ok(tera::Value::String(codegraph_naming::quote_pg_column(s)))
+        .ok_or_else(|| tera::Error::message("quote_pg filter expects a string"))?;
+    Ok(tera::Value::from(codegraph_naming::quote_pg_column(s)))
 }
 
 fn dollar_quote_filter(
     value: &tera::Value,
-    _args: &std::collections::HashMap<String, tera::Value>,
-) -> tera::Result<tera::Value> {
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
     let s = value
         .as_str()
-        .ok_or_else(|| tera::Error::msg("dollar_quote filter expects a string"))?;
+        .ok_or_else(|| tera::Error::message("dollar_quote filter expects a string"))?;
     // Use single-quote escaping instead of dollar-quoting.
     // Supabase CLI's migration runner mishandles $$$$ (empty dollar-quoted strings),
     // causing INSERT statements in codelist migrations to silently fail.
     let escaped = s.replace('\'', "''");
-    Ok(tera::Value::String(format!("'{}'", escaped)))
+    Ok(tera::Value::from(format!("'{}'", escaped)))
 }
 
 #[cfg(test)]
@@ -228,7 +241,7 @@ mod tests {
     /// Render the IFML layout template with a minimal shell context — the
     /// smallest template whose pack override proves the merge precedence.
     fn render_layout(tera: &Tera) -> String {
-        let ctx = tera::Context::from_serialize(serde_json::json!({
+        let ctx = tera::Context::from_serialize(&serde_json::json!({
             "shell": {
                 "import": { "export_name": "Nav", "import_path": "$lib/Nav.svelte" },
                 "testid": null,

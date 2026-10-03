@@ -10,6 +10,8 @@ use crate::error::Result;
 #[derive(Debug, Serialize)]
 pub struct TypesContext {
     pub struct_name: String,
+    /// Skipped when None: tera 2's `default` filter only fires on undefined.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub nsid: String,
     pub is_record: bool,
@@ -35,6 +37,8 @@ pub struct RustFieldContext {
 #[derive(Debug, Serialize)]
 pub struct EnumDefContext {
     pub enum_name: String,
+    /// Skipped when None: tera 2's `default` filter only fires on undefined.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub nsid: String,
     pub variants: Vec<EnumVariantContext>,
