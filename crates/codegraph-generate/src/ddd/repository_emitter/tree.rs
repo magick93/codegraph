@@ -204,7 +204,7 @@ impl RepositoryImplEmitter {
             );
             wln!(
                 code,
-                "        let worker_rows = db.query_all(worker_stmt).await?;"
+                "        let worker_rows = db.query_all_raw(worker_stmt).await?;"
             );
             wln!(code, "        for wr in &worker_rows {{");
             wln!(

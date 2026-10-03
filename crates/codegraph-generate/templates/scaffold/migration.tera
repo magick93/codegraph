@@ -33,7 +33,7 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
     let db = sea_orm::Database::connect(&db_url).await?;
 
     // Ensure schema_migrations table exists
-    sea_orm::ConnectionTrait::execute(
+    sea_orm::ConnectionTrait::execute_raw(
         &db,
         sea_orm::Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
@@ -71,7 +71,7 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         let version = fname.trim_end_matches(".sql");
 
         // Check if already applied
-        let already = sea_orm::ConnectionTrait::query_one(
+        let already = sea_orm::ConnectionTrait::query_one_raw(
             &db,
             sea_orm::Statement::from_sql_and_values(
                 sea_orm::DatabaseBackend::Postgres,
@@ -94,7 +94,7 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         let txn = sea_orm::TransactionTrait::begin(&db).await?;
         let mut failure: Option<(usize, sea_orm::DbErr)> = None;
         for (idx, stmt_sql) in statements.iter().enumerate() {
-            let res = sea_orm::ConnectionTrait::execute(
+            let res = sea_orm::ConnectionTrait::execute_raw(
                 &txn,
                 sea_orm::Statement::from_string(
                     sea_orm::DatabaseBackend::Postgres,
@@ -114,7 +114,7 @@ async fn run_sea_orm_migrations() -> Result<(), Box<dyn std::error::Error>> {
         txn.commit().await?;
 
         // Record migration
-        sea_orm::ConnectionTrait::execute(
+        sea_orm::ConnectionTrait::execute_raw(
             &db,
             sea_orm::Statement::from_sql_and_values(
                 sea_orm::DatabaseBackend::Postgres,

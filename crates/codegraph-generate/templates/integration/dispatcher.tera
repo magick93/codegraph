@@ -50,7 +50,7 @@ impl IntegrationDispatcher {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Find active installations whose extension point covers this entity
         let rows = self.db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "SELECT c.worker_url, i.id as installation_id
                  FROM platform_integrations.installations i

@@ -619,7 +619,7 @@ mod sea_orm_impl {
             let tx = self.inner()?;
             let values: Vec<sea_orm::Value> = params.iter().map(sea_value).collect();
             let res = tx
-                .execute(sea_orm::Statement::from_sql_and_values(
+                .execute_raw(sea_orm::Statement::from_sql_and_values(
                     sea_orm::DatabaseBackend::Postgres,
                     sql,
                     values,
@@ -637,7 +637,7 @@ mod sea_orm_impl {
             let tx = self.inner()?;
             let values: Vec<sea_orm::Value> = params.iter().map(sea_value).collect();
             let res = tx
-                .query_one(sea_orm::Statement::from_sql_and_values(
+                .query_one_raw(sea_orm::Statement::from_sql_and_values(
                     sea_orm::DatabaseBackend::Postgres,
                     sql,
                     values,
@@ -655,7 +655,7 @@ mod sea_orm_impl {
             let tx = self.inner()?;
             let values: Vec<sea_orm::Value> = params.iter().map(sea_value).collect();
             let res = tx
-                .query_all(sea_orm::Statement::from_sql_and_values(
+                .query_all_raw(sea_orm::Statement::from_sql_and_values(
                     sea_orm::DatabaseBackend::Postgres,
                     sql,
                     values,

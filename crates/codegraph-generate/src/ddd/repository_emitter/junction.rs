@@ -48,7 +48,7 @@ pub(crate) fn emit_junction_inserts(
                 "{pad}        vec![{parent_id_var}.into(), (*item).into()],"
             );
             wln!(code, "{pad}    );");
-            wln!(code, "{pad}    tx.execute(stmt).await?;");
+            wln!(code, "{pad}    tx.execute_raw(stmt).await?;");
             wln!(code, "{pad}}}");
         } else {
             wln!(
@@ -68,7 +68,7 @@ pub(crate) fn emit_junction_inserts(
                 "{pad}            vec![{parent_id_var}.into(), (*item).into()],"
             );
             wln!(code, "{pad}        );");
-            wln!(code, "{pad}        tx.execute(stmt).await?;");
+            wln!(code, "{pad}        tx.execute_raw(stmt).await?;");
             wln!(code, "{pad}    }}");
             wln!(code, "{pad}}}");
         }
@@ -107,7 +107,7 @@ pub(crate) fn emit_junction_replace(
         wln!(code, "{pad}        \"{del_sql}\",");
         wln!(code, "{pad}        vec![id.into()],");
         wln!(code, "{pad}    );");
-        wln!(code, "{pad}    tx.execute(stmt).await?;");
+        wln!(code, "{pad}    tx.execute_raw(stmt).await?;");
         let ins_sql = junction_insert_sql(j);
         wln!(code, "{pad}    for item in ids {{");
         wln!(
@@ -118,7 +118,7 @@ pub(crate) fn emit_junction_replace(
         wln!(code, "{pad}            \"{ins_sql}\",");
         wln!(code, "{pad}            vec![id.into(), (*item).into()],");
         wln!(code, "{pad}        );");
-        wln!(code, "{pad}        tx.execute(stmt).await?;");
+        wln!(code, "{pad}        tx.execute_raw(stmt).await?;");
         wln!(code, "{pad}    }}");
         wln!(code, "{pad}}}");
     }
@@ -149,7 +149,7 @@ pub(crate) fn emit_junction_reads(
         wln!(code, "{pad}        \"{select_sql}\",");
         wln!(code, "{pad}        vec![{parent_id_expr}.into()],");
         wln!(code, "{pad}    );");
-        wln!(code, "{pad}    let rows = db.query_all(stmt).await?;");
+        wln!(code, "{pad}    let rows = db.query_all_raw(stmt).await?;");
         wln!(
             code,
             "{pad}    let mut items = Vec::with_capacity(rows.len());"

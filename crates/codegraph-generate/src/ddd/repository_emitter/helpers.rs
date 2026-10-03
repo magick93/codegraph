@@ -71,11 +71,11 @@ pub(crate) fn vec_array_type_and_ctor(rust_type: &str) -> (&'static str, &'stati
     match inner {
         "NaiveDate" | "chrono::NaiveDate" => (
             "sea_orm::sea_query::ArrayType::ChronoDate",
-            "sea_orm::Value::ChronoDate(Some(Box::new(s)))",
+            "sea_orm::Value::ChronoDate(Some(s))",
         ),
         "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => (
             "sea_orm::sea_query::ArrayType::ChronoDateTimeUtc",
-            "sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(s)))",
+            "sea_orm::Value::ChronoDateTimeUtc(Some(s))",
         ),
         "i32" => (
             "sea_orm::sea_query::ArrayType::Int",
@@ -99,7 +99,7 @@ pub(crate) fn vec_array_type_and_ctor(rust_type: &str) -> (&'static str, &'stati
         ),
         _ => (
             "sea_orm::sea_query::ArrayType::String",
-            "sea_orm::Value::String(Some(Box::new(s.to_string())))",
+            "sea_orm::Value::String(Some(s.to_string()))",
         ),
     }
 }
@@ -124,21 +124,18 @@ pub(crate) fn typed_value_expr(rust_type: &str, value_expr: &str) -> String {
         "i64" => format!("sea_orm::Value::BigInt(Some({}))", value_expr),
         "f32" => format!("sea_orm::Value::Float(Some({}))", value_expr),
         "f64" => format!("sea_orm::Value::Double(Some({}))", value_expr),
-        "String" => format!("sea_orm::Value::String(Some(Box::new({})))", value_expr),
+        "String" => format!("sea_orm::Value::String(Some({}))", value_expr),
         "NaiveDate" | "chrono::NaiveDate" => {
-            format!("sea_orm::Value::ChronoDate(Some(Box::new({})))", value_expr)
+            format!("sea_orm::Value::ChronoDate(Some({}))", value_expr)
         }
         "DateTime<Utc>" | "chrono::DateTime<chrono::Utc>" => {
-            format!(
-                "sea_orm::Value::ChronoDateTimeUtc(Some(Box::new({})))",
-                value_expr
-            )
+            format!("sea_orm::Value::ChronoDateTimeUtc(Some({}))", value_expr)
         }
         "Decimal" | "rust_decimal::Decimal" => {
-            format!("sea_orm::Value::Decimal(Some(Box::new({})))", value_expr)
+            format!("sea_orm::Value::Decimal(Some({}))", value_expr)
         }
         "Uuid" | "uuid::Uuid" => {
-            format!("sea_orm::Value::Uuid(Some(Box::new({})))", value_expr)
+            format!("sea_orm::Value::Uuid(Some({}))", value_expr)
         }
         "serde_json::Value" => {
             format!("sea_orm::Value::Json(Some(Box::new({})))", value_expr)
@@ -149,9 +146,6 @@ pub(crate) fn typed_value_expr(rust_type: &str, value_expr: &str) -> String {
                 value_expr
             )
         }
-        _ => format!(
-            "sea_orm::Value::String(Some(Box::new({}.to_string())))",
-            value_expr
-        ),
+        _ => format!("sea_orm::Value::String(Some({}.to_string()))", value_expr),
     }
 }

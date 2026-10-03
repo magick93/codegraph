@@ -43,7 +43,7 @@ heck = "0.5"
 base64 = "0.22"
 garde = "0.20"
 utoipa = { version = "6", features = ["uuid", "chrono"] }
-sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
+sea-orm = { version = "2", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
 axum = "0.8"
 bytes = "1"
 lsp-types = "0.97"
