@@ -5,14 +5,14 @@
   "main": "bindings/node/index.js",
   "scripts": {
     "test": "tree-sitter test",
-    "build": "tree-sitter generate",
-    "build-wasm": "tree-sitter build-wasm",
+    "build": "tree-sitter generate --abi 14",
+    "build-wasm": "tree-sitter build --wasm",
     "parse": "tree-sitter parse"
   },
   "dependencies": {
     "nan": "^2.18.0"
   },
   "devDependencies": {
-    "tree-sitter-cli": "^0.21.0"
+    "tree-sitter-cli": "^0.27.0"
   }
 }
