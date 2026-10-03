@@ -7,7 +7,6 @@ license = { workspace = true }
 [dependencies]
 auto-lsp = { version = "0.6", features = ["lsp_server"] }
 tree-sitter-ifml = { path = "../tree-sitter-ifml" }
-salsa = { workspace = true }
 
 [build-dependencies]
 tree-sitter-ifml = { path = "../tree-sitter-ifml" }

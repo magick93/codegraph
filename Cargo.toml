@@ -54,7 +54,9 @@ lsp-types = "0.97"
 # unreleased — coordinate the jump with its next release.
 tree-sitter = "0.25"
 tree-sitter-language = "0.1"
-salsa = "0.22"
+# salsa: no direct dependency anywhere — 0.22 rides in transitively via
+# auto-lsp 0.6.2 (0.23 via rex-driver). A direct salsa upgrade is gated on
+# the same auto-lsp release as tree-sitter above (issue #423).
 rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
 rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
 rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
