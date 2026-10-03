@@ -99,7 +99,7 @@ impl AppStateSeedSink {
                 "SELECT public.create_api_key('{organization_id}', 'seed-provision', '[\"*\"]'::jsonb)::text AS id"
             ),
         );
-        let row = sea_orm::ConnectionTrait::query_one(&self.state.db, statement)
+        let row = sea_orm::ConnectionTrait::query_one_raw(&self.state.db, statement)
             .await
             .map_err(|e| SeedError::Internal(format!("create_api_key: {e}")))?
             .ok_or_else(|| {
@@ -136,7 +136,7 @@ impl SeedSink for AppStateSeedSink {
             sql,
             [organization_id.into(), DEFAULT_TENANT_ID.into()],
         );
-        sea_orm::ConnectionTrait::execute(&self.state.db, statement)
+        sea_orm::ConnectionTrait::execute_raw(&self.state.db, statement)
             .await
             .map_err(|e| SeedError::Internal(format!("init_workflows: {e}")))?;
         Ok(())

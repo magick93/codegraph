@@ -63,7 +63,7 @@ impl WebhookDispatcher {
         // 1. Find undelivered deliveries that are ready for retry
         let pending = self
             .db
-            .query_all(Statement::from_sql_and_values(
+            .query_all_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 r#"
                 SELECT
@@ -116,7 +116,7 @@ impl WebhookDispatcher {
         // Query all domain event queues
         let queues: Vec<String> = self
             .db
-            .query_all(Statement::from_string(
+            .query_all_raw(Statement::from_string(
                 DatabaseBackend::Postgres,
                 "SELECT queue_name FROM pgmq.list_queues() WHERE queue_name LIKE 'events_%'",
             ))
@@ -129,7 +129,7 @@ impl WebhookDispatcher {
             // Read up to 100 messages at a time (visibility timeout 30s)
             let msgs = self
                 .db
-                .query_all(Statement::from_sql_and_values(
+                .query_all_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     "SELECT msg_id, message FROM pgmq.read($1, 30, 100)",
                     [queue.as_str().into()],
@@ -164,7 +164,7 @@ impl WebhookDispatcher {
                 // Uses SECURITY DEFINER function to bypass RLS on platform tables.
                 let subs = self
                     .db
-                    .query_all(Statement::from_sql_and_values(
+                    .query_all_raw(Statement::from_sql_and_values(
                         DatabaseBackend::Postgres,
                         r#"
                         SELECT
@@ -208,7 +208,7 @@ impl WebhookDispatcher {
                     );
                     if let Err(e) = self
                         .db
-                        .execute(Statement::from_string(DatabaseBackend::Postgres, insert_sql))
+                        .execute_raw(Statement::from_string(DatabaseBackend::Postgres, insert_sql))
                         .await
                     {
                         tracing::error!(delivery_id = %delivery_id, endpoint_id = %endpoint_id, error = %e, "failed to create delivery record");
@@ -236,7 +236,7 @@ impl WebhookDispatcher {
                 if all_inserts_succeeded {
                     let _ = self
                         .db
-                        .execute(Statement::from_sql_and_values(
+                        .execute_raw(Statement::from_sql_and_values(
                             DatabaseBackend::Postgres,
                             "SELECT pgmq.delete($1, $2)",
                             [queue.as_str().into(), msg_id.into()],
@@ -305,7 +305,7 @@ impl WebhookDispatcher {
             // Mark as delivered
             let _ = self
                 .db
-                .execute(Statement::from_sql_and_values(
+                .execute_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     r#"
                     UPDATE platform.webhook_delivery
@@ -328,7 +328,7 @@ impl WebhookDispatcher {
 
             let _ = self
                 .db
-                .execute(Statement::from_sql_and_values(
+                .execute_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     r#"
                     UPDATE platform.webhook_delivery
@@ -349,7 +349,7 @@ impl WebhookDispatcher {
             if new_attempt > self.max_retries as i32 {
                 let _ = self
                     .db
-                    .execute(Statement::from_sql_and_values(
+                    .execute_raw(Statement::from_sql_and_values(
                         DatabaseBackend::Postgres,
                         r#"
                         UPDATE platform.webhook_endpoint

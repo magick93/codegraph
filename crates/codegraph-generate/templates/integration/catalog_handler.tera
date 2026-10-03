@@ -24,7 +24,7 @@ pub async fn list_catalog(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rows = state.db
-        .query_all(Statement::from_string(
+        .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             "SELECT id, name, vendor, version, description, extension_point_id, tier, categories, markets, enabled
              FROM platform_integrations.catalog WHERE enabled = TRUE ORDER BY name".to_string(),
@@ -61,7 +61,7 @@ pub async fn list_installations(
     axum::extract::Extension(auth): axum::extract::Extension<AuthInfo>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rows = state.db
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT i.id, i.catalog_id, i.extension_point_id, i.status, i.installed_at::text,
                     c.name, c.vendor
@@ -112,7 +112,7 @@ pub async fn install_integration(
     Json(body): Json<InstallRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AppError> {
     let catalog_row = state.db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT extension_point_id FROM platform_integrations.catalog WHERE id = $1 AND enabled = TRUE",
             [body.catalog_id.clone().into()],
@@ -125,7 +125,7 @@ pub async fn install_integration(
         .map_err(|e| AppError::internal(format!("Parse error: {e}")))?;
 
     let row = state.db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "INSERT INTO platform_integrations.installations (platform_organization_id, catalog_id, extension_point_id, status, installed_by)
              VALUES ($1, $2, $3, 'active', $4)
@@ -146,7 +146,7 @@ pub async fn install_integration(
 
     let settings = body.settings.unwrap_or(serde_json::json!({}));
     let _ = state.db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "INSERT INTO platform_integrations.installation_settings (installation_id, platform_organization_id, settings)
              VALUES ($1, $2, $3)",
@@ -180,7 +180,7 @@ pub async fn uninstall_integration(
     Path(installation_id): Path<Uuid>,
 ) -> Result<StatusCode, AppError> {
     let affected = state.db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "DELETE FROM platform_integrations.installations WHERE id = $1 AND platform_organization_id = $2",
             [installation_id.into(), auth.organization_id.into()],
@@ -201,7 +201,7 @@ pub async fn get_catalog_entry(
     Path(catalog_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let row = state.db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT id, name, vendor, version, description, extension_point_id, tier,
                     categories, markets, config_schema, permissions, data_flows
@@ -237,7 +237,7 @@ pub async fn get_installation(
     Path(installation_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let row = state.db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT i.id, i.catalog_id, i.extension_point_id, i.status, i.installed_at::text,
                     c.name, c.vendor, c.version, c.description, c.tier,
@@ -282,7 +282,7 @@ pub async fn update_installation_settings(
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Verify installation belongs to tenant
     let _installation = state.db
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT id FROM platform_integrations.installations WHERE id = $1 AND platform_organization_id = $2",
             [installation_id.into(), auth.organization_id.into()],
@@ -293,7 +293,7 @@ pub async fn update_installation_settings(
 
     // JSONB merge: existing settings || new settings
     let _ = state.db
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "UPDATE platform_integrations.installation_settings
              SET settings = settings || $1, updated_at = NOW()
@@ -319,7 +319,7 @@ pub async fn list_extension_points(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let rows = state.db
-        .query_all(Statement::from_string(
+        .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             "SELECT id, name, description, cardinality, allowed_entities, allowed_directions
              FROM platform_integrations.extension_points ORDER BY name".to_string(),

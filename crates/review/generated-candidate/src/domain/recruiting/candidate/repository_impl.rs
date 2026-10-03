@@ -54,9 +54,9 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_application_process_history (id, candidate_id, action_date, descriptions) VALUES ($1, $2, $3, $4)",
-                vec![child_id_candidate_application_process_history.into(), id.into(), item.action_date.map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDateTimeUtc(None)), item.descriptions.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new(s)))).collect())))).unwrap_or(sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, None))],
+                vec![child_id_candidate_application_process_history.into(), id.into(), item.action_date.map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(v))).unwrap_or(sea_orm::Value::ChronoDateTimeUtc(None)), item.descriptions.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(s))).collect())))).unwrap_or(sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, None))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Insert optional child row: recruiting.candidate_distribution_guidelines
@@ -65,9 +65,9 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, description, do_not_redistribute_indicator, end_date, scope, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id_candidate_distribution_guidelines.into(), id.into(), item.description.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::ChronoDate(Some(Box::new(item.start_date)))],
+                vec![child_id_candidate_distribution_guidelines.into(), id.into(), item.description.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::ChronoDate(Some(item.start_date))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Insert optional child row: recruiting.candidate_person_name
@@ -76,9 +76,9 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_person_name (id, candidate_id, family_name, formatted_name, given_name) VALUES ($1, $2, $3, $4, $5)",
-                vec![child_id_candidate_person_name.into(), id.into(), item.family_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.formatted_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.given_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None))],
+                vec![child_id_candidate_person_name.into(), id.into(), item.family_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.formatted_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.given_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Insert child rows: recruiting.candidate_position_schedule_type_codes
@@ -87,9 +87,9 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_position_schedule_type_codes (id, candidate_id, code) VALUES ($1, $2, $3)",
-                vec![child_id_candidate_position_schedule_type_codes.into(), id.into(), sea_orm::Value::String(Some(Box::new(item.code.to_string())))],
+                vec![child_id_candidate_position_schedule_type_codes.into(), id.into(), sea_orm::Value::String(Some(item.code.to_string()))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Insert child rows: recruiting.candidate_qualifications
@@ -98,9 +98,9 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_qualifications (id, candidate_id, date_awarded, issuer, qualification_name) VALUES ($1, $2, $3, $4, $5)",
-                vec![child_id_candidate_qualifications.into(), id.into(), item.date_awarded.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.issuer.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::String(Some(Box::new(item.qualification_name.clone())))],
+                vec![child_id_candidate_qualifications.into(), id.into(), item.date_awarded.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.issuer.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::String(Some(item.qualification_name.clone()))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         Ok(id)
@@ -134,7 +134,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 "SELECT id, action_date, descriptions FROM recruiting.candidate_application_process_history WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -153,7 +153,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 "SELECT id, description, do_not_redistribute_indicator, end_date, scope, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -175,7 +175,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 "SELECT id, family_name, formatted_name, given_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -195,7 +195,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 "SELECT id, code FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -213,7 +213,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 "SELECT id, date_awarded, issuer, qualification_name FROM recruiting.candidate_qualifications WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -286,69 +286,69 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         // Replace optional child row: recruiting.candidate_application_process_history
         if let Some(ref item) = cmd.application_process_history {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_application_process_history WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             let child_id = Uuid::new_v4();
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_application_process_history (id, candidate_id, action_date, descriptions) VALUES ($1, $2, $3, $4)",
-                vec![child_id.into(), id.into(), item.action_date.map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDateTimeUtc(None)), item.descriptions.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new(s)))).collect())))).unwrap_or(sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, None))],
+                vec![child_id.into(), id.into(), item.action_date.map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(v))).unwrap_or(sea_orm::Value::ChronoDateTimeUtc(None)), item.descriptions.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(s))).collect())))).unwrap_or(sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, None))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Replace optional child row: recruiting.candidate_distribution_guidelines
         if let Some(ref item) = cmd.distribution_guidelines {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             let child_id = Uuid::new_v4();
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, description, do_not_redistribute_indicator, end_date, scope, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id.into(), id.into(), item.description.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::ChronoDate(Some(Box::new(item.start_date)))],
+                vec![child_id.into(), id.into(), item.description.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::ChronoDate(Some(item.start_date))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Replace optional child row: recruiting.candidate_person_name
         if let Some(ref item) = cmd.person_name {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_person_name WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             let child_id = Uuid::new_v4();
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_person_name (id, candidate_id, family_name, formatted_name, given_name) VALUES ($1, $2, $3, $4, $5)",
-                vec![child_id.into(), id.into(), item.family_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.formatted_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), item.given_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None))],
+                vec![child_id.into(), id.into(), item.family_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.formatted_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.given_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         // Replace child rows: recruiting.candidate_position_schedule_type_codes
         if let Some(ref items) = cmd.position_schedule_type_codes {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             for item in items {
                 let child_id = Uuid::new_v4();
                 let stmt = Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     "INSERT INTO recruiting.candidate_position_schedule_type_codes (id, candidate_id, code) VALUES ($1, $2, $3)",
-                    vec![child_id.into(), id.into(), sea_orm::Value::String(Some(Box::new(item.code.to_string())))],
+                    vec![child_id.into(), id.into(), sea_orm::Value::String(Some(item.code.to_string()))],
                 );
-                tx.execute(stmt).await?;
+                tx.execute_raw(stmt).await?;
             }
         }
 
         // Replace child rows: recruiting.candidate_qualifications
         if let Some(ref items) = cmd.qualifications {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_qualifications WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             for item in items {
                 let child_id = Uuid::new_v4();
                 let stmt = Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     "INSERT INTO recruiting.candidate_qualifications (id, candidate_id, date_awarded, issuer, qualification_name) VALUES ($1, $2, $3, $4, $5)",
-                    vec![child_id.into(), id.into(), item.date_awarded.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.issuer.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::String(Some(Box::new(item.qualification_name.clone())))],
+                    vec![child_id.into(), id.into(), item.date_awarded.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), item.issuer.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), sea_orm::Value::String(Some(item.qualification_name.clone()))],
                 );
-                tx.execute(stmt).await?;
+                tx.execute_raw(stmt).await?;
             }
         }
 
@@ -404,7 +404,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     "SELECT id, action_date, descriptions FROM recruiting.candidate_application_process_history WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -423,7 +423,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     "SELECT id, description, do_not_redistribute_indicator, end_date, scope, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -445,7 +445,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     "SELECT id, family_name, formatted_name, given_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -465,7 +465,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     "SELECT id, code FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -483,7 +483,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     "SELECT id, date_awarded, issuer, qualification_name FROM recruiting.candidate_qualifications WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;

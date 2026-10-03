@@ -539,7 +539,7 @@ impl RepositoryImplEmitter {
         wln!(code, "        );");
         wln!(
             code,
-            "        let count_row = db.query_one(count_stmt).await?"
+            "        let count_row = db.query_one_raw(count_stmt).await?"
         );
         wln!(
             code,
@@ -582,7 +582,7 @@ impl RepositoryImplEmitter {
             "            vec![query.into(), (page_size as i64).into(), (offset as i64).into()],"
         );
         wln!(code, "        );");
-        wln!(code, "        let rows = db.query_all(stmt).await?;");
+        wln!(code, "        let rows = db.query_all_raw(stmt).await?;");
         wln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()");
         wln!(
             code,
@@ -644,7 +644,7 @@ impl RepositoryImplEmitter {
             "            vec![vec_str.into(), (limit as i64).into()],"
         );
         wln!(code, "        );");
-        wln!(code, "        let rows = db.query_all(stmt).await?;");
+        wln!(code, "        let rows = db.query_all_raw(stmt).await?;");
         wln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()");
         wln!(
             code,
