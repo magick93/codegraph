@@ -820,17 +820,21 @@ async fn auto_classifier_does_not_reclassify_mox_schemas() {
         .iter()
         .find(|s| s.title == "CustomerType")
         .expect("mox entity must classify as entity");
-    assert!(customer_score
-        .reasons
-        .contains(&"override:source=mox".to_string()));
+    assert!(
+        customer_score
+            .reasons
+            .contains(&"override:source=mox".to_string())
+    );
     let address_score = result
         .value_objects
         .iter()
         .find(|s| s.title == "AddressType")
         .expect("mox value object must classify as value object");
-    assert!(address_score
-        .reasons
-        .contains(&"override:source=mox".to_string()));
+    assert!(
+        address_score
+            .reasons
+            .contains(&"override:source=mox".to_string())
+    );
     assert!(!result.entities.iter().any(|s| s.title == "AddressType"));
 }
 

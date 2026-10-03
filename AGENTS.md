@@ -1849,6 +1849,19 @@ still AND on top.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
 - The `project.database_target` and `project.persistence_provider` variables are available in all Tera templates via `ProjectConfig`.
 
+## Dependency policy (#426)
+
+- **Cadence**: monthly Tier-0 lockfile refresh (`cargo update`, lockfile-only PR — the #418 shape); quarterly review of Tier-3 majors against the #417 table. Majors are deliberate epic work — no drive-by major bumps.
+- **Deliberate pins** (bump only with their stated gate green):
+  - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
+  - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up.
+  - `rex-*` @ 77688ee and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
+- **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
+- **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
+- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo) and `RUSTSEC-2026-0308` (salsa 0.23 unsound — via rex-driver; fixed upstream in salsa 0.28.5; moves with the rexlang rev pin).
+- **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
+
 ## Include Path System (`?include=`)
 
 Generated list/GET handlers support `?include=` eager loading. Paths are

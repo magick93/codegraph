@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
 
-use codegraph_config::ux::{Align, Display};
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::{Align, Display};
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::error::Result;
-use crate::ux::plan::{build_ux_plan, CollectionPlan, RowAction};
+use crate::ux::plan::{CollectionPlan, RowAction, build_ux_plan};
 use crate::ux::sort::{
     apply_list_scope, collect_ux_plan_context, list_order_is_pinned, sort_plan_from_plan,
 };
-use crate::ProjectConfig;
 
 use super::context::{
     UxE2eActionsCtx, UxE2eAlignCheck, UxE2eChipCheck, UxE2eColumnCtx, UxE2eCopyCheck,
@@ -101,31 +101,31 @@ pub(super) async fn build_ux_e2e_spec(
                 .get(name.as_str())
                 .map(|f| !f.is_entity_ref && f.nested_type_name.is_none())
                 .unwrap_or(false);
-            if body_controlled {
-                if let Some(text) =
+            if body_controlled
+                && let Some(text) =
                     chip_fixture_text(field, workflow_status_field.as_deref(), name, initial_state)
-                {
-                    chip_checks.push(UxE2eChipCheck { text });
-                }
+            {
+                chip_checks.push(UxE2eChipCheck { text });
             }
         }
 
         // Clipboard/tooltip assertions: the FIRST copy-chip column with a
         // stable (non-random) fixture value.
-        if copy_check.is_none() && col.display == Display::CopyChip {
-            if let Some(expr) = stable_fixture_expr(
+        if copy_check.is_none()
+            && col.display == Display::CopyChip
+            && let Some(expr) = stable_fixture_expr(
                 name,
                 create_field,
                 workflow_status_field.as_deref(),
                 initial_state,
-            ) {
-                copy_check = Some(UxE2eCopyCheck {
-                    key: name.clone(),
-                    td_index,
-                    expected_expr: expr,
-                    truncate_tooltip: col.truncate_tooltip,
-                });
-            }
+            )
+        {
+            copy_check = Some(UxE2eCopyCheck {
+                key: name.clone(),
+                td_index,
+                expected_expr: expr,
+                truncate_tooltip: col.truncate_tooltip,
+            });
         }
 
         // Intl formatting assertions for money/quantity/time-point cells.
@@ -178,9 +178,16 @@ pub(super) async fn build_ux_e2e_spec(
             // ('{ value: ... }', or '[{ ... }]' when array-typed) for the
             // create body — the rendered cell is the wrapper's stringified
             // form, so a toHaveText(object) is invalid Playwright. The
-            // assertion simply doesn't apply.
+            // assertion simply doesn't apply. Value-object fields are
+            // omitted from the generated fixture ("serde default"), so
+            // their cells render the null placeholder — the first-column
+            // literal would assert against text the fixture never sets.
             if let Some(literal) = create_field
-                .filter(|f| !f.is_array && f.structured_sub_fields.is_empty())
+                .filter(|f| {
+                    !f.is_array
+                        && f.structured_sub_fields.is_empty()
+                        && f.nested_type_name.is_none()
+                })
                 .and_then(stable_fixture_literal)
             {
                 first_column = Some(UxE2eFirstColumnCtx {
@@ -386,6 +393,12 @@ fn flip_alt_literal(field: &UiField) -> Option<String> {
         return None;
     }
     if !field.structured_sub_fields.is_empty() {
+        return None;
+    }
+    // Value-object fields are omitted from the generated fixture
+    // ("serde default") — every rendered cell is the null placeholder, so
+    // no distinct alt literal can ever appear.
+    if field.nested_type_name.is_some() {
         return None;
     }
     if field.is_codelist {

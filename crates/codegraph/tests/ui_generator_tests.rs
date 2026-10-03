@@ -5,10 +5,10 @@
 //! Also covers unit tests for form helper functions.
 
 use codegraph::generate;
+use codegraph::generate::GenerationEntry;
 use codegraph::generate::template_engine;
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use codegraph::generate::ui::form;
-use codegraph::generate::GenerationEntry;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 use std::path::Path;
@@ -148,8 +148,8 @@ async fn ui_page_generator_produces_list_and_detail_pages() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-page");
 
-    let gen = generate::ui::page::UiPageGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::page::UiPageGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -196,8 +196,8 @@ async fn ui_page_generator_produces_create_page() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-page-create");
 
-    let gen = generate::ui::page::UiPageGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::page::UiPageGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -226,8 +226,8 @@ async fn ui_page_generator_skips_delete_page_when_no_delete_op() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-page-ops");
 
     // CandidateType has operations = ["create", "read", "update", "list"] — no delete
-    let gen = generate::ui::page::UiPageGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::page::UiPageGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -259,8 +259,8 @@ async fn ui_form_generator_produces_form_component() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-form");
 
-    let gen = generate::ui::form::UiFormGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::form::UiFormGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -297,8 +297,8 @@ async fn ui_store_generator_produces_store_file() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-store");
 
-    let gen = generate::ui::store::UiStoreGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::store::UiStoreGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -327,8 +327,8 @@ async fn ui_scaffold_generator_produces_scaffold_files() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -382,8 +382,8 @@ path_segment = "candidates-custom"
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-nav");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -418,8 +418,8 @@ async fn ui_scaffold_generates_supabase_client() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-supabase");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -451,8 +451,8 @@ async fn ui_scaffold_generates_auth_callback() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-auth-cb");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -483,8 +483,8 @@ async fn ui_scaffold_generates_login_and_signup_pages() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-auth-pages");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -535,8 +535,8 @@ async fn ui_scaffold_generates_dashboard_page() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-dash");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -575,8 +575,8 @@ async fn ui_scaffold_generates_settings_pages() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-settings");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -619,8 +619,8 @@ async fn ui_scaffold_api_client_uses_supabase_jwt() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-api-jwt");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -656,8 +656,8 @@ async fn ui_scaffold_package_json_has_supabase_deps() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-pkg-deps");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -693,8 +693,8 @@ async fn ui_scaffold_app_layout_has_settings_nav() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-scaffold-layout-nav");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -732,8 +732,8 @@ async fn ui_type_generator_produces_types_file() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-types");
 
-    let gen = generate::ui::types::UiTypeGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::types::UiTypeGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -764,9 +764,9 @@ async fn ui_domain_layout_generator_produces_layout() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-domain-layout");
 
-    let gen = generate::ui::domain_layout::UiDomainLayoutGenerator::new(&output_dir);
+    let generator = generate::ui::domain_layout::UiDomainLayoutGenerator::new(&output_dir);
     let entities = vec!["CandidateType".to_string()];
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -927,8 +927,8 @@ entities = ["ReadOnlyType"]
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-form-skip");
 
-    let gen = generate::ui::form::UiFormGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ui::form::UiFormGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "ReadOnlyType",
@@ -955,8 +955,8 @@ async fn ui_scaffold_vite_config_has_version_defines() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-vite-version");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -993,8 +993,8 @@ async fn ui_scaffold_generates_version_server_route() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-version-server");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -1058,8 +1058,8 @@ async fn ui_scaffold_generates_version_page() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-ui-version-page");
 
-    let gen = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
-    let files = gen
+    let generator = generate::ui::scaffold::UiScaffoldGenerator::new(&output_dir, false, false);
+    let files = generator
         .generate(
             &mock,
             &config,

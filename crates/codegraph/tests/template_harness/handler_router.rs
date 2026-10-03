@@ -18,8 +18,8 @@ async fn candidate_handler() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-handler");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -123,8 +123,8 @@ async fn handler_fts_rest_dedicated_generates_search_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-handler-fts-dedicated");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -192,8 +192,8 @@ async fn router_fts_rest_dedicated_registers_search_route() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-router-fts-dedicated");
 
-    let gen = generate::api::router::RouterGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -241,8 +241,8 @@ async fn handler_fts_rest_query_param_omits_search_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-handler-fts-query");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -274,8 +274,8 @@ async fn recruiting_router() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-router");
 
-    let gen = generate::api::router::RouterGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -370,9 +370,9 @@ async fn router_nests_child_under_parent() {
         source: codegraph_core::types::DetectionSource::ScalarRef,
     }];
 
-    let gen = generate::api::router::RouterGenerator::new(&output_dir)
+    let generator = generate::api::router::RouterGenerator::new(&output_dir)
         .with_parent_candidates(parent_candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "compensation",
@@ -415,8 +415,8 @@ async fn router_no_relationships_renders_flat() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-flat-router");
 
     // No parent_candidates — all entities should render as root
-    let gen = generate::api::router::RouterGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -444,9 +444,9 @@ async fn child_handler_uses_find_by_id_scoped_for_ownership() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-handler-ownership");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -499,9 +499,9 @@ async fn child_handler_derives_parent_ref_from_graph() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-handler-parent-ref");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -537,9 +537,9 @@ async fn child_handler_retains_utoipa_tags() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-handler-tags");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -670,9 +670,9 @@ async fn array_items_handler_fk_uses_parent_type_name() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-array-items-handler-fk");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -705,8 +705,8 @@ async fn links_generator_produces_output() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-links-gen");
 
-    let gen = generate::api::links::LinksGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::links::LinksGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -745,9 +745,9 @@ async fn child_handler_nested_path_includes_parent() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-nested-path");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -783,8 +783,8 @@ async fn openapi_spec() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-openapi");
 
-    let gen = generate::api::openapi::OpenApiGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::openapi::OpenApiGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -934,7 +934,7 @@ async fn openapi_error_schemas_are_defined_by_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-openapi-error-refs");
 
-    let scaffold = generate::scaffold::gen::ScaffoldGenerator::new(
+    let scaffold = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -1049,9 +1049,9 @@ async fn child_handler_has_nested_utoipa_path() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-handler-utoipa-path");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir)
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",

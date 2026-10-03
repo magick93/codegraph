@@ -232,11 +232,7 @@ impl EntityGenerator for WorkflowActionGenerator {
                                 .map(|d| d.entities.contains(&pc.parent_title))
                                 .unwrap_or(false)
                     });
-                if parent_is_child {
-                    2
-                } else {
-                    1
-                }
+                if parent_is_child { 2 } else { 1 }
             } else {
                 1
             }

@@ -46,7 +46,7 @@ impl<'a> {{ entity_name }}Page<'a> {
     // ── Field interactions (Component Object Model) ──────────────────────────
 
 {% for field in create_fields %}
-{% if field.pg_type is containing("GEOMETRY") %}
+{% if field.pg_type is containing(pat="GEOMETRY") %}
     // Geometry field {{ field.name }} omitted — requires ST_GeomFromText wrapper
 {% elif field.input_type == "checkbox" %}
     pub async fn check_{{ field.name }}(&self) -> Result<()> {
@@ -140,7 +140,7 @@ impl<'a> {{ entity_name }}Page<'a> {
     pub async fn create(&self, data: &HashMap<&str, Value>) -> Result<String> {
         self.goto_create().await?;
 {% for field in create_fields %}
-{% if field.pg_type is containing("GEOMETRY") %}
+{% if field.pg_type is containing(pat="GEOMETRY") %}
         // {{ field.name }}: geometry — skip
 {% elif field.input_type == "checkbox" %}
         if data.get("{{ field.name }}").and_then(|v| v.as_bool()).unwrap_or(false) {

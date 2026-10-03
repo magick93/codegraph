@@ -6,9 +6,9 @@ mod types;
 pub use capabilities::{CapabilityRegistry, GeneratorCapability, GeneratorKind, GeneratorTarget};
 pub use plan::BuildPlan;
 pub use resolve::{
-    load_and_resolve_profile, IfmlFrameworkTarget, ProfileDef, ProfileIfmlConfig, ProfileMeta,
-    ProfileScripts, ProfileSection, ProfileVariant, ProfilesConfig, ResolvedProfile,
-    ResolvedSection,
+    IfmlFrameworkTarget, ProfileDef, ProfileIfmlConfig, ProfileMeta, ProfileScripts,
+    ProfileSection, ProfileVariant, ProfilesConfig, ResolvedProfile, ResolvedSection,
+    load_and_resolve_profile,
 };
 pub use types::{DeploymentTopology, PersistenceProvider};
 

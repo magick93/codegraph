@@ -17,10 +17,10 @@ use auto_lsp::lsp_types::{
         SemanticTokensFullRequest,
     },
 };
+use auto_lsp::server::Session;
 use auto_lsp::server::notification_registry::NotificationRegistry;
 use auto_lsp::server::options::InitOptions;
 use auto_lsp::server::request_registry::RequestRegistry;
-use auto_lsp::server::Session;
 
 pub use state::*;
 

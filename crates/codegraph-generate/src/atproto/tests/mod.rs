@@ -17,8 +17,8 @@ mod types;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
-use crate::project_config::AtprotoConfig;
 use crate::ProjectConfig;
+use crate::project_config::AtprotoConfig;
 
 pub(super) fn make_domain_config() -> codegraph_config::DomainConfig {
     let domains = std::collections::HashMap::new();

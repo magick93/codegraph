@@ -367,7 +367,7 @@ fn value_to_prop(value: &Value, owner: &str) -> Result<PropValue, ArtifactError>
             return Err(ArtifactError::UnsupportedValue {
                 owner: owner.to_string(),
                 kind: value_kind(other),
-            })
+            });
         }
     })
 }

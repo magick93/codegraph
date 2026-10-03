@@ -13,9 +13,9 @@ use crate::api::api_model::{
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ux::plan::{build_ux_plan, ActionSpec, RowAction};
-use codegraph_config::ux::{Align, Display};
+use crate::ux::plan::{ActionSpec, RowAction, build_ux_plan};
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::{Align, Display};
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::store::UiParentInfo;
@@ -55,11 +55,15 @@ pub struct UiPageContext {
     /// render error, while an empty one falls through to the template's
     /// `list_fields` fallback.
     pub ux_columns: Vec<UxColumnCtx>,
-    /// ux-rules row-action partition (present only with a plan).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// ux-rules row-action partition (present only with a plan). Serialized
+    /// as null (not omitted) when there is no plan: tera 2 hard-errors on
+    /// absent-variable dereferences like `{% if ux_actions.child_menu %}`
+    /// where tera 1 treated them as falsy, and a null root keeps that
+    /// falsy behavior byte-identical.
     pub ux_actions: Option<UxActionsCtx>,
-    /// ux-rules locale/visual baseline (present only with a plan).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// ux-rules locale/visual baseline (present only with a plan). Null —
+    /// not omitted — when there is no plan, for the same tera 2 reason as
+    /// `ux_actions`.
     pub ux: Option<UxSettingsCtx>,
     /// ux-rules list-sort contract (issue #306): the `?sort=` allow-list,
     /// present only when the plan exposes at least one sortable column and
@@ -670,50 +674,37 @@ async fn resolve_parent_info(
         .domains
         .get(domain)
         .and_then(|d| d.get_entity_config(schema_title))
+        && ec.role.as_deref() == Some("child")
+        && let Some(ref parent_title) = ec.parent
+        && let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
     {
-        if ec.role.as_deref() == Some("child") {
-            if let Some(ref parent_title) = ec.parent {
-                if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
-                {
-                    let parent_domain = if config
-                        .domains
-                        .get(domain)
-                        .map(|d| d.entities.contains(parent_title))
-                        .unwrap_or(false)
-                    {
-                        domain.to_string()
-                    } else {
-                        parent_schema
-                            .domain
-                            .clone()
-                            .unwrap_or_else(|| domain.to_string())
-                    };
-                    let gp = super::store::resolve_grandparent(
-                        parent_title,
-                        domain,
-                        config,
-                        parent_candidates,
-                        db,
-                    )
-                    .await
-                    .map(Box::new);
-                    result = Some(UiParentInfo {
-                        param_name: crate::api::router::param_name_from_path_segment(
-                            &resolve_path_segment_with_config(None, &parent_schema, config),
-                        ),
-                        domain: parent_domain,
-                        path_segment: resolve_path_segment_with_config(
-                            None,
-                            &parent_schema,
-                            config,
-                        ),
-                        module_name: parent_schema.pg_table_name.clone(),
-                        entity_name: parent_schema.rust_type_name.clone(),
-                        grandparent: gp,
-                    });
-                }
-            }
-        }
+        let parent_domain = if config
+            .domains
+            .get(domain)
+            .map(|d| d.entities.contains(parent_title))
+            .unwrap_or(false)
+        {
+            domain.to_string()
+        } else {
+            parent_schema
+                .domain
+                .clone()
+                .unwrap_or_else(|| domain.to_string())
+        };
+        let gp =
+            super::store::resolve_grandparent(parent_title, domain, config, parent_candidates, db)
+                .await
+                .map(Box::new);
+        result = Some(UiParentInfo {
+            param_name: crate::api::router::param_name_from_path_segment(
+                &resolve_path_segment_with_config(None, &parent_schema, config),
+            ),
+            domain: parent_domain,
+            path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+            module_name: parent_schema.pg_table_name.clone(),
+            entity_name: parent_schema.rust_type_name.clone(),
+            grandparent: gp,
+        });
     }
 
     // 2. Fall back to graph parent_candidates (only if entity is not explicitly root)
@@ -900,6 +891,11 @@ mod ux_list_template_tests {
             "list_fields": [{"name": "name", "label": "Name"}],
             "terminal_states": ["archived"],
             "parent": null,
+            // Production serializes these as null when the ux plane is
+            // inactive (tera 2 errors on absent-variable dereferences).
+            "ux_columns": [],
+            "ux_actions": null,
+            "ux": null,
         })
     }
 
@@ -1371,6 +1367,9 @@ mod ux_child_section_template_tests {
             "has_child_sections": true,
             "parent": null,
             "detail_extensions": [],
+            // Null (not absent) mirrors UiPageContext's flag-off serialization.
+            "ux_actions": null,
+            "ux": null,
         });
         if ux {
             let obj = ctx.as_object_mut().unwrap();

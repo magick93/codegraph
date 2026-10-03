@@ -9,8 +9,8 @@ use codegraph_core::types::{PropertyNode, SchemaNode};
 /// stamp the persona DID into did-carrying fixture fields.
 #[test]
 fn playwright_ts_use_persona_token_renders_did_persona() {
-    use generate::playwright::{TsEntityContext, TsFieldDef};
     use generate::ProjectConfig;
+    use generate::playwright::{TsEntityContext, TsFieldDef};
 
     let tera = test_tera();
     let project = ProjectConfig::default();
@@ -130,8 +130,8 @@ fn playwright_ts_use_persona_token_renders_did_persona() {
 /// rows are registered in createdIds for the file-level afterAll cleanup.
 #[test]
 fn playwright_ts_update_roundtrip_and_cleanup() {
-    use generate::playwright::{TsEntityContext, TsFieldDef};
     use generate::ProjectConfig;
+    use generate::playwright::{TsEntityContext, TsFieldDef};
 
     let tera = test_tera();
     let project = ProjectConfig::default();
@@ -356,8 +356,8 @@ role = "root"
 "#;
     let config = codegraph_config::config::parse_domain_config_str(config_str).unwrap();
 
-    let gen = crate::generate::ui::e2e_test::UiE2eTestGenerator::new(output_dir.path());
-    let files = gen
+    let generator = crate::generate::ui::e2e_test::UiE2eTestGenerator::new(output_dir.path());
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
@@ -511,8 +511,8 @@ role = "root"
 
     // ── Positive: entity with ui_detail_extensions mounts the panel ──
     let config = config_with_extensions(Some("\"ird-registration-panel\""));
-    let gen = UiPageGenerator::new(output_dir.path());
-    let files = gen
+    let generator = UiPageGenerator::new(output_dir.path());
+    let files = generator
         .generate(&mock, "WorkerType", "hr", &config, &tera, &project)
         .await
         .expect("detail page generation should not fail");

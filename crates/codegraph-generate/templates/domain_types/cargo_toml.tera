@@ -11,7 +11,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
-utoipa = { version = "5", features = ["chrono", "uuid", "decimal"] }
+utoipa = { version = "6", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 garde = { version = "0.22", features = ["derive", "regex"] }
 thiserror = "2"

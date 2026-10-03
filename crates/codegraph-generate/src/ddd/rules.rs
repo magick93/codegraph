@@ -47,12 +47,12 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{PropertyNode, RuleKind, RuleNode};
 use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
-use crate::api::api_model::{normalized_resource_name, resolve_entity_operations};
-use crate::code_writer::{wln, CodeWriter};
-use crate::error::Result;
-use crate::rosetta_expr::{transpile, ExprContext};
-use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
+use crate::api::api_model::{normalized_resource_name, resolve_entity_operations};
+use crate::code_writer::{CodeWriter, wln};
+use crate::error::Result;
+use crate::rosetta_expr::{ExprContext, transpile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 /// Transpiler field knowledge for one input entity (the `validations.rs`

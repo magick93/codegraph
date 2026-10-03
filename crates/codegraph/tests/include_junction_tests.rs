@@ -10,10 +10,10 @@
 use std::path::Path;
 
 use codegraph::generate;
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::api::resolve_include_paths;
 use codegraph::generate::ddd::dto::DtoGenerator;
 use codegraph::generate::traits::EntityGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::DetectionSource;
 use codegraph_core::types::{ParentCandidate, PropertyNode, SchemaNode};
@@ -306,9 +306,9 @@ allow_include = ["review_decision"]
     };
 
     let output_dir = tempfile::TempDir::new().unwrap();
-    let gen = DtoGenerator::new(output_dir.path());
+    let generator = DtoGenerator::new(output_dir.path());
     let files = rt()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "WorkerType",
             "hr",

@@ -45,9 +45,9 @@ path = "tests/unit/mod.rs"
 thiserror = "2"
 axum = { version = "0.8", features = ["multipart"] }
 {% if project.database_target == "sqlite" %}
-sea-orm = { version = "1", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+sea-orm = { version = "2", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 {% else %}
-sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-orm = { version = "2", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 {% endif %}
 tower-http = { version = "0.6", features = ["cors", "limit", "set-header"] }
 serde = { version = "1", features = ["derive"] }
@@ -66,8 +66,8 @@ opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid", "decimal"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid", "decimal"] }
+utoipa-swagger-ui = { version = "10", features = ["axum"] }
 async-trait = "0.1"
 garde = { version = "0.22", features = ["derive", "regex"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }

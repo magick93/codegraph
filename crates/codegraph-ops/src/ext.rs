@@ -65,19 +65,18 @@ pub fn register_extension(ext: Box<dyn TestExtension>) {
 ///
 /// Returns Err(Config) if unknown.
 pub async fn run_extension(name: &str, config: &OpsConfig, args: &[String]) -> OpsResult<()> {
-    if let Some(entry) = config.manifest.extensions.iter().find(|e| e.name == name) {
-        if let Some(exec) = &entry.exec {
-            if entry.requires_api && !api_running(config).await {
-                output::warn(format!(
-                    "extension {name} requires the API running — run 'api --keep' first"
-                ));
-                return Err(OpsError::Config(format!(
-                    "extension {name} requires the API running"
-                )));
-            }
-            return run_exec(&format!("ext:{name}"), exec, &entry.args, &config.root_dir).await;
+    if let Some(entry) = config.manifest.extensions.iter().find(|e| e.name == name)
+        && let Some(exec) = &entry.exec
+    {
+        if entry.requires_api && !api_running(config).await {
+            output::warn(format!(
+                "extension {name} requires the API running — run 'api --keep' first"
+            ));
+            return Err(OpsError::Config(format!(
+                "extension {name} requires the API running"
+            )));
         }
-        // No exec: fall through to the in-process registry.
+        return run_exec(&format!("ext:{name}"), exec, &entry.args, &config.root_dir).await;
     }
 
     let ctx = OpsContext { config, args };

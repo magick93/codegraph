@@ -16,7 +16,7 @@ use codegraph_core::caching_querier::CachingQuerier;
 use codegraph_core::traits::GraphQuerier;
 
 use codegraph::generate::traits::GeneratedFile;
-use codegraph::generate::{run_generators_with_opts, GeneratorOpts, ProjectConfig};
+use codegraph::generate::{GeneratorOpts, ProjectConfig, run_generators_with_opts};
 
 use validators::OutputValidator;
 

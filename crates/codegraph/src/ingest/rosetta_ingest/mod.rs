@@ -114,8 +114,8 @@ use codegraph_naming::{strip_suffix, to_snake_case};
 use crate::error::{Error, Result};
 use crate::ingest::async_ingest::sanitize_description;
 use crate::ingest::mox_ingest::{
-    emit_schema_namespace_edge, ingest_namespaces_deduped, resolve_domain,
-    DISCOVERED_NAMESPACE_SOURCE,
+    DISCOVERED_NAMESPACE_SOURCE, emit_schema_namespace_edge, ingest_namespaces_deduped,
+    resolve_domain,
 };
 
 use bridge::{attribute_property, data_schema_node, enum_schema_node, ordered_bridge_attributes};
@@ -565,10 +565,10 @@ pub async fn ingest_rosetta_files(
             "format": schema.format,
             "transform_annotations": transforms,
         });
-        if !schema.annotations.is_empty() {
-            if let Ok(annotations) = serde_json::to_value(&schema.annotations) {
-                properties["annotations"] = annotations;
-            }
+        if !schema.annotations.is_empty()
+            && let Ok(annotations) = serde_json::to_value(&schema.annotations)
+        {
+            properties["annotations"] = annotations;
         }
         let node = RegulatoryNode {
             name: schema.name.clone(),

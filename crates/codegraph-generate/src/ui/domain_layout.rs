@@ -62,21 +62,21 @@ impl DomainGenerator for UiDomainLayoutGenerator {
 
         let mut entities = Vec::new();
         for title in entity_titles {
-            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await {
-                if !schema.pg_table_name.is_empty() {
-                    let name = schema.rust_type_name.clone();
-                    let label = codegraph_naming::to_display_name(&name);
-                    let entity_cfg = config
-                        .domains
-                        .get(domain)
-                        .and_then(|d| d.get_entity_config(title));
-                    entities.push(UiDomainEntity {
-                        name: name.clone(),
-                        module_name: schema.pg_table_name.clone(),
-                        path_segment: resolve_path_segment(entity_cfg, &schema),
-                        label,
-                    });
-                }
+            if let Ok(Some(schema)) = db.get_schema_in_domain(title, domain).await
+                && !schema.pg_table_name.is_empty()
+            {
+                let name = schema.rust_type_name.clone();
+                let label = codegraph_naming::to_display_name(&name);
+                let entity_cfg = config
+                    .domains
+                    .get(domain)
+                    .and_then(|d| d.get_entity_config(title));
+                entities.push(UiDomainEntity {
+                    name: name.clone(),
+                    module_name: schema.pg_table_name.clone(),
+                    path_segment: resolve_path_segment(entity_cfg, &schema),
+                    label,
+                });
             }
         }
 

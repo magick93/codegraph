@@ -1,11 +1,11 @@
 use codegraph_naming::{escape_rust_keyword, to_pascal_case, to_snake_case};
 
+use super::ExprContext;
 use super::error::TranspileError;
 use super::helpers::{
     chain_parts, date_time_gap, kind_for, optional_field_error, optional_receiver_error,
     reduce_gap, root_symbol, string_literal, wrap_operand, wraps_as_operand,
 };
-use super::ExprContext;
 
 /// One lambda binding frame (innermost frame last in the stack).
 pub(super) struct Frame {
@@ -799,10 +799,10 @@ impl Emitter<'_> {
         // through to the generic operand path (a bare OPTIONAL field on
         // either side keeps its refusal there — field-vs-field optional
         // comparison stays unsupported).
-        if matches!(op, "=" | "<>") {
-            if let Some(frag) = self.emit_enum_equality(op, left, right)? {
-                return Ok(frag);
-            }
+        if matches!(op, "=" | "<>")
+            && let Some(frag) = self.emit_enum_equality(op, left, right)?
+        {
+            return Ok(frag);
         }
         let rust_op = match op {
             "+" => "+",

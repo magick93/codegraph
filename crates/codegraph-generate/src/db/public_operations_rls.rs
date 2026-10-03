@@ -27,11 +27,11 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{Access, SchemaNode};
 use serde::Serialize;
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::GenerationEntry;
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::{Error, Result};
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 /// The serving role created by migration `0002` — the only role that needs

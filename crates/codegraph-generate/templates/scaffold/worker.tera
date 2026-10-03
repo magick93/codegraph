@@ -143,7 +143,7 @@ async fn db_ok(state: &AppState) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         use sea_orm::ConnectionTrait;
-        sea_orm::ConnectionTrait::execute(
+        sea_orm::ConnectionTrait::execute_raw(
             &state.db,
             sea_orm::Statement::from_string(sea_orm::DatabaseBackend::Postgres, "SELECT 1"),
         )
@@ -167,7 +167,7 @@ async fn db_ok(state: &AppState) -> bool {
 }
 {% else %}
 async fn db_ok(state: &AppState) -> bool {
-    sea_orm::ConnectionTrait::execute(
+    sea_orm::ConnectionTrait::execute_raw(
         &state.db,
         sea_orm::Statement::from_string(sea_orm::DatabaseBackend::Postgres, "SELECT 1"),
     )

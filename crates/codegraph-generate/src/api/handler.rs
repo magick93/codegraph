@@ -5,17 +5,17 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{ParentCandidate, PolicyKind};
 use serde::Serialize;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::filter_fields::{
-    resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
+    FilterFieldInfo, NestedFilterFieldInfo, resolve_filter_fields, resolve_nested_filter_fields,
 };
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::type_registry;
-use crate::ProjectConfig;
 use codegraph_config::{DomainConfig, EntityConfig};
 
-use super::include_path::{resolve_include_paths_for_topology, ResolvedIncludePath};
+use super::include_path::{ResolvedIncludePath, resolve_include_paths_for_topology};
 use super::router::{ChildInfo, CrossRefInfo};
 
 use super::api_model::{resolve_entity_operations, resolve_path_segment};
@@ -37,6 +37,9 @@ pub struct HandlerContext {
     pub parent_entity: Option<String>,
     pub parent_path_segment: Option<String>,
     pub parent_module_name: Option<String>,
+    /// tera 2's `default` filter only fires on undefined (not null), so None
+    /// must OMIT the key for `parent_domain | default(value=domain)` routes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_domain: Option<String>,
     pub role: String,
     /// Named path parameter for this entity's ID (e.g. `"worker_id"`).
@@ -48,6 +51,8 @@ pub struct HandlerContext {
     /// Path segment for the grandparent entity (depth-2 children only, e.g. `"workers"`).
     pub grandparent_path_segment: Option<String>,
     /// Domain of the grandparent entity (depth-2 children only).
+    /// Skipped when None: tera 2's `default` only fires on undefined keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grandparent_domain: Option<String>,
     pub children: Vec<ChildInfo>,
     pub cross_refs: Vec<CrossRefInfo>,
@@ -421,39 +426,36 @@ async fn apply_config_parent(
     entity_cfg: Option<&EntityConfig>,
     topo: &mut HandlerTopology,
 ) {
-    if let Some(ec) = entity_cfg {
-        if ec.role.as_deref() == Some("child") {
-            if let Some(parent_title) = &ec.parent {
-                let parent_name =
-                    super::router::strip_suffix(parent_title, &config.defaults.type_suffix);
-                if topo.parent_ref.is_none() {
-                    topo.parent_ref = Some(format!(
-                        "{}_id",
-                        codegraph_naming::to_snake_case(parent_name)
-                    ));
-                }
-                if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
-                {
-                    topo.parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
-                    topo.parent_module_name = Some(parent_schema.pg_table_name.clone());
-                    topo.parent_domain = if config
-                        .domains
-                        .get(domain)
-                        .map(|d| d.entities.contains(parent_title))
-                        .unwrap_or(false)
-                    {
-                        Some(domain.to_string())
-                    } else {
-                        parent_schema.domain.or_else(|| Some(domain.to_string()))
-                    };
-                } else {
-                    topo.parent_path_segment = Some(codegraph_naming::to_kebab_case(parent_name));
-                    topo.parent_module_name = Some(codegraph_naming::to_snake_case(parent_name));
-                    topo.parent_domain = Some(domain.to_string());
-                }
-                topo.role = "child".to_string();
-            }
+    if let Some(ec) = entity_cfg
+        && ec.role.as_deref() == Some("child")
+        && let Some(parent_title) = &ec.parent
+    {
+        let parent_name = super::router::strip_suffix(parent_title, &config.defaults.type_suffix);
+        if topo.parent_ref.is_none() {
+            topo.parent_ref = Some(format!(
+                "{}_id",
+                codegraph_naming::to_snake_case(parent_name)
+            ));
         }
+        if let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await {
+            topo.parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
+            topo.parent_module_name = Some(parent_schema.pg_table_name.clone());
+            topo.parent_domain = if config
+                .domains
+                .get(domain)
+                .map(|d| d.entities.contains(parent_title))
+                .unwrap_or(false)
+            {
+                Some(domain.to_string())
+            } else {
+                parent_schema.domain.or_else(|| Some(domain.to_string()))
+            };
+        } else {
+            topo.parent_path_segment = Some(codegraph_naming::to_kebab_case(parent_name));
+            topo.parent_module_name = Some(codegraph_naming::to_snake_case(parent_name));
+            topo.parent_domain = Some(domain.to_string());
+        }
+        topo.role = "child".to_string();
     }
 }
 
@@ -561,31 +563,27 @@ async fn collect_config_children(
         // Iterate entity_config entries to find children of this entity
         {
             for (other_title, other_cfg) in &domain_entry.entity_config {
-                if other_cfg.role.as_deref() == Some("child") {
-                    if let Some(parent_title) = &other_cfg.parent {
-                        if super::router::strip_suffix(parent_title, &config.defaults.type_suffix)
-                            == stripped_title
-                        {
-                            let child_name = super::router::strip_suffix(
-                                other_title,
-                                &config.defaults.type_suffix,
-                            );
-                            if let Ok(Some(child_schema)) =
-                                db.get_schema_in_domain(other_title, domain).await
-                            {
-                                resolved_children.push(ChildInfo {
-                                    entity_name: child_schema.rust_type_name.clone(),
-                                    module_name: child_schema.pg_table_name.clone(),
-                                    path_segment: resolve_path_segment(None, &child_schema),
-                                });
-                            } else {
-                                resolved_children.push(ChildInfo {
-                                    entity_name: child_name.to_string(),
-                                    module_name: codegraph_naming::to_snake_case(child_name),
-                                    path_segment: codegraph_naming::to_kebab_case(child_name),
-                                });
-                            }
-                        }
+                if other_cfg.role.as_deref() == Some("child")
+                    && let Some(parent_title) = &other_cfg.parent
+                    && super::router::strip_suffix(parent_title, &config.defaults.type_suffix)
+                        == stripped_title
+                {
+                    let child_name =
+                        super::router::strip_suffix(other_title, &config.defaults.type_suffix);
+                    if let Ok(Some(child_schema)) =
+                        db.get_schema_in_domain(other_title, domain).await
+                    {
+                        resolved_children.push(ChildInfo {
+                            entity_name: child_schema.rust_type_name.clone(),
+                            module_name: child_schema.pg_table_name.clone(),
+                            path_segment: resolve_path_segment(None, &child_schema),
+                        });
+                    } else {
+                        resolved_children.push(ChildInfo {
+                            entity_name: child_name.to_string(),
+                            module_name: codegraph_naming::to_snake_case(child_name),
+                            path_segment: codegraph_naming::to_kebab_case(child_name),
+                        });
                     }
                 }
             }
@@ -867,14 +865,13 @@ fn build_handler_imports(
             // The override response type is only referenced textually in the
             // dot-path merge arm (handler.tera), so only register it for
             // multi-segment paths; single-segment includes use inference.
-            if path.segments.len() > 1 {
-                if let Some(over) = path
+            if path.segments.len() > 1
+                && let Some(over) = path
                     .segments
                     .first()
                     .and_then(|s| s.child_table_override.as_ref())
-                {
-                    handler_refs.push(over.response_type.clone());
-                }
+            {
+                handler_refs.push(over.response_type.clone());
             }
         }
     }

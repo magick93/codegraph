@@ -341,11 +341,12 @@ async fn referenceschema_and_itemsof_edges_persisted() {
     assert!(history_item.is_codelist);
 
     // Array of primitives carries NO edge (no $ref to resolve).
-    assert!(q
-        .get_array_item_schema("tags", "OrderType")
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        q.get_array_item_schema("tags", "OrderType")
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     // Bulk accessors see exactly the three scalar ReferencesSchema targets
     // (history went the ItemsOf route, so OrderStatus appears once here).
@@ -461,11 +462,12 @@ async fn codelist_round_trips() {
     // JSON-path codelist link lives on PropertyNode.ref_target +
     // classification_kind instead. The accessor is dormant for ingested
     // models.
-    assert!(q
-        .get_codelist_for_property("status", "OrderType")
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        q.get_codelist_for_property("status", "OrderType")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 // ── Probe 4: value object composes a child table ─────────────────────────

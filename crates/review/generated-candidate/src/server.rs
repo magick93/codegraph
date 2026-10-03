@@ -97,7 +97,7 @@ async fn version() -> axum::Json<VersionInfo> {
 async fn health(
     axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
 ) -> axum::Json<serde_json::Value> {
-    let db_ok = sea_orm::ConnectionTrait::execute(
+    let db_ok = sea_orm::ConnectionTrait::execute_raw(
         &state.db,
         sea_orm::Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
@@ -115,7 +115,7 @@ async fn health(
 async fn health_ready(
     axum::extract::State(state): axum::extract::State<crate::app_state::AppState>,
 ) -> axum::Json<serde_json::Value> {
-    let db_ok = sea_orm::ConnectionTrait::execute(
+    let db_ok = sea_orm::ConnectionTrait::execute_raw(
         &state.db,
         sea_orm::Statement::from_string(
             sea_orm::DatabaseBackend::Postgres,
@@ -149,14 +149,14 @@ async fn health_ready(
     let rls_ok = async {
         use sea_orm::TransactionTrait;
         let tx = state.db.begin().await.ok()?;
-        sea_orm::ConnectionTrait::execute(
+        sea_orm::ConnectionTrait::execute_raw(
             &tx,
             sea_orm::Statement::from_string(
                 sea_orm::DatabaseBackend::Postgres,
                 "SELECT set_config('app.current_api_key', 'health-check', true)",
             ),
         ).await.ok()?;
-        let readback = sea_orm::ConnectionTrait::query_one(
+        let readback = sea_orm::ConnectionTrait::query_one_raw(
             &tx,
             sea_orm::Statement::from_string(
                 sea_orm::DatabaseBackend::Postgres,

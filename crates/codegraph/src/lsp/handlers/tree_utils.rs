@@ -5,7 +5,7 @@ use auto_lsp::lsp_types::*;
 use auto_lsp::tree_sitter;
 use auto_lsp::tree_sitter::{Query, QueryCursor, StreamingIterator};
 
-use crate::lsp::state::{GrafeoState, GRAFE};
+use crate::lsp::state::{GRAFE, GrafeoState};
 pub(super) fn with_grafe<F, R>(f: F) -> R
 where
     F: FnOnce(Option<&GrafeoState>) -> R,
@@ -233,10 +233,10 @@ pub(super) fn extract_data_refs(source: &[u8], root: &tree_sitter::Node) -> Vec<
                     .map(|s: &str| s.to_string());
             }
         }
-        if let (Some(k), Some(v)) = (key, val) {
-            if k == "data" {
-                refs.push(v);
-            }
+        if let (Some(k), Some(v)) = (key, val)
+            && k == "data"
+        {
+            refs.push(v);
         }
     }
 
@@ -281,20 +281,21 @@ pub(super) fn extract_module_uses(source: &str) -> Vec<(String, Range)> {
                 while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
                     j += 1;
                 }
-                if j < bytes.len() && bytes[j] == b'"' {
-                    if let Some(len) = code[j + 1..].find('"') {
-                        let name = code[j + 1..j + 1 + len].to_string();
-                        let end_col = j + 2 + len;
-                        uses.push((
-                            name,
-                            Range::new(
-                                Position::new(line_idx as u32, i as u32),
-                                Position::new(line_idx as u32, end_col as u32),
-                            ),
-                        ));
-                        i = end_col;
-                        continue;
-                    }
+                if j < bytes.len()
+                    && bytes[j] == b'"'
+                    && let Some(len) = code[j + 1..].find('"')
+                {
+                    let name = code[j + 1..j + 1 + len].to_string();
+                    let end_col = j + 2 + len;
+                    uses.push((
+                        name,
+                        Range::new(
+                            Position::new(line_idx as u32, i as u32),
+                            Position::new(line_idx as u32, end_col as u32),
+                        ),
+                    ));
+                    i = end_col;
+                    continue;
                 }
             }
             i += 1;

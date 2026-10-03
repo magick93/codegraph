@@ -300,10 +300,12 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
     let wrangler_toml: toml::Value = toml::from_str(&compensation_wrangler.content)
         .expect("compensation wrangler.toml must parse as TOML");
     assert_eq!(wrangler_toml["name"].as_str(), Some("hr-payroll-worker"));
-    assert!(wrangler_toml["build"]["command"]
-        .as_str()
-        .unwrap()
-        .contains("--features cloudflare-worker"));
+    assert!(
+        wrangler_toml["build"]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--features cloudflare-worker")
+    );
     assert_eq!(
         wrangler_toml["hyperdrive"][0]["binding"].as_str(),
         Some("PAYROLL_DB"),
@@ -377,14 +379,18 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
 
     // Files were actually written to disk (not just reported).
     assert!(output_dir.path().join("workers/Cargo.toml").exists());
-    assert!(output_dir
-        .path()
-        .join("workers/compensation/src/worker.rs")
-        .exists());
-    assert!(output_dir
-        .path()
-        .join("workers/gateway/wrangler.toml")
-        .exists());
+    assert!(
+        output_dir
+            .path()
+            .join("workers/compensation/src/worker.rs")
+            .exists()
+    );
+    assert!(
+        output_dir
+            .path()
+            .join("workers/gateway/wrangler.toml")
+            .exists()
+    );
 
     println!("workers scaffold produced {} files", report.files.len());
 }
@@ -440,15 +446,21 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
         "worker hooks mod must re-export the shared HookRegistry, got:\n{}",
         hooks_mod.content
     );
-    assert!(find("workers/compensation/src/lib.rs")
-        .content
-        .contains("pub mod hooks;"));
-    assert!(find("workers/compensation/src/main.rs")
-        .content
-        .contains("mod hooks;"));
-    assert!(find("workers/compensation/src/app_state.rs")
-        .content
-        .contains("use crate::hooks::HookRegistry;"));
+    assert!(
+        find("workers/compensation/src/lib.rs")
+            .content
+            .contains("pub mod hooks;")
+    );
+    assert!(
+        find("workers/compensation/src/main.rs")
+            .content
+            .contains("mod hooks;")
+    );
+    assert!(
+        find("workers/compensation/src/app_state.rs")
+            .content
+            .contains("use crate::hooks::HookRegistry;")
+    );
     // The worker manifest carries a path dependency on the hooks-api crate so
     // the `hooks_api::...` references in command/query/app_state compile. The
     // relative path must resolve from the worker crate dir to the hooks crate.
@@ -482,10 +494,11 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
         dep_path.display()
     );
     // Common worker gets the same hooks module.
-    assert!(report.files.iter().any(|f| f
-        .path
-        .to_string_lossy()
-        .ends_with("workers/common/src/hooks/mod.rs")));
+    assert!(report.files.iter().any(|f| {
+        f.path
+            .to_string_lossy()
+            .ends_with("workers/common/src/hooks/mod.rs")
+    }));
 
     // API meta: per-worker copy of the monolith meta.tera.
     let meta = find("workers/compensation/src/api/meta.rs");
@@ -532,18 +545,24 @@ async fn workers_topology_emits_hooks_reexport_and_api_meta() {
             .any(|f| f.path.to_string_lossy().contains("/workers/")),
         "monolith topology must not produce a workers/ directory"
     );
-    assert!(report2
-        .files
-        .iter()
-        .any(|f| f.path.to_string_lossy().ends_with("src/api/meta.rs")));
-    assert!(!report2
-        .files
-        .iter()
-        .any(|f| f.path.to_string_lossy().ends_with("src/hooks/mod.rs")));
-    assert!(!report2
-        .files
-        .iter()
-        .any(|f| f.path.to_string_lossy().ends_with("hooks/mod.rs")));
+    assert!(
+        report2
+            .files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("src/api/meta.rs"))
+    );
+    assert!(
+        !report2
+            .files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("src/hooks/mod.rs"))
+    );
+    assert!(
+        !report2
+            .files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("hooks/mod.rs"))
+    );
 }
 
 /// Lexically normalize an absolute path (collapse `.`/`..`) into its ordered

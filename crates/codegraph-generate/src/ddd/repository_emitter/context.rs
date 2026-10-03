@@ -360,7 +360,7 @@ pub(crate) async fn build_columns_and_children(
 
     // Add composite range column (if present) so DDL has it, but mark as
     // composite so create/update/response code skips DTO references.
-    if let Some(ref range) = ctx.composite_range {
+    if let Some(range) = ctx.composite_range {
         direct_columns.push(TreeColumn {
             field_name: range.pg_column_name.clone(),
             pg_column_name: range.pg_column_name.clone(),
@@ -552,26 +552,24 @@ pub(crate) async fn build_columns_and_children(
                         .unwrap_or(false),
                     None => false,
                 };
-                if !has_back_ref {
-                    if let Some(t) = target {
-                        junction_tables.push(JunctionTableInfo {
-                            field_name: field_def.rust_field_name.clone(),
-                            sql_table_name: codegraph_naming::truncate_pg_identifier(&format!(
-                                "{}_{}",
-                                module_name, field_def.column_name
-                            )),
-                            sql_schema_name: schema_name.to_string(),
-                            parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-                                "{}_id",
-                                module_name
-                            )),
-                            child_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-                                "{}_id",
-                                t.pg_table_name
-                            )),
-                            is_required: prop.is_required,
-                        });
-                    }
+                if !has_back_ref && let Some(t) = target {
+                    junction_tables.push(JunctionTableInfo {
+                        field_name: field_def.rust_field_name.clone(),
+                        sql_table_name: codegraph_naming::truncate_pg_identifier(&format!(
+                            "{}_{}",
+                            module_name, field_def.column_name
+                        )),
+                        sql_schema_name: schema_name.to_string(),
+                        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+                            "{}_id",
+                            module_name
+                        )),
+                        child_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
+                            "{}_id",
+                            t.pg_table_name
+                        )),
+                        is_required: prop.is_required,
+                    });
                 }
                 continue;
             }
@@ -636,10 +634,9 @@ pub(crate) async fn build_columns_and_children(
                     ctx.suffix,
                 ))
                 .await
+                    && seen_child_structs.insert(child_info.struct_name.clone())
                 {
-                    if seen_child_structs.insert(child_info.struct_name.clone()) {
-                        child_tables.push(child_info);
-                    }
+                    child_tables.push(child_info);
                 }
             }
         }

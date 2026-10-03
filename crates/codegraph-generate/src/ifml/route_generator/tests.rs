@@ -1934,9 +1934,9 @@ fn model_with_guards(
 #[test]
 fn roles_helper_emitted_once_and_never_overwrites() {
     let tmp = tempfile::tempdir().unwrap();
-    let gen = IfmlRouteGenerator::new(tmp.path(), "svelte");
+    let generator = IfmlRouteGenerator::new(tmp.path(), "svelte");
 
-    let file = gen
+    let file = generator
         .roles_helper(&roles_helper_model(vec!["admin".to_string()]))
         .expect("roles.ts for role-guarded model");
     assert!(file.path.ends_with("src/lib/roles.ts"), "{:?}", file.path);
@@ -1961,13 +1961,16 @@ fn roles_helper_emitted_once_and_never_overwrites() {
     std::fs::create_dir_all(file.path.parent().expect("parent dir")).unwrap();
     std::fs::write(&file.path, "custom roles helper").unwrap();
     assert!(
-        gen.roles_helper(&roles_helper_model(vec!["admin".to_string()]))
+        generator
+            .roles_helper(&roles_helper_model(vec!["admin".to_string()]))
             .is_none(),
         "existing roles.ts must never be overwritten"
     );
 
     assert!(
-        gen.roles_helper(&roles_helper_model(Vec::new())).is_none(),
+        generator
+            .roles_helper(&roles_helper_model(Vec::new()))
+            .is_none(),
         "no role-guarded views must mean no roles.ts"
     );
 
@@ -2398,7 +2401,7 @@ fn gate_consts_pair_requires_and_roles_in_guard_order() {
 #[test]
 fn policy_roles_helper_embeds_role_capabilities() {
     let tmp = tempfile::tempdir().unwrap();
-    let gen = IfmlRouteGenerator::new(tmp.path(), "svelte");
+    let generator = IfmlRouteGenerator::new(tmp.path(), "svelte");
     let policy = super::super::context::PolicyContext {
         actors: vec![
             (
@@ -2409,7 +2412,7 @@ fn policy_roles_helper_embeds_role_capabilities() {
         ],
         capabilities: vec!["approve_expense".to_string(), "manage_refunds".to_string()],
     };
-    let file = gen
+    let file = generator
         .roles_helper(&model_with_guards(
             vec!["admin".to_string()],
             Vec::new(),
@@ -2451,8 +2454,8 @@ fn policy_roles_helper_embeds_role_capabilities() {
 #[test]
 fn requires_only_roles_helper_checks_user_capabilities_without_policy() {
     let tmp = tempfile::tempdir().unwrap();
-    let gen = IfmlRouteGenerator::new(tmp.path(), "svelte");
-    let file = gen
+    let generator = IfmlRouteGenerator::new(tmp.path(), "svelte");
+    let file = generator
         .roles_helper(&model_with_guards(
             Vec::new(),
             vec!["manage_refunds".to_string()],

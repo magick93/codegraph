@@ -24,7 +24,7 @@ pub use dimension::Dimension;
 pub use presentation::{
     Align, Display, FormatConfig, ToneMap, VALID_TONE_VALUES, WORKFLOW_TONE_FALLBACK,
 };
-pub use rule::{glob_match, ActionRules, CollectionRule, ColumnRule, UxRules};
+pub use rule::{ActionRules, CollectionRule, ColumnRule, UxRules, glob_match};
 
 /// The built-in `ux-default` pack: the default behavior contract shipped
 /// with codegraph (precedent: `BUILT_IN_PACKS` in `ifml_components.rs`).
@@ -219,15 +219,15 @@ pub fn parse_ux_rules_str(input: &str) -> Result<ParsedUxRules, UxParseError> {
 
     for (idx, collection) in rules.collections.iter().enumerate() {
         let index = idx + 1;
-        if let Some(pattern) = collection.entity_pattern.as_deref() {
-            if pattern.trim().is_empty() {
-                return Err(UxParseError::EmptyGlob {
-                    kind: "collection",
-                    index,
-                    field: "entity_pattern",
-                    hint: "name a concrete pattern, e.g. \"refund*\" (or \"*\" for every entity)",
-                });
-            }
+        if let Some(pattern) = collection.entity_pattern.as_deref()
+            && pattern.trim().is_empty()
+        {
+            return Err(UxParseError::EmptyGlob {
+                kind: "collection",
+                index,
+                field: "entity_pattern",
+                hint: "name a concrete pattern, e.g. \"refund*\" (or \"*\" for every entity)",
+            });
         }
         match collection.display.as_deref() {
             Some("timeline") => {
@@ -792,11 +792,13 @@ display = "copy-chip"
         assert_eq!(merged.columns[0].align, Some(Align::Left));
         // Pack rules stay reachable behind the project's.
         assert!(merged.columns.len() > project.columns.len());
-        assert!(merged
-            .columns
-            .iter()
-            .any(|c| c.dimension == Some(Dimension::Identifier)
-                && c.display == Some(Display::CopyChip)));
+        assert!(
+            merged
+                .columns
+                .iter()
+                .any(|c| c.dimension == Some(Dimension::Identifier)
+                    && c.display == Some(Display::CopyChip))
+        );
         // Collections pass through likewise.
         let with_collection = parse("[[collection]]\nentity_pattern = \"refund*\"\n").rules;
         let merged2 = merge(&with_collection, &pack);

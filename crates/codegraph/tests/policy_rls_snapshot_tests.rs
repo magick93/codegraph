@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use codegraph::generate::db::dialect::{dialect_for_target, DatabaseTarget};
+use codegraph::generate::ProjectConfig;
+use codegraph::generate::db::dialect::{DatabaseTarget, dialect_for_target};
 use codegraph::generate::db::policy_rls::PolicyRlsGenerator;
 use codegraph::generate::traits::GlobalGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph_config::config::{DefaultsConfig, DomainConfig, DomainEntry};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
@@ -199,10 +199,12 @@ async fn generate(
     // build.rs; the path argument is ignored (kept for signature compat).
     let tera = codegraph::generate::template_engine::create_tera(Path::new("")).unwrap();
     let project = ProjectConfig::default();
-    let gen = PolicyRlsGenerator::new(Path::new("/tmp/policy-rls-test"))
+    let generator = PolicyRlsGenerator::new(Path::new("/tmp/policy-rls-test"))
         .with_dialect(dialect_for_target(dialect));
     let empty: Vec<codegraph::generate::GenerationEntry> = vec![];
-    gen.generate(engine, &config, &empty, &tera, &project).await
+    generator
+        .generate(engine, &config, &empty, &tera, &project)
+        .await
 }
 
 /// The core snapshot: human + agent + inherited actors, permit with a `when`

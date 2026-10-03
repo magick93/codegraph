@@ -4,8 +4,8 @@
 //! generators against it and asserts template output correctness
 //! per-schema, per-template.
 
-use codegraph::generate::template_engine;
 use codegraph::generate::GenerationEntry;
+use codegraph::generate::template_engine;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 use std::path::Path;

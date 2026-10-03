@@ -23,17 +23,7 @@ const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
 const NEW_URL = `${BASE_PATH}/new`;
 {% endif %}
 
-{% macro pom_construct(page_var) -%}
-{%- if parent -%}
-{%- if parent.grandparent -%}
-new {{ entity_name }}Page({{ page_var }}, UI_PATH)
-{%- else -%}
-new {{ entity_name }}Page({{ page_var }}, BASE_PATH)
-{%- endif -%}
-{%- else -%}
-new {{ entity_name }}Page({{ page_var }})
-{%- endif -%}
-{%- endmacro %}
+
 
 {% if has_create %}
 test.describe('{{ entity_name }} Validation', () => {
@@ -60,7 +50,7 @@ test.describe('{{ entity_name }} Validation', () => {
 {% endif %}
 {% if required_create_fields | length > 0 %}
   test('submit empty form shows errors', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.gotoCreate();
     await ui.waitForForm();
 
@@ -83,7 +73,7 @@ test.describe('{{ entity_name }} Validation', () => {
   });
 {% else %}
   test('submit empty form succeeds (no required fields)', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.gotoCreate();
     await ui.waitForForm();
     // No required fields — submitting an empty form should succeed
@@ -94,7 +84,7 @@ test.describe('{{ entity_name }} Validation', () => {
 {% endif %}
 
   test('invalid field types rejected', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.gotoCreate();
 
 {% set has_typed_fields = false %}

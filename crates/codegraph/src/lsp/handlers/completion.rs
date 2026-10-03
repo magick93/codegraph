@@ -128,16 +128,16 @@ pub fn handle_completion(
             "fields" => {
                 if let Some(entity_name) = find_current_entity_ts(source_bytes, &root, position) {
                     with_grafe(|grafe| {
-                        if let Some(grafe) = grafe {
-                            if let Some(info) = grafe.schema_infos.get(&entity_name) {
-                                for prop in &info.properties {
-                                    items.push(CompletionItem {
-                                        label: prop.clone(),
-                                        kind: Some(CompletionItemKind::PROPERTY),
-                                        detail: Some(format!("Property of {}", entity_name)),
-                                        ..Default::default()
-                                    });
-                                }
+                        if let Some(grafe) = grafe
+                            && let Some(info) = grafe.schema_infos.get(&entity_name)
+                        {
+                            for prop in &info.properties {
+                                items.push(CompletionItem {
+                                    label: prop.clone(),
+                                    kind: Some(CompletionItemKind::PROPERTY),
+                                    detail: Some(format!("Property of {}", entity_name)),
+                                    ..Default::default()
+                                });
                             }
                         }
                     });
@@ -183,23 +183,23 @@ pub fn handle_completion(
 
     if items.is_empty() && before_cursor.contains("fields: [") {
         let after_bracket = before_cursor.split("fields: [").last().unwrap_or("");
-        if !after_bracket.contains(']') {
-            if let Some(entity_name) = find_current_entity_ts(source_bytes, &root, position) {
-                with_grafe(|grafe| {
-                    if let Some(grafe) = grafe {
-                        if let Some(info) = grafe.schema_infos.get(&entity_name) {
-                            for prop in &info.properties {
-                                items.push(CompletionItem {
-                                    label: prop.clone(),
-                                    kind: Some(CompletionItemKind::PROPERTY),
-                                    detail: Some(format!("Property of {}", entity_name)),
-                                    ..Default::default()
-                                });
-                            }
-                        }
+        if !after_bracket.contains(']')
+            && let Some(entity_name) = find_current_entity_ts(source_bytes, &root, position)
+        {
+            with_grafe(|grafe| {
+                if let Some(grafe) = grafe
+                    && let Some(info) = grafe.schema_infos.get(&entity_name)
+                {
+                    for prop in &info.properties {
+                        items.push(CompletionItem {
+                            label: prop.clone(),
+                            kind: Some(CompletionItemKind::PROPERTY),
+                            detail: Some(format!("Property of {}", entity_name)),
+                            ..Default::default()
+                        });
                     }
-                });
-            }
+                }
+            });
         }
     }
 

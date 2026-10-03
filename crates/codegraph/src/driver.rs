@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use codegraph_backend::{create_backend, Backend, BackendConfig};
+use codegraph_backend::{Backend, BackendConfig, create_backend};
 
 use crate::error::Result;
 use crate::generate::{
@@ -665,19 +665,19 @@ pub async fn run_with_graph_cache(
         }
 
         // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
-        if let Some(ref pc) = project_config {
-            if pc.integration.has_atproto {
-                crate::ingest::atproto_projection::project_atproto_lexicons(
-                    be.ingestor(),
-                    be.querier(),
-                    &domain_config,
-                    pc,
-                )
-                .await
-                .map_err(|e| {
-                    crate::error::Error::Config(format!("AT Protocol projection failed: {e}"))
-                })?;
-            }
+        if let Some(ref pc) = project_config
+            && pc.integration.has_atproto
+        {
+            crate::ingest::atproto_projection::project_atproto_lexicons(
+                be.ingestor(),
+                be.querier(),
+                &domain_config,
+                pc,
+            )
+            .await
+            .map_err(|e| {
+                crate::error::Error::Config(format!("AT Protocol projection failed: {e}"))
+            })?;
         }
     }
 
@@ -687,18 +687,18 @@ pub async fn run_with_graph_cache(
     // path (domain_config is re-parsed every run).
     crate::ingest::dependencies::inject_dependency_domains(&mut domain_config);
 
-    if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused) {
-        if let Some(hash) = inputs_hash.as_deref() {
-            be.engine()
-                .checkpoint()
-                .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-            crate::artifact::persist_cache_marker(cache_dir, hash)
-                .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-            println!(
-                "Graph cache: persisted fresh graph (inputs hash {})",
-                &hash[..16]
-            );
-        }
+    if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused)
+        && let Some(hash) = inputs_hash.as_deref()
+    {
+        be.engine()
+            .checkpoint()
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        crate::artifact::persist_cache_marker(cache_dir, hash)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        println!(
+            "Graph cache: persisted fresh graph (inputs hash {})",
+            &hash[..16]
+        );
     }
 
     let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
@@ -762,27 +762,28 @@ pub async fn run_with_graph_cache(
     }
 
     // Run post-generation scripts from the profile plan.
-    if let Some(ref plan) = build_plan {
-        if !no_post_gen && !plan.post_gen_scripts.is_empty() {
-            println!("\nPost-generation scripts:");
-            for (section, scripts) in &plan.post_gen_scripts {
-                for cmd in scripts {
-                    println!("  [{section}] {cmd}");
-                    let status = std::process::Command::new("sh")
-                        .arg("-c")
-                        .arg(cmd)
-                        .status()
-                        .map_err(|e| {
-                            crate::error::Error::Config(format!(
-                                "failed to run post_gen script [{section}] {cmd}: {e}"
-                            ))
-                        })?;
-                    if !status.success() {
-                        let code = status.code().unwrap_or(-1);
-                        return Err(crate::error::Error::Config(format!(
-                            "post_gen script [{section}] {cmd} failed (exit {code})"
-                        )));
-                    }
+    if let Some(ref plan) = build_plan
+        && !no_post_gen
+        && !plan.post_gen_scripts.is_empty()
+    {
+        println!("\nPost-generation scripts:");
+        for (section, scripts) in &plan.post_gen_scripts {
+            for cmd in scripts {
+                println!("  [{section}] {cmd}");
+                let status = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .status()
+                    .map_err(|e| {
+                        crate::error::Error::Config(format!(
+                            "failed to run post_gen script [{section}] {cmd}: {e}"
+                        ))
+                    })?;
+                if !status.success() {
+                    let code = status.code().unwrap_or(-1);
+                    return Err(crate::error::Error::Config(format!(
+                        "post_gen script [{section}] {cmd} failed (exit {code})"
+                    )));
                 }
             }
         }
@@ -1358,11 +1359,7 @@ fn load_ui_overrides(config_path: &Path) -> Result<codegraph_config::UiOverrideC
 
 fn load_seed_config(config_path: &Path) -> Option<PathBuf> {
     let path = config_path.parent()?.join("seed.toml");
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 fn load_ui_domains(config_path: &Path) -> Result<codegraph_config::UiDomainConfig> {
@@ -1500,10 +1497,12 @@ generators = ["ddl"]
             Some(codegraph_config::Display::Raw)
         );
         // Pack rules still reachable behind the project's.
-        assert!(resolved
-            .columns
-            .iter()
-            .any(|c| c.dimension == Some(Dimension::Identifier)));
+        assert!(
+            resolved
+                .columns
+                .iter()
+                .any(|c| c.dimension == Some(Dimension::Identifier))
+        );
     }
 
     #[test]
@@ -1528,9 +1527,11 @@ generators = ["ddl"]
         let project = dir.path().join("ux-rules.toml");
         std::fs::write(&project, "").unwrap();
         let plan = plan_with_ux_rules(false);
-        assert!(effective_ux_rules(Some(&project), Some(&plan))
-            .unwrap()
-            .is_some());
+        assert!(
+            effective_ux_rules(Some(&project), Some(&plan))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

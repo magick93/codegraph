@@ -13,9 +13,9 @@ use codegraph_core::types::{
     EventNode, GrantEdge, ParameterDefinitionNode, PropertyNode, SchemaNode, ViewComponentNode,
     ViewContainerNode,
 };
+use codegraph_generate::ProjectConfig;
 use codegraph_generate::ifml::e2e_test::IfmlE2eTestGenerator;
 use codegraph_generate::traits::GlobalGenerator;
-use codegraph_generate::ProjectConfig;
 
 const EDITOR_FORM_SPEC: &str = r#"{"type":"form","value":{"fields":[{"name":"name","input":{"type":"text"},"required":true,"validations":[],"values":[]}]}}"#;
 
@@ -358,16 +358,17 @@ async fn generate_with_config(
     mappings: Option<IfmlComponentMappings>,
     config: &DomainConfig,
 ) -> Vec<codegraph_generate::traits::GeneratedFile> {
-    let gen = IfmlE2eTestGenerator::new(output, "svelte").with_mappings(mappings);
-    gen.generate(
-        db,
-        config,
-        &[],
-        &tera::Tera::default(),
-        &ProjectConfig::default(),
-    )
-    .await
-    .unwrap()
+    let generator = IfmlE2eTestGenerator::new(output, "svelte").with_mappings(mappings);
+    generator
+        .generate(
+            db,
+            config,
+            &[],
+            &tera::Tera::default(),
+            &ProjectConfig::default(),
+        )
+        .await
+        .unwrap()
 }
 
 fn content_of(files: &[codegraph_generate::traits::GeneratedFile], suffix: &str) -> String {
@@ -763,8 +764,8 @@ async fn non_svelte_frameworks_emit_nothing() {
     ingest_ifml_model(&engine).await;
     let dir = tempfile::tempdir().unwrap();
 
-    let gen = IfmlE2eTestGenerator::new(dir.path(), "react");
-    let files = gen
+    let generator = IfmlE2eTestGenerator::new(dir.path(), "react");
+    let files = generator
         .generate(
             &engine,
             &test_config(),

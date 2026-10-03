@@ -7,7 +7,7 @@ use tera::Tera;
 
 use crate::capabilities::{Capability, CapabilitySet};
 use crate::db;
-use crate::db::dialect::{dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::db::dialect::{DatabaseTarget, SqlDialect, dialect_for_target};
 use crate::error::{Error, Result};
 use crate::output::reports_config_dir;
 use crate::playwright;
@@ -394,25 +394,25 @@ pub(crate) fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
     // plugins config declares) plus the site pages/e2e roots, so
     // `emit_manifests` writes per-package + per-site `.codegraph-manifest.json`
     // files the guard can consume.
-    if ctx.capabilities.has(Capability::EmDash) {
-        if let Some(ref plugins) = ctx.emdash_plugins {
-            for domain_key in plugins.plugins.keys() {
-                roots.push(crate::emdash::emdash_package_root(output_dir, domain_key));
-            }
-            if !plugins.plugins.is_empty() {
-                roots.push(crate::emdash::emdash_site_pages_root_with_base(
-                    output_dir,
-                    &ctx.project_config
-                        .map(|p| p.integration.emdash_site_pages_base.clone())
-                        .unwrap_or_default(),
-                ));
-                roots.push(crate::emdash::emdash_site_e2e_root_with_base(
-                    output_dir,
-                    &ctx.project_config
-                        .map(|p| p.integration.emdash_site_e2e_base.clone())
-                        .unwrap_or_default(),
-                ));
-            }
+    if ctx.capabilities.has(Capability::EmDash)
+        && let Some(ref plugins) = ctx.emdash_plugins
+    {
+        for domain_key in plugins.plugins.keys() {
+            roots.push(crate::emdash::emdash_package_root(output_dir, domain_key));
+        }
+        if !plugins.plugins.is_empty() {
+            roots.push(crate::emdash::emdash_site_pages_root_with_base(
+                output_dir,
+                &ctx.project_config
+                    .map(|p| p.integration.emdash_site_pages_base.clone())
+                    .unwrap_or_default(),
+            ));
+            roots.push(crate::emdash::emdash_site_e2e_root_with_base(
+                output_dir,
+                &ctx.project_config
+                    .map(|p| p.integration.emdash_site_e2e_base.clone())
+                    .unwrap_or_default(),
+            ));
         }
     }
 

@@ -284,10 +284,10 @@ pub fn derive_view(name: &str, route: &str, source: &str) -> DerivedView {
                 }
             }
             t if is_button_tag(t) => {
-                if let Some(line) = button_event_line(item, source, &functions, &mut view.skipped) {
-                    if seen_events.insert(line.clone()) {
-                        view.events.push(line);
-                    }
+                if let Some(line) = button_event_line(item, source, &functions, &mut view.skipped)
+                    && seen_events.insert(line.clone())
+                {
+                    view.events.push(line);
                 }
             }
             t => {
@@ -303,13 +303,13 @@ pub fn derive_view(name: &str, route: &str, source: &str) -> DerivedView {
         }
     }
 
-    if let FetchScan::Single { entity, .. } = &fetch {
-        if !has_list {
-            if let Some(comp) = view.components.first_mut() {
-                comp.data = Some(entity.clone());
-            } else {
-                view.data = Some(entity.clone());
-            }
+    if let FetchScan::Single { entity, .. } = &fetch
+        && !has_list
+    {
+        if let Some(comp) = view.components.first_mut() {
+            comp.data = Some(entity.clone());
+        } else {
+            view.data = Some(entity.clone());
         }
     }
     view
@@ -336,10 +336,10 @@ fn derive_form(
     let mut events: Vec<String> = Vec::new();
     let mut seen_events = HashSet::new();
 
-    if let Some(line) = submit_event_line(form, source, functions, skipped) {
-        if seen_events.insert(line.clone()) {
-            events.push(line);
-        }
+    if let Some(line) = submit_event_line(form, source, functions, skipped)
+        && seen_events.insert(line.clone())
+    {
+        events.push(line);
     }
     for el in descendant_elements(form) {
         let Some(tag) = tag_of(el, source) else {
@@ -353,12 +353,11 @@ fn derive_form(
             } else {
                 skipped.push(format!("form control <{tag}> without a name or bind:value"));
             }
-        } else if is_button_tag(tag) {
-            if let Some(line) = button_event_line(el, source, functions, skipped) {
-                if seen_events.insert(line.clone()) {
-                    events.push(line);
-                }
-            }
+        } else if is_button_tag(tag)
+            && let Some(line) = button_event_line(el, source, functions, skipped)
+            && seen_events.insert(line.clone())
+        {
+            events.push(line);
         }
     }
 
@@ -891,10 +890,12 @@ fn fetch_segment_from_url(url: &str) -> Option<String> {
     let mut idx = 0usize;
     if segs.first().is_some_and(|seg| *seg == "api") {
         idx = 1;
-        if let Some(v) = segs.get(1) {
-            if v.len() >= 2 && v.starts_with('v') && v[1..].chars().all(|c| c.is_ascii_digit()) {
-                idx = 2;
-            }
+        if let Some(v) = segs.get(1)
+            && v.len() >= 2
+            && v.starts_with('v')
+            && v[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            idx = 2;
         }
     }
     let rest = &segs[idx..];
@@ -917,10 +918,10 @@ fn fetch_segment_from_url(url: &str) -> Option<String> {
 fn fetch_scan(script: &str) -> FetchScan {
     let mut found: Vec<(String, String)> = Vec::new();
     for arg in fetch_call_args(script) {
-        if let Some(parts) = fetch_parts_from_url(&arg) {
-            if !found.iter().any(|(entity, _)| *entity == parts.0) {
-                found.push(parts);
-            }
+        if let Some(parts) = fetch_parts_from_url(&arg)
+            && !found.iter().any(|(entity, _)| *entity == parts.0)
+        {
+            found.push(parts);
         }
     }
     match found.len() {
@@ -1115,10 +1116,10 @@ fn singularize(word: &str) -> String {
     if SINGULAR_EXCEPTIONS.contains(&word.to_ascii_lowercase().as_str()) {
         return word.to_string();
     }
-    if let Some(stem) = word.strip_suffix("ies") {
-        if !stem.is_empty() {
-            return format!("{stem}y");
-        }
+    if let Some(stem) = word.strip_suffix("ies")
+        && !stem.is_empty()
+    {
+        return format!("{stem}y");
     }
     if word.len() >= 4 {
         if let Some(stem) = word.strip_suffix("ses") {

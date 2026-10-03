@@ -155,23 +155,22 @@ pub async fn project_atproto_lexicons(
             };
 
             for prop in &props {
-                if prop.classification_kind == Some(RefClassificationKind::EntityReference) {
-                    if let Some(ref ref_target) = &prop.ref_target {
-                        let ref_stem = extract_ref_stem(ref_target);
-                        if let Some(target_schema) =
-                            find_schema_by_title_or_stem(&schemas, ref_stem, type_suffix)
-                        {
-                            if let Some(target_nsid) = title_to_nsid.get(&target_schema.title) {
-                                ingestor
-                                    .ingest_edge(
-                                        &source_nsid,
-                                        target_nsid,
-                                        EdgeType::LexiconReferences,
-                                        None,
-                                    )
-                                    .await?;
-                            }
-                        }
+                if prop.classification_kind == Some(RefClassificationKind::EntityReference)
+                    && let Some(ref_target) = &prop.ref_target
+                {
+                    let ref_stem = extract_ref_stem(ref_target);
+                    if let Some(target_schema) =
+                        find_schema_by_title_or_stem(&schemas, ref_stem, type_suffix)
+                        && let Some(target_nsid) = title_to_nsid.get(&target_schema.title)
+                    {
+                        ingestor
+                            .ingest_edge(
+                                &source_nsid,
+                                target_nsid,
+                                EdgeType::LexiconReferences,
+                                None,
+                            )
+                            .await?;
                     }
                 }
             }

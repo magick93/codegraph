@@ -40,9 +40,9 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO rsvp.rsvp_event (id, rsvp_id, capacity, title, birth_date, family_name, given_name) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id_rsvp_event.into(), id.into(), item.capacity.map(|v| sea_orm::Value::BigInt(Some(v))).unwrap_or(sea_orm::Value::BigInt(None)), sea_orm::Value::String(Some(Box::new(item.title.clone()))), item.birth_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::String(Some(Box::new(item.family_name.clone()))), sea_orm::Value::String(Some(Box::new(item.given_name.clone())))],
+                vec![child_id_rsvp_event.into(), id.into(), item.capacity.map(|v| sea_orm::Value::BigInt(Some(v))).unwrap_or(sea_orm::Value::BigInt(None)), sea_orm::Value::String(Some(item.title.clone())), item.birth_date.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::String(Some(item.family_name.clone())), sea_orm::Value::String(Some(item.given_name.clone()))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         Ok(id)
@@ -76,7 +76,7 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
                 "SELECT id, capacity, title, birth_date, family_name, given_name FROM rsvp.rsvp_event WHERE rsvp_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -126,14 +126,14 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
         // Replace optional child row: rsvp.rsvp_event
         if let Some(ref item) = cmd.event {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM rsvp.rsvp_event WHERE rsvp_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             let child_id = Uuid::new_v4();
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO rsvp.rsvp_event (id, rsvp_id, capacity, title, birth_date, family_name, given_name) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id.into(), id.into(), item.capacity.map(|v| sea_orm::Value::BigInt(Some(v))).unwrap_or(sea_orm::Value::BigInt(None)), sea_orm::Value::String(Some(Box::new(item.title.clone()))), item.birth_date.map(|v| sea_orm::Value::ChronoDate(Some(Box::new(v)))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::String(Some(Box::new(item.family_name.clone()))), sea_orm::Value::String(Some(Box::new(item.given_name.clone())))],
+                vec![child_id.into(), id.into(), item.capacity.map(|v| sea_orm::Value::BigInt(Some(v))).unwrap_or(sea_orm::Value::BigInt(None)), sea_orm::Value::String(Some(item.title.clone())), item.birth_date.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::String(Some(item.family_name.clone())), sea_orm::Value::String(Some(item.given_name.clone()))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         Ok(())
@@ -194,7 +194,7 @@ impl RsvpRepository<sea_orm::DatabaseTransaction> for RsvpRepositoryImpl {
                     "SELECT id, capacity, title, birth_date, family_name, given_name FROM rsvp.rsvp_event WHERE rsvp_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;

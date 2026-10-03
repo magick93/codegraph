@@ -5,7 +5,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 
-use codegraph::migrate::{migrate, MigrateArgs, STDLIB_FILE_NAME};
+use codegraph::migrate::{MigrateArgs, STDLIB_FILE_NAME, migrate};
 
 const EMPLOYEE_JSON: &str = r#"{
   "$id": "https://example.com/hr/json/EmployeeType.json",

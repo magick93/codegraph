@@ -9,9 +9,9 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::traits::EntityGenerator;
 use codegraph::generate::ui::e2e_test::UiE2eTestGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
@@ -193,10 +193,10 @@ role = "root"
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = codegraph::generate::template_engine::create_tera(&template_dir).unwrap();
     let output = tempfile::TempDir::new().unwrap();
-    let gen = UiE2eTestGenerator::new(output.path());
+    let generator = UiE2eTestGenerator::new(output.path());
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "WorkerType",
             "hr",
@@ -335,10 +335,10 @@ role = "root"
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = codegraph::generate::template_engine::create_tera(&template_dir).unwrap();
     let output = tempfile::TempDir::new().unwrap();
-    let gen = UiE2eTestGenerator::new(output.path());
+    let generator = UiE2eTestGenerator::new(output.path());
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(&engine, "RefundType", "hr", &config, &tera, &project))
+        .block_on(generator.generate(&engine, "RefundType", "hr", &config, &tera, &project))
         .expect("UiE2eTestGenerator failed");
 
     let content = files

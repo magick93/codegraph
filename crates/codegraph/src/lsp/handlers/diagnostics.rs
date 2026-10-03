@@ -14,10 +14,10 @@ use crate::lsp::state::GrafeoState;
 
 use super::completion::extract_identifier_from_value;
 use super::tree_utils::{
-    collect_array_field_refs, collect_errors, extract_data_refs, extract_import_paths,
+    IFML_LANG, collect_array_field_refs, collect_errors, extract_data_refs, extract_import_paths,
     extract_module_names, extract_module_uses, extract_navigate_bindings, extract_view_names,
     extract_view_policy_refs, extract_views_with_params, find_line_with_text,
-    has_error_outside_imports, with_grafe, IFML_LANG,
+    has_error_outside_imports, with_grafe,
 };
 const VALID_COMPONENT_TYPES: &[&str] = &["list", "form", "details", "search", "tree", "chart"];
 
@@ -66,32 +66,29 @@ pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
     // Validate fields: [...] entries against the bound entity's schema.
     // Only runs when schemas are configured.
     with_grafe(|grafe| {
-        if let Some(grafe) = grafe {
-            if !grafe.schema_infos.is_empty() {
-                validate_fields_against_schema(source, &root, grafe, &mut diagnostics);
-            }
+        if let Some(grafe) = grafe
+            && !grafe.schema_infos.is_empty()
+        {
+            validate_fields_against_schema(source, &root, grafe, &mut diagnostics);
         }
     });
 
     let data_refs = extract_data_refs(source_bytes, &root);
     with_grafe(|grafe| {
-        if let Some(grafe) = grafe {
-            if !grafe.entity_names.is_empty() {
-                for ref_name in &data_refs {
-                    if !grafe.entity_names.contains(ref_name) {
-                        if let Some(line) = find_line_with_text(source, ref_name) {
-                            diagnostics.push(Diagnostic {
-                                range: Range::new(Position::new(line, 0), Position::new(line, 50)),
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                message: format!(
-                                    "Entity '{}' not found in loaded schemas",
-                                    ref_name
-                                ),
-                                source: Some("codegraph".to_string()),
-                                ..Default::default()
-                            });
-                        }
-                    }
+        if let Some(grafe) = grafe
+            && !grafe.entity_names.is_empty()
+        {
+            for ref_name in &data_refs {
+                if !grafe.entity_names.contains(ref_name)
+                    && let Some(line) = find_line_with_text(source, ref_name)
+                {
+                    diagnostics.push(Diagnostic {
+                        range: Range::new(Position::new(line, 0), Position::new(line, 50)),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: format!("Entity '{}' not found in loaded schemas", ref_name),
+                        source: Some("codegraph".to_string()),
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -103,19 +100,19 @@ pub fn compute_diagnostics(db: &BaseDb, uri: &Url) -> Vec<Diagnostic> {
     for (target, keys) in &navigate_bindings {
         if let Some(expected_params) = views_with_params.get(target.as_str()) {
             for key in keys {
-                if !expected_params.contains(key) {
-                    if let Some(line) = find_line_with_text(source, key) {
-                        diagnostics.push(Diagnostic {
-                            range: Range::new(Position::new(line, 0), Position::new(line, 50)),
-                            severity: Some(DiagnosticSeverity::WARNING),
-                            message: format!(
-                                "'{}' is not a declared parameter of view '{}'. Expected: {:?}",
-                                key, target, expected_params
-                            ),
-                            source: Some("codegraph".to_string()),
-                            ..Default::default()
-                        });
-                    }
+                if !expected_params.contains(key)
+                    && let Some(line) = find_line_with_text(source, key)
+                {
+                    diagnostics.push(Diagnostic {
+                        range: Range::new(Position::new(line, 0), Position::new(line, 50)),
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        message: format!(
+                            "'{}' is not a declared parameter of view '{}'. Expected: {:?}",
+                            key, target, expected_params
+                        ),
+                        source: Some("codegraph".to_string()),
+                        ..Default::default()
+                    });
                 }
             }
         }
@@ -291,20 +288,21 @@ fn validate_component_types(
                 ));
             }
         }
-        if let (Some(k), Some(v), Some(range)) = (key, val_text, val_range) {
-            if k == "type" && !VALID_COMPONENT_TYPES.contains(&v.as_str()) {
-                diagnostics.push(Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    message: format!(
-                        "Unknown component type '{}'. Expected one of: {}",
-                        v,
-                        VALID_COMPONENT_TYPES.join(", ")
-                    ),
-                    source: Some("codegraph".to_string()),
-                    ..Default::default()
-                });
-            }
+        if let (Some(k), Some(v), Some(range)) = (key, val_text, val_range)
+            && k == "type"
+            && !VALID_COMPONENT_TYPES.contains(&v.as_str())
+        {
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: format!(
+                    "Unknown component type '{}'. Expected one of: {}",
+                    v,
+                    VALID_COMPONENT_TYPES.join(", ")
+                ),
+                source: Some("codegraph".to_string()),
+                ..Default::default()
+            });
         }
     }
 }
@@ -376,30 +374,30 @@ fn check_fields_duplicates(
                         if arr.goto_first_child() {
                             loop {
                                 let elem = arr.node();
-                                if elem.kind() == "value_expression" {
-                                    if let Ok(text) = elem.utf8_text(source) {
-                                        let trimmed = text.trim();
-                                        if seen.contains_key(trimmed) {
-                                            let r = elem.range();
-                                            diagnostics.push(Diagnostic {
-                                                range: Range::new(
-                                                    Position::new(
-                                                        r.start_point.row as u32,
-                                                        r.start_point.column as u32,
-                                                    ),
-                                                    Position::new(
-                                                        r.end_point.row as u32,
-                                                        r.end_point.column as u32,
-                                                    ),
+                                if elem.kind() == "value_expression"
+                                    && let Ok(text) = elem.utf8_text(source)
+                                {
+                                    let trimmed = text.trim();
+                                    if seen.contains_key(trimmed) {
+                                        let r = elem.range();
+                                        diagnostics.push(Diagnostic {
+                                            range: Range::new(
+                                                Position::new(
+                                                    r.start_point.row as u32,
+                                                    r.start_point.column as u32,
                                                 ),
-                                                severity: Some(DiagnosticSeverity::WARNING),
-                                                message: format!("Duplicate field '{}'", trimmed),
-                                                source: Some("codegraph".to_string()),
-                                                ..Default::default()
-                                            });
-                                        } else {
-                                            seen.insert(trimmed, ());
-                                        }
+                                                Position::new(
+                                                    r.end_point.row as u32,
+                                                    r.end_point.column as u32,
+                                                ),
+                                            ),
+                                            severity: Some(DiagnosticSeverity::WARNING),
+                                            message: format!("Duplicate field '{}'", trimmed),
+                                            source: Some("codegraph".to_string()),
+                                            ..Default::default()
+                                        });
+                                    } else {
+                                        seen.insert(trimmed, ());
                                     }
                                 }
                                 if !arr.goto_next_sibling() {

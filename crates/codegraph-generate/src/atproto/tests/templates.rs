@@ -21,9 +21,36 @@ use tera::Tera;
 // Object/record templates expect data under the `"record"` key (not `"object"`).
 
 fn load_tera() -> Tera {
+    // tera 2 removed the `Tera::new(glob)` constructor; load the same way the
+    // template engine does. Templates are bulk-added: tera 2 validates
+    // include targets at add time, so forward references between templates
+    // only resolve if the whole batch is inserted first.
     let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let glob = base.join("**/*.tera").to_string_lossy().to_string();
-    Tera::new(&glob).expect("Tera should load all templates")
+    let mut templates: Vec<(String, String)> = Vec::new();
+    for entry in walkdir::WalkDir::new(&base)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("tera") {
+            continue;
+        }
+        let name = path
+            .strip_prefix(&base)
+            .expect("walkdir path must be under templates dir")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let content = std::fs::read_to_string(path).expect("read template");
+        templates.push((name, content));
+    }
+    templates.sort();
+    let mut tera = Tera::default();
+    // tera 2 validates filter references when templates are added, so the
+    // custom codegraph filters must be registered before the batch.
+    crate::template_engine::register_filters(&mut tera);
+    tera.add_raw_templates(templates)
+        .expect("Tera should load all templates");
+    tera
 }
 
 #[test]

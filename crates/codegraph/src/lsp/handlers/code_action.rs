@@ -25,54 +25,54 @@ pub fn handle_code_action(
     let mut actions: Vec<CodeActionOrCommand> = Vec::new();
 
     for diag in &relevant {
-        if diag.message.contains("not found in loaded schemas") {
-            if let Some(name) = extract_name_from_msg(&diag.message) {
-                actions.push(
-                    CodeAction {
-                        title: format!("Create schema file for '{}'", name),
-                        kind: Some(CodeActionKind::QUICKFIX),
-                        is_preferred: None,
-                        diagnostics: Some(vec![(*diag).clone()]),
-                        edit: Some(create_schema_edit(&name)),
-                        command: None,
-                        disabled: None,
-                        data: None,
-                    }
-                    .into(),
-                );
+        if diag.message.contains("not found in loaded schemas")
+            && let Some(name) = extract_name_from_msg(&diag.message)
+        {
+            actions.push(
+                CodeAction {
+                    title: format!("Create schema file for '{}'", name),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    is_preferred: None,
+                    diagnostics: Some(vec![(*diag).clone()]),
+                    edit: Some(create_schema_edit(&name)),
+                    command: None,
+                    disabled: None,
+                    data: None,
+                }
+                .into(),
+            );
 
-                actions.push(
-                    CodeAction {
-                        title: format!("Import '{}' from known domain", name),
-                        kind: Some(CodeActionKind::QUICKFIX),
-                        is_preferred: None,
-                        diagnostics: Some(vec![(*diag).clone()]),
-                        edit: None,
-                        command: None,
-                        disabled: None,
-                        data: None,
-                    }
-                    .into(),
-                );
-            }
+            actions.push(
+                CodeAction {
+                    title: format!("Import '{}' from known domain", name),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    is_preferred: None,
+                    diagnostics: Some(vec![(*diag).clone()]),
+                    edit: None,
+                    command: None,
+                    disabled: None,
+                    data: None,
+                }
+                .into(),
+            );
         }
 
-        if diag.message.contains("not found on entity") {
-            if let Some((field, entity)) = extract_field_entity_from_msg(&diag.message) {
-                actions.push(
-                    CodeAction {
-                        title: format!("Add field '{}' to '{}' schema", field, entity),
-                        kind: Some(CodeActionKind::QUICKFIX),
-                        is_preferred: None,
-                        diagnostics: Some(vec![(*diag).clone()]),
-                        edit: Some(create_field_edit(&entity, &field)),
-                        command: None,
-                        disabled: None,
-                        data: None,
-                    }
-                    .into(),
-                );
-            }
+        if diag.message.contains("not found on entity")
+            && let Some((field, entity)) = extract_field_entity_from_msg(&diag.message)
+        {
+            actions.push(
+                CodeAction {
+                    title: format!("Add field '{}' to '{}' schema", field, entity),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    is_preferred: None,
+                    diagnostics: Some(vec![(*diag).clone()]),
+                    edit: Some(create_field_edit(&entity, &field)),
+                    command: None,
+                    disabled: None,
+                    data: None,
+                }
+                .into(),
+            );
         }
     }
 

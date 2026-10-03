@@ -219,12 +219,12 @@ async fn ingest_from_loader(
     let mut namespace_sources: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     for uri in &uris {
-        if let Some(entry) = loader.get(uri) {
-            if let Some(ns) = namespace_from_schema(&entry.schema) {
-                namespace_sources
-                    .entry(ns)
-                    .or_insert_with(|| JSON_NAMESPACE_SOURCE.to_string());
-            }
+        if let Some(entry) = loader.get(uri)
+            && let Some(ns) = namespace_from_schema(&entry.schema)
+        {
+            namespace_sources
+                .entry(ns)
+                .or_insert_with(|| JSON_NAMESPACE_SOURCE.to_string());
         }
     }
     if !namespace_sources.is_empty() {
@@ -521,26 +521,26 @@ async fn ingest_properties(
                 })
         });
 
-        if let Some(ref items_ref_str) = items_ref {
-            if let Ok((_resolved_uri, resolved_entry)) = loader.resolve_ref(items_ref_str, uri) {
-                let item_schema = &resolved_entry.schema;
-                // Ingest item type's properties under the array schema's title
-                return ingest_properties_from_schema(
-                    db,
-                    loader,
-                    uri,
-                    item_schema,
-                    schema_title,
-                    classifier,
-                    is_entity,
-                    ui_overrides,
-                    suffix,
-                    result,
-                    stem_to_schema_ids,
-                    title_to_schema_id,
-                )
-                .await;
-            }
+        if let Some(ref items_ref_str) = items_ref
+            && let Ok((_resolved_uri, resolved_entry)) = loader.resolve_ref(items_ref_str, uri)
+        {
+            let item_schema = &resolved_entry.schema;
+            // Ingest item type's properties under the array schema's title
+            return ingest_properties_from_schema(
+                db,
+                loader,
+                uri,
+                item_schema,
+                schema_title,
+                classifier,
+                is_entity,
+                ui_overrides,
+                suffix,
+                result,
+                stem_to_schema_ids,
+                title_to_schema_id,
+            )
+            .await;
         }
         // Array schema with no resolvable items ref — nothing to ingest
         return Ok(());
@@ -661,29 +661,26 @@ async fn ingest_properties_from_schema(
 
             // If the property has inline enum values, create a synthetic codelist
             // so the existing codelist pipeline generates a Rust enum + CHECK constraint.
-            if !clf.inline_enum_values.is_empty() {
-                if let Some(ref synthetic_name) = clf.ref_target {
-                    let codelist = CodeList {
-                        name: synthetic_name.clone(),
-                        description: Some(format!(
-                            "Inline enum values for {}.{}",
-                            schema_title, name
-                        )),
-                        pg_table_name: to_snake_case(synthetic_name),
-                        render_as: "enum".to_string(),
-                        check_expression: None,
+            if !clf.inline_enum_values.is_empty()
+                && let Some(ref synthetic_name) = clf.ref_target
+            {
+                let codelist = CodeList {
+                    name: synthetic_name.clone(),
+                    description: Some(format!("Inline enum values for {}.{}", schema_title, name)),
+                    pg_table_name: to_snake_case(synthetic_name),
+                    render_as: "enum".to_string(),
+                    check_expression: None,
+                };
+                db.ingest_codelist(&codelist).await.map_err(Error::Graph)?;
+                for (i, val) in clf.inline_enum_values.iter().enumerate() {
+                    let ev = EnumValue {
+                        value: val.clone(),
+                        display_name: None,
+                        sort_order: i as i32,
                     };
-                    db.ingest_codelist(&codelist).await.map_err(Error::Graph)?;
-                    for (i, val) in clf.inline_enum_values.iter().enumerate() {
-                        let ev = EnumValue {
-                            value: val.clone(),
-                            display_name: None,
-                            sort_order: i as i32,
-                        };
-                        db.ingest_enum_value(synthetic_name, &ev)
-                            .await
-                            .map_err(Error::Graph)?;
-                    }
+                    db.ingest_enum_value(synthetic_name, &ev)
+                        .await
+                        .map_err(Error::Graph)?;
                 }
             }
 
@@ -828,51 +825,49 @@ async fn ingest_properties_from_schema(
             }
 
             // Ingest composite columns and create ExpandsTo edges for CompositeWrapper/MediaWrapper
-            if is_composite_wrapper {
-                if let Some(ref ref_path) = prop.ref_target {
-                    let ref_stem = extract_ref_stem(ref_path);
-                    // Collect column definitions from composite_wrappers or media_wrappers
-                    let columns: Option<&[codegraph_classifier::config::CompositeWrapperColumn]> =
-                        classifier
-                            .composite_wrappers
-                            .iter()
-                            .find(|cw| cw.schema == ref_stem)
-                            .map(|cw| cw.columns.as_slice())
-                            .or_else(|| {
-                                classifier
-                                    .media_wrappers
-                                    .get(ref_stem)
-                                    .map(|mw| mw.columns.as_slice())
-                            });
-                    if let Some(col_defs) = columns {
-                        for col_def in col_defs {
-                            let comp_col = CompositeColumn {
-                                suffix: col_def.suffix.clone(),
-                                pg_type: col_def.postgres.clone(),
-                                rust_type: col_def.rust.clone(),
-                                sea_orm_type: col_def.sea_orm.clone(),
-                                fk_target: if col_def.fk_table.is_empty() {
-                                    None
-                                } else {
-                                    Some(col_def.fk_table.clone())
-                                },
-                                dto_rust_type: col_def.dto_rust_type.clone(),
-                                wrapper_schema: ref_stem.to_string(),
-                            };
-                            db.ingest_composite_column(&comp_col)
-                                .await
-                                .map_err(Error::Graph)?;
-
-                            db.ingest_edge(
-                                &format!("{}::{}", name, schema_title),
-                                &format!("{}::{}", col_def.suffix, ref_stem),
-                                EdgeType::ExpandsTo,
-                                None,
-                            )
+            if is_composite_wrapper && let Some(ref ref_path) = prop.ref_target {
+                let ref_stem = extract_ref_stem(ref_path);
+                // Collect column definitions from composite_wrappers or media_wrappers
+                let columns: Option<&[codegraph_classifier::config::CompositeWrapperColumn]> =
+                    classifier
+                        .composite_wrappers
+                        .iter()
+                        .find(|cw| cw.schema == ref_stem)
+                        .map(|cw| cw.columns.as_slice())
+                        .or_else(|| {
+                            classifier
+                                .media_wrappers
+                                .get(ref_stem)
+                                .map(|mw| mw.columns.as_slice())
+                        });
+                if let Some(col_defs) = columns {
+                    for col_def in col_defs {
+                        let comp_col = CompositeColumn {
+                            suffix: col_def.suffix.clone(),
+                            pg_type: col_def.postgres.clone(),
+                            rust_type: col_def.rust.clone(),
+                            sea_orm_type: col_def.sea_orm.clone(),
+                            fk_target: if col_def.fk_table.is_empty() {
+                                None
+                            } else {
+                                Some(col_def.fk_table.clone())
+                            },
+                            dto_rust_type: col_def.dto_rust_type.clone(),
+                            wrapper_schema: ref_stem.to_string(),
+                        };
+                        db.ingest_composite_column(&comp_col)
                             .await
                             .map_err(Error::Graph)?;
-                            result.edges_created += 1;
-                        }
+
+                        db.ingest_edge(
+                            &format!("{}::{}", name, schema_title),
+                            &format!("{}::{}", col_def.suffix, ref_stem),
+                            EdgeType::ExpandsTo,
+                            None,
+                        )
+                        .await
+                        .map_err(Error::Graph)?;
+                        result.edges_created += 1;
                     }
                 }
             }
@@ -904,22 +899,22 @@ async fn ingest_allof_edges(
         .unwrap_or(&entry.stem);
 
     for item in &all_of {
-        if let Some(ref_path) = item.get("$ref").and_then(|v| v.as_str()) {
-            if let Ok((_resolved, target_entry)) = loader.resolve_ref(ref_path, uri) {
-                let to_title = target_entry
-                    .schema
-                    .get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&target_entry.stem);
-                let props = EdgeProperties {
-                    composition_type: Some("allOf".to_string()),
-                    ..Default::default()
-                };
-                db.ingest_edge(from_title, to_title, EdgeType::ExtendsSchema, Some(&props))
-                    .await
-                    .map_err(Error::Graph)?;
-                result.edges_created += 1;
-            }
+        if let Some(ref_path) = item.get("$ref").and_then(|v| v.as_str())
+            && let Ok((_resolved, target_entry)) = loader.resolve_ref(ref_path, uri)
+        {
+            let to_title = target_entry
+                .schema
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&target_entry.stem);
+            let props = EdgeProperties {
+                composition_type: Some("allOf".to_string()),
+                ..Default::default()
+            };
+            db.ingest_edge(from_title, to_title, EdgeType::ExtendsSchema, Some(&props))
+                .await
+                .map_err(Error::Graph)?;
+            result.edges_created += 1;
         }
     }
 
@@ -1509,14 +1504,13 @@ fn collect_all_refs(
     if let Some(all_of) = schema.get("allOf").and_then(|v| v.as_array()) {
         for item in all_of {
             if let Some(ref_path) = item.get("$ref").and_then(|v| v.as_str()) {
-                if let Ok((_resolved_uri, ref_entry)) = loader.resolve_ref(ref_path, base_uri) {
-                    if let Some(props) = ref_entry
+                if let Ok((_resolved_uri, ref_entry)) = loader.resolve_ref(ref_path, base_uri)
+                    && let Some(props) = ref_entry
                         .schema
                         .get("properties")
                         .and_then(|v| v.as_object())
-                    {
-                        prop_blocks.push(props.clone());
-                    }
+                {
+                    prop_blocks.push(props.clone());
                 }
             } else if let Some(props) = item.get("properties").and_then(|v| v.as_object()) {
                 prop_blocks.push(props.clone());
@@ -1530,10 +1524,10 @@ fn collect_all_refs(
                 refs.push(ref_path.to_string());
             }
             // Also check items.$ref for array properties
-            if let Some(items) = prop_schema.get("items") {
-                if let Some(ref_path) = items.get("$ref").and_then(|v| v.as_str()) {
-                    refs.push(ref_path.to_string());
-                }
+            if let Some(items) = prop_schema.get("items")
+                && let Some(ref_path) = items.get("$ref").and_then(|v| v.as_str())
+            {
+                refs.push(ref_path.to_string());
             }
         }
     }

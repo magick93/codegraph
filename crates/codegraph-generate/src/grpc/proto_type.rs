@@ -33,10 +33,10 @@ pub fn proto_type_from_field(
     db: &dyn GraphQuerier,
     entity_name: &str,
 ) -> ProtoFieldType {
-    if let Some(expr) = prop.effective_type_expr() {
-        if let Ok(field) = proto_type_from_expr(&expr, prop, entity_name) {
-            return field;
-        }
+    if let Some(expr) = prop.effective_type_expr()
+        && let Ok(field) = proto_type_from_expr(&expr, prop, entity_name)
+    {
+        return field;
     }
     proto_type_from_field_from_strings(prop, db, entity_name)
 }

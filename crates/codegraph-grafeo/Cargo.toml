@@ -1,7 +1,7 @@
 [package]
 name = "codegraph-grafeo"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Grafeo graph database adapter for codegraph-core traits"
 
 [dependencies]
@@ -9,11 +9,11 @@ codegraph-core = { path = "../codegraph-core" }
 thiserror = "2"
 codegraph-naming = { path = "../codegraph-naming" }
 codegraph-type-contracts = { path = "../codegraph-type-contracts" }
-grafeo = "=0.5.42"
-grafeo-engine = "=0.5.42"
-grafeo-core = "=0.5.42"
-grafeo-common = "=0.5.42"
-grafeo-adapters = "=0.5.42"
+grafeo = "=0.5.43"
+grafeo-engine = "=0.5.43"
+grafeo-core = "=0.5.43"
+grafeo-common = "=0.5.43"
+grafeo-adapters = "=0.5.43"
 async-trait = "0.1"
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 uuid.workspace = true

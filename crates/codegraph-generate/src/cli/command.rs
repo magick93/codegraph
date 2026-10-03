@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::Result;
 use crate::filter_fields::{
-    resolve_filter_fields, resolve_nested_filter_fields, FilterFieldInfo, NestedFilterFieldInfo,
+    FilterFieldInfo, NestedFilterFieldInfo, resolve_filter_fields, resolve_nested_filter_fields,
 };
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
@@ -39,6 +39,8 @@ pub struct CliFieldInfo {
     pub name: String,
     pub rust_type: String,
     pub is_required: bool,
+    /// Skipped when None: tera 2's `default` filter only fires on undefined.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 

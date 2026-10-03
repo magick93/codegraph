@@ -967,21 +967,21 @@ fn constraint_values(schema: &serde_json::Value) -> ExtractedConstraints {
             )),
         }
     }
-    if let (Some(min), Some(max)) = (out.min_length, out.max_length) {
-        if min > max {
-            out.dropped_notes
-                .push("minLength exceeds maxLength; both were dropped".to_string());
-            out.min_length = None;
-            out.max_length = None;
-        }
+    if let (Some(min), Some(max)) = (out.min_length, out.max_length)
+        && min > max
+    {
+        out.dropped_notes
+            .push("minLength exceeds maxLength; both were dropped".to_string());
+        out.min_length = None;
+        out.max_length = None;
     }
-    if let (Some(min), Some(max)) = (out.minimum, out.maximum) {
-        if min > max {
-            out.dropped_notes
-                .push("minimum exceeds maximum; both were dropped".to_string());
-            out.minimum = None;
-            out.maximum = None;
-        }
+    if let (Some(min), Some(max)) = (out.minimum, out.maximum)
+        && min > max
+    {
+        out.dropped_notes
+            .push("minimum exceeds maximum; both were dropped".to_string());
+        out.minimum = None;
+        out.maximum = None;
     }
     out
 }
@@ -1124,7 +1124,9 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["Uuid", "DateTime", "Date", "Email", "Uri", "Json", "Decimal"]
+            vec![
+                "Uuid", "DateTime", "Date", "Email", "Uri", "Json", "Decimal"
+            ]
         );
     }
 

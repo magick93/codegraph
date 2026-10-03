@@ -1,7 +1,7 @@
 //! Colored console output helpers (info/ok/warn/fail/section).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Global verbose flag — with `--verbose`, quiet stages (dependency
 /// compilation, browser downloads) also stream their child output inline.

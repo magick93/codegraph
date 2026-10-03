@@ -9,8 +9,8 @@ use codegraph_core::types::{
 use super::query::{query_gql_params, query_many_params, query_one_params};
 use super::{PROPERTY_RETURN_COLS, SCHEMA_RETURN_COLS};
 use crate::conversions::{
-    row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_extension,
-    row_to_property_node, row_to_schema_node, row_to_structured_sub_field, RowReader,
+    RowReader, row_to_codelist, row_to_composite_column, row_to_composite_range, row_to_extension,
+    row_to_property_node, row_to_schema_node, row_to_structured_sub_field,
 };
 use crate::engine::GrafeoEngine;
 
@@ -838,16 +838,14 @@ impl GrafeoEngine {
                 continue;
             }
 
-            if let Some(ref_target) = &prop.ref_target {
-                if let Some(target_schema) = loadout.schema(self, ref_target).await? {
-                    if !target_schema.is_entity
-                        && !target_schema.is_codelist
-                        && target_schema.schema_type == "object"
-                    {
-                        jsonb_columns.push(col);
-                        continue;
-                    }
-                }
+            if let Some(ref_target) = &prop.ref_target
+                && let Some(target_schema) = loadout.schema(self, ref_target).await?
+                && !target_schema.is_entity
+                && !target_schema.is_codelist
+                && target_schema.schema_type == "object"
+            {
+                jsonb_columns.push(col);
+                continue;
             }
             columns.push(col);
         }
@@ -1078,68 +1076,64 @@ impl GrafeoEngine {
             None => false,
         };
 
-        if !has_back_ref {
-            if let Some(target_schema) = target_title {
-                let child_table = codegraph_naming::truncate_pg_identifier(&format!(
-                    "{}_{}",
-                    schema.pg_table_name, prop.pg_column_name
-                ));
-                let child_fk_col = codegraph_naming::truncate_pg_identifier(&format!(
-                    "{}_id",
-                    schema.pg_table_name
-                ));
-                let child_id_col = codegraph_naming::truncate_pg_identifier(&format!(
-                    "{}_id",
+        if !has_back_ref && let Some(target_schema) = target_title {
+            let child_table = codegraph_naming::truncate_pg_identifier(&format!(
+                "{}_{}",
+                schema.pg_table_name, prop.pg_column_name
+            ));
+            let child_fk_col =
+                codegraph_naming::truncate_pg_identifier(&format!("{}_id", schema.pg_table_name));
+            let child_id_col = codegraph_naming::truncate_pg_identifier(&format!(
+                "{}_id",
+                target_schema.pg_table_name
+            ));
+
+            let child_col = ColumnInfo {
+                name: child_id_col.clone(),
+                description: Some(format!(
+                    "FK to {}.{}",
+                    target_schema
+                        .domain
+                        .clone()
+                        .unwrap_or_else(|| default_schema.to_string()),
                     target_schema.pg_table_name
-                ));
+                )),
+                rust_type: "uuid::Uuid".to_string(),
+                postgres_type: "UUID".to_string(),
+                is_optional: false,
+                is_codelist_fk: false,
+                composite_columns: vec![],
+                is_array: false,
+                classification: Some(
+                    codegraph_type_contracts::RefClassificationKind::EntityReference,
+                ),
+                fk_target: Some(FkTarget {
+                    schema: target_schema
+                        .domain
+                        .clone()
+                        .unwrap_or_else(|| default_schema.to_string()),
+                    table: target_schema.pg_table_name.clone(),
+                    column: "id".to_string(),
+                    on_delete: "CASCADE".to_string(),
+                }),
+                check_values: vec![],
+            };
 
-                let child_col = ColumnInfo {
-                    name: child_id_col.clone(),
-                    description: Some(format!(
-                        "FK to {}.{}",
-                        target_schema
-                            .domain
-                            .clone()
-                            .unwrap_or_else(|| default_schema.to_string()),
-                        target_schema.pg_table_name
-                    )),
-                    rust_type: "uuid::Uuid".to_string(),
-                    postgres_type: "UUID".to_string(),
-                    is_optional: false,
-                    is_codelist_fk: false,
-                    composite_columns: vec![],
-                    is_array: false,
-                    classification: Some(
-                        codegraph_type_contracts::RefClassificationKind::EntityReference,
-                    ),
-                    fk_target: Some(FkTarget {
-                        schema: target_schema
-                            .domain
-                            .clone()
-                            .unwrap_or_else(|| default_schema.to_string()),
-                        table: target_schema.pg_table_name.clone(),
-                        column: "id".to_string(),
-                        on_delete: "CASCADE".to_string(),
-                    }),
-                    check_values: vec![],
-                };
-
-                children.push(CompositionNode {
-                    field_name: prop.pg_column_name.clone(),
-                    schema_title: target_schema.title.clone(),
-                    table_schema: default_schema.to_string(),
-                    table_name: child_table,
-                    fk: Some(FkDirection::OnChild {
-                        column: child_fk_col,
-                    }),
-                    is_collection: true,
-                    columns: vec![child_col],
-                    jsonb_columns: vec![],
-                    children: vec![],
-                    composite_range: None,
-                    consumed_fields: vec![],
-                });
-            }
+            children.push(CompositionNode {
+                field_name: prop.pg_column_name.clone(),
+                schema_title: target_schema.title.clone(),
+                table_schema: default_schema.to_string(),
+                table_name: child_table,
+                fk: Some(FkDirection::OnChild {
+                    column: child_fk_col,
+                }),
+                is_collection: true,
+                columns: vec![child_col],
+                jsonb_columns: vec![],
+                children: vec![],
+                composite_range: None,
+                consumed_fields: vec![],
+            });
         }
         Ok(())
     }
@@ -1250,25 +1244,23 @@ impl GrafeoEngine {
 
         // Verify the target exists as an entity in the graph before emitting FK.
         // Try to find the target by table name in the resolved schema domain.
-        if let Some(target_check) = loadout.schema_in_domain(self, &table, &schema_name).await {
-            if !target_check.is_entity {
-                return None;
-            }
+        if let Some(target_check) = loadout.schema_in_domain(self, &table, &schema_name).await
+            && !target_check.is_entity
+        {
+            return None;
         }
         // If the schema doesn't exist in the resolved domain, try the default domain
         // as a fallback (cross-domain allOf references).
-        if schema_name != default_schema {
-            if let Some(target_check) = loadout.schema_in_domain(self, &table, default_schema).await
-            {
-                if target_check.is_entity {
-                    return Some(FkTarget {
-                        schema: default_schema.to_string(),
-                        table,
-                        column: target_column.to_string(),
-                        on_delete: on_delete.to_string(),
-                    });
-                }
-            }
+        if schema_name != default_schema
+            && let Some(target_check) = loadout.schema_in_domain(self, &table, default_schema).await
+            && target_check.is_entity
+        {
+            return Some(FkTarget {
+                schema: default_schema.to_string(),
+                table,
+                column: target_column.to_string(),
+                on_delete: on_delete.to_string(),
+            });
         }
 
         Some(FkTarget {

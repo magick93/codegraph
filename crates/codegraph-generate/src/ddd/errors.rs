@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 use codegraph_naming;
 

@@ -1,5 +1,5 @@
 use crate::api::include_path::ResolvedIncludePath;
-use crate::code_writer::{wln, CodeWriter};
+use crate::code_writer::{CodeWriter, wln};
 
 use super::child::{emit_child_reads, include_hydration_children};
 use super::dto::{emit_child_field_population, emit_entity_to_dto_field};
@@ -16,7 +16,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"find_tree\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn find_tree(");
         wln!(code, "        &self,");
@@ -121,7 +122,10 @@ impl RepositoryImplEmitter {
         }
         wln!(code, "                ..Default::default()");
         if has_tree_include {
-            wln!(code, "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;");
+            wln!(
+                code,
+                "            }}).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Serialization error: {{e}}\").into() }})?;"
+            );
             // Emit worker merge block
             for inc in &tree.tree_include {
                 wln!(
@@ -200,11 +204,17 @@ impl RepositoryImplEmitter {
             );
             wln!(
                 code,
-                "        let worker_rows = db.query_all(worker_stmt).await?;"
+                "        let worker_rows = db.query_all_raw(worker_stmt).await?;"
             );
             wln!(code, "        for wr in &worker_rows {{");
-            wln!(code, "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing position_id: {{e}}\").into() }})?;");
-            wln!(code, "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;");
+            wln!(
+                code,
+                "            let pos_id: Uuid = wr.try_get_by_index(0).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing position_id: {{e}}\").into() }})?;"
+            );
+            wln!(
+                code,
+                "            let worker_json: serde_json::Value = wr.try_get_by_index(1).map_err(|e| -> Box<dyn std::error::Error> {{ format!(\"Missing deployed_worker: {{e}}\").into() }})?;"
+            );
             wln!(code, "            worker_map.insert(pos_id, worker_json);");
             wln!(code, "        }}");
             wln!(code);

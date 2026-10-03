@@ -5,6 +5,7 @@
 //! IS EMPTY, IS NOT EMPTY, AND, OR, IN, dot-notation field access.
 
 use nom::{
+    IResult,
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::{char, multispace0, multispace1},
@@ -12,7 +13,6 @@ use nom::{
     multi::separated_list1,
     number::complete::double,
     sequence::{delimited, preceded, tuple},
-    IResult,
 };
 use serde_json::Value;
 

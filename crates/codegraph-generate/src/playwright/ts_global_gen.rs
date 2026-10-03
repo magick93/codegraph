@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
-use super::{e2e_tests_root, TsDomainSummary, TsEntitySummary, TsGlobalContext};
+use super::{TsDomainSummary, TsEntitySummary, TsGlobalContext, e2e_tests_root};
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 
 pub struct TsGlobalGenerator {
     output_dir: PathBuf,

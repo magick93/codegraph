@@ -35,11 +35,11 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{FunctionNode, FunctionOperation};
 use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
-use crate::code_writer::{wln, CodeWriter};
-use crate::error::Result;
-use crate::rosetta_expr::{transpile_scoped, ExprContext};
-use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
+use crate::code_writer::{CodeWriter, wln};
+use crate::error::Result;
+use crate::rosetta_expr::{ExprContext, transpile_scoped};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 /// Rust primitive for a rosetta builtin type title. `None` for

@@ -6,14 +6,14 @@ use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMappings};
 use codegraph_core::traits::GraphQuerier;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 
 use self::context::build_page_context;
 use self::load::build_load_context;
-use self::ux::{resolve_generation_ux, UxGeneration};
+use self::ux::{UxGeneration, resolve_generation_ux};
 use self::workflow::js_quote;
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 
@@ -206,13 +206,13 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
         if let Some(ctx) = self.layout_context(&model) {
             let layout_template = format!("ifml/{}/layout.tera", self.framework);
-            if let Ok(content) = render_template(tera, &layout_template, &ctx) {
-                if let Some(rel) = self.route_layout() {
-                    files.push(GeneratedFile {
-                        path: self.output_dir.join(rel),
-                        content,
-                    });
-                }
+            if let Ok(content) = render_template(tera, &layout_template, &ctx)
+                && let Some(rel) = self.route_layout()
+            {
+                files.push(GeneratedFile {
+                    path: self.output_dir.join(rel),
+                    content,
+                });
             }
         }
 

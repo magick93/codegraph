@@ -1,5 +1,5 @@
 use crate::api::include_path::ResolvedIncludePath;
-use crate::code_writer::{w, wln, CodeWriter};
+use crate::code_writer::{CodeWriter, w, wln};
 
 use super::dto::emit_child_field_population;
 use super::helpers::{
@@ -30,7 +30,7 @@ pub(crate) fn emit_child_col_write_value(code: &mut CodeWriter, col: &ChildColum
             };
             w!(
                 code,
-                ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
+                ", item.{field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some({map_fn}))).collect())))).unwrap_or({null})",
                 field = col.field_name,
                 null = null_value_for_type("Vec<String>"),
             );
@@ -45,7 +45,7 @@ pub(crate) fn emit_child_col_write_value(code: &mut CodeWriter, col: &ChildColum
         } else if has_enum {
             w!(
                 code,
-                ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
+                ", item.{field}.as_ref().map(|v| sea_orm::Value::String(Some(v.to_string()))).unwrap_or({null})",
                 field = col.field_name,
                 null = null_value_for_type(&col.rust_type),
             );
@@ -68,7 +68,7 @@ pub(crate) fn emit_child_col_write_value(code: &mut CodeWriter, col: &ChildColum
         };
         w!(
             code,
-            ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
+            ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(item.{field}.clone().into_iter().map(|s| sea_orm::Value::String(Some({map_fn}))).collect())))",
             field = col.field_name,
         );
     } else if is_vec_type(&col.rust_type) {
@@ -81,7 +81,7 @@ pub(crate) fn emit_child_col_write_value(code: &mut CodeWriter, col: &ChildColum
     } else if has_enum {
         w!(
             code,
-            ", sea_orm::Value::String(Some(Box::new(item.{field}.to_string())))",
+            ", sea_orm::Value::String(Some(item.{field}.to_string()))",
             field = col.field_name,
         );
     } else {
@@ -156,7 +156,7 @@ fn emit_child_insert_body(
     }
     wln!(code, "],");
     wln!(code, "{pad}    );");
-    wln!(code, "{pad}    tx.execute(stmt).await?;");
+    wln!(code, "{pad}    tx.execute_raw(stmt).await?;");
     emit_child_inserts(code, &child.child_tables, row_id_var, "item", indent + 1);
     wln!(code, "{pad}}}");
 }
@@ -319,7 +319,7 @@ pub(crate) fn emit_child_reads(
         wln!(code, "{pad}        \"{}\",", select_sql);
         wln!(code, "{pad}        vec![{parent_id_expr}.into()],");
         wln!(code, "{pad}    );");
-        wln!(code, "{pad}    let rows = db.query_all(stmt).await?;");
+        wln!(code, "{pad}    let rows = db.query_all_raw(stmt).await?;");
         wln!(
             code,
             "{pad}    let mut items = Vec::with_capacity(rows.len());"

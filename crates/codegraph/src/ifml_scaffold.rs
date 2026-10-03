@@ -6,13 +6,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
-use codegraph_backend::{create_backend, BackendConfig};
+use codegraph_backend::{BackendConfig, create_backend};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::error::{Error, Result};
-use crate::ifml_control_inference::{infer_control, is_codelist_kind, MAX_CONTROL_VALUES};
+use crate::ifml_control_inference::{MAX_CONTROL_VALUES, infer_control, is_codelist_kind};
 
 const MAX_LIST_FIELDS: usize = 5;
 const MAX_VO_SUBFIELDS: usize = 8;
@@ -563,7 +563,9 @@ mod tests {
         };
         let content = render_ifml(&[], &[e]);
         assert!(
-            content.contains("field status -> input dropdown { required: true; values: [\"gold\", \"silver\"]; }"),
+            content.contains(
+                "field status -> input dropdown { required: true; values: [\"gold\", \"silver\"]; }"
+            ),
             "unexpected rendering:\n{content}"
         );
         rex_ifml::parse_ifml(&content).expect("must parse");

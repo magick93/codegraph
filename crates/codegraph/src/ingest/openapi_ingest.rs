@@ -359,10 +359,10 @@ impl Response {
     fn schema_title(&self) -> Option<String> {
         let content = self.content.as_ref()?;
         for media in content.values() {
-            if let Some(schema) = &media.schema {
-                if let Some(title) = ref_schema_title(schema) {
-                    return Some(title);
-                }
+            if let Some(schema) = &media.schema
+                && let Some(title) = ref_schema_title(schema)
+            {
+                return Some(title);
             }
         }
         None

@@ -21,7 +21,7 @@ mod test_framework;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use codegraph::generate::{run_generators_with_opts, GeneratorOpts, ProjectConfig};
+use codegraph::generate::{GeneratorOpts, ProjectConfig, run_generators_with_opts};
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, GrantEdge,

@@ -15,8 +15,8 @@ pub use code_action::handle_code_action;
 pub use completion::handle_completion;
 pub use diagnostics::{compute_diagnostics, handle_document_diagnostic};
 pub use hover::{handle_goto_definition, handle_hover};
-pub use positions::{handle_update_positions, UpdatePositionsRequest};
-pub use semantic_tokens::{handle_semantic_tokens_full, TOKEN_MODIFIERS, TOKEN_TYPES};
+pub use positions::{UpdatePositionsRequest, handle_update_positions};
+pub use semantic_tokens::{TOKEN_MODIFIERS, TOKEN_TYPES, handle_semantic_tokens_full};
 
 pub(crate) use hover::get_word_at_position;
 pub(crate) use tree_utils::{collect_errors, has_any_error};

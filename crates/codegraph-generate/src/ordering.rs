@@ -392,11 +392,11 @@ pub async fn compute_generation_order(
             for ref_title in refs {
                 // Only consider intra-domain dependencies; cross-domain deps
                 // are already handled by domain-level topological ordering.
-                if let Some(&dep_idx) = title_to_idx.get(ref_title) {
-                    if dep_idx != idx {
-                        dependents[dep_idx].push(idx);
-                        in_degree[idx] += 1;
-                    }
+                if let Some(&dep_idx) = title_to_idx.get(ref_title)
+                    && dep_idx != idx
+                {
+                    dependents[dep_idx].push(idx);
+                    in_degree[idx] += 1;
                 }
             }
         }
@@ -407,7 +407,7 @@ pub async fn compute_generation_order(
             let mut zeros: Vec<usize> = in_degree
                 .iter()
                 .enumerate()
-                .filter(|(_, &d)| d == 0)
+                .filter(|(_, deg)| **deg == 0)
                 .map(|(i, _)| i)
                 .collect();
             zeros.sort_by(|a, b| group[*a].schema_title.cmp(&group[*b].schema_title));

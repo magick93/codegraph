@@ -18,8 +18,8 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use codegraph_backend::{create_backend, BackendConfig};
-use codegraph_config::config::{parse_domain_config, DomainConfig};
+use codegraph_backend::{BackendConfig, create_backend};
+use codegraph_config::config::{DomainConfig, parse_domain_config};
 use codegraph_core::types::ConditionKind;
 
 fn fixture_model() -> Vec<PathBuf> {
@@ -202,7 +202,8 @@ async fn trade_state_lands_as_a_namespaced_schema_and_closed_state_as_a_codelist
         .await
         .unwrap();
     assert!(
-        refs.iter().any(|r| r.target == "GMRA" || r.target == "ICMA"),
+        refs.iter()
+            .any(|r| r.target == "GMRA" || r.target == "ICMA"),
         "the real ICMA/GMRA docReference must resolve now the base-desc bodies are declared: {refs:?}"
     );
 }

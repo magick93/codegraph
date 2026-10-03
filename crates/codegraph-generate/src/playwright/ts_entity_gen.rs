@@ -1,8 +1,8 @@
-use crate::domain_model::{
-    build_entity_model, example_for_field, parse_rust_type, ts_type_for_field, EntityField,
-    RustType,
-};
 use crate::ProjectConfig;
+use crate::domain_model::{
+    EntityField, RustType, build_entity_model, example_for_field, parse_rust_type,
+    ts_type_for_field,
+};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
 use heck::ToLowerCamelCase;
 
-use super::{e2e_tests_root, TsEntityContext, TsFieldDef, TsFkField};
+use super::{TsEntityContext, TsFieldDef, TsFkField, e2e_tests_root};
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
@@ -59,51 +59,50 @@ pub(crate) async fn expand_vo_fields(
         // e.g. `person` (PersonReferenceType) → person_did / person_name / ...
         // Array VOs are flattened the same way when the DDL materializes their
         // columns on the main table (e.g. `recipients` → recipients_did / ...).
-        if matches!(
+        if (matches!(
             kind,
             Some(RefClassificationKind::CompositeWrapper)
                 | Some(RefClassificationKind::MediaWrapper)
-        ) || (prop.is_array && matches!(kind, Some(RefClassificationKind::ValueObject)))
+        ) || (prop.is_array && matches!(kind, Some(RefClassificationKind::ValueObject))))
+            && let Ok(cols) = db.get_composite_columns(&prop.name, schema_title).await
         {
-            if let Ok(cols) = db.get_composite_columns(&prop.name, schema_title).await {
-                for col in cols {
-                    let rust_name = format!("{}{}", prop.rust_field_name, col.suffix);
-                    let column_name = format!("{}{}", prop.pg_column_name, col.suffix);
-                    if out.iter().any(|f| f.rust_field == rust_name) {
-                        continue;
-                    }
-                    let base_rt = parse_rust_type(&col.rust_type, prop.is_required);
-                    let rust_type = if prop.is_required {
-                        base_rt
-                    } else {
-                        RustType::Optional {
-                            optional: Box::new(base_rt),
-                        }
-                    };
-                    let is_fk = column_name.ends_with("_id");
-                    out.push(EntityField {
-                        name: rust_name.to_lower_camel_case(),
-                        column: column_name.clone(),
-                        rust_field: rust_name.clone(),
-                        rust_type: rust_type.clone(),
-                        sea_orm_type: col.sea_orm_type.clone(),
-                        pg_type: col.pg_type.clone(),
-                        ts_type: ts_type_for_field(&rust_type),
-                        required: prop.is_required,
-                        is_pk: false,
-                        is_fk,
-                        fk_target: if is_fk { col.fk_target.clone() } else { None },
-                        fk_table: None,
-                        classification: Some("composite_column".to_string()),
-                        example_value: example_for_field(&rust_name, &col.rust_type, None),
-                        label: field.label.clone(),
-                        inherited: false,
-                        is_child_table: false,
-                        is_model_optional: !prop.is_required,
-                    });
+            for col in cols {
+                let rust_name = format!("{}{}", prop.rust_field_name, col.suffix);
+                let column_name = format!("{}{}", prop.pg_column_name, col.suffix);
+                if out.iter().any(|f| f.rust_field == rust_name) {
+                    continue;
                 }
-                continue;
+                let base_rt = parse_rust_type(&col.rust_type, prop.is_required);
+                let rust_type = if prop.is_required {
+                    base_rt
+                } else {
+                    RustType::Optional {
+                        optional: Box::new(base_rt),
+                    }
+                };
+                let is_fk = column_name.ends_with("_id");
+                out.push(EntityField {
+                    name: rust_name.to_lower_camel_case(),
+                    column: column_name.clone(),
+                    rust_field: rust_name.clone(),
+                    rust_type: rust_type.clone(),
+                    sea_orm_type: col.sea_orm_type.clone(),
+                    pg_type: col.pg_type.clone(),
+                    ts_type: ts_type_for_field(&rust_type),
+                    required: prop.is_required,
+                    is_pk: false,
+                    is_fk,
+                    fk_target: if is_fk { col.fk_target.clone() } else { None },
+                    fk_table: None,
+                    classification: Some("composite_column".to_string()),
+                    example_value: example_for_field(&rust_name, &col.rust_type, None),
+                    label: field.label.clone(),
+                    inherited: false,
+                    is_child_table: false,
+                    is_model_optional: !prop.is_required,
+                });
             }
+            continue;
         }
 
         // Scalar entity references — the DDL emits `{prop}_id` FK columns and
@@ -324,20 +323,18 @@ impl EntityGenerator for TsEntityGenerator {
             // and fall back to the first variant when the generic example
             // isn't one of them.
             let mut example_value = f.example_value.clone();
-            if is_enum_typed {
-                if let Some(target) = &f.fk_target {
-                    let filename = target.rsplit('/').next().unwrap_or(target);
-                    let cl_name = filename
-                        .strip_suffix(".json#")
-                        .or_else(|| filename.strip_suffix(".json"))
-                        .unwrap_or(filename);
-                    if let Ok(values) = db.get_enum_values(cl_name).await {
-                        if !values.is_empty() {
-                            let unquoted = example_value.trim_matches('"');
-                            if !values.iter().any(|v| v.value == unquoted) {
-                                example_value = format!("\"{}\"", values[0].value);
-                            }
-                        }
+            if is_enum_typed && let Some(target) = &f.fk_target {
+                let filename = target.rsplit('/').next().unwrap_or(target);
+                let cl_name = filename
+                    .strip_suffix(".json#")
+                    .or_else(|| filename.strip_suffix(".json"))
+                    .unwrap_or(filename);
+                if let Ok(values) = db.get_enum_values(cl_name).await
+                    && !values.is_empty()
+                {
+                    let unquoted = example_value.trim_matches('"');
+                    if !values.iter().any(|v| v.value == unquoted) {
+                        example_value = format!("\"{}\"", values[0].value);
                     }
                 }
             }

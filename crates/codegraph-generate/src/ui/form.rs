@@ -9,8 +9,8 @@ use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
-use codegraph_core::types::resolve_field;
 use codegraph_core::types::PropertyNode;
+use codegraph_core::types::resolve_field;
 use codegraph_type_contracts::RefClassificationKind;
 
 use crate::api::api_model::{resolve_entity_operations, resolve_path_segment};

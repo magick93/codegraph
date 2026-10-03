@@ -7,12 +7,12 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::ParentCandidate;
 use serde::Serialize;
 
-use crate::api::router::{build_router_context, RouterContext, RouterEntity};
+use crate::api::router::{RouterContext, RouterEntity, build_router_context};
 use crate::error::Result;
 use crate::traits::{
     DomainGenerator, DomainGeneratorKind, GeneratedFile, GlobalGenerator, GlobalGeneratorKind,
 };
-use crate::{render_template_with_project, ProjectConfig};
+use crate::{ProjectConfig, render_template_with_project};
 
 /// One HTTP endpoint in the plugin API contract.
 ///
@@ -347,7 +347,7 @@ fn route(method: &str, path: &str, operation: &str) -> ApiContractRoute {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::router::{param_name_from_path_segment, ChildInfo, ParentInfo, RouterEntity};
+    use crate::api::router::{ChildInfo, ParentInfo, RouterEntity, param_name_from_path_segment};
 
     fn entity(name: &str, module: &str, path_segment: &str) -> RouterEntity {
         RouterEntity {

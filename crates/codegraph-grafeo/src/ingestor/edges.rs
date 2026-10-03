@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use codegraph_core::error::GraphError;
-use codegraph_core::types::{strip_ifml_prefix, EdgeProperties, EdgeType};
+use codegraph_core::types::{EdgeProperties, EdgeType, strip_ifml_prefix};
 
 use super::gql::{
     build_edge_props_string, decode_regulatory_edge_ids, edge_kind_ref, escape_gql,

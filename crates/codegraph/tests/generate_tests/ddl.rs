@@ -32,8 +32,8 @@ async fn test_ddl_generator_produces_table_sql() {
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -135,8 +135,8 @@ generate_action_endpoints = true
     let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "RefundRequestType",
@@ -234,8 +234,8 @@ auditable = true
     let tera = generate::template_engine::create_tera(&template_dir).unwrap();
 
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-policy-ddl");
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "TestEntityType",

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use super::traits::GeneratedFile;
 use super::GenerationEntry;
+use super::traits::GeneratedFile;
 use crate::error::Error;
 
 #[derive(Debug, Default)]

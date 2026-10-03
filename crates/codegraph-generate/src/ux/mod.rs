@@ -13,16 +13,16 @@ pub mod dimension;
 pub mod plan;
 pub mod sort;
 
-pub use diagnostics::{collect_diagnostics, report, UxDiagnostics};
+pub use diagnostics::{UxDiagnostics, collect_diagnostics, report};
 pub use dimension::{
-    infer_dimension, infer_dimension_with_hints, infer_sub_field_dimensions, DimensionHints,
-    SubFieldDimension,
+    DimensionHints, SubFieldDimension, infer_dimension, infer_dimension_with_hints,
+    infer_sub_field_dimensions,
 };
 pub use plan::{
-    build_ux_plan, ids, ActionPlan, ActionSpec, CollectionPlan, ColumnPlan, RowAction, RowVisuals,
-    UxPlan, UxPlanInput, VerticalAlign,
+    ActionPlan, ActionSpec, CollectionPlan, ColumnPlan, RowAction, RowVisuals, UxPlan, UxPlanInput,
+    VerticalAlign, build_ux_plan, ids,
 };
 pub use sort::{
-    apply_list_scope, collect_ux_plan_context, list_order_is_pinned, resolve_ux_sort_plan,
-    sort_plan_from_plan, UxSortPlan,
+    UxSortPlan, apply_list_scope, collect_ux_plan_context, list_order_is_pinned,
+    resolve_ux_sort_plan, sort_plan_from_plan,
 };

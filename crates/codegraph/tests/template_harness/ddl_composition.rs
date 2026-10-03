@@ -163,8 +163,8 @@ async fn composite_range_collapses_start_end_into_daterange() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-composite-range");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "PositionHistoryType",
@@ -547,8 +547,8 @@ async fn recursive_child_tables_with_full_classification() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-recursive-child");
 
-    let gen = generate::db::ddl::DdlGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::ddl::DdlGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &engine,
             "PersonType",

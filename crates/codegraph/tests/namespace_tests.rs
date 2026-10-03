@@ -12,8 +12,8 @@ use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    qualified_schema_id, topological_namespace_order, AtprotoNamespaceNode, EdgeProperties,
-    EdgeType, LexiconNode, NamespaceImport, NamespaceNode, SchemaNode,
+    AtprotoNamespaceNode, EdgeProperties, EdgeType, LexiconNode, NamespaceImport, NamespaceNode,
+    SchemaNode, qualified_schema_id, topological_namespace_order,
 };
 use codegraph_grafeo::GrafeoEngine;
 
@@ -243,11 +243,12 @@ async fn assert_schemas_by_namespace(db: &dyn GraphQuerier) {
     assert_eq!(leaf.len(), 1);
     assert_eq!(leaf[0].title, "Date");
     // Unknown namespace: empty, not error.
-    assert!(db
-        .list_schemas_by_namespace("nope", true)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        db.list_schemas_by_namespace("nope", true)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 // ── namespace_generation_order: determinism + cycle ────────────────────

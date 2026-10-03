@@ -13,9 +13,9 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::traits::EntityGenerator;
 use codegraph::generate::ui::e2e_test::UiE2eTestGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
@@ -211,10 +211,10 @@ fn generate(
     domain: &str,
 ) -> String {
     let output = tempfile::TempDir::new().unwrap();
-    let gen = UiE2eTestGenerator::new(output.path());
+    let generator = UiE2eTestGenerator::new(output.path());
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             engine,
             title,
             domain,
@@ -806,10 +806,10 @@ fn all_files(
     domain: &str,
 ) -> Vec<(String, String)> {
     let output = tempfile::TempDir::new().unwrap();
-    let gen = UiE2eTestGenerator::new(output.path());
+    let generator = UiE2eTestGenerator::new(output.path());
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(engine, title, domain, config, &tera(), project))
+        .block_on(generator.generate(engine, title, domain, config, &tera(), project))
         .expect("UiE2eTestGenerator failed");
     files
         .into_iter()
@@ -847,10 +847,10 @@ fn ux_spec_absent_when_flag_off() {
 
     let files = {
         let output = tempfile::TempDir::new().unwrap();
-        let gen = UiE2eTestGenerator::new(output.path());
+        let generator = UiE2eTestGenerator::new(output.path());
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(gen.generate(
+            .block_on(generator.generate(
                 &engine,
                 "RefundType",
                 "hr",
@@ -976,11 +976,11 @@ fn pom_kernel_emitted_once_per_generator_across_entities() {
     let config = config(&[("hr", "RefundType")]);
 
     let output = tempfile::TempDir::new().unwrap();
-    let gen = UiE2eTestGenerator::new(output.path());
-    let run = |gen: &UiE2eTestGenerator| {
+    let generator = UiE2eTestGenerator::new(output.path());
+    let run = |generator: &UiE2eTestGenerator| {
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(gen.generate(
+            .block_on(generator.generate(
                 &engine,
                 "RefundType",
                 "hr",
@@ -990,8 +990,8 @@ fn pom_kernel_emitted_once_per_generator_across_entities() {
             ))
             .unwrap()
     };
-    let first = run(&gen);
-    let second = run(&gen);
+    let first = run(&generator);
+    let second = run(&generator);
 
     assert!(
         first
@@ -1073,10 +1073,17 @@ fn ux_spec_no_list_or_no_create_emits_no_file() {
 
     let files = {
         let output = tempfile::TempDir::new().unwrap();
-        let gen = UiE2eTestGenerator::new(output.path());
+        let generator = UiE2eTestGenerator::new(output.path());
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(gen.generate(&engine, "RefundType", "hr", &config, &tera(), &ux_project()))
+            .block_on(generator.generate(
+                &engine,
+                "RefundType",
+                "hr",
+                &config,
+                &tera(),
+                &ux_project(),
+            ))
             .unwrap()
     };
     assert!(

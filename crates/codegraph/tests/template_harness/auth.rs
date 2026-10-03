@@ -12,7 +12,7 @@ async fn scaffold_middleware_supports_dual_auth() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-dual-auth");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -26,7 +26,7 @@ async fn scaffold_middleware_supports_dual_auth() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -122,7 +122,7 @@ async fn scaffold_wires_app_user_pool_and_mode() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-app-user-pool");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -136,7 +136,7 @@ async fn scaffold_wires_app_user_pool_and_mode() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -193,7 +193,7 @@ async fn scaffold_wires_app_user_pool_and_mode() {
 
     // doctor.rs (admin-CLI builds only): warn when APP_DATABASE_URL is unset
     // on a postgres target.
-    let gen_admin = generate::scaffold::gen::ScaffoldGenerator::new(
+    let gen_admin = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -243,7 +243,7 @@ async fn scaffold_generates_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-mw");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -257,7 +257,7 @@ async fn scaffold_generates_middleware() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -293,7 +293,7 @@ async fn test_permission_middleware_generated() {
 
     // has_atproto = true: the permission middleware (with extract_uuid_from_path)
     // lives in the atproto branch of the template.
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -307,7 +307,7 @@ async fn test_permission_middleware_generated() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -360,7 +360,7 @@ async fn middleware_test_mode_did_validation_uses_rsky_when_atproto() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-middleware-atproto");
 
     // has_atproto = true → rsky_syntax branch
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -374,7 +374,7 @@ async fn middleware_test_mode_did_validation_uses_rsky_when_atproto() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -421,8 +421,8 @@ async fn router_permission_gated_emits_layers_and_helper() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-permission-router");
 
-    let gen = generate::api::router::RouterGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::router::RouterGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "recruiting",
@@ -464,11 +464,11 @@ async fn router_permission_gated_emits_layers_and_helper() {
     );
     // Backward compat: an entity WITHOUT permissions must NOT get the layers.
     let mut plain_config = test_domain_config();
-    if let Some(recruiting) = plain_config.domains.get_mut("recruiting") {
-        if let Some(cfg) = recruiting.entity_config.get_mut("CandidateType") {
-            cfg.permissions.scope = None;
-            cfg.permissions.record_scoped = false;
-        }
+    if let Some(recruiting) = plain_config.domains.get_mut("recruiting")
+        && let Some(cfg) = recruiting.entity_config.get_mut("CandidateType")
+    {
+        cfg.permissions.scope = None;
+        cfg.permissions.record_scoped = false;
     }
     let plain = generate::api::router::RouterGenerator::new(&output_dir);
     let files = plain
@@ -502,7 +502,7 @@ async fn scaffold_main_has_security_middleware() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-security");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -516,7 +516,7 @@ async fn scaffold_main_has_security_middleware() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,

@@ -22,7 +22,7 @@ pub mod scaffold_gen;
 
 use std::path::{Path, PathBuf};
 
-pub use config::{load_plugins_config, EmdashPluginConfig, EmdashPluginsConfig};
+pub use config::{EmdashPluginConfig, EmdashPluginsConfig, load_plugins_config};
 
 /// Marker file name of the generated app output dir (shape detection).
 const APP_OUTPUT_DIR: &str = "cosmos-app";
