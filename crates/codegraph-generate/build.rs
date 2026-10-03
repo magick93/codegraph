@@ -52,16 +52,23 @@ fn main() {
         walk_templates(&templates_dir, &templates_dir, &mut templates);
         templates.sort();
 
+        // tera 2 validates include/extends/filter references in
+        // finalize_templates, which runs at the end of every add_raw_template
+        // call — forward includes between templates only resolve if the whole
+        // batch is inserted first via a single add_raw_templates call.
+        writeln!(out, "    tera.add_raw_templates(vec![").unwrap();
+
         for (name, abs) in &templates {
             writeln!(
                 out,
-                "    tera.add_raw_template(\"{name}\", include_str!(\"{abs}\"))?;",
+                "    (\"{name}\", include_str!(\"{abs}\")),",
                 name = name,
                 abs = abs,
             )
             .unwrap();
         }
 
+        writeln!(out, "])?;").unwrap();
         writeln!(out, "    Ok(())").unwrap();
         writeln!(out, "}}").unwrap();
 

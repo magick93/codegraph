@@ -25,7 +25,7 @@ toml = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "signal"] }
 clap = { version = "4", features = ["derive"] }
 thiserror = "2"
-tera = "1"
+tera = { version = "2", features = ["preserve_order"] }
 tempfile = "3"
 heck = "0.5"
 walkdir = "2"

@@ -39,6 +39,8 @@ pub struct CliFieldInfo {
     pub name: String,
     pub rust_type: String,
     pub is_required: bool,
+    /// Skipped when None: tera 2's `default` filter only fires on undefined.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 

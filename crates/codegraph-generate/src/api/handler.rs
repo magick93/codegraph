@@ -37,6 +37,9 @@ pub struct HandlerContext {
     pub parent_entity: Option<String>,
     pub parent_path_segment: Option<String>,
     pub parent_module_name: Option<String>,
+    /// tera 2's `default` filter only fires on undefined (not null), so None
+    /// must OMIT the key for `parent_domain | default(value=domain)` routes.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_domain: Option<String>,
     pub role: String,
     /// Named path parameter for this entity's ID (e.g. `"worker_id"`).
@@ -48,6 +51,8 @@ pub struct HandlerContext {
     /// Path segment for the grandparent entity (depth-2 children only, e.g. `"workers"`).
     pub grandparent_path_segment: Option<String>,
     /// Domain of the grandparent entity (depth-2 children only).
+    /// Skipped when None: tera 2's `default` only fires on undefined keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub grandparent_domain: Option<String>,
     pub children: Vec<ChildInfo>,
     pub cross_refs: Vec<CrossRefInfo>,

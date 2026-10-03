@@ -18,7 +18,7 @@ fn test_tera() -> tera::Tera {
 }
 
 fn project_context() -> tera::Context {
-    tera::Context::from_serialize(serde_json::json!({
+    tera::Context::from_serialize(&serde_json::json!({
         "project": ProjectConfig::default(),
     }))
     .unwrap()

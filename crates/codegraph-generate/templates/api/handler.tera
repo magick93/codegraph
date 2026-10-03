@@ -291,11 +291,16 @@ pub async fn get_by_id(
     }
     
     let mut included = {{ entity_name }}IncludedData { 
-        {%- set seen = [] %}
         {%- for ipath in include_paths %}
         {%- set field = ipath.segments[0].module_name %}
-        {%- if field not in seen %}
-        {%- set_global seen = seen | concat(with=[field]) %}
+        {%- set i = loop.index %}
+        {%- set_global dup = false %}
+        {%- for prev in include_paths %}
+        {%- if loop.index < i and prev.segments[0].module_name == field %}
+        {%- set_global dup = true %}
+        {%- endif %}
+        {%- endfor %}
+        {%- if not dup %}
         {{ field }}: None,
         {%- endif %}
         {%- endfor %}
