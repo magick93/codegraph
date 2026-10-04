@@ -318,6 +318,7 @@ async fn run_generator_pipeline(
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await?;

@@ -69,6 +69,7 @@ fn cache_run_args<'a>(fx: &'a CacheFixture, output: &'a Path) -> codegraph::driv
         ifml_design_system: None,
         ux_rules: None,
         codegraph_rev: None,
+        check: false,
     }
 }
 

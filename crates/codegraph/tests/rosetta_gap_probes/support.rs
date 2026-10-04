@@ -118,6 +118,7 @@ pub fn driver_args(p: &SchemaProject) -> codegraph::driver::RunArgs<'_> {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     }
 }

@@ -111,6 +111,7 @@ async fn full_pipeline_runs_clean_over_the_real_cdm_fragment() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await
@@ -373,6 +374,7 @@ async fn fragment_conditions_land_as_nodes_and_emit_into_validations() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await
@@ -469,6 +471,7 @@ async fn generated_functions_show_copy_from_before_and_no_dispatch() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await
@@ -547,6 +550,7 @@ async fn trade_state_operations_config_yields_no_update_or_delete_surface() {
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await

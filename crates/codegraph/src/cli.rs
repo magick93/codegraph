@@ -46,6 +46,10 @@ pub enum Commands {
         /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
         #[arg(long)]
         ux_rules: Option<PathBuf>,
+        /// Compile-check the generated output with `cargo check` after
+        /// generation; a failing check fails the run (issue #336)
+        #[arg(long)]
+        check: bool,
     },
     /// Classify all schemas and show entity/VO decisions
     Classify {
@@ -153,6 +157,10 @@ pub enum Commands {
         /// (issue #275). Default: off (fresh in-memory graph).
         #[arg(long)]
         graph_cache: Option<PathBuf>,
+        /// Compile-check the generated output with `cargo check` after
+        /// generation; a failing check fails the run (issue #336)
+        #[arg(long)]
+        check: bool,
     },
     /// IFML-only UI generation: ingest .ifml DSL files and emit framework routes
     IfmlGenerate {

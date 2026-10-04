@@ -127,6 +127,7 @@ async fn run_pipeline(output: &Path, mox_file: &Path, config: &Path, profiles: &
         ifml_design_system: None,
         ux_rules: None,
         codegraph_rev: None,
+        check: false,
     })
     .await
     .unwrap();

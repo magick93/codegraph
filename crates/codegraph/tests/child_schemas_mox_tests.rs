@@ -152,6 +152,7 @@ fn run_args<'a>(
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     }
 }

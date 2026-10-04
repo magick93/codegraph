@@ -172,6 +172,7 @@ impl FixtureRun {
             ifml_design_system: None,
             ux_rules,
             codegraph_rev: None,
+            check: false,
         }
     }
 
@@ -1572,6 +1573,7 @@ async fn ux_rules_flag_off_emits_no_ux_specs() {
         ifml_design_system: None,
         ux_rules: None,
         codegraph_rev: None,
+        check: false,
     })
     .await
     .unwrap();
