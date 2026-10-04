@@ -1,0 +1,79 @@
+namespace flywheel.taxonomy
+: <"
+    Marketplace taxonomy: the master category tree that maps a business
+    problem ('what challenge can we help you solve?') to the right kind of
+    provider, professions, industries (including the ANZSIC-style division /
+    subdivision / group / class hierarchy), and business model reference data.
+
+    The industries hierarchy uses composite natural primary keys; each level
+    references its parent by the full parent key (modelled as references).
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+
+	type Category: <"Table public.category - self-referencing category tree. UNIQUE (name, parent) via constraint category_name_parent_unique.">
+		[rootType]
+		id Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		description string (0..1)
+		name string (0..1) <"Unique together with parent.">
+		slug Slug (0..1) <"Set by trigger set_slug when empty (originally generated, later a plain column).">
+		enabled boolean (0..1) <"Default FALSE.">
+		parent Category (0..1) <"FK parent -> category.id - absolute parent category."> [metadata reference]
+
+	type Profession: <"Table public.professions - recognised professions, keyed by postgres 'name' type (a bounded text label).">
+		id string (1..1) <"Primary key of postgres type 'name'; e.g. 'Solicitor', 'Chartered Accountant'."> [metadata id]
+		description string (0..1)
+
+	type Industry: <"Table public.industry - simple industry tree; parent_id NULL for top-level industries.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (1..1) <"varchar(255).">
+		parent Industry (0..1) <"FK parent_id -> industry.id."> [metadata reference]
+		isSubIndustry boolean (1..1) <"Column is_sub_industry, default FALSE.">
+
+	type IndustriesDivision: <"Table industries.division - top level of the ANZSIC-style classification.">
+		divisionCode string (1..1) <"Primary key; char(1) division letter, e.g. 'M'."> [metadata id]
+		divisionTitle string (1..1) <"e.g. 'Professional, Scientific and Technical Services'.">
+
+	type IndustriesSubdivision: <"Table industries.subdivision - subdivision level; primary key (subdivision_code, division_code).">
+		subdivisionCode int (1..1) <"Part of composite primary key, e.g. 69.">
+		division IndustriesDivision (1..1) <"Part of composite primary key; FK division_code -> division.division_code."> [metadata reference]
+		subdivisionTitle string (1..1) <"e.g. 'Professional, Scientific and Technical Services'.">
+
+	type IndustriesGroup: <"Table industries.'group' - group level; primary key (group_code, subdivision_code, division_code).">
+		groupCode int (1..1) <"Part of composite primary key, e.g. 691.">
+		subdivision IndustriesSubdivision (1..1) <"Part of composite primary key (subdivision_code, division_code)."> [metadata reference]
+		groupTitle string (1..1) <"e.g. 'Legal and Accounting Services'.">
+
+	type IndustriesClass: <"Table industries.class - most detailed level; primary key (class_code, group_code, subdivision_code, division_code). Full-text search vector maintained by trigger.">
+		classCode int (1..1) <"Part of composite primary key, e.g. 6911.">
+		group IndustriesGroup (1..1) <"Part of composite primary key (group_code, subdivision_code, division_code)."> [metadata reference]
+		classTitle string (1..1) <"e.g. 'Legal Services'.">
+		titleSearchVector SearchVector (0..1) <"Column class_title_tsv, tsvector - trigger-maintained.">
+
+	type BusinessModelCategory: <"Table public.business_model_categories - grouping of business models; parent_id NULL for top-level.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (1..1)
+		description string (0..1)
+		parent BusinessModelCategory (0..1) <"FK parent_id -> business_model_categories.id."> [metadata reference]
+
+	type BusinessModel: <"Table public.business_models - canonical business models a business can self-identify with during onboarding.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (1..1)
+		description string (0..1)
+		category BusinessModelCategory (0..1) <"FK category_id -> business_model_categories.id."> [metadata reference]
+
+	type BusinessModelExample: <"Table public.business_model_examples - well-known companies exemplifying a business model.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		businessModel BusinessModel (1..1) <"FK business_model_id -> business_models.id."> [metadata reference]
+		businessName string (1..1) <"Column business_name - e.g. 'Airbnb'.">
+		reason string (0..1) <"Why it exemplifies the model.">
+		country string (0..1)
+		stockSymbol string (0..1)
+
+	type BusinessStructure: <"Table public.business_structure - legal structures (e.g. NZ company, sole trader) per country.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		countryCode string (0..1) <"FK country_code -> country_code_list.code.">
+		name string (1..1)
+		isPopular boolean (0..1) <"Column is_popular, default FALSE.">

@@ -1,0 +1,65 @@
+namespace flywheel.accounts
+: <"
+    Workspace accounts, subscription plans and Stripe customer links.
+
+    Account recreates the minimal shape of the third-party basejump package
+    (schema basejump, installed via package) that core Flywheel tables
+    reference: accounts and account_user with the account_role enum extended
+    with 'finance'.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.profiles.*
+import flywheel.reference.*
+
+	type Account: <"Basejump table basejump.accounts - a team/workspace account. Companies and leads are scoped to accounts.">
+		[rootType]
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		primaryOwnerUser User (1..1) <"FK primary_owner_user_id -> auth.users(id)."> [metadata reference]
+		name string (1..1) <"Display name of the workspace.">
+		slug Slug (1..1) <"URL identifier, unique.">
+		personalAccount boolean (1..1) <"TRUE for a user's personal account, FALSE for a team account.">
+		privateMetadata string (0..1) <"Column private_metadata, jsonb - visible to account members only.">
+		publicMetadata string (0..1) <"Column public_metadata, jsonb - publicly visible.">
+
+	type AccountUser: <"Basejump table basejump.account_user - membership of a user in an account; primary key (account_id, user_id).">
+		account Account (1..1) <"Part of composite primary key."> [metadata reference]
+		user User (1..1) <"Part of composite primary key; FK to auth.users(id)."> [metadata reference]
+		accountRole AccountRoleEnum (1..1) <"Column account_role.">
+
+	type CompanyPlan: <"Table public.company_plan - subscription plan offered to companies; user-count bands priced monthly/annually.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (1..1) <"Plan name.">
+		description string (0..1) <"Plan description.">
+		userRange IntRange (1..1) <"Column user_range, int4range NOT NULL, CHECK (NOT isempty(user_range) AND lower(user_range) > 0) - the band of team sizes the plan covers.">
+		monthlyCost number(fractionalDigits: 2) (1..1) <"Column monthly_cost, numeric(10,2) NOT NULL.">
+		annualCost number(fractionalDigits: 2) (0..1) <"Column annual_cost, numeric(10,2).">
+		currency CurrencyCode (1..1) <"FK currency -> currency_code_list.code, default 'NZD'."> [metadata reference]
+		creationDate zonedDateTime (0..1) <"Column creation_date.">
+		expiryDate zonedDateTime (0..1) <"Column expiry_date.">
+		discountPercentage Percent (0..1) <"Default 0.">
+		discountDuration DateTimeRange (0..1) <"Column discount_duration, tstzrange - period during which the discount applies (replaced two earlier date columns).">
+		additionalFeatures string (0..1) <"Column additional_features, jsonb - free-form list/map of plan features; kept as raw payload.">
+		active boolean (0..1) <"Default TRUE.">
+		gracePeriod int (0..1) <"Days of grace after expiry; default 0.">
+		autoRenewal boolean (0..1) <"Default FALSE.">
+		stripeProductId string (0..1) <"Linked Stripe product.">
+
+	type AccountPlan: <"Table public.account_plan - the plan an account is subscribed to; original primary key is the account id (1:1), modelled as a surrogate id plus a unique account reference.">
+		id Uuid (1..1) <"Primary key (surrogate for the 1:1 account link)."> [metadata id]
+		account Account (1..1) <"Unique FK -> basejump.accounts(id) - the original primary key."> [metadata reference]
+		companyPlan CompanyPlan (0..1) <"FK company_plan_id -> company_plan.id."> [metadata reference]
+		createdBy User (0..1) <"FK created_by -> auth.users(id); basejump trigger maintained."> [metadata reference]
+		updatedBy User (0..1) <"FK updated_by -> auth.users(id); basejump trigger maintained."> [metadata reference]
+
+	type AccountInvitee: <"Table public.account_invitee - a professional invited into an account.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		professionalProfile ProfessionalProfile (1..1) <"FK professional_profile_id -> professional_profile.id."> [metadata reference]
+		account Account (0..1) <"FK account_id -> basejump.accounts(id)."> [metadata reference]
+
+	type StripeCustomer: <"Table public.stripe_customers - link between an auth user and their Stripe customer id. Original primary key is the user id (1:1), modelled as a surrogate id plus a unique user reference.">
+		id Uuid (1..1) <"Primary key (surrogate for the 1:1 user link)."> [metadata id]
+		user User (1..1) <"Unique FK user_id -> auth.users(id) ON DELETE CASCADE - the original primary key."> [metadata reference]
+		stripeCustomerId string (0..1) <"Column stripe_customer_id, unique.">

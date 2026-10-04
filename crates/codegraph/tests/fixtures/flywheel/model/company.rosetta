@@ -1,0 +1,194 @@
+namespace flywheel.company
+: <"
+    The supply side of the marketplace: companies of professional service
+    providers, their brand and public pages, the service categories they trade
+    in, their New Zealand offices, and the brandstation website-scraping
+    tables.
+
+    The enum public.company_page_component was declared in SQL with a missing
+    comma that merged the last two literals into a single corrupted value
+    ('services' 'people'); the model represents the four intended values.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.reference.*
+import flywheel.taxonomy.*
+import flywheel.profiles.*
+import flywheel.accounts.*
+
+	type Company: <"Table public.company - a professional service provider organisation listed on the marketplace.">
+		[rootType]
+		id Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		name string (1..1) <"Trading name.">
+		description string (0..1) <"Company description.">
+		email EmailAddress (0..1) <"Column email, citext, unique.">
+		legalName string (0..1) <"Column legal_name - registered legal entity name.">
+		locale Bcp47Locale (0..1) <"Column bcp_47_locale, jsonb - content locale."> 
+		logo string (0..1) <"Logo URL.">
+		slogan string (0..1) <"Marketing slogan.">
+		telephone string (0..1) <"Contact telephone.">
+		slug Slug (0..1) <"Unique URL slug, set by trigger company_set_slug.">
+		website string (0..1) <"Website URL, unique.">
+		category CompanyCategory (0..1) <"FK category_id -> company_category.id."> [metadata reference]
+		plan CompanyPlan (0..1) <"FK plan_id -> company_plan.id."> [metadata reference]
+		isPartner boolean (0..1) <"Column is_partner, default FALSE - company participates in the partner programme.">
+		account Account (0..1) <"FK account_id -> basejump.accounts(id), unique - owning workspace."> [metadata reference]
+		webpageOfServices string (0..1) <"Column webpage_of_services - scraped/linked services page.">
+		webpageOfServicesProcessedDate zonedDateTime (0..1) <"When the services page was last processed.">
+		searchVector SearchVector (0..1) <"Column search_vector, tsvector - trigger-maintained full-text index (column managed outside migrations).">
+		createdBy User (0..1) <"FK created_by -> auth.users(id)."> [metadata reference]
+
+	type CompanyBrand: <"Table public.company_brand - public-facing brand record of a company.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		company Company (1..1) <"FK company_id -> company.id."> [metadata reference]
+		name string (0..1) <"Brand name.">
+		description string (0..1) <"Brand description.">
+		logoUrl string (0..1) <"Column logo_url.">
+		slogan string (0..1) <"Brand slogan.">
+		brandUrl string (0..1) <"Column brand_url.">
+		coverImageUrl string (0..1) <"Column cover_image_url.">
+		valueProposition string (0..1) <"Column value_proposition.">
+		background RgbColor (0..1) <"Columns background_red / background_green / background_blue.">
+		aggregateRating number(fractionalDigits: 2) (0..1) <"Column aggregate_rating, numeric(3,2).">
+		reviewCount int (0..1) <"Column review_count.">
+		createdBy User (0..1) <"FK created_by -> auth.users(id)."> [metadata reference]
+
+	type CompanyCategory: <"Table public.company_category - display categories for companies (with generated slug and pluralisation forms).">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (1..1) <"Category name.">
+		description string (0..1) <"Category description.">
+		isEnabled boolean (1..1) <"Column is_enabled, default TRUE.">
+		slug Slug (0..1) <"GENERATED ALWAYS AS slugify(name) STORED, unique.">
+		abbreviation string (0..1) <"Unique short form.">
+		color string (0..1) <"Display colour.">
+		individual string (0..*) <"Column individual, text[] - singular name variants.">
+		plural string (0..*) <"Column plural, text[] - plural name variants.">
+		collective string (0..*) <"Column collective, text[] - collective noun variants.">
+		category Category (0..1) <"FK cat_id -> category.id - link into the master category tree."> [metadata reference]
+
+	type CompanyCategorySubcategory: <"Table public.company_cat_subcat - which master categories (and subcategories) a company operates in; primary key (company_id, parent_cat, sub_cat). parent/subcategory deletes RESTRICT, company deletes CASCADE.">
+		company Company (1..1) <"Part of composite primary key."> [metadata reference]
+		parentCategory Category (1..1) <"Column parent_cat -> category.id; part of composite primary key."> [metadata reference]
+		subCategory Category (1..1) <"Column sub_cat -> category.id; part of composite primary key."> [metadata reference]
+
+	type CompanyOffice: <"Table public.company_offices_nz - physical offices of a company in New Zealand. At most one primary office per company (partial unique index on is_primary).">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		company Company (1..1) <"FK company_id -> company.id ON DELETE CASCADE."> [metadata reference]
+		streetAddress NzStreetAddress (1..1) <"FK nz_street_address_id -> nz_street_address.id ON DELETE CASCADE."> [metadata reference]
+		isPrimary boolean (0..1) <"Column is_primary, default FALSE; unique where TRUE.">
+		officeAddress PostalAddress (0..1) <"Column office_address, jsonb.">
+		postalAddress PostalAddress (0..1) <"Column postal_address, jsonb.">
+		phone string (0..1)
+		fax string (0..1)
+		dx string (0..1) <"Document exchange (NZ legal sector) identifier.">
+		geometry GeoPoint (0..1) <"Column geom extensions.geometry(point,4167); geocoded by positionstack trigger.">
+
+	type Service: <"Table public.services - catalogue of professional services a company can list.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (1..1)
+		description string (0..1)
+		searchVector SearchVector (0..1) <"Column search_vector, tsvector - trigger-maintained (column managed outside migrations).">
+
+	type CompanyService: <"Table public.company_services - a service a company offers, optionally scoped to a marketplace category and workspace account.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		company Company (1..1) <"FK company_id -> company.id."> [metadata reference]
+		service Service (1..1) <"FK service_id -> services.id."> [metadata reference]
+		category Category (0..1) <"FK category_id -> category.id."> [metadata reference]
+		account Account (0..1) <"FK account_id -> basejump.accounts(id)."> [metadata reference]
+
+	type SameAs: <"Table public.same_as - third-party profile URLs belonging to a company (schema.org sameAs).">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		company Company (1..1) <"FK company_id -> company.id."> [metadata reference]
+		url string (1..1)
+
+	type CompanyPage: <"Table public.company_page - layout of a public company page.">
+		[rootType]
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		company Company (0..1) <"FK company_id -> company.id."> [metadata reference]
+		componentsOrder CompanyPageComponentEnum (0..*) <"Column components_order, company_page_component[] - ordering of page sections.">
+		publicationDateRange DateTimeRange (0..1) <"Column publication_date_range, tstzrange.">
+
+	type CompanyPageComponent: <"Table public.company_page_components - one rendered section of a company page.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		companyPage CompanyPage (0..1) <"FK company_page_id -> company_page.id."> [metadata reference]
+		componentType CompanyPageComponentEnum (0..1) <"Column component_type.">
+		componentData string (0..1) <"Column component_data, jsonb - section-specific payload; kept as raw payload.">
+
+	type CompanyPageIntro: <"Table public.company_page_intro - the hero/intro block of a company page.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		company Company (0..1) <"FK company_id -> company.id."> [metadata reference]
+		title string (0..1)
+		subTitle string (0..1) <"Column sub_title.">
+		primaryCallToActionText string (0..1) <"Column primary_cta_text.">
+		primaryCallToActionAction string (0..1) <"Column primary_cta_action.">
+		secondaryCallToActionText string (0..1) <"Column secondary_cta_text.">
+		secondaryCallToActionAction string (0..1) <"Column secondary_cta_action.">
+		announcementText string (0..1) <"Column announcment_text (sic, misspelled in the original schema).">
+		announcementAction string (0..1) <"Column announcment_action (sic).">
+		mainImageUrl string (0..1) <"Column main_image_url.">
+		componentName string (0..1) <"Column component_name.">
+		account Account (0..1) <"FK account_id -> basejump.accounts(id)."> [metadata reference]
+
+	type CompanyTestimonial: <"Table public.company_testimonials - a client testimonial from either a registered professional or an unregistered person (exactly one; CHECK with num_nonnulls = 1).">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		account Account (0..1) <"FK account_id -> basejump.accounts(id) - the company workspace being reviewed."> [metadata reference]
+		quote string (1..1)
+		starRating number(fractionalDigits: 2) (0..1) <"Column star, numeric(5,2).">
+		professionalProfile ProfessionalProfile (0..1) <"FK professional_profile_id -> professional_profile.id - registered author."> [metadata reference]
+		unregisteredUser CompanyTestimonialsUnregisteredUser (0..1) <"Column company_testimonials_unregistered_users_id."> [metadata reference]
+		condition ExactlyOneAuthor:
+			required choice professionalProfile, unregisteredUser
+
+	type CompanyTestimonialsUnregisteredUser: <"Table public.company_testimonials_unregistered_users - attribution details for testimonials by people without profiles.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		firstName string (0..1)
+		lastName string (0..1)
+		title string (0..1) <"Job title of the quoted person.">
+		company string (0..1) <"Employer of the quoted person.">
+		socialMediaHandle string (0..1) <"Column social_media_handle.">
+		socialMedia SocialMediaEnum (0..1) <"Column social_media - which network the handle belongs to.">
+		avatarUrl string (0..1)
+		companyLogoUrl string (0..1) <"Column company_logo_url.">
+
+	type WebsiteBrand: <"Table brandstation.website_brand - brand extracted from a company website.">
+		baseDomain string (1..1) <"Primary key; DEFAULT url_to_base_domain() - the eTLD+1 of the scraped site."> [metadata id]
+		title string (0..1) <"Page title.">
+		logoUrl string (0..1) <"Column logo_url.">
+		linkedinUrl string (0..1)
+		facebookUrl string (0..1)
+		twitterUrl string (0..1)
+		youtubeUrl string (0..1)
+		instagramUrl string (0..1)
+		tiktokUrl string (0..1)
+		backgroundColor WebsiteColors (0..1) <"FK background_color -> website_colors.id."> [metadata reference]
+		bucketName string (0..1) <"Storage bucket, unique; trigger-set.">
+		publishedDate zonedDateTime (0..1)
+		iframelyData string (0..1) <"Column iframely_data, jsonb - raw iframely embed metadata; kept as raw payload.">
+		category Category (0..1) <"FK category_id -> category.id."> [metadata reference]
+		isProcessed boolean (1..1) <"Column is_processed, default FALSE.">
+
+	type WebsiteColors: <"Table brandstation.website_colors - dominant colours extracted from a website.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		selected boolean (0..1) <"Default FALSE; partial unique index allows one selected colour per base domain.">
+		websiteBrand WebsiteBrand (0..1) <"FK base_domain -> website_brand.base_domain."> [metadata reference]
+		red RgbComponent (1..1)
+		green RgbComponent (1..1)
+		blue RgbComponent (1..1)
+		dominanceScore number (0..1) <"Column dominance_score, numeric - visual dominance of the colour.">
+
+	type BrandstationCompany: <"Table brandstation.company - brand record produced by the brandstation pipeline (near-duplicate of company_brand).">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		name string (1..1)
+		description string (0..1)
+		logoUrl string (0..1) <"Column logo_url.">
+		slogan string (0..1)
+		brandUrl string (0..1) <"Column brand_url.">
+		coverImageUrl string (0..1) <"Column cover_image_url.">
+		valueProposition string (0..1) <"Column value_proposition.">
+		background RgbColor (0..1) <"Columns background_red / background_green / background_blue.">
+		aggregateRating number(fractionalDigits: 2) (0..1) <"Column aggregate_rating, numeric(3,2).">
+		reviewCount int (0..1) <"Column review_count.">
+		publishedDate zonedDateTime (0..1)
+		createdBy User (1..1) <"FK created_by -> auth.users(id)."> [metadata reference]

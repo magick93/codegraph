@@ -1,0 +1,71 @@
+namespace flywheel.inbox
+: <"
+    Messaging: the user-to-user inbox (schema inbox), platform-generated
+    notification templates, the realtime notification queue, and the outbound
+    email log.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.profiles.*
+import flywheel.accounts.*
+
+	type Message: <"Table inbox.messages - a message; system-generated messages have no sender.">
+		[rootType]
+		messageId Uuid (1..1) <"Primary key."> [metadata id]
+		sender ProfessionalProfile (0..1) <"FK sender_id -> professional_profile.id; NULL for system messages (NOT NULL was dropped)."> [metadata reference]
+		subject string (0..1)
+		body string (0..1)
+		sentTime zonedDateTime (0..1) <"Column sent_time, default CURRENT_TIMESTAMP; migrated from naive timestamp to timestamptz.">
+		replyTo Message (0..1) <"FK reply_to_message_id -> messages.message_id - threading."> [metadata reference]
+		isDraft boolean (0..1) <"Column is_draft, default TRUE.">
+		systemSender MessageSystemSenderEnum (0..1) <"Column system_sender - set when the sender is the platform.">
+		preheader string (0..1) <"Email preheader used when the message is also emailed.">
+
+	type MessageRecipient: <"Table inbox.message_recipients - one delivery of a message per recipient.">
+		messageRecipientId Uuid (1..1) <"Primary key."> [metadata id]
+		message Message (1..1) <"FK message_id -> messages.message_id."> [metadata reference]
+		recipient ProfessionalProfile (0..1) <"Column recipient_id -> professional_profile.id; may also hold an account id (account-scoped inbox)."> [metadata reference]
+		recipientType MessageRecipientTypeEnum (1..1) <"Column recipient_type - to/cc/bcc.">
+		readStatus boolean (0..1) <"Default FALSE.">
+		readTime dateTime (0..1) <"Naive timestamp in the original schema.">
+		account Account (0..1) <"FK account_id -> basejump.accounts(id) - account-scoped delivery."> [metadata reference]
+		isArchived boolean (0..1) <"Column is_archived, default FALSE.">
+		snoozeUntil zonedDateTime (0..1) <"Snoozed inbox items reappear at this time.">
+
+	type Label: <"Table inbox.labels - a user's inbox label/folder.">
+		labelId Uuid (1..1) <"Primary key."> [metadata id]
+		name SmallText (1..1) <"Postgres domain inbox.smalltext (max 255 chars).">
+		user ProfessionalProfile (0..1) <"FK user_id -> professional_profile.id - label owner."> [metadata reference]
+
+	type MessageLabel: <"Table inbox.message_labels - assignment of a label to a message.">
+		messageLabelId Uuid (1..1) <"Primary key."> [metadata id]
+		message Message (0..1) <"FK message_id -> messages.message_id."> [metadata reference]
+		label Label (0..1) <"FK label_id -> labels.label_id."> [metadata reference]
+
+	type PlatformMessage: <"Table inbox.platform_messages - templated platform notification per event trigger.">
+		messageId Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		subject string (1..1)
+		body string (1..1)
+		eventTrigger InboxEventEnum (1..1) <"Column event_trigger - which event renders this template.">
+		isActive boolean (1..1) <"Default TRUE.">
+
+	type InboxNotification: <"Table public.inbox_notify - realtime notification queue (in the supabase_realtime publication); id equals the originating message_recipient_id.">
+		id Uuid (1..1) <"Primary key; equals message_recipients.message_recipient_id."> [metadata id]
+		user ProfessionalProfile (0..1) <"FK user_id -> professional_profile.id - user to notify."> [metadata reference]
+
+	type EmailMessage: <"Table public.email_messages - outbound email log (row-level security denies all direct access; written by SECURITY DEFINER send functions).">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		recipient string (0..1)
+		sender string (0..1)
+		cc string (0..1)
+		bcc string (0..1)
+		subject string (0..1)
+		textBody string (0..1) <"Column text_body.">
+		htmlBody string (0..1) <"Column html_body.">
+		created zonedDateTime (0..1) <"Default CURRENT_TIMESTAMP.">
+		status string (0..1)
+		deliveryResult string (0..1) <"Column deliveryresult (sic), jsonb - mailgun delivery result.">
+		deliverySignature string (0..1) <"Column deliverysignature (sic), jsonb - webhook signature.">
+		log string (0..1) <"Column log, jsonb - delivery event log.">

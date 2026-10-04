@@ -1,0 +1,164 @@
+# Domain configuration for flywheel — Flywheel B2B marketplace.
+# Model source: model/<domain>.rosetta (edit, then `just generate`).
+# Rosetta types are auto-scored by the classifier: entity vs value object
+# follows from the graph shape. force_entities pins the postgres table set
+# (1:1 with the original schema); force_value_objects pins the jsonb-embedded
+# structures.
+
+[defaults]
+app_name = "flywheel"
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+# Model source: model/common.rosetta — shared aliases, value structures and
+# all codelists (enums). Codelist tables/seeds must live in `common`.
+
+[domains.reference]
+label = "Reference Data"
+schema_dir = "reference"
+postgres_schema = "reference"
+depends_on = ["common"]
+# Model source: model/reference.rosetta
+force_entities = [
+    "IsoCountry", "City", "Nationality", "CountryCode", "CurrencyCode",
+    "NzStreetAddress", "NzLandAndDistrict", "NzSuburbAndLocality",
+    "NzPhysicalAddress",
+]
+force_value_objects = ["PostalAddress"]
+
+[domains.profiles]
+label = "Profiles"
+schema_dir = "profiles"
+postgres_schema = "profiles"
+depends_on = ["common", "reference", "taxonomy"]
+# Model source: model/profiles.rosetta
+force_entities = [
+    "User", "PreferredPronouns", "ProfessionalProfile", "ClientProfile",
+    "ProfessionalProfileFollowsCategory", "ProfessionalProfileCategory",
+    "ProfessionalProfileProfessionalService",
+]
+
+[domains.accounts]
+label = "Accounts & Plans"
+schema_dir = "accounts"
+postgres_schema = "accounts"
+depends_on = ["common", "profiles", "reference"]
+# Model source: model/accounts.rosetta
+force_entities = [
+    "Account", "AccountUser", "CompanyPlan", "AccountPlan", "AccountInvitee",
+    "StripeCustomer",
+]
+
+[domains.company]
+label = "Companies"
+schema_dir = "company"
+postgres_schema = "company"
+depends_on = ["common", "reference", "taxonomy", "profiles", "accounts"]
+# Model source: model/company.rosetta
+force_entities = [
+    "Company", "CompanyBrand", "CompanyCategory", "CompanyCategorySubcategory",
+    "CompanyOffice", "Service", "CompanyService", "SameAs", "CompanyPage",
+    "CompanyPageComponent", "CompanyPageIntro", "CompanyTestimonial",
+    "CompanyTestimonialsUnregisteredUser", "WebsiteBrand", "WebsiteColors",
+    "BrandstationCompany",
+]
+
+[domains.taxonomy]
+label = "Taxonomy"
+schema_dir = "taxonomy"
+postgres_schema = "taxonomy"
+depends_on = ["common"]
+# Model source: model/taxonomy.rosetta
+force_entities = [
+    "Category", "Profession", "Industry",
+    "IndustriesDivision", "IndustriesSubdivision", "IndustriesGroup",
+    "IndustriesClass",
+    "BusinessModelCategory", "BusinessModel", "BusinessModelExample",
+    "BusinessStructure",
+]
+
+[domains.jobs]
+label = "Jobs & Posts"
+schema_dir = "jobs"
+postgres_schema = "jobs"
+depends_on = ["common", "profiles", "company", "accounts", "qanda"]
+# Model source: model/jobs.rosetta
+force_entities = [
+    "JobPost", "JobApplication", "JobApplicationHistory", "Post", "Comment",
+    "CommentFlag",
+]
+force_value_objects = [
+    "JobMarketingElements",
+    "IndividualApplicant",
+    "BusinessApplicant",
+    "LegalApplicant",
+    "AccountingApplicant",
+    "HrApplicant",
+    "ExactBudget",
+    "RangeBudget",
+    "MinimumHoursBudget",
+    "NoBudget",
+    "ApplicationStateContext",
+    "ApplicationState",
+]
+
+[domains.qanda]
+label = "Questions & Forms"
+schema_dir = "qanda"
+postgres_schema = "qanda"
+depends_on = ["common", "profiles", "taxonomy"]
+# Model source: model/qanda.rosetta
+force_entities = [
+    "Question", "MultiChoiceOption", "GroupQuestion", "PlainTextQuestion",
+    "PlainTextAnswer", "Form", "FormSchemaScopePath", "FormInput",
+    "FormInputItem", "FormLayout", "FormLayoutElement", "FormResponse",
+]
+
+[domains.marketplace]
+label = "Marketplace"
+schema_dir = "marketplace"
+postgres_schema = "marketplace"
+depends_on = ["common", "profiles", "accounts", "reference"]
+# Model source: model/marketplace.rosetta
+force_entities = [
+    "Auction", "AuctionBid", "AuctionAutobid", "Lead", "LeadWatchList",
+    "LeadPurchase",
+]
+force_value_objects = [
+    "QaPair",
+    "ServiceExpertise",
+    "LeadRequirements",
+    "PreferredProvider",
+    "ComplianceAndRisk",
+    "LeadContactInfo",
+    "AnonymousLeadDossier",
+    "FullLeadDossier",
+    "PurchaseMetadata",
+]
+
+[domains.inbox]
+label = "Inbox"
+schema_dir = "inbox"
+postgres_schema = "inbox"
+depends_on = ["common", "profiles", "accounts"]
+# Model source: model/inbox.rosetta
+force_entities = [
+    "Message", "MessageRecipient", "Label", "MessageLabel", "PlatformMessage",
+    "InboxNotification", "EmailMessage",
+]
+
+[domains.pricing]
+label = "Pricing & Billing"
+schema_dir = "pricing"
+postgres_schema = "pricing"
+depends_on = ["common", "reference", "taxonomy", "profiles"]
+# Model source: model/pricing.rosetta
+force_entities = [
+    "PricingModel", "PricingPlan", "TimeBasedPricing", "PricingTier",
+    "UsagePricing", "PerformancePricing", "AdditionalFee", "SegmentPricing",
+    "SegmentIndustry", "Contract", "Invoice", "InvoiceLineItem",
+    "PricingHistory",
+]

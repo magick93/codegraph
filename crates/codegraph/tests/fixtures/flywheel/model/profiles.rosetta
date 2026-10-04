@@ -1,0 +1,76 @@
+namespace flywheel.profiles
+: <"
+    People and identity: Supabase auth users, the professional (service provider)
+    and client (business user) profiles, pronoun preferences, and the
+    profile-to-category relations that drive marketplace discovery.
+
+    Table public.professional_profile is the single main profile (the earlier
+    user_profiles / profiles_info tables were dropped).
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.reference.*
+import flywheel.taxonomy.*
+
+	type User: <"Table public.users - Supabase auth.users mirror with Stripe-synced billing details. Other tables reference auth users by id; modelled once here.">
+		id Uuid (1..1) <"Primary key; equals auth.users.id."> [metadata id]
+		fullName string (0..1) <"Column full_name (public.users mirror).">
+		avatarUrl string (0..1) <"Column avatar_url.">
+		billingAddress string (0..1) <"Column billing_address, jsonb - Stripe billing address.">
+		paymentMethod string (0..1) <"Column payment_method, jsonb - default Stripe payment method.">
+
+	type PreferredPronouns: <"Table public.preferred_pronouns - one row per auth user; exactly one of common_pronoun / other must be set (CHECK num_nonnulls = 1).">
+		id Uuid (1..1) <"Primary key; FK to auth.users(id)."> [metadata id]
+		commonPronoun PronounsEnum (0..1) <"Column common_pronoun - a standard pronoun set.">
+		other string (0..1) <"Column other - free-text pronoun.">
+		condition ExactlyOnePronoun:
+			required choice commonPronoun, other
+
+	type ProfessionalProfile: <"Table public.professional_profile - the marketplace profile of a professional service provider (lawyer, accountant, HR consultant, ...). Discovered by businesses via categories and professions.">
+		[rootType]
+		id Uuid (1..1) <"Primary key, default auth.uid(); the historical FK to auth.users(id) was dropped - profile rows exist independently."> [metadata id]
+		firstName string (0..1) <"Column first_name.">
+		lastName string (0..1) <"Column last_name.">
+		fullName string (0..1) <"Column full_name - GENERATED ALWAYS AS coalesce(first_name,'') || ' ' || coalesce(last_name,'') STORED.">
+		username string (0..1) <"Column username, citext, unique - case-insensitive.">
+		slugName Slug (0..1) <"Column slug_name, unique - derived from name plus a pg_hashids suffix by trigger.">
+		jobTitle string (0..1) <"Column job_title.">
+		about string (0..1) <"Column about - biography / capability statement.">
+		avatarUrl string (0..1) <"Column avatar_url.">
+		preferredPronouns string (0..1) <"Column preferred_pronounds (sic, misspelled in the original schema) - denormalised pronoun label.">
+		postQualifiedExperience int (0..1) <"Column post_qualified_experience, CHECK (value >= 0) - years of experience after qualification.">
+		currentProfession Profession (0..1) <"FK current_professions_id -> professions.id."> [metadata reference]
+		country IsoCountry (0..1) <"FK iso3_country -> iso_3166_2_countries.'alpha-3'."> [metadata reference]
+		city City (0..1) <"FK city_id -> cities.id."> [metadata reference]
+		onlyTradePartners boolean (0..1) <"Column only_trade_partners, default NULL: NULL = publicly visible, TRUE = visible to trade partners only, FALSE = visible to any signed-in user.">
+		systemStatus SystemProfileStatusEnum (1..1) <"Column sys_status (renamed from status), default 'active'.">
+		userDeletedAt zonedDateTime (0..1) <"Column user_deleted_at - soft deletion timestamp.">
+
+	type ClientProfile: <"Table public.client_profile - profile of a business-side user seeking professional services.">
+		[rootType]
+		id Uuid (1..1) <"Primary key, default auth.uid()."> [metadata id]
+		firstName string (0..1) <"Column first_name.">
+		lastName string (0..1) <"Column last_name.">
+		fullName string (0..1) <"Column full_name - GENERATED ALWAYS AS coalesce(first_name,'') || ' ' || coalesce(last_name,'') STORED.">
+		username string (0..1) <"Column username, citext, unique.">
+		slugName Slug (0..1) <"Column slug_name.">
+		preferredPronouns PreferredPronouns (0..1) <"Column preferred_pronouns -> preferred_pronouns.id."> [metadata reference]
+		avatarUrl string (0..1) <"Column avatar_url.">
+		country IsoCountry (0..1) <"FK iso3_country -> iso_3166_2_countries.'alpha-3'."> [metadata reference]
+		city City (0..1) <"FK city_id -> cities.id."> [metadata reference]
+		about string (0..1) <"Column about.">
+
+	type ProfessionalProfileFollowsCategory: <"Table public.professional_profile_follows_categories - categories a professional follows (feed/notification preferences).">
+		id Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		professionalProfile ProfessionalProfile (0..1) <"FK professional_profile_id -> professional_profile.id."> [metadata reference]
+		category Category (0..1) <"FK category_id -> category.id."> [metadata reference]
+
+	type ProfessionalProfileCategory: <"Table public.professional_profile_category - categories a professional offers services in; primary key (professional_profile_id, category_id), both FKs ON DELETE CASCADE.">
+		professionalProfile ProfessionalProfile (1..1) <"Part of composite primary key."> [metadata reference]
+		category Category (1..1) <"Part of composite primary key."> [metadata reference]
+
+	type ProfessionalProfileProfessionalService: <"Table public.professional_profile_professional_services - service categories a professional trades in; primary key (professional_profile_id, category_id), both FKs ON DELETE CASCADE.">
+		professionalProfile ProfessionalProfile (1..1) <"Part of composite primary key."> [metadata reference]
+		category Category (1..1) <"Part of composite primary key."> [metadata reference]
