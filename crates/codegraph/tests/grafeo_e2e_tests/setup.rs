@@ -227,10 +227,12 @@ pub(crate) fn generate_mod_files_recursive(dir: &std::path::Path) {
         if entry.file_type().unwrap().is_dir() {
             generate_mod_files_recursive(&entry.path());
             modules.push(name);
-        } else if let Some(stem) = name.strip_suffix(".rs") {
-            if stem != "mod" && stem != "main" && stem != "app_state" {
-                modules.push(stem.to_string());
-            }
+        } else if let Some(stem) = name.strip_suffix(".rs")
+            && stem != "mod"
+            && stem != "main"
+            && stem != "app_state"
+        {
+            modules.push(stem.to_string());
         }
     }
 

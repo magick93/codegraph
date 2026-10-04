@@ -1,6 +1,6 @@
 use crate::error::AtprotoError;
 use crate::types::{CreateRecordResponse, ListRecordsResponse};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 #[allow(async_fn_in_trait)]
 pub trait RepoWriter: Send + Sync {

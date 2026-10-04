@@ -63,16 +63,15 @@ pub fn resolve_parent_fk_column(
         return Some(fk);
     }
     // If manual config says role=child with a parent, derive FK from parent name
-    if let Some(ec) = entity_cfg {
-        if ec.role.as_deref() == Some("child") {
-            if let Some(ref parent_title) = ec.parent {
-                let parent_name = api::router::strip_suffix(parent_title, suffix);
-                return Some(format!(
-                    "{}_id",
-                    codegraph_naming::to_snake_case(parent_name)
-                ));
-            }
-        }
+    if let Some(ec) = entity_cfg
+        && ec.role.as_deref() == Some("child")
+        && let Some(ref parent_title) = ec.parent
+    {
+        let parent_name = api::router::strip_suffix(parent_title, suffix);
+        return Some(format!(
+            "{}_id",
+            codegraph_naming::to_snake_case(parent_name)
+        ));
     }
     // 2. Graph fallback (no domain check — FK column always needed)
     let stripped = api::router::strip_suffix(schema_title, suffix);
@@ -102,17 +101,15 @@ pub async fn resolve_parent_fk_column_same_domain(
     if let Some(fk) = entity_cfg.and_then(|ec| ec.parent_ref.clone()) {
         return Some(fk);
     }
-    if let Some(ec) = entity_cfg {
-        if ec.role.as_deref() == Some("child") {
-            if let Some(ref parent_title) = ec.parent {
-                let parent_name =
-                    api::router::strip_suffix(parent_title, &config.defaults.type_suffix);
-                return Some(format!(
-                    "{}_id",
-                    codegraph_naming::to_snake_case(parent_name)
-                ));
-            }
-        }
+    if let Some(ec) = entity_cfg
+        && ec.role.as_deref() == Some("child")
+        && let Some(ref parent_title) = ec.parent
+    {
+        let parent_name = api::router::strip_suffix(parent_title, &config.defaults.type_suffix);
+        return Some(format!(
+            "{}_id",
+            codegraph_naming::to_snake_case(parent_name)
+        ));
     }
     // 2. Graph fallback with same-domain check (only for non-root entities)
     let effective_role = entity_cfg

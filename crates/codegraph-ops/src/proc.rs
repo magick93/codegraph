@@ -578,9 +578,10 @@ mod tests {
         let mut cmd = Command::new("definitely-not-a-real-cg-binary-xyz");
         let err = run_streaming(&mut cmd, "x").unwrap_err();
         assert!(matches!(err, OpsError::Command(_)), "got {err:?}");
-        assert!(err
-            .to_string()
-            .contains("definitely-not-a-real-cg-binary-xyz"));
+        assert!(
+            err.to_string()
+                .contains("definitely-not-a-real-cg-binary-xyz")
+        );
     }
 
     #[cfg(unix)]

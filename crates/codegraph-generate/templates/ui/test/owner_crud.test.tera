@@ -23,20 +23,6 @@ let UI_PATH: string;
 const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
 {% endif %}
 
-{#- The page object for a spec body: nested routes pass the runtime base
-    path resolved in beforeAll; top-level entities use the POM default. -#}
-{% macro pom_construct(page_var) -%}
-{%- if parent -%}
-{%- if parent.grandparent -%}
-new {{ entity_name }}Page({{ page_var }}, UI_PATH)
-{%- else -%}
-new {{ entity_name }}Page({{ page_var }}, BASE_PATH)
-{%- endif -%}
-{%- else -%}
-new {{ entity_name }}Page({{ page_var }})
-{%- endif -%}
-{%- endmacro %}
-
 // Entity reference dependency IDs — populated in beforeAll when FK deps exist
 {% raw %}
 const depIds: Record<string, string | string[]> = {};
@@ -77,7 +63,7 @@ function testData(): Record<string, unknown> {
     // '{{ field.name }}': entity ref — emitted by _dep_setup.tera
 {%- elif field.pg_type == "UUID" and not field.is_entity_ref %}
     '{{ field.name }}': `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`,
-{%- elif field.pg_type is containing("GEOMETRY") %}
+{%- elif field.pg_type is containing(pat="GEOMETRY") %}
     // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
 {%- elif field.is_array %}
     '{{ field.name }}': ['Test {{ field.label }}'],
@@ -129,7 +115,7 @@ function updatedData(): Record<string, unknown> {
     // '{{ field.name }}': entity ref — emitted by _dep_setup.tera
 {%- elif field.pg_type == "UUID" and not field.is_entity_ref %}
     '{{ field.name }}': `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`,
-{%- elif field.pg_type is containing("GEOMETRY") %}
+{%- elif field.pg_type is containing(pat="GEOMETRY") %}
     // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
 {%- elif field.is_array %}
     '{{ field.name }}': ['Updated {{ field.label }}'],
@@ -145,36 +131,6 @@ function updatedData(): Record<string, unknown> {
 {% include "ui/test/_dep_setup.tera" %}
   };
 }
-
-{#- The POM fill call for one field: only the VALUE SHAPE differs per
-    input kind — the selector mechanics live in the page class. -#}
-{% macro fill_call(field, data_var) -%}
-{%- if field.nested_type_name -%}
-// '{{ field.name }}' is a ValueObject — provide nested structure in testData()
-{%- elif field.input_type == "checkbox" -%}
-await ui.fill{{ field.name | pascal_case }}(Boolean({{ data_var }}['{{ field.name }}']));
-{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array -%}
-await ui.fill{{ field.name | pascal_case }}(({{ data_var }}['{{ field.name }}'] as { code: string }[])[0]?.code ?? '');
-{%- elif field.is_codelist and field.codelist_values | length > 0 -%}
-await ui.fill{{ field.name | pascal_case }}(String({{ data_var }}['{{ field.name }}']));
-{%- elif field.input_type == "datetime-local" -%}
-await ui.fill{{ field.name | pascal_case }}(String({{ data_var }}['{{ field.name }}']));
-{%- elif field.is_entity_ref -%}
-await ui.fill{{ field.name | pascal_case }}(String({{ data_var }}['{{ field.name }}'] ?? ''));
-{%- elif field.input_type == "date-range" -%}
-await ui.fill{{ field.name | pascal_case }}(String({{ data_var }}['{{ field.name }}']));
-{%- elif field.structured_sub_fields | length > 0 and field.is_array -%}
-await ui.fill{{ field.name | pascal_case }}(({{ data_var }}['{{ field.name }}'] as Record<string, unknown>[]).map((v) => String(v['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? '')));
-{%- elif field.structured_sub_fields | length > 0 -%}
-await ui.fill{{ field.name | pascal_case }}(String(({{ data_var }}['{{ field.name }}'] as Record<string, unknown>)?.['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
-{%- elif field.input_type == "array" -%}
-await ui.fill{{ field.name | pascal_case }}({{ data_var }}['{{ field.name }}'] as string[]);
-{%- elif field.pg_type is containing("GEOMETRY") -%}
-// '{{ field.name }}' geometry — omitted from form fill
-{%- else -%}
-await ui.fill{{ field.name | pascal_case }}(String({{ data_var }}['{{ field.name }}']));
-{%- endif -%}
-{%- endmacro %}
 
 test.describe('{{ entity_name }} Owner CRUD', () => {
 
@@ -216,16 +172,40 @@ test.describe('{{ entity_name }} Owner CRUD', () => {
 {%- if has_create %}
 {% if create_fields | length > 0 %}
   test('owner can create {{ entity_name }} via form', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.gotoCreate();
     // Wait for Svelte 5 to hydrate the form's submit handler.
     await ui.waitForForm();
 {%- for field in create_fields %}
 {%- if field.nested_type_name %}
     // '{{ field.name }}' is a ValueObject — provide nested structure in testData()
-{%- elif field.pg_type is containing("GEOMETRY") %}
+{%- elif field.pg_type is containing(pat="GEOMETRY") %}
 {%- else %}
-    {{ self::fill_call(field=field, data_var="data") }}
+    {% if field.nested_type_name -%}
+// '{{ field.name }}' is a ValueObject — provide nested structure in testData()
+{%- elif field.input_type == "checkbox" -%}
+await ui.fill{{ field.name | pascal_case }}(Boolean(data['{{ field.name }}']));
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array -%}
+await ui.fill{{ field.name | pascal_case }}((data['{{ field.name }}'] as { code: string }[])[0]?.code ?? '');
+{%- elif field.is_codelist and field.codelist_values | length > 0 -%}
+await ui.fill{{ field.name | pascal_case }}(String(data['{{ field.name }}']));
+{%- elif field.input_type == "datetime-local" -%}
+await ui.fill{{ field.name | pascal_case }}(String(data['{{ field.name }}']));
+{%- elif field.is_entity_ref -%}
+await ui.fill{{ field.name | pascal_case }}(String(data['{{ field.name }}'] ?? ''));
+{%- elif field.input_type == "date-range" -%}
+await ui.fill{{ field.name | pascal_case }}(String(data['{{ field.name }}']));
+{%- elif field.structured_sub_fields | length > 0 and field.is_array -%}
+await ui.fill{{ field.name | pascal_case }}((data['{{ field.name }}'] as Record<string, unknown>[]).map((v) => String(v['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? '')));
+{%- elif field.structured_sub_fields | length > 0 -%}
+await ui.fill{{ field.name | pascal_case }}(String((data['{{ field.name }}'] as Record<string, unknown>)?.['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
+{%- elif field.input_type == "array" -%}
+await ui.fill{{ field.name | pascal_case }}(data['{{ field.name }}'] as string[]);
+{%- elif field.pg_type is containing(pat="GEOMETRY") -%}
+// '{{ field.name }}' geometry — omitted from form fill
+{%- else -%}
+await ui.fill{{ field.name | pascal_case }}(String(data['{{ field.name }}']));
+{%- endif %}
 {%- endif %}
 {%- endfor %}
     await ui.submit();
@@ -247,7 +227,7 @@ test.describe('{{ entity_name }} Owner CRUD', () => {
 
 {% if has_list %}
   test('owner sees {{ entity_name }} in list', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.gotoList();
     const table = ui.tableRoot();
     const empty = ui.emptyState();
@@ -257,7 +237,7 @@ test.describe('{{ entity_name }} Owner CRUD', () => {
 
 {%- if has_read and has_create %}
   test('owner can view {{ entity_name }} detail', async ({ ownerPage, orgContext }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
     await ui.gotoDetail(myId);
@@ -270,7 +250,7 @@ test.describe('{{ entity_name }} Owner CRUD', () => {
 {%- if has_update and has_create %}
 {% if update_fields | length > 0 %}
   test('owner can edit {{ entity_name }}', async ({ ownerPage, orgContext }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
     await ui.gotoEdit(myId);
@@ -279,9 +259,33 @@ test.describe('{{ entity_name }} Owner CRUD', () => {
 {%- for field in update_fields %}
 {%- if field.nested_type_name %}
     // '{{ field.name }}' is a ValueObject — provide nested structure in testData()
-{%- elif field.pg_type is containing("GEOMETRY") %}
+{%- elif field.pg_type is containing(pat="GEOMETRY") %}
 {%- else %}
-    {{ self::fill_call(field=field, data_var="updated") }}
+    {% if field.nested_type_name -%}
+// '{{ field.name }}' is a ValueObject — provide nested structure in testData()
+{%- elif field.input_type == "checkbox" -%}
+await ui.fill{{ field.name | pascal_case }}(Boolean(updated['{{ field.name }}']));
+{%- elif field.is_codelist and field.codelist_values | length > 0 and field.is_array -%}
+await ui.fill{{ field.name | pascal_case }}((updated['{{ field.name }}'] as { code: string }[])[0]?.code ?? '');
+{%- elif field.is_codelist and field.codelist_values | length > 0 -%}
+await ui.fill{{ field.name | pascal_case }}(String(updated['{{ field.name }}']));
+{%- elif field.input_type == "datetime-local" -%}
+await ui.fill{{ field.name | pascal_case }}(String(updated['{{ field.name }}']));
+{%- elif field.is_entity_ref -%}
+await ui.fill{{ field.name | pascal_case }}(String(updated['{{ field.name }}'] ?? ''));
+{%- elif field.input_type == "date-range" -%}
+await ui.fill{{ field.name | pascal_case }}(String(updated['{{ field.name }}']));
+{%- elif field.structured_sub_fields | length > 0 and field.is_array -%}
+await ui.fill{{ field.name | pascal_case }}((updated['{{ field.name }}'] as Record<string, unknown>[]).map((v) => String(v['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? '')));
+{%- elif field.structured_sub_fields | length > 0 -%}
+await ui.fill{{ field.name | pascal_case }}(String((updated['{{ field.name }}'] as Record<string, unknown>)?.['{{ field.structured_sub_fields | first | get(key="name") }}'] ?? ''));
+{%- elif field.input_type == "array" -%}
+await ui.fill{{ field.name | pascal_case }}(updated['{{ field.name }}'] as string[]);
+{%- elif field.pg_type is containing(pat="GEOMETRY") -%}
+// '{{ field.name }}' geometry — omitted from form fill
+{%- else -%}
+await ui.fill{{ field.name | pascal_case }}(String(updated['{{ field.name }}']));
+{%- endif %}
 {%- endif %}
 {%- endfor %}
     await ui.submit();
@@ -295,7 +299,7 @@ test.describe('{{ entity_name }} Owner CRUD', () => {
 
 {%- if has_delete and has_create %}
   test('owner can delete {{ entity_name }}', async ({ ownerPage, orgContext }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     const entity = await createEntityAsAcme(orgContext, BASE_PATH, testData());
     const myId = entity['id'] as string;
     await ui.gotoDetail(myId);

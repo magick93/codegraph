@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
-use crate::db::dialect::{db_template_for, dialect_for_target, DatabaseTarget, SqlDialect};
+use crate::db::dialect::{DatabaseTarget, SqlDialect, db_template_for, dialect_for_target};
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};

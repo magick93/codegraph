@@ -19,7 +19,7 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
@@ -36,20 +36,27 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 futures = "0.3"
-tera = "1"
+tera = { version = "2", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive"] }
 codegraph-config = { path = "crates/codegraph-config" }
 heck = "0.5"
 base64 = "0.22"
 garde = "0.20"
-utoipa = { version = "5", features = ["uuid", "chrono"] }
-sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
+utoipa = { version = "6", features = ["uuid", "chrono"] }
+sea-orm = { version = "2", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros"] }
 axum = "0.8"
 bytes = "1"
 lsp-types = "0.97"
+# tree-sitter cannot move past 0.25 until auto-lsp releases > 0.6.2: the
+# crate uses `links = "tree-sitter"`, so two versions cannot coexist, and
+# auto-lsp 0.6.2 (newest) requires ^0.25.5 and re-exports it through
+# `auto_lsp::tree_sitter` (issue #422). auto-lsp master is on 0.26.5 but
+# unreleased — coordinate the jump with its next release.
 tree-sitter = "0.25"
 tree-sitter-language = "0.1"
-salsa = "0.22"
+# salsa: no direct dependency anywhere — 0.22 rides in transitively via
+# auto-lsp 0.6.2 (0.23 via rex-driver). A direct salsa upgrade is gated on
+# the same auto-lsp release as tree-sitter above (issue #423).
 rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
 rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }
 rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "77688ee99d35fe4ad0812b3acb488c61136c17ee" }

@@ -6,7 +6,7 @@ use codegraph_core::types::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
     NeverBothGroup,
 };
-use rex_driver::{compile_actors_str_with_imports, SchemaImports};
+use rex_driver::{SchemaImports, compile_actors_str_with_imports};
 use rex_ifml::IfmlModel;
 use rex_ir::ActorModel;
 

@@ -43,10 +43,8 @@ pub fn migrations_root(output_dir: &Path) -> PathBuf {
             .and_then(|n| n.to_str())
             .map(|n| n == "generated")
             .unwrap_or(false);
-    if in_repo_layout {
-        if let Some(repo_root) = output_dir.parent().and_then(Path::parent) {
-            return repo_root.join("migrations");
-        }
+    if in_repo_layout && let Some(repo_root) = output_dir.parent().and_then(Path::parent) {
+        return repo_root.join("migrations");
     }
     output_dir.join("migrations")
 }

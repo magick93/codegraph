@@ -214,7 +214,7 @@ pub fn ensure_binary_fresh(app_dir: &Path, binary: &Path) -> OpsResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{record_service, ServiceEntry, ServiceRegistry};
+    use crate::registry::{ServiceEntry, ServiceRegistry, record_service};
 
     /// A live ServiceEntry for `port` whose pid is this test process (always
     /// alive; only safe with the reuse path or an injected killer).

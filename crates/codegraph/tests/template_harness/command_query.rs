@@ -15,8 +15,8 @@ async fn candidate_command() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-cmd");
 
-    let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::command::CommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -197,7 +197,7 @@ async fn jwt_auth_resolves_context_in_one_round_trip() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-jwt-single-trip");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -211,7 +211,7 @@ async fn jwt_auth_resolves_context_in_one_round_trip() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -267,8 +267,8 @@ async fn candidate_query() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-query");
 
-    let gen = generate::ddd::query::QueryGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::query::QueryGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -297,8 +297,8 @@ async fn candidate_event() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-event");
 
-    let gen = generate::ddd::event::EventGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::event::EventGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -327,8 +327,8 @@ async fn candidate_enriched_event() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-enriched-event");
 
-    let gen = generate::ddd::event::EventGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::event::EventGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -383,8 +383,8 @@ async fn candidate_command_correlation_id() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-cmd-corr");
 
-    let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::command::CommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -414,8 +414,8 @@ async fn command_inlines_typed_uuid_context_bundle() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-cmd-security");
 
-    let gen = generate::ddd::command::CommandGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::command::CommandGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -479,8 +479,8 @@ async fn query_inlines_typed_uuid_context_bundle() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-query-security");
 
-    let gen = generate::ddd::query::QueryGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::query::QueryGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -539,9 +539,9 @@ async fn child_command_accepts_parent_id() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-command");
 
-    let gen = generate::ddd::command::CommandGenerator::new(&output_dir)
+    let generator = generate::ddd::command::CommandGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",
@@ -577,9 +577,9 @@ async fn child_query_has_find_by_id_scoped() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-query");
 
-    let gen =
+    let generator =
         generate::ddd::query::QueryGenerator::new(&output_dir).with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",

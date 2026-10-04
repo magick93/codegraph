@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # GitHub Actions only. Cargo dependencies are updated deliberately, not
+  # by automation: monthly Tier-0 lockfile refreshes (manual `cargo update`
+  # PR, see AGENTS.md "Dependency policy") and majors as epic work —
+  # dependabot manifest PRs would churn the deliberate exact/rev pins
+  # (sqlglot-rust, grafeo, rex-*, sigil-*).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

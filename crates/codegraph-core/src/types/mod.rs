@@ -37,8 +37,8 @@ pub use api::{
 // methods. `EdgeType::InNamespace` stays shared by both features.
 pub use atproto::{AtprotoNamespaceNode, CollectionNode, LexiconNode, RepositoryNode};
 pub use authorization::{
-    resolve_effective_permits, ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode,
-    DelegationRecord, GrantEdge, NeverBothGroup, Permit,
+    ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
+    NeverBothGroup, Permit, resolve_effective_permits,
 };
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
@@ -47,17 +47,17 @@ pub use condition::{ConditionKind, ConditionNode};
 pub use discovery::{DetectionSource, Extension, ParentCandidate};
 pub use edge::{EdgeProperties, EdgeType};
 pub use field_def::{
-    codelist_enum_name_from_ref, ensure_id_suffix, resolve_field, resolve_fk_column_name,
-    FieldDefinition,
+    FieldDefinition, codelist_enum_name_from_ref, ensure_id_suffix, resolve_field,
+    resolve_fk_column_name,
 };
 pub use function::{
     FunctionAlias, FunctionDispatch, FunctionInput, FunctionNode, FunctionOperation,
     FunctionPostCondition, FunctionTransform, FunctionTransformKind,
 };
 pub use ifml::{
-    strip_ifml_prefix, ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
-    ModuleUseRecord, NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode, ModuleUseRecord,
+    NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode,
+    ViewContainerNode, strip_ifml_prefix,
 };
 pub use incompleteness::{Incompleteness, IncompletenessReason};
 pub use mox::{
@@ -65,9 +65,9 @@ pub use mox::{
     MoxParam, MoxVocabularyNode,
 };
 pub use namespace::{
-    derive_namespace_depends, descendants, disambiguate_schema_ids, namespace_module_path,
-    namespace_module_rust, qualified_schema_id, topological_namespace_order, topological_order,
-    NamespaceImport, NamespaceNode,
+    NamespaceImport, NamespaceNode, derive_namespace_depends, descendants, disambiguate_schema_ids,
+    namespace_module_path, namespace_module_rust, qualified_schema_id, topological_namespace_order,
+    topological_order,
 };
 pub use persistence::{
     AuditEffect, AuditTimestampKind, AuditUserKind, PersistenceChildTable, PersistenceColumn,
@@ -79,7 +79,7 @@ pub use policy::{
     RowSecurityPolicy, SoftDeleteMarker, SoftDeletePolicy, SoftDeleteVisibility,
     TenantIsolationPolicy, TenantPropagation, TenantStrategy,
 };
-pub use property::{inject_codelist_properties, ref_target_candidate_title, PropertyNode};
+pub use property::{PropertyNode, inject_codelist_properties, ref_target_candidate_title};
 pub use regulatory::{
     RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RegulatoryRefRecord,
 };
@@ -87,7 +87,7 @@ pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
 pub use rule::{RuleKind, RuleNode, RuleRefRecord};
-pub use schema::{Access, SchemaClassificationData, SchemaNode, MOX_SOURCE};
+pub use schema::{Access, MOX_SOURCE, SchemaClassificationData, SchemaNode};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
 };

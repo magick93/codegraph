@@ -5,7 +5,7 @@ use clap::Parser;
 
 mod cli;
 
-use codegraph_backend::{create_backend, BackendConfig};
+use codegraph_backend::{BackendConfig, create_backend};
 
 #[tokio::main]
 async fn main() -> codegraph::error::Result<()> {
@@ -271,7 +271,7 @@ async fn cmd_lsp(
     config: Option<&Path>,
     mox_files: &[PathBuf],
 ) -> codegraph::error::Result<()> {
-    use codegraph::lsp::{init_mox, run_lsp_server, GrafeoState, SchemaInfo};
+    use codegraph::lsp::{GrafeoState, SchemaInfo, init_mox, run_lsp_server};
 
     let backend_config = BackendConfig::default();
     let be = create_backend(&backend_config)
@@ -357,28 +357,28 @@ async fn cmd_lsp(
     }
 
     // Also try AutoClassifier if domain config is provided (more precise)
-    if let Some(config_path) = config {
-        if let Ok(domain_config) = codegraph_config::config::parse_domain_config(config_path) {
-            for (domain_name, domain_entry) in &domain_config.domains {
-                let domain_schemas: Vec<_> = all_data
-                    .iter()
-                    .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
-                    .cloned()
-                    .collect();
-                let result =
-                    auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
-                for score in &result.entities {
-                    let name = score
-                        .title
-                        .strip_suffix(default_suffix)
-                        .unwrap_or(&score.title)
-                        .to_string();
-                    entity_names_set.insert(name);
-                }
-                // Also include legacy explicit entities from domains.toml
-                for entity in &domain_entry.entities {
-                    entity_names_set.insert(entity.clone());
-                }
+    if let Some(config_path) = config
+        && let Ok(domain_config) = codegraph_config::config::parse_domain_config(config_path)
+    {
+        for (domain_name, domain_entry) in &domain_config.domains {
+            let domain_schemas: Vec<_> = all_data
+                .iter()
+                .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+                .cloned()
+                .collect();
+            let result =
+                auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+            for score in &result.entities {
+                let name = score
+                    .title
+                    .strip_suffix(default_suffix)
+                    .unwrap_or(&score.title)
+                    .to_string();
+                entity_names_set.insert(name);
+            }
+            // Also include legacy explicit entities from domains.toml
+            for entity in &domain_entry.entities {
+                entity_names_set.insert(entity.clone());
             }
         }
     }

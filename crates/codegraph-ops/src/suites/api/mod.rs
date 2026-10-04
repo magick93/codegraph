@@ -10,7 +10,7 @@ use std::process::Command;
 use crate::config::OpsConfig;
 use crate::db::{psql_exec, psql_exec_file_ok, psql_query};
 use crate::error::{OpsError, OpsResult};
-use crate::ext::{run_hooks, HookPolicy};
+use crate::ext::{HookPolicy, run_hooks};
 use crate::migrate::run_api_migrations_with_options;
 use crate::output;
 use crate::proc::{ManagedProcess, Supervisor};
@@ -682,11 +682,10 @@ async fn stage_database(
             .hurl
             .as_ref()
             .and_then(|h| h.org_id_b.clone())
+            && let Ok(key) = provision_api_key(config, &org_b, "ops-test-key-b").await
         {
-            if let Ok(key) = provision_api_key(config, &org_b, "ops-test-key-b").await {
-                counters.pass("Org B API key provisioned");
-                api_key_b = Some(key);
-            }
+            counters.pass("Org B API key provisioned");
+            api_key_b = Some(key);
         }
         // Limited (read-only) key for scope-denial contract files (#169):
         // opted in via `hurl.limited_key = true`, exposed to hurl as
@@ -1217,19 +1216,17 @@ async fn stage_graceful_shutdown(
             true
         }
     };
-    if shutdown_ok {
-        if let Ok(log) = std::fs::read_to_string(&config.log_file) {
-            let log = strip_ansi(&log);
-            if log.contains("received SIGTERM") {
-                counters.pass("Log: received SIGTERM");
-            } else {
-                output::warn("Log: no SIGTERM receipt message (app-specific)");
-            }
-            if log.contains("timer service shutting down") || log.contains("shutting down") {
-                counters.pass("Log: service shutdown messages present");
-            } else {
-                output::warn("Log: no explicit shutdown messages (app-specific)");
-            }
+    if shutdown_ok && let Ok(log) = std::fs::read_to_string(&config.log_file) {
+        let log = strip_ansi(&log);
+        if log.contains("received SIGTERM") {
+            counters.pass("Log: received SIGTERM");
+        } else {
+            output::warn("Log: no SIGTERM receipt message (app-specific)");
+        }
+        if log.contains("timer service shutting down") || log.contains("shutting down") {
+            counters.pass("Log: service shutdown messages present");
+        } else {
+            output::warn("Log: no explicit shutdown messages (app-specific)");
         }
     }
     config.metrics.end();

@@ -11,7 +11,7 @@ use std::path::Path;
 use codegraph::generate::emdash::{
     emdash_package_root, emdash_site_e2e_root, emdash_site_pages_root, load_plugins_config,
 };
-use codegraph::generate::{run_generators_with_opts, GeneratorOpts, ProjectConfig};
+use codegraph::generate::{GeneratorOpts, ProjectConfig, run_generators_with_opts};
 use codegraph::profile::{BuildPlan, PersistenceProvider};
 use codegraph_config::DomainConfig;
 use codegraph_core::mock::MockEngine;
@@ -384,9 +384,11 @@ async fn emdash_generators_emit_package_site_pages_e2e_and_manifests() {
     // ── README scaffold at the packages root ──────────────────────────
     let readme = tmp.path().join("packages").join("README.md");
     assert!(readme.is_file(), "scaffold README");
-    assert!(std::fs::read_to_string(&readme)
-        .unwrap()
-        .contains("community-events"));
+    assert!(
+        std::fs::read_to_string(&readme)
+            .unwrap()
+            .contains("community-events")
+    );
 
     // ── Manifests ─────────────────────────────────────────────────────
     let manifest_rel = ".codegraph-manifest.json";
@@ -451,10 +453,12 @@ async fn emdash_generators_emit_nothing_without_config_or_feature() {
     })
     .await
     .unwrap();
-    assert!(report
-        .files
-        .iter()
-        .all(|f| !f.path.to_string_lossy().contains("emdash-community")));
+    assert!(
+        report
+            .files
+            .iter()
+            .all(|f| !f.path.to_string_lossy().contains("emdash-community"))
+    );
 
     // Feature on but no plugins config → generators skipped entirely.
     let mut plan = emdash_build_plan();
@@ -481,10 +485,12 @@ async fn emdash_generators_emit_nothing_without_config_or_feature() {
     })
     .await
     .unwrap();
-    assert!(report
-        .files
-        .iter()
-        .all(|f| !f.path.to_string_lossy().contains("emdash-community")));
+    assert!(
+        report
+            .files
+            .iter()
+            .all(|f| !f.path.to_string_lossy().contains("emdash-community"))
+    );
     assert!(!tmp.path().join("packages").join("README.md").exists());
 }
 

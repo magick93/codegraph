@@ -8,8 +8,8 @@ mod helpers;
 
 use std::path::Path;
 
-use codegraph::generate::traits::{DomainGenerator, EntityGenerator};
 use codegraph::generate::ProjectConfig;
+use codegraph::generate::traits::{DomainGenerator, EntityGenerator};
 
 #[test]
 fn snapshot_grpc_proto_candidate() {
@@ -18,12 +18,12 @@ fn snapshot_grpc_proto_candidate() {
     let tera = helpers::create_test_tera();
     let project = ProjectConfig::default();
 
-    let gen = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(Path::new(
+    let generator = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(Path::new(
         "/tmp/grpc-test-proto",
     ));
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "CandidateType",
             "recruiting",
@@ -49,12 +49,12 @@ fn snapshot_grpc_service_candidate() {
     let tera = helpers::create_test_tera();
     let project = ProjectConfig::default();
 
-    let gen = codegraph::generate::grpc::service::GrpcServiceGenerator::new(Path::new(
+    let generator = codegraph::generate::grpc::service::GrpcServiceGenerator::new(Path::new(
         "/tmp/grpc-test-svc",
     ));
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "CandidateType",
             "recruiting",
@@ -83,13 +83,13 @@ fn snapshot_grpc_router_recruiting() {
     let tera = helpers::create_test_tera();
     let project = ProjectConfig::default();
 
-    let gen = codegraph::generate::grpc::router::GrpcRouterGenerator::new(Path::new(
+    let generator = codegraph::generate::grpc::router::GrpcRouterGenerator::new(Path::new(
         "/tmp/grpc-test-router",
     ));
     let entity_titles = vec!["CandidateType".to_string()];
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "recruiting",
             &entity_titles,
@@ -115,12 +115,12 @@ fn snapshot_grpc_proto_candidate_contains_entity_message() {
     let tera = helpers::create_test_tera();
     let project = ProjectConfig::default();
 
-    let gen = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(Path::new(
+    let generator = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(Path::new(
         "/tmp/grpc-test-check",
     ));
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "CandidateType",
             "recruiting",
@@ -137,13 +137,19 @@ fn snapshot_grpc_proto_candidate_contains_entity_message() {
 
     assert!(proto_file.content.contains("message Candidate"));
     assert!(proto_file.content.contains("service CandidateService"));
-    assert!(proto_file
-        .content
-        .contains("rpc Create(CreateCandidateRequest) returns (Candidate)"));
-    assert!(proto_file
-        .content
-        .contains("rpc Get(GetCandidateRequest) returns (Candidate)"));
-    assert!(proto_file
-        .content
-        .contains("rpc List(ListCandidateRequest) returns (ListCandidateResponse)"));
+    assert!(
+        proto_file
+            .content
+            .contains("rpc Create(CreateCandidateRequest) returns (Candidate)")
+    );
+    assert!(
+        proto_file
+            .content
+            .contains("rpc Get(GetCandidateRequest) returns (Candidate)")
+    );
+    assert!(
+        proto_file
+            .content
+            .contains("rpc List(ListCandidateRequest) returns (ListCandidateResponse)")
+    );
 }

@@ -5,10 +5,10 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 use super::querier::*;

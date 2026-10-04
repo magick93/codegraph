@@ -11,8 +11,8 @@
 
 use std::path::Path;
 
-use codegraph_backend::{create_backend, BackendConfig};
-use codegraph_config::config::{parse_domain_config, DomainConfig};
+use codegraph_backend::{BackendConfig, create_backend};
+use codegraph_config::config::{DomainConfig, parse_domain_config};
 use codegraph_core::traits::GraphQuerier;
 
 // ── Fixture (the shared rosetta_bridge store model + its functions) ────

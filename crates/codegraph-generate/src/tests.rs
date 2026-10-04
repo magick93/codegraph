@@ -53,9 +53,11 @@ fn test_reports_config_dir_prefers_domain_config_dir_over_cwd() {
 
     // Supplied dir wins over cwd, so generation composition does not
     // depend on the invoking shell's cwd.
-    assert!(reports_config_dir(Some(dir.path()))
-        .join("reports.toml")
-        .exists());
+    assert!(
+        reports_config_dir(Some(dir.path()))
+            .join("reports.toml")
+            .exists()
+    );
 
     // None falls back to the process current directory (legacy behavior).
     assert_eq!(

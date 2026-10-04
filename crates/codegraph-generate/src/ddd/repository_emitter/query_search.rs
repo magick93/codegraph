@@ -1,4 +1,4 @@
-use crate::code_writer::{wln, CodeWriter};
+use crate::code_writer::{CodeWriter, wln};
 use crate::filter_fields::NestedFilterFieldInfo;
 
 use super::child::emit_child_reads;
@@ -160,7 +160,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select_list\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn list(");
         wln!(code, "        &self,");
@@ -221,32 +222,82 @@ impl RepositoryImplEmitter {
                     .to_string();
                 match base_type.as_str() {
                     "Uuid" | "uuid::Uuid" => {
-                        wln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\", )))?;", ff.field_name);
-                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                        wln!(
+                            code,
+                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\", )))?;",
+                            ff.field_name
+                        );
+                        wln!(
+                            code,
+                            "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));",
+                            tree.entity_module,
+                            pascal_col
+                        );
                     }
                     "i32" => {
-                        wln!(code, "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{}': {{e}}\")))?;", ff.field_name);
-                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                        wln!(
+                            code,
+                            "            let parsed: i32 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i32 for filter '{}': {{e}}\")))?;",
+                            ff.field_name
+                        );
+                        wln!(
+                            code,
+                            "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));",
+                            tree.entity_module,
+                            pascal_col
+                        );
                     }
                     "i64" => {
-                        wln!(code, "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{}': {{e}}\")))?;", ff.field_name);
-                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                        wln!(
+                            code,
+                            "            let parsed: i64 = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid i64 for filter '{}': {{e}}\")))?;",
+                            ff.field_name
+                        );
+                        wln!(
+                            code,
+                            "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));",
+                            tree.entity_module,
+                            pascal_col
+                        );
                     }
                     "bool" => {
-                        wln!(code, "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;", ff.field_name);
-                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                        wln!(
+                            code,
+                            "            let parsed: bool = val.parse().map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid bool for filter '{}': {{e}}\")))?;",
+                            ff.field_name
+                        );
+                        wln!(
+                            code,
+                            "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));",
+                            tree.entity_module,
+                            pascal_col
+                        );
                     }
                     // Entity reference types (e.g. "ConsultationType") — FK columns
                     // are always UUIDs, even when the DTO wraps them in Option<>.
                     ty if ty.ends_with("Type")
                         && ty.chars().next().is_some_and(|c| c.is_uppercase()) =>
                     {
-                        wln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;", ff.field_name);
-                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                        wln!(
+                            code,
+                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;",
+                            ff.field_name
+                        );
+                        wln!(
+                            code,
+                            "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));",
+                            tree.entity_module,
+                            pascal_col
+                        );
                     }
                     _ => {
                         // String and everything else — exact match.
-                        wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(val.clone()));", tree.entity_module, pascal_col);
+                        wln!(
+                            code,
+                            "            condition = condition.add(crate::entity::{}::Column::{}.eq(val.clone()));",
+                            tree.entity_module,
+                            pascal_col
+                        );
                     }
                 }
                 wln!(code, "        }}");
@@ -259,8 +310,16 @@ impl RepositoryImplEmitter {
                     code,
                     "        if let Some(val) = filters.get(\"{parent_ref}\") {{"
                 );
-                wln!(code, "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;");
-                wln!(code, "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));", tree.entity_module, pascal_col);
+                wln!(
+                    code,
+                    "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{parent_ref}': {{e}}\")))?;"
+                );
+                wln!(
+                    code,
+                    "            condition = condition.add(crate::entity::{}::Column::{}.eq(parsed));",
+                    tree.entity_module,
+                    pascal_col
+                );
                 wln!(code, "        }}");
             }
 
@@ -435,7 +494,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"search_ids\", db.table = \"{}.{}\"  ))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn search_ids(");
         wln!(code, "        &self,");
@@ -459,21 +519,27 @@ impl RepositoryImplEmitter {
             wln!(
                 code,
                 "            if include_deleted {{ \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\" }} else {{ \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) AND deleted_at IS NULL\" }},",
-                tree.schema_name, q(&tree.table_name), tree.fts_language,
-                tree.schema_name, q(&tree.table_name), tree.fts_language,
+                tree.schema_name,
+                q(&tree.table_name),
+                tree.fts_language,
+                tree.schema_name,
+                q(&tree.table_name),
+                tree.fts_language,
             );
         } else {
             wln!(
                 code,
                 "            \"SELECT COUNT(*) AS count FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1)\",",
-                tree.schema_name, q(&tree.table_name), tree.fts_language
+                tree.schema_name,
+                q(&tree.table_name),
+                tree.fts_language
             );
         }
         wln!(code, "            vec![query.into()],");
         wln!(code, "        );");
         wln!(
             code,
-            "        let count_row = db.query_one(count_stmt).await?"
+            "        let count_row = db.query_one_raw(count_stmt).await?"
         );
         wln!(
             code,
@@ -492,14 +558,23 @@ impl RepositoryImplEmitter {
             wln!(
                 code,
                 "            if include_deleted {{ \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\" }} else {{ \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) AND deleted_at IS NULL ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\" }},",
-                tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language,
-                tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language,
+                tree.schema_name,
+                q(&tree.table_name),
+                tree.fts_language,
+                tree.fts_language,
+                tree.schema_name,
+                q(&tree.table_name),
+                tree.fts_language,
+                tree.fts_language,
             );
         } else {
             wln!(
                 code,
                 "            \"SELECT id FROM {}.{} WHERE search_tsv @@ websearch_to_tsquery('{}', $1) ORDER BY ts_rank(search_tsv, websearch_to_tsquery('{}', $1)) DESC LIMIT $2 OFFSET $3\",",
-                tree.schema_name, q(&tree.table_name), tree.fts_language, tree.fts_language
+                tree.schema_name,
+                q(&tree.table_name),
+                tree.fts_language,
+                tree.fts_language
             );
         }
         wln!(
@@ -507,7 +582,7 @@ impl RepositoryImplEmitter {
             "            vec![query.into(), (page_size as i64).into(), (offset as i64).into()],"
         );
         wln!(code, "        );");
-        wln!(code, "        let rows = db.query_all(stmt).await?;");
+        wln!(code, "        let rows = db.query_all_raw(stmt).await?;");
         wln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()");
         wln!(
             code,
@@ -525,7 +600,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db, embedding), fields(db.operation = \"semantic_search_ids\", db.table = \"{}.{}\"  ))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn semantic_search_ids(");
         wln!(code, "        &self,");
@@ -539,7 +615,10 @@ impl RepositoryImplEmitter {
             code,
             "    ) -> Result<Vec<uuid::Uuid>, Box<dyn std::error::Error>> {{"
         );
-        wln!(code, "        let vec_str = format!(\"[{{}}]\", embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(\",\"));");
+        wln!(
+            code,
+            "        let vec_str = format!(\"[{{}}]\", embedding.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(\",\"));"
+        );
         wln!(code, "        let stmt = Statement::from_sql_and_values(");
         wln!(code, "            DatabaseBackend::Postgres,");
         let emb_col = format!("{}_embedding", tree.table_name);
@@ -565,7 +644,7 @@ impl RepositoryImplEmitter {
             "            vec![vec_str.into(), (limit as i64).into()],"
         );
         wln!(code, "        );");
-        wln!(code, "        let rows = db.query_all(stmt).await?;");
+        wln!(code, "        let rows = db.query_all_raw(stmt).await?;");
         wln!(code, "        let ids: Vec<uuid::Uuid> = rows.iter()");
         wln!(
             code,

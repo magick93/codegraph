@@ -4,12 +4,12 @@ use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 #[cfg(test)]
 use crate::project_config::AtprotoConfig;
 use crate::render_template_with_project;
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 #[derive(Debug, Serialize)]
@@ -120,17 +120,17 @@ impl DomainGenerator for AtprotoAppviewEmitter {
                 if !schema.is_entity || schema.is_codelist {
                     continue;
                 }
-                if let Some(ref d) = schema.domain {
-                    if !d.is_empty() {
-                        let has_lex = domains.entry(d.clone()).or_insert(false);
-                        if !*has_lex {
-                            *has_lex = db
-                                .get_lexicon_by_schema(&schema.title)
-                                .await
-                                .ok()
-                                .flatten()
-                                .is_some();
-                        }
+                if let Some(ref d) = schema.domain
+                    && !d.is_empty()
+                {
+                    let has_lex = domains.entry(d.clone()).or_insert(false);
+                    if !*has_lex {
+                        *has_lex = db
+                            .get_lexicon_by_schema(&schema.title)
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some();
                     }
                 }
             }

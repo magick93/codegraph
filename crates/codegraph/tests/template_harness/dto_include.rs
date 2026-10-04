@@ -68,8 +68,8 @@ async fn dto_include_single_level() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-single");
 
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
@@ -121,8 +121,8 @@ async fn dto_include_not_generated_when_not_configured() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dto-include-none");
 
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
@@ -369,8 +369,8 @@ allow_include = ["deployment.position"]
     )
     .unwrap();
 
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
@@ -564,8 +564,8 @@ allow_include = ["deployment.position"]
     )
     .unwrap();
 
-    let gen = generate::ddd::dto::DtoGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::dto::DtoGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",

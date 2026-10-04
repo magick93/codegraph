@@ -15,10 +15,10 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::EntityGenerator;
-use codegraph::generate::ProjectConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_grafeo::GrafeoEngine;
 
@@ -30,9 +30,9 @@ async fn grafeo_candidate_repository_trait_content() {
     let (engine, config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
-    let gen =
+    let generator =
         codegraph::generate::ddd::repository::RepositoryTraitGenerator::new(Path::new("/tmp/out"));
-    let files = gen
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -281,8 +281,8 @@ async fn grafeo_all_entity_generators_produce_output_for_candidate() {
         ),
     ];
 
-    for (name, gen) in &generators {
-        let files = gen
+    for (name, generator) in &generators {
+        let files = generator
             .generate(
                 &engine,
                 "CandidateType",
@@ -317,8 +317,8 @@ async fn grafeo_composite_wrapper_ddl_expansion() {
     let (engine, config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
-    let gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
-    let files = gen
+    let generator = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
+    let files = generator
         .generate(
             &engine,
             "CandidateType",
@@ -422,8 +422,8 @@ async fn grafeo_ddl_generates_child_table_for_qualifications() {
     let (engine, config) = setup_grafeo().await;
     let tera = create_tera(&Path::new(env!("CARGO_MANIFEST_DIR")).join("templates")).unwrap();
 
-    let gen = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
-    let files = gen
+    let generator = codegraph::generate::db::ddl::DdlGenerator::new(Path::new("/tmp/out"));
+    let files = generator
         .generate(
             &engine,
             "CandidateType",

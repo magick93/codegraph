@@ -301,18 +301,18 @@ fn infer_input_with_note(signals: &FieldSignals) -> (ControlInputType, Option<&'
     if signals.rust_type.contains("Uuid") {
         return (ControlInputType::Hidden, None);
     }
-    if let Some(fmt) = signals.format {
-        if fmt.contains("date") || fmt.contains("time") {
-            return (ControlInputType::DateTime, None);
-        }
+    if let Some(fmt) = signals.format
+        && (fmt.contains("date") || fmt.contains("time"))
+    {
+        return (ControlInputType::DateTime, None);
     }
     if signals.rust_type.contains("Date") || signals.rust_type.contains("Time") {
         return (ControlInputType::DateTime, None);
     }
-    if let Some(fmt) = signals.format {
-        if fmt.contains("email") {
-            return (ControlInputType::Email, None);
-        }
+    if let Some(fmt) = signals.format
+        && fmt.contains("email")
+    {
+        return (ControlInputType::Email, None);
     }
     if TEMPORAL_SUFFIXES.iter().any(|s| name.ends_with(s)) {
         return (ControlInputType::DateTime, None);

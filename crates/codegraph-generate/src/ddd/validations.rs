@@ -28,11 +28,11 @@ use codegraph_core::types::{ConditionKind, PropertyNode};
 use codegraph_naming::to_snake_case;
 use codegraph_type_contracts::RefClassificationKind;
 
-use crate::code_writer::{wln, CodeWriter};
-use crate::error::Result;
-use crate::rosetta_expr::{transpile, ExprContext};
-use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use crate::ProjectConfig;
+use crate::code_writer::{CodeWriter, wln};
+use crate::error::Result;
+use crate::rosetta_expr::{ExprContext, transpile};
+use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 /// One generated `validate_*_items` check: an array field plus its bounds.
@@ -200,12 +200,10 @@ impl DomainGenerator for ConditionValidationsGenerator {
                     p.effective_kind(),
                     Some(RefClassificationKind::CodelistReference)
                         | Some(RefClassificationKind::CodelistCheck)
-                ) {
-                    if let Some(enum_name) =
-                        codegraph_core::types::codelist_enum_name_from_ref(&p.ref_target)
-                    {
-                        enum_types.insert(enum_name);
-                    }
+                ) && let Some(enum_name) =
+                    codegraph_core::types::codelist_enum_name_from_ref(&p.ref_target)
+                {
+                    enum_types.insert(enum_name);
                 }
             }
             // Entity-reference properties surface on the create DTO as

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    strip_ifml_prefix, ActionNode, DataBindingResolution, EventNode, ModuleUseRecord,
-    NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingResolution, EventNode, ModuleUseRecord, NavigationFlowRecord,
+    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode, strip_ifml_prefix,
 };
 
 use super::query::{query_gql, query_many, query_many_params};

@@ -4,8 +4,8 @@
 use std::path::Path;
 
 use codegraph::generate;
-use codegraph::generate::traits::EntityGenerator;
 use codegraph::generate::ProjectConfig;
+use codegraph::generate::traits::EntityGenerator;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
@@ -144,10 +144,10 @@ fn snapshot_dto_included_single_level() {
     let project = ProjectConfig::default();
     let output_dir = tempfile::TempDir::new().unwrap();
 
-    let gen = generate::ddd::dto::DtoGenerator::new(output_dir.path());
+    let generator = generate::ddd::dto::DtoGenerator::new(output_dir.path());
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(&engine, "WorkerType", "hr", &config, &tera, &project))
+        .block_on(generator.generate(&engine, "WorkerType", "hr", &config, &tera, &project))
         .expect("DtoGenerator failed");
 
     let included_file = files
@@ -377,10 +377,10 @@ fn snapshot_dto_included_dot_notation() {
     let project = ProjectConfig::default();
     let output_dir = tempfile::TempDir::new().unwrap();
 
-    let gen = generate::ddd::dto::DtoGenerator::new(output_dir.path());
+    let generator = generate::ddd::dto::DtoGenerator::new(output_dir.path());
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(&engine, "WorkerType", "hr", &config, &tera, &project))
+        .block_on(generator.generate(&engine, "WorkerType", "hr", &config, &tera, &project))
         .expect("DtoGenerator failed");
 
     let included_file = files

@@ -248,8 +248,7 @@ impl GrafeoEngine {
             .execute_with_params(gql, params)
             .map_err(|e| GraphError::Ingest(format!("ingest_property INSERT failed: {e}")))?;
 
-        let edge_gql =
-            "MATCH (s:Schema {title: $st}), (p:Property {name: $pn, _schema_title: $st2}) \
+        let edge_gql = "MATCH (s:Schema {title: $st}), (p:Property {name: $pn, _schema_title: $st2}) \
              INSERT (s)-[:HasProperty]->(p)";
         let edge_params = HashMap::from([
             ("st".into(), grafeo::Value::String(schema_title.into())),
@@ -481,10 +480,7 @@ impl GrafeoEngine {
                 self,
                 "MATCH (n) WHERE n:ViewContainer OR n:ViewComponent OR n:Event OR n:ActionNode OR n:ParameterDefinition OR n:DataBinding RETURN count(n) AS cnt",
             )?,
-            lexicons_ingested: count_from_gql(
-                self,
-                "MATCH (l:Lexicon) RETURN count(l) AS cnt",
-            )?,
+            lexicons_ingested: count_from_gql(self, "MATCH (l:Lexicon) RETURN count(l) AS cnt")?,
             collections_ingested: count_from_gql(
                 self,
                 "MATCH (c:Collection) RETURN count(c) AS cnt",
@@ -501,10 +497,7 @@ impl GrafeoEngine {
                 self,
                 "MATCH (r:ApiResource) RETURN count(r) AS cnt",
             )?,
-            policy_count: count_from_gql(
-                self,
-                "MATCH (p:Policy) RETURN count(p) AS cnt",
-            )?,
+            policy_count: count_from_gql(self, "MATCH (p:Policy) RETURN count(p) AS cnt")?,
             relationship_count: count_from_gql(
                 self,
                 "MATCH (r:Relationship) RETURN count(r) AS cnt",

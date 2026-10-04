@@ -7,8 +7,8 @@
 //! the `regulatory_reports` generator (gated behind `rosetta_backend`)
 //! emits per-corpus report skeletons with TODO(#263)/TODO(#264) seams.
 
-use codegraph_backend::{create_backend, BackendConfig};
-use codegraph_config::config::{parse_domain_config, DomainConfig};
+use codegraph_backend::{BackendConfig, create_backend};
+use codegraph_config::config::{DomainConfig, parse_domain_config};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{RegulatoryEdgeKind, RegulatoryKind, RegulatoryOwner};
@@ -84,18 +84,20 @@ async fn regulatory_nodes_ingest_with_stats_and_needs_review_shrinks() {
     // AgencySource's `[ruleReference ReportedStatus]` promotes to a real
     // edge; `- total` carries none.
     assert_eq!(stats.rule_reference_edges, 1, "stats: {stats}");
-    assert!(stats
-        .needs_review_names
-        .iter()
-        .all(|n| !n.starts_with("rule ")
-            && !n.starts_with("report ")
-            && !n.starts_with("body ")
-            && !n.starts_with("corpus ")
-            && !n.starts_with("segment ")
-            && !n.starts_with("schema ")
-            && !n.starts_with("meta-type ")
-            && !n.starts_with("func ")
-            && !n.starts_with("external-rule-source ")));
+    assert!(
+        stats
+            .needs_review_names
+            .iter()
+            .all(|n| !n.starts_with("rule ")
+                && !n.starts_with("report ")
+                && !n.starts_with("body ")
+                && !n.starts_with("corpus ")
+                && !n.starts_with("segment ")
+                && !n.starts_with("schema ")
+                && !n.starts_with("meta-type ")
+                && !n.starts_with("func ")
+                && !n.starts_with("external-rule-source "))
+    );
 }
 
 // ── Node read-back (grafeo backend, as rosetta_condition_tests) ────────
@@ -324,9 +326,11 @@ async fn regulatory_references_read_back() {
 
     // No DerivesFrom edges: the metaType's type_ref is builtin (`number`)
     // and the rule source has no `extends`.
-    assert!(!refs
-        .iter()
-        .any(|r| r.edge_kind == RegulatoryEdgeKind::DerivesFrom));
+    assert!(
+        !refs
+            .iter()
+            .any(|r| r.edge_kind == RegulatoryEdgeKind::DerivesFrom)
+    );
 }
 
 #[tokio::test]
@@ -346,11 +350,13 @@ async fn doc_reference_targets_with_no_declared_element_are_skipped() {
         )
         .await
         .unwrap();
-    assert!(engine
-        .list_regulatory_references()
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        engine
+            .list_regulatory_references()
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 // ── Mock engine parity (same bridge, mock backend) ─────────────────────

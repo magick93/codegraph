@@ -2,8 +2,8 @@
 //! Run with: cargo test -p codegraph --test grpc_compile_tests
 //! Requires `protoc` in PATH (skipped if absent).
 
-use codegraph::generate::traits::EntityGenerator;
 use codegraph::generate::ProjectConfig;
+use codegraph::generate::traits::EntityGenerator;
 
 mod helpers;
 
@@ -28,10 +28,10 @@ fn test_grpc_proto_files_compile() {
     let tmp = tempfile::tempdir().expect("failed to create temp dir");
     let out_dir = tmp.path().join("output");
 
-    let gen = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(&out_dir);
+    let generator = codegraph::generate::grpc::proto::GrpcProtoGenerator::new(&out_dir);
     let files = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(gen.generate(
+        .block_on(generator.generate(
             &engine,
             "CandidateType",
             "recruiting",

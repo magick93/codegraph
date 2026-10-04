@@ -5,10 +5,10 @@ use std::path::PathBuf;
 
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::codelist::rust_enum::RustCodelistGenerator;
 use crate::error::Result;
 use crate::traits::GeneratedFile;
-use crate::ProjectConfig;
 
 /// Thin wrapper around [`RustCodelistGenerator`] that targets the domain-types crate.
 pub struct DomainTypesCodelistGenerator {

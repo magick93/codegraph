@@ -3,9 +3,9 @@ use crate::harness::{
     setup_mock, test_domain_config, test_project_config, test_tera,
 };
 use codegraph::generate;
+use codegraph::generate::ProjectConfig;
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
-use codegraph::generate::ProjectConfig;
 
 // === Repository Template Tests ===
 
@@ -16,8 +16,8 @@ async fn candidate_repository() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-repo");
 
-    let gen = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "CandidateType",
@@ -58,9 +58,9 @@ async fn child_repository_trait_create_has_parent_id() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-child-repo-trait");
 
-    let gen = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir)
+    let generator = generate::ddd::repository::RepositoryTraitGenerator::new(&output_dir)
         .with_parent_candidates(candidates);
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             "RewardType",

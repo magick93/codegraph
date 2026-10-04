@@ -14,16 +14,16 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::ProjectConfig;
 use crate::domain_model::build_entity_model;
 use crate::emdash::config::EmdashPluginsConfig;
 use crate::emdash::context::{
-    build_entity_context, build_package_context, CodelistOption, EmdashPackageContext,
+    CodelistOption, EmdashPackageContext, build_entity_context, build_package_context,
 };
 use crate::error::Result;
 use crate::playwright::ts_entity_gen::expand_vo_fields;
 use crate::render_template_with_project;
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 
 /// Template render wrapper: the package context is exposed to templates as
 /// `p` (e.g. `{{ p.plugin_id }}`), keeping loop variables (`e`, `f`, ...)

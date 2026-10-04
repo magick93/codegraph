@@ -36,7 +36,7 @@
 //! source string.
 
 use rex_expr::{AlgebraKind, BinOp, Expr, ExprKind, UnOp};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Canonical `expr_json` for a rexlang expression source: `None` when the
 /// source is absent, does not parse, or fails to serialize.

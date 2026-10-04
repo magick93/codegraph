@@ -5,13 +5,13 @@ use async_trait::async_trait;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::api::api_model::{
     resolve_entity_operations, resolve_path_segment, resolve_path_segment_with_config,
 };
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 
 use super::common::{collect_child_sections, collect_ui_fields};
 use super::context::UiE2eTestContext;
@@ -71,34 +71,31 @@ impl UiE2eTestGenerator {
             .and_then(|d| d.get_entity_config(parent_title))
         {
             if parent_ec.role.as_deref() == Some("child") {
-                if let Some(ref gp_title) = parent_ec.parent {
-                    if let Ok(Some(gp_schema)) =
+                if let Some(ref gp_title) = parent_ec.parent
+                    && let Ok(Some(gp_schema)) =
                         db.get_schema_in_domain(gp_title, parent_domain).await
+                {
+                    let gp_domain = if config
+                        .domains
+                        .get(parent_domain)
+                        .map(|d| d.entities.contains(gp_title))
+                        .unwrap_or(false)
                     {
-                        let gp_domain = if config
-                            .domains
-                            .get(parent_domain)
-                            .map(|d| d.entities.contains(gp_title))
-                            .unwrap_or(false)
-                        {
-                            parent_domain.to_string()
-                        } else {
-                            gp_schema
-                                .domain
-                                .clone()
-                                .unwrap_or_else(|| parent_domain.to_string())
-                        };
-                        return Some(Box::new(super::store::UiGrandparentInfo {
-                            param_name: crate::api::router::param_name_from_path_segment(
-                                &resolve_path_segment_with_config(None, &gp_schema, config),
-                            ),
-                            domain: gp_domain,
-                            path_segment: resolve_path_segment_with_config(
-                                None, &gp_schema, config,
-                            ),
-                            entity_name: gp_schema.rust_type_name.clone(),
-                        }));
-                    }
+                        parent_domain.to_string()
+                    } else {
+                        gp_schema
+                            .domain
+                            .clone()
+                            .unwrap_or_else(|| parent_domain.to_string())
+                    };
+                    return Some(Box::new(super::store::UiGrandparentInfo {
+                        param_name: crate::api::router::param_name_from_path_segment(
+                            &resolve_path_segment_with_config(None, &gp_schema, config),
+                        ),
+                        domain: gp_domain,
+                        path_segment: resolve_path_segment_with_config(None, &gp_schema, config),
+                        entity_name: gp_schema.rust_type_name.clone(),
+                    }));
                 }
             } else if parent_ec.role.as_deref() == Some("root") {
                 return None; // Explicitly root — no grandparent
@@ -228,30 +225,30 @@ impl EntityGenerator for UiE2eTestGenerator {
             .collect();
         // For codelist entities with no UI fields (enum-only schemas), inject a
         // synthetic code field so testData() produces a valid create payload.
-        if create_fields.is_empty() {
-            if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, &domain).await {
-                if schema.is_codelist && domain == "common" {
-                    create_fields.push(UiField {
-                        name: "code".to_string(),
-                        label: "Code".to_string(),
-                        ts_type: "string".to_string(),
-                        input_type: "code".to_string(),
-                        is_required: true,
-                        is_array: false,
-                        is_entity_ref: false,
-                        is_immutable: false,
-                        is_codelist: false,
-                        is_range: false,
-                        codelist_values: vec![],
-                        description: String::new(),
-                        pg_type: "TEXT".to_string(),
-                        open_end: false,
-                        ref_api_path: None,
-                        structured_sub_fields: vec![],
-                        nested_type_name: None,
-                    });
-                }
-            }
+        if create_fields.is_empty()
+            && let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, &domain).await
+            && schema.is_codelist
+            && domain == "common"
+        {
+            create_fields.push(UiField {
+                name: "code".to_string(),
+                label: "Code".to_string(),
+                ts_type: "string".to_string(),
+                input_type: "code".to_string(),
+                is_required: true,
+                is_array: false,
+                is_entity_ref: false,
+                is_immutable: false,
+                is_codelist: false,
+                is_range: false,
+                codelist_values: vec![],
+                description: String::new(),
+                pg_type: "TEXT".to_string(),
+                open_end: false,
+                ref_api_path: None,
+                structured_sub_fields: vec![],
+                nested_type_name: None,
+            });
         }
 
         let required_create_fields: Vec<UiField> = create_fields
@@ -409,48 +406,40 @@ impl EntityGenerator for UiE2eTestGenerator {
                 .domains
                 .get(&domain)
                 .and_then(|d| d.get_entity_config(schema_title))
+                && ec.role.as_deref() == Some("child")
+                && let Some(ref parent_title) = ec.parent
+                && let Ok(Some(parent_schema)) =
+                    db.get_schema_in_domain(parent_title, &domain).await
             {
-                if ec.role.as_deref() == Some("child") {
-                    if let Some(ref parent_title) = ec.parent {
-                        if let Ok(Some(parent_schema)) =
-                            db.get_schema_in_domain(parent_title, &domain).await
-                        {
-                            let parent_domain = if config
-                                .domains
-                                .get(&domain)
-                                .map(|d| d.entities.contains(parent_title))
-                                .unwrap_or(false)
-                            {
-                                domain.clone()
-                            } else {
-                                parent_schema
-                                    .domain
-                                    .clone()
-                                    .unwrap_or_else(|| domain.clone())
-                            };
+                let parent_domain = if config
+                    .domains
+                    .get(&domain)
+                    .map(|d| d.entities.contains(parent_title))
+                    .unwrap_or(false)
+                {
+                    domain.clone()
+                } else {
+                    parent_schema
+                        .domain
+                        .clone()
+                        .unwrap_or_else(|| domain.clone())
+                };
 
-                            let grandparent = self
-                                .resolve_grandparent(db, config, parent_title, &parent_domain)
-                                .await;
+                let grandparent = self
+                    .resolve_grandparent(db, config, parent_title, &parent_domain)
+                    .await;
 
-                            parent_title_str = parent_title.clone();
-                            result = Some(UiParentInfo {
-                                param_name: crate::api::router::param_name_from_path_segment(
-                                    &resolve_path_segment_with_config(None, &parent_schema, config),
-                                ),
-                                domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(
-                                    None,
-                                    &parent_schema,
-                                    config,
-                                ),
-                                module_name: parent_schema.pg_table_name.clone(),
-                                entity_name: parent_schema.rust_type_name.clone(),
-                                grandparent,
-                            });
-                        }
-                    }
-                }
+                parent_title_str = parent_title.clone();
+                result = Some(UiParentInfo {
+                    param_name: crate::api::router::param_name_from_path_segment(
+                        &resolve_path_segment_with_config(None, &parent_schema, config),
+                    ),
+                    domain: parent_domain,
+                    path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                    module_name: parent_schema.pg_table_name.clone(),
+                    entity_name: parent_schema.rust_type_name.clone(),
+                    grandparent,
+                });
             }
 
             // 2. Fall back to graph parent_candidates (only if parent is in same domain,

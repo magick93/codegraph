@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::persistence::build_persistence_entity;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 
 use crate::ddd::repository_emitter::{
@@ -291,17 +291,15 @@ fn render_entity_sql(
             &tree.fts_language,
         );
     }
-    if tree.has_embeddings {
-        if let Some(ec) = config
+    if tree.has_embeddings
+        && let Some(ec) = config
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(schema_title))
-        {
-            if let Some(first) = ec.search.embedding_columns.first() {
-                let emb_col = format!("{}_embedding", first);
-                write_embedding_queries(&mut sql, &table, &entity_name, soft_delete_col, &emb_col);
-            }
-        }
+        && let Some(first) = ec.search.embedding_columns.first()
+    {
+        let emb_col = format!("{}_embedding", first);
+        write_embedding_queries(&mut sql, &table, &entity_name, soft_delete_col, &emb_col);
     }
     if let Some(ref hf) = tree.hierarchy_field {
         write_tree_query(
@@ -440,10 +438,8 @@ fn write_get_scoped_queries(
             "\"id\" = :id".to_string(),
             format!("\"{parent_fk}\" = :parent_id"),
         ];
-        if !include_deleted {
-            if let Some(sd) = soft_delete_col {
-                clauses.push(format!("\"{}\" IS NULL", sd));
-            }
+        if !include_deleted && let Some(sd) = soft_delete_col {
+            clauses.push(format!("\"{}\" IS NULL", sd));
         }
         sql.push_str(&format!(
             "--! get_{entity_name}_scoped{suffix} (id, parent_id) : ({hints})\n\
@@ -470,10 +466,8 @@ fn write_get_queries(
 
     for (suffix, include_deleted) in [("", false), ("_including_deleted", true)] {
         let mut clauses = vec!["\"id\" = :id".to_string()];
-        if !include_deleted {
-            if let Some(sd) = soft_delete_col {
-                clauses.push(format!("\"{}\" IS NULL", sd));
-            }
+        if !include_deleted && let Some(sd) = soft_delete_col {
+            clauses.push(format!("\"{}\" IS NULL", sd));
         }
         sql.push_str(&format!(
             "--! get_{entity_name}{suffix} (id) : ({hints})\n\

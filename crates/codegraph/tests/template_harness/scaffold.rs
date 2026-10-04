@@ -15,7 +15,7 @@ async fn scaffold_main() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -29,7 +29,7 @@ async fn scaffold_main() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -129,7 +129,7 @@ async fn scaffold_error_module() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-error");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -143,7 +143,7 @@ async fn scaffold_error_module() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -189,8 +189,8 @@ async fn pgmq_setup_global() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-pgmq");
 
-    let gen = generate::db::event_trigger::PgmqSetupGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::event_trigger::PgmqSetupGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -229,8 +229,8 @@ async fn platform_schema_global() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-platform");
 
-    let gen = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -289,8 +289,8 @@ async fn platform_schema_rls_consistency() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-platform-rls");
 
-    let gen = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::db::platform_schema::PlatformSchemaGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -341,7 +341,7 @@ async fn scaffold_main_has_graceful_shutdown() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shutdown");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -355,7 +355,7 @@ async fn scaffold_main_has_graceful_shutdown() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -391,7 +391,7 @@ async fn scaffold_main_has_health_ready() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-health-ready");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -405,7 +405,7 @@ async fn scaffold_main_has_health_ready() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -484,7 +484,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-shadow");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -498,7 +498,7 @@ async fn scaffold_cargo_toml_has_shadow_rs() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -531,7 +531,7 @@ async fn scaffold_generates_build_rs() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-build-rs");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -545,7 +545,7 @@ async fn scaffold_generates_build_rs() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -574,7 +574,7 @@ async fn scaffold_main_has_version_endpoint() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-scaffold-version");
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -588,7 +588,7 @@ async fn scaffold_main_has_version_endpoint() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(
             &mock,
             &config,
@@ -661,7 +661,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-sqlite-scaffold");
     let project = sqlite_project_config();
 
-    let gen = generate::scaffold::gen::ScaffoldGenerator::new(
+    let generator = generate::scaffold::generator::ScaffoldGenerator::new(
         &output_dir,
         false,
         false,
@@ -675,7 +675,7 @@ async fn scaffold_cargo_toml_with_sqlite_dialect() {
         false,
         "sea-orm",
     );
-    let files = gen
+    let files = generator
         .generate(&mock, &config, &test_generation_order(), &tera, &project)
         .await
         .unwrap();

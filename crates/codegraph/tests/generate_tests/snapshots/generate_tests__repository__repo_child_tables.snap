@@ -1,5 +1,6 @@
 ---
-source: crates/codegraph/tests/generate_tests.rs
+source: crates/codegraph/tests/generate_tests/repository.rs
+assertion_line: 383
 expression: code
 ---
 //! Generated repository implementation for Candidate.
@@ -42,9 +43,9 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_person_name (id, candidate_id, first_name, last_name) VALUES ($1, $2, $3, $4)",
-                vec![child_id_candidate_person_name.into(), id.into(), sea_orm::Value::String(Some(Box::new(item.first_name.clone()))), item.last_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None))],
+                vec![child_id_candidate_person_name.into(), id.into(), sea_orm::Value::String(Some(item.first_name.clone())), item.last_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None))],
             );
-            tx.execute(stmt).await?;
+            tx.execute_raw(stmt).await?;
         }
 
         Ok(id)
@@ -78,7 +79,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 "SELECT id, first_name, last_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
                 vec![id.into()],
             );
-            let rows = db.query_all(stmt).await?;
+            let rows = db.query_all_raw(stmt).await?;
             let mut items = Vec::with_capacity(rows.len());
             for child_row in &rows {
                 use sea_orm::TryGetable;
@@ -122,15 +123,15 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         // Replace child rows: recruiting.candidate_person_name
         if let Some(ref items) = cmd.person_name {
             let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_person_name WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute(del).await?;
+            tx.execute_raw(del).await?;
             for item in items {
                 let child_id = Uuid::new_v4();
                 let stmt = Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
                     "INSERT INTO recruiting.candidate_person_name (id, candidate_id, first_name, last_name) VALUES ($1, $2, $3, $4)",
-                    vec![child_id.into(), id.into(), sea_orm::Value::String(Some(Box::new(item.first_name.clone()))), item.last_name.clone().map(|v| sea_orm::Value::String(Some(Box::new(v)))).unwrap_or(sea_orm::Value::String(None))],
+                    vec![child_id.into(), id.into(), sea_orm::Value::String(Some(item.first_name.clone())), item.last_name.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None))],
                 );
-                tx.execute(stmt).await?;
+                tx.execute_raw(stmt).await?;
             }
         }
 
@@ -166,7 +167,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     "SELECT id, first_name, last_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;

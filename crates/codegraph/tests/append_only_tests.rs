@@ -10,11 +10,11 @@
 
 use std::path::Path;
 
+use codegraph::generate::ProjectConfig;
 use codegraph::generate::db::ddl::DdlGenerator;
 use codegraph::generate::template_engine::create_tera;
 use codegraph::generate::traits::EntityGenerator;
-use codegraph::generate::ProjectConfig;
-use codegraph_config::config::{parse_domain_config_str, DomainConfig};
+use codegraph_config::config::{DomainConfig, parse_domain_config_str};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{
     ColumnInfo, CompositionNode, CompositionTree, FkDirection, SchemaNode,
@@ -131,17 +131,18 @@ async fn generate_ddl(
     // create_tera uses the templates embedded by codegraph-generate's
     // build.rs; the path argument is ignored (signature compat).
     let tera = create_tera(Path::new("")).unwrap();
-    let gen = DdlGenerator::new(Path::new("/tmp/append-only-test"));
-    gen.generate(
-        engine,
-        "SnapshotType",
-        "recruiting",
-        config,
-        &tera,
-        &ProjectConfig::default(),
-    )
-    .await
-    .expect("DDL generation")
+    let generator = DdlGenerator::new(Path::new("/tmp/append-only-test"));
+    generator
+        .generate(
+            engine,
+            "SnapshotType",
+            "recruiting",
+            config,
+            &tera,
+            &ProjectConfig::default(),
+        )
+        .await
+        .expect("DDL generation")
 }
 
 fn table_sql(files: &[codegraph::generate::traits::GeneratedFile]) -> String {
@@ -220,10 +221,12 @@ fn append_only_with_narrowed_operations_parses() {
         "SnapshotType",
         "append_only = true\noperations = [\"create\", \"read\", \"list\"]",
     );
-    assert!(config.domains["recruiting"]
-        .get_entity_config("SnapshotType")
-        .unwrap()
-        .is_append_only());
+    assert!(
+        config.domains["recruiting"]
+            .get_entity_config("SnapshotType")
+            .unwrap()
+            .is_append_only()
+    );
 }
 
 // ── DDL emission ────────────────────────────────────────────────────────

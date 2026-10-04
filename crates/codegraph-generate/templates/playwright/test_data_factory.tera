@@ -10,7 +10,7 @@ impl {{ entity_name }}Factory {
     pub fn default_data() -> HashMap<&'static str, Value> {
         let mut m: HashMap<&'static str, Value> = HashMap::new();
 {% for field in create_fields %}
-{% if field.pg_type is containing("GEOMETRY") %}
+{% if field.pg_type is containing(pat="GEOMETRY") %}
         // {{ field.name }}: geometry — omit
 {% elif field.is_entity_ref %}
         // {{ field.name }}: entity ref — caller must supply

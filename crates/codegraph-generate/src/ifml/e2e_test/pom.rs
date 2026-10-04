@@ -39,7 +39,7 @@ use crate::ux::plan::UxPlan;
 
 use super::super::context::{IfmlComponent, IfmlViewContainer};
 use super::super::route_generator::workflow_for_entity;
-use super::super::selectors::{is_collection, is_details, is_form, ComponentSelectors};
+use super::super::selectors::{ComponentSelectors, is_collection, is_details, is_form};
 use super::fixtures::{form_spec, view_route};
 use super::kernel::{BASE_PAGE_TS, UX_TABLE_TS};
 use super::pom_render::render_pom_page;

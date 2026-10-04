@@ -5,7 +5,7 @@ use std::path::Path;
 
 use codegraph_core::traits::GraphQuerier;
 
-use codegraph::ifml_derive::{derive_view, render_model, view_name_from_route, IfmlDeriveArgs};
+use codegraph::ifml_derive::{IfmlDeriveArgs, derive_view, render_model, view_name_from_route};
 
 /// A form page shaped like the forward pipeline's generated pages: wrapper
 /// div, form with typed fields, submit + cancel buttons whose handlers

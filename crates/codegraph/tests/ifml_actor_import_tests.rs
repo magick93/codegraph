@@ -274,12 +274,14 @@ view "Queue" {
         vec!["Support".to_string(), "Escalation".to_string()]
     );
     assert_eq!(engine.get_actors().await.expect("actors").len(), 4);
-    assert!(engine
-        .get_capabilities()
-        .await
-        .expect("capabilities")
-        .iter()
-        .any(|c| c.name == "EscalateTicket"));
+    assert!(
+        engine
+            .get_capabilities()
+            .await
+            .expect("capabilities")
+            .iter()
+            .any(|c| c.name == "EscalateTicket")
+    );
 }
 
 const DELEGATION_MOX: &str = r#"
@@ -524,9 +526,11 @@ view "TodoBoard" {
 
     let grants = engine.get_grants().await.expect("grants");
     assert_eq!(grants.len(), 2);
-    assert!(grants
-        .iter()
-        .all(|g| g.effect == "permit" && g.actor == "Agent"));
+    assert!(
+        grants
+            .iter()
+            .all(|g| g.effect == "permit" && g.actor == "Agent")
+    );
 
     let permits = engine.effective_permits("Agent").await.expect("permits");
     assert_eq!(permits.len(), 2);

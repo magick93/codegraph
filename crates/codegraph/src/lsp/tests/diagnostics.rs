@@ -1,8 +1,8 @@
 use auto_lsp::lsp_server::Connection;
 use auto_lsp::lsp_types::*;
 
-use super::{do_init_handshake, do_shutdown, open_document, recv_diagnostics, LSP_TEST_LOCK};
-use crate::lsp::{run_lsp_server, GrafeoState, SchemaInfo};
+use super::{LSP_TEST_LOCK, do_init_handshake, do_shutdown, open_document, recv_diagnostics};
+use crate::lsp::{GrafeoState, SchemaInfo, run_lsp_server};
 
 #[test]
 fn test_lsp_diagnostic_for_valid_ifml() {

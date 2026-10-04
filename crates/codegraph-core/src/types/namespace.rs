@@ -145,7 +145,7 @@ pub fn topological_order(
     // BTreeSet gives the lexicographic tie-break for free.
     let mut ready: BTreeSet<&str> = in_degree
         .iter()
-        .filter(|(_, &deg)| deg == 0)
+        .filter(|(_, deg)| **deg == 0)
         .map(|(node, _)| *node)
         .collect();
     let mut order = Vec::with_capacity(nodes.len());

@@ -1,4 +1,4 @@
-use crate::code_writer::{w, wln, CodeWriter};
+use crate::code_writer::{CodeWriter, w, wln};
 
 use super::child::{child_insert_sql, emit_child_col_write_value, emit_child_inserts};
 use super::dto::emit_response_construction;
@@ -87,7 +87,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"insert\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn create(");
         wln!(code, "        &self,");
@@ -280,7 +281,7 @@ impl RepositoryImplEmitter {
                     };
                     w!(
                         code,
-                        ", cmd.{dto_field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))).unwrap_or({null})",
+                        ", cmd.{dto_field}.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some({map_fn}))).collect())))).unwrap_or({null})",
                         null = null_value_for_type("Vec<String>"),
                     );
                 } else if is_vec_type(&col.rust_type) {
@@ -292,7 +293,7 @@ impl RepositoryImplEmitter {
                 } else if has_enum {
                     w!(
                         code,
-                        ", cmd.{dto_field}.as_ref().map(|v| sea_orm::Value::String(Some(Box::new(v.to_string())))).unwrap_or({null})",
+                        ", cmd.{dto_field}.as_ref().map(|v| sea_orm::Value::String(Some(v.to_string()))).unwrap_or({null})",
                         null = null_value_for_type(&col.rust_type),
                     );
                 } else {
@@ -311,7 +312,7 @@ impl RepositoryImplEmitter {
                 };
                 w!(
                     code,
-                    ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(cmd.{dto_field}.clone().into_iter().map(|s| sea_orm::Value::String(Some(Box::new({map_fn})))).collect())))",
+                    ", sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(cmd.{dto_field}.clone().into_iter().map(|s| sea_orm::Value::String(Some({map_fn}))).collect())))",
                 );
             } else if is_vec_type(&col.rust_type) {
                 let (array_type, value_ctor) = vec_array_type_and_ctor(&col.rust_type);
@@ -322,7 +323,7 @@ impl RepositoryImplEmitter {
             } else if has_enum {
                 w!(
                     code,
-                    ", sea_orm::Value::String(Some(Box::new(cmd.{dto_field}.to_string())))",
+                    ", sea_orm::Value::String(Some(cmd.{dto_field}.to_string()))",
                 );
             } else {
                 let item_expr = format!("cmd.{dto_field}{clone_suffix}");
@@ -333,7 +334,7 @@ impl RepositoryImplEmitter {
 
         wln!(code, "],");
         wln!(code, "        );");
-        wln!(code, "        tx.execute(stmt).await?;");
+        wln!(code, "        tx.execute_raw(stmt).await?;");
     }
 
     pub(crate) fn emit_find_by_id_fn(&self, tree: &EntityTree, code: &mut CodeWriter) {
@@ -341,7 +342,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn find_by_id(");
         wln!(code, "        &self,");
@@ -412,7 +414,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"select_scoped\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn find_by_id_scoped(");
         wln!(code, "        &self,");
@@ -501,7 +504,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"update\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn update(");
         wln!(code, "        &self,");
@@ -585,7 +589,10 @@ impl RepositoryImplEmitter {
         }
         wln!(code, "        match model.update(tx).await {{");
         wln!(code, "            Ok(_) => {{}}");
-        wln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}");
+        wln!(
+            code,
+            "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}"
+        );
         wln!(code, "            Err(e) => return Err(e.into()),");
         wln!(code, "        }}");
 
@@ -628,9 +635,13 @@ impl RepositoryImplEmitter {
                 let typed_value = typed_value_expr(&col.rust_type, "v");
                 wln!(code, "            if let Some(v) = cmd.{dto_field} {{");
                 let set_expr = if crate::is_geometry_cast(cast) {
-                    format!("                set_clauses.push(format!(\"{pg_col} = ST_GeomFromGeoJSON(${{}})\", values.len() + 1));")
+                    format!(
+                        "                set_clauses.push(format!(\"{pg_col} = ST_GeomFromGeoJSON(${{}})\", values.len() + 1));"
+                    )
                 } else {
-                    format!("                set_clauses.push(format!(\"{pg_col} = ${{}}::{cast}\", values.len() + 1));")
+                    format!(
+                        "                set_clauses.push(format!(\"{pg_col} = ${{}}::{cast}\", values.len() + 1));"
+                    )
                 };
                 wln!(code, "{set_expr}");
                 wln!(code, "                values.push({typed_value});");
@@ -649,13 +660,13 @@ impl RepositoryImplEmitter {
             );
             wln!(
                 code,
-                "                values.push(sea_orm::Value::Uuid(Some(Box::new(id))));"
+                "                values.push(sea_orm::Value::Uuid(Some(id)));"
             );
             wln!(
                 code,
                 "                let stmt = Statement::from_sql_and_values(DatabaseBackend::Postgres, &sql, values);"
             );
-            wln!(code, "                tx.execute(stmt).await?;");
+            wln!(code, "                tx.execute_raw(stmt).await?;");
             wln!(code, "            }}");
             wln!(code, "        }}");
         }
@@ -708,7 +719,7 @@ impl RepositoryImplEmitter {
                     "            let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, \"{}\", vec![id.into()]);",
                     delete_sql
                 );
-                wln!(code, "            tx.execute(del).await?;");
+                wln!(code, "            tx.execute_raw(del).await?;");
                 let item_var = if child.columns.is_empty() && child.child_tables.is_empty() {
                     "_item"
                 } else {
@@ -728,7 +739,7 @@ impl RepositoryImplEmitter {
                 }
                 wln!(code, "],");
                 wln!(code, "                );");
-                wln!(code, "                tx.execute(stmt).await?;");
+                wln!(code, "                tx.execute_raw(stmt).await?;");
                 emit_child_inserts(code, &child.child_tables, "child_id", "item", 4);
                 wln!(code, "            }}");
                 wln!(code, "        }}");
@@ -755,7 +766,7 @@ impl RepositoryImplEmitter {
                     "            let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, \"{}\", vec![id.into()]);",
                     delete_sql
                 );
-                wln!(code, "            tx.execute(del).await?;");
+                wln!(code, "            tx.execute_raw(del).await?;");
                 wln!(code, "            let child_id = Uuid::new_v4();");
                 wln!(
                     code,
@@ -769,7 +780,7 @@ impl RepositoryImplEmitter {
                 }
                 wln!(code, "],");
                 wln!(code, "            );");
-                wln!(code, "            tx.execute(stmt).await?;");
+                wln!(code, "            tx.execute_raw(stmt).await?;");
                 emit_child_inserts(code, &child.child_tables, "child_id", "item", 3);
                 wln!(code, "        }}");
             }
@@ -781,7 +792,8 @@ impl RepositoryImplEmitter {
         wln!(
             code,
             "    #[tracing::instrument(skip(self, tx), fields(db.operation = \"delete\", db.table = \"{}.{}\"))]",
-            tree.schema_name, tree.table_name
+            tree.schema_name,
+            tree.table_name
         );
         wln!(code, "    async fn delete(");
         wln!(code, "        &self,");
@@ -821,7 +833,10 @@ impl RepositoryImplEmitter {
             );
             wln!(code, "        match active.update(tx).await {{");
             wln!(code, "            Ok(_) => {{}}");
-            wln!(code, "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}");
+            wln!(
+                code,
+                "            Err(sea_orm::DbErr::RecordNotUpdated) => {{ /* RLS hid the row — find_by_id will return 404 */ }}"
+            );
             wln!(code, "            Err(e) => return Err(e.into()),");
             wln!(code, "        }}");
         } else {

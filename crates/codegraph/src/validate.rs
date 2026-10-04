@@ -194,13 +194,14 @@ impl ValidationPass {
                 if prop.classification.as_deref() != Some("entity_reference") {
                     continue;
                 }
-                if let Some(ref ref_target) = prop.ref_target {
-                    if let Some(&target_domain) = entity_domain.get(ref_target.as_str()) {
-                        if target_domain != source_domain {
-                            // Cross-domain FK — check dependency is declared
-                            let source_entry = &config.domains[source_domain];
-                            if !source_entry.depends_on.contains(&target_domain.to_string()) {
-                                issues.push(ValidationIssue {
+                if let Some(ref ref_target) = prop.ref_target
+                    && let Some(&target_domain) = entity_domain.get(ref_target.as_str())
+                    && target_domain != source_domain
+                {
+                    // Cross-domain FK — check dependency is declared
+                    let source_entry = &config.domains[source_domain];
+                    if !source_entry.depends_on.contains(&target_domain.to_string()) {
+                        issues.push(ValidationIssue {
                                     severity: Severity::Error,
                                     entity: title.clone(),
                                     check: "fk_target_undeclared_dependency",
@@ -209,11 +210,9 @@ impl ValidationPass {
                                         prop.name, ref_target, target_domain, source_domain, target_domain
                                     ),
                                 });
-                            }
-                        }
                     }
-                    // If target isn't in any domain, check_ref_targets already catches it
                 }
+                // If target isn't in any domain, check_ref_targets already catches it
             }
         }
         issues
@@ -608,10 +607,10 @@ async fn namespace_domain_assignments(
                     observed.insert(d);
                 }
             }
-            if observed.len() == 1 {
-                if let Some(d) = observed.iter().next() {
-                    out.insert(fqn.to_string(), d.to_string());
-                }
+            if observed.len() == 1
+                && let Some(d) = observed.iter().next()
+            {
+                out.insert(fqn.to_string(), d.to_string());
             }
         }
     }

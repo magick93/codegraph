@@ -9,7 +9,7 @@
 //! 4. `webhook/dispatch.tera` — dispatcher takes a `CancellationToken`,
 //!    selects on cancellation, and drains one final batch before exiting.
 
-use codegraph::generate::{template_engine, ProjectConfig};
+use codegraph::generate::{ProjectConfig, template_engine};
 use std::path::Path;
 
 fn test_tera() -> tera::Tera {
@@ -18,7 +18,7 @@ fn test_tera() -> tera::Tera {
 }
 
 fn project_context() -> tera::Context {
-    tera::Context::from_serialize(serde_json::json!({
+    tera::Context::from_serialize(&serde_json::json!({
         "project": ProjectConfig::default(),
     }))
     .unwrap()

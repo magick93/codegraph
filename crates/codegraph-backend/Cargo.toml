@@ -1,7 +1,7 @@
 [package]
 name = "codegraph-backend"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Backend selector and factory for graph database adapters"
 
 [dependencies]

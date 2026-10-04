@@ -1,4 +1,3 @@
-{%- import "ui/_ux_cell.tera" as ux_cell -%}
 {# Timeline collections keep their fixed DESC date order (issue #306 v1): no sort buttons, no aria-sort. If/when IFML parity lands, a RenderColumn-style per-entry contract would mirror the table's header-button pattern — deliberately not built here (ledger item, #291). #}
 {% raw %}
 		<ol class="timeline" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline">
@@ -14,7 +13,55 @@
 							<div class="timeline-meta-list">
 								{#each previewColumns as col}
 									{@const value = (row as Record<string, unknown>)[col.key]}
-									<span class="timeline-meta" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline-meta">{col.label}: {% endraw %}{{ ux_cell::cell() }}{% raw %}</span>
+									<span class="timeline-meta" data-testid="{% endraw %}{{ module_name }}{% raw %}-timeline-meta">{col.label}: {% endraw %}{% raw %}
+									{#if value === null || value === undefined}
+										{formatValue(value)}
+									{:else if isBooleanField(value)}
+										<Badge variant={value ? 'default' : 'secondary'}>
+											{formatValue(value)}
+										</Badge>
+									{:else if col.display === 'chip'}
+										<Badge variant={toneFor(col, value)} data-testid="{% endraw %}{{ module_name }}{% raw %}-chip">
+											{formatValue(value)}
+										</Badge>
+									{:else if col.display === 'copy-chip'}
+										{#if col.truncateTooltip}
+											<Tooltip.Root>
+												<Tooltip.Trigger
+													class="inline-flex max-w-[12rem] items-center gap-1 rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-xs"
+													data-testid="{% endraw %}{{ module_name }}{% raw %}-copy"
+													onclick={(e) => { e.stopPropagation(); copyValue(value); }}
+												>
+													{truncate(value, 8)}
+												</Tooltip.Trigger>
+												<Tooltip.Content>{String(value)}</Tooltip.Content>
+											</Tooltip.Root>
+										{:else}
+											<button
+												class="inline-flex max-w-[12rem] items-center gap-1 rounded-md border bg-muted/40 px-1.5 py-0.5 font-mono text-xs"
+												data-testid="{% endraw %}{{ module_name }}{% raw %}-copy"
+												onclick={(e) => { e.stopPropagation(); copyValue(value); }}
+											>
+												{truncate(value, 8)}
+											</button>
+										{/if}
+									{:else if col.dimension === 'money'}
+										{formatMoney(value)}
+									{:else if col.dimension === 'quantity'}
+										{formatNumber(value)}
+									{:else if col.dimension === 'time-point'}
+										{formatDateTime(value)}
+									{:else if col.truncateTooltip}
+										<Tooltip.Root>
+											<Tooltip.Trigger class="block max-w-[14rem] truncate text-left">
+												{String(value)}
+											</Tooltip.Trigger>
+											<Tooltip.Content>{String(value)}</Tooltip.Content>
+										</Tooltip.Root>
+									{:else}
+										{formatValue(value)}
+									{/if}
+								{% endraw %}{% raw %}</span>
 								{/each}
 							</div>
 						{/if}
@@ -28,7 +75,67 @@
 {% raw %}					</div>
 {% endraw %}
 {% if ux_actions %}
-{% raw %}					<div class="timeline-actions">{% endraw %}{{ ux_cell::actions() }}{% raw %}</div>
+{% raw %}					<div class="timeline-actions">{% endraw %}{% raw %}
+									{#each ux_actions.primary as item}
+										<Button
+											variant="ghost"
+											size="sm"
+											onclick={(e) => { e.stopPropagation(); handleRowClick(row as Record<string, unknown>); }}
+										>
+											{actionLabel(item.action, item.label)}
+										</Button>
+									{/each}
+{% endraw %}
+{% if ux_actions.menu %}
+{% raw %}
+									<DropdownMenu.Root>
+										<DropdownMenu.Trigger>
+											{#snippet child({ props })}
+											<Button
+												{...props}
+												variant="ghost"
+												size="sm"
+												data-testid="{% endraw %}{{ module_name }}{% raw %}-actions"
+												onclick={(e) => { e.stopPropagation(); props.onclick?.(e); }}
+											>
+												{m.common_actions()}
+											</Button>
+											{/snippet}
+										</DropdownMenu.Trigger>
+										<DropdownMenu.Portal>
+											<DropdownMenu.Content data-testid="{% endraw %}{{ module_name }}{% raw %}-actions-menu" class="w-40">
+												{#each ux_actions.menu as item}
+													{#if item.action === 'delete'}
+													<DropdownMenu.Item
+														class="text-destructive data-[highlighted]:text-destructive"
+														data-testid="{% endraw %}{{ module_name }}{% raw %}-action-delete"
+														onclick={(e) => { e.stopPropagation(); requestDelete(row as Record<string, unknown>); }}
+													>
+														{actionLabel(item.action, item.label)}
+													</DropdownMenu.Item>
+													{:else if item.action === 'edit'}
+													<DropdownMenu.Item
+														data-testid="{% endraw %}{{ module_name }}{% raw %}-action-edit"
+														onclick={(e) => { e.stopPropagation(); goto(`${basePath}/${row['id']}/edit`); }}
+													>
+														{actionLabel(item.action, item.label)}
+													</DropdownMenu.Item>
+													{:else}
+													<DropdownMenu.Item
+														data-testid="{% endraw %}{{ module_name }}{% raw %}-action-{item.action}"
+														onclick={(e) => { e.stopPropagation(); handleRowClick(row as Record<string, unknown>); }}
+													>
+														{actionLabel(item.action, item.label)}
+													</DropdownMenu.Item>
+													{/if}
+												{/each}
+											</DropdownMenu.Content>
+										</DropdownMenu.Portal>
+									</DropdownMenu.Root>
+{% endraw %}
+{% endif %}
+{% raw %}
+								{% endraw %}{% raw %}</div>
 {% endraw %}
 {% endif %}
 {% raw %}				</li>

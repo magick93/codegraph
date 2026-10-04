@@ -194,7 +194,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, action_date, descriptions FROM recruiting.candidate_application_process_history WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -213,7 +213,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -235,7 +235,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, family_name, formatted_name, given_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -255,7 +255,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, code FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -273,7 +273,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, date_awarded, issuer, qualification_name FROM recruiting.candidate_qualifications WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -333,7 +333,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, action_date, descriptions FROM recruiting.candidate_application_process_history WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -352,7 +352,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -374,7 +374,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, family_name, formatted_name, given_name FROM recruiting.candidate_person_name WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -394,7 +394,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, code FROM recruiting.candidate_position_schedule_type_codes WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;
@@ -412,7 +412,7 @@ impl ApplicationRepositoryImpl {
                     "SELECT id, date_awarded, issuer, qualification_name FROM recruiting.candidate_qualifications WHERE candidate_id = $1 ORDER BY created_at",
                     vec![row.id.into()],
                 );
-                let rows = db.query_all(stmt).await?;
+                let rows = db.query_all_raw(stmt).await?;
                 let mut items = Vec::with_capacity(rows.len());
                 for child_row in &rows {
                     use sea_orm::TryGetable;

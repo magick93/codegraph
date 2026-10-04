@@ -100,7 +100,7 @@ pub async fn list_endpoints(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -114,7 +114,7 @@ pub async fn list_endpoints(
     })?;
 
     let rows = tx
-        .query_all(Statement::from_string(
+        .query_all_raw(Statement::from_string(
             DatabaseBackend::Postgres,
             r#"
             SELECT e.id, e.url, e.description, e.headers, e.is_active, e.created_at, e.updated_at,
@@ -203,7 +203,7 @@ pub async fn create_endpoint(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [tenant_id.to_string().into()],
@@ -216,7 +216,7 @@ pub async fn create_endpoint(
         )
     })?;
 
-    tx.execute(Statement::from_string(
+    tx.execute_raw(Statement::from_string(
         DatabaseBackend::Postgres,
         format!(
             "INSERT INTO platform.webhook_endpoint (id, tenant_id, url, hmac_secret, description, headers, is_active, created_at, updated_at) VALUES ('{}'::uuid, '{}'::uuid, '{}', '{}', {}, '{}'::jsonb, true, '{}'::timestamptz, '{}'::timestamptz)",
@@ -266,7 +266,7 @@ pub async fn get_endpoint(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -280,7 +280,7 @@ pub async fn get_endpoint(
     })?;
 
     let row = tx
-        .query_one(Statement::from_sql_and_values(
+        .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
             SELECT e.id, e.url, e.description, e.headers, e.is_active, e.created_at, e.updated_at,
@@ -356,7 +356,7 @@ pub async fn update_endpoint(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -370,7 +370,7 @@ pub async fn update_endpoint(
     })?;
 
     let _ = tx
-        .execute(Statement::from_sql_and_values(
+        .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
             UPDATE platform.webhook_endpoint
@@ -422,7 +422,7 @@ pub async fn delete_endpoint(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -435,7 +435,7 @@ pub async fn delete_endpoint(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
         DELETE FROM platform.webhook_endpoint WHERE id = $1
@@ -475,7 +475,7 @@ pub async fn rotate_secret(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -488,7 +488,7 @@ pub async fn rotate_secret(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
         UPDATE platform.webhook_endpoint
@@ -528,7 +528,7 @@ pub async fn list_subscriptions(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -542,7 +542,7 @@ pub async fn list_subscriptions(
     })?;
 
     let rows = tx
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
             SELECT id, subscriber_id, event_domain, event_entity, event_type, filter, is_active, created_at
@@ -617,7 +617,7 @@ pub async fn create_subscription(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [tenant_id.to_string().into()],
@@ -630,7 +630,7 @@ pub async fn create_subscription(
         )
     })?;
 
-    tx.execute(Statement::from_string(
+    tx.execute_raw(Statement::from_string(
         DatabaseBackend::Postgres,
         format!(
             "INSERT INTO platform.event_subscription (id, tenant_id, subscriber_type, subscriber_id, event_domain, event_entity, event_type, filter, is_active, created_at) VALUES ('{}'::uuid, '{}'::uuid, 'webhook', '{}'::uuid, '{}', {}, {}, '{}'::jsonb, true, '{}'::timestamptz)",
@@ -680,7 +680,7 @@ pub async fn delete_subscription(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -693,7 +693,7 @@ pub async fn delete_subscription(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "DELETE FROM platform.event_subscription WHERE id = $1 AND subscriber_type = 'webhook'",
         [sub_id.into()],
@@ -729,7 +729,7 @@ pub async fn list_deliveries(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -743,7 +743,7 @@ pub async fn list_deliveries(
     })?;
 
     let rows = tx
-        .query_all(Statement::from_sql_and_values(
+        .query_all_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"
             SELECT id, endpoint_id, subscription_id, event_payload, response_status, response_body, attempt, delivered_at, next_retry_at, created_at
@@ -803,7 +803,7 @@ pub async fn retry_delivery(
         )
     })?;
 
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT set_config('app.organization_id', $1, true)",
         [api_key_info.organization_id.to_string().into()],
@@ -817,7 +817,7 @@ pub async fn retry_delivery(
     })?;
 
     // Reset the delivery for retry
-    tx.execute(Statement::from_sql_and_values(
+    tx.execute_raw(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         r#"
         UPDATE platform.webhook_delivery

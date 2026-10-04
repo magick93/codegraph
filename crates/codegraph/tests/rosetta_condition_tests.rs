@@ -6,8 +6,8 @@
 //! `condition_validations` generator (gated behind `rosetta_backend`)
 //! emits per-domain item-count validations + #262 transpile markers.
 
-use codegraph_backend::{create_backend, BackendConfig};
-use codegraph_config::config::{parse_domain_config, DomainConfig};
+use codegraph_backend::{BackendConfig, create_backend};
+use codegraph_config::config::{DomainConfig, parse_domain_config};
 use codegraph_core::types::{ConditionKind, PropertyNode};
 
 // ── Bridge fixture ─────────────────────────────────────────────────────

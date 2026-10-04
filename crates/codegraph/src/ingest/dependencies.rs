@@ -23,7 +23,7 @@ use codegraph_core::types::{
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Deserialize;
 
-use crate::artifact::{parse_document, NodeRecord, PropValue};
+use crate::artifact::{NodeRecord, PropValue, parse_document};
 use crate::error::{Error, Result};
 
 /// `SchemaNode.custom_annotations["source"]` prefix for dependency-ingested
@@ -209,13 +209,13 @@ async fn load_one(
 ) -> Result<()> {
     let bytes = std::fs::read(path)?;
     let meta = dependency_meta_from_bytes(&bytes)?;
-    if let Some(face_domain) = meta.domain.as_deref() {
-        if face_domain != domain {
-            return Err(Error::Config(format!(
-                "dependency pinned as {domain:?} but {} carries meta.domain {face_domain:?}",
-                dep.source
-            )));
-        }
+    if let Some(face_domain) = meta.domain.as_deref()
+        && face_domain != domain
+    {
+        return Err(Error::Config(format!(
+            "dependency pinned as {domain:?} but {} carries meta.domain {face_domain:?}",
+            dep.source
+        )));
     }
     let doc = parse_document(&bytes).map_err(|e| {
         Error::Config(format!(

@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
-    resolve_effective_permits, DataBindingResolution, EventNode, NavigationFlowRecord,
-    ViewContainerNode,
+    DataBindingResolution, EventNode, NavigationFlowRecord, ViewContainerNode,
+    resolve_effective_permits,
 };
 use rex_ifml::ComponentSpec;
 
@@ -127,7 +127,7 @@ pub trait IfmlQuerier: Send + Sync {
     async fn get_ifml_model(&self) -> Result<IfmlModel, GraphError>;
     async fn get_view_containers(&self) -> Result<Vec<IfmlViewContainer>, GraphError>;
     async fn get_view_container(&self, name: &str)
-        -> Result<Option<IfmlViewContainer>, GraphError>;
+    -> Result<Option<IfmlViewContainer>, GraphError>;
     async fn get_navigation_edges(&self) -> Result<Vec<NavigationEdge>, GraphError>;
     async fn get_data_flows(&self) -> Result<Vec<DataFlowEdge>, GraphError>;
     async fn get_actions(&self) -> Result<Vec<IfmlActionDef>, GraphError>;

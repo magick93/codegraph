@@ -82,10 +82,11 @@ impl TypeRegistry for InMemoryTypeRegistry {
                     continue;
                 }
             };
-            if let Some(tr) = self.map.get(&candidate) {
-                if tr.module_path != caller_base && seen.insert(candidate.clone()) {
-                    result.push(tr.use_statement());
-                }
+            if let Some(tr) = self.map.get(&candidate)
+                && tr.module_path != caller_base
+                && seen.insert(candidate.clone())
+            {
+                result.push(tr.use_statement());
             }
         }
         result

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use codegraph_config::ux::UxRules;
 use codegraph_config::DomainConfig;
+use codegraph_config::ux::UxRules;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;

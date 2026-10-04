@@ -16,9 +16,9 @@ use async_trait::async_trait;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 
 /// Global generator emitting the SvelteKit skeleton (svelte only).
 pub struct IfmlSkeletonGenerator {
@@ -198,12 +198,12 @@ entities = ["CustomerType"]
     #[test]
     fn skeleton_files_are_never_overwritten() {
         let dir = tempfile::tempdir().unwrap();
-        let gen = IfmlSkeletonGenerator::new(dir.path(), "svelte");
+        let generator = IfmlSkeletonGenerator::new(dir.path(), "svelte");
         let existing = dir.path().join("src/app.html");
         std::fs::create_dir_all(existing.parent().unwrap()).unwrap();
         std::fs::write(&existing, "<!-- custom shell -->").unwrap();
 
-        let files = futures::executor::block_on(gen.generate(
+        let files = futures::executor::block_on(generator.generate(
             &MockEngine::new(),
             &test_config(),
             &[],
@@ -227,8 +227,11 @@ entities = ["CustomerType"]
     #[test]
     fn package_json_carries_toolchain_and_scripts() {
         assert!(PACKAGE_JSON.contains("@sveltejs/kit"));
-        assert!(PACKAGE_JSON
-            .contains("\"check\": \"svelte-kit sync && svelte-check --tsconfig ./tsconfig.json\""));
+        assert!(
+            PACKAGE_JSON.contains(
+                "\"check\": \"svelte-kit sync && svelte-check --tsconfig ./tsconfig.json\""
+            )
+        );
         assert!(PACKAGE_JSON.contains("svelte\": \"^5.56.0"));
     }
 

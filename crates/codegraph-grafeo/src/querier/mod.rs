@@ -12,20 +12,21 @@ use async_trait::async_trait;
 use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
-    descendants, topological_namespace_order, topological_order, ActionNode, ActorNode,
-    ActorPolicyNode, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode, CapabilityNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
-    DataBindingResolution, EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode,
-    GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
-    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
-    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
-    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
-    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
+    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
+    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
+    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
+    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode, descendants, topological_namespace_order,
+    topological_order,
 };
 
 use self::query::{query_gql, query_gql_params, query_many, query_many_params};
-use crate::conversions::{row_to_property_node, RowReader};
+use crate::conversions::{RowReader, row_to_property_node};
 use crate::engine::GrafeoEngine;
 
 /// The RETURN clause for all SchemaNode queries — keeps the 25 columns in one place.
@@ -175,10 +176,10 @@ impl GrafeoEngine {
             let reader = RowReader::from_columns(&result.columns);
             for row in &result.rows {
                 let schema_id = reader.get_string(row, "s.schema_id")?;
-                if seen.insert(schema_id.clone()) {
-                    if let Some(schema) = self.query_schema_by_id(&schema_id).await? {
-                        out.push(schema);
-                    }
+                if seen.insert(schema_id.clone())
+                    && let Some(schema) = self.query_schema_by_id(&schema_id).await?
+                {
+                    out.push(schema);
                 }
             }
         }

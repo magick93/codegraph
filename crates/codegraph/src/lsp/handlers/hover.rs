@@ -24,30 +24,30 @@ pub fn handle_hover(db: &BaseDb, params: HoverParams) -> anyhow::Result<Option<H
 
     if let Some(word) = word {
         if let Some(hover) = with_grafe(|grafe| {
-            if let Some(grafe) = grafe {
-                if let Some(info) = grafe.schema_infos.get(&word) {
-                    let mut md = format!(
-                        "**{}**\n\n{}\n\n",
-                        info.title,
-                        info.description.as_deref().unwrap_or("No description")
-                    );
-                    md.push_str("| Field | Type |\n|-------|------|\n");
-                    for prop in &info.properties {
-                        md.push_str(&format!("| {} | string |\n", prop));
-                    }
-
-                    let start_char = position.character.saturating_sub(word.len() as u32);
-                    return Some(Hover {
-                        contents: HoverContents::Markup(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: md,
-                        }),
-                        range: Some(Range::new(
-                            Position::new(position.line, start_char),
-                            Position::new(position.line, start_char + word.len() as u32),
-                        )),
-                    });
+            if let Some(grafe) = grafe
+                && let Some(info) = grafe.schema_infos.get(&word)
+            {
+                let mut md = format!(
+                    "**{}**\n\n{}\n\n",
+                    info.title,
+                    info.description.as_deref().unwrap_or("No description")
+                );
+                md.push_str("| Field | Type |\n|-------|------|\n");
+                for prop in &info.properties {
+                    md.push_str(&format!("| {} | string |\n", prop));
                 }
+
+                let start_char = position.character.saturating_sub(word.len() as u32);
+                return Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: md,
+                    }),
+                    range: Some(Range::new(
+                        Position::new(position.line, start_char),
+                        Position::new(position.line, start_char + word.len() as u32),
+                    )),
+                });
             }
             None
         }) {
@@ -95,18 +95,18 @@ pub fn handle_goto_definition(
     if let Some(word) = word {
         let mut entity_result = None;
         with_grafe(|grafe| {
-            if let Some(grafe) = grafe {
-                if let Some(info) = grafe.schema_infos.get(&word) {
-                    for schema_dir in &grafe.schema_dirs {
-                        let full_path = schema_dir.join(&info.rel_path);
-                        if full_path.exists() {
-                            let uri_str = format!("file://{}", full_path.display());
-                            if let Ok(file_uri) = uri_str.parse::<Url>() {
-                                entity_result = Some(GotoDefinitionResponse::Scalar(Location {
-                                    uri: file_uri,
-                                    range: Range::new(Position::new(0, 0), Position::new(0, 1)),
-                                }));
-                            }
+            if let Some(grafe) = grafe
+                && let Some(info) = grafe.schema_infos.get(&word)
+            {
+                for schema_dir in &grafe.schema_dirs {
+                    let full_path = schema_dir.join(&info.rel_path);
+                    if full_path.exists() {
+                        let uri_str = format!("file://{}", full_path.display());
+                        if let Ok(file_uri) = uri_str.parse::<Url>() {
+                            entity_result = Some(GotoDefinitionResponse::Scalar(Location {
+                                uri: file_uri,
+                                range: Range::new(Position::new(0, 0), Position::new(0, 1)),
+                            }));
                         }
                     }
                 }

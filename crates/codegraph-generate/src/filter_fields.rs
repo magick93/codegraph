@@ -33,10 +33,10 @@ pub async fn resolve_filter_fields(
     config_override: Option<&[String]>,
 ) -> Result<Vec<FilterFieldInfo>> {
     // Explicit empty list disables filtering.
-    if let Some(list) = config_override {
-        if list.is_empty() {
-            return Ok(Vec::new());
-        }
+    if let Some(list) = config_override
+        && list.is_empty()
+    {
+        return Ok(Vec::new());
     }
 
     let all_props = db.get_properties(schema_title).await?;

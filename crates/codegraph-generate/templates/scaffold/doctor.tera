@@ -96,7 +96,7 @@ async fn check_database() -> CheckResult {
     };
     match sea_orm::Database::connect(&db_url).await {
         Ok(db) => {
-            let ok = sea_orm::ConnectionTrait::execute(
+            let ok = sea_orm::ConnectionTrait::execute_raw(
                 &db,
                 sea_orm::Statement::from_string(
                     sea_orm::DatabaseBackend::Postgres,
@@ -168,7 +168,7 @@ async fn check_db_version() -> CheckResult {
     };
     match sea_orm::Database::connect(&db_url).await {
         Ok(db) => {
-            let result = sea_orm::ConnectionTrait::query_one(
+            let result = sea_orm::ConnectionTrait::query_one_raw(
                 &db,
                 sea_orm::Statement::from_string(
                     sea_orm::DatabaseBackend::Postgres,

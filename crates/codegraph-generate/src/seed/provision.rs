@@ -1,15 +1,15 @@
-use crate::scaffold::gen::{build_scaffold_domains, ScaffoldDomain};
 use crate::ProjectConfig;
+use crate::scaffold::generator::{ScaffoldDomain, build_scaffold_domains};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
 use serde::Serialize;
 
+use crate::GenerationEntry;
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
-use crate::GenerationEntry;
 use codegraph_config::DomainConfig;
 
 /// Template context for the seed CLI binary. The AppState construction loop

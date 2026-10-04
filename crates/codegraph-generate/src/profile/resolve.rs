@@ -237,17 +237,17 @@ pub fn load_and_resolve_profile(
     let mut resolved = resolve_profile(def, variant)?;
 
     // Resolve template_pack path from the variant, relative to profiles.toml directory.
-    if let Some(variant_name) = variant {
-        if let Some(variant_def) = def.variants.as_ref().and_then(|vs| vs.get(variant_name)) {
-            resolved.template_pack_path = variant_def.template_pack.as_ref().map(|tp| {
-                let path = PathBuf::from(tp);
-                if path.is_absolute() {
-                    path
-                } else {
-                    profiles_path.parent().unwrap_or(Path::new(".")).join(&path)
-                }
-            });
-        }
+    if let Some(variant_name) = variant
+        && let Some(variant_def) = def.variants.as_ref().and_then(|vs| vs.get(variant_name))
+    {
+        resolved.template_pack_path = variant_def.template_pack.as_ref().map(|tp| {
+            let path = PathBuf::from(tp);
+            if path.is_absolute() {
+                path
+            } else {
+                profiles_path.parent().unwrap_or(Path::new(".")).join(&path)
+            }
+        });
     }
 
     Ok(resolved)

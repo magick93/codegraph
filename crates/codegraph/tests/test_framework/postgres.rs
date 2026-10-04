@@ -48,7 +48,9 @@ pub async fn resolve_base_target() -> Result<PgTarget, String> {
                 let _ = psql_exec(&target, &format!("DROP DATABASE {DB_PREFIX}_probe;")).await;
                 return Ok(target);
             }
-            println!("gate: DATABASE_URL target lacks CREATEDB — falling back to the gate postgres container");
+            println!(
+                "gate: DATABASE_URL target lacks CREATEDB — falling back to the gate postgres container"
+            );
         } else {
             println!(
                 "gate: DATABASE_URL unreachable — falling back to the gate postgres container"

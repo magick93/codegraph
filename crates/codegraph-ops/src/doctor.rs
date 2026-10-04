@@ -226,8 +226,11 @@ pub async fn run_doctor(config: &OpsConfig) -> OpsResult<()> {
                 "api db reachable ({}:{}/{} as {})",
                 api.host, api.port, api.db, api.user
             ));
-            match psql_query(api, "SELECT count(*) FROM pg_proc WHERE proname = 'create_api_key'")
-                .await
+            match psql_query(
+                api,
+                "SELECT count(*) FROM pg_proc WHERE proname = 'create_api_key'",
+            )
+            .await
             {
                 Ok(count) if count == "1" => {
                     output::ok("create_api_key() present — API-key auth available")
@@ -900,7 +903,7 @@ mod tests {
 
     #[test]
     fn check_port_ready_verdicts() {
-        use crate::registry::{record_service, ServiceEntry};
+        use crate::registry::{ServiceEntry, record_service};
 
         let dir = tempfile::tempdir().unwrap();
 

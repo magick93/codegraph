@@ -6,13 +6,13 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use serde::Serialize;
 
+use crate::ProjectConfig;
 use crate::api::api_model::resolve_entity_operations;
-use crate::api::include_path::{resolve_include_paths_for_topology, ResolvedIncludePath};
+use crate::api::include_path::{ResolvedIncludePath, resolve_include_paths_for_topology};
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::type_registry;
-use crate::ProjectConfig;
 use codegraph_config::DomainConfig;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -467,16 +467,16 @@ pub async fn build_dto_context(
     // Media fields are excluded from Create/Update DTOs — uploads happen via
     // separate media endpoints, not the JSON CRUD body.
     for prop in &props {
-        if prop.effective_kind() == Some(RefClassificationKind::MediaWrapper) {
-            if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
-                for col in &comp_cols {
-                    let field_name = format!("{}{}", prop.rust_field_name, col.suffix);
-                    if !workflow_excluded_fields.contains(&field_name) {
-                        workflow_excluded_fields.push(field_name.clone());
-                    }
-                    if !immutable_fields.contains(&field_name) {
-                        immutable_fields.push(field_name);
-                    }
+        if prop.effective_kind() == Some(RefClassificationKind::MediaWrapper)
+            && let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await
+        {
+            for col in &comp_cols {
+                let field_name = format!("{}{}", prop.rust_field_name, col.suffix);
+                if !workflow_excluded_fields.contains(&field_name) {
+                    workflow_excluded_fields.push(field_name.clone());
+                }
+                if !immutable_fields.contains(&field_name) {
+                    immutable_fields.push(field_name);
                 }
             }
         }
@@ -589,10 +589,9 @@ pub async fn build_dto_context(
                     &config.defaults.type_suffix,
                 ))
                 .await
+                    && seen_child_structs.insert(child_dto.struct_name.clone())
                 {
-                    if seen_child_structs.insert(child_dto.struct_name.clone()) {
-                        child_dtos.push(child_dto);
-                    }
+                    child_dtos.push(child_dto);
                 }
             }
             continue;
@@ -772,25 +771,25 @@ pub async fn build_dto_context(
 
     // Inject hierarchy_field as a synthetic optional UUID field for self-referential
     // tree/hierarchy relationships (e.g. parent_organization_id, reports_to_position_id).
-    if let Some(hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.clone()) {
-        if !fields.iter().any(|f| f.name == hf) {
-            fields.push(DtoField {
-                name: hf,
-                rust_type: "uuid::Uuid".to_string(),
-                is_required: false,
-                is_array: false,
-                description: "Parent hierarchy reference.".to_string(),
-                render_strategy: "hierarchy".to_string(),
-                is_entity_ref: false,
-                is_hierarchy_field: true,
-                min_length: None,
-                max_length: None,
-                minimum: None,
-                maximum: None,
-                pattern: None,
-                format: None,
-            });
-        }
+    if let Some(hf) = entity_cfg.and_then(|ec| ec.hierarchy_field.clone())
+        && !fields.iter().any(|f| f.name == hf)
+    {
+        fields.push(DtoField {
+            name: hf,
+            rust_type: "uuid::Uuid".to_string(),
+            is_required: false,
+            is_array: false,
+            description: "Parent hierarchy reference.".to_string(),
+            render_strategy: "hierarchy".to_string(),
+            is_entity_ref: false,
+            is_hierarchy_field: true,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pattern: None,
+            format: None,
+        });
     }
 
     let has_list_fields = !list_include.is_empty();
@@ -1382,31 +1381,31 @@ async fn build_combined_group(
                 .map(|s| s.title)
         }
     };
-    if let Some(ref key) = props_key {
-        if let Some(props) = all_props.get(key) {
-            for prop in props {
-                if prop.rust_field_name == "id"
-                    || prop.rust_field_name == "created_at"
-                    || prop.rust_field_name == "updated_at"
-                {
-                    continue;
-                }
-                // Skip ValueObject properties (not direct columns).
-                if matches!(
-                    prop.effective_kind(),
-                    Some(RefClassificationKind::ValueObject)
-                ) {
-                    continue;
-                }
-                let is_optional = prop.is_nullable || !prop.is_required;
-                let field_type = dot_field_type(prop, is_optional);
-                let fd = codegraph_core::types::resolve_field(prop);
-                base_fields.push(serde_json::json!({
-                    "name": fd.rust_field_name,
-                    "rust_type": field_type,
-                    "is_optional": is_optional,
-                }));
+    if let Some(ref key) = props_key
+        && let Some(props) = all_props.get(key)
+    {
+        for prop in props {
+            if prop.rust_field_name == "id"
+                || prop.rust_field_name == "created_at"
+                || prop.rust_field_name == "updated_at"
+            {
+                continue;
             }
+            // Skip ValueObject properties (not direct columns).
+            if matches!(
+                prop.effective_kind(),
+                Some(RefClassificationKind::ValueObject)
+            ) {
+                continue;
+            }
+            let is_optional = prop.is_nullable || !prop.is_required;
+            let field_type = dot_field_type(prop, is_optional);
+            let fd = codegraph_core::types::resolve_field(prop);
+            base_fields.push(serde_json::json!({
+                "name": fd.rust_field_name,
+                "rust_type": field_type,
+                "is_optional": is_optional,
+            }));
         }
     }
 

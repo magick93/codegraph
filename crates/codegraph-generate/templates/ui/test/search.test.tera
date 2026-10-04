@@ -21,17 +21,7 @@ let UI_PATH: string;
 const BASE_PATH = '/{{ domain }}/{{ path_segment }}';
 {% endif %}
 
-{% macro pom_construct(page_var) -%}
-{%- if parent -%}
-{%- if parent.grandparent -%}
-new {{ entity_name }}Page({{ page_var }}, UI_PATH)
-{%- else -%}
-new {{ entity_name }}Page({{ page_var }}, BASE_PATH)
-{%- endif -%}
-{%- else -%}
-new {{ entity_name }}Page({{ page_var }})
-{%- endif -%}
-{%- endmacro %}
+
 
 function searchTestData(): Record<string, unknown> {
   return {
@@ -66,7 +56,7 @@ function searchTestData(): Record<string, unknown> {
     '{{ field.name }}': { value: 'Test {{ field.label }}' },
 {%- elif field.is_array %}
     '{{ field.name }}': ['Test {{ field.label }}'],
-{%- elif field.pg_type is containing("GEOMETRY") %}
+{%- elif field.pg_type is containing(pat="GEOMETRY") %}
     // geometry field omitted — plain WKT strings are not accepted by the API without ST_GeomFromText
 {%- elif field.input_type == "geometry" %}
     '{{ field.name }}': '{"type":"Point","coordinates":[0,0]}',
@@ -103,7 +93,7 @@ test.describe('{{ entity_name }} Full-Text Search', () => {
   });
 
   test('search finds created {{ entity_name }}', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.gotoList();
     await ui.searchInput().fill('UniqueSearchTerm2025');
     // Wait for navigation (server-side search triggers page reload)
@@ -112,14 +102,14 @@ test.describe('{{ entity_name }} Full-Text Search', () => {
   });
 
   test('search shows results count', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.openListAt('?q=UniqueSearchTerm2025');
     await expect(ui.pagination()).toContainText('Found');
     await expect(ui.pagination()).toContainText('UniqueSearchTerm2025');
   });
 
   test('clearing search restores full list', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.openListAt('?q=UniqueSearchTerm2025');
     await ui.searchInput().clear();
     // Trigger search with empty value
@@ -129,7 +119,7 @@ test.describe('{{ entity_name }} Full-Text Search', () => {
   });
 
   test('non-matching search shows no results', async ({ ownerPage }) => {
-    const ui = {{ self::pom_construct(page_var="ownerPage") }};
+    const ui = {% if parent %}{% if parent.grandparent %}new {{ entity_name }}Page(ownerPage, UI_PATH){% else %}new {{ entity_name }}Page(ownerPage, BASE_PATH){% endif %}{% else %}new {{ entity_name }}Page(ownerPage){% endif %};
     await ui.openListAt('?q=xyznonexistent99');
     await expect(ui.noResults()).toContainText('No results found');
   });

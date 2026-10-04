@@ -1,8 +1,8 @@
 use crate::harness::{test_project_config, test_tera};
 use codegraph::generate;
+use codegraph::generate::ProjectConfig;
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
-use codegraph::generate::ProjectConfig;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 
@@ -385,8 +385,8 @@ operations = ["create", "read", "update", "list"]
         let tera = test_tera();
         let output_dir = tempfile::TempDir::new().unwrap();
 
-        let gen = generate::db::entity::SeaOrmEntityGenerator::new(output_dir.path());
-        let files = gen
+        let generator = generate::db::entity::SeaOrmEntityGenerator::new(output_dir.path());
+        let files = generator
             .generate(
                 &mock,
                 "WorkerType",
@@ -684,16 +684,16 @@ operations = ["create", "read", "update", "list"]
                     .strip_prefix("pub struct ")
                     .and_then(|s| s.split(&[' ', '{'][..]).next())
                     .map(|s| s.to_string());
-            } else if let Some(stripped) = trimmed.strip_prefix("pub ") {
-                if let Some(colon) = stripped.find(':') {
-                    let field_name = stripped[..colon].trim().to_string();
-                    let field_type = stripped[colon + 1..]
-                        .trim()
-                        .trim_end_matches(',')
-                        .to_string();
-                    if !field_name.is_empty() && !field_type.is_empty() {
-                        current_fields.insert(field_name, field_type);
-                    }
+            } else if let Some(stripped) = trimmed.strip_prefix("pub ")
+                && let Some(colon) = stripped.find(':')
+            {
+                let field_name = stripped[..colon].trim().to_string();
+                let field_type = stripped[colon + 1..]
+                    .trim()
+                    .trim_end_matches(',')
+                    .to_string();
+                if !field_name.is_empty() && !field_type.is_empty() {
+                    current_fields.insert(field_name, field_type);
                 }
             }
         }

@@ -16,9 +16,9 @@ use namespace::deserialize_namespaces;
 
 pub use domain::{DomainDependency, DomainEntry};
 pub use entity::{
-    default_min_roles, default_roles_hierarchy, ApprovalChainDef, ApprovalStepDef, DataGuard,
-    DtoConfig, EntityConfig, ErrorDefConfig, PermissionConfig, RbacConfig, SearchConfig, TimerDef,
-    TreeIncludeConfig, WorkflowConfig,
+    ApprovalChainDef, ApprovalStepDef, DataGuard, DtoConfig, EntityConfig, ErrorDefConfig,
+    PermissionConfig, RbacConfig, SearchConfig, TimerDef, TreeIncludeConfig, WorkflowConfig,
+    default_min_roles, default_roles_hierarchy,
 };
 pub use namespace::NamespaceEntry;
 

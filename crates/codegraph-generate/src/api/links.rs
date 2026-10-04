@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::ProjectConfig;
 use crate::error::Result;
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
-use crate::ProjectConfig;
 
 static LINKS_MODULE: &str = include_str!("../../templates/api/links.tera");
 

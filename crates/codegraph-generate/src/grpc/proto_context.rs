@@ -130,12 +130,11 @@ impl ProtoContext {
             let field_number = prop_offset as u32 + 2;
             let field_type = proto_type_from_field(prop, db, &entity_name);
 
-            if field_type.is_import {
-                if let Some(ref path) = field_type.import_path {
-                    if !imports.contains(path) {
-                        imports.push(path.clone());
-                    }
-                }
+            if field_type.is_import
+                && let Some(ref path) = field_type.import_path
+                && !imports.contains(path)
+            {
+                imports.push(path.clone());
             }
 
             // Check if this property should be rendered as a proto enum

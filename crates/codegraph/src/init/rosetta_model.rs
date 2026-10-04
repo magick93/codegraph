@@ -97,11 +97,7 @@ pub fn scan_rosetta_namespace(source: &str) -> Option<String> {
     source.lines().find_map(|line| {
         let rest = line.trim().strip_prefix("namespace ")?;
         let name: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
-        if name.is_empty() {
-            None
-        } else {
-            Some(name)
-        }
+        if name.is_empty() { None } else { Some(name) }
     })
 }
 

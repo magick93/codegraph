@@ -402,7 +402,7 @@ fn date_literal(text: &str, owner: &str) -> Result<String, ExprTsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn when_json(value: Value) -> String {
         value.to_string()

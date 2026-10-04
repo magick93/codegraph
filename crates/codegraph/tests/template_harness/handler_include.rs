@@ -3,9 +3,9 @@ use crate::harness::{
     setup_include_mock_with_refs, test_domain_config, test_project_config, test_tera,
 };
 use codegraph::generate;
+use codegraph::generate::ProjectConfig;
 #[allow(unused_imports)]
 use codegraph::generate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
-use codegraph::generate::ProjectConfig;
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{PropertyNode, SchemaNode};
 
@@ -18,8 +18,8 @@ async fn handler_with_include_produces_include_code() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-include");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
@@ -127,8 +127,8 @@ async fn handler_without_include_omits_include_code() {
     let tera = test_tera();
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-no-include");
 
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
@@ -245,8 +245,8 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-handler-code");
     let tera = test_tera();
 
-    let gen = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = codegraph::generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "DeploymentType",
@@ -454,8 +454,8 @@ parent_ref = "worker_type_id"
 
     // Handler: list block wires both batch methods + merge block.
     let output_dir = std::path::PathBuf::from("/tmp/hr-graph-test-harness-dot-include-list");
-    let gen = generate::api::handler::HandlerGenerator::new(&output_dir);
-    let files = gen
+    let generator = generate::api::handler::HandlerGenerator::new(&output_dir);
+    let files = generator
         .generate(
             &mock,
             "WorkerType",
