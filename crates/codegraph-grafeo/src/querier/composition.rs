@@ -838,7 +838,26 @@ impl GrafeoEngine {
                 continue;
             }
 
-            if let Some(ref_target) = &prop.ref_target
+            // Scalar entity references are FK columns by their own
+            // property-level classification (#277) — the one canonical
+            // classification plane. The target schema's `is_entity` flag is
+            // set by the classifier/config plane and can lag the property
+            // classification (the rosetta bridge records a VO-shaped default
+            // for every schema and never declares entities, while its
+            // properties still classify model-typed attributes as
+            // EntityReference). Demoting such a property to the jsonb plane
+            // here makes the DDL/entity families resolve zero reference
+            // columns while the dto family — which trusts the property
+            // classification — resolves them all (#446): audit-only skeleton
+            // tables whose repositories read columns the model lacks. The
+            // generation-order plane treats every schema with a pg_table_name
+            // as generated, so the FK column's target table exists whenever
+            // the property classification says entity reference.
+            let is_scalar_entity_reference = classification
+                == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+                && !prop.is_array;
+            if !is_scalar_entity_reference
+                && let Some(ref_target) = &prop.ref_target
                 && let Some(target_schema) = loadout.schema(self, ref_target).await?
                 && !target_schema.is_entity
                 && !target_schema.is_codelist
@@ -1596,7 +1615,9 @@ mod query_count_tests {
 
         // PIN: measured GQL executions for this tree build. See the module
         // docs before touching this number. Baseline before the memoized
-        // loadout (issue #389): 58.
-        assert_eq!(query_count(), 47);
+        // loadout (issue #389): 58. #446 (scalar entity references are
+        // never demoted to the jsonb plane) skips the target-schema lookup
+        // for the fixture's one scalar entity ref: 47 → 46.
+        assert_eq!(query_count(), 46);
     }
 }

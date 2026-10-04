@@ -30,9 +30,9 @@
 //!   compile gate modeled on `grafeo_e2e_tests/compile_gate.rs`: generate
 //!   into a scratch dir under `target/` (same mount as the workspace's
 //!   cargo cache) with path deps into this checkout, then
-//!   `cargo check --manifest-path`. Documents the current compile state of
-//!   the corpus — failures are the A2 ordering/registry bug class
-//!   (#334/#333), reported rather than papered over.
+//!   `cargo check --manifest-path`. Pins the corpus compiling clean —
+//!   failures (the A6 skeleton class #446, the A2 ordering/registry class
+//!   #334/#333) are reported rather than papered over.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -128,6 +128,7 @@ fn run_args<'a>(
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     }
 }
@@ -386,29 +387,27 @@ async fn flywheel_corpus_generates_full_artifact_set() {
 /// `cargo check` it with path deps into this checkout — no network, cargo
 /// artifacts stay on the same mount.
 ///
-/// This test DOCUMENTS the current compile state of the corpus. It is
-/// expected to expose the A2 ordering/registry bug class (#334/#333) and is
-/// left failing until A2 lands. Observed state (2026-10-04, master
-/// 3496f85f + wave-0): generation itself is silent (0 errors / 0 warnings)
-/// but 53 of 136 emitted entities are audit-only skeletons — the DDL and
-/// `sea_orm_entity` families resolve ZERO model properties for them while
-/// the dto/repository/command/query families resolve all of them (e.g.
-/// `accounts.account_invitee` DDL + entity lack `account_id` /
-/// `professional_profile_id`, yet the emitted repository_impl reads
-/// `cmd.account_id`). cargo check fails with 805 errors in three families,
-/// all one missing-column triad:
+/// This gate was RED while the A6 skeleton bug (#446) was open: generation
+/// was silent (0 errors / 0 warnings) but 53 of 136 emitted entities were
+/// audit-only skeletons — the DDL and `sea_orm_entity` families resolved
+/// ZERO model properties for them while the dto/repository/command/query
+/// families resolved all of them, and cargo check failed with 805 errors in
+/// one missing-column triad (E0560×161 / E0609×483 / E0599×161; first
+/// errors `accounts_account.primary_owner_user_id`,
+/// `accounts_account_invitee.account_id`/`professional_profile_id`).
 ///
-/// ```text
-/// E0560: 161 — ActiveModel has no field named `<col>`
-/// E0609: 483 — no field `<col>` on type Model/ActiveModel
-/// E0599: 161 — no variant `<Column>` on enum Column
-/// ```
-///
-/// First errors: `accounts_account` (`primary_owner_user_id`),
-/// `accounts_account_invitee` (`account_id`, `professional_profile_id`).
-/// Suspected seam: property lookup divergence under the rosetta namespace
-/// plane (title vs `<ns>::<Name>` schema_id) between the DDL/entity path
-/// (`query_ddl_context` / composition tree) and the dto path.
+/// Root cause (fixed): the composition tree demoted every scalar property
+/// classified `EntityReference` to the jsonb plane whenever the TARGET
+/// schema's `is_entity` flag was false — and the rosetta bridge records a
+/// VO-shaped default (`is_entity = false`) for every schema while its
+/// properties still classify model-typed attributes as entity references,
+/// so the bridge-only gate graph (no classification pass) demoted them all.
+/// DDL/entity resolve through the tree; dto trusts the property
+/// classification — hence the divergence. The seam now keeps scalar
+/// entity-reference columns in the tree (see
+/// `codegraph-grafeo/src/querier/composition.rs`), and a debug-only
+/// ddl/dto gap advisory (`ddl_dto_gap_fields`) warns if the planes ever
+/// diverge again. The gate is GREEN as of #446: `cargo check` exits clean.
 ///
 /// Ignored because a cold `cargo check` of the generated app compiles the
 /// whole dependency tree (sea-orm, axum, utoipa, …); run explicitly:

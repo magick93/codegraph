@@ -24,6 +24,7 @@ use crate::project_config::{GenerationEntry, GeneratorOpts, ProjectConfig};
 use crate::registry::{build_domain_generators, build_entity_generators, build_global_generators};
 use crate::report;
 use crate::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenerator};
+use crate::type_registry;
 
 /// Run all generators for all entities in topological order.
 pub async fn run_generators(
@@ -271,9 +272,22 @@ fn clean_stale_migrations(ctx: &GeneratorContext<'_>) {
 
 /// Run every per-entity generator for every entity in the generation order.
 ///
-/// Entities run sequentially to ensure TypeRegistry is populated for earlier
-/// entities before later entities reference their types. Within each entity,
-/// generators run sequentially.
+/// Two passes (#333 single generator-ordering contract):
+///
+/// **Pass 1 — registration.** The `dto` generator is the entity-level
+/// registrar of the `{Entity}Response`/request/child types that the
+/// repository emitter, query, and handler generators resolve through the
+/// type registry. Rendering a repository for entity A before entity B's dto
+/// has registered `BResponse` silently drops the cross-module import
+/// (E0425). Pass 1 therefore runs ONLY the dto generator per entity, in
+/// generation order, discarding its files (pass 2 renders them); errors
+/// re-surface in pass 2 where they are reported. Files, migration
+/// numbering, and the report are unchanged — only the registry is warm by
+/// construction.
+///
+/// **Pass 2 — render.** The historical loop: per entity, all generators in
+/// registration order. Entities run sequentially so TypeRegistry entries
+/// for earlier entities exist before later entities reference them.
 ///
 /// The generation order is already grouped by domain (see
 /// `compute_generation_order`), so in workers topology we rebuild the
@@ -289,11 +303,33 @@ async fn run_entity_phase(
 ) -> Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> {
     let mut entity_results: Vec<(Vec<GeneratedFile>, Vec<report::GenerationError>)> = Vec::new();
     let mut current_worker_domain: Option<String> = None;
+
+    let runs_dto = entity_gens.iter().any(|g| g.name() == "dto");
+
+    // Pass 1 (monolith): register every DTO type up front.
+    if runs_dto && !ctx.workers_topology {
+        register_dto_types(ctx, entity_gens, order).await;
+        #[cfg(debug_assertions)]
+        if entity_gens.iter().any(|g| g.name() == "repository") {
+            debug_assert_repository_registry_ready(ctx, order).await;
+        }
+    }
+
     for entry in order {
         if ctx.workers_topology && current_worker_domain.as_deref() != Some(entry.domain.as_str()) {
             let worker_dir = ctx.output_dir.join("workers").join(&entry.domain);
             *entity_gens = build_entity_generators(ctx, parent_candidates, Some(&worker_dir));
             current_worker_domain = Some(entry.domain.clone());
+            // Pass 1 (workers): the routed dto generator for this domain
+            // registers its types before the domain's repositories render.
+            if entity_gens.iter().any(|g| g.name() == "dto") {
+                let domain_entries: Vec<GenerationEntry> = order
+                    .iter()
+                    .filter(|e| e.domain == entry.domain)
+                    .cloned()
+                    .collect();
+                register_dto_types(ctx, entity_gens, &domain_entries).await;
+            }
         }
 
         let generation_mode = ctx
@@ -337,7 +373,98 @@ async fn run_entity_phase(
         }
         entity_results.push((entity_files, errors));
     }
+
+    // Debug invariant for the workers rebuilds whose domains were checked
+    // above; the monolith check ran right after its registration pass.
+    #[cfg(debug_assertions)]
+    if ctx.workers_topology && runs_dto && entity_gens.iter().any(|g| g.name() == "repository") {
+        debug_assert_repository_registry_ready(ctx, order).await;
+    }
+
     entity_results
+}
+
+/// Pass 1 of the entity phase (#333): run the `dto` generator for every
+/// entry so the type registry holds its `{Entity}Response`/request/child
+/// registrations before any dependent generator renders. Files are
+/// discarded — pass 2 renders them — and errors are ignored here: pass 2
+/// runs the same generator and reports the failure exactly once.
+async fn register_dto_types(
+    ctx: &GeneratorContext<'_>,
+    entity_gens: &[Box<dyn EntityGenerator>],
+    entries: &[GenerationEntry],
+) {
+    for entry in entries {
+        let generation_mode = ctx
+            .config
+            .domains
+            .get(&entry.domain)
+            .and_then(|d| d.get_entity_config(&entry.schema_title))
+            .and_then(|ec| ec.generation_mode.as_deref())
+            .unwrap_or(&ctx.config.defaults.generation_mode);
+        if generation_mode == "none" {
+            continue;
+        }
+        for generator in entity_gens.iter().filter(|g| g.name() == "dto") {
+            if generation_mode == "ddd_only" && is_api_entity_generator(generator.name()) {
+                continue;
+            }
+            let _ = generator
+                .generate(
+                    ctx.db(),
+                    &entry.schema_title,
+                    &entry.domain,
+                    ctx.config,
+                    ctx.tera,
+                    ctx.project,
+                )
+                .await;
+        }
+    }
+}
+
+/// #333 debug invariant: when repositories begin, the type registry holds a
+/// `{Entity}Response` for every generated entity. A miss means a repository
+/// would silently drop the cross-module import for that type (E0425) — the
+/// failure class the registration pass exists to prevent. Debug builds
+/// only; release runs skip the schema lookups.
+#[cfg(debug_assertions)]
+async fn debug_assert_repository_registry_ready(
+    ctx: &GeneratorContext<'_>,
+    order: &[GenerationEntry],
+) {
+    for entry in order {
+        let generation_mode = ctx
+            .config
+            .domains
+            .get(&entry.domain)
+            .and_then(|d| d.get_entity_config(&entry.schema_title))
+            .and_then(|ec| ec.generation_mode.as_deref())
+            .unwrap_or(&ctx.config.defaults.generation_mode);
+        if generation_mode == "none" {
+            continue;
+        }
+        let Ok(Some(schema)) = ctx
+            .db()
+            .get_schema_in_domain(&entry.schema_title, &entry.domain)
+            .await
+        else {
+            continue;
+        };
+        let type_name = format!("{}Response", schema.rust_type_name);
+        // Registry probe via the existing resolution API: a name resolves to
+        // a `use` statement iff it is registered (and no caller base ever
+        // equals a registered module path).
+        let registered =
+            !type_registry::resolve_imports(std::slice::from_ref(&type_name), &[]).is_empty();
+        assert!(
+            registered,
+            "#333 ordering invariant: `{type_name}` is not registered but the repository \
+             generator is about to run for {}.{} — the dto registration pass must render \
+             before dependent generators",
+            entry.domain, entry.schema_title
+        );
+    }
 }
 
 /// Write per-entity output: migrations get sequential prefixes (starting at
@@ -400,11 +527,16 @@ async fn run_codelist_generators(
 ) -> Result<()> {
     // Codelist SQL migration generators (codelists are not entities, run separately)
     {
-        let codelists = ctx
+        let mut codelists = ctx
             .db()
             .list_codelists()
             .await
             .map_err(|e| Error::Config(e.to_string()))?;
+        // Migration-number allocation (issue #332): the `CODELIST_START +
+        // idx` sequence below is only deterministic if the codelist order
+        // is. The graph query returns scan order (unsorted contract), so
+        // sort by name at the allocation boundary.
+        codelists.sort_by(|a, b| a.name.cmp(&b.name));
         let codelist_sql_gen =
             db::codelist::CodelistGenerator::new(ctx.output_dir).with_dialect(ctx.make_dialect());
         for (idx, cl) in codelists.iter().enumerate() {
