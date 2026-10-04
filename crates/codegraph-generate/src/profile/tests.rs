@@ -805,4 +805,64 @@ generators = ["ddl"]
             "expected ux_rules type error, got: {msg}"
         );
     }
+
+    // ── dependency_strategy feature (issue #347) ──
+
+    #[test]
+    fn dependency_strategy_from_config_parses_known_values() {
+        assert_eq!(
+            DependencyStrategy::from_config("rev").unwrap(),
+            DependencyStrategy::Rev
+        );
+        assert_eq!(
+            DependencyStrategy::from_config("path").unwrap(),
+            DependencyStrategy::Path
+        );
+        assert_eq!(DependencyStrategy::default(), DependencyStrategy::Rev);
+    }
+
+    #[test]
+    fn dependency_strategy_from_config_unknown_value_errors() {
+        let result = DependencyStrategy::from_config("branch");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown dependency_strategy \"branch\""),
+            "expected clear error message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn build_plan_dependency_strategy_defaults_to_rev() {
+        let plan = plan_with_features("auth = true").unwrap();
+        assert_eq!(plan.dependency_strategy, DependencyStrategy::Rev);
+    }
+
+    #[test]
+    fn build_plan_dependency_strategy_parses_both_values() {
+        let plan = plan_with_features("dependency_strategy = \"rev\"").unwrap();
+        assert_eq!(plan.dependency_strategy, DependencyStrategy::Rev);
+        let plan = plan_with_features("dependency_strategy = \"path\"").unwrap();
+        assert_eq!(plan.dependency_strategy, DependencyStrategy::Path);
+    }
+
+    #[test]
+    fn build_plan_dependency_strategy_invalid_value_errors() {
+        let err = plan_with_features("dependency_strategy = \"branch\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown dependency_strategy"),
+            "expected clear error message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_plan_dependency_strategy_non_string_errors() {
+        let err = plan_with_features("dependency_strategy = true").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("dependency_strategy") && msg.contains("must be a string"),
+            "expected dependency_strategy type error, got: {msg}"
+        );
+    }
 }

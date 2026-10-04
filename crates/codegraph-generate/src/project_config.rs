@@ -6,7 +6,7 @@ use tera::Tera;
 
 use crate::db::dialect::DatabaseTarget;
 use crate::emdash;
-use crate::profile::{DeploymentTopology, PersistenceProvider};
+use crate::profile::{DependencyStrategy, DeploymentTopology, PersistenceProvider};
 
 // =============================================================================
 // Project-level configuration for template rendering.
@@ -160,6 +160,17 @@ pub struct CargoConfig {
     /// to reference codegraph-type-contracts as a git dependency.
     #[serde(default)]
     pub codegraph_rev: String,
+    /// How the generated app's Cargo.toml references codegraph crates
+    /// (issue #347; default `Rev` = the historical git+rev pins). `Path`
+    /// switches the emitted `codegraph-*` deps to absolute path deps.
+    #[serde(default)]
+    pub dependency_strategy: DependencyStrategy,
+    /// Absolute path of the codegraph checkout that ran generation (parent of
+    /// the codegraph crate's compile-time `CARGO_MANIFEST_DIR`). Only read by
+    /// templates when `dependency_strategy` is `Path` — the emitted path deps
+    /// then carry BUILD-MACHINE paths by design (local development loops).
+    #[serde(default)]
+    pub codegraph_path_root: String,
     /// Raw `[patch.'https://github.com/magick93/codegraph.git']` entries emitted
     /// into the generated Cargo.toml (dev environments pin the local codegraph
     /// checkout via path overrides). Empty string = no patch section.
@@ -401,6 +412,8 @@ mod tests {
                 serde_json::json!("codegraph_type_contracts"),
             ),
             ("codegraph_rev", serde_json::json!("")),
+            ("dependency_strategy", serde_json::json!("rev")),
+            ("codegraph_path_root", serde_json::json!("")),
             ("has_atproto", serde_json::json!(false)),
             ("has_fern", serde_json::json!(false)),
             ("fern_sdk_languages", serde_json::json!(["typescript"])),

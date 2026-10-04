@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-{% if project.codegraph_rev %}
+{% if project.dependency_strategy == "path" %}
+codegraph-ops = { path = "{{ project.codegraph_path_root }}/crates/codegraph-ops" }
+{% elif project.codegraph_rev %}
 codegraph-ops = { git = "https://github.com/magick93/codegraph.git", rev = "{{ project.codegraph_rev }}" }
 {% else %}
 codegraph-ops = { path = "{{ codegraph_ops_path }}" }

@@ -155,6 +155,7 @@ pub(crate) async fn run_routing_generators_with_parts(
         persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
         dto_key_casing: "snake".to_string(),
         deployment_topology: topology,
+        dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         namespace_layout: false,
         ux_rules: false,
         expr_ir: false,

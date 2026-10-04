@@ -376,6 +376,8 @@ pub async fn run_with_graph_cache(
             },
             cargo: CargoConfig {
                 codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
+                dependency_strategy: plan.dependency_strategy,
+                codegraph_path_root: codegraph_checkout_root(),
                 ..CargoConfig::default()
             },
             integration: IntegrationFlags {
@@ -1386,6 +1388,19 @@ fn current_git_rev() -> String {
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Absolute path of the codegraph checkout that produced this binary:
+/// this crate compiles at `<checkout>/crates/codegraph`, so the checkout
+/// root is two parents up from its compile-time manifest dir. Consumed by
+/// the `dependency_strategy = "path"` templates (issue #347) — empty only
+/// if the manifest dir has fewer than two parents (never in practice).
+fn codegraph_checkout_root() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
 

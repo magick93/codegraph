@@ -158,6 +158,15 @@ fn init_scaffolds_expected_file_tree() {
         "path mode must not reference the git repo:\n{workspace}"
     );
 
+    // A --codegraph-path scaffold is "asked for path": profiles.toml opts the
+    // generated app into path deps too (issue #347).
+    let profiles_raw = fs::read_to_string(project.join("profiles.toml")).unwrap();
+    assert!(
+        profiles_raw.contains("dependency_strategy = \"path\""),
+        "profiles.toml must carry dependency_strategy = \"path\" when the \
+         scaffold was given --codegraph-path:\n{profiles_raw}"
+    );
+
     let main = fs::read_to_string(project.join("demo-app-graph/src/main.rs")).unwrap();
     assert!(
         main.contains("CODEGRAPH_REV: &str = \"abc123\""),
@@ -232,6 +241,23 @@ fn init_wrapper_and_justfile_are_mox_first() {
     assert!(
         justfile.contains("Regenerate code from your .mox model"),
         "justfile generate comment must reference the .mox model:\n{justfile}"
+    );
+
+    // CI workflow is mox-first too (issue #346): --mox-files per domain, no
+    // rosetta flags, and the plain postgres service (byte-identical to the
+    // pre-rosetta shape).
+    let ci = fs::read_to_string(project.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci.contains("--mox-files model/common.mox"),
+        "ci.yml generate step must pass --mox-files per domain:\n{ci}"
+    );
+    assert!(
+        !ci.contains("--rosetta-files"),
+        "mox-first ci.yml must not reference --rosetta-files:\n{ci}"
+    );
+    assert!(
+        !ci.contains("APP_DATABASE_URL"),
+        "mox-first ci.yml keeps its historical shape (no APP_DATABASE_URL):\n{ci}"
     );
 
     let domains_toml = fs::read_to_string(project.join("domains.toml")).unwrap();
@@ -361,6 +387,41 @@ async fn init_scaffold_runs_mox_first() {
         ddl.contains("todo_list_id"),
         "starter refers must produce a todo_list_id FK on todo_item:\n{ddl}"
     );
+
+    // Path dependency strategy (issue #347): the scaffold was created with
+    // --codegraph-path, so profiles.toml carries dependency_strategy = "path"
+    // and the generated app + testkit manifests must reference the codegraph
+    // crates inside the generating checkout — no git+rev pins anywhere.
+    let generated_cargo =
+        fs::read_to_string(output.join("Cargo.toml")).expect("generated Cargo.toml");
+    let checkout_root = repo_root();
+    assert!(
+        generated_cargo.contains(&format!(
+            "codegraph-workflow = {{ path = \"{}/crates/codegraph-workflow\" }}",
+            checkout_root.display()
+        )),
+        "generated Cargo.toml must reference codegraph-workflow by path:\n{generated_cargo}"
+    );
+    assert!(
+        generated_cargo.contains(&format!(
+            "codegraph-type-contracts = {{ path = \"{}/crates/codegraph-type-contracts\" }}",
+            checkout_root.display()
+        )),
+        "generated Cargo.toml must reference codegraph-type-contracts by path:\n{generated_cargo}"
+    );
+    assert!(
+        !generated_cargo.contains("magick93/codegraph.git"),
+        "path strategy must not reference the git repo:\n{generated_cargo}"
+    );
+    let testkit_cargo =
+        fs::read_to_string(output.join("testkit/Cargo.toml")).expect("testkit Cargo.toml");
+    assert!(
+        testkit_cargo.contains(&format!(
+            "codegraph-ops = {{ path = \"{}/crates/codegraph-ops\" }}",
+            checkout_root.display()
+        )),
+        "testkit Cargo.toml must reference codegraph-ops by path:\n{testkit_cargo}"
+    );
 }
 
 #[test]
@@ -386,6 +447,14 @@ fn init_git_rev_mode_pins_rev_in_workspace() {
     assert!(
         main.contains("CODEGRAPH_REV: &str = \"abc123\""),
         "wrapper should stamp the rev:\n{main}"
+    );
+
+    // Default scaffolds (no --codegraph-path) stay on the rev strategy: no
+    // dependency_strategy line at all (issue #347 byte-identity).
+    let profiles_raw = fs::read_to_string(dir.path().join("demo-app/profiles.toml")).unwrap();
+    assert!(
+        !profiles_raw.contains("dependency_strategy"),
+        "default scaffold must not emit a dependency_strategy line:\n{profiles_raw}"
     );
 }
 
@@ -908,6 +977,45 @@ fn init_rosetta_scaffolds_expected_tree() {
             "model/common.rosetta".to_string(),
             "model/billing.rosetta".to_string()
         ]
+    );
+}
+
+/// CI workflow coherence for rosetta-first scaffolds (issue #346): the
+/// generate step must pass --rosetta-files per domain (mirroring the
+/// justfile's per-domain loop), never --mox-files; the ops-api service must
+/// be a pgmq-bundled postgres image (the generated domain-event triggers
+/// require the pgmq extension — plain postgres inserts 500); and the
+/// app_user serving pool URL must be pinned to the migration's
+/// `app_user`/`app_user_pass` convention.
+#[test]
+fn init_rosetta_ci_is_rosetta_first() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_rosetta_args(dir.path(), "demo-app", &["common", "billing"]);
+    args.rev = Some("abc123".to_string());
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let ci = fs::read_to_string(project.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci.contains("--rosetta-files model/common.rosetta"),
+        "ci.yml generate step must pass --rosetta-files per domain:\n{ci}"
+    );
+    assert!(
+        ci.contains("--rosetta-files model/billing.rosetta"),
+        "ci.yml generate step must pass --rosetta-files per domain:\n{ci}"
+    );
+    assert!(
+        !ci.contains("--mox-files"),
+        "rosetta-first ci.yml must not reference --mox-files:\n{ci}"
+    );
+    assert!(
+        ci.contains("pgmq"),
+        "ops-api postgres service must be a pgmq-capable image \
+         (domain-event triggers need the pgmq extension):\n{ci}"
+    );
+    assert!(
+        ci.contains("APP_DATABASE_URL"),
+        "ci.yml must set the app_user serving pool URL:\n{ci}"
     );
 }
 

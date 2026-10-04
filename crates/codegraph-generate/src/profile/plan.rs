@@ -8,7 +8,7 @@ use super::capabilities::{CapabilityRegistry, GeneratorKind};
 use super::resolve::{
     IfmlFrameworkTarget, ResolvedProfile, ResolvedSection, default_framework_target,
 };
-use super::types::{DeploymentTopology, PersistenceProvider};
+use super::types::{DependencyStrategy, DeploymentTopology, PersistenceProvider};
 
 // ── Build Plan ───────────────────────────────────────────────────────────────
 
@@ -51,6 +51,14 @@ pub struct BuildPlan {
     pub dto_key_casing: String,
     /// Deployment topology for the generated application (default: Monolith).
     pub deployment_topology: DeploymentTopology,
+    /// How the generated app's Cargo.toml references codegraph crates
+    /// (issue #347; default: `Rev` = the historical git+rev pins).
+    /// `Path` emits ABSOLUTE `path` dependencies into the checkout that ran
+    /// generation (`project.codegraph_path_root`), so the generated output
+    /// carries build-machine paths and is only buildable on the generating
+    /// machine (or wherever that checkout lives) — that is the documented
+    /// cost of the flag, which exists for local development loops.
+    pub dependency_strategy: DependencyStrategy,
     /// Namespace-aware module layout (issue #268): when true, schemas that
     /// carry a namespace emit under namespace-derived module paths
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
@@ -192,6 +200,21 @@ impl BuildPlan {
             None => DeploymentTopology::default(),
         };
 
+        // Parse dependency_strategy from features (issue #347; default: Rev
+        // = byte-identical). Same strictness as deployment_topology: unknown
+        // values are a hard error (a typo must not silently flip the emitted
+        // dependency shape) and a non-string value is a parse error naming
+        // the key.
+        let dependency_strategy = match profile.features.get("dependency_strategy") {
+            Some(v) => {
+                let s = v.as_str().ok_or_else(|| {
+                    Error::Config("feature \"dependency_strategy\" must be a string".to_string())
+                })?;
+                DependencyStrategy::from_config(s)?
+            }
+            None => DependencyStrategy::default(),
+        };
+
         // Topology × provider rule: the workers scaffold emits per-domain
         // Cloudflare Worker crates whose wasm32 slice cannot link SeaORM
         // (sqlx/mio do not compile to wasm32-unknown-unknown). Cornucopia is
@@ -266,6 +289,7 @@ impl BuildPlan {
             persistence_provider,
             dto_key_casing,
             deployment_topology,
+            dependency_strategy,
             namespace_layout,
             ux_rules,
             expr_ir,
@@ -324,6 +348,7 @@ impl BuildPlan {
             persistence_provider: PersistenceProvider::default(),
             dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
+            dependency_strategy: DependencyStrategy::default(),
             namespace_layout: false,
             ux_rules: false,
             expr_ir: false,

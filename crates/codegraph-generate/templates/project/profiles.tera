@@ -21,7 +21,10 @@ domain_types_base = "crates/domain-types"
 database_target = "{{ database_target }}"
 persistence_provider = "{{ persistence_provider }}"
 deployment_topology = "{{ deployment_topology }}"
-ops_backend = {{ features.ops }}
+{% if dependency_strategy_path %}# Local development: the generated app references this checkout's
+# codegraph crates by absolute path (issue #347).
+dependency_strategy = "path"
+{% endif %}ops_backend = {{ features.ops }}
 grpc_backend = {{ features.grpc }}
 ifml_backend = {{ features.ifml }}
 {% if features.rosetta %}rosetta_backend = true
