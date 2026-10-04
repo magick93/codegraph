@@ -3,25 +3,27 @@ use std::collections::HashMap;
 
 /// Apply domain naming rules to adjust a classification score.
 /// Returns additional VO score and reason, or None if no rule matches.
+///
+/// Selection is deterministic (issue #332): a title containing several rule
+/// patterns is resolved by [`codegraph_classifier::config::select_naming_rule`]
+/// — longest pattern wins, lexicographic tie-break — never by HashMap
+/// iteration order (which varies per process and flips borderline
+/// classifications across the net_score ≥ 4 entity boundary).
 pub fn apply_naming_rules(
     title: &str,
     rules: &HashMap<String, NamingRule>,
 ) -> Option<NamingRuleResult> {
-    for (pattern, rule) in rules {
-        if title.contains(pattern.as_str()) {
-            let is_hard = matches!(
-                rule.rule_type,
-                codegraph_classifier::config::NamingRuleType::Hard
-            );
-            let type_label = if is_hard { "hard" } else { "soft" };
-            return Some(NamingRuleResult {
-                vo_score: rule.score,
-                is_hard,
-                reason: format!("naming:{type_label}:{pattern}"),
-            });
-        }
-    }
-    None
+    let (pattern, rule) = codegraph_classifier::config::select_naming_rule(title, rules)?;
+    let is_hard = matches!(
+        rule.rule_type,
+        codegraph_classifier::config::NamingRuleType::Hard
+    );
+    let type_label = if is_hard { "hard" } else { "soft" };
+    Some(NamingRuleResult {
+        vo_score: rule.score,
+        is_hard,
+        reason: format!("naming:{type_label}:{pattern}"),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,5 +166,42 @@ mod tests {
     #[test]
     fn normal_path_not_excluded() {
         assert!(!should_exclude_by_path("benefits/json/EnrollmentType.json"));
+    }
+
+    /// The #332 knife-edge pin: a title containing two patterns with
+    /// different scores must resolve identically no matter how the rules
+    /// map's iteration order lands (each construction bumps the thread-local
+    /// RandomState keys; cross-process the seed differs a priori). Before the
+    /// fix this failed with e.g. `{"5:true": 107, "3:false": 93}`.
+    #[test]
+    fn multi_match_naming_rule_resolves_identically_across_hash_orders() {
+        let title = "WorkerCompensationReportType";
+        let mut winners: HashMap<String, usize> = HashMap::new();
+        for _ in 0..200 {
+            let mut rules = HashMap::new();
+            rules.insert(
+                "Report".to_string(),
+                NamingRule {
+                    score: 5,
+                    rule_type: NamingRuleType::Hard,
+                },
+            );
+            rules.insert(
+                "Compensation".to_string(),
+                NamingRule {
+                    score: 3,
+                    rule_type: NamingRuleType::Soft,
+                },
+            );
+            let result = apply_naming_rules(title, &rules).expect("title matches both rules");
+            *winners
+                .entry(format!("{}:{}", result.vo_score, result.is_hard))
+                .or_default() += 1;
+        }
+        assert_eq!(
+            winners,
+            HashMap::from([("3:false".to_string(), 200)]),
+            "longest-pattern (Compensation, soft +3) must win deterministically: {winners:?}"
+        );
     }
 }

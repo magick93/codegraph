@@ -117,6 +117,29 @@ pub fn parse_classifier_config_str(content: &str) -> Result<ClassifierConfig, Bo
     Ok(config)
 }
 
+/// Deterministically select the naming rule matching `title` (issue #332).
+///
+/// A title may contain several rule patterns (e.g. "WorkerCompensationReportType"
+/// contains both "Compensation" and "Report"). Picking the first match in
+/// `HashMap` iteration order makes the winner depend on the per-process hash
+/// seed — which flips the soft/hard decision and the vo_score delta, pushing
+/// borderline schemas across the net_score ≥ 4 entity boundary from run to
+/// run ("Auto-classified N entities" flipping 0/1).
+///
+/// The total order here is specificity: the LONGEST contained pattern wins
+/// (longest match is the standard specificity rule); equal-length patterns
+/// tie-break lexicographically. Single-match titles — the common case — are
+/// unaffected.
+pub fn select_naming_rule<'a>(
+    title: &str,
+    rules: &'a HashMap<String, NamingRule>,
+) -> Option<(&'a String, &'a NamingRule)> {
+    rules
+        .iter()
+        .filter(|(pattern, _)| title.contains(pattern.as_str()))
+        .min_by(|(a, _), (b, _)| b.len().cmp(&a.len()).then_with(|| a.cmp(b)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,5 +180,81 @@ mod tests {
         assert_eq!(sw.postgres, "JSONB");
         assert_eq!(sw.rust, "IdentifierType");
         assert_eq!(sw.sea_orm, "Json");
+    }
+
+    fn rule(score: i32, rule_type: NamingRuleType) -> NamingRule {
+        NamingRule { score, rule_type }
+    }
+
+    fn sample_rules() -> HashMap<String, NamingRule> {
+        HashMap::from([
+            ("Report".to_string(), rule(5, NamingRuleType::Hard)),
+            ("Compensation".to_string(), rule(3, NamingRuleType::Soft)),
+            ("Vendor".to_string(), rule(3, NamingRuleType::Soft)),
+            ("Message".to_string(), rule(3, NamingRuleType::Soft)),
+        ])
+    }
+
+    #[test]
+    fn select_naming_rule_picks_the_single_match() {
+        let rules = sample_rules();
+        // "WeeklyReportType" contains exactly one pattern.
+        let (pattern, r) = select_naming_rule("WeeklyReportType", &rules).expect("Report matches");
+        assert_eq!(pattern, "Report");
+        assert_eq!(r.score, 5);
+    }
+
+    #[test]
+    fn select_naming_rule_longest_pattern_wins_over_hash_order() {
+        let rules = sample_rules();
+        // "WorkerCompensationReportType" contains both "Compensation" (12)
+        // and "Report" (6): specificity (longest) must decide, not the
+        // HashMap seed.
+        let (pattern, r) =
+            select_naming_rule("WorkerCompensationReportType", &rules).expect("two matches");
+        assert_eq!(
+            pattern, "Compensation",
+            "longest contained pattern must win"
+        );
+        assert_eq!(r.score, 3);
+        assert!(matches!(r.rule_type, NamingRuleType::Soft));
+    }
+
+    #[test]
+    fn select_naming_rule_equal_length_tie_breaks_lexicographically() {
+        let rules = HashMap::from([
+            ("bbxyz".to_string(), rule(3, NamingRuleType::Soft)),
+            ("aaxyz".to_string(), rule(5, NamingRuleType::Hard)),
+        ]);
+        // Both 5-char patterns are contained in the title; equal length →
+        // lexicographically smallest pattern wins.
+        let (pattern, _) = select_naming_rule("PREFbbxyzSUFaaxyzSUF", &rules).expect("two matches");
+        assert_eq!(pattern, "aaxyz");
+    }
+
+    #[test]
+    fn select_naming_rule_no_match_returns_none() {
+        assert!(select_naming_rule("PersonType", &sample_rules()).is_none());
+    }
+
+    /// The #332 knife-edge pin: the winner for a multi-match title must not
+    /// depend on the HashMap seed. Every `HashMap::from` construction bumps
+    /// the thread-local RandomState keys, so iteration order varies across
+    /// these builds even within one process (and across processes a priori).
+    #[test]
+    fn select_naming_rule_is_stable_across_hash_orders() {
+        let title = "ScreeningVendorMessageTypeWorkerCompensationReportType";
+        let mut winners: HashMap<String, usize> = HashMap::new();
+        for _ in 0..200 {
+            let rules = sample_rules();
+            let (pattern, _) = select_naming_rule(title, &rules).expect("four matches");
+            *winners.entry(pattern.clone()).or_default() += 1;
+        }
+        assert_eq!(
+            winners.len(),
+            1,
+            "selection must be seed-independent: {winners:?}"
+        );
+        assert!(winners.contains_key("Compensation"));
     }
 }

@@ -1,3 +1,36 @@
+//! Deterministic generation ordering (issue #332).
+//!
+//! `compute_generation_order` is the total order every per-entity generator
+//! runs in and the sequence migration numbers are allocated against. Its
+//! determinism contract, and the audit of every input that feeds it:
+//!
+//! * **Domain order** — `DomainRegistry::topological_order` (Kahn; the
+//!   registry assigns node indices in sorted-name order, and every frontier
+//!   batch is sorted, so tie-breaks are lexicographic regardless of the
+//!   `config.domains` `HashMap`).
+//! * **Entity order within a domain** — collected into a `BTreeSet`
+//!   (config entities ∪ graph-discovered, minus exclude/force-VO), then with
+//!   namespaces in the graph ordered by `namespace_generation_order` rank
+//!   (imported-before-importer), title as tie-break. No in-degree signal
+//!   participates in ordering; the Kahn pass below only orders FK
+//!   dependencies and sorts every frontier and cycle fallback by title.
+//! * **Graph reads** — `list_schemas` sorts by domain (grafeo
+//!   `query_schemas`); duplicate titles make `title_namespace` last-wins over
+//!   a stable scan order (grafeo's FxHashMap-backed storage iterates
+//!   seed-fixed for identical insert sequences — ingestion is sequential and
+//!   input-file-ordered). `list_all_schema_references` order only feeds
+//!   membership/adjacency whose selection is re-sorted by title.
+//! * **Consumers** — `all_domains_for_generation` appends entity-less
+//!   custom-routes domains in sorted-name order; `pipeline::write_entity_results`
+//!   allocates migration sequence numbers strictly in this Vec's order;
+//!   `pipeline::run_codelist_generators` sorts codelists by name before the
+//!   `CODELIST_START + idx` allocation. `parent_candidates` (grafeo scan
+//!   order) feed nested-route content only through per-title lookups.
+//!
+//! Any new consumer of this module (or new graph read feeding emission) must
+//! sort at the emission boundary — never let a `HashMap`/`HashSet`/`DashMap`
+//! iteration order reach a file path, a migration number, or emitted content.
+
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use codegraph_config::DomainConfig;
@@ -42,17 +75,25 @@ fn group_by_domain(entries: &[GenerationEntry]) -> Vec<(String, Vec<String>)> {
 /// Entity-less custom-routes domains get the per-domain router scaffold and,
 /// in workers topology, a per-domain worker crate + gateway upstream, even
 /// though they have no entities to route.
+///
+/// Determinism (issue #332): `config.domains` is a `HashMap`, so the
+/// custom-routes tail is appended in sorted-name order — a plain iteration
+/// would make the (domain, entities) pair order — and with it the domain
+/// phase's emission order and the generation report — vary per process.
 pub fn all_domains_for_generation(
     config: &DomainConfig,
     entries: &[GenerationEntry],
 ) -> Vec<(String, Vec<String>)> {
     let mut result = group_by_domain(entries);
     let present: HashSet<String> = result.iter().map(|(d, _)| d.clone()).collect();
-    for (name, entry) in &config.domains {
-        if entry.custom_routes && !present.contains(name) {
-            result.push((name.clone(), Vec::new()));
-        }
-    }
+    let mut custom_routes: Vec<String> = config
+        .domains
+        .iter()
+        .filter(|(name, entry)| entry.custom_routes && !present.contains(*name))
+        .map(|(name, _)| name.clone())
+        .collect();
+    custom_routes.sort();
+    result.extend(custom_routes.into_iter().map(|name| (name, Vec::new())));
     result
 }
 
