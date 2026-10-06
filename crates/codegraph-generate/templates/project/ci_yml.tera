@@ -10,7 +10,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Generate code
-        run: cargo run -p {{ graph_binary }} -- run{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %} --config domains.toml --output generated
+        run: cargo run -p {{ graph_binary }} -- run{% if features.rosetta %}{% for d in domains %} --rosetta-files model/{{ d.name }}.rosetta{% endfor %}{% else %}{% for d in domains %} --mox-files model/{{ d.name }}.mox{% endfor %}{% endif %} --config domains.toml --output generated
       - name: Check generated workspace compiles
         run: cargo check --manifest-path generated/Cargo.toml
 
@@ -18,8 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
-        env:
+{% if features.rosetta %}        # pgmq-bundled postgres: the generated domain-event triggers
+        # insert into pgmq queues; plain postgres has no pgmq extension and
+        # every event insert 500s. Tag = latest stable pgmq release image
+        # (quay.io/tembo/pgmq-pg, manifest list for pg15/pg16 x amd64/arm64).
+        image: quay.io/tembo/pgmq-pg:v1.2.1
+{% else %}        image: postgres:15
+{% endif %}        env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
           POSTGRES_DB: postgres
@@ -36,5 +41,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install psql
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
-      - name: Run ops API suite
+{% if features.rosetta %}        # App_user serving pool (migration 0002 seeds the same password):
+        # the harness pins app_user to app_user_pass and passes this through
+        # to the generated server, exercising the NOBYPASSRLS pool mode.
+        env:
+          APP_DATABASE_URL: postgres://app_user:app_user_pass@localhost:5432/postgres
+{% endif %}      - name: Run ops API suite
         run: cargo run -p testkit -- --config codegraph-ops.toml api

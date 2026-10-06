@@ -1,0 +1,145 @@
+namespace flywheel.marketplace
+: <"
+    The lead-generation engine: businesses' demand is packaged into leads;
+    providers compete for them in English auctions (bidding, buy-now prices,
+    reserve prices), can watchlist leads with reminder preferences, and buy
+    the winning lead via Stripe.
+
+    auction_bids is a postgres table PARTITION BY LIST (replaced_by): rows
+    with replaced_by NULL are the active bid, rows with a value are historic
+    (outbid) bids; modelled here as an optional self-reference.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.profiles.*
+import flywheel.accounts.*
+import flywheel.reference.*
+
+	type QaPair: <"fwdata QASchema - one question/answer pair exchanged during lead qualification.">
+		question string (1..1) <"Column 'Q'.">
+		answer string (1..1) <"Column 'A'.">
+
+	type ServiceExpertise: <"fwdata ServiceExpertiseSchema - the expertise profile a buying business needs.">
+		sectorSpecialization string (0..*) <"Column sectorSpecialization.">
+		coreServices string (1..*) <"Column coreServices.">
+		toolsAndTechnologies string (0..*) <"Column toolsAndTechnologies.">
+		certifications string (0..*)
+		experienceLevel ExperienceLevelEnum (0..1)
+		methodologies string (0..*)
+		complianceStandards string (0..*)
+
+	type LeadRequirements: <"fwdata RequirementsSchema (extended) - project requirements of the lead.">
+		description string (1..1) <"Project overview, minimum length 10 in app validation.">
+		deliverables string (0..*)
+		timeline string (0..1)
+		budget Money (0..1) <"Only present in the full (revealed) dossier.">
+		specificNeeds string (0..*)
+
+	type PreferredProvider: <"fwdata preferredProvider - what kind of provider the buyer wants.">
+		serviceExpertise ServiceExpertise (1..1)
+		preferredCommunicationStyle CommunicationStyleEnum (0..1)
+		geographicLocation string (0..1)
+		pastClientExamples string (0..*) <"Only present in the full (revealed) dossier.">
+
+	type ComplianceAndRisk: <"fwdata complianceAndRisk - compliance and risk-management expectations.">
+		riskTolerance RiskToleranceEnum (0..1)
+		necessaryInsurance string (0..*)
+		complianceRequirements string (0..*)
+		confidentialityLevel ConfidentialityLevelEnum (0..1)
+
+	type LeadContactInfo: <"fwdata contactInfo - identifying contact details, present only in the full (revealed) dossier.">
+		primaryContactName string (0..1)
+		jobTitle string (0..1)
+		email EmailAddress (0..1)
+		phone string (0..1)
+
+	type AnonymousLeadDossier: <"Structure of leads.anon_dossier jsonb (fwdata AnonymousLeadDossierSchema): the anonymised brief visible to bidders before purchase.">
+		title string (1..1) <"Descriptive lead title, minimum length 5 in app validation.">
+		subtitle string (0..1)
+		industry string (1..1) <"Industry of the buying business, minimum length 3.">
+		brief string (0..1) <"Short brief.">
+		category string (1..1) <"Marketplace category, minimum length 3.">
+		subCategory string (0..1)
+		companySize CompanySizeEnum (0..1)
+		targetAudience string (0..*)
+		requirements LeadRequirements (1..1)
+		preferredProvider PreferredProvider (1..1)
+		complianceAndRisk ComplianceAndRisk (1..1)
+		summary string (0..1) <"Project summary.">
+		keyFocusAreas string (0..*)
+		qaPairs QaPair (1..*) <"Column qaPairs - qualification Q&A.">
+
+	type FullLeadDossier extends AnonymousLeadDossier: <"fwdata FullLeadDossierSchema - the dossier with identifying information, revealed to the auction winner (get_lead_for_winner / reveal_lead).">
+		businessName string (0..1)
+		businessStructure string (0..1)
+		businessModel string (0..1)
+		annualRevenue number (0..1)
+		contactInfo LeadContactInfo (1..1)
+
+	type Auction: <"Table public.auction - the auction of a lead. id is shared with the originating job post.">
+		[rootType]
+		id Tsid (1..1) <"Primary key; same value as the originating job_posts.id."> [metadata id]
+		title string (0..1) <"NOT NULL was dropped 2024-12.">
+		bidMinimum Money (1..1) <"Column bid_min, default 0.00 - minimum first bid.">
+		startTime zonedDateTime (1..1) <"Default now().">
+		endTime zonedDateTime (1..1) <"Default now() + interval '7 days'.">
+		buyNowPrice Money (0..1) <"Price at which a provider can skip bidding and buy the lead.">
+		candleEndTime zonedDateTime (0..1) <"Randomised close time for candle auctions.">
+		startingPrice Money (0..1)
+		reservePrice Money (0..1) <"Minimum price the seller accepts; surfaced only to the winner.">
+		isSealed boolean (0..1) <"Column is_sealed, default FALSE.">
+		secondPrice boolean (0..1) <"Default FALSE - winner pays second-highest bid.">
+		auctionType AuctionTypeEnum (1..1) <"Column auction_type, default 'english'.">
+		lead Lead (0..1) <"FK lead_id -> leads.id - the lead being sold."> [metadata reference]
+		notifiedEmailCount int (0..1) <"Providers notified about this auction.">
+		priceIncrement int (0..1) <"Default 10 - minimum bid increment.">
+
+	type AuctionBid: <"Table public.auction_bids (PARTITION BY LIST (replaced_by)) - a provider's bid. Validated and outbid-replaced by trigger private.func_auction_bid_check; replaced bids move to the historic partition.">
+		id Tsid (1..1) <"Column id, bigint, default nextval('auction_bids_id_seq')."> [metadata id]
+		bidder User (1..1) <"Column user_id -> auth.users(id), default auth.uid()."> [metadata reference]
+		auction Auction (1..1) <"FK auction_id -> auction.id."> [metadata reference]
+		bid Money (1..1) <"Bid amount, numeric(18,2).">
+		bidTime zonedDateTime (1..1) <"Trigger-set to CURRENT_TIMESTAMP.">
+		replacedBy AuctionBid (0..1) <"Partition key: NULL = active bid; set to the replacing bid's id when outbid."> [metadata reference]
+
+	type AuctionAutobid: <"Table public.auction_autobids - a provider's maximum bid delegated to the autobidding engine. UNIQUE (user_id, auction_id).">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		bidder User (1..1) <"Column user_id -> auth.users(id)."> [metadata reference]
+		auction Auction (1..1) <"FK auction_id -> auction.id."> [metadata reference]
+		maximumBid Money (1..1) <"Column max_bid - ceiling the autobidder may bid up to.">
+
+	type Lead: <"Table public.leads - a packaged client lead (anonymised brief) sold to providers. job_post_id was dropped; the auction carries the link.">
+		[rootType]
+		id Tsid (1..1) <"Primary key, default generate_tsid()."> [metadata id]
+		anonymousDossier AnonymousLeadDossier (0..1) <"Column anon_dossier, jsonb - anonymised brief bidders can see.">
+		account Account (0..1) <"FK account_id -> basejump.accounts(id) - the selling workspace."> [metadata reference]
+		professionalProfile ProfessionalProfile (0..1) <"FK professional_profile_id -> professional_profile.id."> [metadata reference]
+		isPremium boolean (1..1) <"Default FALSE - premium leads surface higher.">
+
+	type LeadWatchList: <"Table public.lead_watch_list - a provider shortlisting a lead with an optional closing reminder. UNIQUE (lead_id, professional_id).">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		lead Lead (1..1) <"FK lead_id -> leads.id."> [metadata reference]
+		professional ProfessionalProfile (1..1) <"Column professional_id -> professional_profile.id."> [metadata reference]
+		account Account (0..1) <"FK account_id -> basejump.accounts(id)."> [metadata reference]
+		reminder ReminderTypeEnum (0..1) <"Default 'no_email_reminder'.">
+
+	type PurchaseMetadata: <"Structure of lead_purchases.metadata jsonb (fwdata PurchaseMetaDataSchema).">
+		auctionId Tsid (1..1) <"Column auction_id - the auction the lead was won from.">
+		price Money (1..1)
+		purchaseType PurchaseTypeEnum (1..1) <"Column purchase_type.">
+		purchaserId Uuid (1..1) <"Column purchaser_id - the buying profile/account id.">
+
+	type LeadPurchase: <"Table public.lead_purchases - a provider buying a won lead. Note: the FK named lead_id references auction(id), not leads.id (sic in the original schema).">
+		[rootType]
+		id Uuid (1..1) <"Primary key, default uuid_generate_v4()."> [metadata id]
+		auction Auction (1..1) <"Column lead_id -> auction.id ON DELETE CASCADE."> [metadata reference]
+		buyer ProfessionalProfile (1..1) <"Column professional_profile_id -> professional_profile.id ON DELETE CASCADE - the winning provider."> [metadata reference]
+		purchaseDate dateTime (0..1) <"Default CURRENT_TIMESTAMP (naive timestamp).">
+		amount number(fractionalDigits: 2) (1..1) <"numeric(10,2) - amount paid.">
+		currency CurrencyCode (1..1) <"FK currency -> currency_code_list.code, default 'USD'.">
+		status string (1..1) <"Default 'completed'; e.g. pending/completed/refunded (plain text in the original schema).">
+		stripeTransactionId string (0..1)
+		metadata PurchaseMetadata (0..1) <"Column metadata, jsonb.">
+		stripeSession string (0..1) <"Column stripe_session, unique - Stripe checkout session id.">

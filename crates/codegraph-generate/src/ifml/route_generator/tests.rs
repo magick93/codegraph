@@ -1606,7 +1606,7 @@ fn form_spec_maps_input_types_and_validations() {
                         args: vec![Expression::Ident("name".to_string())],
                     }),
                     op: BinOp::Gt,
-                    right: Box::new(Expression::NumLit(2.0)),
+                    right: Box::new(Expression::NumLit(2.0.into())),
                 }],
                 values: Vec::new(),
                 messages: vec!["Name too short".to_string()],
@@ -1663,7 +1663,7 @@ fn form_message_renders_validate_message_and_client_check() {
                     args: vec![Expression::Ident("title".to_string())],
                 }),
                 op: BinOp::Gt,
-                right: Box::new(Expression::NumLit(2.0)),
+                right: Box::new(Expression::NumLit(2.0.into())),
             }],
             values: Vec::new(),
             messages: vec!["Title too short".to_string()],
@@ -2503,7 +2503,7 @@ fn render_expression_covers_operators_and_calls() {
             args: vec![Expression::Ident("name".to_string())],
         }),
         op: BinOp::Gt,
-        right: Box::new(Expression::NumLit(2.0)),
+        right: Box::new(Expression::NumLit(2.0.into())),
     };
     assert_eq!(render_expression(&expr), "len(name) > 2");
 

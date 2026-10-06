@@ -281,7 +281,7 @@ fn migrate_emits_compiling_mox_per_domain_and_stdlib() {
         ("hr.mox".to_string(), hr.clone()),
         ("sales.mox".to_string(), sales.clone()),
     ];
-    let compilation = rex_driver::compile_files(&sources);
+    let compilation = rex_driver::compile_files(&sources, &rex_driver::DomainImports::default());
     let errors: Vec<String> = compilation
         .diagnostics
         .iter()

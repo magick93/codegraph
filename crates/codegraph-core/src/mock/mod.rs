@@ -91,6 +91,8 @@ pub struct MockEngine {
     /// RuleReference bindings from rule-source classes (resolved at ingest
     /// time).
     rule_refs: Mutex<Vec<RuleRefRecord>>,
+    /// Ingested `.ddd` design models (issue #449).
+    ddd_models: Mutex<Vec<DddModelGraph>>,
     start_time: Instant,
 }
 
@@ -160,6 +162,7 @@ impl MockEngine {
             rules: Mutex::new(Vec::new()),
             rule_applies_to: Mutex::new(Vec::new()),
             rule_refs: Mutex::new(Vec::new()),
+            ddd_models: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }

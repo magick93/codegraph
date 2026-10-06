@@ -539,6 +539,243 @@ async fn emitted_manifest_loads_through_ops_config() {
     assert!(cfg.hooks.is_empty());
 }
 
+// ---------------------------------------------------------------------------
+// `run --check` / `generate --check` post-generate compile gate (issue #336)
+// ---------------------------------------------------------------------------
+
+/// `--check` plumbing: RunArgs carries the flag, defaults to false, and the
+/// flag is settable through to the driver. Clap-level parsing (`--check`
+/// accepted on `run` and `generate`) is exercised by the CLI `--help` smoke
+/// check; this pins the driver-level contract without a full pipeline run.
+#[test]
+fn check_flag_plumbs_through_run_args() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let config_path = dir.path().join("domains.toml");
+    let template_dirs: Vec<std::path::PathBuf> = Vec::new();
+    let ifml_files: Vec<std::path::PathBuf> = Vec::new();
+
+    let args = codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config_path,
+        output: dir.path(),
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: None,
+        no_post_gen: false,
+        template_dir: &template_dirs,
+        ifml_files: &ifml_files,
+        openapi_files: &[],
+        mox_files: &[],
+        rosetta_files: &[],
+        ddd_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: None,
+        codegraph_rev: None,
+        check: false,
+    };
+    assert!(!args.check, "--check must default to false on RunArgs");
+
+    let flagged = codegraph::driver::RunArgs {
+        check: true,
+        ..args
+    };
+    assert!(flagged.check, "--check must be settable on RunArgs");
+}
+
+/// The gate function: a compiling crate passes; corrupting one generated
+/// .rs file makes it fail with the rustc error surfaced in the message.
+///
+/// Always-on (NOT `#[ignore]`d): the fixture is a zero-dependency crate, so
+/// `cargo check` never touches the registry or the network — it only needs
+/// the locally installed toolchain (resolved via `$CARGO` under `cargo
+/// test`, else `$PATH`).
+#[test]
+fn check_gate_fails_non_zero_on_broken_output() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"cg_check_gate_fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    let main_rs = dir.path().join("src").join("main.rs");
+    std::fs::write(&main_rs, "fn main() { println!(\"ok\"); }\n").unwrap();
+
+    // Good output passes the gate.
+    codegraph::driver::check_generated_output(dir.path())
+        .expect("clean crate must pass the compile gate");
+
+    // Corrupt the generated .rs file: the gate must fail and surface the
+    // rustc diagnostic.
+    std::fs::write(
+        &main_rs,
+        "fn main() { let _broken: u32 = \"not a number\"; }\n",
+    )
+    .unwrap();
+    let err = codegraph::driver::check_generated_output(dir.path())
+        .expect_err("broken crate must fail the compile gate");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("cargo check"),
+        "failure must name the gate command: {msg}"
+    );
+    assert!(
+        msg.contains("mismatched types"),
+        "rustc error must be surfaced in the failure: {msg}"
+    );
+}
+
+/// Full-pipeline e2e: `run` over a mox fixture generates an app that passes
+/// the gate, and corrupting a generated .rs file afterwards makes the gate
+/// (invoked through the driver plumbing) fail on the real generated tree.
+/// Modeled on `testkit_crate_compiles`; the flag-off side (no cargo
+/// invocation) is pinned by `check_flag_plumbs_through_run_args` (default
+/// false) plus the `if check` gate in the driver.
+///
+/// Uses a minimal real profile with `dependency_strategy = "path"` so the
+/// generated app resolves codegraph deps into this checkout (offline);
+/// plan-less runs are NOT checkable today (they emit an incoherent root
+/// Cargo.toml — see the report on issue #336).
+#[tokio::test]
+#[ignore = "slow: full generate + cargo check of the generated app tree (builds the full dep tree; needs a warm cargo cache)"]
+async fn check_gate_passes_on_good_output() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mox = dir.path().join("model.mox");
+    let config = dir.path().join("domains.toml");
+    let profiles = dir.path().join("profiles.toml");
+    // Absolute path into this checkout so the generated domain-types crate
+    // resolves codegraph-type-contracts as an offline path dep (same trick
+    // as `testkit_crate_compiles`).
+    let type_contracts = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(|p| p.join("crates/codegraph-type-contracts"))
+        .expect("codegraph workspace crates dir");
+    std::fs::write(
+        &mox,
+        "package common\n\n/// A named collection of todo items.\nclass TodoListType {\n    String name\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &config,
+        "[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &profiles,
+        format!(
+            r#"[profiles.default.meta]
+name = "default"
+version = "0.1.0"
+description = "Minimal check-gate fixture profile"
+app_name = "app"
+generator_name = "app-graph"
+api_title = "App API"
+domain_types_crate = "app_domain_types"
+domain_types_base = "crates/domain-types"
+type_contracts_base = "{}"
+
+[profiles.default.features]
+database_target = "postgres"
+persistence_provider = "sea_orm"
+deployment_topology = "monolith"
+dependency_strategy = "path"
+ops_backend = false
+grpc_backend = false
+ifml_backend = false
+has_admin_cli = true
+ux_rules = true
+
+[profiles.default.api]
+generators = [
+    "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
+    "query", "event", "handler", "workflow_action", "media_route", "test",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    "router", "links", "errors",
+    "openapi", "scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views",
+    "webhook_dispatch", "webhook_endpoint_api",
+]
+output = "generated/"
+scripts.post_gen = []
+
+[profiles.default.cli]
+generators = ["cli_command", "cli_domain", "cli_scaffold"]
+output = "generated/"
+"#,
+            type_contracts.display()
+        ),
+    )
+    .unwrap();
+
+    let output = dir.path().join("generated");
+    let mox_files = vec![mox.clone()];
+    let template_dirs: Vec<std::path::PathBuf> = Vec::new();
+
+    // Good output + gate on: the run must pass end to end.
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles.clone()),
+        no_post_gen: false,
+        template_dir: &template_dirs,
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        rosetta_files: &[],
+        ddd_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: None,
+        codegraph_rev: None,
+        check: true,
+    })
+    .await
+    .expect("run with --check must pass on good output");
+    assert!(
+        output.join("Cargo.toml").exists(),
+        "the fixture must generate a Cargo.toml for the gate to check"
+    );
+
+    // Corrupt one generated .rs file: the gate must now fail with the rustc
+    // error surfaced. Prefer the crate entrypoint — some emitted .rs files
+    // are not reachable from the module tree and cargo never compiles them.
+    let main_rs = output.join("src").join("main.rs");
+    let lib_rs = if main_rs.exists() {
+        main_rs
+    } else {
+        std::fs::read_dir(output.join("src"))
+            .expect("generated src dir")
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|ext| ext == "rs"))
+            .expect("at least one generated .rs file")
+    };
+    let original = std::fs::read_to_string(&lib_rs).unwrap();
+    std::fs::write(
+        &lib_rs,
+        format!("{original}\nfn __corrupted() {{ let _x: u32 = \"no\"; }}\n"),
+    )
+    .unwrap();
+    let err = codegraph::driver::check_generated_output(&output)
+        .expect_err("gate must fail on corrupted generated code");
+    assert!(
+        err.to_string().contains("mismatched types"),
+        "rustc error must be surfaced: {err}"
+    );
+}
+
 /// Rosetta-first contract (issue #260): a manifest carrying rosetta_files
 /// parses through the harness's `OpsConfig::load` and preserves the
 /// per-domain model list in manifest order.

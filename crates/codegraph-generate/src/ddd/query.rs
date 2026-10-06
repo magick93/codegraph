@@ -97,25 +97,44 @@ impl EntityGenerator for QueryGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+        // DDD design surface (issue #449): a design covering this title
+        // replaces the operations with its repository built-in mapping and
+        // drives the FTS surface + filter fields from its search
+        // definition.
+        let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
+        let mut operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+        if let Some(design_ops) = design_surface.operations_for(schema_title) {
+            operations = design_ops;
+        }
+        let design_search = design_surface.search_for(schema_title);
 
         let search = entity_cfg.map(|ec| &ec.search);
-        let has_fts = search
-            .and_then(|s| s.fts_columns.as_ref())
-            .map(|cols| !cols.is_empty())
-            .unwrap_or(false);
+        let has_fts = match design_search {
+            Some(design) => !design.text.is_empty(),
+            None => search
+                .and_then(|s| s.fts_columns.as_ref())
+                .map(|cols| !cols.is_empty())
+                .unwrap_or(false),
+        };
         let has_embeddings = search
             .map(|s| !s.embedding_columns.is_empty())
             .unwrap_or(false);
 
-        let filter_fields = resolve_filter_fields(
-            db,
-            schema_title,
-            entity_cfg
-                .and_then(|ec| ec.filter_fields.as_ref())
-                .map(|v| v.as_slice()),
-        )
-        .await?;
+        let filter_fields = match design_search {
+            Some(design) => {
+                crate::ddd::design::design_filter_fields(db, schema_title, design).await?
+            }
+            None => {
+                resolve_filter_fields(
+                    db,
+                    schema_title,
+                    entity_cfg
+                        .and_then(|ec| ec.filter_fields.as_ref())
+                        .map(|v| v.as_slice()),
+                )
+                .await?
+            }
+        };
 
         // Resolve parent_ref for child entities
         let parent_ref = crate::resolve_parent_fk_column_same_domain(
@@ -154,7 +173,11 @@ impl EntityGenerator for QueryGenerator {
             .as_ref()
             .is_some_and(|ec| ec.is_append_only())
             || !operations.iter().any(|op| op == "update" || op == "delete");
-        let is_auditable = (if policies.is_empty() {
+        // Issue #449: when a design exists for this title, `flags.auditable`
+        // WINS over the policy/domains.toml fallback ordering.
+        let is_auditable = (if let Some(design) = design_surface.design_for(schema_title) {
+            design.flags.auditable
+        } else if policies.is_empty() {
             config
                 .domains
                 .get(&domain)

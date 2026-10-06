@@ -226,7 +226,7 @@ view "EditCustomer" {
     );
     assert_eq!(
         params[2].default,
-        Some(rex_ifml::ValueExpression::Number(1.0))
+        Some(rex_ifml::ValueExpression::Number(1.0.into()))
     );
 
     let fields = match &model.views[0].components[0].spec {

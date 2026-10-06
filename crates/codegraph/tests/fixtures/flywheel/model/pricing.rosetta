@@ -1,0 +1,124 @@
+namespace flywheel.pricing
+: <"
+    Provider pricing and billing suite (from apps/supabase/common_ddl.sql): how
+    service providers price their work (hourly, tiers, usage, performance,
+    fees, customer segments) and how engagements are contracted and invoiced.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.reference.*
+import flywheel.taxonomy.*
+import flywheel.profiles.*
+
+	type PricingModel: <"Table public.pricing_model - the top-level pricing approach of a provider.">
+		[rootType]
+		modelId Uuid (1..1) <"Primary key."> [metadata id]
+		name string (1..1)
+		description string (0..1)
+		modelType PricingModelTypeEnum (1..1) <"Column model_type.">
+		isActive boolean (0..1) <"Column is_active, default TRUE in app layer.">
+
+	type PricingPlan: <"Table public.pricing_plan - a sellable plan under a pricing model.">
+		planId Uuid (1..1) <"Primary key."> [metadata id]
+		model PricingModel (1..1) <"FK model_id -> pricing_model.model_id."> [metadata reference]
+		name string (1..1)
+		description string (0..1)
+		basePrice PositiveMoney (0..1) <"Column base_price, postgres domain positive_money.">
+		billingCycle BillingCycleEnum (0..1) <"Column billing_cycle.">
+		isActive boolean (0..1) <"Column is_active.">
+
+	type TimeBasedPricing: <"Table public.time_based_pricing - rate card of a plan.">
+		pricingId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		hourlyRate PositiveMoney (0..1)
+		dailyRate PositiveMoney (0..1)
+		weeklyRate PositiveMoney (0..1)
+		monthlyRate PositiveMoney (0..1)
+		minimumHours number(fractionalDigits: 2) (0..1) <"numeric(5,2).">
+		overtimeMultiplier number(fractionalDigits: 2) (0..1) <"numeric(3,2), default 1.5.">
+
+	type PricingTier: <"Table public.pricing_tier - volume/value tier of a plan. CHECK (min_value < max_value OR max_value IS NULL).">
+		tierId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		tierName string (1..1) <"Column tier_name.">
+		minValue number(fractionalDigits: 2) (0..1) <"Column min_value, numeric(10,2).">
+		maxValue number(fractionalDigits: 2) (0..1) <"Column max_value, numeric(10,2).">
+		price PositiveMoney (1..1)
+		unit string (0..1) <"Unit the tier value is measured in.">
+		condition MinBelowMax:
+			if minValue exists and maxValue exists
+			then minValue < maxValue
+
+	type UsagePricing: <"Table public.usage_pricing - per-unit metered pricing of a plan.">
+		usageId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		metricName string (1..1) <"Column metric_name - metered metric, e.g. documents reviewed.">
+		unitPrice PositiveMoney (1..1) <"Column unit_price.">
+		unitName string (1..1) <"Column unit_name.">
+
+	type PerformancePricing: <"Table public.performance_pricing - outcome-linked bonuses/penalties of a plan.">
+		performanceId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		metricName string (1..1) <"Column metric_name - the performance metric.">
+		targetValue number(fractionalDigits: 2) (0..1) <"Column target_value, numeric(15,2).">
+		bonusAmount PositiveMoney (0..1) <"Column bonus_amount.">
+		penaltyAmount PositiveMoney (0..1) <"Column penalty_amount.">
+		isPercentage boolean (0..1) <"Column is_percentage.">
+
+	type AdditionalFee: <"Table public.additional_fee - extra fees attached to a plan.">
+		feeId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		feeName string (1..1) <"Column fee_name.">
+		feeAmount PositiveMoney (1..1) <"Column fee_amount.">
+		feeType string (1..1) <"Column fee_type, e.g. setup/onboarding.">
+		isRecurring boolean (0..1) <"Column is_recurring.">
+		billingCycle BillingCycleEnum (0..1) <"Column billing_cycle.">
+
+	type SegmentPricing: <"Table public.segment_pricing - plan pricing for a customer segment.">
+		segmentId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		customerSegment CustomerSegmentEnum (1..1) <"Column customer_segment.">
+
+	type SegmentIndustry: <"Table public.segment_industry - segment pricing tailored to an industry; primary key (segment_id, industry_id).">
+		segment SegmentPricing (1..1) <"Part of composite primary key."> [metadata reference]
+		industry Industry (1..1) <"Part of composite primary key; FK industry_id -> industry.id."> [metadata reference]
+
+	type Contract: <"Table public.contract - a client engagement under a plan. CHECK (start_date <= end_date OR end_date IS NULL).">
+		[rootType]
+		contractId Uuid (1..1) <"Primary key."> [metadata id]
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		customerId Uuid (0..1) <"Column customer_id - the contracting client (profile/account id; no FK in the original schema).">
+		startDate date (1..1) <"Column start_date.">
+		endDate date (0..1) <"Column end_date.">
+		contractValue PositiveMoney (0..1) <"Column contract_value.">
+		status ContractStatusEnum (1..1)
+		condition StartBeforeEnd:
+			if endDate exists
+			then startDate <= endDate
+
+	type Invoice: <"Table public.invoice - an invoice issued under a contract.">
+		invoiceId Uuid (1..1) <"Primary key."> [metadata id]
+		contract Contract (1..1) <"FK contract_id -> contract.contract_id."> [metadata reference]
+		invoiceDate date (1..1)
+		dueDate date (1..1) <"Column due_date.">
+		totalAmount PositiveMoney (1..1) <"Column total_amount.">
+		status PaymentStatusEnum (1..1)
+
+	type InvoiceLineItem: <"Table public.invoice_line_item - one line of an invoice.">
+		lineItemId Uuid (1..1) <"Primary key."> [metadata id]
+		invoice Invoice (1..1) <"FK invoice_id -> invoice.invoice_id."> [metadata reference]
+		description string (1..1)
+		quantity number(fractionalDigits: 2) (0..1) <"numeric(10,2).">
+		unitPrice PositiveMoney (0..1) <"Column unit_price.">
+		totalPrice PositiveMoney (1..1) <"Column total_price.">
+
+	type PricingHistory: <"Table public.pricing_history - audit trail of plan price changes.">
+		plan PricingPlan (1..1) <"FK plan_id -> pricing_plan.plan_id."> [metadata reference]
+		changeDate zonedDateTime (1..1) <"Default now().">
+		changeType string (1..1) <"Column change_type - e.g. increase/decrease/promotion.">
+		oldValue string (0..1) <"Column old_value, jsonb.">
+		newValue string (0..1) <"Column new_value, jsonb.">
+		changeReason string (0..1) <"Column change_reason.">
+		changedBy User (0..1) <"FK changed_by -> auth.users(id)."> [metadata reference]

@@ -438,10 +438,12 @@ async fn run_generator_pipeline(
         openapi_files: &[],
         mox_files: &[],
         rosetta_files: &[model],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await?;
@@ -576,10 +578,12 @@ generators = ["dto", "regulatory_reports"]
         openapi_files: &[],
         mox_files: &[],
         rosetta_files: &[model],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::ddl::query::ddl_dto_gap_fields;
 use crate::db::dialect::{PostgresDialect, SqliteDialect};
 
 fn col(pg_type: &str) -> ColumnDef {
@@ -527,4 +528,71 @@ fn non_status_columns_and_workflowless_entities_are_untouched() {
         columns.iter().all(|c| c.default.is_none()),
         "no workflow config on the entity → no defaults injected"
     );
+}
+
+// ── ddl_dto_gap_fields (#446 debug invariant) ────────────────────────────
+
+fn dto_field(name: &str, is_array: bool, is_entity_ref: bool) -> crate::ddd::dto::DtoField {
+    crate::ddd::dto::DtoField {
+        name: name.to_string(),
+        rust_type: "String".to_string(),
+        is_required: true,
+        is_array,
+        description: String::new(),
+        render_strategy: String::new(),
+        is_entity_ref,
+        is_hierarchy_field: false,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pattern: None,
+        format: None,
+    }
+}
+
+fn ddl_cols(names: &[&str]) -> Vec<ColumnDef> {
+    names
+        .iter()
+        .map(|n| ColumnDef {
+            name: (*n).to_string(),
+            pg_type: "TEXT".to_string(),
+            nullable: true,
+            default: None,
+            is_primary_key: false,
+            is_array: false,
+        })
+        .collect()
+}
+
+#[test]
+fn gap_fields_flags_missing_columns() {
+    let ddl = ddl_cols(&["id", "note", "parent_id"]);
+    let dto = vec![
+        dto_field("id", false, false),
+        dto_field("note", false, false),
+        dto_field("parent_id", false, true),
+        dto_field("missing_id", false, true),
+    ];
+    assert_eq!(ddl_dto_gap_fields(&ddl, &dto), vec!["missing_id"]);
+}
+
+#[test]
+fn gap_fields_allows_codelist_code_suffix_and_junction_arrays() {
+    let ddl = ddl_cols(&["status_code"]);
+    let dto = vec![
+        // Codelist field: rust-side `_code` strip → status_code column.
+        dto_field("status", false, false),
+        // Junction array entity ref: child table, never a column.
+        dto_field("tags_id", true, true),
+    ];
+    assert!(ddl_dto_gap_fields(&ddl, &dto).is_empty());
+}
+
+#[test]
+fn gap_fields_skips_hierarchy_fields() {
+    let ddl = ddl_cols(&[]);
+    let mut hierarchy = dto_field("parent_organization_id", false, false);
+    hierarchy.is_hierarchy_field = true;
+    assert!(ddl_dto_gap_fields(&ddl, &[hierarchy]).is_empty());
 }

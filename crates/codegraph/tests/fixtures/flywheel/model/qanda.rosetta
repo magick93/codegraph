@@ -1,0 +1,110 @@
+namespace flywheel.qanda
+: <"
+    The guided, question-driven onboarding engine ('What business challenge
+    can we help you solve?') and the JSON-Schema-driven forms engine.
+
+    Tables live in the postgres schema qanda (questions, multi_choice_options,
+    group_questions, plain_text_questions, plain_text_answers) plus the
+    public forms engine tables. The qanda schema was dropped and recreated
+    twice; this is the final shape.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+import flywheel.profiles.*
+import flywheel.taxonomy.*
+
+	type Question: <"Table qanda.questions - a question in the onboarding tree; parent_question deletes SET NULL. Functions also reference a group_id column that no migration defines (migration drift).">
+		questionId Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		parentQuestion Question (0..1) <"FK parent_question_id -> questions.question_id ON DELETE SET NULL."> [metadata reference]
+		title string (0..1) <"varchar(255).">
+		subTitle string (0..1) <"Column sub_title, varchar(255).">
+		description string (0..1)
+		body string (0..1)
+		answerType QuestionTypeEnum (0..1) <"Column answer_type.">
+		category Category (0..1) <"FK category -> public.category(id)."> [metadata reference]
+
+	type MultiChoiceOption: <"Table qanda.multi_choice_options - one selectable option of a multiple-choice question.">
+		optionId Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		question Question (0..1) <"FK question_id -> questions.question_id."> [metadata reference]
+		optionText string (0..1) <"Column option_text (originally varchar(255)).">
+
+	type GroupQuestion: <"Table qanda.group_questions - a question bundle targeted at a business context (category + business model + industry + legal structure). Recent duplicates are deduplicated by trigger; a partial unique index enforces uniqueness for recent rows.">
+		[rootType]
+		id Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		category Category (0..1) <"FK category_id -> category.id ON DELETE CASCADE."> [metadata reference]
+		businessModel BusinessModel (0..1) <"FK business_model_id -> business_models.id ON DELETE CASCADE."> [metadata reference]
+		industry Industry (0..1) <"FK industry_id -> industry.id ON DELETE CASCADE."> [metadata reference]
+		businessStructure BusinessStructure (0..1) <"FK business_structure_id -> business_structure.id."> [metadata reference]
+		createdBy ProfessionalProfile (0..1) <"FK created_by -> professional_profile.id ON DELETE SET NULL."> [metadata reference]
+
+	type PlainTextQuestion: <"Table qanda.plain_text_questions - a plain-language question derived from a group question, with LLM prompts. Original primary key is the group question id (1:1), modelled as a surrogate id plus a unique group-question reference.">
+		id Uuid (1..1) <"Primary key (surrogate for the 1:1 group-question link)."> [metadata id]
+		groupQuestion GroupQuestion (1..1) <"Unique FK id -> group_questions.id - the original primary key."> [metadata reference]
+		question string (1..1)
+		systemPrompt string (0..1) <"Column system_prompt - LLM system prompt.">
+		userPrompt string (0..1) <"Column user_prompt - LLM user prompt.">
+		jsonizedQuestions string (0..1) <"Column jsonized_questions, jsonb - structured question payload.">
+
+	type PlainTextAnswer: <"Table qanda.plain_text_answers - answers a professional gave to a plain-text question set.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		professionalProfile ProfessionalProfile (1..1) <"FK professional_profile_id -> professional_profile.id."> [metadata reference]
+		groupQuestion GroupQuestion (1..1) <"FK group_question_id -> group_questions.id."> [metadata reference]
+		answers string (1..1) <"Column answers, text - serialized answer payload.">
+
+	type Form: <"Table public.forms - a form defined by a JSON Schema; form_payloads are validated against it by a pg_jsonschema trigger.">
+		[rootType]
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		title string (1..1)
+		schemaDocument JsonSchema (1..1) <"Column schema, jsonb - the JSON Schema of valid responses.">
+		description string (0..1)
+		parentForm Form (0..1) <"FK form_id -> forms.id - nesting of forms."> [metadata reference]
+
+	type FormSchemaScopePath: <"Table public.form_schema_scope_paths - JSON pointer paths extracted from a form schema; primary key (path, form_id); auto-populated by a plv8 trigger.">
+		path string (1..1) <"Part of composite primary key - a scope path into the schema.">
+		form Form (1..1) <"Part of composite primary key; FK form_id -> forms.id."> [metadata reference]
+
+	type FormInput: <"Table public.form_inputs - an input control within a form."> 
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		inputType string (1..1) <"Column 'type', NOT NULL - control type, e.g. text/number/select.">
+		componentName string (0..1) <"Column component_name.">
+		name string (0..1)
+		description string (0..1)
+		placeholder string (0..1)
+		icon string (0..1)
+		errorMessage string (0..1) <"Column error_message.">
+		scope string (0..1) <"JSON pointer scope within the form schema.">
+		options HstoreEntry (0..*) <"Column 'options', hstore - key/value control options.">
+		form Form (0..1) <"FK (scope, form_id) -> form_schema_scope_paths(path, form_id)."> [metadata reference]
+
+	type FormInputItem: <"Table public.form_input_items - a selectable item (title/value pair) of a form input.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		title string (1..1)
+		value string (0..1)
+		icon string (0..1)
+		description string (0..1)
+		formInput FormInput (0..1) <"FK form_input_id -> form_inputs.id."> [metadata reference]
+
+	type FormLayout: <"Table public.form_layouts - a layout container of a form.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		layoutType FormLayoutEnum (1..1) <"Column 'type', NOT NULL.">
+		label string (0..1)
+		description string (0..1)
+		icon string (0..1)
+		errorMessage string (0..1) <"Column error_message.">
+		form Form (0..1) <"FK form_id -> forms.id."> [metadata reference]
+
+	type FormLayoutElement: <"Table public.form_layout_elements - an element within a layout; self-referencing parent for nesting.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		elementType FormLayoutEnum (1..1) <"Column 'type', NOT NULL.">
+		formLayout FormLayout (0..1) <"FK form_layout_id -> form_layouts.id."> [metadata reference]
+		scope string (0..1) <"JSON pointer scope of the element.">
+		label string (0..1)
+		parentElement FormLayoutElement (0..1) <"FK form_layout_element_parent_id -> form_layout_elements.id - nesting."> [metadata reference]
+		position int (0..1) <"Order within the parent layout.">
+
+	type FormResponse: <"Table public.form_responses - a submitted form payload, validated against the form's JSON Schema.">
+		id Uuid (1..1) <"Primary key."> [metadata id]
+		form Form (1..1) <"FK form_id -> forms.id."> [metadata reference]
+		formPayload string (1..1) <"Column form_payload, json NOT NULL - response document conforming to forms.schema.">

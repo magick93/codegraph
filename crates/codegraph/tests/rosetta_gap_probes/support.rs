@@ -114,10 +114,12 @@ pub fn driver_args(p: &SchemaProject) -> codegraph::driver::RunArgs<'_> {
         openapi_files: &[],
         mox_files: &[],
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     }
 }

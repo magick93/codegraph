@@ -1,6 +1,7 @@
 mod api_model;
 mod atproto;
 mod composition;
+mod ddd;
 mod governance;
 mod ifml;
 mod query;
@@ -14,10 +15,10 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
-    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
-    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
     PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
     RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
@@ -636,6 +637,10 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
         self.query_effective_permits(actor).await
+    }
+
+    async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
+        self.query_ddd_models().await
     }
 
     async fn get_mox_vocabularies(&self) -> Result<Vec<MoxVocabularyNode>, GraphError> {

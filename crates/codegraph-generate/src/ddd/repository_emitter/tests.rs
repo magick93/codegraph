@@ -206,6 +206,7 @@ fn sort_test_tree(is_auditable: bool) -> EntityTree {
         has_read: true,
         has_update: false,
         has_delete: false,
+        has_list: true,
         has_workflow: false,
         has_fts: false,
         has_embeddings: false,
@@ -222,6 +223,7 @@ fn sort_test_tree(is_auditable: bool) -> EntityTree {
         parent_ref: None,
         hierarchy_field: None,
         tree_include: vec![],
+        design_finders: vec![],
     }
 }
 

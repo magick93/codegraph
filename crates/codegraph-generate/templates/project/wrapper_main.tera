@@ -68,6 +68,10 @@ enum Commands {
         /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
         #[arg(long)]
         ux_rules: Option<PathBuf>,
+        /// Compile-check the generated output with `cargo check` after
+        /// generation; a failing check fails the run.
+        #[arg(long)]
+        check: bool,
     },
     /// Show entity/VO classification decisions for the .mox model.
     Classify {
@@ -104,6 +108,10 @@ enum Commands {
         /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
         #[arg(long)]
         ux_rules: Option<PathBuf>,
+        /// Compile-check the generated output with `cargo check` after
+        /// generation; a failing check fails the run.
+        #[arg(long)]
+        check: bool,
     },
     /// Validate project layout and configuration.
     Doctor {
@@ -161,6 +169,7 @@ async fn main() -> Result<()> {
             mox_files,
             rosetta_files,
             ux_rules,
+            check,
         } => {
             let dirs = template_dirs(&template_dir);
             codegraph::driver::run(codegraph::driver::RunArgs {
@@ -187,6 +196,7 @@ async fn main() -> Result<()> {
                 } else {
                     Some(CODEGRAPH_REV.to_string())
                 },
+                check,
             })
             .await
             .map_err(|e| codegraph::error::Error::Config(format!("run failed: {e}")))?;
@@ -219,6 +229,7 @@ async fn main() -> Result<()> {
             output,
             extension_points,
             ux_rules,
+            check,
         } => {
             let dirs = template_dirs(&[]);
             codegraph::driver::generate(
@@ -230,6 +241,7 @@ async fn main() -> Result<()> {
                 None,
                 None,
                 ux_rules.as_deref(),
+                check,
             )
             .await
             .map_err(|e| codegraph::error::Error::Config(format!("generate failed: {e}")))

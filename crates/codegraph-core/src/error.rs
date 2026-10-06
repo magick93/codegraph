@@ -34,6 +34,14 @@ pub enum Error {
         /// error comes from parsing or resolution.
         reason: String,
     },
+    #[error("ddd model error in '{file}': {reason}")]
+    DddModel {
+        /// The .ddd file the error came from.
+        file: String,
+        /// Failure cause, including the rendered rex diagnostics when the
+        /// error comes from compilation (grouped per file).
+        reason: String,
+    },
     #[error("Template error: {0}")]
     Template(String),
     #[error("Validation error: {0}")]

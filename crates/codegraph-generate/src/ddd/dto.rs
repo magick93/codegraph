@@ -415,7 +415,15 @@ pub async fn build_dto_context(
         .get(&domain)
         .and_then(|d| d.get_entity_config(&entity_name));
 
-    let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+    // DDD design surface (issue #449): a design covering this title maps
+    // its repository built-ins onto the DTO operation set — no `save` in
+    // the design means no create/update DTO files. dto_response always
+    // emits. Empty surface → schema-derived operations, byte-identical.
+    let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
+    let mut operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+    if let Some(design_ops) = design_surface.operations_for(schema_title) {
+        operations = design_ops;
+    }
 
     let dto_config = entity_cfg.map(|ec| &ec.dto);
     let mut immutable_fields = dto_config

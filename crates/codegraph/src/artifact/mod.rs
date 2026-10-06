@@ -111,16 +111,19 @@ fn collect_schema_dir_into(
 
 /// Every model/config input that shapes the graph: domain config,
 /// classifier config, `ui-overrides.toml` (ingested onto property nodes),
-/// JSON schemas, mox/rosetta/IFML/OpenAPI sources. Transitive files pulled
-/// in by model sources (mox `import schema` targets, IFML `.actor`
-/// imports) are NOT tracked yet — editing one of those invalidates the
-/// cache only when its importing file changes too.
+/// JSON schemas, mox/rosetta/ddd/IFML/OpenAPI sources. Transitive files
+/// pulled in by model sources (mox `import schema` targets, IFML `.actor`
+/// imports, `.ddd` imported `.mox` domains) are NOT tracked yet — editing
+/// one of those invalidates the cache only when its importing file changes
+/// too.
+#[allow(clippy::too_many_arguments)]
 pub fn collect_run_inputs(
     schemas: Option<&Path>,
     classifier: Option<&Path>,
     config_path: &Path,
     mox_files: &[std::path::PathBuf],
     rosetta_files: &[std::path::PathBuf],
+    ddd_files: &[std::path::PathBuf],
     ifml_files: &[std::path::PathBuf],
     openapi_files: &[std::path::PathBuf],
 ) -> Result<Vec<InputFile>, ArtifactError> {
@@ -138,7 +141,13 @@ pub fn collect_run_inputs(
     if let Some(schemas_dir) = schemas {
         files.extend(collect_schema_dir(schemas_dir)?);
     }
-    for group in [mox_files, rosetta_files, ifml_files, openapi_files] {
+    for group in [
+        mox_files,
+        rosetta_files,
+        ddd_files,
+        ifml_files,
+        openapi_files,
+    ] {
         for path in group {
             files.push(read_input_file(path)?);
         }

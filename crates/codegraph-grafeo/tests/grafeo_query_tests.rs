@@ -1488,3 +1488,348 @@ async fn test_get_interactions_scoped_to_operation_mock() {
     let engine = codegraph_core::mock::MockEngine::new();
     exercise_interactions_scoped(&engine).await.unwrap();
 }
+
+// ── DDD design plane (issue #449) ─────────────────────────────────────
+
+/// Count edges by label through the raw session (the DddBindsClass edge has
+/// no querier surface of its own).
+fn count_edges(engine: &GrafeoEngine, label: &str) -> usize {
+    let session = engine.db().session();
+    let result = session
+        .execute(&format!("MATCH ()-[e:{label}]->() RETURN count(e) AS cnt"))
+        .expect("edge count query");
+    result.rows()[0][0].as_int64().expect("integer count") as usize
+}
+
+/// A full-featured DddModelGraph: two modules, designs of all three
+/// stereotypes with flags, repositories with builtin + declared operations
+/// (rex-ir TypeRef/Multiplicity JSON payloads), services with delegation +
+/// capabilities, and a search with text/filters/sorts/document/ranking/
+/// pagination. Vecs are in canonical order (ordinals, repository names).
+fn ddd_fixture() -> DddModelGraph {
+    let book_ref = serde_json::json!({
+        "type": "class",
+        "value": {"package": "nz.example.library", "name": "Book"}
+    });
+    let loan_ref = serde_json::json!({
+        "type": "class",
+        "value": {"package": "nz.example.library", "name": "Loan"}
+    });
+    DddModelGraph {
+        source_path: "model/library.ddd".to_string(),
+        application: DddApplicationNode {
+            name: "Library".to_string(),
+            base: Some("nz.example.library".to_string()),
+            source_path: "model/library.ddd".to_string(),
+        },
+        modules: vec![
+            DddModuleNode {
+                application: "Library".to_string(),
+                name: "catalogue".to_string(),
+                ordinal: 0,
+            },
+            DddModuleNode {
+                application: "Library".to_string(),
+                name: "lending".to_string(),
+                ordinal: 1,
+            },
+        ],
+        designs: vec![
+            DddDesignNode {
+                application: "Library".to_string(),
+                module: "catalogue".to_string(),
+                class: "Book".to_string(),
+                resolved_title: Some("Book".to_string()),
+                stereotype: "entity".to_string(),
+                is_abstract: false,
+                flags: DddDesignFlags {
+                    scaffold: true,
+                    cache: true,
+                    ..Default::default()
+                },
+                ordinal: 0,
+            },
+            DddDesignNode {
+                application: "Library".to_string(),
+                module: "catalogue".to_string(),
+                class: "Money".to_string(),
+                resolved_title: None,
+                stereotype: "value".to_string(),
+                is_abstract: false,
+                flags: DddDesignFlags::default(),
+                ordinal: 1,
+            },
+            DddDesignNode {
+                application: "Library".to_string(),
+                module: "catalogue".to_string(),
+                class: "LoanSummary".to_string(),
+                resolved_title: None,
+                stereotype: "dto".to_string(),
+                is_abstract: true,
+                flags: DddDesignFlags {
+                    auditable: true,
+                    optimistic_locking: true,
+                    non_persistent: true,
+                    ..Default::default()
+                },
+                ordinal: 2,
+            },
+            DddDesignNode {
+                application: "Library".to_string(),
+                module: "lending".to_string(),
+                class: "Loan".to_string(),
+                resolved_title: None,
+                stereotype: "entity".to_string(),
+                is_abstract: false,
+                flags: DddDesignFlags {
+                    scaffold: true,
+                    ..Default::default()
+                },
+                ordinal: 0,
+            },
+        ],
+        repositories: vec![
+            DddRepositoryNode {
+                application: "Library".to_string(),
+                name: "BookRepository".to_string(),
+                design_class: "Book".to_string(),
+                operations: vec![
+                    DddRepositoryOperation {
+                        name: "findById".to_string(),
+                        builtin: Some("findById".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![],
+                        ordinal: 0,
+                    },
+                    DddRepositoryOperation {
+                        name: "findAll".to_string(),
+                        builtin: Some("findAll".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![],
+                        ordinal: 1,
+                    },
+                    DddRepositoryOperation {
+                        name: "save".to_string(),
+                        builtin: Some("save".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![],
+                        ordinal: 2,
+                    },
+                    DddRepositoryOperation {
+                        name: "delete".to_string(),
+                        builtin: Some("delete".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![],
+                        ordinal: 3,
+                    },
+                    DddRepositoryOperation {
+                        name: "findByTitle".to_string(),
+                        builtin: None,
+                        return_type: Some(serde_json::json!({
+                            "type": "primitive",
+                            "value": "String"
+                        })),
+                        return_multiplicity: None,
+                        params: vec![DddParam {
+                            name: "title".to_string(),
+                            type_json: serde_json::json!({
+                                "type": "primitive",
+                                "value": "String"
+                            }),
+                            multiplicity: None,
+                        }],
+                        ordinal: 4,
+                    },
+                ],
+            },
+            DddRepositoryNode {
+                application: "Library".to_string(),
+                name: "LoanRepository".to_string(),
+                design_class: "Loan".to_string(),
+                operations: vec![
+                    DddRepositoryOperation {
+                        name: "save".to_string(),
+                        builtin: Some("save".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![],
+                        ordinal: 0,
+                    },
+                    DddRepositoryOperation {
+                        name: "renewLoan".to_string(),
+                        builtin: None,
+                        return_type: Some(loan_ref.clone()),
+                        return_multiplicity: Some(serde_json::json!({"type": "many"})),
+                        params: vec![DddParam {
+                            name: "loan".to_string(),
+                            type_json: loan_ref,
+                            multiplicity: Some(serde_json::json!({"type": "one"})),
+                        }],
+                        ordinal: 1,
+                    },
+                ],
+            },
+        ],
+        services: vec![
+            DddServiceNode {
+                application: "Library".to_string(),
+                module: "catalogue".to_string(),
+                name: "LoanService".to_string(),
+                description: Some("Manages loans".to_string()),
+                dependencies: vec![
+                    "LoanRepository".to_string(),
+                    "NotificationService".to_string(),
+                ],
+                operations: vec![
+                    DddServiceOperation {
+                        name: "borrow".to_string(),
+                        return_type: Some(serde_json::json!({
+                            "type": "primitive",
+                            "value": "Boolean"
+                        })),
+                        return_multiplicity: None,
+                        params: vec![DddParam {
+                            name: "book".to_string(),
+                            type_json: book_ref,
+                            multiplicity: None,
+                        }],
+                        delegation_target: None,
+                        delegation_operation: None,
+                        capabilities: vec!["BorrowBooks".to_string()],
+                        ordinal: 0,
+                    },
+                    DddServiceOperation {
+                        name: "renew".to_string(),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![],
+                        delegation_target: Some("LoanRepository".to_string()),
+                        delegation_operation: Some("save".to_string()),
+                        capabilities: vec![],
+                        ordinal: 1,
+                    },
+                ],
+                ordinal: 0,
+            },
+            DddServiceNode {
+                application: "Library".to_string(),
+                module: "lending".to_string(),
+                name: "ReturnService".to_string(),
+                description: None,
+                dependencies: vec!["LoanRepository".to_string()],
+                operations: vec![DddServiceOperation {
+                    name: "returnLoan".to_string(),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: vec![],
+                    delegation_target: Some("LoanRepository".to_string()),
+                    delegation_operation: Some("save".to_string()),
+                    capabilities: vec![],
+                    ordinal: 0,
+                }],
+                ordinal: 0,
+            },
+        ],
+        searches: vec![DddSearchNode {
+            application: "Library".to_string(),
+            module: "lending".to_string(),
+            name: "BookSearch".to_string(),
+            description: Some("Full-text catalogue search".to_string()),
+            entity_class: "Book".to_string(),
+            entity_title: Some("Book".to_string()),
+            text: vec![
+                DddSearchField {
+                    property: "title".to_string(),
+                    boost: Some(2.0),
+                    analyzer: Some("standard".to_string()),
+                },
+                DddSearchField {
+                    property: "synopsis".to_string(),
+                    boost: None,
+                    analyzer: None,
+                },
+            ],
+            filters: vec!["category".to_string()],
+            sorts: vec!["title".to_string()],
+            document: vec![DddDocumentField {
+                name: "label".to_string(),
+                expr: r#"title + " - " + synopsis"#.to_string(),
+            }],
+            ranking: Some("recency".to_string()),
+            analyzer: Some("english".to_string()),
+            pagination: Some(DddPagination {
+                limit: Some(20),
+                max_limit: Some(100),
+                cursor: true,
+            }),
+            capabilities: vec!["SearchBooks".to_string()],
+            ordinal: 0,
+        }],
+    }
+}
+
+#[tokio::test]
+async fn test_ddd_model_round_trip() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    // The schema the Book design / BookSearch resolve against; Money,
+    // LoanSummary and Loan stay unresolved (advisory edges skip silently).
+    engine
+        .ingest_schema(&make_schema("Book", "library", true))
+        .await
+        .unwrap();
+
+    let fixture = ddd_fixture();
+    engine.ingest_ddd_model(&fixture).await.unwrap();
+
+    let loaded = engine.get_ddd_models().await.unwrap();
+    assert_eq!(loaded.len(), 1, "one model per application");
+    assert_eq!(loaded[0], fixture, "deep round-trip, canonical order");
+
+    // Structural edges land as declared.
+    assert_eq!(count_edges(&engine, "DddHasModule"), 2);
+    assert_eq!(count_edges(&engine, "DddHasDesign"), 4);
+    assert_eq!(count_edges(&engine, "DddHasService"), 2);
+    assert_eq!(count_edges(&engine, "DddHasSearch"), 1);
+    assert_eq!(count_edges(&engine, "DddHasRepository"), 2);
+    assert_eq!(count_edges(&engine, "DddHasOperation"), 7);
+    // DddBindsClass: only the resolved titles bind (design Book + search
+    // BookSearch → Schema "Book").
+    assert_eq!(count_edges(&engine, "DddBindsClass"), 2);
+
+    // Empty graphs report no models.
+    let empty = GrafeoEngine::in_memory().unwrap();
+    assert!(empty.get_ddd_models().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_ddd_models_sorted_by_application_name() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let fixture = ddd_fixture();
+    engine.ingest_ddd_model(&fixture).await.unwrap();
+
+    let other = DddModelGraph {
+        source_path: "model/aardvark.ddd".to_string(),
+        application: DddApplicationNode {
+            name: "Aardvark".to_string(),
+            base: None,
+            source_path: "model/aardvark.ddd".to_string(),
+        },
+        modules: vec![],
+        designs: vec![],
+        repositories: vec![],
+        services: vec![],
+        searches: vec![],
+    };
+    engine.ingest_ddd_model(&other).await.unwrap();
+
+    let loaded = engine.get_ddd_models().await.unwrap();
+    let names: Vec<&str> = loaded.iter().map(|m| m.application.name.as_str()).collect();
+    assert_eq!(names, vec!["Aardvark", "Library"]);
+    assert_eq!(loaded[0], other);
+    assert_eq!(loaded[1], fixture);
+}

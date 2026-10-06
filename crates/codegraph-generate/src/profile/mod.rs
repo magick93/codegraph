@@ -10,7 +10,7 @@ pub use resolve::{
     ProfileSection, ProfileVariant, ProfilesConfig, ResolvedProfile, ResolvedSection,
     load_and_resolve_profile,
 };
-pub use types::{DeploymentTopology, PersistenceProvider};
+pub use types::{DependencyStrategy, DeploymentTopology, PersistenceProvider};
 
 #[cfg(test)]
 pub(crate) use resolve::resolve_profile;

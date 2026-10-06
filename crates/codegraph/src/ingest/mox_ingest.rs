@@ -49,7 +49,7 @@ use codegraph_core::types::{
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind, TypeExpr};
-use rex_driver::{SchemaImports, compile_files_with_imports};
+use rex_driver::{DomainImports, SchemaImports, compile_files};
 use rex_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
 use crate::error::{Error, Result};
@@ -397,7 +397,11 @@ pub async fn ingest_mox_files(
         .len();
     let import_names: HashSet<String> = imported_files.iter().map(|i| i.alias.clone()).collect();
 
-    let compilation = compile_files_with_imports(&sources, &schema_imports);
+    let imports = DomainImports {
+        schemas: schema_imports,
+        sigil: rex_driver::SigilImports::new(),
+    };
+    let compilation = compile_files(&sources, &imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!("Warning: mox diagnostic in {path}: {}", diagnostic.message);
     }

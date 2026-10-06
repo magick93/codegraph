@@ -195,6 +195,13 @@ impl GrafeoEngine {
             EdgeType::NamespaceParent => "NamespaceParent",
             EdgeType::NamespaceImports => "NamespaceImports",
             EdgeType::NamespaceDepends => "NamespaceDepends",
+            EdgeType::DddHasModule => "DddHasModule",
+            EdgeType::DddHasDesign => "DddHasDesign",
+            EdgeType::DddHasRepository => "DddHasRepository",
+            EdgeType::DddHasService => "DddHasService",
+            EdgeType::DddHasSearch => "DddHasSearch",
+            EdgeType::DddHasOperation => "DddHasOperation",
+            EdgeType::DddBindsClass => "DddBindsClass",
         };
 
         let match_clause = match &edge_type {
@@ -476,6 +483,64 @@ impl GrafeoEngine {
                 format!(
                     "MATCH (a:Namespace {{fqn: '{}'}}), (b:Namespace {{fqn: '{}'}})",
                     escape_gql(from_id),
+                    escape_gql(to_id),
+                )
+            }
+            // DDD design plane (issue #449). Secondary path — `ingest_ddd_model`
+            // wires these edges directly. Ids are compound natural keys:
+            // `app::module`, `app::class`, `app::repository`.
+            EdgeType::DddHasModule => {
+                let (app, module) = split_compound_id(to_id, "DddHasModule")?;
+                format!(
+                    "MATCH (a:DddApplication {{name: '{}'}}), \
+                     (b:DddModule {{application: '{}', name: '{}'}})",
+                    escape_gql(from_id),
+                    escape_gql(app),
+                    escape_gql(module),
+                )
+            }
+            EdgeType::DddHasDesign | EdgeType::DddHasService | EdgeType::DddHasSearch => {
+                let (app, module) = split_compound_id(from_id, "DddHas{Design,Service,Search}")?;
+                format!(
+                    "MATCH (a:DddModule {{application: '{}', name: '{}'}}), \
+                     (b:DddDesign {{application: '{}', module: '{}', class: '{}'}})",
+                    escape_gql(app),
+                    escape_gql(module),
+                    escape_gql(app),
+                    escape_gql(module),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::DddHasRepository => {
+                let (app, class) = split_compound_id(from_id, "DddHasRepository")?;
+                format!(
+                    "MATCH (a:DddDesign {{application: '{}', class: '{}'}}), \
+                     (b:DddRepository {{application: '{}', name: '{}'}})",
+                    escape_gql(app),
+                    escape_gql(class),
+                    escape_gql(app),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::DddBindsClass => {
+                let (app, class) = split_compound_id(from_id, "DddBindsClass")?;
+                format!(
+                    "MATCH (a:DddDesign {{application: '{}', class: '{}'}}), \
+                     (b:Schema {{title: '{}'}})",
+                    escape_gql(app),
+                    escape_gql(class),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::DddHasOperation => {
+                let (app, repository) = split_compound_id(from_id, "DddHasOperation")?;
+                format!(
+                    "MATCH (a:DddRepository {{application: '{}', name: '{}'}}), \
+                     (b:DddRepositoryOperation {{application: '{}', repository_name: '{}', name: '{}'}})",
+                    escape_gql(app),
+                    escape_gql(repository),
+                    escape_gql(app),
+                    escape_gql(repository),
                     escape_gql(to_id),
                 )
             }

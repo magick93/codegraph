@@ -6,6 +6,7 @@ mod codelist;
 mod composite;
 mod composition;
 mod condition;
+mod ddd;
 mod discovery;
 mod edge;
 mod field_def;
@@ -44,6 +45,11 @@ pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
 pub use condition::{ConditionKind, ConditionNode};
+pub use ddd::{
+    DddApplicationNode, DddDesignFlags, DddDesignNode, DddDocumentField, DddModelGraph,
+    DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
+    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
+};
 pub use discovery::{DetectionSource, Extension, ParentCandidate};
 pub use edge::{EdgeProperties, EdgeType};
 pub use field_def::{

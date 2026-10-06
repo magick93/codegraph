@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::api::api_model::resolve_entity_operations;
 use crate::api::include_path::resolve_include_paths_for_topology;
+use crate::ddd::design::{DddDesignSurface, DesignFinder};
 use crate::error::Result;
 use crate::filter_fields::{FilterFieldInfo, resolve_filter_fields};
 use crate::render_template_with_project;
@@ -49,6 +50,11 @@ pub struct RepositoryContext {
     /// both repository impls (same resolver).
     #[serde(default)]
     pub ux_sort: bool,
+    /// Declared `.ddd` design finders (issue #449). Empty when no design
+    /// applies — the design-gated template block renders nothing, keeping
+    /// flag-off output byte-identical.
+    #[serde(default)]
+    pub design_finders: Vec<DesignFinder>,
 }
 
 pub struct RepositoryTraitGenerator {
@@ -103,25 +109,47 @@ impl EntityGenerator for RepositoryTraitGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(schema_title));
 
-        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+        // DDD design surface (issue #449): when a `.ddd` design covers this
+        // schema title, its repository built-ins become the TOP-priority
+        // operations source, its search definition drives the FTS surface
+        // and the filter fields, and its flags override the audit
+        // fallback. Empty surface (no designs in the graph) → everything
+        // below keeps the schema-derived values, byte-identical.
+        let design_surface = DddDesignSurface::from_graph(db).await?;
+        design_surface.warn_stereotype_mismatch(schema_title, schema.is_entity);
+        let mut operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+        if let Some(design_ops) = design_surface.operations_for(schema_title) {
+            operations = design_ops;
+        }
+        let design_search = design_surface.search_for(schema_title);
 
         let search = entity_cfg.map(|ec| &ec.search);
-        let has_fts = search
-            .and_then(|s| s.fts_columns.as_ref())
-            .map(|cols| !cols.is_empty())
-            .unwrap_or(false);
+        let has_fts = match design_search {
+            Some(design) => !design.text.is_empty(),
+            None => search
+                .and_then(|s| s.fts_columns.as_ref())
+                .map(|cols| !cols.is_empty())
+                .unwrap_or(false),
+        };
         let has_embeddings = search
             .map(|s| !s.embedding_columns.is_empty())
             .unwrap_or(false);
 
-        let filter_fields = resolve_filter_fields(
-            db,
-            schema_title,
-            entity_cfg
-                .and_then(|ec| ec.filter_fields.as_ref())
-                .map(|v| v.as_slice()),
-        )
-        .await?;
+        let filter_fields = match design_search {
+            Some(design) => {
+                crate::ddd::design::design_filter_fields(db, schema_title, design).await?
+            }
+            None => {
+                resolve_filter_fields(
+                    db,
+                    schema_title,
+                    entity_cfg
+                        .and_then(|ec| ec.filter_fields.as_ref())
+                        .map(|v| v.as_slice()),
+                )
+                .await?
+            }
+        };
 
         // Resolve parent_ref for child entities (graph-detected or manual config)
         let parent_ref = crate::resolve_parent_fk_column_same_domain(
@@ -179,18 +207,22 @@ impl EntityGenerator for RepositoryTraitGenerator {
         // Append-only snapshot semantics (issue #284) — same inference as
         // db/ddl.rs and the repository emitter: no update/delete ops (or an
         // explicit flag) means no audit columns, so the repository trait must
-        // not declare `include_deleted` (the impl side omits it).
-        let entity_cfg = config
-            .domains
-            .get(&domain)
-            .and_then(|d| d.get_entity_config(schema_title));
+        // not declare `include_deleted` (the impl side omits it). A design
+        // override feeds its OWN mapped operation set into the inference.
         let append_only = entity_cfg.as_ref().is_some_and(|ec| ec.is_append_only()) || {
-            let ops =
+            let ops = if design_surface.design_for(schema_title).is_some() {
+                operations.clone()
+            } else {
                 crate::api::api_model::resolve_entity_operations(db, config, &domain, schema_title)
-                    .await;
+                    .await
+            };
             !ops.iter().any(|op| op == "update" || op == "delete")
         };
-        let is_auditable = (if has_audit_policy {
+        // Issue #449: when a design exists for this title, `flags.auditable`
+        // WINS over the policy/domains.toml fallback ordering.
+        let is_auditable = (if let Some(design) = design_surface.design_for(schema_title) {
+            design.flags.auditable
+        } else if has_audit_policy {
             policies
                 .iter()
                 .find_map(|p| {
@@ -231,6 +263,11 @@ impl EntityGenerator for RepositoryTraitGenerator {
                 .map(|plan| !plan.is_empty())
                 .unwrap_or(false);
 
+        // Declared `.ddd` finders lower into trait + impl methods; the
+        // emitter validates each finder's column against the entity tree
+        // (unmappable finders are skipped there with a warning).
+        let design_finders = design_surface.finders_for(schema_title, &entity_name);
+
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -250,6 +287,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
             domain: domain.clone(),
             operations,
             ux_sort,
+            design_finders,
         };
 
         // Issue #268 (namespace_layout): namespaced repositories emit

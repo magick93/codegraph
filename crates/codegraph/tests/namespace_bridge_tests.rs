@@ -712,10 +712,12 @@ async fn run_gate(root: &Path, output: &Path, mox: &[PathBuf], gated: bool) {
         openapi_files: &[],
         mox_files: mox,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     };
     args.profile_name = "ns";

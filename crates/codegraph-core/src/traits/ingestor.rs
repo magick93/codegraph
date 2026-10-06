@@ -2,12 +2,12 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
     CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode, DataBindingNode,
-    EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode, FunctionNode,
-    HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode, MoxDomainModel,
-    NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner,
-    RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    DddModelGraph, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
+    FunctionNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
+    RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -184,6 +184,15 @@ pub trait GraphIngestor: Send + Sync {
         let _ = model;
         Ok(())
     }
+
+    // ── DDD design plane (issue #449) ────────────────────────────────
+
+    /// Ingest a full `.ddd` design model: the application, its modules, the
+    /// per-class designs, repositories (+ operations), application services,
+    /// and search definitions. `DddBindsClass` edges to `Schema` nodes are
+    /// inserted when `resolved_title`/`entity_title` resolve; missing
+    /// targets are skipped silently (advisory at this layer).
+    async fn ingest_ddd_model(&self, model: &DddModelGraph) -> Result<(), GraphError>;
 
     // ── Constraint plane (issue #261) ─────────────────────────────────
 

@@ -125,4 +125,14 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
         max_depth: Option<i32>,
     ) -> Result<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>, Box<dyn std::error::Error>>;
 {% endif %}
+{%- for finder in design_finders %}
+
+    /// Design finder `{{ finder.name }}` (declared in the .ddd design):
+    /// equality query over the named column(s).
+    async fn {{ finder.method_name }}(
+        &self,
+        db: &C,
+{% for p in finder.params %}        {{ p.name }}: {{ p.rust_type }},
+{% endfor %}    ) -> Result<{% if finder.returns_many %}Vec<{{ finder.return_rust_type }}>{% else %}Option<{{ finder.return_rust_type }}>{% endif %}, Box<dyn std::error::Error>>;
+{%- endfor %}
 }

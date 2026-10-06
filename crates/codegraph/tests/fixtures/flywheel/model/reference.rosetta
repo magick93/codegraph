@@ -1,0 +1,100 @@
+namespace flywheel.reference
+: <"
+    Reference and geodata shared across the Flywheel domain:
+    ISO 3166 countries, cities, nationalities, HR-XML country/currency code lists
+    and LINZ New Zealand address data.
+">
+
+version "1.0.0"
+
+import flywheel.common.*
+
+	type IsoCountry: <"Table public.iso_3166_2_countries - ISO 3166 country list including regional groupings. Referenced by profiles and client locations via its alpha-3 code.">
+		name string (0..1) <"Column 'name' - country name.">
+		alpha2Code string (0..1) <"Column 'alpha-2' - ISO 3166-1 alpha-2 code.">
+		alpha3Code string (1..1) <"Column 'alpha-3' - ISO 3166-1 alpha-3 code; unique target of country references."> [metadata id]
+		countryCode int (0..1) <"Column 'country-code' - ISO 3166-1 numeric code.">
+		iso3166Subdivision string (0..1) <"Column 'iso_3166-2' - subdivision code prefix.">
+		region string (0..1) <"Column 'region' - continental region.">
+		subRegion string (0..1) <"Column 'sub-region'.">
+		intermediateRegion string (0..1) <"Column 'intermediate-region'.">
+		regionCode int (0..1) <"Numeric region code.">
+		subRegionCode int (0..1) <"Numeric sub-region code.">
+		intermediateRegionCode int (0..1) <"Numeric intermediate-region code.">
+
+	type City: <"Table public.cities - towns and cities keyed by country.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		name string (0..1) <"City or town name.">
+		country IsoCountry (0..1) <"FK iso3_country -> iso_3166_2_countries.'alpha-3'."> [metadata reference]
+
+	type Nationality: <"Table public.nationalities - nationality labels in English and native form.">
+		id int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		englishName string (1..1) <"Column english_name, unique.">
+		nativeName string (1..1) <"Column native_name, unique.">
+
+	type CountryCode: <"Table public.country_code_list (HR-XML country code list). Used by business_structure.country_code.">
+		code string (1..1) <"ISO country code."> [metadata id]
+		description string (0..1) <"Country name.">
+
+	type CurrencyCode: <"Table public.currency_code_list (HR-XML currency code list). Used by company_plan.currency and lead_purchases.currency.">
+		code string (1..1) <"ISO 4217 currency code, e.g. 'NZD'."> [metadata id]
+		description string (0..1) <"Currency name.">
+
+	type NzStreetAddress: <"Table public.nz_street_address - LINZ NZ Street Address import (via QGIS). Used to locate company offices in New Zealand. Search-support columns (address identifiers, water route names, duplicate truncations) are represented by their primary values; full-text search vector omitted.">
+		id int (1..1) <"Column id, default nextval('nz_street_address_id_seq')."> [metadata id]
+		addressId int (0..1) <"Column address_id - LINZ address identifier.">
+		changeId int (0..1) <"Column change_id - LINZ change identifier.">
+		addressType string (0..1) <"Column address_ty, varchar(5).">
+		unitValue string (0..1) <"Column unit_value, varchar(5) - unit/flat identifier.">
+		addressNumber int (0..1) <"Column address_nu - street number.">
+		addressSuffix1 string (0..1) <"Column address__1, varchar(3) - street number alphabetic suffix.">
+		addressSuffix2 int (0..1) <"Column address__2 - street number numeric suffix.">
+		waterRoute string (0..1) <"Column water_rout, varchar(19).">
+		waterName string (0..1) <"Column water_name, varchar(35).">
+		suburbLocality string (0..1) <"Column suburb_loc, varchar(40).">
+		townCity string (0..1) <"Column town_city, varchar(25).">
+		fullRoadName string (0..1) <"Column full_road_, varchar(33).">
+		fullAddress string (0..1) <"Column full_add_1, varchar(68) - one-line formatted address (full-text searchable).">
+		roadSection int (0..1) <"Column road_secti.">
+		geometry GeoPoint (0..1) <"Column geom extensions.geometry(point,4167); geocoded via positionstack trigger.">
+
+	type NzLandAndDistrict: <"Table public.nz_land_and_districts - NZ land districts with boundaries.">
+		gid int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		id int (0..1) <"Column id - source identifier.">
+		name string (0..1) <"Column name, varchar(14), unique.">
+		geometry GeoPolygon (0..1) <"Column geom extensions.geometry(multipolygon,4167).">
+
+	type NzSuburbAndLocality: <"Table public.nz_suburbs_and_localities - NZ suburbs and localities with boundaries.">
+		gid int (1..1) <"Surrogate key (postgres serial)."> [metadata id]
+		id int (0..1) <"Column id - source identifier.">
+		name string (0..1) <"Column name, varchar(53).">
+		additional string (0..1) <"Column additional, varchar(253).">
+		localityType string (0..1) <"Column 'type', varchar(17).">
+		territorialAuthority string (0..1) <"Column territoria, varchar(126).">
+		population number (0..1) <"Population estimate.">
+		geometry GeoPolygon (0..1) <"Column geom extensions.geometry(multipolygon,4167).">
+
+	type NzPhysicalAddress: <"Table public.physical_Address - NZ parcel addressing record with sender details.">
+		id Uuid (1..1) <"Primary key, default gen_random_uuid()."> [metadata id]
+		contactName string (0..1) <"Column contact_name.">
+		contactPhone string (0..1) <"Column contact_phone.">
+		companyName string (0..1) <"Column company_name.">
+		buildingName string (0..1) <"Column building_name.">
+		addressLine1 string (0..1) <"Column physical_Address_line1.">
+		addressLine2 string (0..1) <"Column physical_Address_line2.">
+		addressLine3 string (0..1) <"Column physical_Address_line3.">
+		postCode string (0..1) <"Column post_code, varchar(4) - NZ post code.">
+		deliveryInstructions string (0..1) <"Column delivery_instructions.">
+		senderAddressLine1 string (0..1) <"Column sender_physical_Address_line1.">
+		senderAddressLine2 string (0..1) <"Column sender_physical_Address_line2.">
+		senderAddressLine3 string (0..1) <"Column sender_physical_Address_line3.">
+		fromDetails string (0..1) <"Column from_details.">
+
+	type PostalAddress: <"Structure of the jsonb columns company_offices_nz.office_address / postal_address. Keys inferred from view usage (city) and the physical address record shape.">
+		line1 string (0..1) <"Street address line 1.">
+		line2 string (0..1) <"Street address line 2.">
+		suburb string (0..1) <"Suburb or locality.">
+		city string (0..1) <"Town or city; surfaced by view_nz_company_offices as 'city' / 'town_city'.">
+		region string (0..1) <"Region or territorial authority.">
+		postCode string (0..1) <"NZ post code.">
+		country string (0..1) <"Country name or code.">

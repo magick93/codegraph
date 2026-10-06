@@ -1077,6 +1077,15 @@ impl DdlGenerator {
             indexes,
         } = artifacts;
 
+        // Debug-time invariant (#446 AC): the DDL context must resolve at
+        // least the property-derived columns the dto context resolves. A
+        // divergence is the audit-only-skeleton signature — generation is
+        // silent while the emitted repository/command code reads columns
+        // the table and model lack (E0560/E0609/E0599). Loud advisory, not
+        // fatal: the dto plane is the reference resolution.
+        #[cfg(debug_assertions)]
+        warn_on_ddl_dto_gap(db, schema_title, &domain, config, &columns).await;
+
         Ok(DdlContext {
             schema_name,
             table_name,
@@ -1665,4 +1674,74 @@ fn flatten_child_tables_inner(
 fn is_global_entity(_table_name: &str, _config: &DomainConfig) -> bool {
     // TODO: check tenancy config for global tables
     false
+}
+
+/// Property-derived dto fields with no backing column in the DDL context —
+/// the audit-only-skeleton signature (#446: DDL/entity resolve fewer
+/// properties than dto/repository/command/query, and the emitted
+/// repository reads columns the table and model lack).
+///
+/// Exclusions mirror planes that legitimately produce no column on this
+/// table: `id` (hardcoded primary key), hierarchy fields (synthetic
+/// self-referential FK, added by `add_hierarchy_artifacts`), and array
+/// entity references (junction child tables). Codelist fields strip a
+/// trailing `_code` on the Rust side (`status_code` column ↔ `status`
+/// field), so the suffixed column name is accepted too.
+pub(crate) fn ddl_dto_gap_fields(
+    ddl_columns: &[ColumnDef],
+    dto_fields: &[crate::ddd::dto::DtoField],
+) -> Vec<String> {
+    // Reserved-word columns are double-quoted in the DDL context
+    // (`"name"`) — compare on the bare identifier.
+    let column_names: HashSet<&str> = ddl_columns
+        .iter()
+        .map(|c| c.name.trim_matches('"'))
+        .collect();
+    let mut gaps = Vec::new();
+    for field in dto_fields {
+        if field.name == "id" || field.is_hierarchy_field {
+            continue;
+        }
+        if field.is_array && field.is_entity_ref {
+            continue;
+        }
+        if column_names.contains(field.name.as_str()) {
+            continue;
+        }
+        let code_suffixed = format!("{}_code", field.name);
+        if column_names.contains(code_suffixed.as_str()) {
+            continue;
+        }
+        gaps.push(field.name.clone());
+    }
+    gaps
+}
+
+/// Loud advisory wiring for [`ddl_dto_gap_fields`] (debug builds only —
+/// release runs skip the extra dto-context resolution).
+#[cfg(debug_assertions)]
+async fn warn_on_ddl_dto_gap(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    domain: &str,
+    config: &DomainConfig,
+    columns: &[ColumnDef],
+) {
+    let Ok(dto_ctx) = crate::ddd::dto::build_dto_context(db, schema_title, domain, config).await
+    else {
+        return;
+    };
+    let gaps = ddl_dto_gap_fields(columns, &dto_ctx.fields);
+    if gaps.is_empty() {
+        return;
+    }
+    let message = format!(
+        "ddl/dto column divergence for {domain}.{schema_title}: the dto context resolves {} \
+         field(s) the DDL context has no column for: {} (audit-only skeleton signature, \
+         issue #446)",
+        gaps.len(),
+        gaps.join(", ")
+    );
+    eprintln!("warning: ddl-dto-gap: {message}");
+    tracing::warn!("{message}");
 }

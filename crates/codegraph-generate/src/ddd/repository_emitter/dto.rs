@@ -89,8 +89,19 @@ pub(crate) fn emit_child_field_population(
 
 /// Emit the response struct construction shared by `find_by_id` and `find_by_id_scoped`.
 pub(crate) fn emit_response_construction(code: &mut CodeWriter, tree: &EntityTree) {
-    emit_child_reads(code, &tree.child_tables, "id", 2);
-    emit_junction_reads(code, &tree.junction_tables, "id", 2);
+    emit_response_construction_for(code, tree, "id");
+}
+
+/// Same, with the parent id expression named: `find_by_id` scopes child
+/// reads on the `id` parameter, while design finders scope them on
+/// `row.id` (issue #449).
+pub(crate) fn emit_response_construction_for(
+    code: &mut CodeWriter,
+    tree: &EntityTree,
+    row_id_expr: &str,
+) {
+    emit_child_reads(code, &tree.child_tables, row_id_expr, 2);
+    emit_junction_reads(code, &tree.junction_tables, row_id_expr, 2);
     wln!(code);
     wln!(code, "        Ok(Some({}Response {{", tree.entity_name);
     wln!(code, "            id: row.id,");

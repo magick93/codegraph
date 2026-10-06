@@ -559,7 +559,7 @@ pub(super) fn render_expression(expr: &Expression) -> String {
     match expr {
         Expression::Ident(name) => name.clone(),
         Expression::StringLit(value) => format!("\"{}\"", value.replace('"', "\\\"")),
-        Expression::NumLit(value) => format!("{value}"),
+        Expression::NumLit(value) => format!("{}", value.value()),
         Expression::BoolLit(value) => value.to_string(),
         Expression::FieldExpr { object, field } => {
             format!("{}.{}", render_expression(object), field)

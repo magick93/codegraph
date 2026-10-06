@@ -47,6 +47,11 @@ pub struct ProjectTemplateContext {
     pub database_target: String,
     pub persistence_provider: String,
     pub deployment_topology: String,
+    /// Path dependency strategy for the generated app (issue #347): true
+    /// when the scaffold was given `--codegraph-path`, so profiles.toml
+    /// opts generation into absolute path deps. Default scaffolds omit the
+    /// line entirely (rev strategy, byte-identical).
+    pub dependency_strategy_path: bool,
     pub features: ProjectFeatures,
     pub api_port: u16,
     pub ui_port: u16,
@@ -115,6 +120,7 @@ impl ProjectTemplateContext {
             heck::ToTitleCase::to_title_case(project_name as &str)
         );
         let codegraph_path = codegraph_path.map(|p| p.to_string_lossy().into_owned());
+        let dependency_strategy_path = codegraph_path.is_some();
         Self {
             project_name: project_name.to_string(),
             app_name,
@@ -125,6 +131,7 @@ impl ProjectTemplateContext {
             database_target: database_target.to_string(),
             persistence_provider: persistence_provider.to_string(),
             deployment_topology: deployment_topology.to_string(),
+            dependency_strategy_path,
             features,
             api_port: 3000,
             ui_port: 5173,

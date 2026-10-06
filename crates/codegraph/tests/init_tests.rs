@@ -98,7 +98,10 @@ fn assert_mox_first_layout(project: &Path) {
 fn assert_starter_model_compiles(project: &Path, domain: &str) {
     let path = project.join("model").join(format!("{domain}.mox"));
     let content = fs::read_to_string(&path).unwrap();
-    let compilation = rex_driver::compile_files(&[(path.display().to_string(), content.clone())]);
+    let compilation = rex_driver::compile_files(
+        &[(path.display().to_string(), content.clone())],
+        &rex_driver::DomainImports::default(),
+    );
     assert!(
         compilation.model.is_some(),
         "starter model {domain}.mox must compile: {:?}",
@@ -156,6 +159,15 @@ fn init_scaffolds_expected_file_tree() {
     assert!(
         !workspace.contains("magick93"),
         "path mode must not reference the git repo:\n{workspace}"
+    );
+
+    // A --codegraph-path scaffold is "asked for path": profiles.toml opts the
+    // generated app into path deps too (issue #347).
+    let profiles_raw = fs::read_to_string(project.join("profiles.toml")).unwrap();
+    assert!(
+        profiles_raw.contains("dependency_strategy = \"path\""),
+        "profiles.toml must carry dependency_strategy = \"path\" when the \
+         scaffold was given --codegraph-path:\n{profiles_raw}"
     );
 
     let main = fs::read_to_string(project.join("demo-app-graph/src/main.rs")).unwrap();
@@ -232,6 +244,23 @@ fn init_wrapper_and_justfile_are_mox_first() {
     assert!(
         justfile.contains("Regenerate code from your .mox model"),
         "justfile generate comment must reference the .mox model:\n{justfile}"
+    );
+
+    // CI workflow is mox-first too (issue #346): --mox-files per domain, no
+    // rosetta flags, and the plain postgres service (byte-identical to the
+    // pre-rosetta shape).
+    let ci = fs::read_to_string(project.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci.contains("--mox-files model/common.mox"),
+        "ci.yml generate step must pass --mox-files per domain:\n{ci}"
+    );
+    assert!(
+        !ci.contains("--rosetta-files"),
+        "mox-first ci.yml must not reference --rosetta-files:\n{ci}"
+    );
+    assert!(
+        !ci.contains("APP_DATABASE_URL"),
+        "mox-first ci.yml keeps its historical shape (no APP_DATABASE_URL):\n{ci}"
     );
 
     let domains_toml = fs::read_to_string(project.join("domains.toml")).unwrap();
@@ -315,10 +344,12 @@ async fn init_scaffold_runs_mox_first() {
         openapi_files: &[],
         mox_files: &mox_files,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await
@@ -361,6 +392,41 @@ async fn init_scaffold_runs_mox_first() {
         ddl.contains("todo_list_id"),
         "starter refers must produce a todo_list_id FK on todo_item:\n{ddl}"
     );
+
+    // Path dependency strategy (issue #347): the scaffold was created with
+    // --codegraph-path, so profiles.toml carries dependency_strategy = "path"
+    // and the generated app + testkit manifests must reference the codegraph
+    // crates inside the generating checkout — no git+rev pins anywhere.
+    let generated_cargo =
+        fs::read_to_string(output.join("Cargo.toml")).expect("generated Cargo.toml");
+    let checkout_root = repo_root();
+    assert!(
+        generated_cargo.contains(&format!(
+            "codegraph-workflow = {{ path = \"{}/crates/codegraph-workflow\" }}",
+            checkout_root.display()
+        )),
+        "generated Cargo.toml must reference codegraph-workflow by path:\n{generated_cargo}"
+    );
+    assert!(
+        generated_cargo.contains(&format!(
+            "codegraph-type-contracts = {{ path = \"{}/crates/codegraph-type-contracts\" }}",
+            checkout_root.display()
+        )),
+        "generated Cargo.toml must reference codegraph-type-contracts by path:\n{generated_cargo}"
+    );
+    assert!(
+        !generated_cargo.contains("magick93/codegraph.git"),
+        "path strategy must not reference the git repo:\n{generated_cargo}"
+    );
+    let testkit_cargo =
+        fs::read_to_string(output.join("testkit/Cargo.toml")).expect("testkit Cargo.toml");
+    assert!(
+        testkit_cargo.contains(&format!(
+            "codegraph-ops = {{ path = \"{}/crates/codegraph-ops\" }}",
+            checkout_root.display()
+        )),
+        "testkit Cargo.toml must reference codegraph-ops by path:\n{testkit_cargo}"
+    );
 }
 
 #[test]
@@ -386,6 +452,14 @@ fn init_git_rev_mode_pins_rev_in_workspace() {
     assert!(
         main.contains("CODEGRAPH_REV: &str = \"abc123\""),
         "wrapper should stamp the rev:\n{main}"
+    );
+
+    // Default scaffolds (no --codegraph-path) stay on the rev strategy: no
+    // dependency_strategy line at all (issue #347 byte-identity).
+    let profiles_raw = fs::read_to_string(dir.path().join("demo-app/profiles.toml")).unwrap();
+    assert!(
+        !profiles_raw.contains("dependency_strategy"),
+        "default scaffold must not emit a dependency_strategy line:\n{profiles_raw}"
     );
 }
 
@@ -432,6 +506,7 @@ fn doctor_fresh_scaffold_has_zero_model_warnings() {
         profiles_config: Some(project.join("profiles.toml")),
         mox_files: vec![project.join("model/common.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -462,6 +537,7 @@ fn doctor_empty_schemas_dir_in_mox_mode_still_warns() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -491,6 +567,7 @@ fn doctor_classifier_missing_with_json_schemas_is_hard_failure() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -518,6 +595,7 @@ fn doctor_validates_multiple_mox_files() {
             project.join("model/billing.mox"),
         ],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -540,6 +618,7 @@ fn doctor_fails_on_missing_schemas() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -584,6 +663,7 @@ fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -607,6 +687,7 @@ fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -633,6 +714,7 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -657,7 +739,10 @@ fn add_domain_appends_and_creates_mox_starter() {
     let model = dir.path().join("model/billing.mox");
     assert!(model.is_file(), "add domain must create model/billing.mox");
     let content = fs::read_to_string(&model).unwrap();
-    let compilation = rex_driver::compile_files(&[("model/billing.mox".to_string(), content)]);
+    let compilation = rex_driver::compile_files(
+        &[("model/billing.mox".to_string(), content)],
+        &rex_driver::DomainImports::default(),
+    );
     assert!(
         compilation.model.is_some(),
         "added domain starter must compile: {:?}",
@@ -702,8 +787,10 @@ fn add_domain_normalizes_name() {
     let model = dir.path().join("model/billing_accounts.mox");
     assert!(model.is_file());
     let content = fs::read_to_string(&model).unwrap();
-    let compilation =
-        rex_driver::compile_files(&[("model/billing_accounts.mox".to_string(), content)]);
+    let compilation = rex_driver::compile_files(
+        &[("model/billing_accounts.mox".to_string(), content)],
+        &rex_driver::DomainImports::default(),
+    );
     assert!(
         compilation.model.is_some(),
         "normalized domain starter must compile: {:?}",
@@ -759,6 +846,7 @@ fn doctor_valid_import_passes() {
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
 }
@@ -775,6 +863,7 @@ fn doctor_missing_import_target_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -795,6 +884,7 @@ fn doctor_invalid_import_json_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -911,6 +1001,45 @@ fn init_rosetta_scaffolds_expected_tree() {
     );
 }
 
+/// CI workflow coherence for rosetta-first scaffolds (issue #346): the
+/// generate step must pass --rosetta-files per domain (mirroring the
+/// justfile's per-domain loop), never --mox-files; the ops-api service must
+/// be a pgmq-bundled postgres image (the generated domain-event triggers
+/// require the pgmq extension — plain postgres inserts 500); and the
+/// app_user serving pool URL must be pinned to the migration's
+/// `app_user`/`app_user_pass` convention.
+#[test]
+fn init_rosetta_ci_is_rosetta_first() {
+    let dir = TempDir::new().unwrap();
+    let mut args = init_rosetta_args(dir.path(), "demo-app", &["common", "billing"]);
+    args.rev = Some("abc123".to_string());
+    cmd_init(&args).unwrap();
+    let project = dir.path().join("demo-app");
+
+    let ci = fs::read_to_string(project.join(".github/workflows/ci.yml")).unwrap();
+    assert!(
+        ci.contains("--rosetta-files model/common.rosetta"),
+        "ci.yml generate step must pass --rosetta-files per domain:\n{ci}"
+    );
+    assert!(
+        ci.contains("--rosetta-files model/billing.rosetta"),
+        "ci.yml generate step must pass --rosetta-files per domain:\n{ci}"
+    );
+    assert!(
+        !ci.contains("--mox-files"),
+        "rosetta-first ci.yml must not reference --mox-files:\n{ci}"
+    );
+    assert!(
+        ci.contains("pgmq"),
+        "ops-api postgres service must be a pgmq-capable image \
+         (domain-event triggers need the pgmq extension):\n{ci}"
+    );
+    assert!(
+        ci.contains("APP_DATABASE_URL"),
+        "ci.yml must set the app_user serving pool URL:\n{ci}"
+    );
+}
+
 /// THE rosetta acceptance gate: a fresh `init --rosetta` scaffold must
 /// generate with ONLY --rosetta-files + --config (no --schemas, no
 /// --classifier), producing DDL for the starter type and its status
@@ -941,10 +1070,12 @@ async fn init_rosetta_scaffold_runs_rosetta_first() {
         openapi_files: &[],
         mox_files: &[],
         rosetta_files: &rosetta_files,
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         codegraph_rev: None,
+        check: false,
         ux_rules: None,
     })
     .await
@@ -1003,6 +1134,7 @@ fn doctor_rosetta_starter_has_zero_model_warnings() {
         profiles_config: Some(project.join("profiles.toml")),
         mox_files: vec![],
         rosetta_files: vec![project.join("model/common.rosetta")],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -1026,6 +1158,7 @@ fn doctor_broken_rosetta_file_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![broken],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1056,6 +1189,7 @@ fn doctor_rosetta_namespace_without_domain_entry_warns() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![file],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1092,6 +1226,7 @@ fn doctor_rosetta_import_without_matching_file_warns() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![file],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);

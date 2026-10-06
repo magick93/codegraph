@@ -50,6 +50,11 @@ pub struct RunArgs<'a> {
     /// data plane (issue #256). Ingested after mox and BEFORE the JSON
     /// schema pass; bridged titles join the schema pass's skip-set.
     pub rosetta_files: &'a [PathBuf],
+    /// rexlang `.ddd` design files (issue #449), compiled against their
+    /// imported `.mox` domains and ingested as the DDD design plane
+    /// (designs/repositories/services/searches). Absent/empty = no design
+    /// ingest, generators unchanged.
+    pub ddd_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
     /// Optional `ifml-components.toml` mapping IFML components to
     /// handcrafted framework components. Absent = all built-in templates.
@@ -64,6 +69,10 @@ pub struct RunArgs<'a> {
     /// Git rev to pin in generated Cargo.toml codegraph deps. When None the
     /// driver falls back to `git rev-parse HEAD` of the current directory.
     pub codegraph_rev: Option<String>,
+    /// Post-generate compile gate (issue #336): when true, run `cargo
+    /// check` over `<output>/Cargo.toml` after generation and fail the run
+    /// when it fails. Defaults to false — no cargo invocation.
+    pub check: bool,
 }
 
 /// Arguments for the IFML-only UI generation path (`ifml_generate`).
@@ -216,11 +225,13 @@ pub async fn run_with_graph_cache(
         openapi_files,
         mox_files,
         rosetta_files,
+        ddd_files,
         ifml_framework,
         ifml_components,
         ifml_design_system,
         ux_rules,
         codegraph_rev,
+        check,
     } = args;
 
     // Model-source guard: at least one of schemas / mox files / rosetta
@@ -260,6 +271,7 @@ pub async fn run_with_graph_cache(
                 config_path,
                 mox_files,
                 rosetta_files,
+                ddd_files,
                 ifml_files,
                 openapi_files,
             )
@@ -376,6 +388,8 @@ pub async fn run_with_graph_cache(
             },
             cargo: CargoConfig {
                 codegraph_rev: codegraph_rev.unwrap_or_else(current_git_rev),
+                dependency_strategy: plan.dependency_strategy,
+                codegraph_path_root: codegraph_checkout_root(),
                 ..CargoConfig::default()
             },
             integration: IntegrationFlags {
@@ -566,6 +580,23 @@ pub async fn run_with_graph_cache(
                 total_stats.imported_policies += stats.imported_policies;
             }
             println!("Pass 1b complete: {total_stats}");
+        }
+
+        // Pass 1c: Ingest rexlang .ddd design files (issue #449): compiled
+        // against their imported .mox domains and landed as the DDD design
+        // plane. Runs AFTER the schema passes so design classes resolve
+        // against the full ingested title set; a compile error is a hard
+        // error (the RosettaModel precedent).
+        if !ddd_files.is_empty() {
+            println!("Pass 1c: {} ddd files to ingest", ddd_files.len());
+            let ddd_stats = crate::ingest::ddd_ingest::ingest_ddd_files(
+                be.ingestor(),
+                be.querier(),
+                ddd_files,
+                &domain_config,
+            )
+            .await?;
+            println!("Pass 1c complete: {ddd_stats}");
         }
 
         // Pass 1c: Ingest API model from domain configuration
@@ -789,11 +820,138 @@ pub async fn run_with_graph_cache(
         }
     }
 
+    // Post-generate compile gate (issue #336): strictly opt-in via `--check`
+    // — flag off ⇒ no cargo invocation, no output change.
+    if check {
+        check_generated_output(output)?;
+    }
+
     println!("Done.");
     Ok(RunOutcome {
         graph_cache_reused,
         inputs_hash,
     })
+}
+
+/// How many trailing `cargo check` output lines a gate failure carries.
+const CHECK_FAILURE_TAIL_LINES: usize = 50;
+
+/// Post-generate compile gate (issue #336): `cargo check --manifest-path
+/// <output>/Cargo.toml` so a run that emitted non-compiling code exits
+/// non-zero instead of leaving the failure to the consumer's first build.
+///
+/// Output streams live: every cargo line prints as it arrives (`[check]`
+/// prefix, stderr + stdout); on failure the last
+/// [`CHECK_FAILURE_TAIL_LINES`] lines ride the returned error so the run
+/// exits non-zero with the rustc errors visible. Degrades to a WARN + skip
+/// (never fails the run) when `cargo` is absent or the output carries no
+/// `Cargo.toml` (e.g. UI-only generation).
+pub fn check_generated_output(output: &Path) -> Result<()> {
+    let manifest_path = output.join("Cargo.toml");
+    if !manifest_path.exists() {
+        eprintln!(
+            "WARN: --check requested but no Cargo.toml at {} — compile gate skipped",
+            manifest_path.display()
+        );
+        return Ok(());
+    }
+    let cargo = match find_cargo() {
+        Some(cargo) => cargo,
+        None => {
+            eprintln!(
+                "WARN: --check requested but `cargo` was not found ($CARGO unset, not on $PATH) — compile gate skipped"
+            );
+            return Ok(());
+        }
+    };
+    println!(
+        "Compile gate: cargo check --manifest-path {}",
+        manifest_path.display()
+    );
+
+    let mut child = std::process::Command::new(&cargo)
+        .arg("check")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            crate::error::Error::Config(format!(
+                "failed to spawn cargo check ({}): {e}",
+                cargo.display()
+            ))
+        })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        crate::error::Error::Config("cargo check stdout not captured".to_string())
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        crate::error::Error::Config("cargo check stderr not captured".to_string())
+    })?;
+
+    // Pump stderr on a thread so both streams print live as they arrive;
+    // stdout drains inline on the calling thread.
+    use std::io::BufRead as _;
+    let stderr_thread = std::thread::spawn(move || {
+        let mut collected = String::new();
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            eprintln!("[check] {line}");
+            collected.push_str(&line);
+            collected.push('\n');
+        }
+        collected
+    });
+    let mut stdout_collected = String::new();
+    for line in std::io::BufReader::new(stdout)
+        .lines()
+        .map_while(std::result::Result::ok)
+    {
+        println!("[check] {line}");
+        stdout_collected.push_str(&line);
+        stdout_collected.push('\n');
+    }
+    let stderr_collected = stderr_thread.join().unwrap_or_default();
+
+    let status = child
+        .wait()
+        .map_err(|e| crate::error::Error::Config(format!("failed to wait for cargo check: {e}")))?;
+    if !status.success() {
+        let code = status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_string());
+        let combined = format!("{stdout_collected}{stderr_collected}");
+        let tail = last_lines(&combined, CHECK_FAILURE_TAIL_LINES);
+        return Err(crate::error::Error::Config(format!(
+            "compile gate failed: cargo check exited with {code} — last {} lines:\n{tail}",
+            CHECK_FAILURE_TAIL_LINES
+        )));
+    }
+    println!("Compile gate passed.");
+    Ok(())
+}
+
+/// Resolve the cargo binary: `$CARGO` when set (also how `cargo test`
+/// environments expose it), else a `$PATH` scan. `None` = unavailable (the
+/// gate degrades to a WARN + skip).
+fn find_cargo() -> Option<PathBuf> {
+    if let Some(cargo) = std::env::var_os("CARGO").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(cargo));
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("cargo"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Last `max` lines of `s` (line-based, UTF-8 safe).
+fn last_lines(s: &str, max: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    let start = lines.len().saturating_sub(max);
+    lines[start..].join("\n")
 }
 
 /// IFML-only UI generation: ingest IFML DSL files (+ optional schemas) and
@@ -1086,6 +1244,7 @@ pub async fn generate(
     ifml_components: Option<&Path>,
     ifml_design_system: Option<&str>,
     ux_rules: Option<&Path>,
+    check: bool,
 ) -> Result<()> {
     let config = codegraph_config::config::parse_domain_config(config_path)
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
@@ -1152,6 +1311,9 @@ pub async fn generate(
     print!("{}", report.summary());
     if report.has_errors() {
         eprintln!("Generation completed with errors. Some entities were skipped.");
+    }
+    if check {
+        check_generated_output(output)?;
     }
     Ok(())
 }
@@ -1386,6 +1548,19 @@ fn current_git_rev() -> String {
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Absolute path of the codegraph checkout that produced this binary:
+/// this crate compiles at `<checkout>/crates/codegraph`, so the checkout
+/// root is two parents up from its compile-time manifest dir. Consumed by
+/// the `dependency_strategy = "path"` templates (issue #347) — empty only
+/// if the manifest dir has fewer than two parents (never in practice).
+fn codegraph_checkout_root() -> String {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
 

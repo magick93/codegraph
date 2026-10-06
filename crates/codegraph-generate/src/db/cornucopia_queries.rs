@@ -313,7 +313,91 @@ fn render_entity_sql(
         );
     }
 
+    // ── declared .ddd design finders (issue #449) ──────────────────────
+    write_design_finder_queries(
+        &mut sql,
+        &table,
+        &entity_name,
+        tree,
+        soft_delete_col,
+        &row_cols,
+        pg_types,
+    );
+
     sql
+}
+
+/// One annotated equality query per declared design finder. Parameter
+/// columns resolve exactly like the SeaORM emitter's (the same
+/// `finder_columns` contract), so both providers emit the same finders.
+///
+/// Binding: `String`/`bool`/`i64`/`f64`/`Uuid` params bind their natural
+/// rust type (tokio-postgres infers the column type from the prepared
+/// comparison, exactly like `get_{entity} (id)`); `Decimal`/`NaiveDate`
+/// params bind as text with an explicit `::text` cast on the column to
+/// avoid depending on the generated queries crate's numeric/chrono
+/// features.
+fn write_design_finder_queries(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    tree: &EntityTree,
+    soft_delete_col: Option<&str>,
+    row_cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
+) {
+    if tree.design_finders.is_empty() {
+        return;
+    }
+    let cols = row_col_list(row_cols, pg_types, tree.append_only);
+    let hints = row_hints(row_cols, tree.append_only);
+
+    for finder in &tree.design_finders {
+        let Some(param_cols) =
+            crate::ddd::repository_emitter::finder_columns(finder, &tree.direct_columns)
+        else {
+            continue;
+        };
+        let mut clauses = Vec::with_capacity(param_cols.len() + 1);
+        for (param, col) in finder.params.iter().zip(param_cols.iter()) {
+            let pg_col = format!("\"{}\"", col.pg_column_name);
+            if crate::ddd::repository_emitter::finder_param_binds_as_text(&param.rust_type) {
+                clauses.push(format!("{pg_col}::text = :{}", param.name));
+            } else {
+                clauses.push(format!("{pg_col} = :{}", param.name));
+            }
+        }
+        // The declared signature carries no include_deleted parameter —
+        // soft-deleted rows always stay invisible to design finders.
+        if let Some(sd) = soft_delete_col {
+            clauses.push(format!("\"{sd}\" IS NULL"));
+        }
+        sql.push_str(&format!(
+            "--! {fn_name} ({params}) : ({hints})\n\
+             --- Design finder `{author}` (declared in the .ddd design): equality query.\n\
+             SELECT {cols}\n\
+             FROM {table}\n\
+             WHERE {};\n\n",
+            clauses.join("\n    AND "),
+            fn_name = design_finder_query_name(finder, entity_name),
+            params = finder
+                .params
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<_>>()
+                .join(", "),
+            author = finder.name,
+        ));
+    }
+}
+
+/// The cornucopia query function name for a design finder:
+/// `{method_name}_{entity_snake}` (e.g. `find_by_title_book`).
+fn design_finder_query_name(
+    finder: &crate::ddd::design::DesignFinder,
+    entity_name: &str,
+) -> String {
+    format!("{}_{}", finder.method_name, entity_name)
 }
 
 fn row_col_list(

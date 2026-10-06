@@ -81,3 +81,48 @@ impl fmt::Display for DeploymentTopology {
         f.write_str(self.as_str())
     }
 }
+
+/// How the generated app's Cargo.toml references codegraph crates (issue #347).
+///
+/// `Rev` (default) pins `git = "…/magick93/codegraph.git"` + `rev` deps;
+/// `Path` emits absolute `path` deps into the checkout that ran generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DependencyStrategy {
+    /// Git + rev pins (the historical contract).
+    #[default]
+    Rev,
+    /// Absolute path deps into the generating checkout.
+    Path,
+}
+
+impl DependencyStrategy {
+    /// Parse from the profiles.toml `dependency_strategy` feature value.
+    ///
+    /// Unknown values are a configuration error (the `deployment_topology`
+    /// precedent): a typo must not silently flip the emitted dependency
+    /// shape. A non-string value is also a hard error.
+    pub fn from_config(s: &str) -> Result<Self> {
+        match s {
+            "rev" => Ok(Self::Rev),
+            "path" => Ok(Self::Path),
+            other => Err(Error::Config(format!(
+                "unknown dependency_strategy \"{other}\" in profile features; \
+                 expected \"rev\" (default) or \"path\""
+            ))),
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rev => "rev",
+            Self::Path => "path",
+        }
+    }
+}
+
+impl fmt::Display for DependencyStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}

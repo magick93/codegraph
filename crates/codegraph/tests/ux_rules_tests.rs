@@ -167,11 +167,13 @@ impl FixtureRun {
             openapi_files: &[],
             mox_files: &self.mox_files,
             rosetta_files: &[],
+            ddd_files: &[],
             ifml_framework: &[],
             ifml_components: None,
             ifml_design_system: None,
             ux_rules,
             codegraph_rev: None,
+            check: false,
         }
     }
 
@@ -1567,11 +1569,13 @@ async fn ux_rules_flag_off_emits_no_ux_specs() {
         openapi_files: &[],
         mox_files: &mox_files,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
         ux_rules: None,
         codegraph_rev: None,
+        check: false,
     })
     .await
     .unwrap();
