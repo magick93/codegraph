@@ -455,6 +455,7 @@ async fn consumer_generates_against_pinned_face() {
         openapi_files: &[],
         mox_files: &mox_files,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
@@ -548,6 +549,7 @@ fn doctor_command_reports_dependency_outcomes() {
         profiles_config: None,
         mox_files: vec![project.join("model/common.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     };
     let summary = cmd_doctor(&args(project.join("domains.toml"))).unwrap();
     assert_eq!(

@@ -133,7 +133,10 @@ class Part {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("probe.mox");
     fs::write(&path, src).unwrap();
-    let compilation = rex_driver::compile_files(&[(path.display().to_string(), src.to_string())]);
+    let compilation = rex_driver::compile_files(
+        &[(path.display().to_string(), src.to_string())],
+        &rex_driver::DomainImports::default(),
+    );
     for (p, d) in &compilation.diagnostics {
         eprintln!("diag {p}: {}", d.message);
     }

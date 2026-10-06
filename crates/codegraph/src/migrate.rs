@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 
-use rex_driver::compile_files;
+use rex_driver::{DomainImports, compile_files};
 
 use crate::error::{Error, Result};
 use crate::ingest::schema_loader::{SchemaEntry, SchemaLoader};
@@ -272,7 +272,7 @@ pub fn migrate(args: MigrateArgs<'_>) -> Result<MigrateReport> {
         .iter()
         .map(|(name, source)| (format!("<output>/{name}"), source.clone()))
         .collect();
-    let compilation = compile_files(&sources);
+    let compilation = compile_files(&sources, &DomainImports::default());
     for (path, diagnostic) in &compilation.diagnostics {
         if diagnostic.is_error() {
             report
@@ -1099,11 +1099,11 @@ fn with_doc(doc: Option<String>, line: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rex_driver::compile_str;
+    use rex_driver::{DomainImports, compile_str};
 
     #[test]
     fn stdlib_compiles_with_seven_datatypes() {
-        let compilation = compile_str(STDLIB_FILE_NAME, STDLIB_SOURCE);
+        let compilation = compile_str(STDLIB_FILE_NAME, STDLIB_SOURCE, &DomainImports::default());
         let messages: Vec<String> = compilation
             .diagnostics
             .iter()
@@ -1133,10 +1133,13 @@ mod tests {
     #[test]
     fn qualified_stdlib_refs_resolve_across_packages() {
         let domain = "package sales\n\nclass OrderType {\n    codegraph_stdlib.Uuid id\n    codegraph_stdlib.DateTime[0..1] placedAt\n    Int total { minimum 0 }\n}";
-        let compilation = compile_files(&[
-            (STDLIB_FILE_NAME.to_string(), STDLIB_SOURCE.to_string()),
-            ("sales.mox".to_string(), domain.to_string()),
-        ]);
+        let compilation = compile_files(
+            &[
+                (STDLIB_FILE_NAME.to_string(), STDLIB_SOURCE.to_string()),
+                ("sales.mox".to_string(), domain.to_string()),
+            ],
+            &DomainImports::default(),
+        );
         let errors: Vec<String> = compilation
             .diagnostics
             .iter()

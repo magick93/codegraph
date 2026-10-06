@@ -1,0 +1,22 @@
+import "equivalence.mox";
+
+application Equivalence {
+    base equivalence
+
+    module widgets {
+        entity WidgetType auditable repository WidgetRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        search WidgetSearch {
+            entity WidgetType
+            text {
+                title boost 2
+                synopsis analyzer "english"
+            }
+            analyzer "english"
+        }
+    }
+}

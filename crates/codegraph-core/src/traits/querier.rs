@@ -2,10 +2,10 @@ use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
-    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
-    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
     PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
     RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
@@ -447,6 +447,16 @@ pub trait GraphQuerier: Send + Sync {
     /// chain: union of all chain grants with forbid-wins per capability
     /// (see `resolve_effective_permits` for the exact rules).
     async fn effective_permits(&self, _actor: &str) -> Result<Vec<Permit>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── DDD design plane query methods (issue #449) ───────────────────
+
+    /// Every ingested `.ddd` design model, reassembled to the exact ingest
+    /// shape: applications sorted by name, modules/designs/services/
+    /// searches by their `ordinal`, repositories sorted by name and
+    /// attached to their application, repository operations by `ordinal`.
+    async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
         Ok(Vec::new())
     }
 

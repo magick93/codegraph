@@ -279,6 +279,10 @@ pub struct DoctorArgs {
     /// segment matches no domains.toml key warns (compute_generation_order
     /// silently drops such schemas).
     pub rosetta_files: Vec<PathBuf>,
+    /// rexlang .ddd design files (optional). Compile-verified against their
+    /// imported .mox domains (the same read+collect+compile the ingest
+    /// path uses); error-severity diagnostics are hard failures.
+    pub ddd_files: Vec<PathBuf>,
 }
 
 /// Outcome counts for a doctor run. `model_warnings` isolates the
@@ -429,8 +433,13 @@ fn check_mox_files(
         if import_failures > 0 {
             continue;
         }
-        let compilation =
-            rex_driver::compile_files_with_imports(&[(mox_path.clone(), text)], &schema_imports);
+        let compilation = rex_driver::compile_files(
+            &[(mox_path.clone(), text)],
+            &rex_driver::DomainImports {
+                schemas: schema_imports,
+                sigil: rex_driver::SigilImports::new(),
+            },
+        );
         for (p, diagnostic) in &compilation.diagnostics {
             println!("WARN mox diagnostic in {p}: {}", diagnostic.message);
             soft += 1;
@@ -586,6 +595,64 @@ fn check_rosetta_files(
         }
     }
 
+    (hard, soft)
+}
+
+/// Validate `--ddd-files` for doctor (issue #449): every design compiles
+/// against its imported .mox domains through the SAME read+collect+compile
+/// helper the ingest path uses, so doctor and ingest cannot drift.
+/// Error-severity diagnostics (or a missing artifact) are hard failures
+/// with the per-file rendered output; warnings count as soft. Returns the
+/// (hard_failures, soft_warnings) contributed.
+fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
+    let mut hard = 0;
+    let mut soft = 0;
+    for path in ddd_files {
+        match crate::ingest::ddd_ingest::read_and_compile_ddd(path) {
+            Ok(compiled) => {
+                let rendered = crate::ingest::ddd_ingest::render_ddd_diagnostics(&compiled);
+                if !rendered.is_empty() {
+                    println!("{rendered}");
+                }
+                let has_errors = compiled
+                    .compilation
+                    .diagnostics
+                    .iter()
+                    .any(|(_, diagnostic)| diagnostic.is_error());
+                if has_errors || compiled.compilation.model.is_none() {
+                    hard += 1;
+                    println!("FAIL ddd — {} does not compile", path.display());
+                    println!("     hint: fix the rexlang design errors reported above");
+                    continue;
+                }
+                soft += compiled.compilation.diagnostics.len();
+                if let Some(model) = &compiled.compilation.model {
+                    let designs: usize = model.modules.iter().map(|m| m.designs.len()).sum();
+                    let repositories: usize = model
+                        .modules
+                        .iter()
+                        .map(|m| m.designs.iter().filter(|d| d.repository.is_some()).count())
+                        .sum();
+                    let services: usize = model.modules.iter().map(|m| m.services.len()).sum();
+                    let searches: usize = model.modules.iter().map(|m| m.searches.len()).sum();
+                    println!(
+                        "PASS ddd — {} compiles ({} design(s), {} repositor(y/ies), \
+                         {} service(s), {} search(es))",
+                        path.display(),
+                        designs,
+                        repositories,
+                        services,
+                        searches
+                    );
+                }
+            }
+            Err(e) => {
+                hard += 1;
+                println!("FAIL ddd — {e}");
+                println!("     hint: check the .ddd file and its imported .mox domains");
+            }
+        }
+    }
     (hard, soft)
 }
 
@@ -756,6 +823,15 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             "     hint: consider migrating: codegraph migrate --schemas {} --output <dir>",
             schemas_dir.unwrap().display()
         );
+    }
+
+    // The .ddd design plane is additive to any model source: compile-verify
+    // each design when provided (issue #449). Not a model-source check, so
+    // it never feeds model_warnings.
+    if !args.ddd_files.is_empty() {
+        let (hard, soft) = check_ddd_files(&args.ddd_files);
+        hard_failures += hard;
+        soft_warnings += soft;
     }
 
     if let Ok(config) = domain_config.as_ref() {
@@ -966,7 +1042,10 @@ pub fn cmd_add_domain(config_path: &Path, domain_name: &str, rosetta: bool) -> R
         let model_content = super::model_starter::starter_model_mox(&name, &label, "codegraph")
             .map_err(Error::Config)?;
         let mox_rel = format!("model/{name}.mox");
-        let compilation = rex_driver::compile_files(&[(mox_rel.clone(), model_content.clone())]);
+        let compilation = rex_driver::compile_files(
+            &[(mox_rel.clone(), model_content.clone())],
+            &rex_driver::DomainImports::default(),
+        );
         if compilation.model.is_none() {
             return Err(Error::Config(format!(
                 "starter model '{mox_rel}' does not compile — refusing to write"
@@ -1066,7 +1145,10 @@ other = "0.1"
         let model = dir.path().join("model/billing.mox");
         assert!(model.is_file(), "add domain must create model/billing.mox");
         let content = fs::read_to_string(&model).unwrap();
-        let compilation = rex_driver::compile_files(&[("model/billing.mox".to_string(), content)]);
+        let compilation = rex_driver::compile_files(
+            &[("model/billing.mox".to_string(), content)],
+            &rex_driver::DomainImports::default(),
+        );
         assert!(
             compilation.model.is_some(),
             "starter model must compile: {:?}",

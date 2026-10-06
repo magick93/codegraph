@@ -64,6 +64,7 @@ fn cache_run_args<'a>(fx: &'a CacheFixture, output: &'a Path) -> codegraph::driv
         openapi_files: &[],
         mox_files: &fx.mox_files,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,

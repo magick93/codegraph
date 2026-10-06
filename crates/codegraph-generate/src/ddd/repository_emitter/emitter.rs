@@ -178,7 +178,9 @@ impl RepositoryImplEmitter {
         // compile-clean.
         let (has_sort_plan, sort_columns) =
             sort_columns_for_tree(&tree, project, db, config, schema_title, domain).await?;
-        self.emit_list_fn(&tree, has_sort_plan, &sort_columns, &mut code);
+        if tree.has_list {
+            self.emit_list_fn(&tree, has_sort_plan, &sort_columns, &mut code);
+        }
         if tree.has_fts {
             self.emit_search_fn(&tree, &mut code);
         }
@@ -188,6 +190,9 @@ impl RepositoryImplEmitter {
         if tree.hierarchy_field.is_some() {
             self.emit_find_tree_fn(&tree, &mut code);
         }
+        // Declared `.ddd` design finders (issue #449) — nothing renders
+        // when the entity's design carries none.
+        self.emit_design_finders(&tree, &mut code);
         self.emit_footer(&mut code);
 
         // Resolve scalar fields for each include path segment using resolve_field()
@@ -646,12 +651,26 @@ impl RepositoryImplEmitter {
         let module_name = schema.pg_table_name.clone();
         let schema_name = domain.to_string();
 
+        // DDD design surface (issue #449): a design covering this schema
+        // title overrides the operations source, the FTS surface, the
+        // filter fields, and the audit fallback for the emitted impl too —
+        // it must agree with the repository trait byte-for-byte. Empty
+        // surface → schema-derived values, byte-identical.
+        let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
+        design_surface.warn_stereotype_mismatch(schema_title, schema.is_entity);
+        let design = design_surface.design_for(schema_title);
+        let design_search = design_surface.search_for(schema_title);
+
         // Determine enabled operations
-        let operations = resolve_entity_operations(db, config, domain, &entity_name).await;
+        let mut operations = resolve_entity_operations(db, config, domain, &entity_name).await;
+        if let Some(design_ops) = design_surface.operations_for(schema_title) {
+            operations = design_ops;
+        }
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
         let has_update = operations.contains(&"update".to_string());
         let has_delete = operations.contains(&"delete".to_string());
+        let has_list = operations.contains(&"list".to_string());
         let entity_cfg = config
             .domains
             .get(domain)
@@ -684,10 +703,16 @@ impl RepositoryImplEmitter {
         // db/ddl.rs: explicit entity-config flag, or effective operations
         // exclude update AND delete. Append-only tables carry no updated_at
         // and no audit columns, so repositories must not reference them.
+        // A design override feeds its own mapped operations into the
+        // inference (has_update/has_delete above are already overridden).
         let append_only = entity_cfg.as_ref().is_some_and(|ec| ec.is_append_only())
             || !(has_update || has_delete);
 
-        let is_auditable = (if has_audit_policy {
+        // Issue #449: when a design exists for this title, `flags.auditable`
+        // WINS over the policy/domains.toml fallback ordering.
+        let is_auditable = (if let Some(design) = design {
+            design.flags.auditable
+        } else if has_audit_policy {
             audit_policy
                 .as_ref()
                 .map(|a| a.track_deleted)
@@ -817,25 +842,41 @@ impl RepositoryImplEmitter {
         let entity_module = format!("{}_{}", schema_name, module_name);
 
         let search = entity_cfg.map(|ec| &ec.search);
-        let has_fts = search
-            .and_then(|s| s.fts_columns.as_ref())
-            .map(|cols| !cols.is_empty())
-            .unwrap_or(false);
+        // Issue #449: a design search wins for has_fts and supplies the FTS
+        // language from its default analyzer (per-field overrides warn on
+        // the surface and fall back to the default analyzer).
+        let has_fts = match design_search {
+            Some(design) => !design.text.is_empty(),
+            None => search
+                .and_then(|s| s.fts_columns.as_ref())
+                .map(|cols| !cols.is_empty())
+                .unwrap_or(false),
+        };
         let has_embeddings = search
             .map(|s| !s.embedding_columns.is_empty())
             .unwrap_or(false);
-        let fts_language = search
-            .map(|s| s.fts_language.clone())
-            .unwrap_or_else(|| "english".to_string());
+        let fts_language = match design_search.and_then(|s| s.analyzer.clone()) {
+            Some(analyzer) => analyzer,
+            None => search
+                .map(|s| s.fts_language.clone())
+                .unwrap_or_else(|| "english".to_string()),
+        };
 
-        let filter_fields = resolve_filter_fields(
-            db,
-            schema_title,
-            entity_cfg
-                .and_then(|ec| ec.filter_fields.as_ref())
-                .map(|v| v.as_slice()),
-        )
-        .await?;
+        let filter_fields = match design_search {
+            Some(design) => {
+                crate::ddd::design::design_filter_fields(db, schema_title, design).await?
+            }
+            None => {
+                resolve_filter_fields(
+                    db,
+                    schema_title,
+                    entity_cfg
+                        .and_then(|ec| ec.filter_fields.as_ref())
+                        .map(|v| v.as_slice()),
+                )
+                .await?
+            }
+        };
 
         let nested_filter_fields =
             resolve_nested_filter_fields(db, schema_title, &module_name, &schema_name, config)
@@ -931,6 +972,29 @@ impl RepositoryImplEmitter {
             resolved
         };
 
+        // Declared `.ddd` finders, validated against the entity's direct
+        // columns: a finder whose parameter does not name an existing
+        // compatible column is dropped with a one-time warning so the trait
+        // and BOTH impls stay in sync (trait methods are only emitted for
+        // finders that made it onto the tree).
+        let design_finders = design_surface
+            .finders_for(schema_title, &entity_name)
+            .into_iter()
+            .filter(|finder| match super::finders::finder_columns(finder, &direct_columns) {
+                Some(_) => true,
+                None => {
+                    crate::ddd::design::warn_once(
+                        &format!("finder:column:{}::{}", entity_name, finder.name),
+                        &format!(
+                            "finder `{}.{}` skipped: parameters do not resolve to columns of `{}`",
+                            entity_name, finder.name, entity_name
+                        ),
+                    );
+                    false
+                }
+            })
+            .collect();
+
         Ok(EntityTree {
             entity_name,
             module_name: module_name.clone(),
@@ -945,6 +1009,7 @@ impl RepositoryImplEmitter {
             has_read,
             has_update,
             has_delete,
+            has_list,
             append_only,
             has_workflow,
             has_fts,
@@ -955,6 +1020,7 @@ impl RepositoryImplEmitter {
             parent_ref: parent_ref.map(|s| s.to_string()),
             hierarchy_field,
             tree_include,
+            design_finders,
             is_auditable,
             soft_delete_visibility,
             soft_delete_column,

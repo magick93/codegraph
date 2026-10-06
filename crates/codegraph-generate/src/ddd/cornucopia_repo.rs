@@ -11,7 +11,7 @@ use codegraph_config::DomainConfig;
 
 use super::repository_emitter::{
     ChildColumn, ChildTableInfo, EntityTree, RepositoryImplEmitter, emit_child_field_population,
-    emit_entity_to_dto_field,
+    emit_entity_to_dto_field, finder_columns, finder_param_binds_as_text,
 };
 
 /// Generates the Cornucopia repository adapter implementing the entity's
@@ -204,8 +204,11 @@ fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sor
         emit_adapter_delete(tree, &mut code);
     }
 
-    // ── list (always emitted — matches the SeaORM implementation) ─────
-    emit_adapter_list(tree, &mut code, ux_sort);
+    // ── list (only when the trait declares it — matches the SeaORM
+    // implementation) ─────────────────────────────────────────────────────
+    if tree.has_list {
+        emit_adapter_list(tree, &mut code, ux_sort);
+    }
 
     // ── search (FTS) ────────────────────────────────────────────────────
     if tree.has_fts {
@@ -221,6 +224,9 @@ fn emit_adapter(tree: &EntityTree, domain: &str, project: &ProjectConfig, ux_sor
     if tree.hierarchy_field.is_some() {
         emit_adapter_tree(tree, &mut code);
     }
+
+    // ── declared .ddd design finders (issue #449) ───────────────────────
+    emit_adapter_design_finders(tree, &mut code);
 
     wln!(code, "}}");
     code.into_string()
@@ -946,6 +952,103 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
     }
     wln!(code, "        }}");
     wln!(code, "        Ok(items)");
+    wln!(code, "    }}");
+}
+
+/// Emit every declared `.ddd` design finder (issue #449) as adapter methods
+/// calling the annotated queries generated for the same finders. Gated on
+/// `tree.design_finders` — flag-off emits nothing.
+fn emit_adapter_design_finders(tree: &EntityTree, code: &mut CodeWriter) {
+    for finder in &tree.design_finders {
+        // Validate columns exactly like the SeaORM emitter so both
+        // providers emit the same finder set (and stay consistent with the
+        // shared trait).
+        let Some(_) = finder_columns(finder, &tree.direct_columns) else {
+            continue;
+        };
+        emit_adapter_design_finder(tree, finder, code);
+    }
+}
+
+fn emit_adapter_design_finder(
+    tree: &EntityTree,
+    finder: &crate::ddd::design::DesignFinder,
+    code: &mut CodeWriter,
+) {
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    let fn_name = format!(
+        "{}_{}",
+        finder.method_name,
+        codegraph_naming::to_snake_case(entity_name)
+    );
+    wln!(code);
+    wln!(
+        code,
+        "    /// Design finder `{}` (declared in the .ddd design): equality query.",
+        finder.name
+    );
+    wln!(code, "    async fn {}(", finder.method_name);
+    wln!(code, "        &self,");
+    wln!(code, "        db: &C,");
+    for param in &finder.params {
+        wln!(code, "        {}: {},", param.name, param.rust_type);
+    }
+    if finder.returns_many {
+        wln!(
+            code,
+            "    ) -> Result<Vec<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+        );
+    } else {
+        wln!(
+            code,
+            "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+        );
+    }
+
+    // Bind args: natural rust types where tokio-postgres infers the column
+    // type; text-bound types (`Decimal`/`NaiveDate`) stringify (the SQL
+    // casts the column with `::text`).
+    let binds: Vec<String> = finder
+        .params
+        .iter()
+        .map(|param| {
+            if finder_param_binds_as_text(&param.rust_type) {
+                format!("&{}.to_string()", param.name)
+            } else {
+                format!("&{}", param.name)
+            }
+        })
+        .collect();
+    let bind_args = if binds.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", binds.join(", "))
+    };
+
+    if finder.returns_many {
+        wln!(code, "        let mut items = Vec::new();");
+        wln!(
+            code,
+            "        for row in {qmod}::{fn_name}().bind(db{bind_args}).all().await.map_err(|e| e.to_string())? {{"
+        );
+        emit_response_expr(tree, code, "row", "            ", "            let resp = ");
+        wln!(code, "            ;");
+        wln!(code, "            items.push(resp);");
+        wln!(code, "        }}");
+        wln!(code, "        Ok(items)");
+    } else {
+        wln!(
+            code,
+            "        let response = if let Some(row) = {qmod}::{fn_name}().bind(db{bind_args}).opt().await.map_err(|e| e.to_string())? {{"
+        );
+        emit_response_expr(tree, code, "row", "            ", "            Some(");
+        wln!(code, "            )");
+        wln!(code, "        }} else {{");
+        wln!(code, "            None");
+        wln!(code, "        }};");
+        wln!(code, "        Ok(response)");
+    }
     wln!(code, "    }}");
 }
 

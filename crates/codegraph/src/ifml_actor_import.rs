@@ -6,11 +6,12 @@ use codegraph_core::types::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
     NeverBothGroup,
 };
-use rex_driver::{SchemaImports, compile_actors_str_with_imports};
+use rex_driver::{DomainImports, SchemaImports, SigilImports, compile_actors_str};
 use rex_ifml::IfmlModel;
 use rex_ir::ActorModel;
 
 use crate::error::{Error, Result};
+use crate::ingest::rex_imports::collect_domains;
 
 /// Resolve the IFML model's `import` statements against rexlang actor-policy
 /// files and artifacts, ingest the merged policy into the graph, and
@@ -121,8 +122,7 @@ fn import_artifact(raw: &str, source: &str) -> Option<ActorPolicyModel> {
 }
 
 fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolicyModel> {
-    let domains = collect_domains(dir, source);
-    // Domain files may declare `import schema "<path>"` (issue #230); the
+    let domains = collect_domains(dir, source); // Domain files may declare `import schema "<path>"` (issue #230); the
     // rex compiler errors with `imported schema '…' was not provided`
     // unless their content is provided. Policy imports stay
     // warn-and-continue: an unreadable/invalid import file warns here and
@@ -155,7 +155,11 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
         .iter()
         .map(|d| (d.path.clone(), d.source.clone()))
         .collect();
-    let compilation = compile_actors_str_with_imports(raw, source, &domain_pairs, &schema_imports);
+    let imports = DomainImports {
+        schemas: schema_imports,
+        sigil: SigilImports::new(),
+    };
+    let compilation = compile_actors_str(raw, source, &domain_pairs, &imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!(
             "Warning: policy import '{raw}' diagnostic in {path}: {}",
@@ -169,66 +173,6 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
             None
         }
     }
-}
-
-/// One collected `.mox` domain: the import-path-as-written key the rex
-/// compiler matches on, the source text, and the directory its own imports
-/// (`import "x.mox"`, `import schema "y.json"`) resolve against.
-struct DomainSource {
-    path: String,
-    source: String,
-    dir: PathBuf,
-}
-
-/// Collect the `.mox` domain sources an `.actor` file imports, following
-/// `import "x.mox"` lines transitively. Paths are keyed exactly as written
-/// (that is what `compile_actors_str_with_imports` matches on) and resolved
-/// relative to the importing file's directory; missing files warn and are
-/// skipped.
-fn collect_domains(dir: &Path, source: &str) -> Vec<DomainSource> {
-    let mut domains: Vec<DomainSource> = Vec::new();
-    collect_domains_inner(dir, source, &mut domains);
-    domains
-}
-
-fn collect_domains_inner(dir: &Path, source: &str, domains: &mut Vec<DomainSource>) {
-    for import in scan_imports(source) {
-        if domains.iter().any(|d| d.path == import) {
-            continue;
-        }
-        let resolved = dir.join(&import);
-        match std::fs::read_to_string(&resolved) {
-            Ok(domain_source) => {
-                if let Some(domain_dir) = resolved.parent().map(Path::to_path_buf) {
-                    domains.push(DomainSource {
-                        path: import.clone(),
-                        source: domain_source.clone(),
-                        dir: domain_dir.clone(),
-                    });
-                    collect_domains_inner(&domain_dir, &domain_source, domains);
-                }
-            }
-            Err(e) => {
-                eprintln!(
-                    "Warning: domain file '{import}' imported by an actor policy was not found ({e}) — skipped"
-                );
-            }
-        }
-    }
-}
-
-/// Scan source text for rexlang import lines (`import "path.mox"`). A simple
-/// line-oriented scan is sufficient for codegraph's policy resolution.
-fn scan_imports(source: &str) -> Vec<String> {
-    source
-        .lines()
-        .filter_map(|line| {
-            let rest = line.trim().strip_prefix("import ")?.trim();
-            let rest = rest.trim_end_matches(';').trim();
-            let path = rest.strip_prefix('"')?.strip_suffix('"')?;
-            (!path.is_empty()).then(|| path.to_string())
-        })
-        .collect()
 }
 
 /// Convert a compiled rexlang actor model into its graph representation.
@@ -387,21 +331,5 @@ async fn validate_views(querier: &dyn GraphQuerier, model: &IfmlModel) {
                 );
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scan_imports_finds_bare_and_semicolon_lines() {
-        let source = "import \"support.mox\"\n\nactors S {\n    actor A\n}";
-        assert_eq!(scan_imports(source), vec!["support.mox".to_string()]);
-        assert_eq!(
-            scan_imports("import \"a.mox\";\nimport \"b.mox\""),
-            vec!["a.mox".to_string(), "b.mox".to_string()]
-        );
-        assert!(scan_imports("actors S { actor A }").is_empty());
     }
 }

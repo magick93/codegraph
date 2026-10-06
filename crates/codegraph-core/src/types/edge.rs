@@ -104,6 +104,18 @@ pub enum EdgeType {
     NamespaceParent,
     NamespaceImports,
     NamespaceDepends,
+
+    // DDD design plane edge types (issue #449). All seven are written by
+    // `ingest_ddd_model`, not `ingest_edge`; the DddBindsClass edge
+    // (DddDesign/DddSearch → Schema) is advisory and skipped silently when
+    // the referenced title is not in the schema graph.
+    DddHasModule,
+    DddHasDesign,
+    DddHasRepository,
+    DddHasService,
+    DddHasSearch,
+    DddHasOperation,
+    DddBindsClass,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

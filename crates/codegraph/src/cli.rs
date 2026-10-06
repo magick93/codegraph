@@ -138,6 +138,10 @@ pub enum Commands {
         /// the graph data plane (types/choices/enums/attributes)
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
+        /// Paths to rexlang .ddd design files; compiled against their imported
+        /// .mox domains and ingested as the DDD design plane
+        #[arg(long)]
+        ddd_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
@@ -347,6 +351,12 @@ pub enum Commands {
         /// (rosetta-first projects)
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
+
+        /// Paths to rexlang .ddd design files; compile-verified against
+        /// their imported .mox domains (import schema/sigil targets
+        /// included). Error-severity diagnostics are hard failures
+        #[arg(long)]
+        ddd_files: Vec<PathBuf>,
     },
     /// Add to an existing consumer project
     Add {

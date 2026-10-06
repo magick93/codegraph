@@ -81,8 +81,13 @@ pub fn scan_mox_incompleteness(mox_files: &[PathBuf]) -> Vec<IncompleteFinding> 
         if import_broken {
             continue;
         }
-        let compilation =
-            rex_driver::compile_files_with_imports(&[(file.clone(), text)], &schema_imports);
+        let compilation = rex_driver::compile_files(
+            &[(file.clone(), text)],
+            &rex_driver::DomainImports {
+                schemas: schema_imports,
+                sigil: rex_driver::SigilImports::new(),
+            },
+        );
         let Some(model) = compilation.model else {
             continue;
         };

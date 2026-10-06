@@ -64,6 +64,7 @@ fn compiled_grant_policy() -> ActorPolicyModel {
         "policy.actor",
         ACTOR,
         &[("domain.mox".to_string(), DOMAIN_MOX.to_string())],
+        &rex_driver::DomainImports::default(),
     );
     assert!(
         compilation.diagnostics.is_empty(),

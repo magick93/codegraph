@@ -98,7 +98,10 @@ fn assert_mox_first_layout(project: &Path) {
 fn assert_starter_model_compiles(project: &Path, domain: &str) {
     let path = project.join("model").join(format!("{domain}.mox"));
     let content = fs::read_to_string(&path).unwrap();
-    let compilation = rex_driver::compile_files(&[(path.display().to_string(), content.clone())]);
+    let compilation = rex_driver::compile_files(
+        &[(path.display().to_string(), content.clone())],
+        &rex_driver::DomainImports::default(),
+    );
     assert!(
         compilation.model.is_some(),
         "starter model {domain}.mox must compile: {:?}",
@@ -341,6 +344,7 @@ async fn init_scaffold_runs_mox_first() {
         openapi_files: &[],
         mox_files: &mox_files,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
@@ -502,6 +506,7 @@ fn doctor_fresh_scaffold_has_zero_model_warnings() {
         profiles_config: Some(project.join("profiles.toml")),
         mox_files: vec![project.join("model/common.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -532,6 +537,7 @@ fn doctor_empty_schemas_dir_in_mox_mode_still_warns() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -561,6 +567,7 @@ fn doctor_classifier_missing_with_json_schemas_is_hard_failure() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -588,6 +595,7 @@ fn doctor_validates_multiple_mox_files() {
             project.join("model/billing.mox"),
         ],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -610,6 +618,7 @@ fn doctor_fails_on_missing_schemas() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -654,6 +663,7 @@ fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -677,6 +687,7 @@ fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -703,6 +714,7 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![mox],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -727,7 +739,10 @@ fn add_domain_appends_and_creates_mox_starter() {
     let model = dir.path().join("model/billing.mox");
     assert!(model.is_file(), "add domain must create model/billing.mox");
     let content = fs::read_to_string(&model).unwrap();
-    let compilation = rex_driver::compile_files(&[("model/billing.mox".to_string(), content)]);
+    let compilation = rex_driver::compile_files(
+        &[("model/billing.mox".to_string(), content)],
+        &rex_driver::DomainImports::default(),
+    );
     assert!(
         compilation.model.is_some(),
         "added domain starter must compile: {:?}",
@@ -772,8 +787,10 @@ fn add_domain_normalizes_name() {
     let model = dir.path().join("model/billing_accounts.mox");
     assert!(model.is_file());
     let content = fs::read_to_string(&model).unwrap();
-    let compilation =
-        rex_driver::compile_files(&[("model/billing_accounts.mox".to_string(), content)]);
+    let compilation = rex_driver::compile_files(
+        &[("model/billing_accounts.mox".to_string(), content)],
+        &rex_driver::DomainImports::default(),
+    );
     assert!(
         compilation.model.is_some(),
         "normalized domain starter must compile: {:?}",
@@ -829,6 +846,7 @@ fn doctor_valid_import_passes() {
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap();
 }
@@ -845,6 +863,7 @@ fn doctor_missing_import_target_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -865,6 +884,7 @@ fn doctor_invalid_import_json_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1050,6 +1070,7 @@ async fn init_rosetta_scaffold_runs_rosetta_first() {
         openapi_files: &[],
         mox_files: &[],
         rosetta_files: &rosetta_files,
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
@@ -1113,6 +1134,7 @@ fn doctor_rosetta_starter_has_zero_model_warnings() {
         profiles_config: Some(project.join("profiles.toml")),
         mox_files: vec![],
         rosetta_files: vec![project.join("model/common.rosetta")],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -1136,6 +1158,7 @@ fn doctor_broken_rosetta_file_is_a_hard_failure() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![broken],
+        ddd_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1166,6 +1189,7 @@ fn doctor_rosetta_namespace_without_domain_entry_warns() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![file],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1202,6 +1226,7 @@ fn doctor_rosetta_import_without_matching_file_warns() {
         profiles_config: None,
         mox_files: vec![],
         rosetta_files: vec![file],
+        ddd_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);

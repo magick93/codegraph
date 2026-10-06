@@ -8,10 +8,10 @@ use crate::traits::GraphQuerier;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, EnumValue,
-    ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode, MoxOperationNode,
-    MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
+    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
     PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
     RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
@@ -897,6 +897,10 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn effective_permits(&self, actor: &str) -> Result<Vec<Permit>, GraphError> {
         self.inner.effective_permits(actor).await
+    }
+
+    async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
+        self.inner.get_ddd_models().await
     }
 
     // ── mox domain queries ─────────────────────────────────────────────

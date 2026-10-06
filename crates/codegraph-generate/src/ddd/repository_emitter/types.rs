@@ -1,3 +1,4 @@
+use crate::ddd::design::DesignFinder;
 use crate::filter_fields::{FilterFieldInfo, NestedFilterFieldInfo};
 
 /// One validated `?sort=` key mapped to its ORDER BY column (issue #306).
@@ -55,6 +56,10 @@ pub struct EntityTree {
     pub has_read: bool,
     pub has_update: bool,
     pub has_delete: bool,
+    /// Whether the trait declares `list` — both repository impls gate their
+    /// list emission on this so they never carry a method the trait lacks
+    /// (a `.ddd` design without `findAll` maps to no list operation).
+    pub has_list: bool,
     pub has_workflow: bool,
     pub has_fts: bool,
     pub has_embeddings: bool,
@@ -83,6 +88,10 @@ pub struct EntityTree {
     pub hierarchy_field: Option<String>,
     /// Resolved tree_include entries for JOIN-ing related data into tree responses.
     pub tree_include: Vec<TreeIncludeResolved>,
+    /// Declared `.ddd` design finders (issue #449), column-validated for
+    /// this entity. Empty when no design applies — the emitters gate on it,
+    /// keeping flag-off output byte-identical.
+    pub design_finders: Vec<DesignFinder>,
 }
 
 #[allow(dead_code)]

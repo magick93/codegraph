@@ -98,6 +98,7 @@ async fn main() -> codegraph::error::Result<()> {
             openapi_files,
             mox_files,
             rosetta_files,
+            ddd_files,
             ifml_framework,
             ifml_components,
             ifml_design_system,
@@ -120,6 +121,7 @@ async fn main() -> codegraph::error::Result<()> {
                 openapi_files: &openapi_files,
                 mox_files: &mox_files,
                 rosetta_files: &rosetta_files,
+                ddd_files: &ddd_files,
                 ifml_framework: &ifml_framework,
                 ifml_components: ifml_components.as_deref(),
                 ifml_design_system: ifml_design_system.as_deref(),
@@ -243,6 +245,7 @@ async fn main() -> codegraph::error::Result<()> {
             profiles_config,
             mox_files,
             rosetta_files,
+            ddd_files,
         } => {
             let args = codegraph::init::commands::DoctorArgs {
                 config,
@@ -251,6 +254,7 @@ async fn main() -> codegraph::error::Result<()> {
                 profiles_config,
                 mox_files,
                 rosetta_files,
+                ddd_files,
             };
             codegraph::init::commands::cmd_doctor(&args).map(|summary| {
                 println!(

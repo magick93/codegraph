@@ -265,3 +265,126 @@ async fn ingest_condition_round_trips_through_the_mock() {
     let missing = engine.get_conditions_for_schema("OtherType").await.unwrap();
     assert!(missing.is_empty());
 }
+
+#[tokio::test]
+async fn ingest_ddd_model_round_trips_through_the_mock() {
+    use codegraph_core::types::{
+        DddApplicationNode, DddDesignFlags, DddDesignNode, DddDocumentField, DddModelGraph,
+        DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
+        DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
+    };
+
+    let engine = MockEngine::new();
+    assert!(engine.get_ddd_models().await.unwrap().is_empty());
+
+    let fixture = DddModelGraph {
+        source_path: "model/library.ddd".to_string(),
+        application: DddApplicationNode {
+            name: "Library".to_string(),
+            base: Some("nz.example.library".to_string()),
+            source_path: "model/library.ddd".to_string(),
+        },
+        modules: vec![DddModuleNode {
+            application: "Library".to_string(),
+            name: "catalogue".to_string(),
+            ordinal: 0,
+        }],
+        designs: vec![DddDesignNode {
+            application: "Library".to_string(),
+            module: "catalogue".to_string(),
+            class: "Book".to_string(),
+            resolved_title: Some("Book".to_string()),
+            stereotype: "entity".to_string(),
+            is_abstract: false,
+            flags: DddDesignFlags {
+                scaffold: true,
+                cache: true,
+                ..Default::default()
+            },
+            ordinal: 0,
+        }],
+        repositories: vec![DddRepositoryNode {
+            application: "Library".to_string(),
+            name: "BookRepository".to_string(),
+            design_class: "Book".to_string(),
+            operations: vec![
+                DddRepositoryOperation {
+                    name: "findById".to_string(),
+                    builtin: Some("findById".to_string()),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: vec![],
+                    ordinal: 0,
+                },
+                DddRepositoryOperation {
+                    name: "findByTitle".to_string(),
+                    builtin: None,
+                    return_type: Some(serde_json::json!({
+                        "type": "primitive",
+                        "value": "String"
+                    })),
+                    return_multiplicity: None,
+                    params: vec![DddParam {
+                        name: "title".to_string(),
+                        type_json: serde_json::json!({
+                            "type": "primitive",
+                            "value": "String"
+                        }),
+                        multiplicity: None,
+                    }],
+                    ordinal: 1,
+                },
+            ],
+        }],
+        services: vec![DddServiceNode {
+            application: "Library".to_string(),
+            module: "catalogue".to_string(),
+            name: "LoanService".to_string(),
+            description: Some("Manages loans".to_string()),
+            dependencies: vec!["LoanRepository".to_string()],
+            operations: vec![DddServiceOperation {
+                name: "renew".to_string(),
+                return_type: None,
+                return_multiplicity: None,
+                params: vec![],
+                delegation_target: Some("LoanRepository".to_string()),
+                delegation_operation: Some("save".to_string()),
+                capabilities: vec!["RenewBooks".to_string()],
+                ordinal: 0,
+            }],
+            ordinal: 0,
+        }],
+        searches: vec![DddSearchNode {
+            application: "Library".to_string(),
+            module: "catalogue".to_string(),
+            name: "BookSearch".to_string(),
+            description: None,
+            entity_class: "Book".to_string(),
+            entity_title: Some("Book".to_string()),
+            text: vec![DddSearchField {
+                property: "title".to_string(),
+                boost: Some(2.5),
+                analyzer: None,
+            }],
+            filters: vec!["category".to_string()],
+            sorts: vec!["title".to_string()],
+            document: vec![DddDocumentField {
+                name: "label".to_string(),
+                expr: "title".to_string(),
+            }],
+            ranking: Some("bm25".to_string()),
+            analyzer: Some("english".to_string()),
+            pagination: Some(DddPagination {
+                limit: Some(20),
+                max_limit: None,
+                cursor: true,
+            }),
+            capabilities: vec![],
+            ordinal: 0,
+        }],
+    };
+
+    engine.ingest_ddd_model(&fixture).await.unwrap();
+    let loaded = engine.get_ddd_models().await.unwrap();
+    assert_eq!(loaded, vec![fixture]);
+}

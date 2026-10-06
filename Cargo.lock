@@ -842,10 +842,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "sigil-diag",
- "sigil-model",
- "sigil-resolve",
- "sigil-syntax",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-resolve 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
  "syn 2.0.119",
  "tempfile",
  "tera",
@@ -935,6 +935,7 @@ dependencies = [
  "pathdiff",
  "rex-expr",
  "rex-ifml",
+ "rex-ir",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -3414,7 +3415,7 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0fb770bbfacbcef0002dd89a0a1ae87c740da512#0fb770bbfacbcef0002dd89a0a1ae87c740da512"
 dependencies = [
  "ariadne",
  "rex-expr",
@@ -3424,13 +3425,17 @@ dependencies = [
  "salsa 0.23.0",
  "serde",
  "serde_json",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-resolve 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
  "thiserror",
 ]
 
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0fb770bbfacbcef0002dd89a0a1ae87c740da512#0fb770bbfacbcef0002dd89a0a1ae87c740da512"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3441,7 +3446,7 @@ dependencies = [
 [[package]]
 name = "rex-ifml"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0fb770bbfacbcef0002dd89a0a1ae87c740da512#0fb770bbfacbcef0002dd89a0a1ae87c740da512"
 dependencies = [
  "pest",
  "pest_derive",
@@ -3452,7 +3457,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0fb770bbfacbcef0002dd89a0a1ae87c740da512#0fb770bbfacbcef0002dd89a0a1ae87c740da512"
 dependencies = [
  "serde",
  "serde_json",
@@ -3462,7 +3467,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0fb770bbfacbcef0002dd89a0a1ae87c740da512#0fb770bbfacbcef0002dd89a0a1ae87c740da512"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3472,7 +3477,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=77688ee99d35fe4ad0812b3acb488c61136c17ee#77688ee99d35fe4ad0812b3acb488c61136c17ee"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0fb770bbfacbcef0002dd89a0a1ae87c740da512#0fb770bbfacbcef0002dd89a0a1ae87c740da512"
 dependencies = [
  "anyhow",
  "rex-ir",
@@ -4043,13 +4048,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigil-diag"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468#69115a79999e6ff2ce04c039a71edac6d8ba2468"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "sigil-model"
 version = "0.1.0"
 source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
 dependencies = [
  "serde",
  "serde_json",
- "sigil-diag",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+]
+
+[[package]]
+name = "sigil-model"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468#69115a79999e6ff2ce04c039a71edac6d8ba2468"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
 ]
 
 [[package]]
@@ -4059,9 +4082,21 @@ source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20
 dependencies = [
  "serde",
  "serde_json",
- "sigil-diag",
- "sigil-model",
- "sigil-syntax",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+]
+
+[[package]]
+name = "sigil-resolve"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468#69115a79999e6ff2ce04c039a71edac6d8ba2468"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
 ]
 
 [[package]]
@@ -4070,8 +4105,18 @@ version = "0.1.0"
 source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
 dependencies = [
  "chumsky 0.13.0",
- "sigil-diag",
- "sigil-model",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+]
+
+[[package]]
+name = "sigil-syntax"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468#69115a79999e6ff2ce04c039a71edac6d8ba2468"
+dependencies = [
+ "chumsky 0.13.0",
+ "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
 ]
 
 [[package]]

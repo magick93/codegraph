@@ -97,6 +97,77 @@ bridged, auto-scored): integration guide at `docs/rosetta.md`, construct
 matrix + defects ledger at `docs/rosetta-gap-analysis.md`.
 
 
+## DDD design models as generator input (issue #449)
+
+rexlang's Sculptor-style design layer: `.ddd` files compile — against their
+imported `.mox` domains (which may `import schema` JSON / `import sigil`
+rosetta) — into the versioned `rex_ir::ddd::DddModel` wire artifact
+(format v1). `codegraph run --mox-files model.mox --ddd-files design.ddd
+--config domains.toml --output out/` ingests the design (driver **Pass 1c**,
+after the IFML pass) and the DDD generators become model-driven. Normative
+docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
+
+- **Import resolution**: imports resolve relative to the `.ddd` file
+  (line-scan `import "x.mox"`, transitive mox via
+  `ingest/rex_imports.rs` — the deduped home of `collect_domains`/
+  `scan_imports`, shared with `ifml_actor_import.rs`); `import schema` via
+  `scan_schema_imports`; `import sigil` content is the named file PLUS a
+  candidate pool of every sibling `*.rosetta` (dot/`target` subtrees
+  skipped, depth 16) — the rexlang CLI's directory-walk rule.
+- **Hard error on design errors** (rosetta precedent):
+  `Error::DddModel{file, reason}` with `rex_driver::render`-ed per-file
+  diagnostics; a broken design never half-ingests. Class resolution is
+  exact → `+type_suffix` → warn (the `wire_alias_refs` chain) at ingest;
+  mox-unknown classes are rex compile errors (hard), graph-unknown classes
+  ingest softly with `resolved_title = None` and skip mapping.
+- **Graph plane** (rex-free): `DddModelGraph` + node families
+  `DddApplication/DddModule/DddDesign/DddRepository/DddRepositoryOperation/
+  DddService/DddSearch` in `codegraph-core/src/types/ddd.rs`; 7 edge types
+  (`DddHasModule/Design/Repository/Service/Search/Operation`, 
+  `DddBindsClass`); DDL in schema_ddl.rs. Trait surface is ONE composite
+  pair (the `ingest_actor_policy` whole-artifact contract):
+  `ingest_ddd_model(&DddModelGraph)` + `get_ddd_models() ->
+  Vec<DddModelGraph>` (Mock + Grafeo + CachingQuerier). **Ordering
+  contract**: nodes carry `ordinal`s; reads restore module-major
+  declaration order (designs → services → searches per module) — the
+  converter must walk rex modules in order. Signatures ride as rex-ir
+  serde JSON (`type_json`/`return_type`), rehydrated by codegraph-generate
+  (which may depend on rex-ir; codegraph-core may NOT).
+- **Mapping** (`codegraph-generate/src/ddd/design.rs`):
+  `DddDesignSurface::from_graph(db)` indexes by resolved title. Design
+  repository builtins become the TOP-priority ops source
+  (`findById→read`, `findAll→list`, `save→create+update`, `delete→delete`;
+  a design without a repository maps to an EMPTY op set) — override
+  applied ONLY inside the ddd/ context builders (repository trait +
+  `EntityTree`, dto, command, query); `resolve_entity_operations` in
+  api/api_model.rs is untouched so API handlers keep schema-derived ops
+  (deferred). Declared finders (`findByX(x)` Sculptor semantics: equality
+  on the snake_cased param, single → `Option<E>`, multiplicity → `Vec<E>`)
+  emit trait (repository.tera, whitespace-controlled design-gated block) +
+  SeaORM impl (`EntityTree.design_finders`) + cornucopia query/adapter;
+  non-lowerable finders warn+skip. `flags.auditable` WINS over the
+  domains.toml/policy fallback (still ANDed with `!append_only`);
+  `optimisticLocking`/`cache`/`nonPersistent` warn-and-record. Design
+  `search` drives `has_fts` (text fields), `filter_fields`, and the FTS
+  language (search default analyzer); boosts recorded only. DTO
+  create/update emission follows design ops (`dto_response` always).
+  Stereotype vs `is_entity` mismatch warns (mox owns entity/VO).
+- **Gates**: `cargo test -p codegraph --test ddd_golden_tests` (committed
+  rexlang `library.{mox,ddd,ddd.json}` fixture byte-compared in-process —
+  the CLI-gates treatment, node-free) and `--test ddd_pipeline_tests`
+  (end-to-end mox+ddd generation, determinism, and the
+  config-driven-vs-design-driven BYTE-EQUALITY equivalence gate) plus
+  `--test ddd_ingest_tests`. Flag-off byte-identity holds: no `.ddd`
+  input ⇒ no nodes ⇒ unchanged output (repository.tera is the only
+  template touched; the finder block is empty-loop-inert).
+- **Deferred**: service `=>`/`inject` → handler/query wiring;
+  `compile_ddd_str_with_actors` (capabilities recorded unvalidated, same
+  as the rexlang CLI); optimistic-locking/cache emission; nonPersistent
+  DDL suppression; search backends beyond Postgres FTS + document
+  projections; per-field analyzers/boosts in the FTS plumbing; ddd on the
+  classify/ifml-generate paths; LSP for `.ddd`.
+
+
 ## Namespaces as first-class citizens (issue #267)
 
 Namespace = where a type lives + what it can see (hierarchical, dotted,
@@ -1855,7 +1926,7 @@ still AND on top.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up.
-  - `rex-*` @ 77688ee and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `rex-*` @ 0fb770b (bumped for the DDD design layer, issue #449) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.

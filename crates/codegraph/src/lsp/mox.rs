@@ -1,7 +1,7 @@
 //! `.mox` support in the codegraph LSP (MoxState, epic #228 P4 / #232 E2).
 //!
 //! Startup: `build_mox_state` compiles the `--mox-files` sources via
-//! `rex_driver::compile_files_with_imports` (import JSON resolved relative to
+//! `rex_driver::compile_files` (import JSON resolved relative to
 //! each file, like the ingest pipeline) into a flat declaration index
 //! ([`MoxState`]). Install it with [`init_mox`](super::init_mox); without it
 //! every mox handler below degrades to quiet (syntax diagnostics still flow
@@ -29,7 +29,7 @@ use auto_lsp::anyhow;
 use auto_lsp::default::db::{BaseDatabase, BaseDb};
 use auto_lsp::lsp_types::*;
 use auto_lsp::tree_sitter::{self, Query, QueryCursor, StreamingIterator};
-use rex_driver::{SchemaImports, compile_files_with_imports};
+use rex_driver::{DomainImports, SchemaImports, compile_files};
 use rex_ir::{FeatureKind, TypeRef};
 
 use super::state::{
@@ -204,7 +204,11 @@ pub fn build_mox_state(
         return state;
     }
 
-    let compilation = compile_files_with_imports(&sources, &schema_imports);
+    let imports = DomainImports {
+        schemas: schema_imports,
+        sigil: rex_driver::SigilImports::new(),
+    };
+    let compilation = compile_files(&sources, &imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!(
             "Warning: LSP mox diagnostic in {path}: {}",

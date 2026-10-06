@@ -1,0 +1,14 @@
+import "library.mox";
+
+application Invalid {
+    base nz.example.library
+
+    module media {
+        entity Library repository LibraryRepository {
+            findById;
+        }
+        entity Chapter repository ChapterRepository {
+            findById;
+        }
+    }
+}

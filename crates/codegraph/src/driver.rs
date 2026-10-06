@@ -50,6 +50,11 @@ pub struct RunArgs<'a> {
     /// data plane (issue #256). Ingested after mox and BEFORE the JSON
     /// schema pass; bridged titles join the schema pass's skip-set.
     pub rosetta_files: &'a [PathBuf],
+    /// rexlang `.ddd` design files (issue #449), compiled against their
+    /// imported `.mox` domains and ingested as the DDD design plane
+    /// (designs/repositories/services/searches). Absent/empty = no design
+    /// ingest, generators unchanged.
+    pub ddd_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
     /// Optional `ifml-components.toml` mapping IFML components to
     /// handcrafted framework components. Absent = all built-in templates.
@@ -220,6 +225,7 @@ pub async fn run_with_graph_cache(
         openapi_files,
         mox_files,
         rosetta_files,
+        ddd_files,
         ifml_framework,
         ifml_components,
         ifml_design_system,
@@ -265,6 +271,7 @@ pub async fn run_with_graph_cache(
                 config_path,
                 mox_files,
                 rosetta_files,
+                ddd_files,
                 ifml_files,
                 openapi_files,
             )
@@ -573,6 +580,23 @@ pub async fn run_with_graph_cache(
                 total_stats.imported_policies += stats.imported_policies;
             }
             println!("Pass 1b complete: {total_stats}");
+        }
+
+        // Pass 1c: Ingest rexlang .ddd design files (issue #449): compiled
+        // against their imported .mox domains and landed as the DDD design
+        // plane. Runs AFTER the schema passes so design classes resolve
+        // against the full ingested title set; a compile error is a hard
+        // error (the RosettaModel precedent).
+        if !ddd_files.is_empty() {
+            println!("Pass 1c: {} ddd files to ingest", ddd_files.len());
+            let ddd_stats = crate::ingest::ddd_ingest::ingest_ddd_files(
+                be.ingestor(),
+                be.querier(),
+                ddd_files,
+                &domain_config,
+            )
+            .await?;
+            println!("Pass 1c complete: {ddd_stats}");
         }
 
         // Pass 1c: Ingest API model from domain configuration

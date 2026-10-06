@@ -857,6 +857,12 @@ impl GraphQuerier for MockEngine {
         Ok(resolve_effective_permits(&actors, &grants, actor))
     }
 
+    async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
+        let mut models = self.ddd_models.lock().unwrap().clone();
+        models.sort_by(|a, b| a.application.name.cmp(&b.application.name));
+        Ok(models)
+    }
+
     // ── Constraint plane queries (issue #261) ─────────────────────────
 
     async fn get_conditions_for_schema(

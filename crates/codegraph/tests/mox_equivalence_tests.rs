@@ -358,6 +358,7 @@ fn run_args<'a>(
         openapi_files: &[],
         mox_files,
         rosetta_files: &[],
+        ddd_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,

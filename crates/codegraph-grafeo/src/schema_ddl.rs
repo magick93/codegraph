@@ -427,6 +427,72 @@ fn node_type_ddl() -> Vec<&'static str> {
             input_type STRING,
             payload_json STRING NOT NULL
         )",
+        // DDD design plane (issue #449). Seven node families mirroring the
+        // rex-ir `.ddd` artifact; service/search sub-structures persist as
+        // JSON-string properties (the ActorPolicy singleton pattern), while
+        // repository operations are their own node family (repositories are
+        // cross-queried).
+        "CREATE NODE TYPE IF NOT EXISTS DddApplication (
+            name STRING NOT NULL,
+            base STRING,
+            source_path STRING NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS DddModule (
+            application STRING NOT NULL,
+            name STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS DddDesign (
+            application STRING NOT NULL,
+            module STRING NOT NULL,
+            class STRING NOT NULL,
+            resolved_title STRING,
+            stereotype STRING NOT NULL,
+            is_abstract BOOLEAN NOT NULL,
+            flags_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS DddRepository (
+            application STRING NOT NULL,
+            name STRING NOT NULL,
+            design_class STRING NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS DddRepositoryOperation (
+            application STRING NOT NULL,
+            repository_name STRING NOT NULL,
+            name STRING NOT NULL,
+            builtin STRING,
+            return_type_json STRING,
+            return_multiplicity STRING,
+            params_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS DddService (
+            application STRING NOT NULL,
+            module STRING NOT NULL,
+            name STRING NOT NULL,
+            description STRING,
+            dependencies_json STRING NOT NULL,
+            operations_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS DddSearch (
+            application STRING NOT NULL,
+            module STRING NOT NULL,
+            name STRING NOT NULL,
+            description STRING,
+            entity_class STRING NOT NULL,
+            entity_title STRING,
+            text_json STRING NOT NULL,
+            filters_json STRING NOT NULL,
+            sorts_json STRING NOT NULL,
+            document_json STRING NOT NULL,
+            ranking STRING,
+            analyzer STRING,
+            pagination_json STRING,
+            capabilities_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
     ]
 }
 
@@ -514,5 +580,14 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS NamespaceParent ()",
         "CREATE EDGE TYPE IF NOT EXISTS NamespaceImports (wildcard BOOLEAN, alias STRING)",
         "CREATE EDGE TYPE IF NOT EXISTS NamespaceDepends ()",
+        // DDD design plane edge types (issue #449). DddBindsClass links a
+        // DddDesign/DddSearch to its resolved Schema (advisory).
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasModule ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasDesign ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasRepository ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasService ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasSearch ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasOperation ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddBindsClass ()",
     ]
 }

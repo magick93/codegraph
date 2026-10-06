@@ -1,0 +1,6 @@
+package equivalence
+
+class WidgetType {
+    String title
+    String synopsis
+}

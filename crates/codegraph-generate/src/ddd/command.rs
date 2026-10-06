@@ -76,7 +76,13 @@ impl EntityGenerator for CommandGenerator {
             .get(&domain)
             .and_then(|d| d.get_entity_config(&entity_name));
 
-        let operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+        // DDD design surface (issue #449): a design covering this title
+        // replaces the operations with its repository built-in mapping.
+        let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
+        let mut operations = resolve_entity_operations(db, config, &domain, &entity_name).await;
+        if let Some(design_ops) = design_surface.operations_for(schema_title) {
+            operations = design_ops;
+        }
 
         // Resolve parent_ref for child entities
         let parent_ref = crate::resolve_parent_fk_column_same_domain(
