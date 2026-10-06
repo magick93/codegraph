@@ -17,6 +17,9 @@ pub struct Cli {
     pub command: Commands,
 }
 
+// The Run variant carries one Vec<PathBuf> per model-source flag; boxing
+// any of them for the lint's sake would churn every construction site.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 pub enum Commands {
     /// Generate code from JSON schemas
@@ -142,6 +145,10 @@ pub enum Commands {
         /// .mox domains and ingested as the DDD design plane
         #[arg(long)]
         ddd_files: Vec<PathBuf>,
+        /// Paths to rexlang .evt event-contract files; compiled against their
+        /// imported .mox domains and ingested as the events plane
+        #[arg(long)]
+        evt_files: Vec<PathBuf>,
         /// IFML framework targets for code generation (e.g. svelte, react)
         #[arg(long)]
         ifml_framework: Vec<String>,
@@ -357,6 +364,12 @@ pub enum Commands {
         /// included). Error-severity diagnostics are hard failures
         #[arg(long)]
         ddd_files: Vec<PathBuf>,
+
+        /// Paths to rexlang .evt event-contract files; compiled against
+        /// their imported .mox domains and ingested as the events plane.
+        /// Error-severity diagnostics are hard failures
+        #[arg(long)]
+        evt_files: Vec<PathBuf>,
     },
     /// Add to an existing consumer project
     Add {

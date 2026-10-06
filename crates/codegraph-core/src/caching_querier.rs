@@ -9,7 +9,7 @@ use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
@@ -901,6 +901,10 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
         self.inner.get_ddd_models().await
+    }
+
+    async fn get_evt_models(&self) -> Result<Vec<EvtModelGraph>, GraphError> {
+        self.inner.get_evt_models().await
     }
 
     // ── mox domain queries ─────────────────────────────────────────────

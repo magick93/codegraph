@@ -3,7 +3,7 @@ use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
@@ -457,6 +457,16 @@ pub trait GraphQuerier: Send + Sync {
     /// searches by their `ordinal`, repositories sorted by name and
     /// attached to their application, repository operations by `ordinal`.
     async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    // ── Event-contract plane query methods (issue #454) ──────────────
+
+    /// Every ingested `.evt` event-contract model, reassembled to the exact
+    /// ingest shape: models grouped by `source_path` (sorted
+    /// lexicographically), events/channels/subscriptions within each model
+    /// by their `ordinal`.
+    async fn get_evt_models(&self) -> Result<Vec<EvtModelGraph>, GraphError> {
         Ok(Vec::new())
     }
 

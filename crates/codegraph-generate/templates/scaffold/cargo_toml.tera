@@ -68,7 +68,8 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid", "decimal"] }
 utoipa-swagger-ui = { version = "10", features = ["axum"] }
-async-trait = "0.1"
+async-trait = "0.1"{% if has_events %}
+anyhow = "1"{% endif %}
 garde = { version = "0.22", features = ["derive", "regex"] }
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 jsonwebtoken = "9"

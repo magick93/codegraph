@@ -863,6 +863,12 @@ impl GraphQuerier for MockEngine {
         Ok(models)
     }
 
+    async fn get_evt_models(&self) -> Result<Vec<EvtModelGraph>, GraphError> {
+        let mut models = self.evt_models.lock().unwrap().clone();
+        models.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+        Ok(models)
+    }
+
     // ── Constraint plane queries (issue #261) ─────────────────────────
 
     async fn get_conditions_for_schema(

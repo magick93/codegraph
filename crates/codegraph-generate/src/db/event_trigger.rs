@@ -16,6 +16,12 @@ use codegraph_config::DomainConfig;
 #[derive(Debug, Serialize)]
 pub struct PgmqSetupContext {
     pub domains: Vec<String>,
+    /// DSL channel queues from the semantic event architecture (`.evt`,
+    /// issue #455): sorted, deduped, and with domain-owned colliding
+    /// queues excluded (`pgmq.create` is not idempotent — the domain loop
+    /// above already creates those). Empty when the graph carries no
+    /// `.evt` models, keeping the rendering byte-identical.
+    pub channels: Vec<String>,
 }
 
 pub struct PgmqSetupGenerator {
@@ -49,7 +55,7 @@ impl GlobalGenerator for PgmqSetupGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
+        db: &dyn GraphQuerier,
         config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
@@ -71,7 +77,16 @@ impl GlobalGenerator for PgmqSetupGenerator {
             .collect();
         domains.sort();
 
-        let ctx = PgmqSetupContext { domains };
+        // Semantic event channels (.evt, issue #455): DSL channel queues
+        // join the per-domain queues in this migration. With no `.evt`
+        // models the architecture is empty (short-circuiting before its
+        // trigger enumeration), so `channels` is empty and the rendering
+        // stays byte-identical.
+        let architecture =
+            crate::events::EventArchitecture::from_graph(db, &*self.dialect, config).await?;
+        let channels = architecture.channel_queues();
+
+        let ctx = PgmqSetupContext { domains, channels };
 
         let content = render_template_with_project(
             tera,

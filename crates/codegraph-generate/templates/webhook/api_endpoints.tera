@@ -592,8 +592,23 @@ pub async fn create_subscription(
     Extension(api_key_info): Extension<ApiKeyInfo>,
     Path(endpoint_id): Path<Uuid>,
     Json(body): Json<CreateSubscription>,
-) -> Result<(StatusCode, Json<SubscriptionResponse>), (StatusCode, Json<serde_json::Value>)> {
-    let id = Uuid::new_v4();
+) -> Result<(StatusCode, Json<SubscriptionResponse>), (StatusCode, Json<serde_json::Value>)> {% if evt_events %}{
+    // Vocabulary gate (.evt): event_type must be one of the declared
+    // events or a CRUD verb, so a subscription can never reference an
+    // event the architecture never emits.
+    if let Some(event_type) = &body.event_type {
+        const DECLARED: &[&str] = &[{% for evt in evt_declared_events %}"{{ evt }}"{% if not loop.last %}, {% endif %}{% endfor %}, "created", "updated", "deleted"];
+        if !DECLARED.contains(&event_type.as_str()) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("unknown event_type `{}`; must be one of: {}", event_type, DECLARED.join(", ")),
+                })),
+            ));
+        }
+    }
+    let id = Uuid::new_v4();{% else %}{
+    let id = Uuid::new_v4();{% endif %}
     let tenant_id = api_key_info.organization_id;
     let now = chrono::Utc::now();
     let filter = body.filter.unwrap_or(serde_json::json!({}));

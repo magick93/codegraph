@@ -1833,3 +1833,138 @@ async fn test_ddd_models_sorted_by_application_name() {
     assert_eq!(loaded[0], other);
     assert_eq!(loaded[1], fixture);
 }
+
+// --- Event-contract plane (issue #454) ---
+
+/// Two contracts' worth of nodes. Billing carries the interesting shapes:
+/// version Some/None, primitive + class-typed fields with resolved_title
+/// Some/None, a channel with multiple publishes, and a multi-event
+/// subscription. Audit covers an event with no fields at all.
+fn evt_fixtures() -> Vec<EvtModelGraph> {
+    let billing = EvtModelGraph {
+        source_path: "events/billing.evt".to_string(),
+        events: vec![
+            EvtEventNode {
+                source_path: "events/billing.evt".to_string(),
+                name: "PaymentRequested".to_string(),
+                version: Some("1.2.0".to_string()),
+                fields: vec![
+                    EvtEventField {
+                        name: "payment_id".to_string(),
+                        type_json: serde_json::json!({
+                            "type": "primitive",
+                            "value": "Uuid"
+                        }),
+                        resolved_title: None,
+                    },
+                    EvtEventField {
+                        name: "order".to_string(),
+                        type_json: serde_json::json!({
+                            "type": "class",
+                            "value": { "name": "Order" }
+                        }),
+                        resolved_title: Some("OrderType".to_string()),
+                    },
+                ],
+                ordinal: 0,
+            },
+            EvtEventNode {
+                source_path: "events/billing.evt".to_string(),
+                name: "PaymentCompleted".to_string(),
+                version: None,
+                fields: vec![EvtEventField {
+                    name: "receipt".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "class",
+                        "value": { "name": "Receipt" }
+                    }),
+                    resolved_title: None,
+                }],
+                ordinal: 1,
+            },
+        ],
+        channels: vec![EvtChannelNode {
+            source_path: "events/billing.evt".to_string(),
+            name: "payments".to_string(),
+            publishes: vec![
+                "PaymentRequested".to_string(),
+                "PaymentCompleted".to_string(),
+            ],
+            ordinal: 0,
+        }],
+        subscriptions: vec![EvtSubscriptionNode {
+            source_path: "events/billing.evt".to_string(),
+            name: "ledger-sync".to_string(),
+            events: vec!["PaymentCompleted".to_string()],
+            consumer: "ledger-service".to_string(),
+            ordinal: 0,
+        }],
+    };
+    let audit = EvtModelGraph {
+        source_path: "events/audit.evt".to_string(),
+        events: vec![EvtEventNode {
+            source_path: "events/audit.evt".to_string(),
+            name: "AuditTrailWritten".to_string(),
+            version: None,
+            fields: vec![],
+            ordinal: 0,
+        }],
+        channels: vec![EvtChannelNode {
+            source_path: "events/audit.evt".to_string(),
+            name: "audit".to_string(),
+            publishes: vec!["AuditTrailWritten".to_string()],
+            ordinal: 0,
+        }],
+        subscriptions: vec![EvtSubscriptionNode {
+            source_path: "events/audit.evt".to_string(),
+            name: "compliance".to_string(),
+            events: vec!["AuditTrailWritten".to_string()],
+            consumer: "compliance-exporter".to_string(),
+            ordinal: 0,
+        }],
+    };
+    // Audit ingested LAST but sorts FIRST by source_path.
+    vec![billing, audit]
+}
+
+#[tokio::test]
+async fn test_evt_model_round_trip() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+
+    for fixture in evt_fixtures() {
+        engine.ingest_evt_model(&fixture).await.unwrap();
+    }
+
+    let loaded = engine.get_evt_models().await.unwrap();
+    let paths: Vec<&str> = loaded.iter().map(|m| m.source_path.as_str()).collect();
+    assert_eq!(
+        paths,
+        vec!["events/audit.evt", "events/billing.evt"],
+        "one model per source_path, grouped lexicographically"
+    );
+    assert_eq!(loaded[0], evt_fixtures()[1], "audit deep round-trip");
+    assert_eq!(loaded[1], evt_fixtures()[0], "billing deep round-trip");
+
+    // Intra-file references survive verbatim.
+    let billing = &loaded[1];
+    assert_eq!(
+        billing.channels[0].publishes,
+        vec!["PaymentRequested", "PaymentCompleted"]
+    );
+    assert_eq!(billing.subscriptions[0].events, vec!["PaymentCompleted"]);
+    assert_eq!(billing.subscriptions[0].consumer, "ledger-service");
+
+    // Ordinals preserved.
+    assert_eq!(
+        billing
+            .events
+            .iter()
+            .map(|e| (e.name.as_str(), e.ordinal))
+            .collect::<Vec<_>>(),
+        vec![("PaymentRequested", 0), ("PaymentCompleted", 1)]
+    );
+
+    // Empty graphs report no models.
+    let empty = GrafeoEngine::in_memory().unwrap();
+    assert!(empty.get_evt_models().await.unwrap().is_empty());
+}

@@ -8,7 +8,14 @@ SELECT pgmq.create('events_{{ domain }}');
 -- pgmq queue tables are created without default PUBLIC grants on PG15+;
 -- the app and api_key roles need access for the dispatch worker.
 GRANT ALL ON TABLE pgmq.q_events_{{ domain }} TO app_user, api_key;
+{% endfor %}{% if channels %}
+{% for queue in channels %}
+SELECT pgmq.create('{{ queue }}');
+-- pgmq queue tables are created without default PUBLIC grants on PG15+;
+-- the app and api_key roles need access for the dispatch worker.
+GRANT ALL ON TABLE pgmq.q_{{ queue }} TO app_user, api_key;
 {% endfor %}
+{% endif %}
 
 -- Queue access for the application role. The app runs domain-table DML as
 -- `app_user` (SET LOCAL ROLE in the query/command layers) and the event

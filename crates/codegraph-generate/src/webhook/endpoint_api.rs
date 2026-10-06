@@ -30,13 +30,29 @@ impl GlobalGenerator for WebhookEndpointApiGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
-        _config: &DomainConfig,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        // Subscription vocabulary validation (.evt, issues #454/#455):
+        // only a non-empty architecture turns the gate on and names the
+        // declared events; an empty architecture keeps the EXACT pre-#455
+        // empty context (byte-identical rendering).
+        let architecture = crate::evt_events::architecture_for(db, project, config).await?;
+        let ctx = if architecture.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::json!({
+                "evt_events": true,
+                "evt_declared_events": architecture
+                    .declared_event_names()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<String>>(),
+            })
+        };
 
         let endpoints =
             render_template_with_project(tera, "webhook/api_endpoints.tera", &ctx, project)?;

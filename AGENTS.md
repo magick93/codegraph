@@ -167,6 +167,75 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   projections; per-field analyzers/boosts in the FTS plumbing; ddd on the
   classify/ifml-generate paths; LSP for `.ddd`.
 
+## Events DSL as generator input (issues #454, #455)
+
+rexlang `.evt` event contracts compile — against their imported `.mox`
+domains — into the events plane: typed payload contracts, per-channel
+publishers, per-subscription consumers, and the transport bindings behind
+them. `codegraph run --mox-files model.mox --evt-files events.evt --config
+domains.toml --output out/` ingests the contracts (driver **Pass 1d**, after
+the ddd pass, part of the graph-cache inputs group) and the events
+generators become model-driven; `--evt-files` also rides `codegraph doctor`
+(`check_evt_files`).
+
+- **Pipeline**: `ingest_evt_files`
+  (`crates/codegraph/src/ingest/evt_ingest.rs`) reads each contract file,
+  collects its transitively imported `.mox` domains (the shared
+  `rex_imports` plumbing; imports resolve relative to the `.evt` file,
+  `import schema`/`import sigil` content included), compiles with
+  `rex_driver::compile_evt_str`, and hard-errors on any error-severity
+  diagnostic (`Error::EvtModel`, the `Error::DddModel` precedent — a broken
+  contract never half-ingests). Payload field types resolve against the
+  ingested schema titles: exact → title + `type_suffix` → warn + count on
+  miss; primitives resolve silently (never a warning, never counted).
+- **Semantic IR (#455)**: `codegraph-generate/src/events/model.rs` —
+  `EventArchitecture::from_graph` builds `events` (payload fields mapped to
+  Rust: rex primitives, resolved schemas' `rust_type_name`,
+  `serde_json::Value` on a miss) / `channels` / `domain_channels` /
+  `subscriptions`. `PublicationSource::{Application, Database(Trigger)}`
+  folds the CRUD-diff per-table trigger plane in as the implicit
+  per-domain channels — a provenance-only rewire
+  (`enumerate_event_trigger_tables` shares the ONE DDL-context
+  enumeration with `DdlGenerator`; `domain_event_trigger.tera` output
+  unchanged). `Transport::{Pgmq, Unbound}` + `capabilities()` —
+  capabilities, not technologies: channels bind pgmq only on a
+  `has_plpgsql()` target; sqlite runs leave them unbound (warned once per
+  channel) and skip the persisted surface.
+  `DeliveryPolicy::at_least_once_default()` = today's dispatch constants
+  (5 retries / 10s exponential-backoff base / 30s visibility timeout).
+  Queue naming is `events_{channel}` (codegraph convention); a channel
+  named like a domain COLLAPSES into the domain queue — the domain
+  migration band owns its creation, warned once.
+- **Emission**: the presence-gated global `evt_events` generator →
+  `src/events/{mod,contracts,emit,consumers}.rs` (one payload struct +
+  `{EVENT}_VERSION` const per declared event; one event enum +
+  `publish_{channel}` per pgmq-bound channel; one handler trait +
+  dispatcher per subscription plus the process-wide registry). The Native
+  superset envelope carries 11 keys (`event`, `version`, `channel`,
+  `payload`, `event_type`, `domain`, `entity_table`, `entity_id`,
+  `tenant_id`, `occurred_at`, `correlation_id`) with `event_type` = the
+  declared event name so `find_webhook_subscriptions` matching is
+  unchanged. The webhook drain dispatches through the registry
+  (`dispatch_registered(&self.db, &message) == 0` delete condition),
+  `webhook_api.rs` gains vocabulary validation (declared events ∪
+  created/updated/deleted), and the scaffold's graph-driven `has_events`
+  gates `pub mod events;` + the gated `anyhow` in lib.rs/Cargo.toml.
+- **Gates**: `cargo test -p codegraph --test evt_golden_tests` (the
+  committed rexlang `orders.{mox,evt,evt.json}` conformance fixture
+  byte-compared in-process — the CLI-gates treatment, node-free),
+  `--test evt_ingest_tests` (conversion/resolution/hard-error semantics +
+  the inputs group), and `--test evt_pipeline_tests` (end-to-end mox+evt
+  generation through `driver::run`, determinism, and the flag-off
+  contract: no `.evt` ⇒ no `src/events/` and byte-identical common tree
+  modulo the gated webhook files + module index). Flag-off byte-identity
+  is pinned in-crate by `src/evt_golden/*` (dispatch/api_endpoints/lib/
+  cargo_toml) + `src/events/pgmq_setup_pre_evt_template.rs` + the canaries.
+- **Deferred**: CloudEvents envelope variant; delivery-policy DSL syntax
+  (upstream rexlang #31 slice 2); deployment-profile transport bindings
+  (#455 §13); full Connector SPI (#455 §14); workers-topology per-channel
+  drain (monolith-first this PR — per-domain worker drains only read
+  `events_{domain}`); publisher/aggregate binding + event domain
+  attribution (rexlang issue drafts, see below); LSP for `.evt`.
 
 ## Namespaces as first-class citizens (issue #267)
 

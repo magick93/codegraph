@@ -836,7 +836,14 @@ pub(super) fn composition_node_to_child_table(
 }
 
 impl DdlGenerator {
-    pub(super) async fn query_ddl_context(
+    /// Build this entity's DDL context.
+    ///
+    /// `pub(crate)` because it IS the shared trigger enumeration: the
+    /// semantic event model (`crate::events::enumerate_event_trigger_tables`)
+    /// calls it per generation-order entry so its per-domain trigger
+    /// publications reproduce the per-entity event-trigger set byte for
+    /// byte, by construction.
+    pub(crate) async fn query_ddl_context(
         &self,
         db: &dyn GraphQuerier,
         schema_title: &str,

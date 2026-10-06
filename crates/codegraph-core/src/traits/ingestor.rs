@@ -3,11 +3,11 @@ use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
     CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode, DataBindingNode,
     DddModelGraph, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
-    FunctionNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
-    MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
-    RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
+    MembershipNode, MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
+    RegulatoryNode, RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -193,6 +193,15 @@ pub trait GraphIngestor: Send + Sync {
     /// inserted when `resolved_title`/`entity_title` resolve; missing
     /// targets are skipped silently (advisory at this layer).
     async fn ingest_ddd_model(&self, model: &DddModelGraph) -> Result<(), GraphError>;
+
+    // ── Event-contract plane (issue #454) ────────────────────────────
+
+    /// Ingest a full `.evt` event-contract model: the declared events, the
+    /// channels publishing them, and the subscriptions consuming them.
+    /// Event references (channel `publishes`, subscription `events`) are
+    /// intra-file names kept verbatim; resolution against the declaring
+    /// file is a consumer concern, never a graph-plane one.
+    async fn ingest_evt_model(&self, model: &EvtModelGraph) -> Result<(), GraphError>;
 
     // ── Constraint plane (issue #261) ─────────────────────────────────
 

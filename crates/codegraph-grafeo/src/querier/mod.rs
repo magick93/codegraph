@@ -2,6 +2,7 @@ mod api_model;
 mod atproto;
 mod composition;
 mod ddd;
+mod evt;
 mod governance;
 mod ifml;
 mod query;
@@ -16,7 +17,7 @@ use codegraph_core::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
-    EnumValue, ErrorDefinitionNode, EventNode, Extension, FunctionNode, GrantEdge,
+    EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge,
     HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
     MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
     ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
@@ -641,6 +642,10 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
         self.query_ddd_models().await
+    }
+
+    async fn get_evt_models(&self) -> Result<Vec<EvtModelGraph>, GraphError> {
+        self.query_evt_models().await
     }
 
     async fn get_mox_vocabularies(&self) -> Result<Vec<MoxVocabularyNode>, GraphError> {

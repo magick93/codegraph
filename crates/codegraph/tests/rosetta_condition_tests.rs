@@ -315,6 +315,7 @@ async fn run_generator_pipeline(
         mox_files: &[],
         rosetta_files: &[model],
         ddd_files: &[],
+        evt_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,

@@ -388,3 +388,91 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
     let loaded = engine.get_ddd_models().await.unwrap();
     assert_eq!(loaded, vec![fixture]);
 }
+
+#[tokio::test]
+async fn ingest_evt_model_round_trips_through_the_mock() {
+    use codegraph_core::types::{
+        EvtChannelNode, EvtEventField, EvtEventNode, EvtModelGraph, EvtSubscriptionNode,
+    };
+
+    let engine = MockEngine::new();
+    assert!(engine.get_evt_models().await.unwrap().is_empty());
+
+    let fixture = EvtModelGraph {
+        source_path: "model/billing.evt".to_string(),
+        events: vec![EvtEventNode {
+            source_path: "model/billing.evt".to_string(),
+            name: "PaymentRequested".to_string(),
+            version: Some("2.0".to_string()),
+            fields: vec![
+                EvtEventField {
+                    name: "payment_id".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "primitive",
+                        "value": "Uuid"
+                    }),
+                    resolved_title: None,
+                },
+                EvtEventField {
+                    name: "order".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "class",
+                        "value": { "name": "Order" }
+                    }),
+                    resolved_title: Some("OrderType".to_string()),
+                },
+            ],
+            ordinal: 0,
+        }],
+        channels: vec![EvtChannelNode {
+            source_path: "model/billing.evt".to_string(),
+            name: "payments".to_string(),
+            publishes: vec![
+                "PaymentRequested".to_string(),
+                "PaymentCompleted".to_string(),
+            ],
+            ordinal: 0,
+        }],
+        subscriptions: vec![EvtSubscriptionNode {
+            source_path: "model/billing.evt".to_string(),
+            name: "ledger-sync".to_string(),
+            events: vec!["PaymentCompleted".to_string()],
+            consumer: "ledger-service".to_string(),
+            ordinal: 0,
+        }],
+    };
+
+    engine.ingest_evt_model(&fixture).await.unwrap();
+
+    // A second contract ingested FIRST by name — reads sort by source_path.
+    let other = EvtModelGraph {
+        source_path: "model/audit.evt".to_string(),
+        events: vec![EvtEventNode {
+            source_path: "model/audit.evt".to_string(),
+            name: "AuditTrailWritten".to_string(),
+            version: None,
+            fields: vec![],
+            ordinal: 0,
+        }],
+        channels: vec![EvtChannelNode {
+            source_path: "model/audit.evt".to_string(),
+            name: "audit".to_string(),
+            publishes: vec!["AuditTrailWritten".to_string()],
+            ordinal: 0,
+        }],
+        subscriptions: vec![EvtSubscriptionNode {
+            source_path: "model/audit.evt".to_string(),
+            name: "compliance".to_string(),
+            events: vec!["AuditTrailWritten".to_string()],
+            consumer: "compliance-exporter".to_string(),
+            ordinal: 0,
+        }],
+    };
+    engine.ingest_evt_model(&other).await.unwrap();
+
+    let loaded = engine.get_evt_models().await.unwrap();
+    let paths: Vec<&str> = loaded.iter().map(|m| m.source_path.as_str()).collect();
+    assert_eq!(paths, vec!["model/audit.evt", "model/billing.evt"]);
+    assert_eq!(loaded[0], other);
+    assert_eq!(loaded[1], fixture);
+}

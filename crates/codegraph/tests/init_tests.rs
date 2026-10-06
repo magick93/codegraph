@@ -345,6 +345,7 @@ async fn init_scaffold_runs_mox_first() {
         mox_files: &mox_files,
         rosetta_files: &[],
         ddd_files: &[],
+        evt_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
@@ -507,6 +508,7 @@ fn doctor_fresh_scaffold_has_zero_model_warnings() {
         mox_files: vec![project.join("model/common.mox")],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -538,6 +540,7 @@ fn doctor_empty_schemas_dir_in_mox_mode_still_warns() {
         mox_files: vec![mox],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -568,6 +571,7 @@ fn doctor_classifier_missing_with_json_schemas_is_hard_failure() {
         mox_files: vec![],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -596,6 +600,7 @@ fn doctor_validates_multiple_mox_files() {
         ],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -619,6 +624,7 @@ fn doctor_fails_on_missing_schemas() {
         mox_files: vec![],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -664,6 +670,7 @@ fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
         mox_files: vec![mox],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -688,6 +695,7 @@ fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
         mox_files: vec![mox],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -715,6 +723,7 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
         mox_files: vec![mox],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -847,6 +856,7 @@ fn doctor_valid_import_passes() {
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
 }
@@ -864,6 +874,7 @@ fn doctor_missing_import_target_is_a_hard_failure() {
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -885,6 +896,7 @@ fn doctor_invalid_import_json_is_a_hard_failure() {
         mox_files: vec![dir.path().join("model.mox")],
         rosetta_files: vec![],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1071,6 +1083,7 @@ async fn init_rosetta_scaffold_runs_rosetta_first() {
         mox_files: &[],
         rosetta_files: &rosetta_files,
         ddd_files: &[],
+        evt_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,
@@ -1135,6 +1148,7 @@ fn doctor_rosetta_starter_has_zero_model_warnings() {
         mox_files: vec![],
         rosetta_files: vec![project.join("model/common.rosetta")],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -1159,6 +1173,7 @@ fn doctor_broken_rosetta_file_is_a_hard_failure() {
         mox_files: vec![],
         rosetta_files: vec![broken],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1190,6 +1205,7 @@ fn doctor_rosetta_namespace_without_domain_entry_warns() {
         mox_files: vec![],
         rosetta_files: vec![file],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1227,6 +1243,7 @@ fn doctor_rosetta_import_without_matching_file_warns() {
         mox_files: vec![],
         rosetta_files: vec![file],
         ddd_files: vec![],
+        evt_files: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);

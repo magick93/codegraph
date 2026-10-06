@@ -93,6 +93,8 @@ pub struct MockEngine {
     rule_refs: Mutex<Vec<RuleRefRecord>>,
     /// Ingested `.ddd` design models (issue #449).
     ddd_models: Mutex<Vec<DddModelGraph>>,
+    /// Ingested `.evt` event-contract models (issue #454).
+    evt_models: Mutex<Vec<EvtModelGraph>>,
     start_time: Instant,
 }
 
@@ -163,6 +165,7 @@ impl MockEngine {
             rule_applies_to: Mutex::new(Vec::new()),
             rule_refs: Mutex::new(Vec::new()),
             ddd_models: Mutex::new(Vec::new()),
+            evt_models: Mutex::new(Vec::new()),
             start_time: Instant::now(),
         }
     }

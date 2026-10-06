@@ -30,13 +30,22 @@ impl GlobalGenerator for WebhookDispatchGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
-        _config: &DomainConfig,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        // Typed-envelope drain branch (.evt, issues #454/#455): only when
+        // the architecture is non-empty does the context carry `evt_events`
+        // — an empty architecture keeps the EXACT pre-#455 empty context,
+        // so the rendering is byte-identical.
+        let architecture = crate::evt_events::architecture_for(db, project, config).await?;
+        let ctx = if architecture.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::json!({ "evt_events": true })
+        };
         let content = render_template_with_project(tera, "webhook/dispatch.tera", &ctx, project)?;
 
         Ok(vec![GeneratedFile {

@@ -181,8 +181,15 @@ impl EntityGenerator for DdlGenerator {
             .query_ddl_context(db, schema_title, domain, config)
             .await?;
 
-        // Skip non-entity schemas (codelists handled separately)
-        if ctx.table_name.is_empty() {
+        // Skip non-entity schemas (codelists handled separately). The
+        // trigger-bearing-table view is the ONE enumeration shared with
+        // crate::events (the semantic event model's implicit per-domain
+        // channels publish exactly this set) — an empty table_name means
+        // no event trigger and no publication.
+        if crate::events::trigger_publication_from_context(&ctx)
+            .table_name
+            .is_empty()
+        {
             return Ok(Vec::new());
         }
 

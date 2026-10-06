@@ -142,11 +142,31 @@ impl WebhookDispatcher {
 
             for row in &msgs {
                 let msg_id: i64 = row.try_get_by_index(0)?;
-                let message: serde_json::Value = row.try_get_by_index(1)?;
+                let message: serde_json::Value = row.try_get_by_index(1)?;{% if evt_events %}
+
+                // Typed event envelope (.evt contracts): the declared event
+                // name rides the `event` key and is mirrored into event_type
+                // so webhook subscription matching is unchanged. `version`
+                // and `channel` ride the envelope; the entity columns are
+                // absent for declared events (deliveries store the whole
+                // envelope). A null domain matches no webhook subscription —
+                // the matcher compares event_domain exactly.
+                let is_typed_envelope = message.get("event").is_some();
+                let event_type = if is_typed_envelope {
+                    message["event"].as_str().unwrap_or("")
+                } else {
+                    message["event_type"].as_str().unwrap_or("")
+                };
+                let event_domain = message["domain"].as_str().unwrap_or("");
+                let event_entity = if is_typed_envelope {
+                    ""
+                } else {
+                    message["entity_table"].as_str().unwrap_or("")
+                };{% else %}
 
                 let event_type = message["event_type"].as_str().unwrap_or("");
                 let event_domain = message["domain"].as_str().unwrap_or("");
-                let event_entity = message["entity_table"].as_str().unwrap_or("");
+                let event_entity = message["entity_table"].as_str().unwrap_or("");{% endif %}
                 let entity_id: Uuid = message["entity_id"]
                     .as_str()
                     .and_then(|s| Uuid::parse_str(s).ok())
@@ -229,11 +249,13 @@ impl WebhookDispatcher {
                     .await;
                 }
 
-                // Delete processed messages from pgmq only when all delivery
-                // records were created successfully. If any INSERT failed, the
+                // Delete processed messages from pgmq only when all delivery{% if evt_events %}
+                // records AND every in-process consumer dispatch succeeded.{% else %}
+                // records were created successfully.{% endif %} If any INSERT failed, the
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
-                if all_inserts_succeeded {
+                if all_inserts_succeeded{% if evt_events %}
+                    && crate::events::consumers::dispatch_registered(&self.db, &message) == 0{% endif %} {
                     let _ = self
                         .db
                         .execute_raw(Statement::from_sql_and_values(
