@@ -72,8 +72,10 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         // loop can apply the same DDD-design operation override the dto
         // generator applies (below) — otherwise mod.rs declares dto_create/
         // dto_update modules the dto generator intentionally skipped.
-        let mut domain_entity_map: std::collections::HashMap<String, Vec<(String, String, String)>> =
-            std::collections::HashMap::new();
+        let mut domain_entity_map: std::collections::HashMap<
+            String,
+            Vec<(String, String, String)>,
+        > = std::collections::HashMap::new();
         let mut seen = std::collections::HashSet::new();
         let mut domain_order = Vec::new();
         let mut seen_domains = std::collections::HashSet::new();

@@ -493,7 +493,8 @@ pub async fn compute_generation_order(
     {
         let mut by_domain_module: HashMap<(String, String), Vec<&str>> = HashMap::new();
         for e in &sorted_entries {
-            let module = codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&e.schema_title));
+            let module =
+                codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&e.schema_title));
             by_domain_module
                 .entry((e.domain.clone(), module))
                 .or_default()
