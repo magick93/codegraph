@@ -233,6 +233,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("integration_catalog",  Global, Common, &[], &[]),
         cap("webhook_dispatch",     Global, Common, &[], &[]),
         cap("webhook_endpoint_api", Global, Common, &[], &[]),
+        cap("evt_events",           Global, Common, &[], &[]),
         cap("seed_provision",       Global, Common, &[], &[]),
 
         // ── ops harness generators ──────────────────────────────────────

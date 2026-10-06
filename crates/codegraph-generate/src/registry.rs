@@ -7,8 +7,8 @@ use crate::output::{
 };
 use crate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use crate::{
-    api, atproto, cli, db, ddd, domain_types, emdash, fern, grpc, hooks, ifml, integration, ops,
-    playwright, scaffold, seed, test, ui, webhook,
+    api, atproto, cli, db, ddd, domain_types, emdash, evt_events, fern, grpc, hooks, ifml,
+    integration, ops, playwright, scaffold, seed, test, ui, webhook,
 };
 
 /// Build the per-entity generator set.
@@ -350,6 +350,12 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         Box::new(webhook::endpoint_api::WebhookEndpointApiGenerator::new(
             output_dir,
         )) as Box<dyn GlobalGenerator>,
+    );
+    // Typed event emission + subscriptions (issues #454/#455): the
+    // generator itself gates on the architecture — no `.evt` input emits
+    // zero files — so it registers unconditionally.
+    global_gens.push(
+        Box::new(evt_events::EvtEventsGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
     );
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {

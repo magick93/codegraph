@@ -493,6 +493,32 @@ fn node_type_ddl() -> Vec<&'static str> {
             capabilities_json STRING NOT NULL,
             ordinal INTEGER NOT NULL
         )",
+        // Event-contract plane (issue #454). Three standalone node families
+        // mirroring the rex-ir `.evt` artifact; the intra-file event
+        // references (channel publishes, subscription events) and payload
+        // fields persist as JSON-string properties (the DddService
+        // `operations_json` pattern) — no edge types this time. Unrelated
+        // to the IFML `:Event` label.
+        "CREATE NODE TYPE IF NOT EXISTS EvtEvent (
+            source_path STRING NOT NULL,
+            name STRING NOT NULL,
+            version STRING,
+            fields_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS EvtChannel (
+            source_path STRING NOT NULL,
+            name STRING NOT NULL,
+            publishes_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
+        "CREATE NODE TYPE IF NOT EXISTS EvtSubscription (
+            source_path STRING NOT NULL,
+            name STRING NOT NULL,
+            events_json STRING NOT NULL,
+            consumer STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
     ]
 }
 

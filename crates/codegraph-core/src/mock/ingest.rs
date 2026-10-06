@@ -538,6 +538,11 @@ impl GraphIngestor for MockEngine {
         Ok(())
     }
 
+    async fn ingest_evt_model(&self, model: &EvtModelGraph) -> Result<(), GraphError> {
+        self.evt_models.lock().unwrap().push(model.clone());
+        Ok(())
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();

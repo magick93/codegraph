@@ -9,6 +9,7 @@ mod condition;
 mod ddd;
 mod discovery;
 mod edge;
+mod events;
 mod field_def;
 mod function;
 mod ifml;
@@ -52,6 +53,7 @@ pub use ddd::{
 };
 pub use discovery::{DetectionSource, Extension, ParentCandidate};
 pub use edge::{EdgeProperties, EdgeType};
+pub use events::{EvtChannelNode, EvtEventField, EvtEventNode, EvtModelGraph, EvtSubscriptionNode};
 pub use field_def::{
     FieldDefinition, codelist_enum_name_from_ref, ensure_id_suffix, resolve_field,
     resolve_fk_column_name,

@@ -283,6 +283,10 @@ pub struct DoctorArgs {
     /// imported .mox domains (the same read+collect+compile the ingest
     /// path uses); error-severity diagnostics are hard failures.
     pub ddd_files: Vec<PathBuf>,
+    /// rexlang .evt event-contract files (optional). Compile-verified
+    /// against their imported .mox domains (the same read+collect+compile
+    /// the ingest path uses); error-severity diagnostics are hard failures.
+    pub evt_files: Vec<PathBuf>,
 }
 
 /// Outcome counts for a doctor run. `model_warnings` isolates the
@@ -656,6 +660,54 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
     (hard, soft)
 }
 
+/// Validate `--evt-files` for doctor (issue #454): every event contract
+/// compiles against its imported .mox domains through the SAME
+/// read+collect+compile helper the ingest path uses, so doctor and ingest
+/// cannot drift. Error-severity diagnostics (or a missing artifact) are
+/// hard failures with the per-file rendered output; warnings count as
+/// soft. Returns the (hard_failures, soft_warnings) contributed.
+fn check_evt_files(evt_files: &[PathBuf]) -> (usize, usize) {
+    let mut hard = 0;
+    let mut soft = 0;
+    for path in evt_files {
+        match crate::ingest::evt_ingest::read_and_compile_evt(path) {
+            Ok(compiled) => {
+                let rendered = crate::ingest::evt_ingest::render_evt_diagnostics(&compiled);
+                if !rendered.is_empty() {
+                    println!("{rendered}");
+                }
+                let has_errors = compiled
+                    .compilation
+                    .diagnostics
+                    .iter()
+                    .any(|(_, diagnostic)| diagnostic.is_error());
+                if has_errors || compiled.compilation.model.is_none() {
+                    hard += 1;
+                    println!("FAIL evt — {} does not compile", path.display());
+                    println!("     hint: fix the rexlang event-contract errors reported above");
+                    continue;
+                }
+                soft += compiled.compilation.diagnostics.len();
+                if let Some(model) = &compiled.compilation.model {
+                    println!(
+                        "PASS evt — {} compiles ({} event(s), {} channel(s), {} subscription(s))",
+                        path.display(),
+                        model.events.len(),
+                        model.channels.len(),
+                        model.subscriptions.len()
+                    );
+                }
+            }
+            Err(e) => {
+                hard += 1;
+                println!("FAIL evt — {e}");
+                println!("     hint: check the .evt file and its imported .mox domains");
+            }
+        }
+    }
+    (hard, soft)
+}
+
 /// Validate an existing consumer project. Prints pass/fail checks and
 /// returns Err when any hard check fails; Ok carries the outcome counts.
 pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
@@ -830,6 +882,15 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     // it never feeds model_warnings.
     if !args.ddd_files.is_empty() {
         let (hard, soft) = check_ddd_files(&args.ddd_files);
+        hard_failures += hard;
+        soft_warnings += soft;
+    }
+
+    // The .evt events plane is additive to any model source:
+    // compile-verify each contract when provided (issue #454). Not a
+    // model-source check, so it never feeds model_warnings.
+    if !args.evt_files.is_empty() {
+        let (hard, soft) = check_evt_files(&args.evt_files);
         hard_failures += hard;
         soft_warnings += soft;
     }

@@ -95,6 +95,7 @@ async fn run_generation(fixture_root: &Path, output_dir: &Path) {
         mox_files: &[],
         rosetta_files: &models,
         ddd_files: &[],
+        evt_files: &[],
         ifml_framework: &[],
         ifml_components: None,
         ifml_design_system: None,

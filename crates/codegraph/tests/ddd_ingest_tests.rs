@@ -735,6 +735,7 @@ fn ddd_files_are_part_of_the_graph_cache_inputs() {
         std::slice::from_ref(&design),
         &[],
         &[],
+        &[],
     )
     .unwrap();
     assert!(
@@ -761,6 +762,7 @@ fn ddd_files_are_part_of_the_graph_cache_inputs() {
             std::slice::from_ref(&design),
             &[],
             &[],
+            &[],
         )
         .unwrap(),
     );
@@ -770,9 +772,18 @@ fn ddd_files_are_part_of_the_graph_cache_inputs() {
     );
 
     // A run without ddd files is unaffected (the group is empty).
-    let without =
-        codegraph::artifact::collect_run_inputs(None, None, &domains_path, &[], &[], &[], &[], &[])
-            .unwrap();
+    let without = codegraph::artifact::collect_run_inputs(
+        None,
+        None,
+        &domains_path,
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+    )
+    .unwrap();
     assert!(
         !without.iter().any(|f| f.path.contains(".ddd")),
         "no ddd entries without ddd files"

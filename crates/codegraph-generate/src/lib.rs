@@ -21,6 +21,8 @@ pub mod db;
 pub mod ddd;
 pub mod domain_types;
 pub mod emdash;
+pub mod events;
+pub mod evt_events;
 pub mod fern;
 pub mod grpc;
 pub mod hooks;

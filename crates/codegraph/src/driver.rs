@@ -55,6 +55,11 @@ pub struct RunArgs<'a> {
     /// (designs/repositories/services/searches). Absent/empty = no design
     /// ingest, generators unchanged.
     pub ddd_files: &'a [PathBuf],
+    /// rexlang `.evt` event-contract files (issue #454), compiled against
+    /// their imported `.mox` domains and ingested as the events plane
+    /// (events/channels/subscriptions). Absent/empty = no event ingest,
+    /// generators unchanged.
+    pub evt_files: &'a [PathBuf],
     pub ifml_framework: &'a [String],
     /// Optional `ifml-components.toml` mapping IFML components to
     /// handcrafted framework components. Absent = all built-in templates.
@@ -226,6 +231,7 @@ pub async fn run_with_graph_cache(
         mox_files,
         rosetta_files,
         ddd_files,
+        evt_files,
         ifml_framework,
         ifml_components,
         ifml_design_system,
@@ -272,6 +278,7 @@ pub async fn run_with_graph_cache(
                 mox_files,
                 rosetta_files,
                 ddd_files,
+                evt_files,
                 ifml_files,
                 openapi_files,
             )
@@ -597,6 +604,23 @@ pub async fn run_with_graph_cache(
             )
             .await?;
             println!("Pass 1c complete: {ddd_stats}");
+        }
+
+        // Pass 1d: Ingest rexlang .evt event-contract files (issue #454):
+        // compiled against their imported .mox domains and landed as the
+        // events plane. Runs AFTER the schema passes so payload field types
+        // resolve against the full ingested title set; a compile error is a
+        // hard error (the DddModel precedent).
+        if !evt_files.is_empty() {
+            println!("Pass 1d: {} evt files to ingest", evt_files.len());
+            let evt_stats = crate::ingest::evt_ingest::ingest_evt_files(
+                be.ingestor(),
+                be.querier(),
+                evt_files,
+                &domain_config,
+            )
+            .await?;
+            println!("Pass 1d complete: {evt_stats}");
         }
 
         // Pass 1c: Ingest API model from domain configuration

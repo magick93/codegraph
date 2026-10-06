@@ -43,6 +43,13 @@ pub struct ScaffoldContext {
     /// `hr-seed` dependency and the `seed` `[[bin]]` entry in Cargo.toml
     /// plus `pub mod seed;` in lib.rs.
     pub has_seed: bool,
+    /// Whether the graph carries a semantic event architecture (.evt,
+    /// issues #454/#455) — gates `pub mod events;` in lib.rs and the
+    /// `anyhow` dependency the events consumers use. Skipped from the
+    /// serialized context when false, keeping every template rendering
+    /// byte-identical on flag-off runs.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_events: bool,
     /// Resolved path (relative to the output dir when possible) of the
     /// `hr-seed` crate, discovered by walking up from the output dir and
     /// CWD looking for a sibling `hr-seed` directory.
@@ -338,6 +345,15 @@ impl GlobalGenerator for ScaffoldGenerator {
         grant_schemas.sort();
         grant_schemas.dedup();
 
+        // Semantic event architecture (.evt, issues #454/#455): the flag
+        // is GRAPH-driven, not build-plan-driven — the `evt_events`
+        // generator registers unconditionally and emits the `src/events/`
+        // module only when the architecture is non-empty, so lib.rs must
+        // declare it under exactly the same condition.
+        let has_events = !crate::evt_events::architecture_for(db, project, config)
+            .await?
+            .is_empty();
+
         let ctx = ScaffoldContext {
             app_name: project.identity.app_name.clone(),
             domains,
@@ -360,6 +376,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_admin_cli: self.has_admin_cli,
             has_labels: self.has_labels,
             has_seed: self.has_seed,
+            has_events,
             seed_crate_path,
             migration_strategy: self.migration_strategy.clone(),
         };
@@ -663,6 +680,7 @@ mod tests {
             has_admin_cli: false,
             has_labels: false,
             has_seed: false,
+            has_events: false,
             seed_crate_path: String::new(),
             migration_strategy: "sea-orm".to_string(),
         }
