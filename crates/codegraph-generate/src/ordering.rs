@@ -485,5 +485,39 @@ pub async fn compute_generation_order(
         }
     }
 
+    // Module-collision diagnostics: two titles in one domain whose stripped
+    // names land on the same module (e.g. HR Open "Type"-suffix stripping
+    // turning a `LifeEventType` enum and a `LifeEvent` class both into
+    // `life_event`) generate duplicate handlers/openapi configs under one
+    // module — a broken generated app with no hint as to why. This is only
+    // fatal when both titles produce entities, which ordering cannot see
+    // (generator selection lives in the profile), so warn loudly instead of
+    // erroring: fixtures legitimately carry such pairs with no generators
+    // enabled.
+    {
+        let mut by_domain_module: HashMap<(String, String), Vec<&str>> = HashMap::new();
+        for e in &sorted_entries {
+            let module =
+                codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&e.schema_title));
+            by_domain_module
+                .entry((e.domain.clone(), module))
+                .or_default()
+                .push(e.schema_title.as_str());
+        }
+        let mut collisions: Vec<String> = by_domain_module
+            .iter()
+            .filter(|(_, titles)| titles.len() > 1)
+            .map(|((domain, module), titles)| {
+                format!(
+                    "domain `{domain}`: titles {titles:?} all map to module `{module}` (rename all but one so their stripped names differ)"
+                )
+            })
+            .collect();
+        collisions.sort();
+        for collision in &collisions {
+            tracing::warn!("module name collision in generation order: {collision}");
+        }
+    }
+
     Ok(sorted_entries)
 }

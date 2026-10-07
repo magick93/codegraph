@@ -426,9 +426,23 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         ctx.capabilities.has(Capability::Grpc),
     )) as Box<dyn GlobalGenerator>);
 
+    // .evt inputs imply the events module: the graph-driven scaffold gate
+    // (`has_events`) declares `pub mod events;` whenever the architecture is
+    // non-empty, so a profile that predates `evt_events` (init templates
+    // before #456) must not silently drop the generator — the generated lib
+    // would declare a module with no files (E0583). Implied beats omitted.
+    let evt_events_implied = match ctx.build_plan {
+        Some(bp) => !bp.has_global_gen("evt_events"),
+        None => false,
+    };
+
     let mut global_gens: Vec<Box<dyn GlobalGenerator>> = global_gens
         .into_iter()
-        .filter(|generator| ctx.plan_has_global(generator.name()))
+        .filter(|generator| {
+            generator.name() == "evt_events" && evt_events_implied || {
+                ctx.plan_has_global(generator.name())
+            }
+        })
         .filter(|generator| {
             generator
                 .supported_targets()

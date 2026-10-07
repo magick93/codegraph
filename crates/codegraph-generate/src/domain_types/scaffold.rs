@@ -68,8 +68,14 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         // Group generation_order entries by domain, deduplicating by (domain, module_name).
-        let mut domain_entity_map: std::collections::HashMap<String, Vec<(String, String)>> =
-            std::collections::HashMap::new();
+        // The tuple carries the entry's schema_title so the per-entity mod.rs
+        // loop can apply the same DDD-design operation override the dto
+        // generator applies (below) — otherwise mod.rs declares dto_create/
+        // dto_update modules the dto generator intentionally skipped.
+        let mut domain_entity_map: std::collections::HashMap<
+            String,
+            Vec<(String, String, String)>,
+        > = std::collections::HashMap::new();
         let mut seen = std::collections::HashSet::new();
         let mut domain_order = Vec::new();
         let mut seen_domains = std::collections::HashSet::new();
@@ -104,11 +110,15 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             domain_entity_map
                 .entry(entry.domain.clone())
                 .or_default()
-                .push((entity_name, module_name));
+                .push((entity_name, module_name, entry.schema_title.clone()));
         }
 
         let src_dir = &self.src_dir;
         let mut files = Vec::new();
+
+        // DDD design surface (issue #449), loaded once: designs override the
+        // per-entity operation set below in lockstep with the dto generator.
+        let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
 
         // Clean stale entity directories that no longer appear in the
         // generation order.  Previous pipeline runs may have written
@@ -171,7 +181,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
                 domain: domain_name.clone(),
                 entities: entities
                     .iter()
-                    .map(|(_name, module)| DomainModEntity {
+                    .map(|(_name, module, _title)| DomainModEntity {
                         module_name: module.clone(),
                     })
                     .collect(),
@@ -189,9 +199,18 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             });
 
             // 2. Generate per-entity mod.rs
-            for (entity_name, module_name) in entities {
-                let operations =
+            for (entity_name, module_name, schema_title) in entities {
+                // DDD design surface (issue #449): a design covering this
+                // title overrides the operation set exactly as
+                // `build_dto_context` does — a design without a repository
+                // maps to an empty set, so no dto_create/dto_update modules
+                // are declared for it. Without this, mod.rs declares modules
+                // the dto generator intentionally skipped (E0583).
+                let mut operations =
                     resolve_entity_operations(db, config, domain_name, entity_name).await;
+                if let Some(design_ops) = design_surface.operations_for(schema_title) {
+                    operations = design_ops;
+                }
 
                 // `entity_name` is already the graph's canonical PascalCase
                 // identifier (rust_type_name, acronym-safe). Re-pascal-casing

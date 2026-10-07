@@ -600,6 +600,21 @@ impl RepositoryImplEmitter {
                             format!("crate::domain::{}::{}::", last.domain, last.module_name)
                         }
                     };
+                    // A self-targeting path whose segment entity_name diverged
+                    // (rust_type_name vs schema title) still resolves to this
+                    // very module — the header's `use super::dto_response::…`
+                    // already imports everything; emitting the full-path form
+                    // again is an E0252 duplicate.
+                    let own_base =
+                        match crate::namespace_rust_prefix(tree.namespace.as_deref(), project) {
+                            Some(ns) => format!("crate::domain::{ns}::{}::", tree.module_name),
+                            None => {
+                                format!("crate::domain::{}::{}::", domain, tree.module_name)
+                            }
+                        };
+                    if base == own_base {
+                        continue;
+                    }
                     for child in &ttree.child_tables {
                         walk_child_imports(
                             child,
