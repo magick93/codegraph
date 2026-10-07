@@ -31,6 +31,7 @@ fn string_prop(name: &str, required: bool) -> PropertyNode {
         format: None,
         is_required: required,
         is_nullable: !required,
+        is_id: false,
         is_array: false,
         min_items: None,
         max_items: None,

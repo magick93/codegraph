@@ -494,6 +494,7 @@ fn property_node_from_record(node: &NodeRecord) -> Result<PropertyNode> {
         format: prop_str(node, "format"),
         is_required: prop_bool(node, "is_required").unwrap_or(false),
         is_nullable: prop_bool(node, "is_nullable").unwrap_or(false),
+        is_id: false,
         is_array: prop_bool(node, "is_array").unwrap_or(false),
         pattern: prop_str(node, "pattern"),
         min_length: parse_u64("min_length"),

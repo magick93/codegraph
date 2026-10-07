@@ -701,6 +701,7 @@ async fn ingest_properties_from_schema(
                     .map(|s| s.to_string()),
                 is_required,
                 is_nullable: !is_required,
+                is_id: false,
                 is_array,
                 min_items: prop_schema
                     .get("minItems")

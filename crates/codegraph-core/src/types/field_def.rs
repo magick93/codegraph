@@ -139,6 +139,7 @@ mod tests {
             format: None,
             is_required: false,
             is_nullable: false,
+            is_id: false,
             is_array,
             min_items: None,
             max_items: None,

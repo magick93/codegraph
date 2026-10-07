@@ -527,6 +527,7 @@ fn ux_test_prop(name: &str) -> PropertyNode {
         format: None,
         is_required: false,
         is_nullable: false,
+        is_id: false,
         type_expr: None,
         is_array: false,
         min_items: None,
