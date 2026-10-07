@@ -1283,6 +1283,23 @@ fn feature_property(
         },
     };
 
+    // Identity features (the `id` modifier) are entity identifiers: every
+    // layer must agree on Uuid. The declared datatype is overridden — the
+    // DDL and entity generators already emit Uuid for these columns, and a
+    // TEXT/String projection over a Uuid column breaks generated hydration
+    // (E0308: expected `String`, found `Uuid`).
+    let mapped = if feature.is_id {
+        match mapped {
+            Mapped::Primitive { .. } => Mapped::Primitive {
+                pg: PgType::Uuid,
+                format: Some("uuid".to_string()),
+            },
+            other => other,
+        }
+    } else {
+        mapped
+    };
+
     let (kind, pg_base, rust_base, sea_base, ref_target, format_hint) = match mapped {
         Mapped::Primitive { pg, format } => (
             RefClassificationKind::PrimitiveWrapper,
