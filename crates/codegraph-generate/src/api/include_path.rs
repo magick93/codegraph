@@ -1110,9 +1110,15 @@ async fn resolve_fk_via_graph(
         }
     }
 
-    // Priority 3: property whose pg_column_name is "{seg}_id".
+    // Priority 3: property whose pg_column_name is "{seg}_id". Identity
+    // and audit columns are never FKs — a naming match against one is a
+    // false positive (e.g. a `deployment_id` identity column matching a
+    // Deployment include).
     let seg_id = format!("{seg_snake}_id");
     for prop in &source_props {
+        if prop.is_id || is_audit_column(&prop.pg_column_name) {
+            continue;
+        }
         if prop.pg_column_name.to_lowercase() == seg_id {
             let fd = resolve_field(prop);
             return Ok((fd.column_name, prop.is_array, true));
@@ -1131,6 +1137,9 @@ async fn resolve_fk_via_graph(
     if parent_ref_stem != seg_snake {
         let parent_seg_id = format!("{parent_ref_stem}_id");
         for prop in &source_props {
+            if prop.is_id || is_audit_column(&prop.pg_column_name) {
+                continue;
+            }
             if prop.pg_column_name.to_lowercase() == parent_seg_id {
                 let fd = resolve_field(prop);
                 return Ok((fd.column_name, prop.is_array, true));
@@ -1140,6 +1149,15 @@ async fn resolve_fk_via_graph(
 
     // Fallback: convention-based default using seg — UNVERIFIED.
     Ok((seg_id, false, false))
+}
+
+/// Audit columns (timestamps + soft-delete) are scaffold-owned and never
+/// reference FKs — exclude them from column-name-convention FK matching.
+fn is_audit_column(pg_column_name: &str) -> bool {
+    matches!(
+        pg_column_name,
+        "created_at" | "updated_at" | "deleted_at" | "deleted_by" | "updated_by"
+    )
 }
 
 /// Derive the response Rust type name for a resolved include path.

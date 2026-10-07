@@ -580,9 +580,10 @@ impl RepositoryImplEmitter {
                     // e.g. a self-referencing FK) already had every child
                     // imported via `use super::dto_response::…` in the
                     // header — emitting the full-path form again is an E0252
-                    // duplicate. Compare entity identity: module names can
-                    // diverge (schema module vs plural table name).
-                    if last.domain == domain && last.entity_name == tree.entity_name {
+                    // duplicate. Compare entity identity by domain and
+                    // module name: formatted paths can diverge under
+                    // namespace_layout while naming the same module.
+                    if last.domain == domain && last.module_name == tree.module_name {
                         continue;
                     }
                     // Issue #268: namespace-derived target module path
