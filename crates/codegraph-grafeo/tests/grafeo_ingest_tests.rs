@@ -40,6 +40,7 @@ fn test_property_node() -> PropertyNode {
         format: None,
         is_required: true,
         is_nullable: false,
+        is_id: true,
         is_array: false,
         min_items: None,
         max_items: None,
@@ -222,4 +223,24 @@ async fn test_finalize_stats() {
     assert_eq!(stats.codelist_count, 1);
     assert_eq!(stats.enum_value_count, 1);
     assert!(stats.duration.as_nanos() > 0);
+}
+
+#[tokio::test]
+async fn test_ingest_property_persists_is_id() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    engine.ingest_schema(&test_schema_node()).await.unwrap();
+    let mut prop = test_property_node();
+    prop.is_id = true;
+
+    engine
+        .ingest_property("PersonType", "test/PersonType", &prop)
+        .await
+        .unwrap();
+    use codegraph_core::traits::GraphQuerier;
+    let props = engine.get_properties("PersonType").await.unwrap();
+    assert_eq!(props.len(), 1);
+    assert!(
+        props[0].is_id,
+        "is_id must round-trip through the graph: identity features drive FK resolution"
+    );
 }

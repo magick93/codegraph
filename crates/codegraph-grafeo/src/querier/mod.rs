@@ -40,10 +40,10 @@ pub(super) const SCHEMA_RETURN_COLS: &str = "\
     s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations, \
     s.access, s.annotations";
 
-/// The RETURN clause for all PropertyNode queries — keeps the 21 columns in one place.
+/// The RETURN clause for all PropertyNode queries — keeps the columns in one place.
 pub(super) const PROPERTY_RETURN_COLS: &str = "\
     p.name, p.prop_type, p.description, p.format, \
-    p.is_required, p.is_nullable, p.is_array, p.pattern, \
+    p.is_required, p.is_nullable, p.is_id, p.is_array, p.pattern, \
     p.min_length, p.max_length, p.minimum, p.maximum, \n    p.min_items, p.max_items, \
     p.pg_column_name, p.pg_column_type, p.rust_field_name, p.rust_field_type, \
     p.sea_orm_type, p.render_strategy, p.ref_target, p.classification, \
