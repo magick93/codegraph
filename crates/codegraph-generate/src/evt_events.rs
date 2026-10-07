@@ -447,14 +447,6 @@ impl GlobalGenerator for EvtEventsGenerator {
         project: &crate::ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let arch = architecture_for(db, project, config).await?;
-        eprintln!(
-            "[evt-probe] generator ran: events={} channels={} domain_channels={} subscriptions={} files_emitted_below={}",
-            arch.events.len(),
-            arch.channels.len(),
-            arch.domain_channels.len(),
-            arch.subscriptions.len(),
-            !arch.is_empty()
-        );
         if arch.is_empty() {
             // The acceptance contract: no `.evt` input ⇒ zero files.
             return Ok(Vec::new());
