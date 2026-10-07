@@ -739,6 +739,13 @@ async fn run_global_phase(
     order: &[GenerationEntry],
     report: &mut report::GenerationReport,
 ) -> Result<()> {
+    eprintln!(
+        "[phase-probe] global generators: {:?}",
+        global_gens
+            .iter()
+            .map(|g| g.name().to_string())
+            .collect::<Vec<_>>()
+    );
     let (first, parallel): (Vec<_>, Vec<_>) = global_gens
         .iter()
         .partition(|generator| generator.sequential_first());
