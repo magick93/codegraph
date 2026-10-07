@@ -164,7 +164,7 @@ impl GrafeoEngine {
             name: $name, prop_type: $prop_type, description: $description, \
             format: $format, \
             is_required: $is_required, is_nullable: $is_nullable, \
-            is_array: $is_array, pattern: $pattern, \
+            is_id: $is_id, is_array: $is_array, pattern: $pattern, \
             min_length: $min_length, max_length: $max_length, \
             min_items: $min_items, max_items: $max_items, \
             minimum: $minimum, maximum: $maximum, \
@@ -200,6 +200,7 @@ impl GrafeoEngine {
             ("format".into(), opt_to_grafeo_value(&prop.format)),
             ("is_required".into(), bool_to_grafeo_value(prop.is_required)),
             ("is_nullable".into(), bool_to_grafeo_value(prop.is_nullable)),
+            ("is_id".into(), bool_to_grafeo_value(prop.is_id)),
             ("is_array".into(), bool_to_grafeo_value(prop.is_array)),
             ("pattern".into(), opt_to_grafeo_value(&prop.pattern)),
             ("min_length".into(), opt_to_grafeo_value(&min_length_str)),

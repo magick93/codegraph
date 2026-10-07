@@ -564,6 +564,10 @@ async fn resolve_auto_paths(
         let Some(fk_column) =
             resolve_child_fk_column(config, domain, target_title, schema_title, db).await?
         else {
+            eprintln!(
+                "[fk-debug] phantom parent candidate skipped: child={} parent={}",
+                target_title, schema_title
+            );
             tracing::warn!(
                 child = %target_title,
                 parent = %schema_title,
@@ -715,6 +719,10 @@ async fn resolve_auto_paths(
         // the source (convention fallback) would emit a fetch reading a
         // column the source entity does not have — skip it loudly.
         if !fk_verified && !is_array {
+            eprintln!(
+                "[fk-debug] unverified single reference skipped: source={} target={}",
+                schema_title, ref_title
+            );
             tracing::warn!(
                 source = %schema_title,
                 target = %ref_title,
@@ -738,6 +746,10 @@ async fn resolve_auto_paths(
         // the reverse collection; without one (junction or unmanaged
         // relationship) there is nothing to fetch by column.
         if is_array && !reverse_verified {
+            eprintln!(
+                "[fk-debug] array reference skipped (no back-FK): source={} target={}",
+                schema_title, ref_title
+            );
             tracing::warn!(
                 source = %schema_title,
                 target = %ref_title,
