@@ -504,7 +504,12 @@ impl RepositoryImplEmitter {
                     .map(|b| b.join("::"))
                     .unwrap_or_default();
                 let is_self_target = path.segments[0].domain == domain
-                    && path.segments[0].entity_name == tree.entity_name;
+                    // Compare module names (pg_table_name), not rust type
+                    // names: the two can diverge (rust_type_name vs schema
+                    // title) while naming the same module, and the header
+                    // already imports self-module dto types wholesale via
+                    // `use super::dto_response::…`.
+                    && path.segments[0].module_name == tree.module_name;
                 if resolved_names.insert(resp.clone())
                     && resp.ends_with("Response")
                     && !is_self_target
