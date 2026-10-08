@@ -78,6 +78,7 @@ pub(super) fn make_primitive_prop(name: &str, prop_type: &str, is_required: bool
         format: None,
         is_required,
         is_nullable: false,
+        is_id: false,
         is_array: false,
         min_items: None,
         max_items: None,

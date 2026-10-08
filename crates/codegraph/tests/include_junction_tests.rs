@@ -57,6 +57,7 @@ fn prop(
     kind: RefClassificationKind,
 ) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: if is_array {
             "array".into()

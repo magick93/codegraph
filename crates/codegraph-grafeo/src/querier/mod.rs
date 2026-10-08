@@ -40,10 +40,10 @@ pub(super) const SCHEMA_RETURN_COLS: &str = "\
     s.has_all_of, s.has_one_of, s.has_any_of, s.has_definitions, s.custom_annotations, \
     s.access, s.annotations";
 
-/// The RETURN clause for all PropertyNode queries — keeps the 21 columns in one place.
+/// The RETURN clause for all PropertyNode queries — keeps the columns in one place.
 pub(super) const PROPERTY_RETURN_COLS: &str = "\
     p.name, p.prop_type, p.description, p.format, \
-    p.is_required, p.is_nullable, p.is_array, p.pattern, \
+    p.is_required, p.is_nullable, p.is_id, p.is_array, p.pattern, \
     p.min_length, p.max_length, p.minimum, p.maximum, \n    p.min_items, p.max_items, \
     p.pg_column_name, p.pg_column_type, p.rust_field_name, p.rust_field_type, \
     p.sea_orm_type, p.render_strategy, p.ref_target, p.classification, \
@@ -97,6 +97,26 @@ impl GrafeoEngine {
             },
         )
         .await
+    }
+
+    /// Titles targeted by any property reference edge (`ReferencesSchema`
+    /// or `ItemsOf`, issue #460) — the contained value-object surface.
+    pub(super) async fn query_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        let mut out = std::collections::HashSet::new();
+        for edge in ["ReferencesSchema", "ItemsOf"] {
+            let gql = format!(
+                "MATCH (:Schema)-[:HasProperty]->(:Property)-[:{edge}]->(t:Schema) \
+                 RETURN DISTINCT t.title"
+            );
+            let result = query_gql(self, &gql)?;
+            let reader = RowReader::from_columns(&result.columns);
+            for row in &result.rows {
+                out.insert(reader.get_string(row, "t.title")?);
+            }
+        }
+        Ok(out)
     }
 
     pub(super) async fn query_all_properties(
@@ -425,6 +445,12 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn list_all_schema_references(&self) -> Result<Vec<(String, String)>, GraphError> {
         self.query_all_schema_references().await
+    }
+
+    async fn list_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        self.query_property_target_titles().await
     }
 
     async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {

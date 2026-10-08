@@ -546,6 +546,12 @@ impl GraphQuerier for CachingQuerier<'_> {
         self.inner.list_all_schema_references().await
     }
 
+    async fn list_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        self.inner.list_property_target_titles().await
+    }
+
     async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {
         self.inner.list_all_properties().await
     }

@@ -44,6 +44,11 @@ const MAX_CHILD_DEPTH: usize = 10;
 /// Recursively build a `ChildTableInfo` for a ValueObject property.
 /// Resolves the target schema, classifies its properties, and recurses
 /// for any nested ValueObject properties (creating nested child tables).
+///
+/// `table_name_override` (issue #460): when the contains-target is an
+/// entity, rows live in the target's OWN table linked by the synthetic
+/// parent back-ref FK — pass `Some(target_table)` to project onto it
+/// instead of deriving a `{parent}_{feature}` child-table name.
 #[allow(clippy::too_many_arguments)]
 async fn build_child_table_info(
     db: &dyn GraphQuerier,
@@ -55,6 +60,7 @@ async fn build_child_table_info(
     visited: &mut std::collections::HashSet<String>,
     depth: usize,
     suffix: &str,
+    table_name_override: Option<&str>,
 ) -> Option<ChildTableInfo> {
     if depth >= MAX_CHILD_DEPTH {
         return None;
@@ -94,10 +100,10 @@ async fn build_child_table_info(
             .collect::<Vec<_>>()
     };
 
-    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        parent_table_name, prop_field_def.column_name
-    ));
+    let child_table_name = match table_name_override {
+        Some(table) => codegraph_naming::truncate_pg_identifier(table),
+        None => codegraph_naming::child_table_name(parent_table_name, &prop_field_def.column_name),
+    };
     let child_struct_name = format!(
         "{}{}",
         parent_struct_name,
@@ -142,10 +148,8 @@ async fn build_child_table_info(
                 let enum_name = crate::ddd::dto::codelist_enum_name_from_ref(&c.ref_target);
                 if c.is_array {
                     // Codelist array within a child VO → nested child table
-                    let nested_table = codegraph_naming::truncate_pg_identifier(&format!(
-                        "{}_{}",
-                        child_table_name, c.pg_column_name
-                    ));
+                    let nested_table =
+                        codegraph_naming::child_table_name(&child_table_name, &c.pg_column_name);
                     let nested_struct = format!(
                         "{}{}",
                         child_struct_name,
@@ -156,10 +160,9 @@ async fn build_child_table_info(
                         struct_name: nested_struct,
                         sql_table_name: nested_table,
                         sql_schema_name: schema_name.to_string(),
-                        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_id",
-                            child_table_name
-                        )),
+                        parent_fk_column: codegraph_naming::child_parent_fk_column(
+                            &child_table_name,
+                        ),
                         is_array: true,
                         columns: vec![ChildColumn {
                             field_name: "code".to_string(),
@@ -170,6 +173,7 @@ async fn build_child_table_info(
                             pg_cast: None,
                         }],
                         child_tables: vec![],
+                        is_back_ref: false,
                     });
                 } else {
                     child_columns.push(ChildColumn {
@@ -267,6 +271,7 @@ async fn build_child_table_info(
                     visited,
                     depth + 1,
                     suffix,
+                    None,
                 ))
                 .await;
                 if let Some(nested_info) = nested {
@@ -300,8 +305,7 @@ async fn build_child_table_info(
     // DTO carrying its own `interview_id` next to the parent binding); the
     // table has that column once, bound to the parent FK, so DTO duplicates
     // are dropped and the first occurrence of any repeated column wins.
-    let parent_fk_column =
-        codegraph_naming::truncate_pg_identifier(&format!("{}_id", parent_table_name));
+    let parent_fk_column = codegraph_naming::child_parent_fk_column(parent_table_name);
     {
         let mut seen_fields = std::collections::HashSet::new();
         child_columns.retain(|c| seen_fields.insert(c.field_name.clone()));
@@ -320,6 +324,7 @@ async fn build_child_table_info(
         is_array: prop.is_array,
         columns: child_columns,
         child_tables: nested_child_tables,
+        is_back_ref: table_name_override.is_some(),
     })
 }
 
@@ -456,10 +461,8 @@ pub(crate) async fn build_columns_and_children(
         ) {
             if prop.is_array {
                 let enum_name = crate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target);
-                let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-                    "{}_{}",
-                    module_name, prop.pg_column_name
-                ));
+                let child_table_name =
+                    codegraph_naming::child_table_name(module_name, &prop.pg_column_name);
                 let child_struct = format!(
                     "{}{}",
                     entity_name,
@@ -471,10 +474,7 @@ pub(crate) async fn build_columns_and_children(
                         struct_name: child_struct,
                         sql_table_name: child_table_name,
                         sql_schema_name: schema_name.to_string(),
-                        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_id",
-                            module_name
-                        )),
+                        parent_fk_column: codegraph_naming::child_parent_fk_column(module_name),
                         is_array: true,
                         columns: vec![ChildColumn {
                             field_name: "code".to_string(),
@@ -485,6 +485,7 @@ pub(crate) async fn build_columns_and_children(
                             pg_cast: None,
                         }],
                         child_tables: vec![],
+                        is_back_ref: false,
                     });
                 }
             } else {
@@ -555,19 +556,13 @@ pub(crate) async fn build_columns_and_children(
                 if !has_back_ref && let Some(t) = target {
                     junction_tables.push(JunctionTableInfo {
                         field_name: field_def.rust_field_name.clone(),
-                        sql_table_name: codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_{}",
-                            module_name, field_def.column_name
-                        )),
+                        sql_table_name: codegraph_naming::child_table_name(
+                            module_name,
+                            &field_def.column_name,
+                        ),
                         sql_schema_name: schema_name.to_string(),
-                        parent_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_id",
-                            module_name
-                        )),
-                        child_fk_column: codegraph_naming::truncate_pg_identifier(&format!(
-                            "{}_id",
-                            t.pg_table_name
-                        )),
+                        parent_fk_column: codegraph_naming::child_parent_fk_column(module_name),
+                        child_fk_column: codegraph_naming::child_parent_fk_column(&t.pg_table_name),
                         is_required: prop.is_required,
                     });
                 }
@@ -619,6 +614,44 @@ pub(crate) async fn build_columns_and_children(
                     is_structured_wrapper: false,
                     is_media: false,
                 });
+            } else if prop.is_array
+                && let Some(target) = db
+                    .get_array_item_schema(&prop.name, schema_title)
+                    .await
+                    .ok()
+                    .flatten()
+                && entity_titles.contains(&target.title)
+                && !target.pg_table_name.is_empty()
+            {
+                // Issue #460: the contains-target is an entity ("refers
+                // wins"), so the containment edge projects as the synthetic
+                // back-ref FK on the target's OWN table — the same shape the
+                // DDL plane emits (add_parent_fk via the ArrayItems parent
+                // candidate). A `{parent}_{feature}` child table here would
+                // reference a table the DDL never creates.
+                let target_domain = target
+                    .domain
+                    .clone()
+                    .unwrap_or_else(|| schema_name.to_string());
+                let mut visited = std::collections::HashSet::new();
+                visited.insert(schema_title.to_string());
+                if let Some(child_info) = Box::pin(build_child_table_info(
+                    db,
+                    prop,
+                    schema_title,
+                    module_name,
+                    &target_domain,
+                    entity_name,
+                    &mut visited,
+                    0,
+                    ctx.suffix,
+                    Some(&target.pg_table_name),
+                ))
+                .await
+                    && seen_child_structs.insert(child_info.struct_name.clone())
+                {
+                    child_tables.push(child_info);
+                }
             } else {
                 let mut visited = std::collections::HashSet::new();
                 visited.insert(schema_title.to_string());
@@ -632,6 +665,7 @@ pub(crate) async fn build_columns_and_children(
                     &mut visited,
                     0,
                     ctx.suffix,
+                    None,
                 ))
                 .await
                     && seen_child_structs.insert(child_info.struct_name.clone())

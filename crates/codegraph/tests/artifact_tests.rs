@@ -57,6 +57,7 @@ fn schema(title: &str, classification: &str, domain: &str) -> SchemaNode {
 
 fn property(name: &str, required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: Some(format!("The {name}.")),

@@ -20,6 +20,7 @@ use codegraph_type_contracts::RefClassificationKind;
 
 fn property(name: &str, pg_type: &str) -> codegraph_core::types::PropertyNode {
     codegraph_core::types::PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,

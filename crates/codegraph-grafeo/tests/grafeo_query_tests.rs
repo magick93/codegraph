@@ -40,6 +40,7 @@ fn make_property(name: &str, is_required: bool) -> PropertyNode {
         format: None,
         is_required,
         is_nullable: false,
+        is_id: false,
         is_array: false,
         min_items: None,
         max_items: None,

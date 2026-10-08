@@ -94,12 +94,12 @@ pub async fn resolve_fk_column_name(
 }
 
 /// Append `_id` suffix to a field/column name if not already present.
+///
+/// Canonical implementation lives in codegraph-naming ([`codegraph_naming::
+/// ensure_id_suffix`]); this re-export keeps the `codegraph_core::types`
+/// path stable for the generator crates.
 pub fn ensure_id_suffix(name: &str) -> String {
-    if name.ends_with("_id") {
-        name.to_string()
-    } else {
-        format!("{}_id", name)
-    }
+    codegraph_naming::ensure_id_suffix(name)
 }
 
 /// Extract the codelist enum name from a property's `ref_target` path.
@@ -139,6 +139,7 @@ mod tests {
             format: None,
             is_required: false,
             is_nullable: false,
+            is_id: false,
             is_array,
             min_items: None,
             max_items: None,

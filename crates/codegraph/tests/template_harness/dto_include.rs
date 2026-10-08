@@ -27,6 +27,7 @@ fn prop_split(
     is_array: bool,
 ) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,
@@ -205,6 +206,7 @@ async fn dto_include_dot_notation() {
     let worker_schema = worker_schema();
 
     let deployment_prop = PropertyNode {
+        is_id: false,
         name: "deployment".to_string(),
         prop_type: "object".to_string(),
         description: Some("FK to deployment".to_string()),
@@ -237,6 +239,7 @@ async fn dto_include_dot_notation() {
     };
 
     let position_prop = PropertyNode {
+        is_id: false,
         name: "position".to_string(),
         prop_type: "object".to_string(),
         description: Some("FK to position".to_string()),
@@ -271,6 +274,7 @@ async fn dto_include_dot_notation() {
     // Scalar properties on DeploymentType (non-FK fields that should appear in enriched type)
     let scalar_deployment_props = vec![
         PropertyNode {
+            is_id: false,
             name: "assignment_reason_code".to_string(),
             prop_type: "string".to_string(),
             description: Some("Reason for the deployment assignment".to_string()),
@@ -302,6 +306,7 @@ async fn dto_include_dot_notation() {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "full_time_equivalent_ratio".to_string(),
             prop_type: "number".to_string(),
             description: Some("FTE ratio".to_string()),

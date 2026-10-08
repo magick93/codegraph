@@ -1114,10 +1114,8 @@ async fn build_child_entity(
             .collect::<Vec<_>>()
     };
 
-    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        parent_table_name, prop.pg_column_name
-    ));
+    let child_table_name =
+        codegraph_naming::child_table_name(parent_table_name, &prop.pg_column_name);
     let child_struct_name = format!(
         "{}{}",
         parent_rust_type,
@@ -1245,8 +1243,11 @@ async fn build_child_entity(
         columns,
         relations: Vec::new(),
         structured_imports,
-        has_soft_delete: false,
-        soft_delete_column: None,
+        // Child tables carry the DDL's soft-delete column (see
+        // child_timestamp_columns); the repository emitter's auditable
+        // soft-delete filter relies on it.
+        has_soft_delete: true,
+        soft_delete_column: Some("deleted_at".to_string()),
         soft_delete_visibility: "exclude_by_default".to_string(),
     };
 
@@ -1382,6 +1383,23 @@ fn child_timestamp_columns(columns: &mut Vec<EntityColumn>, dialect: &dyn SqlDia
         pg_cast: None,
         sea_orm_attr: None,
     });
+    // Child tables carry the same soft-delete column the DDL emits for
+    // them — the repository emitter's auditable soft-delete filter
+    // (`Column::DeletedAt.is_null()`) compiles only when the entity model
+    // has the column. Omitting it here desynchronized the entity from the
+    // DDL (E0599 in generated repositories).
+    columns.push(EntityColumn {
+        field_name: "deleted_at".to_string(),
+        rust_type: "Option<chrono::DateTime<chrono::Utc>>".to_string(),
+        sea_orm_type: dialect
+            .map_sea_orm_type("TimestampWithTimeZone")
+            .unwrap_or("TimestampWithTimeZone".to_string()),
+        column_name: "deleted_at".to_string(),
+        is_primary_key: false,
+        is_nullable: true,
+        pg_cast: None,
+        sea_orm_attr: None,
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1401,10 +1419,8 @@ fn build_codelist_child_entity(
     project: &ProjectConfig,
     dialect: &dyn SqlDialect,
 ) -> Result<Vec<GeneratedFile>> {
-    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        parent_table_name, prop.pg_column_name
-    ));
+    let child_table_name =
+        codegraph_naming::child_table_name(parent_table_name, &prop.pg_column_name);
     let child_struct_name = format!(
         "{}{}",
         parent_rust_type,

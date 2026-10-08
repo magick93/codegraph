@@ -504,7 +504,12 @@ impl RepositoryImplEmitter {
                     .map(|b| b.join("::"))
                     .unwrap_or_default();
                 let is_self_target = path.segments[0].domain == domain
-                    && path.segments[0].entity_name == tree.entity_name;
+                    // Compare module names (pg_table_name), not rust type
+                    // names: the two can diverge (rust_type_name vs schema
+                    // title) while naming the same module, and the header
+                    // already imports self-module dto types wholesale via
+                    // `use super::dto_response::…`.
+                    && path.segments[0].module_name == tree.module_name;
                 if resolved_names.insert(resp.clone())
                     && resp.ends_with("Response")
                     && !is_self_target
@@ -580,9 +585,10 @@ impl RepositoryImplEmitter {
                     // e.g. a self-referencing FK) already had every child
                     // imported via `use super::dto_response::…` in the
                     // header — emitting the full-path form again is an E0252
-                    // duplicate. Compare entity identity: module names can
-                    // diverge (schema module vs plural table name).
-                    if last.domain == domain && last.entity_name == tree.entity_name {
+                    // duplicate. Compare entity identity by domain and
+                    // module name: formatted paths can diverge under
+                    // namespace_layout while naming the same module.
+                    if last.domain == domain && last.module_name == tree.module_name {
                         continue;
                     }
                     // Issue #268: namespace-derived target module path

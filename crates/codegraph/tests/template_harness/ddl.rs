@@ -524,6 +524,7 @@ fn assert_ddl_column_type(ddl: &str, column_name: &str, expected_pg: &str) {
 fn candidate_with_fk_properties() -> Vec<PropertyNode> {
     vec![
         PropertyNode {
+            is_id: false,
             name: "givenName".to_string(),
             prop_type: "string".to_string(),
             description: Some("Given name".to_string()),
@@ -555,6 +556,7 @@ fn candidate_with_fk_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "employer".to_string(),
             prop_type: "object".to_string(),
             description: Some("The employer organization".to_string()),
@@ -591,6 +593,7 @@ fn candidate_with_fk_properties() -> Vec<PropertyNode> {
 fn candidate_with_codelist_properties() -> Vec<PropertyNode> {
     vec![
         PropertyNode {
+            is_id: false,
             name: "givenName".to_string(),
             prop_type: "string".to_string(),
             description: None,
@@ -622,6 +625,7 @@ fn candidate_with_codelist_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "gender".to_string(),
             prop_type: "string".to_string(),
             description: Some("Gender code".to_string()),
@@ -753,6 +757,7 @@ async fn codelist_field_with_code_suffix_no_double_code() {
         .with_properties(
             "CandidateType",
             vec![PropertyNode {
+                is_id: false,
                 name: "workerTypeCode".to_string(),
                 prop_type: "string".to_string(),
                 description: Some("Worker type code".to_string()),

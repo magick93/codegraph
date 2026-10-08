@@ -58,6 +58,7 @@ fn candidate_schema() -> SchemaNode {
 fn candidate_properties() -> Vec<PropertyNode> {
     vec![
         PropertyNode {
+            is_id: false,
             name: "givenName".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's given name".to_string()),
@@ -89,6 +90,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "familyName".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's family name".to_string()),
@@ -120,6 +122,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "recruiterId".to_string(),
             prop_type: "string".to_string(),
             description: Some("The recruiter assigned to this candidate".to_string()),

@@ -305,12 +305,21 @@ pub(crate) fn emit_child_reads(
         } else {
             format!("id, {}", col_names.join(", "))
         };
+        let order_by = if child.is_back_ref {
+            // Back-ref children live in the target entity's own table —
+            // which may be non-auditable (no created_at). `id` is the only
+            // column guaranteed present.
+            "id"
+        } else {
+            "created_at"
+        };
         let select_sql = format!(
-            "SELECT {} FROM {}.{} WHERE {} = $1 ORDER BY created_at",
+            "SELECT {} FROM {}.{} WHERE {} = $1 ORDER BY {}",
             select_cols,
             child.sql_schema_name,
             q(&child.sql_table_name),
             child.parent_fk_column,
+            order_by,
         );
 
         wln!(code, "{pad}let {field}_rows = {{", field = child.field_name);

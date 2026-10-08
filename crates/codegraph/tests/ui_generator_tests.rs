@@ -59,6 +59,7 @@ fn candidate_schema() -> SchemaNode {
 fn candidate_properties() -> Vec<PropertyNode> {
     vec![
         PropertyNode {
+            is_id: false,
             name: "givenName".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's given name".to_string()),
@@ -90,6 +91,7 @@ fn candidate_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "familyName".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's family name".to_string()),
@@ -1116,6 +1118,7 @@ async fn ui_scaffold_generates_version_page() {
 
 fn make_test_property(name: &str, rust_type: &str) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,

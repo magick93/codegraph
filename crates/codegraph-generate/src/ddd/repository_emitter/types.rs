@@ -164,6 +164,11 @@ pub struct ChildTableInfo {
     pub columns: Vec<ChildColumn>,
     /// Nested child tables (ValueObject properties within this child table)
     pub child_tables: Vec<ChildTableInfo>,
+    /// Back-ref projection (issue #460): the contains-target is an entity,
+    /// so rows live in the target entity's OWN table (`sql_table_name` is
+    /// that table) linked by the synthetic `parent_fk_column` the DDL puts
+    /// on it — never in a `{parent}_{feature}` child table.
+    pub is_back_ref: bool,
 }
 
 /// Tracks a junction (many-to-many) table persisted and read via raw SQL.

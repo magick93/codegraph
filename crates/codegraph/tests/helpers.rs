@@ -45,6 +45,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
             "CandidateType",
             vec![
                 PropertyNode {
+                    is_id: false,
                     name: "given_name".into(),
                     prop_type: "string".into(),
                     description: Some("Given name".into()),
@@ -76,6 +77,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     type_expr: None,
                 },
                 PropertyNode {
+                    is_id: false,
                     name: "family_name".into(),
                     prop_type: "string".into(),
                     description: Some("Family name".into()),
@@ -107,6 +109,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     type_expr: None,
                 },
                 PropertyNode {
+                    is_id: false,
                     name: "email".into(),
                     prop_type: "string".into(),
                     description: Some("Email address".into()),
@@ -138,6 +141,7 @@ pub fn mock_engine_with_candidate() -> MockEngine {
                     type_expr: None,
                 },
                 PropertyNode {
+                    is_id: false,
                     name: "status".into(),
                     prop_type: "string".into(),
                     description: Some("Application status".into()),

@@ -262,6 +262,61 @@ pub fn fnv1a_64(data: &[u8]) -> u64 {
     hash
 }
 
+/// The child table for a contained value object: `{parent_table}_{feature}`,
+/// truncated to the PostgreSQL identifier limit.
+///
+/// Single source of truth for child-table naming (issue #460): the DDL
+/// generator, the repository emitter (create/hydrate), the SeaORM entity
+/// generator, and the junction/codelist child derivations must all call
+/// this helper so the planes can never drift apart.
+///
+/// # Examples
+/// ```
+/// use codegraph_naming::child_table_name;
+/// assert_eq!(child_table_name("person", "legal_documents"), "person_legal_documents");
+/// assert_eq!(child_table_name("trust", "settlor_ids"), "trust_settlor_ids");
+/// ```
+pub fn child_table_name(parent_table: &str, feature: &str) -> String {
+    truncate_pg_identifier(&format!("{}_{}", parent_table, feature))
+}
+
+/// Append `_id` unless the name already ends with it.
+///
+/// Canonical home (moved from codegraph-core, which delegates): the
+/// child→parent FK derivation must not double the suffix for parents whose
+/// table name already ends in `_id`.
+///
+/// # Examples
+/// ```
+/// use codegraph_naming::ensure_id_suffix;
+/// assert_eq!(ensure_id_suffix("person"), "person_id");
+/// assert_eq!(ensure_id_suffix("evidence_extracted_field_id"), "evidence_extracted_field_id");
+/// ```
+pub fn ensure_id_suffix(name: &str) -> String {
+    if name.ends_with("_id") {
+        name.to_string()
+    } else {
+        format!("{}_id", name)
+    }
+}
+
+/// The FK column a child table/entity uses to reference its parent:
+/// `{parent_table}_id`, suffix-aware so parents whose table name already
+/// ends in `_id` don't double it, and truncated to the identifier limit.
+///
+/// Single source of truth for the child→parent FK column: DDL, SeaORM
+/// entity, and repository planes must all derive through this helper.
+///
+/// # Examples
+/// ```
+/// use codegraph_naming::child_parent_fk_column;
+/// assert_eq!(child_parent_fk_column("person"), "person_id");
+/// assert_eq!(child_parent_fk_column("evidence_extracted_field_id"), "evidence_extracted_field_id");
+/// ```
+pub fn child_parent_fk_column(parent_table: &str) -> String {
+    truncate_pg_identifier(&ensure_id_suffix(parent_table))
+}
+
 /// Whether a PostgreSQL identifier is a reserved word (and thus needs quoting).
 pub fn is_pg_reserved(name: &str) -> bool {
     PG_RESERVED.contains(&name.to_ascii_lowercase().as_str())
@@ -284,6 +339,46 @@ pub fn to_display_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #460: the shared child-table / parent-FK derivations. Every
+    /// plane (DDL, repository, entity, junction) must produce identical
+    /// names because they all call these two helpers.
+    #[test]
+    fn child_table_and_fk_derivations_are_the_single_source_of_truth() {
+        assert_eq!(
+            child_table_name("person", "legal_documents"),
+            "person_legal_documents"
+        );
+        assert_eq!(
+            child_table_name("trust", "settlor_ids"),
+            "trust_settlor_ids"
+        );
+        // Truncation applies (63-char PG budget).
+        let long = child_table_name(
+            "candidate_distribution_guidelines_distribute_to_communication",
+            "address_country_sub_divisions",
+        );
+        assert!(long.len() <= 63);
+        assert_eq!(
+            long,
+            truncate_pg_identifier(&format!(
+                "{}_{}",
+                "candidate_distribution_guidelines_distribute_to_communication",
+                "address_country_sub_divisions"
+            ))
+        );
+
+        assert_eq!(child_parent_fk_column("person"), "person_id");
+        assert_eq!(
+            child_parent_fk_column("evidence_extracted_field_id"),
+            "evidence_extracted_field_id"
+        );
+        assert_eq!(ensure_id_suffix("person"), "person_id");
+        assert_eq!(
+            ensure_id_suffix("evidence_extracted_field_id"),
+            "evidence_extracted_field_id"
+        );
+    }
 
     #[test]
     fn test_strip_suffix() {

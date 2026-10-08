@@ -709,12 +709,11 @@ pub(crate) fn column_info_to_ddl(col: &ColumnInfo, table_name: &str) -> Option<D
 /// FK column a child table/entity uses to reference its parent. Suffix-aware
 /// so parents whose table name already ends in `_id` don't double it
 /// (`evidence_extracted_field_id` → `evidence_extracted_field_id`, not
-/// `evidence_extracted_field_id_id`). Single source of truth for DDL and
-/// SeaORM entity generation.
+/// `evidence_extracted_field_id_id`). Delegates to the codegraph-naming
+/// single source of truth (issue #460) shared with entity/repository
+/// generation.
 pub(crate) fn child_parent_fk_column(parent_table_name: &str) -> String {
-    codegraph_naming::truncate_pg_identifier(&codegraph_core::types::ensure_id_suffix(
-        parent_table_name,
-    ))
+    codegraph_naming::child_parent_fk_column(parent_table_name)
 }
 
 /// Recursively ensure every child table (and nested child) carries the
@@ -737,10 +736,7 @@ pub(super) fn composition_node_to_child_table(
     parent_display_name: &str,
     generated_tables: &HashSet<(String, String)>,
 ) -> ChildTableDef {
-    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        parent_table_name, node.field_name
-    ));
+    let child_table_name = codegraph_naming::child_table_name(parent_table_name, &node.field_name);
     let child_display_name = format!("{} {}", parent_display_name, node.field_name);
 
     let mut columns = Vec::new();
@@ -899,7 +895,7 @@ impl DdlGenerator {
         // - Cross-domain refs pointing to non-existent schemas (e.g. "jdx")
         // Build (schema, table) pairs — a FK is valid only if its target
         // (references_schema, references_table) matches a generated entity.
-        let generated_tables = generated_table_set(config);
+        let generated_tables = generated_table_set(db, config, domain).await;
         retain_generated_fks(&mut artifacts.foreign_keys, &generated_tables);
 
         // Query graph properties for entity-reference columns that the composition
@@ -1286,8 +1282,19 @@ fn add_tree_columns(
     }
 }
 
-fn generated_table_set(config: &DomainConfig) -> HashSet<(String, String)> {
-    config
+/// The set of (schema, table) pairs that will actually have migrations:
+/// the config `entities` lists UNION the graph's own entity tables (mox is
+/// author-declarative — its domains.toml carries no `entities` key, so the
+/// graph's `is_entity` schemas are the authority for FK-target validity,
+/// issue #460). Config-listed entities keep priority for legacy flows;
+/// graph entities are restricted to domains the config knows about so
+/// excluded domains still suppress their FKs.
+async fn generated_table_set(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    default_domain: &str,
+) -> HashSet<(String, String)> {
+    let mut tables: HashSet<(String, String)> = config
         .domains
         .values()
         .flat_map(|d| {
@@ -1298,7 +1305,23 @@ fn generated_table_set(config: &DomainConfig) -> HashSet<(String, String)> {
                 (schema.clone(), table)
             })
         })
-        .collect()
+        .collect();
+    if let Ok(schemas) = db.list_schemas(None).await {
+        for schema in schemas {
+            if !schema.is_entity || schema.pg_table_name.is_empty() {
+                continue;
+            }
+            let domain = match schema.domain.as_deref() {
+                Some(d) if config.domains.contains_key(d) => d.to_string(),
+                // Graph-assigned domains unknown to the config are excluded
+                // surfaces — their tables never generate.
+                Some(_) => continue,
+                None => default_domain.to_string(),
+            };
+            tables.insert((domain, schema.pg_table_name));
+        }
+    }
+    tables
 }
 
 fn retain_generated_fks(

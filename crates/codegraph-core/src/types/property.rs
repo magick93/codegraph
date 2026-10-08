@@ -30,6 +30,7 @@ pub fn inject_codelist_properties(props: &mut Vec<PropertyNode>, is_codelist: bo
             format: None,
             is_required,
             is_nullable: !is_required,
+            is_id: false,
             is_array: false,
             min_items: None,
             max_items: None,
@@ -86,6 +87,11 @@ pub struct PropertyNode {
     pub format: Option<String>,
     pub is_required: bool,
     pub is_nullable: bool,
+    /// `true` for a class identity feature (the rexlang `id` modifier).
+    /// Identity columns are never FKs — FK resolution must not match them
+    /// by column-name convention. Serde-defaulted for backward compat.
+    #[serde(default)]
+    pub is_id: bool,
     pub is_array: bool,
     /// Array item-count bounds (JSON `minItems`/`maxItems`; Rosetta
     /// `(min..max)` when the attribute is an array). `None` = absent or
@@ -226,6 +232,7 @@ mod tests {
             format: None,
             is_required: false,
             is_nullable: false,
+            is_id: false,
             is_array: false,
             min_items: None,
             max_items: None,

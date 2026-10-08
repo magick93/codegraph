@@ -20,6 +20,7 @@ fn prop(
         format: None,
         is_required: true,
         is_nullable: false,
+        is_id: false,
         is_array: rust_field_type.starts_with("Vec<"),
         min_items: None,
         max_items: None,

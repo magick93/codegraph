@@ -47,6 +47,7 @@ pub(crate) fn mock_schema(
 pub(crate) fn mock_properties() -> Vec<PropertyNode> {
     vec![
         PropertyNode {
+            is_id: false,
             name: "given_name".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's given name".to_string()),
@@ -78,6 +79,7 @@ pub(crate) fn mock_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "family_name".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's family name".to_string()),
@@ -181,6 +183,7 @@ pub(crate) fn prop(
     is_array: bool,
 ) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,
@@ -229,6 +232,7 @@ pub(crate) fn prop_split(
     is_array: bool,
 ) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,

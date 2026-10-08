@@ -128,6 +128,7 @@ async fn workers_codelist_test_setup() -> (
     };
 
     let name_prop = PropertyNode {
+        is_id: false,
         name: "name".to_string(),
         prop_type: "string".to_string(),
         description: Some("Name".to_string()),
@@ -159,6 +160,7 @@ async fn workers_codelist_test_setup() -> (
         type_expr: None,
     };
     let gender_prop = PropertyNode {
+        is_id: false,
         name: "gender".to_string(),
         prop_type: "string".to_string(),
         description: Some("Gender code".to_string()),
@@ -190,6 +192,7 @@ async fn workers_codelist_test_setup() -> (
         type_expr: None,
     };
     let pay_line_ref_prop = PropertyNode {
+        is_id: false,
         name: "pay_line".to_string(),
         prop_type: "string".to_string(),
         description: Some("FK to a pay line".to_string()),
@@ -221,6 +224,7 @@ async fn workers_codelist_test_setup() -> (
         type_expr: None,
     };
     let code_ref_prop = PropertyNode {
+        is_id: false,
         name: "code".to_string(),
         prop_type: "string".to_string(),
         description: Some("FK to a code".to_string()),
@@ -252,6 +256,7 @@ async fn workers_codelist_test_setup() -> (
         type_expr: None,
     };
     let work_item_ref_prop = PropertyNode {
+        is_id: false,
         name: "work_item".to_string(),
         prop_type: "string".to_string(),
         description: Some("FK to a work item".to_string()),

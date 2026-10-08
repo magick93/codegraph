@@ -214,11 +214,9 @@ pub async fn resolve_nested_filter_fields(
         }
 
         let prop_def = resolve_field(prop);
-        let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-            "{}_{}",
-            parent_table_name, prop_def.column_name
-        ));
-        let child_fk = format!("{}_id", parent_table_name);
+        let child_table_name =
+            codegraph_naming::child_table_name(parent_table_name, &prop_def.column_name);
+        let child_fk = codegraph_naming::child_parent_fk_column(parent_table_name);
         let child_field_prefix = prop_def.rust_field_name;
 
         // Get child properties and find filterable columns.
@@ -259,14 +257,11 @@ pub async fn resolve_nested_filter_fields(
                     if entity_titles.contains(&gc_schema.title) {
                         continue;
                     }
-                    let gc_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-                        "{}_{}",
-                        child_table_name, cprop_def.column_name
-                    ));
-                    let gc_fk = format!(
-                        "{}_id",
-                        codegraph_naming::truncate_pg_identifier(&child_table_name)
+                    let gc_table_name = codegraph_naming::child_table_name(
+                        &child_table_name,
+                        &cprop_def.column_name,
                     );
+                    let gc_fk = codegraph_naming::child_parent_fk_column(&child_table_name);
                     let gc_props = db
                         .get_properties(&gc_schema.title)
                         .await

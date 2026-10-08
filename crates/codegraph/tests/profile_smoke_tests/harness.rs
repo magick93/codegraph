@@ -49,6 +49,7 @@ pub(crate) fn mock_test_setup() -> (
     };
 
     let props = vec![PropertyNode {
+        is_id: false,
         name: "givenName".to_string(),
         prop_type: "string".to_string(),
         description: Some("First name".to_string()),

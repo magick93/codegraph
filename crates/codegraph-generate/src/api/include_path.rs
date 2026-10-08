@@ -318,10 +318,13 @@ async fn resolve_explicit_paths(
 
             // Resolve FK column and array flag via graph query — uses
             // db.get_properties() which runs GQL internally.
-            let (fk_column, is_array) =
+            let (fk_column, is_array, _) =
                 resolve_fk_via_graph(db, current_source_title, &target_title, seg).await?;
 
-            // Reverse FK: check config parent_ref first, then graph.
+            // Reverse FK: check config parent_ref first, then graph. A None
+            // reverse (the target owns no verified FK property referencing
+            // this source) is only fatal for array segments — the reverse
+            // column is what an array fetch scans.
             let reverse_fk_column =
                 resolve_child_fk_column(config, domain, &target_title, current_source_title, db)
                     .await?;
@@ -405,7 +408,16 @@ async fn resolve_explicit_paths(
                 .and_then(|ec| ec.parent_ref.clone());
             if child_table_override.is_none() {
                 let (fetch_column, fetch_on_title): (&String, String) = if is_array {
-                    (&reverse_fk_column, target_title.clone())
+                    match &reverse_fk_column {
+                        Some(col) => (col, target_title.clone()),
+                        None => {
+                            tracing::warn!(
+                                "include path '{path}' segment '{seg}' is unfetchable — no back-FK \
+                                 column on '{target_title}' (junction array?) — skipping"
+                            );
+                            break;
+                        }
+                    }
                 } else {
                     (&fk_column, current_source_title.to_string())
                 };
@@ -425,10 +437,13 @@ async fn resolve_explicit_paths(
             // Nullability: JSON schema `required` is the source of truth for
             // genuine EntityReference FKs. VO→entity (child_table_override)
             // FKs are always nullable.
+            let effective_reverse_fk = reverse_fk_column
+                .clone()
+                .unwrap_or_else(|| fk_column.clone());
             let fk_is_required = child_table_override.is_none()
                 && fk_column_is_required(db, current_source_title, &fk_column).await?;
             let reverse_fk_is_required =
-                fk_column_is_required(db, &target_title, &reverse_fk_column).await?;
+                fk_column_is_required(db, &target_title, &effective_reverse_fk).await?;
 
             segments.push(IncludeSegment {
                 entity_name: target_entity_name,
@@ -437,7 +452,7 @@ async fn resolve_explicit_paths(
                 domain: target_domain,
                 table: target_table,
                 fk_column,
-                reverse_fk_column,
+                reverse_fk_column: effective_reverse_fk,
                 fk_is_required,
                 reverse_fk_is_required,
                 is_array,
@@ -540,11 +555,22 @@ async fn resolve_auto_paths(
         let target_table = format!("\"{}\".\"{}\"", target_domain, target_module);
 
         // Resolve FK column from the child entity's domain config (parent_ref)
-        // or from graph properties, falling back to convention-based naming.
-        // Both fk_column and reverse_fk_column resolve to the same FK on the
-        // child entity that references the parent.
-        let fk_column =
-            resolve_child_fk_column(config, domain, target_title, schema_title, db).await?;
+        // or from graph properties. Both fk_column and reverse_fk_column
+        // resolve to the same FK on the child entity that references the
+        // parent. A candidate whose child owns no verified FK property is a
+        // phantom edge (derived from the wrong direction of a relationship)
+        // — emitting it would reference a column the child entity does not
+        // have (E0599), so it is skipped with a warning.
+        let Some(fk_column) =
+            resolve_child_fk_column(config, domain, target_title, schema_title, db).await?
+        else {
+            tracing::warn!(
+                child = %target_title,
+                parent = %schema_title,
+                "parent candidate skipped: child owns no FK property referencing the parent (phantom edge)"
+            );
+            continue;
+        };
         let reverse_fk_column = fk_column.clone();
 
         // Junction guard: array-of-entity-ref properties (e.g.
@@ -672,7 +698,7 @@ async fn resolve_auto_paths(
 
         // Resolve FK property via graph query.
         let ref_entity_name = super::router::strip_suffix(ref_title, &config.defaults.type_suffix);
-        let (fk_column, is_array) = resolve_fk_via_graph(
+        let (fk_column, is_array, fk_verified) = resolve_fk_via_graph(
             db,
             schema_title,
             ref_title,
@@ -682,8 +708,20 @@ async fn resolve_auto_paths(
 
         let source_entity_name =
             super::router::strip_suffix(schema_title, &config.defaults.type_suffix);
-        let (reverse_fk_column, _) =
+        let (reverse_resolved, _, reverse_verified) =
             resolve_fk_via_graph(db, ref_title, schema_title, source_entity_name).await?;
+
+        // A single forward reference whose FK column could not be located on
+        // the source (convention fallback) would emit a fetch reading a
+        // column the source entity does not have — skip it loudly.
+        if !fk_verified && !is_array {
+            tracing::warn!(
+                source = %schema_title,
+                target = %ref_title,
+                "entity reference skipped: no FK property on the source references the target"
+            );
+            continue;
+        }
 
         // Junction guard: array-of-entity-ref cross-refs live in junction
         // tables and cannot be fetched by either FK column.
@@ -696,11 +734,31 @@ async fn resolve_auto_paths(
             continue;
         }
 
+        // An array cross-reference needs a back-FK on the target to hydrate
+        // the reverse collection; without one (junction or unmanaged
+        // relationship) there is nothing to fetch by column.
+        if is_array && !reverse_verified {
+            tracing::warn!(
+                source = %schema_title,
+                target = %ref_title,
+                "array entity reference skipped: no back-FK property on the target (junction or unmanaged relationship)"
+            );
+            continue;
+        }
+
         let alias_seg = codegraph_naming::to_snake_case(ref_entity_name);
 
         // Nullability: JSON schema `required` is the source of truth for
         // genuine EntityReference FKs. fk lives on the source, reverse FK on
-        // the referenced (target) schema.
+        // the referenced (target) schema. When no real back-FK exists the
+        // reverse column is never read by the emitted fetch/batch (both
+        // drive off the source-side FK), so the verified forward column is
+        // reused instead of a convention-fabricated name.
+        let reverse_fk_column = if reverse_verified {
+            reverse_resolved
+        } else {
+            fk_column.clone()
+        };
         let fk_is_required = fk_column_is_required(db, schema_title, &fk_column).await?;
         let reverse_fk_is_required =
             fk_column_is_required(db, ref_title, &reverse_fk_column).await?;
@@ -981,7 +1039,12 @@ async fn resolve_fk_via_graph(
     source_title: &str,
     target_title: &str,
     seg: &str,
-) -> Result<(String, bool)> {
+) -> Result<(String, bool, bool)> {
+    // The third field is `verified`: false only for the terminal
+    // convention fallback, where the returned column name is fabricated
+    // ("{seg}_id") rather than read off a real property of the source
+    // schema. Callers must not emit fetches against unverified columns —
+    // the generated entity model may not have them (E0599).
     let seg_snake = codegraph_naming::to_snake_case(seg);
     let source_props = db.get_properties(source_title).await.unwrap_or_default();
 
@@ -1010,7 +1073,7 @@ async fn resolve_fk_via_graph(
             .unwrap_or(false);
         if matches {
             let fd = resolve_field(prop);
-            return Ok((fd.column_name, prop.is_array));
+            return Ok((fd.column_name, prop.is_array, true));
         }
     }
 
@@ -1043,16 +1106,22 @@ async fn resolve_fk_via_graph(
                     col_name = codegraph_core::types::ensure_id_suffix(&col_name);
                 }
             }
-            return Ok((col_name, prop.is_array));
+            return Ok((col_name, prop.is_array, true));
         }
     }
 
-    // Priority 3: property whose pg_column_name is "{seg}_id".
+    // Priority 3: property whose pg_column_name is "{seg}_id". Identity
+    // and audit columns are never FKs — a naming match against one is a
+    // false positive (e.g. a `deployment_id` identity column matching a
+    // Deployment include).
     let seg_id = format!("{seg_snake}_id");
     for prop in &source_props {
+        if prop.is_id || is_audit_column(&prop.pg_column_name) {
+            continue;
+        }
         if prop.pg_column_name.to_lowercase() == seg_id {
             let fd = resolve_field(prop);
-            return Ok((fd.column_name, prop.is_array));
+            return Ok((fd.column_name, prop.is_array, true));
         }
     }
 
@@ -1068,15 +1137,27 @@ async fn resolve_fk_via_graph(
     if parent_ref_stem != seg_snake {
         let parent_seg_id = format!("{parent_ref_stem}_id");
         for prop in &source_props {
+            if prop.is_id || is_audit_column(&prop.pg_column_name) {
+                continue;
+            }
             if prop.pg_column_name.to_lowercase() == parent_seg_id {
                 let fd = resolve_field(prop);
-                return Ok((fd.column_name, prop.is_array));
+                return Ok((fd.column_name, prop.is_array, true));
             }
         }
     }
 
-    // Fallback: convention-based default using seg.
-    Ok((seg_id, false))
+    // Fallback: convention-based default using seg — UNVERIFIED.
+    Ok((seg_id, false, false))
+}
+
+/// Audit columns (timestamps + soft-delete) are scaffold-owned and never
+/// reference FKs — exclude them from column-name-convention FK matching.
+fn is_audit_column(pg_column_name: &str) -> bool {
+    matches!(
+        pg_column_name,
+        "created_at" | "updated_at" | "deleted_at" | "deleted_by" | "updated_by"
+    )
 }
 
 /// Derive the response Rust type name for a resolved include path.
@@ -1099,7 +1180,7 @@ async fn resolve_child_fk_column(
     child_title: &str,
     parent_title: &str,
     db: &dyn GraphQuerier,
-) -> Result<String> {
+) -> Result<Option<String>> {
     // Priority 1: parent_ref from the child entity's domain config. Only
     // honored when the config entry's declared `parent` matches the actual
     // parent schema title — otherwise a parent_ref written for a different
@@ -1114,31 +1195,23 @@ async fn resolve_child_fk_column(
         && let Some(fk) = ec.parent_ref.clone()
         && ec.parent.as_deref().is_some_and(|p| p == parent_title)
     {
-        return Ok(fk);
+        return Ok(Some(fk));
     }
 
     // Priority 2: graph properties — find the property on the child that
-    // references the parent.
+    // references the parent. Only a VERIFIED match (a real property/column
+    // on the child) is accepted: the resolver's convention fallback returns
+    // "{child_seg}_id" without graph evidence, and emitting a fetch against
+    // such a phantom column breaks the generated entity model (E0599).
     let child_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
         child_title,
         &config.defaults.type_suffix,
     ));
-    let (fk, _) = resolve_fk_via_graph(db, child_title, parent_title, &child_seg).await?;
-
-    // If the resolved FK matches the child-based convention (child_seg + "_id"),
-    // it's a fallback — the child doesn't have an explicit property referencing
-    // the parent. In this case, prefer the parent-based naming convention
-    // (parent_seg + "_id") which matches how the entity generator creates FK
-    // columns for array relationships (e.g. events_app_id for PublicEvent → EventsApp).
-    let child_based_fk = format!("{}_id", child_seg);
-    let parent_seg = codegraph_naming::to_snake_case(super::router::strip_suffix(
-        parent_title,
-        &config.defaults.type_suffix,
-    ));
-    if fk == child_based_fk && parent_seg != child_seg {
-        return Ok(format!("{}_id", parent_seg));
+    let (fk, _, verified) = resolve_fk_via_graph(db, child_title, parent_title, &child_seg).await?;
+    if !verified {
+        return Ok(None);
     }
-    Ok(fk)
+    Ok(Some(fk))
 }
 
 #[cfg(test)]
@@ -1192,6 +1265,7 @@ mod tests {
             format: None,
             is_required: false,
             is_nullable: true,
+            is_id: false,
             is_array: false,
             min_items: None,
             max_items: None,
@@ -1383,7 +1457,8 @@ parent_ref = "worker_type_id"
             .await
             .unwrap();
         assert_eq!(
-            fk, "job_type_id",
+            fk.as_deref(),
+            Some("job_type_id"),
             "parent_ref for the DeploymentType → WorkerType link must not leak into the JobType relationship"
         );
     }
@@ -1424,8 +1499,41 @@ parent_ref = "worker_type_id"
             .await
             .unwrap();
         assert_eq!(
-            fk, "worker_type_id",
+            fk.as_deref(),
+            Some("worker_type_id"),
             "parent_ref applies when the config parent matches the actual parent"
+        );
+    }
+
+    /// A candidate whose child owns no property referencing the parent is a
+    /// phantom edge (derived from the wrong direction of a relationship):
+    /// resolve_child_fk_column must report None instead of a
+    /// convention-fabricated column, so the caller skips it (the fabricated
+    /// column does not exist on the child entity — E0599 in generated code).
+    #[tokio::test]
+    async fn child_fk_column_returns_none_for_phantom_edge() {
+        let engine = MockEngine::builder()
+            .with_schema(schema_node("Job", "hr", "job", true))
+            .with_schema(schema_node("Deployment", "hr", "deployment", true))
+            // Deployment references Job — but Job has no property
+            // referencing Deployment, so a (child: Job, parent:
+            // Deployment) candidate is a phantom.
+            .with_properties("Deployment", vec![ref_property("job_id", "job_id", "Job")])
+            .with_ref_target(
+                "job_id",
+                "Deployment",
+                schema_node("Job", "hr", "job", true),
+            )
+            .build();
+
+        let config = hr_config(&["Job", "Deployment"], "");
+
+        let fk = resolve_child_fk_column(&config, "hr", "Job", "Deployment", &engine)
+            .await
+            .unwrap();
+        assert_eq!(
+            fk, None,
+            "phantom edge must resolve to None, not a fabricated {{parent}}_id column"
         );
     }
 }

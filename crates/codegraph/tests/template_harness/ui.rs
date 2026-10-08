@@ -290,6 +290,7 @@ async fn ui_e2e_include_test_generated_when_allow_include_configured() {
     };
 
     let worker_props = vec![PropertyNode {
+        is_id: false,
         name: "dep_entity_id".into(),
         prop_type: "string".into(),
         description: None,
@@ -441,6 +442,7 @@ async fn detail_page_emits_extension_points() {
 
     fn full_name_prop() -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: "fullName".to_string(),
             prop_type: "string".to_string(),
             description: None,

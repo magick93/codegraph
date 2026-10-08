@@ -2237,3 +2237,32 @@ When a ValueObject type extends an entity via allOf (e.g., `RemoteWorkType` allO
 correctly produces both outputs. The DDL generator must also produce both
 (FK column + child table). `dedup_fields()` with independent HashSets
 preserves both.
+
+### Child-table projection contract (issue #460)
+
+One derivation rule across every plane: **a composition edge lowers to an FK
+on the child side.** A contained value object (contains-only, no referring
+edges) projects as a `{parent}_{feature}` child table; a contains-target that
+is also a refers target ("refers wins" → entity) projects as the synthetic
+`{parent}_id` back-ref FK **on the entity's own table** (DDL via the
+`ArrayItems` ParentCandidate through `add_parent_fk`, CASCADE; the repo plane
+mirrors it with `ChildTableInfo.is_back_ref` — create-and-link, back-ref
+hydration, `ORDER BY id`). Naming flows through two `codegraph-naming`
+helpers — `child_table_name(parent, feature)` and
+`child_parent_fk_column(parent)` (suffix-aware, moved from codegraph-core) —
+used by DDL, repository, entity, junction, codelist, and filter planes;
+duplicate `format!` derivations are gone.
+
+Enforcement: `crates/codegraph-generate/src/consistency.rs`
+(`check_child_table_consistency`, run from `pipeline.rs` when the profile
+carries the `ddl` generator) builds both planes' table universes and
+hard-errors (`Config`) when repository SQL targets a table the DDL never
+creates — the pre-fix failure was `person_legal_documents` INSERTs against a
+`legal_document`-only DDL (500 on every person create/list). Ops-less trees
+(e.g. a `.ddd`-designed VO whose design carries no repository) emit no SQL
+and are skipped. mox-first FK retention: `generated_table_set` now unions
+the graph's entity tables with the config `entities` lists, so previously
+dropped FK constraints (all of them, mox-first having no entities key)
+survive — flag-off canaries re-blessed for exactly this (2 migration files
+gain guarded FK-constraint blocks). Gate: `cargo test -p codegraph --test
+mox_child_table_consistency_tests`.

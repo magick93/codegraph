@@ -402,6 +402,7 @@ pub(super) fn attribute_property(
         format: format_hint,
         is_required,
         is_nullable: !is_required,
+        is_id: false,
         is_array,
         min_items,
         max_items,

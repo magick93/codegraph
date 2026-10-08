@@ -56,6 +56,7 @@ fn prop(
     kind: Option<RefClassificationKind>,
 ) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,

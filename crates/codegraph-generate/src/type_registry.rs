@@ -68,6 +68,18 @@ impl TypeRegistry for InMemoryTypeRegistry {
     }
 
     fn imports_needed(&self, names: &[String], caller_base: &[String]) -> Vec<String> {
+        // When the caller is a repository_impl, its entity's dto_response
+        // types are already imported wholesale by the header's
+        // `use super::dto_response::…` — emitting the full-path form for
+        // the same types is an E0252 duplicate.
+        let own_dto_response: Option<Vec<String>> =
+            if caller_base.last().map(|s| s.as_str()) == Some("repository_impl") {
+                let mut module = caller_base[..caller_base.len() - 1].to_vec();
+                module.push("dto_response".into());
+                Some(module)
+            } else {
+                None
+            };
         let mut result = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for name in names {
@@ -84,6 +96,7 @@ impl TypeRegistry for InMemoryTypeRegistry {
             };
             if let Some(tr) = self.map.get(&candidate)
                 && tr.module_path != caller_base
+                && Some(&tr.module_path) != own_dto_response.as_ref()
                 && seen.insert(candidate.clone())
             {
                 result.push(tr.use_statement());
@@ -153,6 +166,53 @@ pub fn register_framework_types() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imports_needed_skips_caller_own_dto_response_types() {
+        // The caller is worker's repository_impl; its sibling dto_response
+        // module is imported wholesale by the header's
+        // `use super::dto_response::…` glob — emitting the full-path form
+        // for the same types is an E0252 duplicate.
+        let mut reg = InMemoryTypeRegistry::new();
+        reg.register(TypeRef {
+            name: "WorkerResponse".into(),
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "core".into(),
+                "worker".into(),
+                "dto_response".into(),
+            ],
+        })
+        .unwrap();
+        reg.register(TypeRef {
+            name: "OrganizationResponse".into(),
+            module_path: vec![
+                "crate".into(),
+                "domain".into(),
+                "core".into(),
+                "organization".into(),
+                "dto_response".into(),
+            ],
+        })
+        .unwrap();
+        let caller_base = vec![
+            "crate".into(),
+            "domain".into(),
+            "core".into(),
+            "worker".into(),
+            "repository_impl".into(),
+        ];
+        let imports = reg.imports_needed(
+            &["WorkerResponse".into(), "OrganizationResponse".into()],
+            &caller_base,
+        );
+        assert_eq!(imports.len(), 1, "got {imports:?}");
+        assert!(
+            imports[0].contains("organization"),
+            "the cross-module import must survive: {imports:?}"
+        );
+    }
 
     fn make_registry() -> InMemoryTypeRegistry {
         let mut reg = InMemoryTypeRegistry::new();

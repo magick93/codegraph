@@ -285,6 +285,7 @@ mod tests {
             format: None,
             is_required: true,
             is_nullable: false,
+            is_id: false,
             is_array: false,
             min_items: None,
             max_items: None,

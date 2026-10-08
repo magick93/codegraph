@@ -140,6 +140,7 @@ pub fn row_to_property_node(
         format: reader.get_opt_string(row, "p.format")?,
         is_required: reader.get_bool(row, "p.is_required")?,
         is_nullable: reader.get_bool(row, "p.is_nullable")?,
+        is_id: reader.get_bool(row, "p.is_id")?,
         is_array: reader.get_bool(row, "p.is_array")?,
         pattern: reader.get_opt_string(row, "p.pattern")?,
         min_length: reader

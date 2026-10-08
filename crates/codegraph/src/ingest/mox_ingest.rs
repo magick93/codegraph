@@ -1198,6 +1198,7 @@ fn feature_property(
         Reference {
             target: String,
             kind: RefClassificationKind,
+            stored_fk: bool,
         },
     }
     let mapped = match (&feature.kind, &feature.type_) {
@@ -1209,9 +1210,16 @@ fn feature_property(
             } else {
                 RefClassificationKind::EntityReference
             };
+            // A single `refers` is a stored FK: project a Uuid `{name}_id`
+            // column (resolve_field appends the suffix; mirrors
+            // ProjectionBuilder::build_entity_ref on the JSON path). Array
+            // references keep child-table/junction semantics — no direct
+            // column, so the pg/rust bases stay empty.
+            let stored_fk = kind == RefClassificationKind::EntityReference && !is_array;
             Mapped::Reference {
                 target: name.clone(),
                 kind,
+                stored_fk,
             }
         }
         (_, TypeRef::Enum { name, .. }) | (_, TypeRef::Vocabulary { name, .. }) => {
@@ -1283,6 +1291,23 @@ fn feature_property(
         },
     };
 
+    // Identity features (the `id` modifier) are entity identifiers: every
+    // layer must agree on Uuid. The declared datatype is overridden — the
+    // DDL and entity generators already emit Uuid for these columns, and a
+    // TEXT/String projection over a Uuid column breaks generated hydration
+    // (E0308: expected `String`, found `Uuid`).
+    let mapped = if feature.is_id {
+        match mapped {
+            Mapped::Primitive { .. } => Mapped::Primitive {
+                pg: PgType::Uuid,
+                format: Some("uuid".to_string()),
+            },
+            other => other,
+        }
+    } else {
+        mapped
+    };
+
     let (kind, pg_base, rust_base, sea_base, ref_target, format_hint) = match mapped {
         Mapped::Primitive { pg, format } => (
             RefClassificationKind::PrimitiveWrapper,
@@ -1300,11 +1325,27 @@ fn feature_property(
             Some(target),
             None,
         ),
-        Mapped::Reference { target, kind } => (
+        Mapped::Reference {
+            target,
             kind,
-            String::new(),
-            target.clone(),
-            String::new(),
+            stored_fk,
+        } => (
+            kind,
+            if stored_fk {
+                PgType::Uuid.pg_ddl()
+            } else {
+                String::new()
+            },
+            if stored_fk {
+                PgType::Uuid.canonical_rust_type().as_rust_str()
+            } else {
+                target.clone()
+            },
+            if stored_fk {
+                PgType::Uuid.sea_orm_type().to_string()
+            } else {
+                String::new()
+            },
             Some(target),
             None,
         ),
@@ -1334,7 +1375,19 @@ fn feature_property(
     let sanitized_name = feature.name.replace(['@', '-'], "");
     let snake = to_snake_case(&sanitized_name);
     let projection = build_projection(&kind, &snake, &pg_type, &rust_type, &sea_base);
-    let mut rust_field_name = escape_rust_keyword(&snake);
+    // Stored single references carry the `_id` suffix on both the column
+    // and the Rust field (resolve_field parity with the JSON path).
+    let stored_fk_column = kind == RefClassificationKind::EntityReference && !is_array;
+    let pg_column_name = if stored_fk_column {
+        format!("{snake}_id")
+    } else {
+        snake.clone()
+    };
+    let mut rust_field_name = escape_rust_keyword(&if stored_fk_column {
+        format!("{snake}_id")
+    } else {
+        snake.clone()
+    });
     if matches!(
         kind,
         RefClassificationKind::CodelistReference | RefClassificationKind::CodelistCheck
@@ -1369,6 +1422,7 @@ fn feature_property(
         format: format_hint,
         is_required,
         is_nullable: !is_required,
+        is_id: feature.is_id,
         is_array,
         min_items: None,
         max_items: None,
@@ -1377,7 +1431,7 @@ fn feature_property(
         max_length: feature.constraints.max_length,
         minimum: feature.constraints.minimum.map(rust_decimal::Decimal::from),
         maximum: feature.constraints.maximum.map(rust_decimal::Decimal::from),
-        pg_column_name: snake.clone(),
+        pg_column_name,
         pg_column_type: pg_type,
         rust_field_name,
         rust_field_type: rust_type,
