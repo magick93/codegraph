@@ -203,6 +203,7 @@ async fn handler_filter_keys_use_stripped_codelist_names() {
     // Codelist reference — rust_field_name stripped (no _code),
     // pg_column_name retains _code suffix.
     let codelist_prop = PropertyNode {
+        is_id: false,
         name: "assignment_reason".to_string(),
         prop_type: "string".to_string(),
         description: None,
@@ -320,6 +321,7 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
 
     fn prop_defaults() -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: String::new(),
             prop_type: "object".to_string(),
             description: None,
@@ -354,6 +356,7 @@ async fn dot_include_list_handler_wires_batch_and_merge() {
 
     fn prop_ref(name: &str, target: &str) -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: name.to_string(),
             rust_field_name: name.to_string(),
             pg_column_name: name.to_string(),
@@ -560,6 +563,7 @@ async fn person_include_hydrates_target_child_tables() {
 
     fn prop_defaults() -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: String::new(),
             prop_type: "object".to_string(),
             description: None,
@@ -594,6 +598,7 @@ async fn person_include_hydrates_target_child_tables() {
 
     fn prop_ref(name: &str, target: &str, is_array: bool) -> PropertyNode {
         PropertyNode {
+            is_id: false,
             is_array,
             min_items: None,
             max_items: None,
@@ -610,6 +615,7 @@ async fn person_include_hydrates_target_child_tables() {
 
     fn prop_vo(name: &str, target: &str) -> PropertyNode {
         PropertyNode {
+            is_id: false,
             classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
             render_strategy: "structured".to_string(),
             ..prop_ref(name, target, false)
@@ -754,6 +760,7 @@ async fn person_include_hydrates_scoped_child_tables() {
 
     fn prop_defaults() -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: String::new(),
             prop_type: "object".to_string(),
             description: None,
@@ -788,6 +795,7 @@ async fn person_include_hydrates_scoped_child_tables() {
 
     fn prop_plain(name: &str) -> PropertyNode {
         PropertyNode {
+            is_id: false,
             prop_type: "object".to_string(),
             rust_field_type: "String".to_string(),
             ..prop_defaults()
@@ -801,6 +809,7 @@ async fn person_include_hydrates_scoped_child_tables() {
 
     fn prop_vo(name: &str, target: &str, is_array: bool) -> PropertyNode {
         PropertyNode {
+            is_id: false,
             classification_kind: Some(codegraph_type_contracts::RefClassificationKind::ValueObject),
             render_strategy: "structured".to_string(),
             is_array,

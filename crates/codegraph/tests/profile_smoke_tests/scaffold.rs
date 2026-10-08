@@ -71,6 +71,7 @@ fn workers_scaffold_test_setup() -> (
     };
 
     let props = vec![PropertyNode {
+        is_id: false,
         name: "name".to_string(),
         prop_type: "string".to_string(),
         description: Some("Name".to_string()),

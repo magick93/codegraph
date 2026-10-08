@@ -278,6 +278,7 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
             "CandidateType",
             vec![
                 PropertyNode {
+                    is_id: false,
                     name: "givenName".into(),
                     prop_type: "string".into(),
                     description: None,
@@ -309,6 +310,7 @@ async fn candidate_create_dto_renders_entity_ref_as_id_field() {
                     type_expr: None,
                 },
                 PropertyNode {
+                    is_id: false,
                     name: "referredByApplication".into(),
                     prop_type: "object".into(),
                     description: None,

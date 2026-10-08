@@ -99,6 +99,26 @@ impl GrafeoEngine {
         .await
     }
 
+    /// Titles targeted by any property reference edge (`ReferencesSchema`
+    /// or `ItemsOf`, issue #460) — the contained value-object surface.
+    pub(super) async fn query_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        let mut out = std::collections::HashSet::new();
+        for edge in ["ReferencesSchema", "ItemsOf"] {
+            let gql = format!(
+                "MATCH (:Schema)-[:HasProperty]->(:Property)-[:{edge}]->(t:Schema) \
+                 RETURN DISTINCT t.title"
+            );
+            let result = query_gql(self, &gql)?;
+            let reader = RowReader::from_columns(&result.columns);
+            for row in &result.rows {
+                out.insert(reader.get_string(row, "t.title")?);
+            }
+        }
+        Ok(out)
+    }
+
     pub(super) async fn query_all_properties(
         &self,
     ) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {
@@ -425,6 +445,12 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn list_all_schema_references(&self) -> Result<Vec<(String, String)>, GraphError> {
         self.query_all_schema_references().await
+    }
+
+    async fn list_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        self.query_property_target_titles().await
     }
 
     async fn list_all_properties(&self) -> Result<HashMap<String, Vec<PropertyNode>>, GraphError> {

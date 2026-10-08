@@ -126,6 +126,13 @@ impl GraphQuerier for MockEngine {
         Ok(self.parent_candidates.lock().unwrap().clone())
     }
 
+    async fn list_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        let ref_targets = self.ref_targets.lock().unwrap();
+        Ok(ref_targets.values().map(|s| s.title.clone()).collect())
+    }
+
     async fn get_codelist(&self, name: &str) -> Result<Option<CodeList>, GraphError> {
         Ok(self.codelists.lock().unwrap().get(name).cloned())
     }

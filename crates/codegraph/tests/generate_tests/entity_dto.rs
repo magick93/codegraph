@@ -453,6 +453,7 @@ async fn generate_policy_driven_entity_with_soft_delete() {
         .with_properties(
             "TestEntityType",
             vec![PropertyNode {
+                is_id: false,
                 name: "name".to_string(),
                 prop_type: "string".to_string(),
                 description: Some("The entity name".to_string()),

@@ -27,6 +27,9 @@ pub struct Model {
 
     pub updated_at: chrono::DateTime<chrono::Utc>,
 
+
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -36,4 +39,20 @@ pub enum Relation {
 
 impl ActiveModelBehavior for ActiveModel {}
 
+
+impl Entity {
+
+    /// Exclude soft-deleted rows.
+    pub fn active() -> Select<Entity> {
+        Entity::find().filter(Column::DeletedAt.is_null())
+    }
+
+    
+
+    /// Include all rows including soft-deleted.
+    pub fn including_deleted() -> Select<Entity> {
+        Entity::find()
+    }
+
+}
 

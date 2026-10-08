@@ -72,6 +72,7 @@ fn person_schema() -> SchemaNode {
 
 fn worker_properties_with_person_ref() -> Vec<PropertyNode> {
     vec![PropertyNode {
+        is_id: false,
         name: "person".into(),
         prop_type: "object".into(),
         description: Some("FK to person".into()),
@@ -216,6 +217,7 @@ fn setup_dot_notation_mock() -> MockEngine {
         .with_properties(
             "WorkerType",
             vec![PropertyNode {
+                is_id: false,
                 name: "deployment".into(),
                 prop_type: "object".into(),
                 description: Some("Deployment".into()),
@@ -254,6 +256,7 @@ fn setup_dot_notation_mock() -> MockEngine {
             "DeploymentType",
             vec![
                 PropertyNode {
+                    is_id: false,
                     name: "assignment_reason_code".into(),
                     prop_type: "string".into(),
                     description: Some("Assignment reason code".into()),
@@ -285,6 +288,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     type_expr: None,
                 },
                 PropertyNode {
+                    is_id: false,
                     name: "full_time_equivalent_ratio".into(),
                     prop_type: "number".into(),
                     description: Some("FTE ratio".into()),
@@ -316,6 +320,7 @@ fn setup_dot_notation_mock() -> MockEngine {
                     type_expr: None,
                 },
                 PropertyNode {
+                    is_id: false,
                     name: "position".into(),
                     prop_type: "object".into(),
                     description: Some("FK to position".into()),

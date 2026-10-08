@@ -154,6 +154,31 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Per-entity generators — run entities sequentially to ensure TypeRegistry
     // is populated for earlier entities before later entities reference their types.
     let entity_results = run_entity_phase(&ctx, &mut entity_gens, &parent_candidates, &order).await;
+
+    // Issue #460: the cross-plane consistency sweep — every table the
+    // repository plane writes or reads must be created by the DDL plane.
+    // Divergence is a hard generation error: divergent output is a
+    // guaranteed runtime failure (INSERT against a table no migration
+    // creates). Skipped when the profile carries no `ddl` generator
+    // (nothing to check against); monolith-only (workers rebuild their
+    // entity generators per domain inside the phase).
+    if entity_gens.iter().any(|g| g.name() == "ddl") {
+        let divergences = crate::consistency::check_child_table_consistency(
+            ctx.db(),
+            ctx.config,
+            &order,
+            &parent_candidates,
+        )
+        .await?;
+        if !divergences.is_empty() {
+            return Err(Error::Config(format!(
+                "child-table projection divergence (issue #460): repository SQL targets \
+                 tables the DDL never creates:\n  - {}",
+                divergences.join("\n  - ")
+            )));
+        }
+    }
+
     write_entity_results(entity_results, &mut report)?;
 
     // Codelists are not entities — SQL migrations + Rust enums run separately.

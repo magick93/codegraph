@@ -55,6 +55,7 @@ fn schema(
 
 fn scalar(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: "string".into(),
         description: None,
@@ -89,6 +90,7 @@ fn scalar(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
 
 fn entity_ref(name: &str, ref_target: &str, is_array: bool, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: if is_array {
             "array".into()
@@ -220,6 +222,7 @@ role = "root"
 /// keyword and the pg type is NUMERIC).
 fn numeric(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         rust_field_type: if pg_type.starts_with("NUMERIC") {
             "Decimal".into()
         } else {
@@ -232,6 +235,7 @@ fn numeric(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
 /// A timestamp column.
 fn timestamp(name: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         rust_field_type: "DateTime<Utc>".into(),
         ..scalar(name, "TIMESTAMPTZ", is_required)
     }
@@ -240,6 +244,7 @@ fn timestamp(name: &str, is_required: bool) -> PropertyNode {
 /// A codelist-backed column (CodelistReference prop + graph enum values).
 fn codelist(name: &str, ref_target: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: "string".into(),
         description: None,
@@ -284,6 +289,7 @@ fn enum_value(value: &str) -> codegraph_core::types::EnumValue {
 fn canonical_ux_spec_snapshot() {
     // A plain `format: uuid` column (the identifier / copy-chip slot).
     let plain_uuid = |name: &str, is_required: bool| PropertyNode {
+        is_id: false,
         format: Some("uuid".into()),
         rust_field_type: "Uuid".into(),
         sea_orm_type: "Uuid".into(),

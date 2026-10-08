@@ -1431,7 +1431,7 @@ fn feature_property(
         max_length: feature.constraints.max_length,
         minimum: feature.constraints.minimum.map(rust_decimal::Decimal::from),
         maximum: feature.constraints.maximum.map(rust_decimal::Decimal::from),
-        pg_column_name: pg_column_name,
+        pg_column_name,
         pg_column_type: pg_type,
         rust_field_name,
         rust_field_type: rust_type,

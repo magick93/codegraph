@@ -50,6 +50,7 @@ mod include_path_resolution_tests {
 
     fn ref_property(name: &str, pg_column: &str, ref_target: &str, is_array: bool) -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: name.to_string(),
             prop_type: "string".to_string(),
             description: None,
@@ -320,6 +321,7 @@ entities = ["WorkerType"]
             .with_properties(
                 "WorkerType",
                 vec![PropertyNode {
+                    is_id: false,
                     name: "person".to_string(),
                     pg_column_name: "person".to_string(),
                     rust_field_name: "person".to_string(),
@@ -438,6 +440,7 @@ operations = ["create", "read", "update", "list"]
             .with_properties(
                 "WorkerType",
                 vec![PropertyNode {
+                    is_id: false,
                     name: "person".to_string(),
                     pg_column_name: "person".to_string(),
                     rust_field_name: "person".to_string(),
@@ -597,6 +600,13 @@ operations = ["create", "read", "update", "list"]
                 "WorkerType",
                 vec![ref_property("person_id", "person_id", "PersonType", false)],
             )
+            // ScalarRef candidates mean the CHILD holds the scalar ref to the
+            // parent — PersonType must own the verified worker_id FK property
+            // or the candidate is a phantom edge and discovery skips it.
+            .with_properties(
+                "PersonType",
+                vec![ref_property("worker_id", "worker_id", "WorkerType", false)],
+            )
             .with_parent_candidate(ParentCandidate {
                 child_title: "PersonType".to_string(),
                 parent_title: "WorkerType".to_string(),
@@ -633,6 +643,7 @@ operations = ["create", "read", "update", "list"]
     /// all others get sensible defaults.
     fn prop_defaults() -> PropertyNode {
         PropertyNode {
+            is_id: false,
             name: String::new(),
             prop_type: "string".to_string(),
             description: None,
@@ -855,6 +866,7 @@ operations = ["create", "read", "update", "list"]
             .with_properties(
                 "OrderType",
                 vec![PropertyNode {
+                    is_id: false,
                     name: "test_entity_id".to_string(),
                     rust_field_name: "test_entity_id".to_string(),
                     pg_column_name: "test_entity_id".to_string(),
@@ -873,6 +885,7 @@ operations = ["create", "read", "update", "list"]
                 "TestEntityType",
                 vec![
                     PropertyNode {
+                        is_id: false,
                         name: "language".to_string(),
                         rust_field_name: "language".to_string(),
                         pg_column_name: "language_code".to_string(),
@@ -885,6 +898,7 @@ operations = ["create", "read", "update", "list"]
                         ..prop_defaults()
                     },
                     PropertyNode {
+                        is_id: false,
                         name: "package_id".to_string(),
                         rust_field_name: "package_id".to_string(),
                         pg_column_name: "package_id".to_string(),
@@ -899,6 +913,7 @@ operations = ["create", "read", "update", "list"]
                         ..prop_defaults()
                     },
                     PropertyNode {
+                        is_id: false,
                         name: "assessment_status".to_string(),
                         rust_field_name: "assessment_status".to_string(),
                         pg_column_name: "status_code".to_string(),
@@ -913,6 +928,7 @@ operations = ["create", "read", "update", "list"]
                         ..prop_defaults()
                     },
                     PropertyNode {
+                        is_id: false,
                         name: "person_id".to_string(),
                         rust_field_name: "person_id".to_string(),
                         pg_column_name: "person_id".to_string(),
@@ -927,6 +943,7 @@ operations = ["create", "read", "update", "list"]
                         ..prop_defaults()
                     },
                     PropertyNode {
+                        is_id: false,
                         name: "name".to_string(),
                         rust_field_name: "name".to_string(),
                         pg_column_name: "name".to_string(),
@@ -935,6 +952,7 @@ operations = ["create", "read", "update", "list"]
                         ..prop_defaults()
                     },
                     PropertyNode {
+                        is_id: false,
                         name: "child_id".to_string(),
                         rust_field_name: "child_id".to_string(),
                         pg_column_name: "child_id".to_string(),
@@ -1126,6 +1144,7 @@ operations = ["create", "read", "update", "list"]
             .with_properties(
                 "WorkerType",
                 vec![PropertyNode {
+                    is_id: false,
                     name: "deployment_id".to_string(),
                     rust_field_name: "deployment_id".to_string(),
                     pg_column_name: "deployment_id".to_string(),

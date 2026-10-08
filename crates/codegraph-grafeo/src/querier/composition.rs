@@ -642,14 +642,9 @@ fn push_codelist_array_child(
     default_schema: &str,
     children: &mut Vec<CompositionNode>,
 ) {
-    let child_table = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        schema.pg_table_name, prop.pg_column_name
-    ));
-    let child_fk_col = format!(
-        "{}_id",
-        codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
-    );
+    let child_table =
+        codegraph_naming::child_table_name(&schema.pg_table_name, &prop.pg_column_name);
+    let child_fk_col = codegraph_naming::child_parent_fk_column(&schema.pg_table_name);
 
     let codelist_title = prop
         .ref_target
@@ -1096,16 +1091,11 @@ impl GrafeoEngine {
         };
 
         if !has_back_ref && let Some(target_schema) = target_title {
-            let child_table = codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_{}",
-                schema.pg_table_name, prop.pg_column_name
-            ));
-            let child_fk_col =
-                codegraph_naming::truncate_pg_identifier(&format!("{}_id", schema.pg_table_name));
-            let child_id_col = codegraph_naming::truncate_pg_identifier(&format!(
-                "{}_id",
-                target_schema.pg_table_name
-            ));
+            let child_table =
+                codegraph_naming::child_table_name(&schema.pg_table_name, &prop.pg_column_name);
+            let child_fk_col = codegraph_naming::child_parent_fk_column(&schema.pg_table_name);
+            let child_id_col =
+                codegraph_naming::child_parent_fk_column(&target_schema.pg_table_name);
 
             let child_col = ColumnInfo {
                 name: child_id_col.clone(),

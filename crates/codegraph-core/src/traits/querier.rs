@@ -176,6 +176,29 @@ pub trait GraphQuerier: Send + Sync {
         Ok(refs)
     }
 
+    /// Titles that appear as the TARGET of another schema's property
+    /// reference — the union of `ReferencesSchema` and `ItemsOf` edge
+    /// targets (issue #460). This is the contained value-object surface:
+    /// a non-entity schema in this set projects as a `{parent}_{feature}`
+    /// child table of its owner, never as a standalone table.
+    ///
+    /// Default implementation falls back to bulk properties + inline
+    /// `ref_target` (arrays whose engines resolve targets only through
+    /// edges need their own override).
+    async fn list_property_target_titles(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, GraphError> {
+        let mut out = std::collections::HashSet::new();
+        for props in self.list_all_properties().await?.into_values() {
+            for p in props {
+                if let Some(t) = p.ref_target {
+                    out.insert(t);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Bulk-fetch all properties keyed by schema title.
     ///
     /// Default implementation falls back to per-schema `get_properties`.

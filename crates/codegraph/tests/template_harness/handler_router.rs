@@ -629,6 +629,7 @@ async fn array_items_handler_fk_uses_parent_type_name() {
 
     // Add EntityReference property so validate_parent_ref finds the FK column
     let child_fk_property = PropertyNode {
+        is_id: false,
         name: "compensation".to_string(),
         prop_type: "object".to_string(),
         description: Some("FK to parent compensation".to_string()),

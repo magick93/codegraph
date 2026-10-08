@@ -74,6 +74,7 @@ fn make_entity_schema(title: &str, domain: &str) -> SchemaNode {
 
 fn make_entity_ref_property(name: &str, ref_target: &str) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
         description: None,
@@ -609,6 +610,7 @@ async fn mock_engine_does_not_produce_phantom_fk_for_array_entity_ref() {
     let child = make_entity_schema("CandidateProfileType", "recruiting");
 
     let array_entity_prop = PropertyNode {
+        is_id: false,
         name: "profiles".into(),
         prop_type: "array".into(),
         description: None,

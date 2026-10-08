@@ -61,6 +61,7 @@ fn schema(
 
 fn scalar(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: "string".into(),
         description: None,
@@ -98,6 +99,7 @@ fn scalar(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
 /// entity refs and serialized as `'Test Case Id'` literals.
 fn plain_uuid(name: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: "string".into(),
         description: None,
@@ -132,6 +134,7 @@ fn plain_uuid(name: &str, is_required: bool) -> PropertyNode {
 
 fn entity_ref(name: &str, ref_target: &str, is_array: bool, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: if is_array {
             "array".into()
@@ -711,6 +714,7 @@ fn unresolved_required_uuid_emits_valid_uuid_literal() {
 /// A codelist-backed column (CodelistReference prop + graph enum values).
 fn codelist(name: &str, ref_target: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         name: name.into(),
         prop_type: "string".into(),
         description: None,
@@ -746,6 +750,7 @@ fn codelist(name: &str, ref_target: &str, is_required: bool) -> PropertyNode {
 /// A numeric column (quantity / money depending on the name).
 fn numeric(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         rust_field_type: if pg_type.starts_with("NUMERIC") {
             "Decimal".into()
         } else {
@@ -758,6 +763,7 @@ fn numeric(name: &str, pg_type: &str, is_required: bool) -> PropertyNode {
 /// A timestamp column.
 fn timestamp(name: &str, is_required: bool) -> PropertyNode {
     PropertyNode {
+        is_id: false,
         rust_field_type: "DateTime<Utc>".into(),
         ..scalar(name, "TIMESTAMPTZ", is_required)
     }

@@ -12,6 +12,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
     use codegraph_core::types::CompositeRange;
 
     let start_prop = PropertyNode {
+        is_id: false,
         name: "start".to_string(),
         prop_type: "string".to_string(),
         description: None,
@@ -44,6 +45,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
     };
 
     let end_prop = PropertyNode {
+        is_id: false,
         name: "end".to_string(),
         prop_type: "string".to_string(),
         description: None,
@@ -82,6 +84,7 @@ async fn composite_range_collapses_start_end_into_daterange() {
         format: None,
         is_required: false,
         is_nullable: true,
+        is_id: false,
         is_array: false,
         min_items: None,
         max_items: None,
@@ -335,6 +338,7 @@ async fn recursive_child_tables_with_full_classification() {
     // Person has a "name" (PrimitiveWrapper) and "communication" (ValueObject)
     let person_props = vec![
         PropertyNode {
+            is_id: false,
             name: "name".to_string(),
             prop_type: "string".to_string(),
             description: Some("Person name".to_string()),
@@ -366,6 +370,7 @@ async fn recursive_child_tables_with_full_classification() {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "communication".to_string(),
             prop_type: "object".to_string(),
             description: Some("Communication details".to_string()),
@@ -401,6 +406,7 @@ async fn recursive_child_tables_with_full_classification() {
     // CommunicationType has "email" (PrimitiveWrapper) and "address" (ValueObject)
     let communication_props = vec![
         PropertyNode {
+            is_id: false,
             name: "email".to_string(),
             prop_type: "string".to_string(),
             description: Some("Email address".to_string()),
@@ -432,6 +438,7 @@ async fn recursive_child_tables_with_full_classification() {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "address".to_string(),
             prop_type: "object".to_string(),
             description: Some("Physical address".to_string()),
@@ -467,6 +474,7 @@ async fn recursive_child_tables_with_full_classification() {
     // AddressType has "city" (PrimitiveWrapper) and "countryCode" (CodelistReference)
     let address_props = vec![
         PropertyNode {
+            is_id: false,
             name: "city".to_string(),
             prop_type: "string".to_string(),
             description: Some("City name".to_string()),
@@ -498,6 +506,7 @@ async fn recursive_child_tables_with_full_classification() {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "countryCode".to_string(),
             prop_type: "string".to_string(),
             description: Some("Country code".to_string()),

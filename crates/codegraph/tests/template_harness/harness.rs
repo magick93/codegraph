@@ -105,6 +105,7 @@ pub(crate) fn candidate_schema() -> SchemaNode {
 pub(crate) fn candidate_properties() -> Vec<PropertyNode> {
     vec![
         PropertyNode {
+            is_id: false,
             name: "givenName".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's given name".to_string()),
@@ -136,6 +137,7 @@ pub(crate) fn candidate_properties() -> Vec<PropertyNode> {
             type_expr: None,
         },
         PropertyNode {
+            is_id: false,
             name: "familyName".to_string(),
             prop_type: "string".to_string(),
             description: Some("The person's family name".to_string()),
@@ -245,6 +247,7 @@ pub(crate) fn parent_child_mock() -> (MockEngine, Vec<codegraph_core::types::Par
     // The child entity needs an EntityReference property whose rust_field_name
     // generates a FK column matching the inferred parent_ref (compensation_type_id).
     let child_fk_property = PropertyNode {
+        is_id: false,
         name: "compensationType".to_string(),
         prop_type: "object".to_string(),
         description: Some("FK to parent compensation".to_string()),
@@ -347,6 +350,7 @@ pub(crate) fn person_schema() -> SchemaNode {
 
 pub(crate) fn worker_properties_with_person_ref() -> Vec<PropertyNode> {
     vec![PropertyNode {
+        is_id: false,
         name: "person".to_string(),
         prop_type: "object".to_string(),
         description: Some("FK to person".to_string()),

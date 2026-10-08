@@ -1114,10 +1114,8 @@ async fn build_child_entity(
             .collect::<Vec<_>>()
     };
 
-    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        parent_table_name, prop.pg_column_name
-    ));
+    let child_table_name =
+        codegraph_naming::child_table_name(parent_table_name, &prop.pg_column_name);
     let child_struct_name = format!(
         "{}{}",
         parent_rust_type,
@@ -1421,10 +1419,8 @@ fn build_codelist_child_entity(
     project: &ProjectConfig,
     dialect: &dyn SqlDialect,
 ) -> Result<Vec<GeneratedFile>> {
-    let child_table_name = codegraph_naming::truncate_pg_identifier(&format!(
-        "{}_{}",
-        parent_table_name, prop.pg_column_name
-    ));
+    let child_table_name =
+        codegraph_naming::child_table_name(parent_table_name, &prop.pg_column_name);
     let child_struct_name = format!(
         "{}{}",
         parent_rust_type,

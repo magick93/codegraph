@@ -48,6 +48,7 @@ fn property_node_serde_round_trip() {
         format: None,
         is_required: true,
         is_nullable: false,
+        is_id: false,
         is_array: false,
         min_items: None,
         max_items: None,
