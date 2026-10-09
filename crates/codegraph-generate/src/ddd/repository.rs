@@ -263,10 +263,16 @@ impl EntityGenerator for RepositoryTraitGenerator {
                 .map(|plan| !plan.is_empty())
                 .unwrap_or(false);
 
-        // Declared `.ddd` finders lower into trait + impl methods; the
-        // emitter validates each finder's column against the entity tree
-        // (unmappable finders are skipped there with a warning).
-        let design_finders = design_surface.finders_for(schema_title, &entity_name);
+        // Declared `.ddd` finders lower into trait + impl methods. The trait
+        // must carry EXACTLY the finders the impl emits: take them from the
+        // entity tree, which validates each finder's columns and drops the
+        // unmappable ones (warning included). Rendering the raw design
+        // surface here made the trait declare finders the impl skipped —
+        // E0046 "not all trait items implemented" (crewbase compile gate).
+        let design_finders = RepositoryImplEmitter
+            .query_entity_tree(db, schema_title, &domain, config, parent_ref.as_deref())
+            .await?
+            .design_finders;
 
         let ctx = RepositoryContext {
             has_create: operations.contains(&"create".to_string()),

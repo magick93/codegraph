@@ -5,6 +5,7 @@
 //! The application installs handlers at startup (`register_*`); the
 //! drain calls [`dispatch_registered`] for every message it reads.
 
+use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 {% if contracts_use %}{{ contracts_use }}
 {% endif %}
@@ -32,7 +33,7 @@ pub trait {{ consumer.handler_trait }}: Send + Sync {
 /// Dispatch one typed envelope to a `{{ consumer.handler_trait }}`.
 /// Returns `false` when the event is not subscribed, the payload is
 /// missing or fails to deserialize, or the handler errors.
-pub fn dispatch_{{ consumer.name_snake }}(
+pub async fn dispatch_{{ consumer.name_snake }}(
     handler: &dyn {{ consumer.handler_trait }},
     ctx: &{{ consumer.context_struct }}<'_>,
     envelope: &serde_json::Value,
@@ -50,7 +51,7 @@ pub fn dispatch_{{ consumer.name_snake }}(
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "payload failed to deserialize; skipped");
                 return false;
             };
-            match handler.{{ event.method }}(ctx, &payload) {
+            match handler.{{ event.method }}(ctx, &payload).await {
                 Ok(()) => true,
                 Err(e) => {
                     tracing::warn!(event = %event, consumer = "{{ consumer.name }}", error = %e, "consumer handler failed");
@@ -72,8 +73,11 @@ pub fn register_{{ consumer.name_snake }}(
 ) {
     let events: &'static [&'static str] = &[{% for event in consumer.events %}"{{ event.event_name }}"{% if not loop.last %}, {% endif %}{% endfor %}];
     let dispatch: DispatchFn = std::sync::Arc::new(move |db, envelope| {
-        let ctx = {{ consumer.context_struct }} { db };
-        dispatch_{{ consumer.name_snake }}(handler.as_ref(), &ctx, envelope)
+        let handler = std::sync::Arc::clone(&handler);
+        Box::pin(async move {
+            let ctx = {{ consumer.context_struct }} { db: &db };
+            dispatch_{{ consumer.name_snake }}(handler.as_ref(), &ctx, &envelope).await
+        })
     });
     let mut guard = match registry().write() {
         Ok(guard) => guard,
@@ -87,9 +91,17 @@ pub fn register_{{ consumer.name_snake }}(
 }
 {% endfor %}
 /// A registered consumer: the events its subscription covers plus a
-/// dispatch closure carrying the app-installed handler.
-type DispatchFn =
-    std::sync::Arc<dyn Fn(&DatabaseConnection, &serde_json::Value) -> bool + Send + Sync>;
+/// dispatch closure carrying the app-installed handler. Arguments are
+/// owned (both are cheap clones) so the boxed future captures no
+/// borrowed lifetimes — the higher-ranked closure form does not infer.
+type DispatchFn = std::sync::Arc<
+    dyn Fn(
+            DatabaseConnection,
+            serde_json::Value,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+        + Send
+        + Sync,
+>;
 
 struct RegisteredConsumer {
     #[allow(dead_code)]
@@ -110,17 +122,31 @@ fn registry() -> &'static std::sync::RwLock<Vec<RegisteredConsumer>> {
 /// consumer dispatches that FAILED (0 = every covering consumer handled
 /// the event, or no consumer subscribes to it) — the drain keeps the
 /// message queued whenever this is non-zero.
-pub(crate) fn dispatch_registered(db: &DatabaseConnection, envelope: &serde_json::Value) -> usize {
+pub(crate) async fn dispatch_registered(
+    db: DatabaseConnection,
+    envelope: serde_json::Value,
+) -> usize {
     let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
         return 0;
     };
-    let guard = match registry().read() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
+    // Clone the matching dispatch closures and drop the guard BEFORE the
+    // first await — the std RwLock guard is not Send.
+    let dispatches: Vec<DispatchFn> = {
+        let guard = match registry().read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard
+            .iter()
+            .filter(|consumer| consumer.events.contains(&event))
+            .map(|consumer| consumer.dispatch.clone())
+            .collect()
     };
-    guard
-        .iter()
-        .filter(|consumer| consumer.events.contains(&event))
-        .filter(|consumer| !(consumer.dispatch)(db, envelope))
-        .count()
+    let mut failures = 0;
+    for dispatch in &dispatches {
+        if !dispatch(db.clone(), envelope.clone()).await {
+            failures += 1;
+        }
+    }
+    failures
 }

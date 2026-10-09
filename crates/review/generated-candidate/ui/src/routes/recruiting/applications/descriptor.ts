@@ -71,7 +71,7 @@ export const ApplicationDescriptor: EntityDescriptor = {
       list: { visible: true },
 
 
-      ref: { entity: '', domain: 'recruiting', displayField: 'display_name' },
+      ref: { entity: 'CandidateType', domain: 'recruiting', displayField: 'display_name' },
 
 
 

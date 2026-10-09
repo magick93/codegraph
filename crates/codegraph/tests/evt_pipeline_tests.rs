@@ -221,7 +221,7 @@ async fn evt_input_generates_the_typed_events_plane() {
     assert!(consumers.contains("pub trait AnalyticsServiceHandler"));
     assert!(consumers.contains("pub fn register_billing_service("));
     assert!(
-        consumers.contains("pub(crate) fn dispatch_registered("),
+        consumers.contains("pub(crate) async fn dispatch_registered(\n    db: DatabaseConnection,"),
         "the drain's entry point"
     );
 
@@ -264,7 +264,7 @@ async fn evt_input_generates_the_typed_events_plane() {
     let dispatch = read_out(&files, "src/webhook_dispatch.rs");
     assert!(dispatch.contains("is_typed_envelope"), "{dispatch}");
     assert!(
-        dispatch.contains("crate::events::consumers::dispatch_registered(&self.db, &message) == 0"),
+        dispatch.contains("dispatch_registered(\n                            self.db.clone(),"),
         "the delete condition extends to consumer dispatches"
     );
 
@@ -379,13 +379,17 @@ async fn no_evt_input_generates_no_events_plane() {
     // The gated files exist in BOTH trees and differ exactly by their
     // events-plane content (the evt side's markers are pinned by the
     // typed-events-plane test above; here only the delta shape).
-    const GATED: [&str; 3] = [
+    const GATED: [&str; 4] = [
         "src/webhook_dispatch.rs",
         "src/webhook_api.rs",
         // The post-generation module index: gains `pub mod events;` with
         // the events plane (the pipeline-level declaration in this
         // plan-less mode — see the typed-plane test's lib.rs note).
         "src/mod.rs",
+        // The binary entry point declares `mod events;` alongside its
+        // webhook modules when the events plane is present — the gated
+        // `webhook_dispatch.rs` references `crate::events::…`.
+        "src/main.rs",
     ];
     for rel in GATED {
         assert!(

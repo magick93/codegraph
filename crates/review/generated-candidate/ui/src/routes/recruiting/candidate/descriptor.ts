@@ -343,7 +343,7 @@ export const CandidateDescriptor: EntityDescriptor = {
 
 
 
-      ref: { entity: '', domain: 'recruiting', displayField: 'display_name' },
+      ref: { entity: 'ApplicationType', domain: 'recruiting', displayField: 'display_name' },
 
 
 

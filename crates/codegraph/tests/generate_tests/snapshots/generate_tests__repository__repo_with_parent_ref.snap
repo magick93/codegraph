@@ -1,5 +1,6 @@
 ---
-source: crates/codegraph/tests/generate_tests.rs
+source: crates/codegraph/tests/generate_tests/repository.rs
+assertion_line: 429
 expression: code
 ---
 //! Generated repository implementation for Application.
@@ -159,7 +160,7 @@ impl ApplicationRepository<sea_orm::DatabaseTransaction> for ApplicationReposito
     ) -> Result<(Vec<ApplicationResponse>, u64), Box<dyn std::error::Error>> {
         let mut condition = sea_orm::Condition::all();
         if let Some(val) = filters.get("candidate_id") {
-            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}", )))?;
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'candidate_id': {e}")))?;
             condition = condition.add(crate::entity::recruiting_application::Column::CandidateId.eq(parsed));
         }
         if let Some(val) = filters.get("candidate_id") {

@@ -82,6 +82,9 @@ struct EventFieldContext {
 #[derive(Debug, Serialize)]
 struct EmitContext {
     channels: Vec<ChannelContext>,
+    /// The full `use crate::events::contracts::{…};` line for the payload
+    /// types the channel enums reference (empty when no channel is bound).
+    contracts_use: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -297,6 +300,7 @@ async fn contracts_context(
 }
 
 fn emit_context(arch: &EventArchitecture) -> EmitContext {
+    let mut payload_types = BTreeSet::new();
     let channels = arch
         .bound_channels()
         .map(|channel| {
@@ -325,7 +329,10 @@ fn emit_context(arch: &EventArchitecture) -> EmitContext {
                 variants.push(VariantContext {
                     variant: event.name.clone(),
                     event_name: event.name.clone(),
-                    payload: payload_struct_name(&event.name),
+                    payload: {
+                        payload_types.insert(payload_struct_name(&event.name));
+                        payload_struct_name(&event.name)
+                    },
                     version_expr: match &event.version {
                         Some(version) => format!("Some(\"{version}\")"),
                         None => "None".to_string(),
@@ -349,7 +356,17 @@ fn emit_context(arch: &EventArchitecture) -> EmitContext {
         })
         .filter(|channel| !channel.variants.is_empty())
         .collect();
-    EmitContext { channels }
+    EmitContext {
+        contracts_use: if payload_types.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "use crate::events::contracts::{{{}}};",
+                payload_types.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        },
+        channels,
+    }
 }
 
 fn consumers_context(arch: &EventArchitecture) -> ConsumersContext {
