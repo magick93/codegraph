@@ -10,7 +10,6 @@ use crate::db;
 use crate::db::dialect::{DatabaseTarget, SqlDialect, dialect_for_target};
 use crate::error::{Error, Result};
 use crate::output::reports_config_dir;
-use crate::playwright;
 use crate::project_config::{GeneratorOpts, ProjectConfig};
 use crate::type_registry;
 
@@ -375,19 +374,17 @@ fn register_entity_types(config: &DomainConfig) {
 
 /// Compute the output roots for `.codegraph-manifest.json` emission: the main
 /// output dir plus any domain-types/hooks-api bases. The repo-level
-/// `e2e-tests` root (home of the TypeScript Playwright harness) and the
-/// repo-level `migrations` root (hand-extended 0000–0009 + generated 0010+)
-/// get their own manifests so the guard can prove generated files are
-/// regenerated while the hand-written files stay excepted.
+/// `migrations` root (hand-extended 0000–0009 + generated 0010+) gets its own
+/// manifest so the guard can prove generated files are regenerated while the
+/// hand-written files stay excepted. (The old `e2e-tests` root died with the
+/// playwright-ts retirement — #463 phase 3.)
 pub(crate) fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
     let output_dir = ctx.output_dir;
-    let e2e_manifest_root = playwright::e2e_tests_root(output_dir);
     let migrations_manifest_root = db::migrations_root(output_dir);
 
     let mut roots: Vec<PathBuf> = vec![output_dir.to_path_buf()];
     roots.extend(ctx.domain_types_base.map(Path::to_path_buf));
     roots.extend(ctx.hooks_base.map(Path::to_path_buf));
-    roots.push(e2e_manifest_root);
     roots.push(migrations_manifest_root);
 
     // EmDash plugin packages: per-package roots (only for domains the
