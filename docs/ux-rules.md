@@ -452,6 +452,9 @@ assert only through it:
 | `NavigationFlow` (+ modal views) | IFML page `navigateTo{Target}()` / `close{Target}Modal()` (row click + `waitForURL` pattern; modal wrapper/close/back waits) |
 | Mapped components (`ifml-components.toml`) | `ComponentSelectors` resolve the mapping's testids into the page class locators; `UxTable` attaches ONLY to unmapped fallback collections whose entity carries a plan |
 | View structure (render/persona payloads) | page `heading()` / `primaryRoot()` / `navRoot()` / `containerRoot()` / `expectDenied()` |
+| List row-delete surface (#463) | `{comp}DeleteViaMenu()` — `UxTable.deleteViaMenu` + confirm step |
+| `on cancel` navigate event (#463) | `{comp}Cancel()` / `press{Comp}Cancel` |
+| Test-side auth personas (#463) | `tests/e2e/personas.ts` — `test.use` storage-state + Bearer header + the ONE `__USER_ROLES__`/`__USER_CAPABILITIES__` seeding place; specs drive personas via the fixture, never inline `addInitScript` |
 
 IFML page classes are built from the SAME resolution the route generator
 renders from — `ComponentSelectors`, `workflow_for_entity`,
@@ -494,6 +497,33 @@ pin/snapshot-verified (`ui_e2e_test_tests`, insta snapshots,
 typecheck over the regenerated review fixture (below); live entity-app
 Playwright runs belong to consumer projects — hr-specs' ~4,000-spec
 suite is the acceptance gate there.
+
+### IFML test-side auth + journeys (#463)
+
+The `ifml_e2e_auth` feature (default/fullstack ON) extends the IFML
+e2e emitter with a test-side auth plane — no new app UI, no Supabase:
+
+- **`tests/e2e/auth.setup.ts`** (Playwright `globalSetup`): provisions
+  one API key per human-actor persona via `public.create_api_key`
+  (psql over `DATABASE_URL`) and writes `.auth/{persona}.json` storage
+  states carrying `apiKey`, roles, and capabilities (from the policy
+  context; view-`roles` personas are the no-policy fallback).
+- **`tests/e2e/personas.ts`**: per-persona `test.use(...)` fixtures —
+  storage state, Bearer header, and the single `__USER_ROLES__`/
+  `__USER_CAPABILITIES__` seeding place (the per-spec inline
+  `addInitScript` stubs disappear when the flag is on).
+- **`{view}.auth.spec.ts`** family: unauthenticated/garbage-key
+  behavior; denial = redirect AND denial presentation; per-capability
+  control-gating visibility.
+- **`tests/journeys/*.journey.spec.ts`** family: the workflow handoff
+  (persona A creates via the API, persona B transitions through the POM
+  transition map, persistence verified via GET) and the shell-nav
+  journey (routes.ts links clicked via `getByRole('link')`, never
+  `goto()`).
+
+Everything above is presence-gated on the flag: off ⇒ byte-identical
+(the inline persona tests stay). The nightly gate's `auth` + `journeys`
+T3 categories run both families against the live fixture app.
 
 ## 7. Diagnostics catalog
 

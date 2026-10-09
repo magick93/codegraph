@@ -635,6 +635,79 @@ dropped on finish; warm run ~110s. Runs locally and on the nightly
 `.github/workflows/ifml-gate.yml` (workflow_dispatch + 03:00 UTC cron, postgres:16
 service, gate logs artifact on failure) — PR CI stays node-free.
 
+## Generated integration testing (#463)
+
+Every generated app ships its integration tests: hurl API contracts +
+a generated authn/authz suite (API), and IFML Playwright specs whose POM
+carries real test-side auth (UI). Locked decisions: hurl only (the
+cosmos-layout `playwright-ts` generator is retired), test-side IFML auth
+(per-persona API keys via `public.create_api_key` — no login UI), in-app
+Rust integration tests deferred.
+
+### `hurl_contract` domain generator
+
+`crates/codegraph-generate/src/api/hurl_contract.rs` +
+`templates/hurl/{entity,auth,rls_isolation}.tera`; capability
+`hurl_contract` ON in default/fullstack (+enterprise, + the init scaffold
+template). Per-entity `{nn:02}_{domain}_{entity}.hurl` numbered from 10 in
+entity generation order (codelists are seed tables, not contract surface —
+they don't number and can't anchor): LIST envelope, CREATE 201 + `data.id`
+capture (required FK parents created first via preceding POSTs with their
+own captures), GET field echo, zero-uuid 404, PUT roundtrip, DELETE 204 +
+GET 404 — `{{api_key}}` everywhere, minimal required-field bodies
+(codelist/inline-enum fields use the ref target's EnumValues via
+`codelist_enum_name_from_ref`, keeping JSON and mox runs byte-identical).
+Once per run (the domain owning the FIRST entity) the authn/authz suite:
+`01_auth.hurl` (401s), `03_scope_denial_403.hurl` (read-only key write →
+403 `INSUFFICIENT_SCOPE`), `04_cross_tenant_404.hurl`, and
+`08_rls_isolation.hurl` — the ops stage-8 file, named in the manifest
+`[hurl].skip`. The ops generator emits the `[hurl]` manifest section
+exactly when the plan carries the generator (`with_hurl_contracts`);
+org ids MUST stay aligned with `OpsHurl::default()`. The api suite warns
+when a hurl dir yields zero runnable files. Hurl variables never appear
+as Tera literals — URLs/headers/bodies/asserts are precomputed context.
+Gates: `cargo test -p codegraph --test hurl_contract_tests` (byte-golden +
+the `[hurl]` OpsManifest parse coupling, node-free);
+`--test review_api_suite -- --ignored` is the live acceptance gate
+(regenerate fixture → `testkit api` → app_user pool mode + 403 + 404 over
+real HTTP; the fixture manifest carries `[hurl]`, and the xfail tolerance
+for the 500-mapping gap is GONE — any failure is hard).
+
+### IFML test-side auth + journeys
+
+Feature `ifml_e2e_auth` (default/fullstack ON, BuildPlan →
+`ProjectConfig.codegen.ifml_e2e_auth`; presence-gated — flag off ⇒
+byte-identical, inline `addInitScript` persona stubs stay). New
+`crates/codegraph-generate/src/ifml/e2e_test/auth.rs`: `tests/e2e/auth.setup.ts`
+(globalSetup provisioning one API key per human-actor persona, writing
+`.auth/{persona}.json` with apiKey/roles/capabilities; view-`roles`
+personas are the no-policy fallback), `tests/e2e/personas.ts`
+(`test.use` storage-state + Bearer + the single
+`__USER_ROLES__`/`__USER_CAPABILITIES__` seeding place),
+`{view}.auth.spec.ts` (denial = redirect AND presentation, capability
+control-gating), and `tests/journeys/*.journey.spec.ts` (workflow handoff
+across personas via the POM transition map + shell-nav link clicks).
+POM extensions: `{comp}DeleteViaMenu()`/`{comp}Cancel()` page-class
+methods; the emitted `playwright.config.ts` carries `globalSetup` when
+auth exists. Driver note: profile-driven `run` injects CLI
+`--ifml-framework` targets when the profile declares none (the
+`ifml_generate` fallback) — without it no IFML artifacts are emitted at
+all. Nightly gate: `auth` + `journeys` T3 categories in
+`ifml_codegen_gate.rs`. Gate: `cargo test -p codegraph --test
+ifml_auth_setup_tests` (5 pins, node-free).
+
+### Testing layers
+
+Two layers per the TDD discipline: (a) node-free PR-CI pins
+(`hurl_contract_tests`, `ifml_auth_setup_tests` — byte-goldens/contains
+over generated artifacts); (b) the nightly live-app layer
+(`review_api_suite` over real Postgres + hurl + axum; the `auth`/
+`journeys` gate categories over a real browser through the POM). PR CI
+stays node-free/DB-free. The playwright-ts retirement removed
+`playwright_ts_*` capabilities/generators and the review fixture's stale
+`e2e-tests/`; the wired `playwright-entity`/`playwright-global` (Rust
+fixture crate) are untouched.
+
 ## UX Rules (#286 ux-rules branch)
 
 Codified UX rules for generated UIs ("form follows data"): a ux-rules TOML
@@ -966,6 +1039,10 @@ cargo test -p codegraph --test grpc_compile_tests   # Level 3: protoc compilatio
 # Profile smoke tests (includes gRPC profile validation)
 cargo test -p codegraph --test profile_smoke_tests
 
+# Generated integration testing (#463) — node-free PR-CI pins
+cargo test -p codegraph --test hurl_contract_tests    # 2, hurl golden + [hurl] manifest coupling
+cargo test -p codegraph --test ifml_auth_setup_tests  # 5, auth.setup/personas/auth specs/journeys/POM
+
 # Ops harness tests (codegraph-ops + ops generator)
 cargo test -p codegraph-ops            # 238 harness tests (suites, proc, db, migrate, ext, metrics, doctor, bundle, registry, freshness, results)
 cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
@@ -974,6 +1051,7 @@ cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 # Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
 cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
+cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
 # Full pipeline integration (requires protoc)
 cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_all_entity_generators_produce_output_for_candidate

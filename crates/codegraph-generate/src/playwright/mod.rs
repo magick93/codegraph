@@ -1,14 +1,20 @@
 // hr-graph/src/generate/playwright/mod.rs
 pub mod entity_gen;
 pub mod global_gen;
-pub mod ts_entity_gen;
-pub mod ts_global_gen;
 
 use std::path::{Path, PathBuf};
 
+use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::PropertyNode;
+use codegraph_type_contracts::RefClassificationKind;
+use heck::ToLowerCamelCase;
 use serde::Serialize;
 
 use super::ui::page::UiField;
+use crate::domain_model::{
+    EntityField, RustType, example_for_field, parse_rust_type, ts_type_for_field,
+};
+use crate::error::Result;
 
 /// Resolve the repo-level `e2e-tests` root for the TypeScript Playwright
 /// harness.
@@ -111,126 +117,183 @@ pub struct PlaywrightCrateContext {
     pub domains: Vec<PlaywrightDomainSummary>,
 }
 
-/// Per-entity context for TypeScript spec + fixture + API client templates.
-#[derive(Debug, Serialize)]
-pub struct TsEntityContext {
-    pub entity_name: String,
-    pub module_name: String,
-    pub domain: String,
-    pub path_segment: String,
-    pub nsid: String,
-    pub has_create: bool,
-    pub has_read: bool,
-    pub has_update: bool,
-    pub has_delete: bool,
-    pub has_list: bool,
-    pub create_fields: Vec<TsFieldDef>,
-    /// Fields the update DTO accepts (create fields minus id/immutable ones —
-    /// mirrors the `!is_immutable` derivation in ui/e2e_test.rs). Drives the
-    /// Update describe in ts_spec.tera.
-    pub update_fields: Vec<TsFieldDef>,
-    /// The single mutable field the Update test PATCHes with a fresh unique
-    /// value: the first required plain-string field in `update_fields` that
-    /// tolerates a generated suffix (enum-typed, DID/URI-shaped, and FK-ref
-    /// fields are skipped — overwriting those would be rejected or reassign
-    /// the record). None when no such field exists; the Update roundtrip test
-    /// is then skipped.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_patch_field: Option<TsFieldDef>,
-    /// True when at least one create field is required (gates the
-    /// missing-required-fields test in ts_spec.tera).
-    pub has_required_fields: bool,
-    /// Required entity-ref FK fields (with target metadata) — drives the
-    /// parent-creation `beforeAll` in ts_spec.tera and `withParent*` helpers
-    /// in ts_fixture.tera. Always serialized (empty vec when no required FKs)
-    /// so Tera templates can safely reference it.
-    pub fk_fields: Vec<TsFkField>,
-    pub schema_name: String,
-    /// Whether this entity has full-text search (search.fts_* config).
-    pub has_fts: bool,
-    /// camelCase create-DTO field used to seed FTS search terms.
-    pub fts_search_field: String,
-    /// True when `fts_search_field` is a required create field.
-    pub fts_search_field_required: bool,
-    /// camelCase create-DTO field of a secondary (D-weight) search column,
-    /// usable in a create payload. Empty when no such column exists.
-    pub fts_secondary_field: String,
-    /// True when the entity is permission-gated (`permissions.scope` set).
-    /// The generated spec then uses a DID persona token so requests carry an
-    /// actor DID the AuthorizationService can evaluate.
-    pub use_persona_token: bool,
-    /// True when the entity has `permissions.record_scoped` set. The generated
-    /// spec then expects 403 (authz-before-handler) for unknown record ids
-    /// instead of 404.
-    pub permission_record_scoped: bool,
-    /// DID injected as the test persona (both in the auth token and in
-    /// did-carrying fixture fields). Defaults to "did:plc:test.generated".
-    pub persona_did: String,
-}
+/// Scalar (non-array) ValueObject / CompositeWrapper / MediaWrapper properties
+/// are stored as flattened child columns on the main table (the Create DTO
+/// mirrors this). The canonical entity model keeps them as single child-table
+/// fields, so the playwright fixtures/specs expand them into their DTO-shaped
+/// flat columns here — without affecting other generators (xrpc, ui, ...).
+pub(crate) async fn expand_vo_fields(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    model_fields: &[EntityField],
+    properties: &[PropertyNode],
+) -> Result<Vec<EntityField>> {
+    let mut out = Vec::new();
+    for field in model_fields {
+        let Some(prop) = properties.iter().find(|p| p.name == field.name) else {
+            out.push(field.clone());
+            continue;
+        };
+        let kind = prop.effective_kind();
+        let expandable = matches!(
+            kind,
+            Some(RefClassificationKind::CompositeWrapper)
+                | Some(RefClassificationKind::MediaWrapper)
+                | Some(RefClassificationKind::ValueObject)
+                | Some(RefClassificationKind::EntityReference)
+        );
+        let is_scalar_vo = !prop.is_array && expandable;
+        let is_array_vo = prop.is_array
+            && matches!(
+                kind,
+                Some(RefClassificationKind::CompositeWrapper)
+                    | Some(RefClassificationKind::MediaWrapper)
+                    | Some(RefClassificationKind::ValueObject)
+            );
+        if !is_scalar_vo && !is_array_vo {
+            out.push(field.clone());
+            continue;
+        }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct TsFieldDef {
-    pub name: String,
-    pub label: String,
-    pub ts_type: String,
-    pub required: bool,
-    pub example_value: String,
-    /// True when the field is enum/codelist-typed — its value must be one of
-    /// the codelist variants, so a generated unique suffix would be rejected.
-    pub is_enum: bool,
-    /// FK target metadata for required entity-ref FKs — used by the spec
-    /// generator to create parent rows in `beforeAll` so the child fixture
-    /// can reference a real parent id. None for non-FK / optional-FK fields.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fk_target_domain: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fk_target_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fk_target_module: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fk_target_entity_name: Option<String>,
-    /// JS-safe variable name for the captured parent id (camelCase of
-    /// `name`), present when `fk_target_entity_name` is Some.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub js_var: Option<String>,
-}
+        // Composite / media wrappers expand into flattened child columns,
+        // e.g. `person` (PersonReferenceType) → person_did / person_name / ...
+        // Array VOs are flattened the same way when the DDL materializes their
+        // columns on the main table (e.g. `recipients` → recipients_did / ...).
+        if (matches!(
+            kind,
+            Some(RefClassificationKind::CompositeWrapper)
+                | Some(RefClassificationKind::MediaWrapper)
+        ) || (prop.is_array && matches!(kind, Some(RefClassificationKind::ValueObject))))
+            && let Ok(cols) = db.get_composite_columns(&prop.name, schema_title).await
+        {
+            for col in cols {
+                let rust_name = format!("{}{}", prop.rust_field_name, col.suffix);
+                let column_name = format!("{}{}", prop.pg_column_name, col.suffix);
+                if out.iter().any(|f| f.rust_field == rust_name) {
+                    continue;
+                }
+                let base_rt = parse_rust_type(&col.rust_type, prop.is_required);
+                let rust_type = if prop.is_required {
+                    base_rt
+                } else {
+                    RustType::Optional {
+                        optional: Box::new(base_rt),
+                    }
+                };
+                let is_fk = column_name.ends_with("_id");
+                out.push(EntityField {
+                    name: rust_name.to_lower_camel_case(),
+                    column: column_name.clone(),
+                    rust_field: rust_name.clone(),
+                    rust_type: rust_type.clone(),
+                    sea_orm_type: col.sea_orm_type.clone(),
+                    pg_type: col.pg_type.clone(),
+                    ts_type: ts_type_for_field(&rust_type),
+                    required: prop.is_required,
+                    is_pk: false,
+                    is_fk,
+                    fk_target: if is_fk { col.fk_target.clone() } else { None },
+                    fk_table: None,
+                    classification: Some("composite_column".to_string()),
+                    example_value: example_for_field(&rust_name, &col.rust_type, None),
+                    label: field.label.clone(),
+                    inherited: false,
+                    is_child_table: false,
+                    is_model_optional: !prop.is_required,
+                });
+            }
+            continue;
+        }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct TsFkField {
-    /// camelCase create-DTO field name, e.g. "campaignId".
-    pub name: String,
-    /// PascalCase target entity name, e.g. "Campaign".
-    pub entity_name: String,
-    /// Domain of the FK target entity, e.g. "campaigns".
-    pub target_domain: String,
-    /// REST path segment of the FK target, e.g. "campaign".
-    pub target_path: String,
-    /// snake_case module of the FK target, e.g. "campaign".
-    pub target_module: String,
-    /// JS-safe variable name for the captured parent id, e.g. "campaignId".
-    pub js_var: String,
-}
+        // Scalar entity references — the DDL emits `{prop}_id` FK columns and
+        // the DTO exposes them as flat `{prop}Id` fields. Nullability honors the
+        // schema's `required` (JSON schema is the source of truth): a required
+        // FK is a plain `campaignId: string` that the fixture must populate;
+        // an optional FK stays `campaignId?: string | null`.
+        if !prop.is_array && kind == Some(RefClassificationKind::EntityReference) {
+            let fd = codegraph_core::types::resolve_field(prop);
+            if out.iter().any(|f| f.rust_field == fd.rust_field_name) {
+                continue;
+            }
+            let rust_type = if prop.is_required {
+                RustType::Simple("Uuid".to_string())
+            } else {
+                RustType::Optional {
+                    optional: Box::new(RustType::Simple("Uuid".to_string())),
+                }
+            };
+            out.push(EntityField {
+                name: fd.rust_field_name.to_lower_camel_case(),
+                column: fd.column_name.clone(),
+                rust_field: fd.rust_field_name.clone(),
+                rust_type: rust_type.clone(),
+                sea_orm_type: "Uuid".to_string(),
+                pg_type: "UUID".to_string(),
+                ts_type: ts_type_for_field(&rust_type),
+                required: prop.is_required,
+                is_pk: false,
+                is_fk: true,
+                fk_target: prop.ref_target.clone(),
+                fk_table: None,
+                classification: Some("entity_reference".to_string()),
+                example_value: example_for_field(&fd.rust_field_name, "Uuid", None),
+                label: field.label.clone(),
+                inherited: false,
+                is_child_table: false,
+                is_model_optional: !prop.is_required,
+            });
+            continue;
+        }
 
-/// Per-entity summary for global generators.
-#[derive(Debug, Serialize, Clone)]
-pub struct TsEntitySummary {
-    pub module_name: String,
-    pub domain: String,
-    pub path_segment: String,
-    pub entity_name: String,
-}
+        // Scalar ValueObjects referencing a known entity — the DDL emits an
+        // FK column, so the DTO exposes `{prop}_id`. Pure VOs stay nested in
+        // the DTO (and are optional), so they keep their single-field form.
+        let vo_target_is_entity = match db.get_property_ref_target(&prop.name, schema_title).await {
+            Ok(Some(target)) => {
+                if target.is_entity {
+                    true
+                } else {
+                    codegraph_core::traits::find_entity_extended_by_vo(db, &target.title)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                }
+            }
+            _ => false,
+        };
+        if vo_target_is_entity {
+            let fd = codegraph_core::types::resolve_field(prop);
+            if out.iter().any(|f| f.rust_field == fd.rust_field_name) {
+                continue;
+            }
+            let rust_type = RustType::Optional {
+                optional: Box::new(RustType::Simple("Uuid".to_string())),
+            };
+            out.push(EntityField {
+                name: fd.rust_field_name.to_lower_camel_case(),
+                column: fd.column_name.clone(),
+                rust_field: fd.rust_field_name.clone(),
+                rust_type: rust_type.clone(),
+                sea_orm_type: "Uuid".to_string(),
+                pg_type: "UUID".to_string(),
+                ts_type: ts_type_for_field(&rust_type),
+                required: false,
+                is_pk: false,
+                is_fk: true,
+                fk_target: prop.ref_target.clone(),
+                fk_table: None,
+                classification: Some("value_object_fk".to_string()),
+                example_value: example_for_field(&fd.rust_field_name, "Uuid", None),
+                label: field.label.clone(),
+                inherited: false,
+                is_child_table: false,
+                is_model_optional: true,
+            });
+            continue;
+        }
 
-/// Domain grouping for TypeScript E2E tests.
-#[derive(Debug, Serialize, Clone)]
-pub struct TsDomainSummary {
-    pub name: String,
-    pub entities: Vec<TsEntitySummary>,
-}
-
-/// Global context for playwright config, auth, docker-compose.
-#[derive(Debug, Serialize)]
-pub struct TsGlobalContext {
-    pub domains: Vec<TsDomainSummary>,
-    pub project_name: String,
-    pub api_base_url: String,
+        out.push(field.clone());
+    }
+    Ok(out)
 }

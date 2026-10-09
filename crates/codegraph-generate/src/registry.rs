@@ -90,9 +90,6 @@ pub(crate) fn build_entity_generators(
         Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
             base("playwright-entity"),
         )) as Box<dyn EntityGenerator>,
-        Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(base(
-            "playwright-ts",
-        ))) as Box<dyn EntityGenerator>,
         Box::new(ui::descriptor::UiDescriptorGenerator::new(
             base("ui-descriptor"),
             ctx.ui_overrides.clone(),
@@ -344,9 +341,6 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             output_dir,
         )) as Box<dyn GlobalGenerator>,
     );
-    global_gens.push(Box::new(playwright::ts_global_gen::TsGlobalGenerator::new(
-        output_dir,
-    )) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(webhook::dispatch::WebhookDispatchGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,

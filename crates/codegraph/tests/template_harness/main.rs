@@ -1,4 +1,3 @@
-use codegraph::generate;
 
 mod auth;
 mod command_query;
@@ -13,6 +12,5 @@ mod harness;
 mod include_resolution;
 mod repository;
 mod scaffold;
-mod ui;
 mod webhook;
 mod workflow;

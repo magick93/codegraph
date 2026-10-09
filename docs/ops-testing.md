@@ -49,6 +49,28 @@ testkit api [--no-migrate] [--rebuild] [--regen]
 hr-specs validation-run numbers at consumer scale: generation ~3 min; the
 app's release build 55-66 min cold, ~1 min warm.
 
+### Generated hurl contracts (#463)
+
+The `hurl_contract` generator (default/fullstack profiles) emits the API
+contract suite the stage-4 harness runs — no hand-written hurl files:
+
+| File | Contract |
+|------|----------|
+| `{nn}_{domain}_{entity}.hurl` (from 10, entity generation order) | LIST envelope, CREATE 201 + `data.id` capture (required FK parents created first via preceding POSTs with their own captures), GET-by-id field echo, zero-uuid 404, PUT roundtrip + GET verify, DELETE 204 + GET 404 — `Authorization: Bearer {{api_key}}` on every request |
+| `01_auth.hurl` | missing key → 401, garbage key → 401 (once per run, anchored at the first entity) |
+| `03_scope_denial_403.hurl` | read-only key (`{{api_key_limited}}`): read 200, write 403 `FORBIDDEN` + `INSUFFICIENT_SCOPE` |
+| `04_cross_tenant_404.hurl` | org-A create captured, org-B GET → 404 (the silent RLS filter) |
+| `08_rls_isolation.hurl` | stage-8 convention file: org-B list never contains the org-A row; the manifest `[hurl].skip` names it so the main loop never runs it (stage 8 does, with `api_key_a`/`api_key_b` only) |
+
+The ops generator emits the `[hurl]` manifest section (dir, skip, org ids,
+`limited_key = true`) exactly when `hurl_contract` is in the plan, and the
+api suite provisions the matching keys (main/org-B/read-only). Org ids MUST
+stay aligned between `OpsHurl::default()` and
+`hurl_contract::ORG_ID_A/ORG_ID_B`. A configured hurl dir that yields zero
+runnable files is warned (never silently skipped). The generator↔harness
+coupling is pinned by `hurl_contract_tests`; `review_api_suite` is the live
+acceptance gate over real HTTP (app_user pool mode + the authz contracts).
+
 ### e2e
 
 ```
