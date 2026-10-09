@@ -135,6 +135,12 @@ pub struct CodegenConfig {
     /// = byte-identical output.
     #[serde(default)]
     pub expr_ir: bool,
+    /// IFML test-side auth surface (issue #463): when true the IFML e2e
+    /// generator emits `tests/e2e/auth.setup.ts` (per-persona API-key
+    /// provisioning), the persona fixtures, `{view}.auth.spec.ts`, journey
+    /// specs, and the extended POM surface. Default false = byte-identical.
+    #[serde(default)]
+    pub ifml_e2e_auth: bool,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -147,6 +153,7 @@ impl Default for CodegenConfig {
             dto_key_casing: DtoKeyCasing::default(),
             namespace_layout: false,
             expr_ir: false,
+            ifml_e2e_auth: false,
             types_import_prefix: "codegraph_type_contracts".into(),
         }
     }
@@ -406,6 +413,7 @@ mod tests {
             ("deployment_topology", serde_json::json!("monolith")),
             ("namespace_layout", serde_json::json!(false)),
             ("expr_ir", serde_json::json!(false)),
+            ("ifml_e2e_auth", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),
             (
                 "types_import_prefix",

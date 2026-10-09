@@ -51,7 +51,7 @@ pub struct ViewTestSpec {
 /// `__USER_CAPABILITIES__` for capability-only views) before navigating,
 /// then asserts the permitted outcome (page renders) or the denied one
 /// (redirect to the denial target).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PersonaTest {
     pub actor: String,
     pub permitted: bool,

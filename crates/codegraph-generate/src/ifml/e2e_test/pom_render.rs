@@ -121,6 +121,19 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
                 collection.row_testid
             ));
         }
+        if pom.auth_enabled && collection.ux_table.is_some() {
+            s.push_str(
+                "  /** Delete a row (first by default) through the overflow menu\n   * and its confirmation dialog. */\n",
+            );
+            s.push_str(&format!(
+                "  async {}DeleteViaMenu(row?: Locator): Promise<void> {{\n",
+                collection.name
+            ));
+            s.push_str(&format!(
+                "    await this.{}.deleteViaMenu(row);\n  }}\n\n",
+                collection.name
+            ));
+        }
         s.push_str(&render_workflow_section(
             &collection.name,
             &collection.pascal,
@@ -201,6 +214,24 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
             s.push_str(&format!(
                 "    await this.page.waitForURL(new RegExp('{}'));\n  }}\n\n",
                 js_string(pattern)
+            ));
+        }
+        if let (true, Some(cancel)) = (pom.auth_enabled, &form.cancel) {
+            s.push_str("  /** The form's cancel control. */\n");
+            s.push_str(&format!("  {}Cancel(): Locator {{\n", form.name));
+            s.push_str(&format!(
+                "    return this.page.getByTestId('{}');\n  }}\n\n",
+                cancel.testid
+            ));
+            s.push_str("  /** Click cancel and wait for the cancel navigation. */\n");
+            s.push_str(&format!(
+                "  async press{}Cancel(): Promise<void> {{\n",
+                form.pascal
+            ));
+            s.push_str(&format!("    await this.{}Cancel().click();\n", form.name));
+            s.push_str(&format!(
+                "    await this.page.waitForURL(new RegExp('{}'));\n  }}\n\n",
+                js_string(&cancel.pattern)
             ));
         }
         s.push_str(&render_workflow_section(

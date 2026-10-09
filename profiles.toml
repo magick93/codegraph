@@ -83,6 +83,11 @@ function_postconditions = false
 # resolves into ProjectConfig.ux for every template/generator; a project
 # --ux-rules file shadows pack rules per selector tier. Off = byte-identical.
 ux_rules = true
+# IFML test-side auth surface (issue #463). When true the IFML e2e generator
+# emits the auth.setup.ts globalSetup (per-persona API keys via
+# public.create_api_key), persona fixtures, {view}.auth.spec.ts, journey
+# specs, and the extended POM surface. Off = byte-identical.
+ifml_e2e_auth = true
 
 [profiles.default.api]
 generators = [
@@ -229,6 +234,7 @@ pagination = true
 validation_level = "strict"
 grpc_backend = true
 ux_rules = true
+ifml_e2e_auth = true
 
 [profiles.fullstack.api]
 generators = [

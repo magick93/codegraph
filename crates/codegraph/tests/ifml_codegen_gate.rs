@@ -630,6 +630,9 @@ fn assert_categories(titles: &[String]) {
     let create_via_ui = has(&|t| t.starts_with("create round trip persists a new refund request"));
     let details_values = has(&|t| t.starts_with("details shows the persisted values"));
     let ux = has(&|t| t.starts_with("ux "));
+    let auth = has(&|t| t.contains("unauthenticated visit is redirected"))
+        && has(&|t| t.contains("garbage API key"));
+    let journeys = has(&|t| t.starts_with("journey: "));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -643,6 +646,8 @@ fn assert_categories(titles: &[String]) {
         ("create via ui", create_via_ui),
         ("details values", details_values),
         ("ux", ux),
+        ("auth", auth),
+        ("journeys", journeys),
     ]
     .iter()
     .filter(|(_, present)| !present)
