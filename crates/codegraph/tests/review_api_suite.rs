@@ -1,17 +1,24 @@
-//! End-to-end api-suite gate for the review fixture (#169 DB-level authz).
+//! End-to-end api-suite gate for the review fixture (#169 DB-level authz,
+//! #463 generated hurl contracts).
 //!
-//! Proves — over real HTTP, through the ops harness (`testkit api`) — that the
-//! generated server:
+//! Proves — over real HTTP, through the ops harness (`testkit api`) — that
+//! the generated server:
 //!
 //! 1. boots in **app_user pool mode** (`APP_DATABASE_URL`, the NOBYPASSRLS
 //!    `app_user` role created by migration 0002) — asserted via the app log's
 //!    `mode=AppUser` pool-mode line;
-//! 2. enforces the `scope_enforced_*` RLS policies over HTTP (read-only key
+//! 2. ships its OWN hurl contract suite: the regenerated fixture must carry
+//!    the `hurl_contract` generator's output (`hurl/01_auth.hurl`,
+//!    `03_scope_denial_403.hurl`, `04_cross_tenant_404.hurl`,
+//!    `08_rls_isolation.hurl` plus the per-entity contracts) and a
+//!    `[hurl]` manifest section with `limited_key = true` — the gate is RED
+//!    until that generator lands (Phase 1 of #463);
+//! 3. enforces the `scope_enforced_*` RLS policies over HTTP (read-only key
 //!    write → 403 INSUFFICIENT_SCOPE, `hurl/03_scope_denial_403.hurl`);
-//! 3. keeps cross-tenant access a silent RLS filter (org B GET of org A's row
+//! 4. keeps cross-tenant access a silent RLS filter (org B GET of org A's row
 //!    → 404, `hurl/04_cross_tenant_404.hurl`);
-//! 4. still serves plain CRUD for a full-wildcard key and rejects anonymous
-//!    requests with 401 (`hurl/01`, `02`, `05`).
+//! 5. still serves plain CRUD for a full-wildcard key and rejects anonymous
+//!    requests with 401 (`hurl/01`, `10+`).
 //!
 //! The test runs the FULL `api` suite against the fixture
 //! `crates/review/generated-candidate/` on a scratch database (unique per run,
@@ -316,17 +323,6 @@ fn retarget_manifest_at_scratch(fixture_manifest: &str, target: &PgTarget) -> St
     if !text.ends_with('\n') {
         text.push('\n');
     }
-    // Defensive: if the checked-in manifest ever loses its [hurl] section
-    // (e.g. an ops-generator run overwrites it), inject the gate's contract
-    // config so the hurl files still run.
-    if !text.contains("[hurl]") {
-        text.push_str(
-            "\n[hurl]\ndir = \"hurl\"\nskip = []\n\
-             org_id_a = \"00000000-0000-0000-0000-000000000001\"\n\
-             org_id_b = \"00000000-0000-0000-0000-000000000002\"\n\
-             limited_key = true\n",
-        );
-    }
     text
 }
 
@@ -375,47 +371,6 @@ async fn record_boot_migrator_bookkeeping(
     Ok(())
 }
 
-/// Recognise the one transitional failure the gate tolerates: the ONLY suite
-/// failure is `03_scope_denial_403.hurl`, its status assert saw the unmapped
-/// 500 (not 200/401 — those would be real authz regressions), and the
-/// enforcement-proof request inside the same file passed (the suite output
-/// shows the file failing on exactly one request, the strict-403 one).
-/// Returns the explanation for the warning when the signature matches.
-fn known_scope_denial_mapping_gap(suite_output: &str, fixture_dir: &Path) -> Option<String> {
-    let fail_lines: Vec<&str> = suite_output
-        .lines()
-        .filter(|l| l.contains(" FAIL ") || l.contains("FAIL 03_scope_denial_403"))
-        .collect();
-    let fail_lines: Vec<&str> = fail_lines
-        .into_iter()
-        .filter(|l| !l.contains("--- server log tail ---"))
-        .collect();
-    if fail_lines.len() != 1 || !fail_lines[0].contains("03_scope_denial_403.hurl") {
-        return None;
-    }
-
-    let hurl_log =
-        std::fs::read_to_string(fixture_dir.join("test-results/hurl/03_scope_denial_403.hurl.log"))
-            .ok()?;
-    // Exactly one request failed (the strict-403 one), with 500 — i.e. the
-    // P0403 raise reached HTTP but the CRUD handler has no Forbidden→403
-    // mapping yet. A 200/401/404 here would mean the RLS scope policies are
-    // NOT firing and must fail the gate.
-    let one_failure = hurl_log.matches("error: Assert status code").count() == 1;
-    let unmapped_500 = hurl_log.contains("actual value is <500>");
-    if !(one_failure && unmapped_500) {
-        return None;
-    }
-
-    Some(
-        "the scope_enforced_insert RLS policy raised P0403 INSUFFICIENT_SCOPE over real HTTP \
-         (asserted via the response body), but the generated CRUD handler still maps the \
-         domain Forbidden error to AppError::internal (500) instead of 403 — \
-         templates/api/handler.tera is owned by the #169 HTTP-mapping stream."
-            .to_string(),
-    )
-}
-
 fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(n);
@@ -441,6 +396,14 @@ async fn review_fixture_api_suite_passes_in_app_pool_mode() {
         .await
         .expect("fixture regeneration must succeed");
 
+    // ── generated hurl contract suite (#463 Phase 1) ──────────────────
+    // The gate is RED until the `hurl_contract` generator lands: the
+    // regenerated fixture must carry its output and the checked-in
+    // manifest must provision the keys those files reference. Failing
+    // here (seconds after regeneration) avoids wasting the slow fixture
+    // build on a run that could never exercise the contracts.
+    assert_generated_hurl_contracts(&fixture_dir(), &fixture_manifest());
+
     // ── scratch database ──────────────────────────────────────────────
     let scratch = scratch_db_name();
     psql_exec(&admin, &format!("CREATE DATABASE {scratch};"))
@@ -460,6 +423,62 @@ async fn review_fixture_api_suite_passes_in_app_pool_mode() {
     if let Err(err) = result {
         panic!("{err}");
     }
+}
+
+/// The checked-in fixture manifest (the regeneration deliberately strips the
+/// ops generator so this hand-committed file survives).
+fn fixture_manifest() -> String {
+    std::fs::read_to_string(fixture_dir().join("codegraph-ops.toml"))
+        .expect("read fixture manifest")
+}
+
+/// The generated hurl contract inventory the regenerated fixture must carry
+/// (#463): the four authn/authz convention files plus at least one per-entity
+/// contract. Byte-set equality lives in `hurl_contract_tests`; this gate
+/// asserts the fixture actually ships the suite (and would run it).
+fn assert_generated_hurl_contracts(fixture: &Path, manifest: &str) {
+    let hurl_dir = fixture.join("hurl");
+    let mut files: Vec<String> = std::fs::read_dir(&hurl_dir)
+        .unwrap_or_else(|e| {
+            panic!(
+                "the regenerated fixture must ship the generated hurl contract dir at {}: {e} \
+                 (the `hurl_contract` generator has not landed — #463 Phase 1)",
+                hurl_dir.display()
+            )
+        })
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "hurl"))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    files.sort();
+
+    for required in [
+        "01_auth.hurl",
+        "03_scope_denial_403.hurl",
+        "04_cross_tenant_404.hurl",
+        "08_rls_isolation.hurl",
+    ] {
+        assert!(
+            files.iter().any(|f| f == required),
+            "the generated hurl suite must include {required}; got {files:?}"
+        );
+    }
+    assert!(
+        files.iter().any(|f| f.starts_with("10_")),
+        "the generated hurl suite must include per-entity contracts (numbered from 10); \
+         got {files:?}"
+    );
+
+    assert!(
+        manifest.contains("[hurl]"),
+        "the fixture manifest must carry the [hurl] section (dir/skip/org ids/limited_key) — \
+         the ops-generator coupling of #463"
+    );
+    assert!(
+        manifest.contains("limited_key = true"),
+        "the fixture manifest must opt into limited-key provisioning: \
+         03_scope_denial_403.hurl asserts with {{{{api_key_limited}}}}"
+    );
 }
 
 /// Body of the gate after the scratch database exists — split out so the
@@ -583,19 +602,9 @@ async fn run_suite_on_scratch(admin: &PgTarget, scratch: &str) -> Result<(), Str
     if !output.status.success() {
         // Full hurl output lands in {fixture}/test-results/hurl/*.log; the
         // suite output tail plus the app log tail usually name the culprit.
-        if let Some(warning) = known_scope_denial_mapping_gap(&combined, &fixture) {
-            // Transitional state while the templates/api stream lands the
-            // CRUD-handler `Forbidden → 403` mapping: the DB-level
-            // enforcement is PROVEN (the INSUFFICIENT_SCOPE payload reached
-            // the HTTP response body and the read-only key still reads), and
-            // the ONLY failure is the 403 status assert coming back as the
-            // unmapped 500. Anything else remains a hard failure — an authz
-            // regression can never hide behind this branch.
-            eprintln!(
-                "\n=== KNOWN GAP (xfail): CRUD-handler 403 mapping pending ===\n{warning}\n=== the gate tightens to a hard 403 assert once the mapping lands ===\n"
-            );
-            return Ok(());
-        }
+        // Any failure is hard: the Forbidden → 403 mapping has shipped
+        // (#169), so a failing scope-denial contract is a real authz
+        // regression, never a transitional state.
         return Err(format!(
             "testkit api failed ({})\n--- suite output tail ---\n{}\n--- app log tail ---\n{}",
             output.status,
