@@ -20,7 +20,7 @@ use crate::render_template_with_project;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use codegraph_config::DomainConfig;
 use codegraph_config::ops_manifest::{
-    OpsCapabilities, OpsDatabase, OpsDbTarget, OpsManifest, OpsServers, OpsSmoke,
+    OpsCapabilities, OpsDatabase, OpsDbTarget, OpsHurl, OpsManifest, OpsServers, OpsSmoke,
 };
 
 /// Derive the API path segment for an entity schema title
@@ -86,6 +86,11 @@ pub struct OpsManifestGenerator {
     has_ui: bool,
     has_admin_cli: bool,
     has_grpc: bool,
+    /// The `hurl_contract` generator is in the plan: emit the `[hurl]`
+    /// manifest section (dir/skip/org ids/limited_key) so the api suite
+    /// provisions exactly the keys the generated contract files reference
+    /// (issue #463). Off = `hurl: None` (consumers may hand-write it).
+    has_hurl_contracts: bool,
 }
 
 impl OpsManifestGenerator {
@@ -102,7 +107,15 @@ impl OpsManifestGenerator {
             has_ui,
             has_admin_cli,
             has_grpc,
+            has_hurl_contracts: false,
         }
+    }
+
+    /// Emit the `[hurl]` manifest section (call when the plan carries the
+    /// `hurl_contract` domain generator).
+    pub fn with_hurl_contracts(mut self, has_hurl_contracts: bool) -> Self {
+        self.has_hurl_contracts = has_hurl_contracts;
+        self
     }
 
     /// Resolve the codegraph-ops crate location as a path relative to the
@@ -192,7 +205,19 @@ impl GlobalGenerator for OpsManifestGenerator {
                 // (not yet on ProjectConfig in all codegraph versions).
                 persistence_provider: "sea_orm".to_string(),
             },
-            hurl: None,
+            // Generated hurl contracts (issue #463): when the plan carries
+            // the `hurl_contract` generator the manifest provisions the
+            // keys its files reference — org ids MUST stay aligned with
+            // ` hurl_contract::ORG_ID_A/ORG_ID_B`, and the skip list names
+            // the stage-8 isolation file so the main hurl loop never runs
+            // it (the api suite's RLS stage does, with api_key_a/b only).
+            hurl: self.has_hurl_contracts.then(|| OpsHurl {
+                dir: PathBuf::from("hurl"),
+                skip: vec![crate::api::hurl_contract::ISOLATION_FILE.to_string()],
+                org_id_a: Some(crate::api::hurl_contract::ORG_ID_A.to_string()),
+                org_id_b: Some(crate::api::hurl_contract::ORG_ID_B.to_string()),
+                limited_key: true,
+            }),
             hooks: Vec::new(),
             extensions: Vec::new(),
             doctor: Default::default(),

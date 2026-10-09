@@ -1,0 +1,23 @@
+# hurl_contract: RLS isolation — ops api-suite stage 8 convention file.
+# Runs with api_key_a / api_key_b only; the manifest [hurl].skip list keeps
+# it out of the main hurl loop.
+
+POST {{ create_url }}
+{{ key_a_header }}
+{{ create_body }}
+
+HTTP 201
+[Captures]
+rls_{{ module }}_id: jsonpath "$.data.id"
+
+GET {{ list_page_url }}
+{{ key_b_header }}
+
+HTTP 200
+[Asserts]
+{{ not_contains_assert }}
+
+GET {{ item_url_base }}/{{ rls_ref }}
+{{ key_a_header }}
+
+HTTP 200

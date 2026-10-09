@@ -1,0 +1,66 @@
+# hurl_contract: {{ domain }}.{{ module }} — API contract (generated; do not edit).
+# Regenerate with the codegraph pipeline. Vars: base_url, api_key.
+{% if has_list %}
+# LIST — envelope shape
+GET {{ list_url }}
+{{ auth_header }}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data" exists
+jsonpath "$.meta" exists
+{% endif %}{% if has_create %}{% for parent in fk_parent_sections %}
+{{ parent.body }}
+{% endfor %}
+# CREATE — 201, capture the id
+POST {{ create_url }}
+{{ auth_header }}
+{{ create_body }}
+
+HTTP 201
+[Captures]
+{{ capture_name }}: jsonpath "$.data.id"
+[Asserts]
+{{ create_asserts }}
+{% endif %}{% if has_read %}
+# GET by id — field echo
+GET {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+
+HTTP 200
+{% if echo_asserts %}[Asserts]
+{{ echo_asserts }}
+{% endif %}
+# GET zero-uuid — 404
+GET {{ item_url_base }}/00000000-0000-0000-0000-000000000000
+{{ auth_header }}
+
+HTTP 404
+{% endif %}{% if has_update %}
+# PUT roundtrip
+PUT {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+{{ update_body }}
+
+HTTP 200
+
+# GET — the update landed
+GET {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+
+HTTP 200
+{% if update_asserts %}[Asserts]
+{{ update_asserts }}
+{% endif %}{% endif %}{% if has_delete %}
+# DELETE — 204
+DELETE {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+
+HTTP 204
+
+# GET — gone
+GET {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+
+HTTP 404
+{% endif %}

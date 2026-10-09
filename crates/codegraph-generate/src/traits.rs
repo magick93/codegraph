@@ -209,6 +209,7 @@ pub enum DomainGeneratorKind {
     RegulatoryReports,
     Functions,
     Rules,
+    HurlContract,
 }
 
 impl DomainGeneratorKind {
@@ -229,6 +230,7 @@ impl DomainGeneratorKind {
             Self::RegulatoryReports => "regulatory_reports",
             Self::Functions => "functions",
             Self::Rules => "rules",
+            Self::HurlContract => "hurl_contract",
         }
     }
 
@@ -249,6 +251,7 @@ impl DomainGeneratorKind {
             "regulatory_reports" => Self::RegulatoryReports,
             "functions" => Self::Functions,
             "rules" => Self::Rules,
+            "hurl_contract" => Self::HurlContract,
             _ => return None,
         })
     }

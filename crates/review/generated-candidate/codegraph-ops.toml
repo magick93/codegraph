@@ -38,6 +38,13 @@ has_grpc = false
 database_target = "postgres"
 persistence_provider = "sea_orm"
 
+[hurl]
+dir = "hurl"
+skip = ["08_rls_isolation.hurl"]
+org_id_a = "00000000-0000-0000-0000-000000000001"
+org_id_b = "00000000-0000-0000-0000-000000000002"
+limited_key = true
+
 [doctor]
 
 [bundle]

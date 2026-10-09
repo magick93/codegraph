@@ -151,10 +151,10 @@ jsonpath "$.meta" exists
 # CREATE — 201, capture the id
 POST {{base_url}}/api/v1/inventory/widget-part
 Authorization: Bearer {{api_key}}
-{{
-  "label": "contract-widget-part",
+{
+  "label": "contract-widget_part",
   "status": "Active"
-}}
+}
 
 HTTP 201
 [Captures]
@@ -168,7 +168,7 @@ Authorization: Bearer {{api_key}}
 
 HTTP 200
 [Asserts]
-jsonpath "$.data.label" == "contract-widget-part"
+jsonpath "$.data.label" == "contract-widget_part"
 jsonpath "$.data.status" == "Active"
 
 # GET zero-uuid — 404
@@ -180,10 +180,10 @@ HTTP 404
 # PUT roundtrip
 PUT {{base_url}}/api/v1/inventory/widget-part/{{widget_part_id}}
 Authorization: Bearer {{api_key}}
-{{
-  "label": "contract-widget-part-v2",
+{
+  "label": "contract-widget_part-v2",
   "status": "Retired"
-}}
+}
 
 HTTP 200
 
@@ -193,7 +193,7 @@ Authorization: Bearer {{api_key}}
 
 HTTP 200
 [Asserts]
-jsonpath "$.data.label" == "contract-widget-part-v2"
+jsonpath "$.data.label" == "contract-widget_part-v2"
 jsonpath "$.data.status" == "Retired"
 
 # DELETE — 204
@@ -226,10 +226,10 @@ jsonpath "$.meta" exists
 # Required FK parent widget_part — created first, id captured
 POST {{base_url}}/api/v1/inventory/widget-part
 Authorization: Bearer {{api_key}}
-{{
-  "label": "contract-parent-part",
+{
+  "label": "contract-widget_part",
   "status": "Active"
-}}
+}
 
 HTTP 201
 [Captures]
@@ -238,10 +238,10 @@ parent_part_id: jsonpath "$.data.id"
 # CREATE — 201, capture the id
 POST {{base_url}}/api/v1/inventory/widget
 Authorization: Bearer {{api_key}}
-{{
+{
   "name": "contract-widget",
   "part_id": "{{parent_part_id}}"
-}}
+}
 
 HTTP 201
 [Captures]
@@ -267,10 +267,10 @@ HTTP 404
 # PUT roundtrip
 PUT {{base_url}}/api/v1/inventory/widget/{{widget_id}}
 Authorization: Bearer {{api_key}}
-{{
+{
   "name": "contract-widget-v2",
   "part_id": "{{parent_part_id}}"
-}}
+}
 
 HTTP 200
 
@@ -281,6 +281,7 @@ Authorization: Bearer {{api_key}}
 HTTP 200
 [Asserts]
 jsonpath "$.data.name" == "contract-widget-v2"
+jsonpath "$.data.part_id" == "{{parent_part_id}}"
 
 # DELETE — 204
 DELETE {{base_url}}/api/v1/inventory/widget/{{widget_id}}
@@ -326,10 +327,10 @@ HTTP 200
 
 POST {{base_url}}/api/v1/inventory/widget-part
 Authorization: Bearer {{api_key_limited}}
-{{
-  "label": "scope-denial-part",
+{
+  "label": "scope-denial-widget_part",
   "status": "Active"
-}}
+}
 
 HTTP 403
 [Asserts]
@@ -345,16 +346,16 @@ jsonpath "$.error.message" contains "INSUFFICIENT_SCOPE"
 
 POST {{base_url}}/api/v1/inventory/widget-part
 Authorization: Bearer {{api_key_a}}
-{{
-  "label": "org-a-part",
+{
+  "label": "org-a-widget_part",
   "status": "Active"
-}}
+}
 
 HTTP 201
 [Captures]
-cross_tenant_part_id: jsonpath "$.data.id"
+cross_tenant_widget_part_id: jsonpath "$.data.id"
 
-GET {{base_url}}/api/v1/inventory/widget-part/{{cross_tenant_part_id}}
+GET {{base_url}}/api/v1/inventory/widget-part/{{cross_tenant_widget_part_id}}
 Authorization: Bearer {{api_key_b}}
 
 HTTP 404
@@ -368,23 +369,23 @@ HTTP 404
 
 POST {{base_url}}/api/v1/inventory/widget-part
 Authorization: Bearer {{api_key_a}}
-{{
-  "label": "rls-isolation-part",
+{
+  "label": "rls-isolation-widget_part",
   "status": "Active"
-}}
+}
 
 HTTP 201
 [Captures]
-rls_part_id: jsonpath "$.data.id"
+rls_widget_part_id: jsonpath "$.data.id"
 
 GET {{base_url}}/api/v1/inventory/widget-part?page=0&page_size=100
 Authorization: Bearer {{api_key_b}}
 
 HTTP 200
 [Asserts]
-jsonpath "$.data[*].id" not contains "{{rls_part_id}}"
+jsonpath "$.data[*].id" not contains "{{rls_widget_part_id}}"
 
-GET {{base_url}}/api/v1/inventory/widget-part/{{rls_part_id}}
+GET {{base_url}}/api/v1/inventory/widget-part/{{rls_widget_part_id}}
 Authorization: Bearer {{api_key_a}}
 
 HTTP 200
