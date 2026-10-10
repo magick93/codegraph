@@ -1602,6 +1602,8 @@ fn ddd_fixture() -> DddModelGraph {
                         return_multiplicity: None,
                         params: vec![],
                         ordinal: 0,
+
+                        is_protected: false,
                     },
                     DddRepositoryOperation {
                         name: "findAll".to_string(),
@@ -1610,6 +1612,8 @@ fn ddd_fixture() -> DddModelGraph {
                         return_multiplicity: None,
                         params: vec![],
                         ordinal: 1,
+
+                        is_protected: false,
                     },
                     DddRepositoryOperation {
                         name: "save".to_string(),
@@ -1618,6 +1622,8 @@ fn ddd_fixture() -> DddModelGraph {
                         return_multiplicity: None,
                         params: vec![],
                         ordinal: 2,
+
+                        is_protected: false,
                     },
                     DddRepositoryOperation {
                         name: "delete".to_string(),
@@ -1626,6 +1632,8 @@ fn ddd_fixture() -> DddModelGraph {
                         return_multiplicity: None,
                         params: vec![],
                         ordinal: 3,
+
+                        is_protected: false,
                     },
                     DddRepositoryOperation {
                         name: "findByTitle".to_string(),
@@ -1644,6 +1652,8 @@ fn ddd_fixture() -> DddModelGraph {
                             multiplicity: None,
                         }],
                         ordinal: 4,
+
+                        is_protected: false,
                     },
                 ],
             },
@@ -1659,6 +1669,8 @@ fn ddd_fixture() -> DddModelGraph {
                         return_multiplicity: None,
                         params: vec![],
                         ordinal: 0,
+
+                        is_protected: false,
                     },
                     DddRepositoryOperation {
                         name: "renewLoan".to_string(),
@@ -1671,6 +1683,8 @@ fn ddd_fixture() -> DddModelGraph {
                             multiplicity: Some(serde_json::json!({"type": "one"})),
                         }],
                         ordinal: 1,
+
+                        is_protected: false,
                     },
                 ],
             },
@@ -1702,6 +1716,8 @@ fn ddd_fixture() -> DddModelGraph {
                         delegation_operation: None,
                         capabilities: vec!["BorrowBooks".to_string()],
                         ordinal: 0,
+
+                        is_protected: false,
                     },
                     DddServiceOperation {
                         name: "renew".to_string(),
@@ -1712,6 +1728,8 @@ fn ddd_fixture() -> DddModelGraph {
                         delegation_operation: Some("save".to_string()),
                         capabilities: vec![],
                         ordinal: 1,
+
+                        is_protected: false,
                     },
                 ],
                 ordinal: 0,
@@ -1731,6 +1749,8 @@ fn ddd_fixture() -> DddModelGraph {
                     delegation_operation: Some("save".to_string()),
                     capabilities: vec![],
                     ordinal: 0,
+
+                    is_protected: false,
                 }],
                 ordinal: 0,
             },

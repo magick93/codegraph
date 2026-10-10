@@ -998,8 +998,12 @@ impl RepositoryImplEmitter {
         // compatible column is dropped with a one-time warning so the trait
         // and BOTH impls stay in sync (trait methods are only emitted for
         // finders that made it onto the tree).
+        // The built-in finders (`findByKeys`/`findByExample`) lower against
+        // the entity's graph features — fetched once alongside the tree.
+        let entity_features =
+            crate::ddd::design::EntityFeatures::from_graph(db, schema_title).await?;
         let design_finders = design_surface
-            .finders_for(schema_title, &entity_name)
+            .finders_for(schema_title, &entity_name, &entity_features)
             .into_iter()
             .filter(|finder| match super::finders::finder_columns(finder, &direct_columns) {
                 Some(_) => true,

@@ -63,9 +63,9 @@ pub use function::{
     FunctionPostCondition, FunctionTransform, FunctionTransformKind,
 };
 pub use ifml::{
-    ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode, ModuleUseRecord,
-    NavigationFlowData, NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode,
-    ViewContainerNode, strip_ifml_prefix,
+    ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
+    ModuleDefinitionNode, ModuleUseRecord, NavigationFlowData, NavigationFlowRecord,
+    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode, strip_ifml_prefix,
 };
 pub use incompleteness::{Incompleteness, IncompletenessReason};
 pub use mox::{

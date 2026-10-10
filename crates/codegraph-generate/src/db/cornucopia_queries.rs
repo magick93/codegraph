@@ -358,10 +358,23 @@ fn write_design_finder_queries(
         else {
             continue;
         };
+        // `findByExample`'s Option params use the nullability idiom:
+        // `(:p IS NULL OR col = :p)` — a None param filters its column out.
+        // Cornucopia infers `Option<T>` for params compared against NULL.
+        let example = finder.kind == crate::ddd::design::FinderKind::FindByExample;
         let mut clauses = Vec::with_capacity(param_cols.len() + 1);
         for (param, col) in finder.params.iter().zip(param_cols.iter()) {
             let pg_col = format!("\"{}\"", col.pg_column_name);
-            if crate::ddd::repository_emitter::finder_param_binds_as_text(&param.rust_type) {
+            if example {
+                if crate::ddd::repository_emitter::finder_param_binds_as_text(&param.rust_type) {
+                    clauses.push(format!(
+                        "(:{p} IS NULL OR {pg_col}::text = :{p})",
+                        p = param.name
+                    ));
+                } else {
+                    clauses.push(format!("(:{p} IS NULL OR {pg_col} = :{p})", p = param.name));
+                }
+            } else if crate::ddd::repository_emitter::finder_param_binds_as_text(&param.rust_type) {
                 clauses.push(format!("{pg_col}::text = :{}", param.name));
             } else {
                 clauses.push(format!("{pg_col} = :{}", param.name));

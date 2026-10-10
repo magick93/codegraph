@@ -110,8 +110,8 @@ pub struct DddRepositoryNode {
 pub struct DddRepositoryOperation {
     /// Operation name, unique within its repository.
     pub name: String,
-    /// The built-in op when this is one: `"findById" | "findAll" | "save" |
-    /// "delete"`.
+    /// The built-in op when this is one: `"findById" | "findAll" |
+    /// "findByExample" | "findByKeys" | "save" | "delete"`.
     pub builtin: Option<String>,
     /// The declared return type as rex-ir `TypeRef` JSON.
     pub return_type: Option<serde_json::Value>,
@@ -121,6 +121,10 @@ pub struct DddRepositoryOperation {
     pub params: Vec<DddParam>,
     /// Declaration order within the repository.
     pub ordinal: usize,
+    /// Sculptor `protected` visibility: the operation stays off the public
+    /// interface (it lowers onto the repository but maps no API operation).
+    #[serde(default)]
+    pub is_protected: bool,
 }
 
 /// One declared parameter: a rex-ir `OperationParam` with the signature
@@ -176,6 +180,10 @@ pub struct DddServiceOperation {
     pub delegation_operation: Option<String>,
     /// Actor capability names guarding this operation, as authored.
     pub capabilities: Vec<String>,
+    /// Sculptor `protected` visibility: the operation stays off the public
+    /// interface.
+    #[serde(default)]
+    pub is_protected: bool,
     /// Declaration order within the service.
     pub ordinal: usize,
 }

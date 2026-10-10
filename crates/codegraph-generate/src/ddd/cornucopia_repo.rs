@@ -983,16 +983,30 @@ fn emit_adapter_design_finder(
         codegraph_naming::to_snake_case(entity_name)
     );
     wln!(code);
-    wln!(
-        code,
-        "    /// Design finder `{}` (declared in the .ddd design): equality query.",
-        finder.name
-    );
+    match finder.kind {
+        crate::ddd::design::FinderKind::Declared => wln!(
+            code,
+            "    /// Design finder `{}` (declared in the .ddd design): equality query.",
+            finder.name
+        ),
+        crate::ddd::design::FinderKind::FindByKeys => wln!(
+            code,
+            "    /// Design built-in `findByKeys`: equality on the natural key."
+        ),
+        crate::ddd::design::FinderKind::FindByExample => wln!(
+            code,
+            "    /// Design built-in `findByExample`: `None` fields filter out."
+        ),
+    }
     wln!(code, "    async fn {}(", finder.method_name);
     wln!(code, "        &self,");
     wln!(code, "        db: &C,");
     for param in &finder.params {
-        wln!(code, "        {}: {},", param.name, param.rust_type);
+        if param.optional {
+            wln!(code, "        {}: Option<{}>,", param.name, param.rust_type);
+        } else {
+            wln!(code, "        {}: {},", param.name, param.rust_type);
+        }
     }
     if finder.returns_many {
         wln!(
@@ -1008,12 +1022,19 @@ fn emit_adapter_design_finder(
 
     // Bind args: natural rust types where tokio-postgres infers the column
     // type; text-bound types (`Decimal`/`NaiveDate`) stringify (the SQL
-    // casts the column with `::text`).
+    // casts the column with `::text`). `findByExample`'s Option params bind
+    // as `&Option<T>` — the query's nullability idiom types them nullable.
     let binds: Vec<String> = finder
         .params
         .iter()
         .map(|param| {
-            if finder_param_binds_as_text(&param.rust_type) {
+            if param.optional {
+                if finder_param_binds_as_text(&param.rust_type) {
+                    format!("&{name}.as_ref().map(|v| v.to_string())", name = param.name)
+                } else {
+                    format!("&{}", param.name)
+                }
+            } else if finder_param_binds_as_text(&param.rust_type) {
                 format!("&{}.to_string()", param.name)
             } else {
                 format!("&{}", param.name)

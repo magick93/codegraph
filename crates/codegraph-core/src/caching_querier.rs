@@ -10,12 +10,13 @@ use crate::types::{
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
     EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode, ref_target_candidate_title,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    ref_target_candidate_title,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -560,6 +561,10 @@ impl GraphQuerier for CachingQuerier<'_> {
 
     async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
         self.inner.get_ifml_view_containers().await
+    }
+
+    async fn get_ifml_modules(&self) -> Result<Vec<ModuleDefinitionNode>, GraphError> {
+        self.inner.get_ifml_modules().await
     }
 
     async fn get_ifml_view_components(

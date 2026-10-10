@@ -1,7 +1,7 @@
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    ActionNode, DataBindingNode, EventNode, ParameterDefinitionNode, ViewComponentNode,
-    ViewContainerNode,
+    ActionNode, DataBindingNode, EventNode, ModuleDefinitionNode, ParameterDefinitionNode,
+    ViewComponentNode, ViewContainerNode,
 };
 
 use super::gql::{escape_gql, opt_str};
@@ -46,6 +46,35 @@ impl GrafeoEngine {
         session
             .execute(&gql)
             .map_err(|e| GraphError::Ingest(format!("ingest_view_container failed: {e}")))?;
+        Ok(id)
+    }
+
+    pub(super) async fn insert_module_definition(
+        &self,
+        node: &ModuleDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let session = self.db().session();
+        let id = format!("module:{}", node.name);
+        let json = |v: &Option<String>| v.clone();
+        let module_uses_json = node
+            .module_uses
+            .as_ref()
+            .map(|u| serde_json::to_string(u).unwrap_or_default());
+        let gql = format!(
+            "INSERT (:ModuleDefinition {{ \
+                name: '{}', domain: {}, inputs_json: {}, outputs_json: {}, \
+                properties_json: {}, module_uses: {} \
+            }})",
+            escape_gql(&node.name),
+            opt_str(&node.domain),
+            opt_str(&json(&node.inputs_json)),
+            opt_str(&json(&node.outputs_json)),
+            opt_str(&json(&node.properties_json)),
+            opt_str(&module_uses_json),
+        );
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_module_definition failed: {e}")))?;
         Ok(id)
     }
 

@@ -18,13 +18,13 @@ use codegraph_core::types::{
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
     EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode, descendants, topological_namespace_order,
-    topological_order,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    descendants, topological_namespace_order, topological_order,
 };
 
 use self::query::{query_gql, query_gql_params, query_many, query_many_params};
@@ -459,6 +459,10 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
         self.query_ifml_view_containers().await
+    }
+
+    async fn get_ifml_modules(&self) -> Result<Vec<ModuleDefinitionNode>, GraphError> {
+        self.query_ifml_modules().await
     }
 
     async fn get_ifml_container_children(

@@ -147,11 +147,31 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   SeaORM impl (`EntityTree.design_finders`) + cornucopia query/adapter;
   non-lowerable finders warn+skip. `flags.auditable` WINS over the
   domains.toml/policy fallback (still ANDed with `!append_only`);
-  `optimisticLocking`/`cache`/`nonPersistent` warn-and-record. Design
+  `cache`/`nonPersistent` warn-and-record. Design
   `search` drives `has_fts` (text fields), `filter_fields`, and the FTS
   language (search default analyzer); boosts recorded only. DTO
   create/update emission follows design ops (`dto_response` always).
   Stereotype vs `is_entity` mismatch warns (mox owns entity/VO).
+- **Sculptor semantics (rexlang #47, pin `a714070`)**: entity designs are
+  `auditable` + `optimisticLocking` by DEFAULT — the artifact bools carry
+  the effective decision, `!flag` opts out, negating default-off flags is
+  a compile error. `protected` ops (service + repository) lower onto the
+  graph (`is_protected` node prop, read-compat default false) but stay OFF
+  the public API plane: `operations_for` excludes them, so `protected
+  save` means no create/update endpoints while the repository still
+  lowers. New validations (hard `Error::DddModel`): value designs demand
+  `readonly` features, cross-aggregate `refers` to a non-root member is
+  rejected, `scaffold` requires a repository. The two query built-ins
+  lower onto the finder plane with consumer-known signatures
+  (`DesignFinder.kind`): `findByKeys` → equality on every `id` feature
+  (surrogate `id: Uuid` fallback), single row; `findByExample` →
+  `Option`-wrapped equality on every stored non-id scalar feature (None
+  filters out — SeaORM `Condition` builder, cornucopia
+  `(:p IS NULL OR col = :p)` idiom), many rows; feature universe from the
+  graph (`EntityFeatures::from_graph`), enum/class features excluded.
+  `optimisticLocking` emission (version column + conflict check) remains
+  a tracked deferral — recorded, no longer warned (default-on would warn
+  on every design).
 - **Gates**: `cargo test -p codegraph --test ddd_golden_tests` (committed
   rexlang `library.{mox,ddd,ddd.json}` fixture byte-compared in-process —
   the CLI-gates treatment, node-free) and `--test ddd_pipeline_tests`
@@ -441,6 +461,17 @@ paired with `validations`), param defaults, module instantiation and actors all 
 persist to the graph, and flow into generation (messages → `data-validate-message`,
 defaults → load-fn fallbacks). Actor declarations are parsed/counted only — no node
 type yet; role-based route-guard codegen is deferred.
+
+Module composition (rexlang pin `a714070`): `ModuleDeclaration.module_uses`
+(`use "Other" as alias { overrides };` inside a module body) ingest as
+`ModuleDefinitionNode`s (`ingest_module_definition` — trait + Grafeo +
+Mock; internal uses ride the node prop AND module→module
+`HasModuleDefinition` edges, view-level uses gain resolvable view→module
+edges), counted in `IfmlIngestStats.module_uses`; `get_ifml_modules` reads
+them back (trait + Grafeo + Mock + CachingQuerier). Deep navigation
+(`a.b.c` folded `FieldAccess` chains) parses and composite `filter:`
+expressions persist in canonical DSL source (`render_value_expression` —
+identifiers stay verbatim).
 
 ### IFML node types (Grafeo graph)
 
@@ -2073,7 +2104,7 @@ still AND on top.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up.
-  - `rex-*` @ 0fb770b (bumped for the DDD design layer, issue #449) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `rex-*` @ a714070 (bumped for the DDD Sculptor semantics, rexlang #47, and the IFML module composition/deep-navigation grammar) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.

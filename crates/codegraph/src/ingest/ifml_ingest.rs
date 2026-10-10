@@ -1,7 +1,7 @@
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ModuleUseRecord,
-    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ModuleDefinitionNode,
+    ModuleUseRecord, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
 use rex_ifml::*;
 
@@ -23,6 +23,55 @@ fn module_use_records(uses: &[ModuleUse]) -> Option<Vec<ModuleUseRecord>> {
     )
 }
 
+/// Render a property `ValueExpression` back to its DSL source form
+/// (deterministic: spaced binary operators, direct unary prefixes, explicit
+/// groups) — the persistence form for composite filter expressions.
+fn render_value_expression(expr: &ValueExpression) -> String {
+    match expr {
+        ValueExpression::Identifier(s) => s.clone(),
+        ValueExpression::String(s) => format!("\"{s}\""),
+        ValueExpression::Number(n) => n.value().to_string(),
+        ValueExpression::Bool(b) => b.to_string(),
+        ValueExpression::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(render_value_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ValueExpression::Object(members) => format!(
+            "{{ {} }}",
+            members
+                .iter()
+                .map(|m| format!("{}: {}", m.key, render_value_expression(&m.value)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ValueExpression::Call(name, args) => format!(
+            "{}({})",
+            name,
+            args.iter()
+                .map(render_value_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        ValueExpression::FieldAccess { object, field } => {
+            format!("{}.{}", render_value_expression(object), field)
+        }
+        ValueExpression::BinOp { left, op, right } => format!(
+            "{} {} {}",
+            render_value_expression(left),
+            op.as_str(),
+            render_value_expression(right)
+        ),
+        ValueExpression::UnaryOp { op, operand } => {
+            format!("{}{}", op.as_str(), render_value_expression(operand))
+        }
+        ValueExpression::Group(inner) => format!("({})", render_value_expression(inner)),
+    }
+}
+
 /// Canonical AST JSON for a DSL condition: the typed IFML `Expression`
 /// serialized once at ingest (issue #278). `None` when the node is
 /// unconditional or the payload fails to serialize — ingest never
@@ -38,14 +87,50 @@ pub async fn ingest_ifml_model(
 ) -> Result<IfmlIngestStats> {
     let mut stats = IfmlIngestStats::default();
 
+    // Pass 0: ingest module declarations before any view content — the
+    // `HasModuleDefinition` edges from view/module `use` statements resolve
+    // against these nodes (edge INSERTs silently no-op on missing targets).
+    // Module-internal `use` statements (rexlang module composition) persist
+    // on the module node AND as module→module edges.
+    for module in &model.modules {
+        let node = ModuleDefinitionNode {
+            name: module.name.clone(),
+            domain: model.domains.first().map(|d| d.name.clone()),
+            inputs_json: Some(serde_json::to_string(&module.input_params).unwrap_or_default()),
+            outputs_json: Some(serde_json::to_string(&module.output_params).unwrap_or_default()),
+            properties_json: Some(serde_json::to_string(&module.properties).unwrap_or_default()),
+            module_uses: module_use_records(&module.module_uses),
+        };
+        db.ingest_module_definition(&node).await?;
+        stats.module_uses += module.module_uses.len();
+        for use_ in &module.module_uses {
+            db.ingest_edge(
+                &format!("module:{}", module.name),
+                &format!("module:{}", use_.module),
+                EdgeType::HasModuleDefinition,
+                None,
+            )
+            .await?;
+        }
+    }
+
     // Pass 1: ingest all view containers and nested containers before any
     // content. Navigation flows (and other edges) target containers that may
     // be declared later in the file, and edge INSERTs silently no-op when the
     // target node does not exist yet.
     for view in &model.views {
-        let _vc_id = ingest_view_container(db, view).await?;
+        let vc_id = ingest_view_container(db, view).await?;
         stats.view_containers += 1;
         stats.module_uses += view.module_uses.len();
+        for use_ in &view.module_uses {
+            db.ingest_edge(
+                &vc_id,
+                &format!("module:{}", use_.module),
+                EdgeType::HasModuleDefinition,
+                None,
+            )
+            .await?;
+        }
 
         for container in &view.containers {
             ingest_container_tree_nodes(db, container, &mut stats).await?;
@@ -284,6 +369,13 @@ async fn ingest_view_component(
         .find(|p| p.key == "filter")
         .and_then(|p| match &p.value {
             ValueExpression::Identifier(s) => Some(s.clone()),
+            // Composite expressions (deep navigation chains, comparisons)
+            // persist in their canonical DSL source form.
+            ValueExpression::FieldAccess { .. }
+            | ValueExpression::BinOp { .. }
+            | ValueExpression::UnaryOp { .. }
+            | ValueExpression::Group(_)
+            | ValueExpression::Call(_, _) => Some(render_value_expression(&p.value)),
             _ => None,
         });
 

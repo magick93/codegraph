@@ -316,6 +316,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                     return_multiplicity: None,
                     params: vec![],
                     ordinal: 0,
+                    is_protected: false,
                 },
                 DddRepositoryOperation {
                     name: "findByTitle".to_string(),
@@ -334,6 +335,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                         multiplicity: None,
                     }],
                     ordinal: 1,
+                    is_protected: false,
                 },
             ],
         }],
@@ -352,6 +354,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 delegation_operation: Some("save".to_string()),
                 capabilities: vec!["RenewBooks".to_string()],
                 ordinal: 0,
+                is_protected: false,
             }],
             ordinal: 0,
         }],

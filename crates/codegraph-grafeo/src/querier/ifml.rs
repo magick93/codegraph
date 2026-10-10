@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    ActionNode, DataBindingResolution, EventNode, ModuleUseRecord, NavigationFlowRecord,
-    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode, strip_ifml_prefix,
+    ActionNode, DataBindingResolution, EventNode, ModuleDefinitionNode, ModuleUseRecord,
+    NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    strip_ifml_prefix,
 };
 
 use super::query::{query_gql, query_many, query_many_params};
@@ -24,6 +25,29 @@ impl GrafeoEngine {
             vc.module_uses, vc.roles, vc.requires \
             ORDER BY vc.name",
             |reader, row| view_container_from_row(reader, row, "vc"),
+        )
+        .await
+    }
+
+    pub(super) async fn query_ifml_modules(&self) -> Result<Vec<ModuleDefinitionNode>, GraphError> {
+        query_many(
+            self,
+            "MATCH (m:ModuleDefinition) RETURN \
+            m.name, m.domain, m.inputs_json, m.outputs_json, \
+            m.properties_json, m.module_uses \
+            ORDER BY m.name",
+            |reader, row| {
+                let module_uses_str: Option<String> =
+                    reader.get_opt_string(row, "m.module_uses")?;
+                Ok(ModuleDefinitionNode {
+                    name: reader.get_string(row, "m.name")?,
+                    domain: reader.get_opt_string(row, "m.domain")?,
+                    inputs_json: reader.get_opt_string(row, "m.inputs_json")?,
+                    outputs_json: reader.get_opt_string(row, "m.outputs_json")?,
+                    properties_json: reader.get_opt_string(row, "m.properties_json")?,
+                    module_uses: module_uses_str.and_then(|s| serde_json::from_str(&s).ok()),
+                })
+            },
         )
         .await
     }

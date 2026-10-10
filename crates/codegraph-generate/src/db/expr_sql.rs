@@ -76,6 +76,7 @@ fn lower(
     };
     match &expr.kind {
         ExprKind::Int(value) => Ok(value.to_string()),
+        ExprKind::Float(value) => Ok(float_literal(*value)),
         ExprKind::String(text) => Ok(string_literal(text)),
         ExprKind::Bool(true) => Ok("TRUE".to_string()),
         ExprKind::Bool(false) => Ok("FALSE".to_string()),
@@ -89,10 +90,12 @@ fn lower(
                 UnOp::Neg => {
                     // Only a folded negative literal is in the subset; the
                     // literal arm above cannot produce it because the token
-                    // grammar yields non-negative integers, so `-3` arrives
-                    // here as Neg(Int). Negating anything else is arithmetic.
+                    // grammar yields non-negative numbers, so `-3` arrives
+                    // here as Neg(Int) and `-1.5` as Neg(Float). Negating
+                    // anything else is arithmetic.
                     match &expr.kind {
                         ExprKind::Int(value) => Ok(format!("-{value}")),
+                        ExprKind::Float(value) => Ok(format!("-{}", float_literal(*value))),
                         _ => reject("negation of a non-literal (arithmetic)"),
                     }
                 }
@@ -206,6 +209,17 @@ fn write_path(expr: &Expr) -> String {
 /// Render `text` as a Postgres string literal, doubling single quotes.
 fn string_literal(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
+}
+
+/// Lower a float literal to a Postgres numeric literal. `42.0_f64` would
+/// format as `42` — still a valid numeric constant, but the decimal point
+/// is kept so the literal reads as the float the DSL authored.
+fn float_literal(value: f64) -> String {
+    if value.is_finite() && value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{value}.0")
+    } else {
+        format!("{value}")
+    }
 }
 
 /// Lower a `date("...")` literal to a Postgres `DATE '...'` literal.

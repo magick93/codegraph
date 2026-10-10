@@ -13,7 +13,7 @@
 //! every other emitted method.
 
 use crate::code_writer::{CodeWriter, wln};
-use crate::ddd::design::DesignFinder;
+use crate::ddd::design::{DesignFinder, FinderKind};
 
 use super::child::emit_child_reads;
 use super::dto::{
@@ -22,14 +22,35 @@ use super::dto::{
 use super::junction::{emit_junction_field_population, emit_junction_reads};
 use super::types::{EntityTree, TreeColumn};
 
+/// The resolved column a finder parameter filters on: the entity column's
+/// identity (owned — the `findByKeys` surrogate key resolves to the `id`
+/// primary key, which is not a `direct_columns` entry).
+#[derive(Debug)]
+pub(crate) struct FinderColumn {
+    pub field_name: String,
+    pub pg_column_name: String,
+}
+
+impl FinderColumn {
+    /// The SeaORM `Column` variant for this column.
+    pub(crate) fn variant(&self) -> String {
+        let bare = self
+            .field_name
+            .strip_prefix("r#")
+            .unwrap_or(&self.field_name);
+        codegraph_naming::to_pascal_case(bare)
+    }
+}
+
 /// Resolve every finder parameter to its entity column, checking the
-/// parameter's rust type against the column's. `None` when any parameter is
-/// unresolvable — the caller drops the finder so the trait and both impls
-/// stay consistent.
-pub(crate) fn finder_columns<'a>(
+/// parameter's rust type against the column's. A parameter naming `id`
+/// resolves to the synthetic UUID primary key (the `findByKeys` surrogate).
+/// `None` when any other parameter is unresolvable — the caller drops the
+/// finder so the trait and both impls stay consistent.
+pub(crate) fn finder_columns(
     finder: &DesignFinder,
-    columns: &'a [TreeColumn],
-) -> Option<Vec<&'a TreeColumn>> {
+    columns: &[TreeColumn],
+) -> Option<Vec<FinderColumn>> {
     let mut resolved = Vec::with_capacity(finder.params.len());
     for param in &finder.params {
         let col = columns.iter().find(|c| {
@@ -37,16 +58,34 @@ pub(crate) fn finder_columns<'a>(
             bare == param.name
                 || c.pg_column_name == param.name
                 || c.dto_field_name.as_deref() == Some(param.name.as_str())
-        })?;
-        if !type_compatible(&param.rust_type, &col.rust_type) {
+        });
+        let (field_name, pg_column_name, column_type) = match col {
+            Some(c) => (
+                c.field_name.clone(),
+                c.pg_column_name.clone(),
+                c.rust_type.clone(),
+            ),
+            // The primary key is emitted outside `direct_columns`
+            // (`row.id`); resolve the surrogate by name.
+            None if param.name == "id" && param.rust_type == "Uuid" => {
+                ("id".to_string(), "id".to_string(), "Uuid".to_string())
+            }
+            None => return None,
+        };
+        if !type_compatible(&param.rust_type, &column_type) {
             return None;
         }
-        resolved.push(col);
+        resolved.push(FinderColumn {
+            field_name,
+            pg_column_name,
+        });
     }
     Some(resolved)
 }
 
 /// Whether a finder parameter type can bind the column's rust type.
+/// `findByExample` params carry `optional: true` with the BARE type in
+/// `rust_type`, so both sides are bare here.
 fn type_compatible(param_type: &str, column_type: &str) -> bool {
     let base = column_type
         .trim_start_matches("Option<")
@@ -77,12 +116,6 @@ pub(crate) fn finder_param_binds_as_text(rust_type: &str) -> bool {
     )
 }
 
-/// The SeaORM `Column` variant for a finder parameter column.
-fn column_variant(col: &TreeColumn) -> String {
-    let bare = col.field_name.strip_prefix("r#").unwrap_or(&col.field_name);
-    codegraph_naming::to_pascal_case(bare)
-}
-
 /// The `.eq(...)` argument for a finder parameter of the given rust type.
 fn eq_arg(param: &str, rust_type: &str) -> String {
     match rust_type {
@@ -107,15 +140,25 @@ impl super::RepositoryImplEmitter {
         &self,
         tree: &EntityTree,
         finder: &DesignFinder,
-        columns: &[&TreeColumn],
+        columns: &[FinderColumn],
         code: &mut CodeWriter,
     ) {
         wln!(code);
-        wln!(
-            code,
-            "    /// Design finder `{}` (declared in the .ddd design): equality query.",
-            finder.name
-        );
+        match finder.kind {
+            FinderKind::Declared => wln!(
+                code,
+                "    /// Design finder `{}` (declared in the .ddd design): equality query.",
+                finder.name
+            ),
+            FinderKind::FindByKeys => wln!(
+                code,
+                "    /// Design built-in `findByKeys`: equality on the natural key."
+            ),
+            FinderKind::FindByExample => wln!(
+                code,
+                "    /// Design built-in `findByExample`: `None` fields filter out."
+            ),
+        }
         wln!(
             code,
             "    #[tracing::instrument(skip(self, db), fields(db.operation = \"design_finder\", db.table = \"{}.{}\"))]",
@@ -126,7 +169,11 @@ impl super::RepositoryImplEmitter {
         wln!(code, "        &self,");
         wln!(code, "        db: &DatabaseTransaction,");
         for param in &finder.params {
-            wln!(code, "        {}: {},", param.name, param.rust_type);
+            if param.optional {
+                wln!(code, "        {}: Option<{}>,", param.name, param.rust_type);
+            } else {
+                wln!(code, "        {}: {},", param.name, param.rust_type);
+            }
         }
         if finder.returns_many {
             wln!(
@@ -143,43 +190,81 @@ impl super::RepositoryImplEmitter {
         }
 
         // Build the query: equality predicates AND-combined, plus the
-        // soft-delete filter when the entity is auditable.
-        if tree.is_auditable {
+        // soft-delete filter when the entity is auditable. `findByExample`'s
+        // Option fields use the Condition builder — each `None` filters its
+        // column out of the predicate entirely.
+        if finder.kind == FinderKind::FindByExample {
             wln!(
                 code,
-                "        let mut query = crate::entity::{}::Entity::find()",
+                "        let mut conditions = sea_query::Condition::all();"
+            );
+            for (param, col) in finder.params.iter().zip(columns.iter()) {
+                let eq = eq_arg(&param.name, &param.rust_type);
+                wln!(
+                    code,
+                    "        if let Some({name}) = &{name} {{",
+                    name = param.name
+                );
+                wln!(
+                    code,
+                    "            conditions = conditions.add(crate::entity::{}::Column::{}.eq({eq}));",
+                    tree.entity_module,
+                    col.variant()
+                );
+                wln!(code, "        }}");
+            }
+            if tree.is_auditable {
+                // Soft-deleted rows always stay invisible to design finders.
+                wln!(
+                    code,
+                    "        conditions = \
+                     conditions.add(crate::entity::{}::Column::DeletedAt.is_null());",
+                    tree.entity_module
+                );
+            }
+            wln!(
+                code,
+                "        let query = crate::entity::{}::Entity::find().filter(conditions);",
                 tree.entity_module
             );
         } else {
-            wln!(
-                code,
-                "        let query = crate::entity::{}::Entity::find()",
-                tree.entity_module
-            );
-        }
-        let params: Vec<&crate::ddd::design::FinderParam> = finder.params.iter().collect();
-        for (i, (param, col)) in params.iter().zip(columns.iter()).enumerate() {
-            let eq = eq_arg(&param.name, &param.rust_type);
-            let terminator = if i + 1 == params.len() && !tree.is_auditable {
-                ";"
+            if tree.is_auditable {
+                wln!(
+                    code,
+                    "        let mut query = crate::entity::{}::Entity::find()",
+                    tree.entity_module
+                );
             } else {
-                ""
-            };
-            wln!(
-                code,
-                "            .filter(crate::entity::{}::Column::{}.eq({eq})){terminator}",
-                tree.entity_module,
-                column_variant(col)
-            );
-        }
-        if tree.is_auditable {
-            // The declared signature carries no include_deleted parameter —
-            // soft-deleted rows always stay invisible to design finders.
-            wln!(
-                code,
-                "            .filter(crate::entity::{}::Column::DeletedAt.is_null());",
-                tree.entity_module
-            );
+                wln!(
+                    code,
+                    "        let query = crate::entity::{}::Entity::find()",
+                    tree.entity_module
+                );
+            }
+            let params: Vec<&crate::ddd::design::FinderParam> = finder.params.iter().collect();
+            for (i, (param, col)) in params.iter().zip(columns.iter()).enumerate() {
+                let eq = eq_arg(&param.name, &param.rust_type);
+                let terminator = if i + 1 == params.len() && !tree.is_auditable {
+                    ";"
+                } else {
+                    ""
+                };
+                wln!(
+                    code,
+                    "            .filter(crate::entity::{}::Column::{}.eq({eq})){terminator}",
+                    tree.entity_module,
+                    col.variant()
+                );
+            }
+            if tree.is_auditable {
+                // The declared signature carries no include_deleted
+                // parameter — soft-deleted rows always stay invisible.
+                wln!(
+                    code,
+                    "            .filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                    tree.entity_module
+                );
+            }
         }
 
         if finder.returns_many {
