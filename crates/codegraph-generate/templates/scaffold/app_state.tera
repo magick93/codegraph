@@ -29,7 +29,9 @@ pub enum DbPoolMode {
 pub struct AppState {
 {% for domain in domains %}
 {% for entity in domain.entities %}
+{% if entity.has_commands %}
     pub {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler,
+{% endif %}
     pub {{ domain.name }}_{{ entity.module_name }}_queries: crate::domain::{{ domain.name }}::{{ entity.module_name }}::query::{{ entity.name }}QueryHandler,
 {% endfor %}
 {% endfor %}

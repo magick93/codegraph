@@ -82,6 +82,12 @@ pub struct RouterEntity {
     pub has_create: bool,
     pub has_update: bool,
     pub has_delete: bool,
+    /// Whether the read (`GET /{id}`) route has a handler to point at —
+    /// an empty design-mapped operation set (value designs, no-repository
+    /// entities) emits no read handler, so the route must be gated too.
+    pub has_read: bool,
+    /// Whether the list (`GET /`) route has a handler to point at.
+    pub has_list: bool,
     pub has_workflow: bool,
     pub has_approval_status: bool,
     pub has_embeddings: bool,
@@ -312,6 +318,8 @@ impl DomainGenerator for RouterGenerator {
                     has_create: operations.contains(&"create".to_string()),
                     has_update: operations.contains(&"update".to_string()),
                     has_delete: operations.contains(&"delete".to_string()),
+                    has_read: operations.contains(&"read".to_string()),
+                    has_list: operations.contains(&"list".to_string()),
                     has_workflow,
                     has_approval_status,
                     has_embeddings,
@@ -656,6 +664,8 @@ pub async fn build_router_context(
                 has_create: operations.contains(&"create".to_string()),
                 has_update: operations.contains(&"update".to_string()),
                 has_delete: operations.contains(&"delete".to_string()),
+                has_read: operations.contains(&"read".to_string()),
+                has_list: operations.contains(&"list".to_string()),
                 has_workflow,
                 has_approval_status,
                 has_embeddings,
@@ -1065,6 +1075,8 @@ mod tests {
                 has_create: true,
                 has_update: true,
                 has_delete: true,
+                has_read: true,
+                has_list: true,
                 has_workflow: false,
                 has_approval_status: false,
                 has_embeddings: false,
