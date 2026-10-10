@@ -191,7 +191,6 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("ui_store",             Entity, Ui,   &[], &[]),
         cap("ui_e2e_test",          Entity, Ui,   &[], &[]),
         cap("playwright-entity",    Entity, Ui,   &[], &[]),
-        cap("playwright_ts_entity", Entity, Ui, &[], &[]),
         cap("ui_descriptor",        Entity, Ui,   &[], &[]),
         cap("ui-shell",             Entity, Ui,   &[], &[]),
 
@@ -202,6 +201,9 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("router",               Domain, Api,  &[], &[]),
         cap("api_contract",         Domain, Api,  &[], &[]),
         cap("links",                Domain, Api,  &[], &[]),
+        // hurl contract tests (issue #463): per-entity hurl API contracts +
+        // the generated authn/authz suite the ops api suite runs.
+        cap("hurl_contract",        Domain, Api,  &[], &[]),
         cap("ui-domain-layout",     Domain, Ui,   &[], &[]),
         cap("cli_domain",           Domain, Cli,  &[], &[]),
 
@@ -226,7 +228,6 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("report_views",         Global, Common, &[], &[]),
         cap("cli_scaffold",         Global, Cli,   &[], &[]),
         cap("playwright-global",    Global, Ui,    &[], &[]),
-        cap("playwright_ts_global", Global, Ui,   &[], &[]),
         cap("integration_tables",   Global, Common, &[], &[]),
         cap("integration_config",   Global, Common, &[], &[]),
         cap("integration_dispatch", Global, Common, &[], &[]),

@@ -3,6 +3,7 @@
 //! path is unchanged.
 
 mod assembly;
+mod auth;
 mod fixtures;
 mod generator;
 mod kernel;

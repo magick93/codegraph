@@ -69,6 +69,8 @@ pub struct BuildPlan {
     /// generator. Default OFF = `ProjectConfig.ux` stays `None`,
     /// byte-identical output.
     pub ux_rules: bool,
+    /// IFML test-side auth surface (issue #463): `ifml_e2e_auth` feature.
+    pub ifml_e2e_auth: bool,
     /// Canonical expression IR (issue #278): when true, IFML guards render
     /// from the persisted `expr_json` AST via the TypeScript lowering
     /// instead of raw source interpolation. Default OFF = byte-identical.
@@ -266,6 +268,13 @@ impl BuildPlan {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Parse ifml_e2e_auth from features (issue #463; default: false).
+        let ifml_e2e_auth = profile
+            .features
+            .get("ifml_e2e_auth")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         // Parse public_operations_rls from features (issue #279; default: false).
         let public_operations_rls = profile
             .features
@@ -293,6 +302,7 @@ impl BuildPlan {
             namespace_layout,
             ux_rules,
             expr_ir,
+            ifml_e2e_auth,
             public_operations_rls,
             features: profile.features.clone(),
         })
@@ -352,6 +362,7 @@ impl BuildPlan {
             namespace_layout: false,
             ux_rules: false,
             expr_ir: false,
+            ifml_e2e_auth: false,
             public_operations_rls: false,
             features,
         })

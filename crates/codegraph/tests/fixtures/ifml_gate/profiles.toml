@@ -20,6 +20,10 @@ persistence_provider = "sea_orm"
 deployment_topology = "monolith"
 ifml_backend = true
 framework_svelte = true
+# Test-side auth bootstrap (issue #463): the gate proves the auth surface
+# (per-persona API-key provisioning, persona fixtures, auth specs, and the
+# journey specs) against the real API alongside the fallback ux markup.
+ifml_e2e_auth = true
 # ux-rules plane ON (issue #303): the gate proves the fallback ux markup
 # (chips, money alignment/formatting, overflow actions) against the real
 # API. No `ifml_design_system` here DELIBERATELY: the fixture's

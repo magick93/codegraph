@@ -21,7 +21,7 @@ use crate::emdash::context::{
     CodelistOption, EmdashPackageContext, build_entity_context, build_package_context,
 };
 use crate::error::Result;
-use crate::playwright::ts_entity_gen::expand_vo_fields;
+use crate::playwright::expand_vo_fields;
 use crate::render_template_with_project;
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
 

@@ -1,0 +1,49 @@
+{% if kind == "auth" %}# hurl_contract: authn — missing and garbage API keys are rejected (401).
+# Generated once per run against the first tenant-scoped entity.
+
+GET {{ create_url }}
+
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "UNAUTHORIZED"
+
+GET {{ create_url }}
+Authorization: Bearer not-a-real-key
+
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "UNAUTHORIZED"
+{% endif %}{% if kind == "scope_denial" %}# hurl_contract: authz scope — the read-only key (api_key_limited) may read
+# but every write is denied with 403 INSUFFICIENT_SCOPE. Generated once per
+# run against the first tenant-scoped entity.
+
+GET {{ list_url }}
+{{ limited_header }}
+
+HTTP 200
+
+POST {{ create_url }}
+{{ limited_header }}
+{{ create_body }}
+
+HTTP 403
+[Asserts]
+jsonpath "$.error.code" == "FORBIDDEN"
+jsonpath "$.error.message" contains "INSUFFICIENT_SCOPE"
+{% endif %}{% if kind == "cross_tenant" %}# hurl_contract: tenant isolation — a cross-tenant read is a silent RLS
+# filter (404), never a 403. Generated once per run against the first
+# tenant-scoped entity.
+
+POST {{ create_url }}
+{{ key_a_header }}
+{{ create_body }}
+
+HTTP 201
+[Captures]
+cross_tenant_{{ module }}_id: jsonpath "$.data.id"
+
+GET {{ item_url_base }}/{{ cross_tenant_ref }}
+{{ key_b_header }}
+
+HTTP 404
+{% endif %}

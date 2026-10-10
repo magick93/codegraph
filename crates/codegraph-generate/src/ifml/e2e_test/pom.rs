@@ -40,7 +40,7 @@ use crate::ux::plan::UxPlan;
 use super::super::context::{IfmlComponent, IfmlViewContainer};
 use super::super::route_generator::workflow_for_entity;
 use super::super::selectors::{ComponentSelectors, is_collection, is_details, is_form};
-use super::fixtures::{form_spec, view_route};
+use super::fixtures::{form_spec, url_pattern, view_route};
 use super::kernel::{BASE_PAGE_TS, UX_TABLE_TS};
 use super::pom_render::render_pom_page;
 use super::spec_payload::ViewTestSpec;
@@ -61,8 +61,13 @@ pub(crate) struct ViewPom {
     pub nav_testid: Option<String>,
     pub container_testid: Option<String>,
     /// Denial redirect target — emitted only when persona payloads cover
-    /// the guarded view (`expectDenied`).
+    /// the guarded view (`expectDenied`). With the auth flag on (issue
+    /// #463) every guarded view carries it, so the `{view}.auth.spec.ts`
+    /// family can drive unauthenticated/garbage-key denial.
     pub denial_target: Option<String>,
+    /// The `ifml_e2e_auth` flag (issue #463): gates the delete/cancel page
+    /// surface. Flag off keeps the plan byte-identical.
+    pub auth_enabled: bool,
     pub collections: Vec<PomCollection>,
     pub forms: Vec<PomForm>,
     pub details: Vec<PomDetails>,
@@ -123,8 +128,20 @@ pub(crate) struct PomForm {
     /// Round-trip save navigation `RegExp` source — present only when the
     /// view's round-trip payload exercises it.
     pub save_pattern: Option<String>,
+    /// Cancel control + navigation (issue #463): model-derived from the
+    /// view's/component's `on cancel` navigate event; rendered only under
+    /// the auth flag.
+    pub cancel: Option<PomCancel>,
     /// Workflow badge + transition surface (model-derived, markup parity).
     pub workflow: Option<PomWorkflowMethods>,
+}
+
+/// The cancel surface of one form (`{component}-cancel` button and its
+/// navigation target pattern).
+#[derive(Debug)]
+pub(crate) struct PomCancel {
+    pub testid: String,
+    pub pattern: String,
 }
 
 /// One details component: root accessor + per-field getters (`dd` order).
@@ -158,7 +175,8 @@ pub(crate) struct PomFlow {
 /// payloads — schema-less runs therefore carry no navigation surface at
 /// all. The workflow and ux-object surfaces are MODEL-derived (markup
 /// parity: badges/buttons/chips render whenever the config/plan renders
-/// them).
+/// them). `auth_enabled` (issue #463) additionally gives every guarded
+/// view a denial target and derives the form cancel surface.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_view_pom(
     config: &DomainConfig,
@@ -167,11 +185,13 @@ pub(crate) fn build_view_pom(
     spec: Option<&ViewTestSpec>,
     rules: Option<&UxRules>,
     plans: &HashMap<String, UxPlan>,
+    auth_enabled: bool,
 ) -> ViewPom {
     let mut pom = ViewPom {
         view_name: vc.name.clone(),
         class_name: format!("{}Page", to_pascal_case(&vc.name)),
         route: view_route(&vc.name),
+        auth_enabled,
         ..Default::default()
     };
     let selectors_for =
@@ -199,7 +219,13 @@ pub(crate) fn build_view_pom(
         pom.denial_target = personas
             .iter()
             .find(|p| !p.permitted)
-            .map(|p| p.denial_target.clone());
+            .map(|p| p.denial_target.clone())
+            .or_else(|| {
+                let guarded = auth_enabled && (!vc.roles.is_empty() || !vc.requires.is_empty());
+                guarded
+                    .then(|| personas.first().map(|p| p.denial_target.clone()))
+                    .flatten()
+            });
     }
     if pom.heading.is_none()
         && pom.primary_root.is_none()
@@ -255,6 +281,14 @@ pub(crate) fn build_view_pom(
         let save_pattern = spec
             .and_then(|s| s.round_trips.iter().find(|rt| rt.component == c.name))
             .map(|rt| rt.target_pattern.clone());
+        let cancel = if auth_enabled {
+            cancel_event(c, &vc.events).map(|(target, binding)| PomCancel {
+                testid: format!("{}-cancel", c.name),
+                pattern: url_pattern(&view_route(&target), &binding),
+            })
+        } else {
+            None
+        };
         let workflow = c
             .entity
             .as_deref()
@@ -267,6 +301,7 @@ pub(crate) fn build_view_pom(
             submit_testid,
             fields: typed_form_fields(c),
             save_pattern,
+            cancel,
             workflow,
         });
     }
@@ -333,6 +368,25 @@ pub(crate) fn build_view_pom(
         });
     }
     pom
+}
+
+/// The view's/component's first `on cancel` navigate event:
+/// `(target_view, bindings)` — the same walk `save_navigation_target` uses.
+fn cancel_event(
+    c: &IfmlComponent,
+    vc_events: &[super::super::context::IfmlEvent],
+) -> Option<(String, HashMap<String, String>)> {
+    let target = |a: &super::super::context::IfmlAction| match a {
+        super::super::context::IfmlAction::Navigate { target, binding } => {
+            Some((target.clone(), binding.clone()))
+        }
+        _ => None,
+    };
+    c.events
+        .iter()
+        .chain(vc_events.iter())
+        .find(|e| e.event_type == "cancel")
+        .and_then(|e| target(&e.action))
 }
 
 /// Workflow methods for one component: the same edge enumeration the route
@@ -446,15 +500,10 @@ fn typed_form_fields(c: &IfmlComponent) -> Vec<PomFormField> {
 }
 
 /// Kernel + page-class emission for one generation run: the file set the
-/// generator pushes when any IFML spec is emitted. `views` carries every
-/// view container with its payloads (any of which may be absent).
-pub(crate) fn pom_file_set(
-    config: &DomainConfig,
-    mappings: Option<&IfmlComponentMappings>,
-    views: &[(&IfmlViewContainer, Option<&ViewTestSpec>)],
-    rules: Option<&UxRules>,
-    plans: &HashMap<String, UxPlan>,
-) -> Vec<(PathBuf, String)> {
+/// generator pushes when any IFML spec is emitted. `poms` carries the
+/// per-view kebab name + plan (built once by the generator, shared with the
+/// auth-spec assembly).
+pub(crate) fn pom_file_set(poms: &[(&str, &ViewPom)]) -> Vec<(PathBuf, String)> {
     let mut files = vec![
         (
             PathBuf::from("tests/pages/support/base-page.ts"),
@@ -465,12 +514,10 @@ pub(crate) fn pom_file_set(
             UX_TABLE_TS.to_string(),
         ),
     ];
-    for (vc, spec) in views {
-        let pom = build_view_pom(config, mappings, vc, *spec, rules, plans);
-        let kebab = to_kebab_case(&vc.name);
+    for (kebab, pom) in poms {
         files.push((
             PathBuf::from(format!("tests/pages/{kebab}-page.ts")),
-            render_pom_page(&pom),
+            render_pom_page(pom),
         ));
     }
     files
@@ -603,7 +650,7 @@ received = ["review"]
         let config = workflow_config();
         let vc = list_view();
 
-        let bare = build_view_pom(&config, None, &vc, None, None, &HashMap::new());
+        let bare = build_view_pom(&config, None, &vc, None, None, &HashMap::new(), false);
         let rendered = render_pom_page(&bare);
         assert!(
             rendered.contains("export class CustomerListPage extends BasePage {"),
@@ -700,7 +747,15 @@ received = ["review"]
                 control_component: None,
             }],
         };
-        let full = build_view_pom(&config, None, &vc, Some(&spec), None, &HashMap::new());
+        let full = build_view_pom(
+            &config,
+            None,
+            &vc,
+            Some(&spec),
+            None,
+            &HashMap::new(),
+            false,
+        );
         let rendered = render_pom_page(&full);
         assert!(
             rendered.contains("async navigateToCustomerDetail()"),
@@ -747,7 +802,15 @@ entities = []
             round_trips: Vec::new(),
             personas: Vec::new(),
         };
-        let pom = build_view_pom(&config, None, &vc, Some(&spec), None, &HashMap::new());
+        let pom = build_view_pom(
+            &config,
+            None,
+            &vc,
+            Some(&spec),
+            None,
+            &HashMap::new(),
+            false,
+        );
         let rendered = render_pom_page(&pom);
         assert!(rendered.contains("heading(): Locator"), "{rendered}");
         assert!(rendered.contains("primaryRoot(): Locator"), "{rendered}");
@@ -765,7 +828,7 @@ entities = []
         let config = workflow_config();
         let mut vc = list_view();
         vc.components.retain(|c| c.component_type == "details");
-        let pom = build_view_pom(&config, None, &vc, None, None, &HashMap::new());
+        let pom = build_view_pom(&config, None, &vc, None, None, &HashMap::new(), false);
         let rendered = render_pom_page(&pom);
         assert!(
             rendered

@@ -41,6 +41,8 @@ generators = [
     "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
     # Domain
     "router", "links", "errors",
+    # hurl API contract tests (issue #463) — run by the ops api suite
+    "hurl_contract",
     # Global
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",

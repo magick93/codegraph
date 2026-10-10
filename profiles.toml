@@ -83,6 +83,11 @@ function_postconditions = false
 # resolves into ProjectConfig.ux for every template/generator; a project
 # --ux-rules file shadows pack rules per selector tier. Off = byte-identical.
 ux_rules = true
+# IFML test-side auth surface (issue #463). When true the IFML e2e generator
+# emits the auth.setup.ts globalSetup (per-persona API keys via
+# public.create_api_key), persona fixtures, {view}.auth.spec.ts, journey
+# specs, and the extended POM surface. Off = byte-identical.
+ifml_e2e_auth = true
 
 [profiles.default.api]
 generators = [
@@ -93,6 +98,9 @@ generators = [
     # Domain ("errors" is required: generated handlers import
     # crate::domain::{domain}::errors::CommonError unconditionally)
     "errors", "router", "links",
+    # hurl API contract tests (issue #463) — per-entity contracts + the
+    # authn/authz suite, run by the ops api suite
+    "hurl_contract",
     # Global
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
@@ -226,13 +234,14 @@ pagination = true
 validation_level = "strict"
 grpc_backend = true
 ux_rules = true
+ifml_e2e_auth = true
 
 [profiles.fullstack.api]
 generators = [
     "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
     "query", "event", "handler", "workflow_action", "media_route", "test",
     "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
-    "router", "links",
+    "router", "links", "hurl_contract",
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
     "report_views",
@@ -258,7 +267,7 @@ generators = [
     "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
     "query", "event", "handler", "workflow_action", "media_route", "test",
     "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
-    "router", "links",
+    "router", "links", "hurl_contract",
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry",
     "domain_types_scaffold",

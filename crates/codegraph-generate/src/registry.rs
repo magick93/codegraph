@@ -90,9 +90,6 @@ pub(crate) fn build_entity_generators(
         Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
             base("playwright-entity"),
         )) as Box<dyn EntityGenerator>,
-        Box::new(playwright::ts_entity_gen::TsEntityGenerator::new(base(
-            "playwright-ts",
-        ))) as Box<dyn EntityGenerator>,
         Box::new(ui::descriptor::UiDescriptorGenerator::new(
             base("ui-descriptor"),
             ctx.ui_overrides.clone(),
@@ -195,6 +192,11 @@ pub(crate) fn build_domain_generators(
                 .with_parent_candidates(parent_candidates.to_vec()),
         ) as Box<dyn DomainGenerator>,
         Box::new(api::links::LinksGenerator::new(base("links"))) as Box<dyn DomainGenerator>,
+        // hurl API contract tests (issue #463) — per-entity contracts plus
+        // the once-per-run authn/authz suite.
+        Box::new(api::hurl_contract::HurlContractGenerator::new(base(
+            "hurl_contract",
+        ))) as Box<dyn DomainGenerator>,
         Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(base(
             "ui-domain-layout",
         ))) as Box<dyn DomainGenerator>,
@@ -339,9 +341,6 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             output_dir,
         )) as Box<dyn GlobalGenerator>,
     );
-    global_gens.push(Box::new(playwright::ts_global_gen::TsGlobalGenerator::new(
-        output_dir,
-    )) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(webhook::dispatch::WebhookDispatchGenerator::new(output_dir))
             as Box<dyn GlobalGenerator>,
@@ -418,13 +417,18 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         );
     }
     // ops harness manifest + testkit crate
-    global_gens.push(Box::new(ops::OpsManifestGenerator::new(
-        output_dir,
-        ctx.capabilities.has(Capability::Cli),
-        ctx.capabilities.has(Capability::Ui),
-        ctx.capabilities.has(Capability::AdminCli),
-        ctx.capabilities.has(Capability::Grpc),
-    )) as Box<dyn GlobalGenerator>);
+    global_gens.push(Box::new(
+        ops::OpsManifestGenerator::new(
+            output_dir,
+            ctx.capabilities.has(Capability::Cli),
+            ctx.capabilities.has(Capability::Ui),
+            ctx.capabilities.has(Capability::AdminCli),
+            ctx.capabilities.has(Capability::Grpc),
+        )
+        // The [hurl] manifest section rides the hurl_contract generator
+        // (issue #463): emit it exactly when that generator is in the plan.
+        .with_hurl_contracts(ctx.plan_has_domain("hurl_contract")),
+    ) as Box<dyn GlobalGenerator>);
 
     // .evt inputs imply the events module: the graph-driven scaffold gate
     // (`has_events`) declares `pub mod events;` whenever the architecture is

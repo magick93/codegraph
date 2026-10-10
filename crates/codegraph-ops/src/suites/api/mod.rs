@@ -824,6 +824,23 @@ async fn stage_hurl(
                 .map(|e| e.path())
                 .collect();
             files.sort();
+            // A configured hurl dir with nothing runnable is almost always a
+            // mistake (the generator's contracts were swept, or skip swallows
+            // everything) — never silently run zero API contracts.
+            let runnable: Vec<_> = files
+                .iter()
+                .filter(|f| {
+                    f.file_name()
+                        .map(|n| !hurl.skip.contains(&n.to_string_lossy().into_owned()))
+                        .unwrap_or(false)
+                })
+                .collect();
+            if runnable.is_empty() {
+                output::warn(format!(
+                    "hurl dir {} yields zero runnable .hurl files — no API contracts ran",
+                    hurl_dir.display()
+                ));
+            }
             for f in files {
                 let name = f
                     .file_name()

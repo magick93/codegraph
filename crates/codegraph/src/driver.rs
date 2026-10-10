@@ -345,8 +345,29 @@ pub async fn run_with_graph_cache(
     let mut project_config: Option<ProjectConfig> = None;
     let mut domain_types_base_path: Option<PathBuf> = None;
     let build_plan = if profiles_path.exists() || profile_name != "default" {
-        let resolved =
+        let mut resolved =
             crate::profile::load_and_resolve_profile(&profiles_path, profile_name, variant)?;
+        // CLI --ifml-framework wins when the profile declares no
+        // per-framework IFML targets: without the targets
+        // `expand_ifml_sections` keeps the unsuffixed `ifml_*` generator
+        // names and the run emits no IFML artifacts at all (the same gap
+        // `ifml_generate`'s ifml_only fallback covers).
+        if !ifml_framework.is_empty() && resolved.ifml_frameworks.is_empty() {
+            resolved.ifml_frameworks = ifml_framework
+                .iter()
+                .map(|fw| crate::profile::IfmlFrameworkTarget {
+                    name: fw.clone(),
+                    output: None,
+                    target: "ui".to_string(),
+                })
+                .collect();
+            for fw in ifml_framework {
+                resolved
+                    .features
+                    .entry(format!("framework_{fw}"))
+                    .or_insert(toml::Value::Boolean(true));
+            }
+        }
         let plan = crate::profile::BuildPlan::from_profile(&resolved, &registry)?;
 
         // Build project config from profile meta (optional fields override defaults).
@@ -388,6 +409,7 @@ pub async fn run_with_graph_cache(
                 dto_key_casing: DtoKeyCasing::from_config(&plan.dto_key_casing),
                 namespace_layout: plan.namespace_layout,
                 expr_ir: plan.expr_ir,
+                ifml_e2e_auth: plan.ifml_e2e_auth,
                 types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
             },
             deployment: DeploymentConfig {
@@ -1193,6 +1215,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.database.persistence_provider = plan.persistence_provider();
         project_config.deployment.deployment_topology = plan.deployment_topology();
         project_config.codegen.expr_ir = plan.expr_ir;
+        project_config.codegen.ifml_e2e_auth = plan.ifml_e2e_auth;
         project_config.integration.public_operations_rls = plan.public_operations_rls;
 
         println!(

@@ -81,7 +81,7 @@ fn modal_click_through_renders_wrapper_and_close_assertions() {
         personas: Vec::new(),
     };
 
-    let rendered = render_spec(&spec);
+    let rendered = render_spec(&spec, true);
     // The flow (and its modal close) is a page-class method; the spec body
     // carries no raw testid construction (#317).
     assert!(
@@ -153,7 +153,7 @@ fn spec_render_includes_all_test_kinds() {
         personas: Vec::new(),
     };
 
-    let rendered = render_spec(&spec);
+    let rendered = render_spec(&spec, true);
     assert!(rendered.contains("import { test, expect } from '@playwright/test';"));
     assert!(
         rendered.contains("import { CustomerListPage } from '../pages/customer-list-page';"),
@@ -684,13 +684,16 @@ entities = []
         ("no-ux-rules", None),
         ("ux-rules-on", Some(UxRules::default())),
     ] {
-        let files = pom_file_set(
+        let pom = super::pom::build_view_pom(
             &config,
             None,
-            &[(&view(), None)],
+            &view(),
+            None,
             rules.as_ref(),
             &HashMap::new(),
+            false,
         );
+        let files = pom_file_set(&[("customer-list", &pom)]);
         let paths: Vec<String> = files
             .iter()
             .map(|(p, _)| p.to_string_lossy().into_owned())

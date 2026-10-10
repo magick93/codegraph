@@ -17,7 +17,7 @@ use super::super::context::{IfmlComponent, IfmlViewContainer};
 use super::super::querier::{IfmlGraphQuerier, IfmlQuerier};
 use super::super::route_generator::denial_target;
 use super::super::selectors::ComponentSelectors;
-use super::pom::pom_file_set;
+use super::pom::{ViewPom, pom_file_set};
 use super::render::{
     package_json, playwright_config, render_spec, render_ux_spec, render_workflow_spec,
 };
@@ -48,6 +48,15 @@ use codegraph_naming::to_kebab_case;
 /// Since #317 every spec kind drives the view through the emitted POM
 /// (kernel + per-view page classes under `tests/pages/`), which is emitted
 /// on the same spec-infra gate: whenever any spec is emitted.
+///
+/// With `project.codegen.ifml_e2e_auth` (issue #463) the generator
+/// additionally emits the test-side auth bootstrap —
+/// `tests/e2e/auth.setup.ts` (per-persona API-key provisioning), the
+/// `tests/e2e/personas.ts` fixtures, the `{view}.auth.spec.ts` family, the
+/// `tests/journeys/*.journey.spec.ts` specs, and the extended POM surface
+/// (`{comp}DeleteViaMenu`/`press{Comp}Cancel`) — and moves the persona
+/// coverage out of the base specs' inline `addInitScript` blocks. Flag off
+/// keeps every artifact byte-identical.
 pub struct IfmlE2eTestGenerator {
     output_dir: PathBuf,
     framework: String,
@@ -104,6 +113,10 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             return Ok(vec![]);
         }
 
+        // Test-side auth bootstrap (issue #463): flag off ⇒ no personas,
+        // no auth specs, no journeys — byte-identical output.
+        let auth_enabled = project.codegen.ifml_e2e_auth;
+
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
         // ux-rules plane (issue #303): one plan per bound entity plus one
@@ -115,16 +128,21 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             None => HashMap::new(),
         };
         let mut ux_specs: Vec<(String, UxViewTest)> = Vec::new();
-        let human_actors: Vec<String> = match &model.policy {
-            Some(_) => db
-                .get_actors()
+        let human_actors: Vec<String> = if auth_enabled || model.policy.is_some() {
+            db.get_actors()
                 .await
                 .map_err(crate::error::Error::Graph)?
                 .into_iter()
                 .filter(|actor| actor.kind.as_deref() != Some("agent"))
                 .map(|actor| actor.name)
-                .collect(),
-            None => Vec::new(),
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let personas = if auth_enabled {
+            super::auth::build_personas(&model, &human_actors)
+        } else {
+            Vec::new()
         };
         let denial = denial_target(&model);
         for vc in &model.view_containers {
@@ -167,8 +185,9 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         // tests (e.g. the workflow config or a mapped collection changed
         // across regenerations into the same root), stale ux specs
         // (issue #303) whose view lost its ux eligibility (flag off, view
-        // removed, or a mapping now replaces the fallback), and stale POM
-        // page classes (#317) for removed views.
+        // removed, or a mapping now replaces the fallback), stale auth
+        // specs (issue #463) whose view lost its guard or the flag turned
+        // off, and stale POM page classes (#317) for removed views.
         let active_specs: HashSet<String> = model
             .view_containers
             .iter()
@@ -182,6 +201,16 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             .iter()
             .map(|(view_name, _)| format!("{}.ux.spec.ts", to_kebab_case(view_name)))
             .collect();
+        let active_auth_specs: HashSet<String> = if auth_enabled {
+            model
+                .view_containers
+                .iter()
+                .filter(|vc| !vc.roles.is_empty() || !vc.requires.is_empty())
+                .map(|vc| format!("{}.auth.spec.ts", to_kebab_case(&vc.name)))
+                .collect()
+        } else {
+            HashSet::new()
+        };
         let active_pages: HashSet<String> = model
             .view_containers
             .iter()
@@ -211,6 +240,12 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     }
                     continue;
                 }
+                if name.strip_suffix(".auth.spec.ts").is_some() {
+                    if !active_auth_specs.contains(name) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    continue;
+                }
                 if !active_specs.contains(name) {
                     let _ = std::fs::remove_file(&path);
                 }
@@ -236,6 +271,70 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             }
         }
 
+        // The POM plans (built once — the auth-spec assembly reads the same
+        // plan the page classes render from).
+        let spec_by_view: HashMap<&str, &ViewTestSpec> = specs
+            .iter()
+            .map(|spec| (spec.view_name.as_str(), spec))
+            .collect();
+        let pom_plans: Vec<(String, ViewPom)> = model
+            .view_containers
+            .iter()
+            .map(|vc| {
+                let spec = spec_by_view.get(vc.name.as_str()).copied();
+                let kebab = to_kebab_case(&vc.name);
+                let pom = super::pom::build_view_pom(
+                    config,
+                    self.mappings.as_ref(),
+                    vc,
+                    spec,
+                    ux_rules,
+                    &ux_plans,
+                    auth_enabled,
+                );
+                (kebab, pom)
+            })
+            .collect();
+        let pom_by_view: HashMap<&str, &ViewPom> = pom_plans
+            .iter()
+            .map(|(kebab, pom)| (kebab.as_str(), pom))
+            .collect();
+
+        // The auth family (issue #463): one `{view}.auth.spec.ts` per
+        // guarded view, built from the same payloads + POM plan.
+        let auth_specs = if auth_enabled {
+            model
+                .view_containers
+                .iter()
+                .filter_map(|vc| {
+                    let spec = spec_by_view.get(vc.name.as_str())?;
+                    let pom = pom_by_view.get(to_kebab_case(&vc.name).as_str())?;
+                    super::auth::build_auth_spec(vc, spec, pom)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        // The journeys (issue #463): workflow handoffs + the shell nav walk.
+        let workflow_journeys = if auth_enabled {
+            super::auth::build_workflow_journeys(
+                db,
+                config,
+                &project.identity.api_version,
+                &model,
+                &personas,
+            )
+            .await
+        } else {
+            Vec::new()
+        };
+        let shell_journey = if auth_enabled {
+            super::auth::build_shell_journey(&model, &personas)
+        } else {
+            None
+        };
+
         let mut files: Vec<GeneratedFile> = specs
             .iter()
             .map(|spec| GeneratedFile {
@@ -244,7 +343,11 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     .join("tests")
                     .join("ifml")
                     .join(format!("{}.spec.ts", to_kebab_case(&spec.view_name))),
-                content: render_spec(spec),
+                // Under the auth flag the persona tests move to the
+                // `{view}.auth.spec.ts` family; a persona-only payload
+                // renders an empty base describe (the file itself stays —
+                // the suite layout is stable across flag toggles).
+                content: render_spec(spec, !auth_enabled),
             })
             .collect();
 
@@ -276,31 +379,109 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             });
         }
 
+        for auth_spec in &auth_specs {
+            files.push(GeneratedFile {
+                path: self.output_dir.join("tests").join("ifml").join(format!(
+                    "{}.auth.spec.ts",
+                    to_kebab_case(&auth_spec.view_name)
+                )),
+                content: super::auth::render_auth_spec(auth_spec),
+            });
+        }
+
+        for journey in &workflow_journeys {
+            files.push(GeneratedFile {
+                path: self.output_dir.join("tests").join("journeys").join(format!(
+                    "{}-workflow.journey.spec.ts",
+                    to_kebab_case(&journey.entity)
+                )),
+                content: super::auth::render_workflow_journey(journey),
+            });
+        }
+        if let Some(journey) = &shell_journey {
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("tests")
+                    .join("journeys")
+                    .join("shell-nav.journey.spec.ts"),
+                content: super::auth::render_shell_nav_journey(journey),
+            });
+        }
+
+        // Journey stale sweep: flag off (or a lost journey) removes the
+        // file; the auth TS bootstrap likewise never lingers.
+        let active_journeys: HashSet<String> = if auth_enabled {
+            super::auth::journey_file_names(&workflow_journeys)
+                .into_iter()
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let journeys_dir = self.output_dir.join("tests").join("journeys");
+        if journeys_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&journeys_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if name.ends_with(".journey.spec.ts") && !active_journeys.contains(name) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+        if !auth_enabled {
+            for rel in ["tests/e2e/auth.setup.ts", "tests/e2e/personas.ts"] {
+                let path = self.output_dir.join(rel);
+                if path.exists() {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+
         // POM infra (issue #317): kernel + one page class per view
         // container, emitted on the same spec-infra gate as the specs.
-        let spec_by_view: HashMap<&str, &ViewTestSpec> = specs
+        let pom_refs: Vec<(&str, &ViewPom)> = pom_plans
             .iter()
-            .map(|spec| (spec.view_name.as_str(), spec))
+            .map(|(kebab, pom)| (kebab.as_str(), pom))
             .collect();
-        let views: Vec<(&IfmlViewContainer, Option<&ViewTestSpec>)> = model
-            .view_containers
-            .iter()
-            .map(|vc| (vc, spec_by_view.get(vc.name.as_str()).copied()))
-            .collect();
-        for (path, content) in
-            pom_file_set(config, self.mappings.as_ref(), &views, ux_rules, &ux_plans)
-        {
+        for (path, content) in pom_file_set(&pom_refs) {
             files.push(GeneratedFile {
                 path: self.output_dir.join(path),
                 content,
             });
         }
 
+        // The auth bootstrap (issue #463): per-persona API-key provisioning
+        // + the shared persona fixtures.
+        if auth_enabled && !personas.is_empty() {
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("tests")
+                    .join("e2e")
+                    .join("auth.setup.ts"),
+                content: super::auth::render_auth_setup(&personas),
+            });
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("tests")
+                    .join("e2e")
+                    .join("personas.ts"),
+                content: super::auth::render_personas(&personas),
+            });
+        }
+
         let config_path = self.output_dir.join("playwright.config.ts");
         if !config_path.exists() {
+            let global_setup =
+                (auth_enabled && !personas.is_empty()).then_some("tests/e2e/auth.setup.ts");
             files.push(GeneratedFile {
                 path: config_path,
-                content: playwright_config().to_string(),
+                content: playwright_config(global_setup).to_string(),
             });
         }
         let package_path = self.output_dir.join("package.json");
