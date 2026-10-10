@@ -169,14 +169,12 @@ pub async fn resolve_entity_operations(
 ) -> Vec<String> {
     let domain_entry = config.domains.get(domain_name);
     // An explicitly configured operations list takes precedence over the graph.
-    if let Some(explicit) = domain_entry
+    let resolved = if let Some(explicit) = domain_entry
         .and_then(|de| de.get_entity_config(entity_name))
         .and_then(|c| c.operations.clone())
     {
-        return explicit;
-    }
-
-    if let Ok(resources) = querier.get_api_resources().await {
+        explicit
+    } else if let Ok(resources) = querier.get_api_resources().await {
         let resource_name = normalized_resource_name(entity_name);
         if let Some(resource) = resources
             .iter()
@@ -184,12 +182,30 @@ pub async fn resolve_entity_operations(
             && let Ok(ops) = querier.get_api_operations(&resource.name).await
             && !ops.is_empty()
         {
-            return ops.iter().map(|op| op.kind.clone()).collect();
+            ops.iter().map(|op| op.kind.clone()).collect()
+        } else {
+            // No explicit config and no usable graph ops — fall back to defaults.
+            config.defaults.operations.clone()
         }
+    } else {
+        config.defaults.operations.clone()
+    };
+
+    // Issue #449 parity: a `.ddd` design's repository builtins are the
+    // top-priority operation source for EVERY consumer of this resolver.
+    // The query/command/repository layers already apply the override in
+    // their own builders; without it here the API wires routes (delete,
+    // update, …) for operations the design-mapped layers don't implement
+    // (crewbase compile gate: `no method 'delete' on CommandHandler`).
+    // Designs are authored against mox classes, whose titles equal their
+    // rust type names.
+    if let Ok(surface) = crate::ddd::design::DddDesignSurface::from_graph(querier).await
+        && let Some(design_ops) = surface.operations_for(entity_name)
+    {
+        return design_ops;
     }
 
-    // No explicit config and no usable graph ops — fall back to defaults.
-    config.defaults.operations.clone()
+    resolved
 }
 
 fn op_kind_to_http(kind: &str) -> (&'static str, &'static str) {

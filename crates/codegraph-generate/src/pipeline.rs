@@ -196,6 +196,56 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
 
     run_global_phase(&ctx, &global_gens, &order, &mut report).await?;
 
+    // Codelist Rust enum re-exports (the generated app re-exports from the
+    // domain-types crate). Runs AFTER the global phase: the events plane
+    // (`src/events/contracts.rs`, emitted by the `evt_events` global
+    // generator) also references `crate::codelist::<Name>`, and the scan
+    // must see it — running before it left the app-side re-export list
+    // empty for evt models (crewbase compile gate). Monolith: the FULL
+    // codelist list (see `generate_reexport_mod`). Workers topology: the
+    // root crate is a placeholder — header-only re-exports; each worker
+    // carries its own referenced-only list (emitted in
+    // `run_codelist_generators`).
+    if ctx.workers_topology {
+        match codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir)
+            .generate_reexport_mod_for(ctx.db(), ctx.output_dir, ctx.project)
+            .await
+        {
+            Ok(files) => {
+                for file in &files {
+                    write_output(file)?;
+                }
+                report.files.extend(files);
+            }
+            Err(e) => {
+                report.errors.push(report::GenerationError {
+                    entity: "(codelists)".into(),
+                    generator: "rust_enum".into(),
+                    source: e,
+                });
+            }
+        }
+    } else {
+        match codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir)
+            .generate_reexport_mod(ctx.db(), ctx.project)
+            .await
+        {
+            Ok(files) => {
+                for file in &files {
+                    write_output(file)?;
+                }
+                report.files.extend(files);
+            }
+            Err(e) => {
+                report.errors.push(report::GenerationError {
+                    entity: "(codelists)".into(),
+                    generator: "rust_enum".into(),
+                    source: e,
+                });
+            }
+        }
+    }
+
     // Validate that every entity in the generation order has entity-specific files
     report.validate_consistency(&order, &ctx.config.defaults.type_suffix);
 
@@ -609,33 +659,17 @@ async fn run_codelist_generators(
         }
     }
 
-    // Codelist Rust enum re-exports (generated app re-exports from hr_domain_types)
-    match codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir)
-        .generate_reexport_mod(ctx.db(), ctx.project)
-        .await
-    {
-        Ok(files) => {
-            for file in &files {
-                write_output(file)?;
-            }
-            report.files.extend(files);
-        }
-        Err(e) => {
-            report.errors.push(report::GenerationError {
-                entity: "(codelists)".into(),
-                generator: "rust_enum".into(),
-                source: e,
-            });
-        }
-    }
-
     // In workers topology each worker crate gets its own `src/codelist/mod.rs`
     // re-exporting exactly the codelists its routed DTO code references
     // (`crate::codelist::<Name>`).  The root-anchored scan above finds
     // nothing in workers topology (domain/api source lives under
     // `workers/{domain}/src/`), so the worker `lib.rs`'s `pub mod codelist;`
     // would otherwise not compile.  Monolith topology never enters this
-    // branch, keeping the root output byte-identical.
+    // branch, keeping the root output byte-identical. The MONOLITH root
+    // re-export runs LATER (after the global phase) — the events plane
+    // (`src/events/contracts.rs`, emitted by the `evt_events` global
+    // generator) also references `crate::codelist::<Name>`, so the scan
+    // must see it.
     if ctx.workers_topology {
         let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir);
         for (domain, _entity_titles) in all_domains_for_generation(ctx.config, order) {

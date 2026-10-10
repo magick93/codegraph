@@ -224,7 +224,7 @@ impl RepositoryImplEmitter {
                     "Uuid" | "uuid::Uuid" => {
                         wln!(
                             code,
-                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\", )))?;",
+                            "            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!(\"Invalid UUID for filter '{}': {{e}}\")))?;",
                             ff.field_name
                         );
                         wln!(

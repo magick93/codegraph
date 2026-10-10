@@ -255,7 +255,12 @@ impl WebhookDispatcher {
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
                 if all_inserts_succeeded{% if evt_events %}
-                    && crate::events::consumers::dispatch_registered(&self.db, &message) == 0{% endif %} {
+                    && crate::events::consumers::dispatch_registered(
+                            self.db.clone(),
+                            message.clone(),
+                        )
+                        .await
+                        == 0{% endif %} {
                     let _ = self
                         .db
                         .execute_raw(Statement::from_sql_and_values(

@@ -469,7 +469,7 @@ pub fn rex_type_to_rust(type_ref: &rex_ir::TypeRef) -> Option<String> {
             | rex_ir::PrimitiveType::Short
             | rex_ir::PrimitiveType::Byte => Some("i64".to_string()),
             rex_ir::PrimitiveType::Float | rex_ir::PrimitiveType::Double => Some("f64".to_string()),
-            rex_ir::PrimitiveType::Date => Some("NaiveDate".to_string()),
+            rex_ir::PrimitiveType::Date => Some("chrono::NaiveDate".to_string()),
         },
         // Named types match by their name leaf against the datatypes the
         // generated code models (the rex `Uuid`/`DateTime`/`Decimal` family
@@ -480,8 +480,10 @@ pub fn rex_type_to_rust(type_ref: &rex_ir::TypeRef) -> Option<String> {
         | rex_ir::TypeRef::Interface { name, .. }
         | rex_ir::TypeRef::Vocabulary { name, .. } => match name.as_str() {
             "Uuid" => Some("Uuid".to_string()),
-            "DateTime" | "Instant" | "Timestamp" => Some("DateTime<Utc>".to_string()),
-            "Decimal" => Some("Decimal".to_string()),
+            "DateTime" | "Instant" | "Timestamp" => {
+                Some("chrono::DateTime<chrono::Utc>".to_string())
+            }
+            "Decimal" => Some("rust_decimal::Decimal".to_string()),
             "Date" => Some("NaiveDate".to_string()),
             _ => None,
         },

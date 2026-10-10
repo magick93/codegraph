@@ -899,6 +899,16 @@ async fn resolve_is_auditable(
     domain: &str,
 ) -> Result<bool> {
     let policies = db.get_policies_for_schema(schema_title).await?;
+    // Issue #449: a `.ddd` design overrides both the operation set and the
+    // auditable flag — the handler's call shape must match the design-mapped
+    // query layer exactly (include_deleted on read methods exists only when
+    // the query layer accepts it), so mirror ddd/query.rs's resolution.
+    let design_surface = crate::ddd::design::DddDesignSurface::from_graph(db).await?;
+    let mut operations =
+        crate::api::api_model::resolve_entity_operations(db, config, domain, schema_title).await;
+    if let Some(design_ops) = design_surface.operations_for(schema_title) {
+        operations = design_ops;
+    }
     // Append-only snapshot semantics (issue #284) — same inference as
     // db/ddl.rs: insert-only entities carry no audit columns, so the API
     // layer never passes `include_deleted` to the query/repository traits.
@@ -908,13 +918,10 @@ async fn resolve_is_auditable(
         .and_then(|d| d.get_entity_config(schema_title))
         .as_ref()
         .is_some_and(|ec| ec.is_append_only())
-        || {
-            let ops =
-                crate::api::api_model::resolve_entity_operations(db, config, domain, schema_title)
-                    .await;
-            !ops.iter().any(|op| op == "update" || op == "delete")
-        };
-    let is_auditable = (if policies.is_empty() {
+        || !operations.iter().any(|op| op == "update" || op == "delete");
+    let is_auditable = (if let Some(design) = design_surface.design_for(schema_title) {
+        design.flags.auditable
+    } else if policies.is_empty() {
         config
             .domains
             .get(domain)

@@ -195,14 +195,57 @@ impl EntityGenerator for UiDescriptorGenerator {
         // Get raw properties for validation metadata and UI override data
         let properties = db.get_properties(schema_title).await?;
 
+        // Entity-ref fields: resolve the target's schema TITLE via the graph
+        // (identical across the JSON and mox pipelines — raw `ref_target`
+        // strings are pipeline-specific: "WorkerType.json#" vs "WorkerType").
+        // Keyed by UI field name so the field closure stays synchronous.
+        let mut ref_entities: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        for f in ui_fields.iter().filter(|f| f.is_entity_ref) {
+            let prop = properties.iter().find(|p| {
+                p.rust_field_name == f.name
+                    || p.name == f.name
+                    || codegraph_core::types::resolve_field(p).rust_field_name == f.name
+            });
+            let resolved = match prop {
+                Some(p) => {
+                    let graph_target = if p.is_array {
+                        db.get_array_item_schema(&p.name, schema_title).await
+                    } else {
+                        db.get_property_ref_target(&p.name, schema_title).await
+                    }
+                    .ok()
+                    .flatten();
+                    match graph_target {
+                        Some(target) => Some(target.title.clone()),
+                        // No graph edge — normalize the raw $ref stem.
+                        None => p.ref_target.as_ref().map(|t| {
+                            let last = t.rsplit('/').next().unwrap_or(t.as_str());
+                            last.strip_suffix(".json#")
+                                .or_else(|| last.strip_suffix(".json"))
+                                .unwrap_or(last)
+                                .to_string()
+                        }),
+                    }
+                }
+                None => None,
+            };
+            ref_entities.insert(f.name.clone(), resolved);
+        }
+
         // Build descriptor fields with validation + overrides
         let fields: Vec<DescriptorField> = ui_fields
             .iter()
             .map(|f| {
-                // Find matching PropertyNode for validation data
-                let prop = properties
-                    .iter()
-                    .find(|p| p.rust_field_name == f.name || p.name == f.name);
+                // Find matching PropertyNode for validation data. Entity-ref
+                // UI fields carry the resolved `_id` name while the raw
+                // property keeps the authored name — match through
+                // `resolve_field` too (issue: JSON/mox descriptor parity).
+                let prop = properties.iter().find(|p| {
+                    p.rust_field_name == f.name
+                        || p.name == f.name
+                        || codegraph_core::types::resolve_field(p).rust_field_name == f.name
+                });
 
                 // Determine group from dto.groups config
                 let group = dto_groups
@@ -280,7 +323,11 @@ impl EntityGenerator for UiDescriptorGenerator {
                     has_list: in_list,
                     is_sortable: f.is_required, // sortable if required (heuristic)
                     is_badge: f.is_codelist,    // badge for codelist fields
-                    ref_entity: prop.and_then(|p| p.ref_target.clone()),
+                    ref_entity: if f.is_entity_ref {
+                        ref_entities.get(&f.name).cloned().flatten()
+                    } else {
+                        None
+                    },
                     ref_domain: if f.is_entity_ref {
                         Some(domain.clone())
                     } else {

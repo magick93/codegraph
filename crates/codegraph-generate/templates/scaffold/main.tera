@@ -23,7 +23,8 @@ mod migration;
 mod webhook_api;
 mod webhook_dispatch;
 mod webhook_router;
-{% endif %}
+{% endif %}{% if has_events %}
+mod events;{% endif %}
 {% if project.hooks_api_crate %}
 mod hooks;
 {% endif %}
@@ -393,7 +394,8 @@ mod server;
 mod webhook_api;
 mod webhook_dispatch;
 mod webhook_router;
-{% endif %}
+{% endif %}{% if has_events %}
+mod events;{% endif %}
 {% if project.hooks_api_crate %}
 mod hooks;
 {% endif %}

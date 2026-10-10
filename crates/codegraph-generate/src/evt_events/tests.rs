@@ -261,12 +261,12 @@ async fn orders_fixture_emits_handler_traits_and_the_consumer_registry() {
     assert!(consumers.contains("pub struct ShippingFanoutContext<'a>"));
     assert!(consumers.contains("pub trait ShippingFanoutHandler"));
     assert!(consumers.contains("async fn on_order_cancelled("));
-    assert!(consumers.contains("pub fn dispatch_audit_worker("));
-    assert!(consumers.contains("pub fn dispatch_shipping_fanout("));
+    assert!(consumers.contains("pub async fn dispatch_audit_worker("));
+    assert!(consumers.contains("pub async fn dispatch_shipping_fanout("));
     assert!(consumers.contains("pub fn register_audit_worker("));
     assert!(consumers.contains("pub fn register_shipping_fanout("));
     assert!(
-        consumers.contains("pub(crate) fn dispatch_registered("),
+        consumers.contains("pub(crate) async fn dispatch_registered(\n    db: DatabaseConnection,"),
         "the drain's entry point"
     );
     assert!(
@@ -423,7 +423,7 @@ async fn dispatch_generator_renders_typed_branch_when_events_present() {
     let content = &files[0].content;
 
     assert!(
-        content.contains("crate::events::consumers::dispatch_registered(&self.db, &message) == 0"),
+        content.contains("crate::events::consumers::dispatch_registered(\n                            self.db.clone(),"),
         "the delete condition extends to consumer dispatches: {content}"
     );
     assert!(

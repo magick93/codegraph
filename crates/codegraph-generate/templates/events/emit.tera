@@ -7,6 +7,8 @@
 
 use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use uuid::Uuid;
+{% if contracts_use %}{{ contracts_use }}
+{% endif %}
 
 /// Per-publish context carried into the event envelope.
 #[derive(Debug, Clone, Copy)]
