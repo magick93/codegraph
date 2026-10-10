@@ -1,4 +1,3 @@
-
 mod auth;
 mod command_query;
 mod ddl;

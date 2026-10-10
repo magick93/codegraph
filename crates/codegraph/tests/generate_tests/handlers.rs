@@ -320,4 +320,3 @@ async fn ui_form_uses_stripped_names_for_codelist() {
         "form must NOT bind pg_column_name with _code suffix"
     );
 }
-
