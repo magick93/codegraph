@@ -117,8 +117,15 @@ fn assert_starter_model_compiles(project: &Path, domain: &str) {
         .iter()
         .map(|c| c.name.as_str())
         .collect();
+    let capitalized = format!(
+        "{}{}",
+        domain.chars().next().unwrap().to_uppercase(),
+        domain.chars().skip(1).collect::<String>()
+    );
+    let todo_list = format!("{capitalized}TodoListType");
+    let todo_item = format!("{capitalized}TodoItemType");
     assert!(
-        classes.contains(&"TodoListType") && classes.contains(&"TodoItemType"),
+        classes.contains(&todo_list.as_str()) && classes.contains(&todo_item.as_str()),
         "starter model must carry the TODO starter classes, got {classes:?}"
     );
 }

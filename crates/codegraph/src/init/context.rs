@@ -345,9 +345,18 @@ mod tests {
                     content.contains(&format!("package {domain}")),
                     "{path:?} must declare its own package:\n{content}"
                 );
+                let capitalized: String = {
+                    let mut chars = domain.chars();
+                    match chars.next() {
+                        Some(c) => {
+                            c.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()
+                        }
+                        None => String::new(),
+                    }
+                };
                 assert!(
-                    content.contains("class TodoListType")
-                        && content.contains("class TodoItemType"),
+                    content.contains(&format!("class {capitalized}TodoListType"))
+                        && content.contains(&format!("class {capitalized}TodoItemType")),
                     "{path:?} must carry the starter classes:\n{content}"
                 );
                 assert!(

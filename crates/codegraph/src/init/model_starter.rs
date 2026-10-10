@@ -93,9 +93,9 @@ mod tests {
     fn starter_model_renders_and_compiles() {
         let content = starter_model_mox("billing", "Billing", "codegraph").unwrap();
         assert!(content.contains("package billing"), "{content}");
-        assert!(content.contains("class TodoListType"), "{content}");
+        assert!(content.contains("class BillingTodoListType"), "{content}");
         assert!(
-            content.contains("refers TodoListType todoList"),
+            content.contains("refers BillingTodoListType todoList"),
             "{content}"
         );
         assert!(
