@@ -4,10 +4,11 @@ use crate::types::{
     CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode, DataBindingNode,
     DddModelGraph, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode, EventNode,
     EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats, InteractionNode, LexiconNode,
-    MembershipNode, MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode,
-    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
-    RegulatoryNode, RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode,
-    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
+    MembershipNode, ModuleDefinitionNode, MoxDomainModel, NamespaceImport, NamespaceNode,
+    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
+    RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
+    ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -56,6 +57,14 @@ pub trait GraphIngestor: Send + Sync {
 
     /// Update the is_entity flag on an already-ingested schema node.
     async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError>;
+
+    /// Ingest a DSL `module "Name"` declaration (rex-ir `ModuleDeclaration`):
+    /// the reusable pattern node view-level and module-internal `use`
+    /// statements resolve against.
+    async fn ingest_module_definition(
+        &self,
+        node: &ModuleDefinitionNode,
+    ) -> Result<String, GraphError>;
 
     async fn ingest_view_component(&self, node: &ViewComponentNode) -> Result<String, GraphError>;
 

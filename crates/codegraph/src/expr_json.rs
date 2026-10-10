@@ -50,6 +50,7 @@ pub fn when_expr_json(source: Option<&str>) -> Option<String> {
 fn expr_value(expr: &Expr) -> Value {
     match &expr.kind {
         ExprKind::Int(value) => json!({"kind": "int", "value": value}),
+        ExprKind::Float(value) => json!({"kind": "float", "value": value}),
         ExprKind::String(value) => json!({"kind": "string", "value": value}),
         ExprKind::Bool(value) => json!({"kind": "bool", "value": value}),
         ExprKind::Null => json!({"kind": "null"}),

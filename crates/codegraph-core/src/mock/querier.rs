@@ -338,6 +338,16 @@ impl GraphQuerier for MockEngine {
         Ok(map.values().cloned().collect())
     }
 
+    async fn get_ifml_modules(&self) -> Result<Vec<ModuleDefinitionNode>, GraphError> {
+        Ok(self
+            .module_definitions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect())
+    }
+
     async fn get_ifml_view_components(
         &self,
         container_name: &str,

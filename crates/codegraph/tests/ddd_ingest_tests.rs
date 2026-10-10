@@ -119,6 +119,7 @@ fn sample_model() -> DddModel {
                         params: vec![param("book", class_ref("nz.example.library", "Book"), None)],
                         delegation: None,
                         capabilities: vec!["BorrowBooks".to_string()],
+                        is_protected: false,
                     },
                     ServiceOperation {
                         name: "renew".to_string(),
@@ -130,6 +131,7 @@ fn sample_model() -> DddModel {
                             operation: "save".to_string(),
                         }),
                         capabilities: Vec::new(),
+                        is_protected: false,
                     },
                 ],
                 dependencies: vec![
@@ -304,6 +306,7 @@ fn conversion_maps_module_major_order_and_every_payload() {
                         multiplicity: Some(mult_json(&Multiplicity::MANY)),
                     }],
                     ordinal: 4,
+                    is_protected: false,
                 },
             ],
         }
@@ -390,6 +393,8 @@ fn rex_ir_builtin(
     let label = match builtin {
         BuiltinRepositoryOp::FindById => "findById",
         BuiltinRepositoryOp::FindAll => "findAll",
+        BuiltinRepositoryOp::FindByExample => "findByExample",
+        BuiltinRepositoryOp::FindByKeys => "findByKeys",
         BuiltinRepositoryOp::Save => "save",
         BuiltinRepositoryOp::Delete => "delete",
     };
@@ -400,6 +405,7 @@ fn rex_ir_builtin(
         return_multiplicity: None,
         params: Vec::new(),
         ordinal,
+        is_protected: false,
     }
 }
 
@@ -451,7 +457,7 @@ const LIB_MOX: &str = concat!(
     "}\n",
     "\n",
     "class Money {\n",
-    "    int cents\n",
+    "    readonly int cents\n",
     "}\n",
 );
 

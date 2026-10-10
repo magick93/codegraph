@@ -132,7 +132,7 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
     async fn {{ finder.method_name }}(
         &self,
         db: &C,
-{% for p in finder.params %}        {{ p.name }}: {{ p.rust_type }},
+{% for p in finder.params %}        {{ p.name }}: {% if p.optional %}Option<{{ p.rust_type }}>{% else %}{{ p.rust_type }}{% endif %},
 {% endfor %}    ) -> Result<{% if finder.returns_many %}Vec<{{ finder.return_rust_type }}>{% else %}Option<{{ finder.return_rust_type }}>{% endif %}, Box<dyn std::error::Error>>;
 {%- endfor %}
 }

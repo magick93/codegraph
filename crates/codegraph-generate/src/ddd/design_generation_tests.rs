@@ -98,6 +98,7 @@ fn builtin(name: &str, op: &str, ordinal: usize) -> DddRepositoryOperation {
         return_multiplicity: None,
         params: Vec::new(),
         ordinal,
+        is_protected: false,
     }
 }
 
@@ -115,6 +116,7 @@ fn declared(
         return_multiplicity,
         params,
         ordinal,
+        is_protected: false,
     }
 }
 
@@ -254,6 +256,122 @@ async fn repository_trait_design_with_read_only_builtins_has_no_create_delete() 
     assert!(!trait_src.contains("async fn update("));
     assert!(trait_src.contains("async fn find_by_id("));
     assert!(trait_src.contains("async fn list("));
+}
+
+#[tokio::test]
+async fn builtin_query_finders_lower_with_consumer_signatures() {
+    // findByKeys / findByExample (rexlang #47) lower onto the finder plane
+    // with the consumer-known signatures: the surrogate key for an entity
+    // with no explicit id feature, and an Option field per stored scalar.
+    let db = db_with_model(Some(model(
+        vec![design("Book", Some("BookType"), DddDesignFlags::default())],
+        vec![repository(
+            "BookRepository",
+            "Book",
+            vec![
+                builtin("findByKeys", "findByKeys", 0),
+                builtin("findByExample", "findByExample", 1),
+            ],
+        )],
+        vec![],
+    )))
+    .await;
+    let trait_src = render_trait(&db, &ProjectConfig::default()).await;
+    assert!(
+        trait_src.contains("async fn find_by_keys("),
+        "findByKeys lowers onto the trait: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("id: Uuid,"),
+        "the surrogate key is the consumer-known signature: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("async fn find_by_example("),
+        "findByExample lowers onto the trait: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("title: Option<String>,"),
+        "example fields are Option-wrapped: {trait_src}"
+    );
+
+    let impl_src = render_impl(&db).await;
+    assert!(
+        impl_src.contains("Column::Id.eq(id)"),
+        "findByKeys equality on the primary key: {impl_src}"
+    );
+    assert!(
+        impl_src.contains("let mut conditions = sea_query::Condition::all();"),
+        "findByExample builds a condition per example field: {impl_src}"
+    );
+    assert!(
+        impl_src.contains("if let Some(title) = &title {"),
+        "None fields filter out of the predicate: {impl_src}"
+    );
+    assert!(
+        impl_src.contains(
+            "conditions = conditions.add(crate::entity::library_book::Column::Title.eq(title.clone()));"
+        ),
+        "Some fields join the predicate: {impl_src}"
+    );
+    // Example finders return many rows.
+    assert!(
+        impl_src.contains("async fn find_by_example(") && impl_src.contains("Vec<BookResponse>"),
+        "findByExample returns many rows: {impl_src}"
+    );
+}
+
+#[tokio::test]
+async fn protected_builtins_stay_off_the_public_operation_set() {
+    // Sculptor visibility: a protected built-in lowers onto the repository
+    // but maps no API operation.
+    let mut save = builtin("save", "save", 0);
+    save.is_protected = true;
+    let mut find_by_id = builtin("findById", "findById", 1);
+    find_by_id.is_protected = true;
+    let surface = crate::ddd::design::DddDesignSurface::from_models(&[model(
+        vec![design("Book", Some("BookType"), DddDesignFlags::default())],
+        vec![repository(
+            "BookRepository",
+            "Book",
+            vec![save, find_by_id, builtin("findAll", "findAll", 2)],
+        )],
+        vec![],
+    )]);
+    let ops = surface.operations_for("BookType").expect("design present");
+    assert!(
+        !ops.contains(&"create".to_string()) && !ops.contains(&"update".to_string()),
+        "protected save maps no create/update: {ops:?}"
+    );
+    assert!(
+        !ops.contains(&"read".to_string()),
+        "protected findById maps no read: {ops:?}"
+    );
+    assert_eq!(ops, vec!["list".to_string()], "findAll still maps list");
+}
+
+#[tokio::test]
+async fn protected_declared_finder_still_lowers_onto_the_repository() {
+    let mut op = declared(
+        "findByTitle",
+        serde_json::json!({"type": "class", "value": {"package": "nz.example.library", "name": "Book"}}),
+        None,
+        vec![string_param("title")],
+        0,
+    );
+    op.is_protected = true;
+    let db = db_with_model(Some(model(
+        vec![design("Book", Some("BookType"), DddDesignFlags::default())],
+        vec![repository("BookRepository", "Book", vec![op])],
+        vec![],
+    )))
+    .await;
+    // The repository plane is internal — protection governs the API plane,
+    // so the finder still lowers.
+    let trait_src = render_trait(&db, &ProjectConfig::default()).await;
+    assert!(
+        trait_src.contains("async fn find_by_title("),
+        "protected declared finders still lower onto the repository: {trait_src}"
+    );
 }
 
 #[tokio::test]

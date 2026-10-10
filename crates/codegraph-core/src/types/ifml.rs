@@ -13,6 +13,28 @@ pub fn strip_ifml_prefix(id: &str) -> &str {
     id
 }
 
+/// A DSL `module "Name" { ... }` declaration (rex-ir `ModuleDeclaration`):
+/// a reusable interaction pattern with typed inputs/outputs, property
+/// defaults, and — since rexlang's module composition — its own internal
+/// `use` statements. View-level `use` statements reference these nodes;
+/// the `HasModuleDefinition` edges resolve against them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModuleDefinitionNode {
+    pub name: String,
+    /// The IFML `domain "..."` the file declared, if any.
+    pub domain: Option<String>,
+    /// Typed input parameter block (rex-ir `ParameterDecl` JSON).
+    pub inputs_json: Option<String>,
+    /// Typed output parameter block (rex-ir `ParameterDecl` JSON).
+    pub outputs_json: Option<String>,
+    /// Property defaults (rex-ir `PropertyAssignment` JSON).
+    pub properties_json: Option<String>,
+    /// `use "Module" as alias { ... }` statements inside the module body
+    /// (module composition). Cross-file resolution is the resolver's; the
+    /// statements persist verbatim.
+    pub module_uses: Option<Vec<ModuleUseRecord>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ViewContainerNode {
     pub name: String,

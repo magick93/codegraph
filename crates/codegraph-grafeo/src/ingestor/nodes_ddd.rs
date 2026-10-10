@@ -131,7 +131,8 @@ impl GrafeoEngine {
                 let gql = format!(
                     "INSERT (:DddRepositoryOperation {{ application: '{}', repository_name: '{}', \
                      name: '{}', builtin: {}, return_type_json: {}, \
-                     return_multiplicity: {}, params_json: '{}', ordinal: {} }})",
+                     return_multiplicity: {}, params_json: '{}', ordinal: {}, \
+                     is_protected: {} }})",
                     escape_gql(&repository.application),
                     escape_gql(&repository.name),
                     escape_gql(&op.name),
@@ -140,6 +141,7 @@ impl GrafeoEngine {
                     opt_str(&return_multiplicity),
                     escape_gql(&params_json),
                     op.ordinal,
+                    op.is_protected,
                 );
                 session.execute(&gql).map_err(|e| {
                     GraphError::Ingest(format!("ingest_ddd_model repository operation failed: {e}"))

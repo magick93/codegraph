@@ -228,6 +228,100 @@ async fn test_ifml_grafeo_round_trip_edges() {
     );
 }
 
+/// Deep navigation (rexlang #PR45): `field_expr` folds `a.b.c` into
+/// nested FieldAccess — filter expressions over related entities parse
+/// and persist verbatim.
+#[tokio::test]
+async fn test_ifml_deep_navigation_filter_parses_and_persists() {
+    let ifml = r#"
+view "Orders" {
+    component "grid" {
+        type: list;
+        data: Order;
+        filter: customer.address.country == "DE" && customer.tier != null;
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = rex_ifml::parse_ifml(ifml).expect("deep navigation parses");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("ingests");
+
+    let components = engine.get_ifml_view_components("Orders").await.unwrap();
+    let filter = components[0].filter.as_deref().expect("filter persists");
+    assert!(
+        filter.contains("customer.address.country"),
+        "the folded field chain persists verbatim: {filter}"
+    );
+}
+
+/// Module composition (rexlang module-internal `use`) round-trips through
+/// the graph: ModuleDefinition nodes persist with their typed inputs,
+/// property defaults, and internal uses; view-level uses resolve as
+/// HasModuleDefinition edges against them.
+#[tokio::test]
+async fn test_ifml_module_definitions_round_trip_through_graph() {
+    let ifml = r#"
+domain "sales" { schema "sales"; }
+
+import "pager.ifml";
+
+module "MasterDetail" {
+    input { entityId: Uuid, pageSize: Int = 20 }
+    output { selected: Uuid }
+
+    use "Pagination" as inner { page_size: 50; }
+
+    component "list" {
+        type: list;
+        data: Item;
+        fields: [name];
+    }
+}
+
+view "Items" {
+    use "MasterDetail" as detail { pageSize: 25; };
+
+    component "grid" {
+        type: list;
+        data: Item;
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = rex_ifml::parse_ifml(ifml).expect("Should parse composed IFML");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let pager = rex_ifml::parse_ifml(
+        "module \"Pagination\" {\n    input { pageSize: Int = 20 }\n    output { selected: Uuid }\n}\n",
+    )
+    .expect("pager parses");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &pager)
+        .await
+        .expect("pager ingests");
+
+    let modules = engine.get_ifml_modules().await.expect("modules queryable");
+    assert!(modules.iter().any(|m| m.name == "MasterDetail"));
+    let master = modules.iter().find(|m| m.name == "MasterDetail").unwrap();
+    let uses = master
+        .module_uses
+        .as_ref()
+        .expect("module-internal uses persist");
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0].module, "Pagination");
+    assert_eq!(uses[0].alias.as_deref(), Some("inner"));
+
+    // The view-level use resolves as an edge against the ingested module.
+    let containers = engine.get_ifml_view_containers().await.unwrap();
+    let items = containers.iter().find(|c| c.name == "Items").unwrap();
+    let uses = items.module_uses.as_ref().expect("view uses persist");
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0].module, "MasterDetail");
+}
+
 /// Typed component taxonomy fixture: table (field/lookup/expr columns),
 /// form (required + validations + values), and chart specs.
 const TYPED_IFML: &str = r#"

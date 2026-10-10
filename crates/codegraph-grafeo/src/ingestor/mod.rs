@@ -34,8 +34,8 @@ use codegraph_core::types::{
     CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
     DataBindingNode, DddModelGraph, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
     EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats, InteractionNode,
-    LexiconNode, MembershipNode, MoxDomainModel, NamespaceImport, NamespaceNode,
-    ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
+    LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDomainModel, NamespaceImport,
+    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
     RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
     RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
     ViewContainerNode,
@@ -630,6 +630,13 @@ impl GraphIngestor for GrafeoEngine {
 
     async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError> {
         self.insert_view_container(node).await
+    }
+
+    async fn ingest_module_definition(
+        &self,
+        node: &ModuleDefinitionNode,
+    ) -> Result<String, GraphError> {
+        self.insert_module_definition(node).await
     }
 
     async fn ingest_view_component(&self, node: &ViewComponentNode) -> Result<String, GraphError> {

@@ -4,12 +4,12 @@ use crate::types::{
     AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
     CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
     EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge,
-    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -218,6 +218,11 @@ pub trait GraphQuerier: Send + Sync {
 
     /// Get all IFML ViewContainer nodes.
     async fn get_ifml_view_containers(&self) -> Result<Vec<ViewContainerNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all IFML ModuleDefinition nodes (DSL `module` declarations).
+    async fn get_ifml_modules(&self) -> Result<Vec<ModuleDefinitionNode>, GraphError> {
         Ok(Vec::new())
     }
 

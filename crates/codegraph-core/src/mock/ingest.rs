@@ -229,6 +229,18 @@ impl GraphIngestor for MockEngine {
         Ok(id)
     }
 
+    async fn ingest_module_definition(
+        &self,
+        node: &ModuleDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("module:{}", node.name);
+        self.module_definitions
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
     async fn ingest_view_component(&self, node: &ViewComponentNode) -> Result<String, GraphError> {
         let id = format!("comp:{}", node.name);
         self.view_components

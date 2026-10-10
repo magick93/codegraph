@@ -22,6 +22,7 @@ use std::sync::{Mutex, OnceLock};
 
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{DddDesignNode, DddRepositoryNode, DddSearchNode};
+use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -45,8 +46,27 @@ pub(crate) fn warn_once(key: &str, message: &str) {
 pub struct FinderParam {
     /// The snake_cased parameter name (the entity column it filters on).
     pub name: String,
-    /// The mapped Rust parameter type.
+    /// The mapped Rust parameter type (never carries the `Option<>` wrapper
+    /// — optionality is [`FinderParam::optional`], wrapped by the emitters).
     pub rust_type: String,
+    /// `true` for `findByExample` example fields: `None` filters the column
+    /// out of the predicate; `Some(value)` equality-matches it.
+    pub optional: bool,
+}
+
+/// Which DSL construct a [`DesignFinder`] lowers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FinderKind {
+    /// A declared `findByX(x, ...)` signature — required equality params
+    /// (the authored signature is the contract).
+    Declared,
+    /// The `findByKeys` repository built-in: equality on every `id` feature
+    /// of the designing entity (the natural key), single row.
+    FindByKeys,
+    /// The `findByExample` repository built-in: `Option`-wrapped equality on
+    /// every stored non-id feature — `None` filters out, `Some` matches.
+    FindByExample,
 }
 
 /// A lowered declared repository operation: an equality query over the
@@ -72,6 +92,9 @@ pub struct DesignFinder {
     pub return_rust_type: String,
     /// The snake_cased Rust method name (e.g. `find_by_title`).
     pub method_name: String,
+    /// Which DSL construct this finder lowers (declared signature,
+    /// `findByKeys`, or `findByExample`).
+    pub kind: FinderKind,
 }
 
 /// Per-application index of the ingested `.ddd` design models, keyed by
@@ -154,10 +177,13 @@ impl DddDesignSurface {
     /// design exists (the caller keeps its schema-derived operations).
     ///
     /// A design WITH a repository maps its built-ins
-    /// (`findById→read`, `findAll→list`, `save→create`+`update`,
-    /// `delete→delete`); a design WITHOUT a repository maps to an empty
-    /// set. Declared (non-built-in) operations are finder candidates, not
-    /// CRUD operations.
+    /// (`findById`/`findByKeys→read`, `findAll`/`findByExample→list`,
+    /// `save→create`+`update`, `delete→delete`); a design WITHOUT a
+    /// repository maps to an empty set. Declared (non-built-in) operations
+    /// are finder candidates, not CRUD operations.
+    ///
+    /// `protected` built-ins (Sculptor visibility) stay OFF the public
+    /// interface: they lower onto the repository but map no operation here.
     pub fn operations_for(&self, schema_title: &str) -> Option<Vec<String>> {
         if !self.designs.contains_key(schema_title) {
             return None;
@@ -170,7 +196,7 @@ impl DddDesignSurface {
         let has = |builtin: &str| {
             repo.operations
                 .iter()
-                .any(|op| op.builtin.as_deref() == Some(builtin))
+                .any(|op| op.builtin.as_deref() == Some(builtin) && !op.is_protected)
         };
         // Canonical order matches the codegraph default operation list
         // (create/read/update/delete/list) so templates stay stable.
@@ -179,13 +205,13 @@ impl DddDesignSurface {
             ops.push("create".to_string());
             ops.push("update".to_string());
         }
-        if has("findById") {
+        if has("findById") || has("findByKeys") {
             ops.push("read".to_string());
         }
         if has("delete") {
             ops.push("delete".to_string());
         }
-        if has("findAll") {
+        if has("findAll") || has("findByExample") {
             ops.push("list".to_string());
         }
         Some(ops)
@@ -198,7 +224,12 @@ impl DddDesignSurface {
     /// Skipped finders (and the reason) print a one-time stderr warning:
     /// no params, non-entity return, unresolvable param type, or array
     /// parameters.
-    pub fn finders_for(&self, schema_title: &str, entity_name: &str) -> Vec<DesignFinder> {
+    pub fn finders_for(
+        &self,
+        schema_title: &str,
+        entity_name: &str,
+        features: &EntityFeatures,
+    ) -> Vec<DesignFinder> {
         let Some(repo) = self.repository_for(schema_title) else {
             return Vec::new();
         };
@@ -208,16 +239,48 @@ impl DddDesignSurface {
         let design_class_leaf = leaf_name(&design.class);
         let mut finders = Vec::new();
         for op in &repo.operations {
-            if op.builtin.is_some() {
+            // Declared signatures lower as equality finders (existing
+            // Sculptor semantics). `protected` declared finders still lower:
+            // the repository is internal, protection governs the API plane.
+            if op.builtin.is_none() {
+                match lower_finder(op, design_class_leaf, entity_name) {
+                    Ok(mut finder) => {
+                        finder.kind = FinderKind::Declared;
+                        finders.push(finder);
+                    }
+                    Err(reason) => warn_once(
+                        &format!("finder:{}::{}", repo.name, op.name),
+                        &format!("finder `{}.{}` skipped: {reason}", repo.name, op.name),
+                    ),
+                }
                 continue;
             }
-            let finder = lower_finder(op, design_class_leaf, entity_name);
-            match finder {
-                Ok(finder) => finders.push(finder),
-                Err(reason) => warn_once(
-                    &format!("finder:{}::{}", repo.name, op.name),
-                    &format!("finder `{}.{}` skipped: {reason}", repo.name, op.name),
-                ),
+            // The two query built-ins lower onto the finder plane with
+            // consumer-known signatures; the four CRUD built-ins map via
+            // `operations_for` instead.
+            match op.builtin.as_deref() {
+                Some("findByKeys") => match keys_finder(op, entity_name, features) {
+                    Some(finder) => finders.push(finder),
+                    None => warn_once(
+                        &format!("finder:{}::{}", repo.name, op.name),
+                        &format!(
+                            "built-in `{}.{}` skipped: `{}` declares no lowerable id feature                              (findByKeys matches the natural key)",
+                            repo.name, op.name, design.class
+                        ),
+                    ),
+                },
+                Some("findByExample") => match example_finder(op, entity_name, features) {
+                    Some(finder) => finders.push(finder),
+                    None => warn_once(
+                        &format!("finder:{}::{}", repo.name, op.name),
+                        &format!(
+                            "built-in `{}.{}` skipped: `{}` declares no lowerable stored \
+                                 feature (findByExample matches example fields)",
+                            repo.name, op.name, design.class
+                        ),
+                    ),
+                },
+                _ => {}
             }
         }
         finders
@@ -279,15 +342,11 @@ impl DddDesignSurface {
 
     fn warn_flags(&self, app: &str, design: &DddDesignNode) {
         let flags = &design.flags;
-        if flags.optimistic_locking {
-            warn_once(
-                &format!("flag:optimistic_locking:{app}::{}", design.class),
-                &format!(
-                    "design `{}`: optimisticLocking not yet mapped — recorded only",
-                    design.class
-                ),
-            );
-        }
+        // `optimisticLocking` is defaulted ON for entity designs (rexlang
+        // #47) and recorded on the flag plane; its version-column emission
+        // remains a tracked deferral, so it no longer warns (a warning on
+        // every entity design would be noise). Explicit opt-outs keep their
+        // signals below.
         if flags.cache {
             warn_once(
                 &format!("flag:cache:{app}::{}", design.class),
@@ -441,6 +500,7 @@ fn lower_finder(
         params.push(FinderParam {
             name: codegraph_naming::to_snake_case(&param.name),
             rust_type,
+            optional: false,
         });
     }
 
@@ -451,6 +511,121 @@ fn lower_finder(
         params,
         returns_many,
         return_rust_type: format!("{entity_name}Response"),
+        kind: FinderKind::Declared,
+    })
+}
+
+/// The designing entity's lowerable features, sourced from the graph
+/// schema — the param universe for the `findByKeys` / `findByExample`
+/// repository built-ins (whose signatures the consumer knows).
+#[derive(Debug, Default, Clone)]
+pub struct EntityFeatures {
+    /// `(name, rust_type)` for every `id` feature (the natural key), in
+    /// declaration order.
+    pub id_features: Vec<(String, String)>,
+    /// `(name, rust_type)` for every stored non-id scalar feature
+    /// (codelist/class references excluded — they are not scalar equality
+    /// material), in declaration order.
+    pub stored_features: Vec<(String, String)>,
+}
+
+impl EntityFeatures {
+    /// Collect the feature universe from the entity's graph properties.
+    /// Features whose types the equality-finder lowering cannot express
+    /// (enums/vocabularies, class references) are excluded from
+    /// `stored_features`; `id` features are excluded from the example set
+    /// (an example matches attributes, not identity).
+    pub async fn from_graph(db: &dyn GraphQuerier, schema_title: &str) -> Result<Self> {
+        let props = db.get_properties(schema_title).await?;
+        let mut features = Self::default();
+        for prop in &props {
+            let rust_type = prop.rust_field_type.clone();
+            let is_scalar = matches!(
+                prop.effective_kind(),
+                None | Some(RefClassificationKind::PrimitiveWrapper)
+            ) && !prop.is_array;
+            let name = codegraph_naming::to_snake_case(&prop.rust_field_name);
+            if prop.is_id {
+                if is_scalar {
+                    features.id_features.push((name, rust_type));
+                }
+                continue;
+            }
+            if is_scalar && !matches!(name.as_str(), "created_at" | "updated_at") {
+                features.stored_features.push((name, rust_type));
+            }
+        }
+        // Surrogate fallback: an entity with no explicit `id` feature
+        // (the common mox shape) keys on the DDL's synthetic UUID primary
+        // key — the consumer-known `findByKeys` signature lowers to it.
+        if features.id_features.is_empty() {
+            features
+                .id_features
+                .push(("id".to_string(), "Uuid".to_string()));
+        }
+        Ok(features)
+    }
+}
+
+/// Lower the `findByKeys` built-in: equality on every id feature (the
+/// natural key), single row. `None` when the entity has no lowerable id
+/// feature or an id feature whose type the equality lowering cannot bind.
+fn keys_finder(
+    op: &codegraph_core::types::DddRepositoryOperation,
+    entity_name: &str,
+    features: &EntityFeatures,
+) -> Option<DesignFinder> {
+    if features.id_features.is_empty() {
+        return None;
+    }
+    let params = features
+        .id_features
+        .iter()
+        .map(|(name, rust_type)| FinderParam {
+            name: name.clone(),
+            rust_type: rust_type.clone(),
+            optional: false,
+        })
+        .collect();
+    Some(DesignFinder {
+        method_name: codegraph_naming::to_snake_case(&op.name),
+        name: op.name.clone(),
+        entity_name: entity_name.to_string(),
+        params,
+        returns_many: false,
+        return_rust_type: format!("{entity_name}Response"),
+        kind: FinderKind::FindByKeys,
+    })
+}
+
+/// Lower the `findByExample` built-in: `Option`-wrapped equality on every
+/// stored non-id scalar feature — `None` filters the column out, `Some`
+/// matches. Many rows.
+fn example_finder(
+    op: &codegraph_core::types::DddRepositoryOperation,
+    entity_name: &str,
+    features: &EntityFeatures,
+) -> Option<DesignFinder> {
+    if features.stored_features.is_empty() {
+        return None;
+    }
+    let params = features
+        .stored_features
+        .iter()
+        .map(|(name, rust_type)| FinderParam {
+            name: name.clone(),
+            rust_type: rust_type.clone(),
+            optional: true,
+        })
+        .collect();
+    Some(DesignFinder {
+        method_name: codegraph_naming::to_snake_case(&op.name),
+        name: op.name.clone(),
+        entity_name: entity_name.to_string(),
+        params,
+        returns_many: true,
+        return_rust_type: format!("{entity_name}Response"),
+        kind: FinderKind::FindByExample,
     })
 }
 
@@ -492,6 +667,13 @@ pub fn rex_type_to_rust(type_ref: &rex_ir::TypeRef) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Declared-finder tests never reach the builtin path — an empty
+    /// feature universe keeps them focused on the signature lowering.
+    fn features(_title: &str) -> EntityFeatures {
+        EntityFeatures::default()
+    }
+
     use super::*;
     use codegraph_core::types::{
         DddApplicationNode, DddDesignFlags, DddModelGraph, DddModuleNode, DddParam,
@@ -548,6 +730,7 @@ mod tests {
             return_multiplicity: None,
             params: Vec::new(),
             ordinal,
+            is_protected: false,
         }
     }
 
@@ -679,6 +862,7 @@ mod tests {
             return_multiplicity: None,
             params: vec![param("title", string_json())],
             ordinal: 4,
+            is_protected: false,
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
@@ -689,7 +873,7 @@ mod tests {
             )],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book");
+        let finders = surface.finders_for("BookType", "Book", &features("Book"));
         assert_eq!(finders.len(), 1);
         let finder = &finders[0];
         assert_eq!(finder.name, "findByTitle");
@@ -711,13 +895,14 @@ mod tests {
             return_multiplicity: Some(many_json()),
             params: vec![param("status", string_json())],
             ordinal: 4,
+            is_protected: false,
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
             vec![repository("BookRepository", "Book", vec![op])],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book");
+        let finders = surface.finders_for("BookType", "Book", &features("Book"));
         assert!(finders[0].returns_many);
     }
 
@@ -740,13 +925,14 @@ mod tests {
                 ),
             ],
             ordinal: 4,
+            is_protected: false,
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
             vec![repository("BookRepository", "Book", vec![op])],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book");
+        let finders = surface.finders_for("BookType", "Book", &features("Book"));
         assert_eq!(finders[0].params.len(), 3);
         assert_eq!(finders[0].params[0].name, "author_name");
         assert_eq!(finders[0].params[0].rust_type, "String");
@@ -766,6 +952,7 @@ mod tests {
             return_multiplicity: None,
             params: vec![],
             ordinal: 4,
+            is_protected: false,
         };
         let non_entity = DddRepositoryOperation {
             name: "countBooks".to_string(),
@@ -779,6 +966,7 @@ mod tests {
                 serde_json::json!({"type": "primitive", "value": "int"}),
             )],
             ordinal: 5,
+            is_protected: false,
         };
         let unresolvable = DddRepositoryOperation {
             name: "findByAuthor".to_string(),
@@ -787,6 +975,7 @@ mod tests {
             return_multiplicity: None,
             params: vec![param("author", class_json("Author"))],
             ordinal: 6,
+            is_protected: false,
         };
         let wrong_entity = DddRepositoryOperation {
             name: "findMovieByTitle".to_string(),
@@ -795,6 +984,7 @@ mod tests {
             return_multiplicity: None,
             params: vec![param("title", string_json())],
             ordinal: 7,
+            is_protected: false,
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
@@ -805,7 +995,11 @@ mod tests {
             )],
             vec![],
         )]);
-        assert!(surface.finders_for("BookType", "Book").is_empty());
+        assert!(
+            surface
+                .finders_for("BookType", "Book", &features("Book"))
+                .is_empty()
+        );
     }
 
     #[test]

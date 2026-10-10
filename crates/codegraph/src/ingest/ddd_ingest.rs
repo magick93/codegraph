@@ -425,6 +425,7 @@ pub fn ddd_model_graph_from_rex(
                             })
                             .collect(),
                         ordinal,
+                        is_protected: op.is_protected,
                     })
                     .collect();
                 repositories.push(DddRepositoryNode {
@@ -457,6 +458,7 @@ pub fn ddd_model_graph_from_rex(
                     delegation_target: op.delegation.as_ref().map(|d| d.target.clone()),
                     delegation_operation: op.delegation.as_ref().map(|d| d.operation.clone()),
                     capabilities: op.capabilities.clone(),
+                    is_protected: op.is_protected,
                     ordinal,
                 })
                 .collect();
@@ -549,6 +551,8 @@ fn builtin_label(builtin: rex_ir::ddd::BuiltinRepositoryOp) -> String {
     match builtin {
         rex_ir::ddd::BuiltinRepositoryOp::FindById => "findById",
         rex_ir::ddd::BuiltinRepositoryOp::FindAll => "findAll",
+        rex_ir::ddd::BuiltinRepositoryOp::FindByExample => "findByExample",
+        rex_ir::ddd::BuiltinRepositoryOp::FindByKeys => "findByKeys",
         rex_ir::ddd::BuiltinRepositoryOp::Save => "save",
         rex_ir::ddd::BuiltinRepositoryOp::Delete => "delete",
     }
