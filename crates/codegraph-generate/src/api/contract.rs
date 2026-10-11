@@ -357,6 +357,8 @@ mod tests {
             has_create: true,
             has_update: true,
             has_delete: true,
+            has_read: true,
+            has_list: true,
             has_workflow: false,
             has_approval_status: false,
             has_embeddings: false,

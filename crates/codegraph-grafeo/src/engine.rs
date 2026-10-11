@@ -53,7 +53,15 @@ impl GrafeoEngine {
             })?;
         }
         let config = grafeo::Config::persistent(path)
-            .with_storage_format(grafeo_engine::config::StorageFormat::SingleFile);
+            .with_storage_format(grafeo_engine::config::StorageFormat::SingleFile)
+            // Ingest fans out one MATCH-per-edge (no label/property index
+            // yet), so individual edge-insert queries on a large model run
+            // tens of seconds — the engine's default 30s query timeout
+            // aborts them mid-ingest ("Ingest failed: ingest_edge ...
+            // timeout"). The in-memory default carries no timeout and the
+            // same ingest completes; the persistent path must not time
+            // out either.
+            .without_query_timeout();
         Self::with_config(config)
     }
 

@@ -300,7 +300,7 @@ async fn builtin_query_finders_lower_with_consumer_signatures() {
         "findByKeys equality on the primary key: {impl_src}"
     );
     assert!(
-        impl_src.contains("let mut conditions = sea_query::Condition::all();"),
+        impl_src.contains("let mut conditions = sea_orm::Condition::all();"),
         "findByExample builds a condition per example field: {impl_src}"
     );
     assert!(

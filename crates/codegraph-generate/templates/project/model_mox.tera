@@ -14,7 +14,7 @@
 package {{ domain }}
 
 /// A named collection of todo items.
-class TodoListType {
+class {{ domain | capitalize }}TodoListType {
     /// Display name of the list.
     String name
 
@@ -23,7 +23,7 @@ class TodoListType {
 }
 
 /// A single todo item belonging to a list.
-class TodoItemType {
+class {{ domain | capitalize }}TodoItemType {
     /// Short title of the item.
     String title
 
@@ -34,5 +34,5 @@ class TodoItemType {
     Boolean [0..1] completed
 
     /// The list this item belongs to.
-    refers TodoListType todoList
+    refers {{ domain | capitalize }}TodoListType todoList
 }

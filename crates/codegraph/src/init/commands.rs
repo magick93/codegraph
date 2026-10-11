@@ -1,5 +1,6 @@
 //! Command implementations for `codegraph init` / `doctor` / `add domain`.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -384,12 +385,24 @@ fn check_codegraph_rev() -> usize {
 /// `import schema` targets (issue #230) are validated too — a missing or
 /// invalid target is a hard failure naming the import path and the .mox
 /// that declares it. Returns the (hard_failures, soft_warnings) contributed.
+///
+/// The files compile as ONE workspace (`compile_files` — the `run`
+/// pipeline's semantics): every file lowers against the union namespace of
+/// all packages, so cross-package type references resolve the same way they
+/// do at generation time. Per-file isolation would false-fail models whose
+/// packages reference each other (the union resolves bare names uniquely
+/// across packages; a single-file compile sees only its own).
 fn check_mox_files(
     mox_files: &[PathBuf],
     domain_config: Option<&codegraph_config::config::DomainConfig>,
 ) -> (usize, usize) {
     let mut hard = 0;
     let mut soft = 0;
+    // Read every file and validate its `import schema` targets; imports
+    // resolve relative to each file's directory (unchanged, per file).
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut schema_imports = rex_driver::SchemaImports::new();
+    let mut import_counts: HashMap<String, usize> = HashMap::new();
     for path in mox_files {
         let text = match fs::read_to_string(path) {
             Ok(t) => t,
@@ -401,7 +414,6 @@ fn check_mox_files(
         };
         let mox_path = path.display().to_string();
         let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut schema_imports = rex_driver::SchemaImports::new();
         let mut import_failures = 0usize;
         let mut import_count = 0usize;
         for decl in crate::ingest::mox_ingest::scan_schema_imports(&text) {
@@ -437,56 +449,95 @@ fn check_mox_files(
         if import_failures > 0 {
             continue;
         }
-        let compilation = rex_driver::compile_files(
-            &[(mox_path.clone(), text)],
-            &rex_driver::DomainImports {
-                schemas: schema_imports,
-                sigil: rex_driver::SigilImports::new(),
-            },
-        );
-        for (p, diagnostic) in &compilation.diagnostics {
-            println!("WARN mox diagnostic in {p}: {}", diagnostic.message);
-            soft += 1;
+        import_counts.insert(mox_path.clone(), import_count);
+        sources.push((mox_path, text));
+    }
+    if sources.is_empty() {
+        return (hard, soft);
+    }
+
+    // Union compile: one workspace, diagnostics tagged with their file path.
+    let compilation = rex_driver::compile_files(
+        &sources,
+        &rex_driver::DomainImports {
+            schemas: schema_imports,
+            sigil: rex_driver::SigilImports::new(),
+        },
+    );
+    for (p, diagnostic) in &compilation.diagnostics {
+        println!("WARN mox diagnostic in {p}: {}", diagnostic.message);
+        soft += 1;
+    }
+    // Attribute hard failures per file: a file carrying at least one
+    // Error-severity diagnostic does not compile (mirrors the per-file
+    // `model: None` gate; the union model is None whenever any file erred).
+    let mut error_files: HashSet<String> = HashSet::new();
+    for (p, diagnostic) in &compilation.diagnostics {
+        if diagnostic.severity == rex_driver::Severity::Error {
+            error_files.insert(p.clone());
         }
-        let Some(model) = compilation.model else {
+    }
+    let model = compilation.model;
+    for (mox_path, text) in &sources {
+        let import_count = import_counts.get(mox_path).copied().unwrap_or(0);
+        if model.is_none() && error_files.is_empty() {
+            // Model blocked without path-attributed errors — fail every file
+            // (the conservative fallback; mirrors the per-file gate).
             hard += 1;
-            println!("FAIL mox — {} does not compile", path.display());
+            println!("FAIL mox — {mox_path} does not compile");
             println!("     hint: fix the rexlang syntax errors reported above");
             continue;
-        };
+        }
+        if error_files.contains(mox_path) {
+            hard += 1;
+            println!("FAIL mox — {mox_path} does not compile");
+            println!("     hint: fix the rexlang syntax errors reported above");
+            continue;
+        }
         let Some(config) = domain_config else {
             // domains.toml already reported a hard failure above.
             continue;
         };
-        let unmatched: Vec<String> = model
-            .packages
-            .iter()
-            .filter(|package| !crate::ingest::mox_ingest::resolve_domain(config, &package.name).1)
-            .map(|package| package.name.clone())
-            .collect();
-        if unmatched.is_empty() {
+        // The file's own package declaration (parse errors above already
+        // failed the file; a compiling file has exactly one package).
+        let Some(package_name) = declared_package(text) else {
+            hard += 1;
+            println!("FAIL mox — {mox_path} declares no `package`");
+            println!("     hint: add a package clause, e.g. `package com.example.model`");
+            continue;
+        };
+        let (_, matched) = crate::ingest::mox_ingest::resolve_domain(config, &package_name);
+        if matched {
             if import_count > 0 {
                 println!(
-                    "PASS mox — {} compiles; every package matches domains.toml; \
-                     {import_count} schema import(s) resolved",
-                    path.display()
+                    "PASS mox — {mox_path} compiles; every package matches domains.toml; \
+                     {import_count} schema import(s) resolved"
                 );
             } else {
-                println!(
-                    "PASS mox — {} compiles; every package matches domains.toml",
-                    path.display()
-                );
+                println!("PASS mox — {mox_path} compiles; every package matches domains.toml");
             }
         } else {
             hard += 1;
-            println!(
-                "FAIL mox — package(s) with no matching domains.toml entry: {}",
-                unmatched.join(", ")
-            );
+            println!("FAIL mox — package with no matching domains.toml entry: {package_name}");
             println!("     hint: add a [domains.<name>] entry or rename the package");
         }
     }
     (hard, soft)
+}
+
+/// The `package` declaration of a `.mox` source (the parser requires it at
+/// the top of the file; a compiling file always carries one).
+fn declared_package(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let trimmed = line.trim_start();
+        trimmed.strip_prefix("package ").map(|rest| {
+            rest.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_end_matches(';')
+                .to_string()
+        })
+    })
 }
 
 /// Validate `--rosetta-files` for doctor: every file must pass the sigil

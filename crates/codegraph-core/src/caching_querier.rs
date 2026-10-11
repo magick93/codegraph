@@ -58,6 +58,8 @@ pub struct CachingQuerier<'a> {
     relationships_cache: RwLock<HashMap<String, Vec<RelationshipNode>>>,
     all_policies_cache: RwLock<Option<Vec<PolicyNode>>>,
     all_relationships_cache: RwLock<Option<Vec<RelationshipNode>>>,
+    ddd_models_cache: RwLock<Option<Vec<DddModelGraph>>>,
+    evt_models_cache: RwLock<Option<Vec<EvtModelGraph>>>,
     /// Populated for future tenant-scoped queries; not read yet.
     #[allow(dead_code)]
     tenants_cache: RwLock<HashMap<String, TenantNode>>,
@@ -93,6 +95,8 @@ impl<'a> CachingQuerier<'a> {
             relationships_cache: RwLock::new(HashMap::new()),
             all_policies_cache: RwLock::new(None),
             all_relationships_cache: RwLock::new(None),
+            ddd_models_cache: RwLock::new(None),
+            evt_models_cache: RwLock::new(None),
             tenants_cache: RwLock::new(HashMap::new()),
         }
     }
@@ -911,11 +915,21 @@ impl GraphQuerier for CachingQuerier<'_> {
     }
 
     async fn get_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
-        self.inner.get_ddd_models().await
+        if let Some(models) = self.ddd_models_cache.read().unwrap().clone() {
+            return Ok(models);
+        }
+        let models = self.inner.get_ddd_models().await?;
+        *self.ddd_models_cache.write().unwrap() = Some(models.clone());
+        Ok(models)
     }
 
     async fn get_evt_models(&self) -> Result<Vec<EvtModelGraph>, GraphError> {
-        self.inner.get_evt_models().await
+        if let Some(models) = self.evt_models_cache.read().unwrap().clone() {
+            return Ok(models);
+        }
+        let models = self.inner.get_evt_models().await?;
+        *self.evt_models_cache.write().unwrap() = Some(models.clone());
+        Ok(models)
     }
 
     // ── mox domain queries ─────────────────────────────────────────────

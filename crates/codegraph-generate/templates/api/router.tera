@@ -36,41 +36,62 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {% endfor %}
 
     Router::new()
-{% if entity.has_create %}
+{% if entity.has_list and entity.has_create %}
         .route(
             "/",
             axum::routing::get({{ entity.module_name }}_handler::list).guard("{{ domain }}:{{ entity.path_segment }}", "list")
                 .merge(axum::routing::post({{ entity.module_name }}_handler::create).guard("{{ domain }}:{{ entity.path_segment }}", "create")),
         )
-{% else %}
+{% elif entity.has_list %}
         .route(
             "/",
             axum::routing::get({{ entity.module_name }}_handler::list).guard("{{ domain }}:{{ entity.path_segment }}", "list"),
         )
+{% elif entity.has_create %}
+        .route(
+            "/",
+            axum::routing::post({{ entity.module_name }}_handler::create).guard("{{ domain }}:{{ entity.path_segment }}", "create"),
+        )
 {% endif %}
-{% if entity.has_update and entity.has_delete %}
+{% if entity.has_read and entity.has_update and entity.has_delete %}
         .route(
             "/{ {{- entity.param_name -}} }",
             axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read")
                 .merge(axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
                 .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
         )
-{% elif entity.has_update %}
+{% elif entity.has_read and entity.has_update %}
         .route(
             "/{ {{- entity.param_name -}} }",
             axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read")
                 .merge(axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update")),
         )
-{% elif entity.has_delete %}
+{% elif entity.has_read and entity.has_delete %}
         .route(
             "/{ {{- entity.param_name -}} }",
             axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read")
                 .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
         )
-{% else %}
+{% elif entity.has_read %}
         .route(
             "/{ {{- entity.param_name -}} }",
             axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read"),
+        )
+{% elif entity.has_update and entity.has_delete %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update")
+                .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+        )
+{% elif entity.has_update %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update"),
+        )
+{% elif entity.has_delete %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete"),
         )
 {% endif %}
 {% if entity.hierarchy_field %}

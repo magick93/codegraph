@@ -118,9 +118,18 @@ pub(crate) fn finder_param_binds_as_text(rust_type: &str) -> bool {
 
 /// The `.eq(...)` argument for a finder parameter of the given rust type.
 fn eq_arg(param: &str, rust_type: &str) -> String {
-    match rust_type {
-        "String" => format!("{param}.clone()"),
-        _ => param.to_string(),
+    // `ColumnTrait::eq` takes `impl Into<Value>`; sea-orm implements
+    // `From<T>` for owned values but not for references, so a `&param`
+    // binding only moves for Copy types (primitives, Uuid). Everything
+    // else — String, chrono dates/times, decimals, JSON, both bare and
+    // crate-qualified spellings — binds owned via `.clone()`.
+    const COPY: &[&str] = &[
+        "bool", "f32", "f64", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "Uuid",
+    ];
+    if COPY.iter().any(|t| rust_type.starts_with(t)) {
+        param.to_string()
+    } else {
+        format!("{param}.clone()")
     }
 }
 
@@ -196,7 +205,7 @@ impl super::RepositoryImplEmitter {
         if finder.kind == FinderKind::FindByExample {
             wln!(
                 code,
-                "        let mut conditions = sea_query::Condition::all();"
+                "        let mut conditions = sea_orm::Condition::all();"
             );
             for (param, col) in finder.params.iter().zip(columns.iter()) {
                 let eq = eq_arg(&param.name, &param.rust_type);

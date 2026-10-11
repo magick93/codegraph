@@ -132,20 +132,41 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   declaration order (designs → services → searches per module) — the
   converter must walk rex modules in order. Signatures ride as rex-ir
   serde JSON (`type_json`/`return_type`), rehydrated by codegraph-generate
-  (which may depend on rex-ir; codegraph-core may NOT).
+  (which may depend on rex-ir; codegraph-core may NOT). CachingQuerier
+  caches `get_ddd_models`/`get_evt_models` (first-read-wins): every
+  ddd-aware generator context rebuilds the design surface from these
+  readbacks, and uncached they re-run several GQL queries + a whole-model
+  JSON parse per entity per generator (~7,000 readbacks ≈ 80% of a
+  9-package consumer's generation wall clock). Safe because the wrapper
+  is created only in the generation phase — the graph is immutable there.
 - **Mapping** (`codegraph-generate/src/ddd/design.rs`):
   `DddDesignSurface::from_graph(db)` indexes by resolved title. Design
   repository builtins become the TOP-priority ops source
   (`findById→read`, `findAll→list`, `save→create+update`, `delete→delete`;
   a design without a repository maps to an EMPTY op set) — override
-  applied ONLY inside the ddd/ context builders (repository trait +
-  `EntityTree`, dto, command, query); `resolve_entity_operations` in
-  api/api_model.rs is untouched so API handlers keep schema-derived ops
-  (deferred). Declared finders (`findByX(x)` Sculptor semantics: equality
+  applied inside the ddd/ context builders (repository trait +
+  `EntityTree`, dto, command, query) AND in `resolve_entity_operations`
+  (api/api_model.rs, issue #449 parity). **Gating invariant**: every
+  consumer of the op set must respect the EMPTY set — handler/command/
+  query generators emit nothing, the router gates read/list routes too
+  (`RouterEntity.has_read`/`has_list` — a template emitting unconditional
+  routes points at handlers that were never generated), and the scaffold
+  app_state/server templates gate the command-handler wiring on
+  `entity.has_commands` (the query plane exists for every entity; the
+  command plane only when a mutating op survives). Value designs and
+  no-repository entities are the shapes that expose a non-gated consumer.
+  Declared finders (`findByX(x)` Sculptor semantics: equality
   on the snake_cased param, single → `Option<E>`, multiplicity → `Vec<E>`)
   emit trait (repository.tera, whitespace-controlled design-gated block) +
   SeaORM impl (`EntityTree.design_finders`) + cornucopia query/adapter;
-  non-lowerable finders warn+skip. `flags.auditable` WINS over the
+  non-lowerable finders warn+skip. The SeaORM binds go through `eq_arg`
+  (repository_emitter/finders.rs): `ColumnTrait::eq` takes
+  `impl Into<Value>` and sea-orm implements `From<T>` only for OWNED
+  values, so `eq_arg` binds bare only Copy scalars (primitives, `Uuid`)
+  and `.clone()`s everything else — params arrive crate-qualified
+  (`chrono::NaiveDate`), so the test keys off Copy, not off non-Copy
+  spellings. The Condition builder path spells `sea_orm::Condition` (the
+  re-export), not `sea_query::`. `flags.auditable` WINS over the
   domains.toml/policy fallback (still ANDed with `!append_only`);
   `cache`/`nonPersistent` warn-and-record. Design
   `search` drives `has_fts` (text fields), `filter_fields`, and the FTS
@@ -1147,7 +1168,7 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 |------|---------|
 | `Cargo.toml` | Workspace: members `{name}-graph` + `ops/testkit`; codegraph crates as `git+rev` deps (or `path` deps with `--codegraph-path`); `exclude = ["generated"]` |
 | `{name}-graph/Cargo.toml`, `{name}-graph/src/main.rs` | Wrapper binary: clap `Run`/`Classify`/`Generate`/`Doctor` calling `codegraph::driver`; `Run`/`Classify` take repeatable `--mox-files`, `--schemas`/`--classifier` are optional with no defaults |
-| `model/{domain}.mox` | Starter mox model per domain (TodoListType + TodoItemType, `refers`-linked); the primary model source. With `--rosetta`: `model/{domain}.rosetta` starters (namespace `{app_name}.{domain}`, one `<Pascal>Type` + `<Pascal>Status` enum) instead — no `.mox` |
+| `model/{domain}.mox` | Starter mox model per domain (`{Domain}TodoListType` + `{Domain}TodoItemType`, `refers`-linked — the capitalized domain prefix keeps class names unique across packages, since multi-package models compile against ONE union namespace where bare names must be unambiguous); the primary model source. With `--rosetta`: `model/{domain}.rosetta` starters (namespace `{app_name}.{domain}`, one `<Pascal>Type` + `<Pascal>Status` enum) instead — no `.mox` |
 | `domains.toml` | One entry per domain (label, schema_dir, postgres_schema); no `entities` key — mox is author-declarative |
 | `profiles.toml` | Profile meta (`name`/`version`/`app_name`, `domain_types_base`) + feature flags (`ops_backend`, `grpc_backend`, `ifml_backend`, `has_admin_cli`, `database_target`, `persistence_provider`, `deployment_topology`) |
 | `extension-points.toml` | Extension points config |
@@ -1208,8 +1229,15 @@ Doctor's model-source matrix (zero warnings is the intentional mox-first
 new-project shape): schemas dir absent + mox files → INFO; schemas dir
 present but empty + mox files → WARN (misconfiguration); schemas dir with
 JSON → PASS; no mox files and no schemas → hard failure. `check_mox_files`
-accepts multiple `--mox-files` (one per domain) and validates `import
-schema` targets.
+accepts multiple `--mox-files` (one per domain), validates `import schema`
+targets per file (paths resolve relative to each file), and compiles the
+WHOLE set as ONE union workspace — the `run` pipeline's semantics, where
+every file lowers against the combined namespace of all packages. A
+per-file compile cannot resolve cross-package type references (false
+`unknown type` failures) and cannot see ambiguous bare names (silent
+zero-class ingestion) — doctor must match generation. Diagnostics are
+attributed per file: an Error-severity diagnostic fails that file; each
+compiling file's package is line-scanned and checked against domains.toml.
 
 Hard failures (non-zero exit): domains.toml, classifier.toml (when JSON
 schemas are present), profiles.toml, schemas dir (when no mox files),
@@ -1231,8 +1259,10 @@ created. Rejects duplicate domain names.
 
 ### Hello-world TODO example
 
-The scaffold ships a working TODO example (two entities: `TodoListType` +
-`TodoItemType`, linked by `refers`) instead of a placeholder model. The
+The scaffold ships a working TODO example (two entities per domain:
+`{Domain}TodoListType` + `{Domain}TodoItemType`, linked by `refers` —
+single-domain projects render `CommonTodoListType`) instead of a
+placeholder model. The
 mox-first generate lifecycle is verified end-to-end by
 `init_scaffold_runs_mox_first` (scaffold → `driver::run` with ONLY
 `--mox-files` + config → DDL contains `todo_list` + `todo_item` with the
@@ -1289,6 +1319,35 @@ Adding a new template:
 3. Add any new fields to `ProjectTemplateContext` (it serializes into the
    Tera context).
 4. Update the `init` tests / `file_tree()` expectations if the layout changed.
+
+## Consumer Performance & Persisted-Graph Cache (issue #275)
+
+Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
+~170 properties — the largest known consumer model):
+
+- **Cold generate** (no cache): ingestion dominates — ~44 min. Ingest
+  fans out one MATCH-per-edge with no label/property index, so edge
+  inserts scan the whole node store: O(nodes × edges) in Grafeo. The
+  in-memory engine carries no query timeout; the PERSISTENT path
+  (`Config::persistent`) defaults to a 30s per-query timeout that
+  mid-size edge inserts cross — `GrafeoEngine::persistent` therefore
+  calls `.without_query_timeout()`. Revisit when Grafeo grows indexes;
+  the real fix is batching edge inserts or indexing the MATCH.
+- **Warm generate** (`run_with_graph_cache(args, Some(cache_dir))`, the
+  consumer-wrapper pattern): an inputs hash over every model/config
+  input + the graph format version is stored beside the checkpoint; on
+  a match the persisted graph reopens and ingestion is SKIPPED —
+  generation alone runs in ~1 min.
+- **Poisoned-cache gotcha**: an aborted persistent ingest (timeout,
+  crash) leaves committed WAL from the partial run in `graph.grafeo`.
+  The next run misses the (unwritten) hash, reopens the SAME file, and
+  re-ingests on top of the partial graph — duplicated nodes and
+  silently missing projections (junction tables vanish, migration
+  counts drop). There is no duplicate detection: after ANY failed
+  persistent-ingest run, delete the cache directory before rerunning.
+- **Generator-only changes don't invalidate the hash** (inputs are the
+  model/config files): when iterating on generators against a consumer
+  model, a warm cache makes each edit→generate→check cycle ~1 min.
 
 ## Template Overrides
 
