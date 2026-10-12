@@ -43,7 +43,7 @@ jobs:
         run: cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture
       - name: Upload gate logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ifml-gate-logs
           path: target/ifml-gate/logs/
