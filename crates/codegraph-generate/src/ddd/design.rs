@@ -243,7 +243,7 @@ impl DddDesignSurface {
             // Sculptor semantics). `protected` declared finders still lower:
             // the repository is internal, protection governs the API plane.
             if op.builtin.is_none() {
-                match lower_finder(op, design_class_leaf, entity_name) {
+                match lower_finder(op, design_class_leaf, entity_name, features) {
                     Ok(mut finder) => {
                         finder.kind = FinderKind::Declared;
                         finders.push(finder);
@@ -444,6 +444,7 @@ fn lower_finder(
     op: &codegraph_core::types::DddRepositoryOperation,
     design_class_leaf: &str,
     entity_name: &str,
+    features: &EntityFeatures,
 ) -> std::result::Result<DesignFinder, String> {
     // The return type must resolve to the designing entity.
     let Some(return_json) = &op.return_type else {
@@ -488,17 +489,26 @@ fn lower_finder(
         }
         let type_ref: rex_ir::TypeRef = serde_json::from_value(param.type_json.clone())
             .map_err(|e| format!("unresolvable parameter type for `{}` ({e})", param.name))?;
-        let Some(rust_type) = rex_type_to_rust(&type_ref) else {
-            return Err(format!(
-                "unresolvable parameter type `{}` for `{}`",
-                type_ref
-                    .qualified_name()
-                    .unwrap_or_else(|| "primitive".to_string()),
-                param.name
-            ));
+        let snake = codegraph_naming::to_snake_case(&param.name);
+        // Primitives and the `Uuid`/`DateTime`/`Decimal` named family map
+        // directly; any other named type (`.mox` wraps datatypes such as
+        // `JurisdictionCode`) resolves to its COLUMN PROJECTION — the named
+        // feature's base type (issue #523), so the signature binds the same
+        // columns the DTOs expose.
+        let rust_type = match rex_type_to_rust(&type_ref) {
+            Some(rt) => rt,
+            None => features.resolve_type(&snake).ok_or_else(|| {
+                format!(
+                    "unresolvable parameter type `{}` for `{}`",
+                    type_ref
+                        .qualified_name()
+                        .unwrap_or_else(|| "primitive".to_string()),
+                    param.name
+                )
+            })?,
         };
         params.push(FinderParam {
-            name: codegraph_naming::to_snake_case(&param.name),
+            name: snake,
             rust_type,
             optional: false,
         });
@@ -517,7 +527,8 @@ fn lower_finder(
 
 /// The designing entity's lowerable features, sourced from the graph
 /// schema — the param universe for the `findByKeys` / `findByExample`
-/// repository built-ins (whose signatures the consumer knows).
+/// repository built-ins (whose signatures the consumer knows) and the
+/// wraps-datatype resolution for declared finder parameters (issue #523).
 #[derive(Debug, Default, Clone)]
 pub struct EntityFeatures {
     /// `(name, rust_type)` for every `id` feature (the natural key), in
@@ -527,6 +538,24 @@ pub struct EntityFeatures {
     /// (codelist/class references excluded — they are not scalar equality
     /// material), in declaration order.
     pub stored_features: Vec<(String, String)>,
+    /// `(name, rust_type)` for every scalar column of a contained value
+    /// (child + grandchild tables), bare column names in walk order — the
+    /// typing view of the emitter's `ChildTableInfo`/`ChildColumn` universe.
+    pub contained_features: Vec<(String, String)>,
+}
+
+impl EntityFeatures {
+    /// The column-projection type for a finder parameter name: direct `id`
+    /// features first, then stored features, then contained-value columns
+    /// (bare names). `None` when the name matches no lowerable feature.
+    pub fn resolve_type(&self, snake_name: &str) -> Option<String> {
+        self.id_features
+            .iter()
+            .chain(self.stored_features.iter())
+            .chain(self.contained_features.iter())
+            .find(|(name, _)| name == snake_name)
+            .map(|(_, ty)| ty.clone())
+    }
 }
 
 impl EntityFeatures {
@@ -563,7 +592,71 @@ impl EntityFeatures {
                 .id_features
                 .push(("id".to_string(), "Uuid".to_string()));
         }
+        // Contained-value columns (issue #523): the typing view of the
+        // child/grandchild tables the repository emitter builds — bare
+        // column names, child then grandchild, so wraps-typed finder params
+        // can name them.
+        for prop in &props {
+            if prop.effective_kind() != Some(RefClassificationKind::ValueObject) {
+                continue;
+            }
+            let target = if prop.is_array {
+                db.get_array_item_schema(&prop.name, schema_title).await
+            } else {
+                db.get_property_ref_target(&prop.name, schema_title).await
+            };
+            let Ok(Some(target)) = target else {
+                continue;
+            };
+            collect_contained_features(db, &target.title, 1, &mut features.contained_features)
+                .await;
+        }
         Ok(features)
+    }
+}
+
+/// Recursively collect scalar columns of contained value children
+/// (`depth` 1 = child, 2 = grandchild — the emitter's joinable universe).
+async fn collect_contained_features(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    depth: usize,
+    out: &mut Vec<(String, String)>,
+) {
+    if depth > 2 {
+        return;
+    }
+    let Ok(props) = db.get_properties(schema_title).await else {
+        return;
+    };
+    for prop in &props {
+        if prop.rust_field_name == "id" || prop.is_array {
+            continue;
+        }
+        out.push((
+            codegraph_naming::to_snake_case(&prop.rust_field_name),
+            prop.rust_field_type.clone(),
+        ));
+    }
+    for prop in &props {
+        if prop.effective_kind() != Some(RefClassificationKind::ValueObject) {
+            continue;
+        }
+        let target = if prop.is_array {
+            db.get_array_item_schema(&prop.name, schema_title).await
+        } else {
+            db.get_property_ref_target(&prop.name, schema_title).await
+        };
+        let Ok(Some(target)) = target else {
+            continue;
+        };
+        Box::pin(collect_contained_features(
+            db,
+            &target.title,
+            depth + 1,
+            out,
+        ))
+        .await;
     }
 }
 

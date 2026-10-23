@@ -963,9 +963,9 @@ fn emit_adapter_design_finders(tree: &EntityTree, code: &mut CodeWriter) {
         // Validate columns exactly like the SeaORM emitter so both
         // providers emit the same finder set (and stay consistent with the
         // shared trait).
-        let Some(_) = finder_columns(finder, &tree.direct_columns) else {
+        if finder_columns(finder, &tree.direct_columns, &tree.child_tables).is_err() {
             continue;
-        };
+        }
         emit_adapter_design_finder(tree, finder, code);
     }
 }

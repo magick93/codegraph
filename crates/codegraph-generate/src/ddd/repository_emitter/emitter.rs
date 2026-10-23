@@ -1049,17 +1049,16 @@ impl RepositoryImplEmitter {
         let design_finders = design_surface
             .finders_for(schema_title, &entity_name, &entity_features)
             .into_iter()
-            .filter(|finder| match super::finders::finder_columns(finder, &direct_columns) {
-                Some(_) => true,
-                None => {
-                    crate::ddd::design::warn_once(
-                        &format!("finder:column:{}::{}", entity_name, finder.name),
-                        &format!(
-                            "finder `{}.{}` skipped: parameters do not resolve to columns of `{}`",
-                            entity_name, finder.name, entity_name
-                        ),
-                    );
-                    false
+            .filter(|finder| {
+                match super::finders::finder_columns(finder, &direct_columns, &child_tables) {
+                    Ok(_) => true,
+                    Err(reason) => {
+                        crate::ddd::design::warn_once(
+                            &format!("finder:column:{}::{}", entity_name, finder.name),
+                            &format!("finder `{}.{}` skipped: {reason}", entity_name, finder.name),
+                        );
+                        false
+                    }
                 }
             })
             .collect();

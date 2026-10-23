@@ -230,7 +230,21 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   on the snake_cased param, single → `Option<E>`, multiplicity → `Vec<E>`)
   emit trait (repository.tera, whitespace-controlled design-gated block) +
   SeaORM impl (`EntityTree.design_finders`) + cornucopia query/adapter;
-  non-lowerable finders warn+skip. The SeaORM binds go through `eq_arg`
+  non-lowerable finders warn+skip. Parameter typing (issue #523):
+  primitives and the `Uuid`/`DateTime`/`Decimal` named family map
+  directly; any other named type (`.mox` wraps datatypes) resolves to its
+  **column projection** — the named feature's base `rust_field_type` — so
+  finders declare model types and bind the columns the DTOs expose.
+  Parameter binding: direct columns first (the `id` surrogate by name),
+  then contained-value columns — bare param names resolve against
+  unique child/grandchild columns (`contains T[]` children, back-refs
+  included) and generate one **EXISTS** equality subquery per child table
+  with that table's params ANDed inside (same-row semantics; dotted
+  `taxIdentifiers.number` syntax is upstream-blocked by the rexlang
+  grammar). Ambiguous contained matches and nesting deeper than
+  grandchild drop with a dedicated reason; every skipped-finder warning
+  names its cause (unresolvable type X / no column named Y / ambiguous
+  contained / type mismatch). The SeaORM binds go through `eq_arg`
   (repository_emitter/finders.rs): `ColumnTrait::eq` takes
   `impl Into<Value>` and sea-orm implements `From<T>` only for OWNED
   values, so `eq_arg` binds bare only Copy scalars (primitives, `Uuid`)

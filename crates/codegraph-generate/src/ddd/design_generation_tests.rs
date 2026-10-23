@@ -498,6 +498,223 @@ async fn finder_mirrored_on_cornucopia_query_and_adapter() {
     assert!(adapter.contains(".all().await"));
 }
 
+// ── issue #523: wraps-typed params + contained-value columns ───────────
+
+fn datatype_param(name: &str, type_name: &str) -> DddParam {
+    DddParam {
+        name: name.to_string(),
+        type_json: serde_json::json!({
+            "type": "datatype",
+            "value": {"package": "nz.example.library", "name": type_name},
+        }),
+        multiplicity: None,
+    }
+}
+
+/// A contained value-object array property (`contains T[] field`), lowered
+/// the way mox ingest projects it (child table, no parent column).
+fn vo_array_prop(name: &str, snake: &str, target: &str) -> PropertyNode {
+    PropertyNode {
+        name: name.to_string(),
+        prop_type: "object".to_string(),
+        description: None,
+        format: None,
+        is_required: false,
+        is_nullable: true,
+        is_id: false,
+        is_array: true,
+        min_items: None,
+        max_items: None,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: snake.to_string(),
+        pg_column_type: String::new(),
+        rust_field_name: snake.to_string(),
+        rust_field_type: target.to_string(),
+        sea_orm_type: String::new(),
+        render_strategy: "child_table".to_string(),
+        ref_target: Some(target.to_string()),
+        classification: None,
+        projection: None,
+        classification_kind: Some(RefClassificationKind::ValueObject),
+        type_expr: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }
+}
+
+fn tax_identifier_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "library/TaxIdentifierType".to_string(),
+        title: "TaxIdentifierType".to_string(),
+        description: None,
+        schema_type: "object".to_string(),
+        classification: "value_object".to_string(),
+        domain: Some("library".to_string()),
+        namespace: None,
+        rel_path: "library/TaxIdentifierType.json".to_string(),
+        pg_type: "TABLE".to_string(),
+        rust_type: "TaxIdentifier".to_string(),
+        sea_orm_type: "Entity".to_string(),
+        rust_type_name: "TaxIdentifier".to_string(),
+        pg_table_name: "tax_identifier".to_string(),
+        api_path_segment: "tax-identifiers".to_string(),
+        parent_schema: None,
+        is_entity: false,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
+/// A wraps-datatype parameter (issue #523) resolves to the named feature's
+/// column projection — the trait method binds the TEXT column with the
+/// DTO-facing base type, not a drop.
+#[tokio::test]
+async fn finder_param_wraps_datatype_resolves_to_column() {
+    let op = declared(
+        "findByIsbn",
+        serde_json::json!({"type": "class", "value": {"package": "nz.example.library", "name": "Book"}}),
+        None,
+        vec![datatype_param("isbn", "IsbnCode")],
+        4,
+    );
+    let db = codegraph_core::mock::MockEngine::builder()
+        .with_schema(book_schema())
+        .with_properties("BookType", vec![string_prop("isbn", true)])
+        .build();
+    db.ingest_ddd_model(&model(
+        vec![design("Book", Some("BookType"), DddDesignFlags::default())],
+        vec![repository("BookRepository", "Book", vec![op])],
+        vec![],
+    ))
+    .await
+    .expect("ingest ddd model");
+
+    let trait_src = render_trait(&db, &ProjectConfig::default()).await;
+    assert!(
+        trait_src.contains("async fn find_by_isbn("),
+        "wraps-typed param must lower the finder: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("isbn: String,"),
+        "wraps param binds the column's base type (String/TEXT): {trait_src}"
+    );
+    let impl_src = render_impl(&db).await;
+    assert!(
+        impl_src.contains("crate::entity::library_book::Column::Isbn.eq(isbn.clone())"),
+        "emitted impl binds the TEXT column: {impl_src}"
+    );
+}
+
+/// Contained-value lookup (issue #523): a finder whose params name the
+/// columns of a `contains T[]` child emits an EXISTS-subquery equality —
+/// one EXISTS per child table with the params ANDed (same-row semantics) —
+/// on BOTH providers.
+#[tokio::test]
+async fn finder_on_contained_value_is_actionable() {
+    let op = declared(
+        "findByTaxIdentifier",
+        serde_json::json!({"type": "class", "value": {"package": "nz.example.library", "name": "Book"}}),
+        None,
+        vec![
+            datatype_param("jurisdiction", "JurisdictionCode"),
+            string_param("number"),
+        ],
+        4,
+    );
+    let tax = tax_identifier_schema();
+    let db = codegraph_core::mock::MockEngine::builder()
+        .with_schema(book_schema())
+        .with_properties(
+            "BookType",
+            vec![
+                string_prop("title", true),
+                vo_array_prop("taxIdentifiers", "tax_identifiers", "TaxIdentifierType"),
+            ],
+        )
+        .with_schema(tax.clone())
+        .with_properties(
+            "TaxIdentifierType",
+            vec![
+                string_prop("jurisdiction", true),
+                string_prop("number", true),
+            ],
+        )
+        .with_ref_target("taxIdentifiers", "BookType", tax)
+        .build();
+    db.ingest_ddd_model(&model(
+        vec![design("Book", Some("BookType"), DddDesignFlags::default())],
+        vec![repository("BookRepository", "Book", vec![op])],
+        vec![],
+    ))
+    .await
+    .expect("ingest ddd model");
+
+    let trait_src = render_trait(&db, &ProjectConfig::default()).await;
+    assert!(
+        trait_src.contains("async fn find_by_tax_identifier("),
+        "contained-value finder lowers: {trait_src}"
+    );
+    assert!(trait_src.contains("jurisdiction: String,"), "{trait_src}");
+    assert!(trait_src.contains("number: String,"), "{trait_src}");
+
+    let impl_src = render_impl(&db).await;
+    assert!(
+        impl_src.contains("async fn find_by_tax_identifier("),
+        "{impl_src}"
+    );
+    // The EXISTS SQL rides the generated code as a Debug-escaped string
+    // literal (`\"` inside the emitted Rust source) — unescape for asserts.
+    let impl_sql = impl_src.replace("\\\"", "\"");
+    assert!(
+        impl_sql.contains("EXISTS (SELECT 1 FROM \"library\".\"book_tax_identifiers\""),
+        "EXISTS reaches the child table: {impl_src}"
+    );
+    assert!(
+        impl_sql.contains("EXISTS (SELECT 1 FROM"),
+        "contained-value params join via EXISTS: {impl_src}"
+    );
+    let exists_count = impl_sql.matches("EXISTS (SELECT 1 FROM").count();
+    assert_eq!(
+        exists_count, 1,
+        "same-child params AND into ONE EXISTS: {impl_src}"
+    );
+    assert!(
+        impl_sql.contains("_child.\"jurisdiction\" = $1 AND _child.\"number\" = $2"),
+        "both child columns bind inside the one EXISTS: {impl_src}"
+    );
+
+    // Cornucopia parity: the annotated SQL carries the same EXISTS join.
+    let mut project = ProjectConfig::default();
+    project.database.persistence_provider = PersistenceProvider::Cornucopia;
+    let dir = TempDir::new().unwrap();
+    let queries = crate::db::cornucopia_queries::CornucopiaQueryGenerator::new(dir.path())
+        .generate(&db, "BookType", "library", &config(), &tera(), &project)
+        .await
+        .expect("cornucopia queries generate");
+    let sql = queries[0].content.clone();
+    assert!(
+        sql.contains("EXISTS (SELECT 1 FROM"),
+        "cornucopia finder joins the child table: {sql}"
+    );
+    assert!(
+        sql.contains("\"jurisdiction\" = :jurisdiction") && sql.contains("\"number\" = :number"),
+        "cornucopia binds both child params: {sql}"
+    );
+}
+
 // ── DTO gating ─────────────────────────────────────────────────────────
 
 async fn render_dtos(db: &codegraph_core::mock::MockEngine) -> Vec<(String, String)> {
