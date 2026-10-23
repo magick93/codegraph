@@ -353,9 +353,11 @@ fn write_design_finder_queries(
     let hints = row_hints(row_cols, tree.append_only);
 
     for finder in &tree.design_finders {
-        let Some(param_cols) =
-            crate::ddd::repository_emitter::finder_columns(finder, &tree.direct_columns)
-        else {
+        let Ok(bindings) = crate::ddd::repository_emitter::finder_columns(
+            finder,
+            &tree.direct_columns,
+            &tree.child_tables,
+        ) else {
             continue;
         };
         // `findByExample`'s Option params use the nullability idiom:
@@ -363,8 +365,23 @@ fn write_design_finder_queries(
         // The FIRST reference needs an explicit cast: Postgres cannot infer
         // a bare parameter's type from `IS NULL` alone.
         let example = finder.kind == crate::ddd::design::FinderKind::FindByExample;
-        let mut clauses = Vec::with_capacity(param_cols.len() + 1);
-        for (param, col) in finder.params.iter().zip(param_cols.iter()) {
+        let mut clauses = Vec::with_capacity(bindings.len() + 1);
+        // Contained-value params (issue #523) group per child table into
+        // one EXISTS — same-row semantics, matching the SeaORM emitter.
+        let mut exists_groups: Vec<(String, Vec<usize>)> = Vec::new();
+        for (i, binding) in bindings.iter().enumerate() {
+            if let crate::ddd::repository_emitter::FinderBinding::Child(child) = binding {
+                match exists_groups.iter_mut().find(|(g, _)| g == &child.group) {
+                    Some((_, idxs)) => idxs.push(i),
+                    None => exists_groups.push((child.group.clone(), vec![i])),
+                }
+            }
+        }
+        for (param, binding) in finder.params.iter().zip(bindings.iter()) {
+            let Some(col) = binding.direct() else {
+                // Contained-value params ride their EXISTS clause below.
+                continue;
+            };
             let pg_col = format!("\"{}\"", col.pg_column_name);
             if example {
                 // `:p IS NULL` stays bare — cornucopia's derive detects the
@@ -397,6 +414,58 @@ fn write_design_finder_queries(
                 clauses.push(format!("{pg_col} = :{}", param.name));
             }
         }
+        for (_, idxs) in &exists_groups {
+            let crate::ddd::repository_emitter::FinderBinding::Child(child) = &bindings[idxs[0]]
+            else {
+                continue;
+            };
+            let alias = if child.intermediate.is_some() {
+                "_gc"
+            } else {
+                "_child"
+            };
+            let preds = idxs
+                .iter()
+                .map(|i| {
+                    let param = &finder.params[*i];
+                    let crate::ddd::repository_emitter::FinderBinding::Child(c) = &bindings[*i]
+                    else {
+                        return String::new();
+                    };
+                    if crate::ddd::repository_emitter::finder_param_binds_as_text(&param.rust_type)
+                    {
+                        format!(
+                            "{alias}.\"{}\"::text = :{}::text",
+                            c.pg_column_name, param.name
+                        )
+                    } else {
+                        format!("{alias}.\"{}\" = :{}", c.pg_column_name, param.name)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            clauses.push(match &child.intermediate {
+                None => format!(
+                    "EXISTS (SELECT 1 FROM \"{}\".\"{}\" _child WHERE _child.\"{}\" = {table}.\"id\" AND {preds})",
+                    child.sql_schema,
+                    child.sql_table_name,
+                    child.parent_fk_column,
+                    table = table,
+                    preds = preds
+                ),
+                Some(ij) => format!(
+                    "EXISTS (SELECT 1 FROM \"{}\".\"{}\" _intermediate WHERE _intermediate.\"{}\" = {table}.\"id\" AND EXISTS (SELECT 1 FROM \"{}\".\"{}\" _gc WHERE _gc.\"{}\" = _intermediate.\"id\" AND {preds}))",
+                    ij.sql_schema,
+                    ij.sql_table_name,
+                    ij.parent_fk_column,
+                    child.sql_schema,
+                    child.sql_table_name,
+                    child.parent_fk_column,
+                    table = table,
+                    preds = preds
+                ),
+            });
+        }
         // The declared signature carries no include_deleted parameter —
         // soft-deleted rows always stay invisible to design finders.
         if let Some(sd) = soft_delete_col {
@@ -413,8 +482,7 @@ fn write_design_finder_queries(
             params = finder
                 .params
                 .iter()
-                .zip(param_cols.iter())
-                .map(|(p, _col)| {
+                .map(|p| {
                     // `?` marks the header param nullable — cornucopia binds
                     // Option<T> for it. Every findByExample parameter binds
                     // as Option (the None-filters idiom); other finders bind

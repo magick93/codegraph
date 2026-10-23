@@ -20,7 +20,7 @@ use super::dto::{
     emit_child_field_population, emit_entity_to_dto_field, emit_response_construction_for,
 };
 use super::junction::{emit_junction_field_population, emit_junction_reads};
-use super::types::{EntityTree, TreeColumn};
+use super::types::{ChildTableInfo, EntityTree, TreeColumn};
 
 /// The resolved column a finder parameter filters on: the entity column's
 /// identity (owned — the `findByKeys` surrogate key resolves to the `id`
@@ -42,15 +42,114 @@ impl FinderColumn {
     }
 }
 
-/// Resolve every finder parameter to its entity column, checking the
-/// parameter's rust type against the column's. A parameter naming `id`
+/// The intermediate child table a grandchild EXISTS nests through (the
+/// `NestedFilterFieldInfo::IntermediateJoin` shape).
+#[derive(Debug, Clone)]
+pub(crate) struct ChildJoin {
+    pub sql_schema: String,
+    pub sql_table_name: String,
+    pub parent_fk_column: String,
+}
+
+/// A finder parameter bound to a contained-value column (issue #523):
+/// equality rides an EXISTS subquery over the child table. Bindings
+/// sharing `group` AND into ONE EXISTS (same-row semantics).
+#[derive(Debug)]
+pub(crate) struct ChildFinderBinding {
+    /// Group identity — bindings sharing it belong to one child row.
+    pub group: String,
+    pub sql_schema: String,
+    pub sql_table_name: String,
+    pub parent_fk_column: String,
+    pub pg_column_name: String,
+    pub rust_type: String,
+    /// Grandchild bindings nest through this intermediate table.
+    pub intermediate: Option<ChildJoin>,
+}
+
+/// Where a finder parameter binds.
+#[derive(Debug)]
+pub(crate) enum FinderBinding {
+    Direct(FinderColumn),
+    Child(ChildFinderBinding),
+}
+
+impl FinderBinding {
+    pub(crate) fn direct(&self) -> Option<&FinderColumn> {
+        match self {
+            FinderBinding::Direct(col) => Some(col),
+            FinderBinding::Child(_) => None,
+        }
+    }
+
+    pub(crate) fn child(&self) -> Option<&ChildFinderBinding> {
+        match self {
+            FinderBinding::Child(child) => Some(child),
+            FinderBinding::Direct(_) => None,
+        }
+    }
+}
+
+/// One contained-column match candidate found while resolving a param.
+struct ChildCandidate {
+    binding: ChildFinderBinding,
+    depth: usize,
+}
+
+/// Flatten the child/grandchild column universe into match candidates
+/// (depth 1 = child, 2 = grandchild — the joinable levels; deeper levels
+/// are collected only so the refusal can name them).
+fn collect_child_candidates(
+    children: &[ChildTableInfo],
+    through: Option<ChildJoin>,
+    depth: usize,
+    out: &mut Vec<ChildCandidate>,
+) {
+    for child in children {
+        let group = match &through {
+            Some(i) => format!(
+                "{}.{}>{}.{}",
+                i.sql_schema, i.sql_table_name, child.sql_schema_name, child.sql_table_name
+            ),
+            None => format!("{}.{}", child.sql_schema_name, child.sql_table_name),
+        };
+        for col in &child.columns {
+            out.push(ChildCandidate {
+                binding: ChildFinderBinding {
+                    group: group.clone(),
+                    sql_schema: child.sql_schema_name.clone(),
+                    sql_table_name: child.sql_table_name.clone(),
+                    parent_fk_column: child.parent_fk_column.clone(),
+                    pg_column_name: col.pg_column_name.clone(),
+                    rust_type: col.rust_type.clone(),
+                    intermediate: through.clone(),
+                },
+                depth,
+            });
+        }
+        let nested_through = Some(ChildJoin {
+            sql_schema: child.sql_schema_name.clone(),
+            sql_table_name: child.sql_table_name.clone(),
+            parent_fk_column: child.parent_fk_column.clone(),
+        });
+        collect_child_candidates(&child.child_tables, nested_through, depth + 1, out);
+    }
+}
+
+/// Resolve every finder parameter to its binding — a direct entity column
+/// or a contained-value column (issue #523) joined via EXISTS — checking
+/// the parameter's rust type against the column's. A parameter naming `id`
 /// resolves to the synthetic UUID primary key (the `findByKeys` surrogate).
-/// `None` when any other parameter is unresolvable — the caller drops the
-/// finder so the trait and both impls stay consistent.
+/// `Err(reason)` names why a parameter does not resolve (no column named
+/// `y` / type mismatch / ambiguous contained match), so the caller's
+/// skipped-finder warning is actionable.
 pub(crate) fn finder_columns(
     finder: &DesignFinder,
     columns: &[TreeColumn],
-) -> Option<Vec<FinderColumn>> {
+    child_tables: &[ChildTableInfo],
+) -> std::result::Result<Vec<FinderBinding>, String> {
+    let mut candidates = Vec::new();
+    collect_child_candidates(child_tables, None, 1, &mut candidates);
     let mut resolved = Vec::with_capacity(finder.params.len());
     for param in &finder.params {
         let col = columns.iter().find(|c| {
@@ -59,28 +158,93 @@ pub(crate) fn finder_columns(
                 || c.pg_column_name == param.name
                 || c.dto_field_name.as_deref() == Some(param.name.as_str())
         });
-        let (field_name, pg_column_name, column_type) = match col {
-            Some(c) => (
-                c.field_name.clone(),
-                c.pg_column_name.clone(),
-                c.rust_type.clone(),
-            ),
-            // The primary key is emitted outside `direct_columns`
-            // (`row.id`); resolve the surrogate by name.
-            None if param.name == "id" && param.rust_type == "Uuid" => {
-                ("id".to_string(), "id".to_string(), "Uuid".to_string())
+        if let Some(c) = col {
+            if !type_compatible(&param.rust_type, &c.rust_type) {
+                return Err(format!(
+                    "parameter `{}` type `{}` does not match column `{}` (`{}`)",
+                    param.name, param.rust_type, param.name, c.rust_type
+                ));
             }
-            None => return None,
-        };
-        if !type_compatible(&param.rust_type, &column_type) {
-            return None;
+            resolved.push(FinderBinding::Direct(FinderColumn {
+                field_name: c.field_name.clone(),
+                pg_column_name: c.pg_column_name.clone(),
+            }));
+            continue;
         }
-        resolved.push(FinderColumn {
-            field_name,
-            pg_column_name,
+        // The primary key is emitted outside `direct_columns`
+        // (`row.id`); resolve the surrogate by name.
+        if param.name == "id" && param.rust_type == "Uuid" {
+            resolved.push(FinderBinding::Direct(FinderColumn {
+                field_name: "id".to_string(),
+                pg_column_name: "id".to_string(),
+            }));
+            continue;
+        }
+        // Contained-value columns: bare-name match against child and
+        // grandchild columns (the documented resolution rule — direct
+        // columns win, then a unique contained match). Deeper levels are
+        // refused with a dedicated reason.
+        let name_matches = |cand: &ChildCandidate| cand.binding.pg_column_name == param.name;
+        let mut shallow: Vec<&ChildCandidate> = candidates
+            .iter()
+            .filter(|c| c.depth <= 2 && name_matches(c))
+            .collect();
+        shallow.sort_by_key(|c| c.depth);
+        shallow.dedup_by(|a, b| {
+            a.binding.group == b.binding.group
+                && a.binding.pg_column_name == b.binding.pg_column_name
         });
+        match shallow.len() {
+            0 => {
+                return Err(
+                    if candidates.iter().any(|c| c.depth > 2 && name_matches(c)) {
+                        format!(
+                            "parameter `{}` reaches a nested contained value deeper than the \
+                         supported grandchild level",
+                            param.name
+                        )
+                    } else {
+                        format!(
+                            "parameter `{}` names no column of `{}`",
+                            param.name, finder.entity_name
+                        )
+                    },
+                );
+            }
+            1 => {
+                let cand = &shallow[0].binding;
+                if !type_compatible(&param.rust_type, &cand.rust_type) {
+                    return Err(format!(
+                        "parameter `{}` type `{}` does not match contained column `{}` (`{}`)",
+                        param.name, param.rust_type, param.name, cand.rust_type
+                    ));
+                }
+                resolved.push(FinderBinding::Child(ChildFinderBinding {
+                    group: cand.group.clone(),
+                    sql_schema: cand.sql_schema.clone(),
+                    sql_table_name: cand.sql_table_name.clone(),
+                    parent_fk_column: cand.parent_fk_column.clone(),
+                    pg_column_name: cand.pg_column_name.clone(),
+                    rust_type: cand.rust_type.clone(),
+                    intermediate: cand.intermediate.clone(),
+                }));
+            }
+            _ => {
+                let groups: Vec<&str> = shallow
+                    .iter()
+                    .map(|c| c.binding.group.as_str())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                return Err(format!(
+                    "parameter `{}` is ambiguous — contained columns of `{}`",
+                    param.name,
+                    groups.join("` and `")
+                ));
+            }
+        }
     }
-    Some(resolved)
+    Ok(resolved)
 }
 
 /// Whether a finder parameter type can bind the column's rust type.
@@ -138,10 +302,13 @@ impl super::RepositoryImplEmitter {
     /// `tree.design_finders` being non-empty — flag-off emits nothing.
     pub(crate) fn emit_design_finders(&self, tree: &EntityTree, code: &mut CodeWriter) {
         for finder in &tree.design_finders {
-            let Some(columns) = finder_columns(finder, &tree.direct_columns) else {
+            let Ok(bindings) = finder_columns(finder, &tree.direct_columns, &tree.child_tables)
+            else {
+                // Already warned at tree-build time (the trait filters the
+                // same way) — skip silently so trait and impls stay in sync.
                 continue;
             };
-            self.emit_design_finder_fn(tree, finder, &columns, code);
+            self.emit_design_finder_fn(tree, finder, &bindings, code);
         }
     }
 
@@ -149,7 +316,7 @@ impl super::RepositoryImplEmitter {
         &self,
         tree: &EntityTree,
         finder: &DesignFinder,
-        columns: &[FinderColumn],
+        bindings: &[FinderBinding],
         code: &mut CodeWriter,
     ) {
         wln!(code);
@@ -207,7 +374,10 @@ impl super::RepositoryImplEmitter {
                 code,
                 "        let mut conditions = sea_orm::Condition::all();"
             );
-            for (param, col) in finder.params.iter().zip(columns.iter()) {
+            for (param, binding) in finder.params.iter().zip(bindings.iter()) {
+                let Some(col) = binding.direct() else {
+                    continue;
+                };
                 let eq = eq_arg(&param.name, &param.rust_type);
                 wln!(
                     code,
@@ -250,10 +420,33 @@ impl super::RepositoryImplEmitter {
                     tree.entity_module
                 );
             }
-            let params: Vec<&crate::ddd::design::FinderParam> = finder.params.iter().collect();
-            for (i, (param, col)) in params.iter().zip(columns.iter()).enumerate() {
+            // Filter chain: direct equality predicates in param order,
+            // then one EXISTS per child group (issue #523 — same-child
+            // params AND inside ONE EXISTS, same-row semantics).
+            let mut exists_groups: Vec<(String, Vec<usize>)> = Vec::new();
+            for (i, binding) in bindings.iter().enumerate() {
+                if let Some(child) = binding.child() {
+                    match exists_groups
+                        .iter_mut()
+                        .find(|(group, _)| group == &child.group)
+                    {
+                        Some((_, idxs)) => idxs.push(i),
+                        None => exists_groups.push((child.group.clone(), vec![i])),
+                    }
+                }
+            }
+            let exists_filter_count = exists_groups.len();
+            let direct_count = bindings.iter().filter(|b| b.direct().is_some()).count();
+            let total_filters = direct_count + exists_filter_count;
+            let mut emitted = 0usize;
+            for (i, binding) in bindings.iter().enumerate() {
+                let Some(col) = binding.direct() else {
+                    continue;
+                };
+                let param = &finder.params[i];
                 let eq = eq_arg(&param.name, &param.rust_type);
-                let terminator = if i + 1 == params.len() && !tree.is_auditable {
+                emitted += 1;
+                let terminator = if emitted == total_filters && !tree.is_auditable {
                     ";"
                 } else {
                     ""
@@ -264,6 +457,93 @@ impl super::RepositoryImplEmitter {
                     tree.entity_module,
                     col.variant()
                 );
+            }
+            for (_, idxs) in &exists_groups {
+                let first = &bindings[idxs[0]];
+                let child = first.child().expect("exists group holds child bindings");
+                let (alias, preds) = match &child.intermediate {
+                    None => (
+                        "_child".to_string(),
+                        idxs.iter()
+                            .enumerate()
+                            .map(|(n, i)| {
+                                format!(
+                                    "_child.\"{}\" = ${}",
+                                    bindings[*i].child().expect("child binding").pg_column_name,
+                                    n + 1
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" AND "),
+                    ),
+                    Some(_) => (
+                        "_gc".to_string(),
+                        idxs.iter()
+                            .enumerate()
+                            .map(|(n, i)| {
+                                format!(
+                                    "_gc.\"{}\" = ${}",
+                                    bindings[*i].child().expect("child binding").pg_column_name,
+                                    n + 1
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" AND "),
+                    ),
+                };
+                let sql = match &child.intermediate {
+                    None => format!(
+                        "EXISTS (SELECT 1 FROM \"{}\".\"{}\" {alias} WHERE {alias}.\"{}\" = \
+                         \"{}\".\"{}\".\"id\" AND {preds})",
+                        child.sql_schema,
+                        child.sql_table_name,
+                        child.parent_fk_column,
+                        tree.schema_name,
+                        tree.table_name,
+                        alias = alias,
+                        preds = preds
+                    ),
+                    Some(ij) => format!(
+                        "EXISTS (SELECT 1 FROM \"{}\".\"{}\" _intermediate WHERE \
+                         _intermediate.\"{}\" = \"{}\".\"{}\".\"id\" AND EXISTS (SELECT 1 FROM \
+                         \"{}\".\"{}\" {alias} WHERE {alias}.\"{}\" = _intermediate.\"id\" AND \
+                         {preds}))",
+                        ij.sql_schema,
+                        ij.sql_table_name,
+                        ij.parent_fk_column,
+                        tree.schema_name,
+                        tree.table_name,
+                        child.sql_schema,
+                        child.sql_table_name,
+                        child.parent_fk_column,
+                        alias = alias,
+                        preds = preds
+                    ),
+                };
+                let values = idxs
+                    .iter()
+                    .map(|i| {
+                        let param = &finder.params[*i];
+                        format!(
+                            "sea_orm::Value::from({})",
+                            eq_arg(&param.name, &param.rust_type)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                emitted += 1;
+                let terminator = if emitted == total_filters && !tree.is_auditable {
+                    ";"
+                } else {
+                    ""
+                };
+                wln!(
+                    code,
+                    "            .filter(sea_orm::sea_query::Expr::cust_with_values("
+                );
+                wln!(code, "                {sql:?},");
+                wln!(code, "                vec![{values}],");
+                wln!(code, "            )){terminator}");
             }
             if tree.is_auditable {
                 // The declared signature carries no include_deleted
@@ -329,5 +609,166 @@ impl super::RepositoryImplEmitter {
             emit_response_construction_for(code, tree, "row.id");
         }
         wln!(code, "    }}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ddd::design::{DesignFinder, FinderKind, FinderParam};
+
+    fn direct_col(name: &str, rust_type: &str) -> TreeColumn {
+        TreeColumn {
+            field_name: name.to_string(),
+            pg_column_name: name.to_string(),
+            dto_field_name: None,
+            rust_type: rust_type.to_string(),
+            is_nullable: false,
+            is_entity_ref: false,
+            dto_rust_type: None,
+            is_workflow_managed: false,
+            is_array: false,
+            pg_cast: None,
+            is_composite_range: false,
+            is_structured_wrapper: false,
+            is_media: false,
+        }
+    }
+
+    fn child_col(name: &str, rust_type: &str) -> super::super::types::ChildColumn {
+        super::super::types::ChildColumn {
+            field_name: name.to_string(),
+            pg_column_name: name.to_string(),
+            rust_type: rust_type.to_string(),
+            is_nullable: false,
+            dto_rust_type: None,
+            pg_cast: None,
+        }
+    }
+
+    fn child_table(name: &str, columns: Vec<super::super::types::ChildColumn>) -> ChildTableInfo {
+        ChildTableInfo {
+            field_name: name.to_string(),
+            struct_name: format!("Book{}", codegraph_naming::to_pascal_case(name)),
+            sql_table_name: format!("book_{name}"),
+            sql_schema_name: "library".to_string(),
+            parent_fk_column: "book_id".to_string(),
+            is_array: true,
+            columns,
+            child_tables: Vec::new(),
+            is_back_ref: false,
+        }
+    }
+
+    fn finder(params: Vec<(&str, &str)>) -> DesignFinder {
+        DesignFinder {
+            method_name: "find_by_thing".to_string(),
+            name: "findByThing".to_string(),
+            entity_name: "Book".to_string(),
+            params: params
+                .into_iter()
+                .map(|(name, rust_type)| FinderParam {
+                    name: name.to_string(),
+                    rust_type: rust_type.to_string(),
+                    optional: false,
+                })
+                .collect(),
+            returns_many: false,
+            return_rust_type: "BookResponse".to_string(),
+            kind: FinderKind::Declared,
+        }
+    }
+
+    /// The skipped-finder warning must name the reason (issue #523): no
+    /// column named `y` and a type mismatch are distinct, actionable causes.
+    #[test]
+    fn finder_drop_reasons_name_the_cause() {
+        let columns = vec![direct_col("title", "String")];
+        let children = vec![child_table(
+            "tax_identifiers",
+            vec![child_col("number", "String")],
+        )];
+
+        let missing = finder_columns(&finder(vec![("ghost", "String")]), &columns, &children)
+            .expect_err("no column named ghost");
+        assert!(missing.contains("names no column of `Book`"), "{missing}");
+
+        let mismatch = finder_columns(&finder(vec![("title", "i64")]), &columns, &children)
+            .expect_err("type mismatch");
+        assert!(
+            mismatch.contains("type `i64` does not match column `title` (`String`)"),
+            "{mismatch}"
+        );
+
+        // Ambiguous contained match names both candidates.
+        let two_children = vec![
+            child_table("tax_identifiers", vec![child_col("number", "String")]),
+            child_table("permits", vec![child_col("number", "String")]),
+        ];
+        let ambiguous =
+            finder_columns(&finder(vec![("number", "String")]), &columns, &two_children)
+                .expect_err("number matches two child tables");
+        assert!(ambiguous.contains("ambiguous"), "{ambiguous}");
+        assert!(
+            ambiguous.contains("book_tax_identifiers") && ambiguous.contains("book_permits"),
+            "{ambiguous}"
+        );
+    }
+
+    /// A unique contained-column match resolves to a Child binding carrying
+    /// the EXISTS join metadata (issue #523).
+    #[test]
+    fn finder_resolves_unique_contained_column() {
+        let columns = vec![direct_col("title", "String")];
+        let mut grandchild = child_table("details", vec![child_col("issued", "String")]);
+        grandchild.sql_table_name = "book_tax_identifiers_details".to_string();
+        grandchild.parent_fk_column = "tax_identifiers_id".to_string();
+        let mut child = child_table(
+            "tax_identifiers",
+            vec![
+                child_col("number", "String"),
+                child_col("jurisdiction", "String"),
+            ],
+        );
+        child.child_tables = vec![grandchild];
+
+        let bindings = finder_columns(
+            &finder(vec![("number", "String"), ("title", "String")]),
+            &columns,
+            &[child],
+        )
+        .expect("contained params resolve");
+        assert!(matches!(bindings[0], FinderBinding::Child(_)));
+        assert!(matches!(bindings[1], FinderBinding::Direct(_)));
+        let child_binding = bindings[0].child().expect("child binding");
+        assert_eq!(child_binding.sql_table_name, "book_tax_identifiers");
+        assert_eq!(child_binding.parent_fk_column, "book_id");
+        assert_eq!(child_binding.pg_column_name, "number");
+        assert!(child_binding.intermediate.is_none());
+
+        // Grandchild params resolve through the intermediate join.
+        let grand = finder_columns(
+            &finder(vec![("issued", "String")]),
+            &columns,
+            &[{
+                let mut c = child_table("tax_identifiers", vec![child_col("number", "String")]);
+                c.child_tables = vec![{
+                    let mut g = child_table("details", vec![child_col("issued", "String")]);
+                    g.sql_table_name = "book_tax_identifiers_details".to_string();
+                    g.parent_fk_column = "tax_identifiers_id".to_string();
+                    g
+                }];
+                c
+            }],
+        )
+        .expect("grandchild param resolves");
+        let grand_binding = grand[0].child().expect("grandchild binding");
+        assert_eq!(grand_binding.sql_table_name, "book_tax_identifiers_details");
+        let ij = grand_binding
+            .intermediate
+            .as_ref()
+            .expect("intermediate join");
+        assert_eq!(ij.sql_table_name, "book_tax_identifiers");
+        assert_eq!(ij.parent_fk_column, "book_id");
     }
 }
