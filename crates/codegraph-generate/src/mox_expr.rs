@@ -88,13 +88,11 @@ impl FieldBinding {
     }
 
     fn element_type(&self) -> &str {
-        if let Some(inner) = self.rust_type.strip_prefix("Vec<") {
-            inner.trim_end_matches('>')
-        } else if let Some(inner) = self.rust_type.strip_prefix("Option<") {
-            inner.trim_end_matches('>')
-        } else {
-            &self.rust_type
-        }
+        self.rust_type
+            .strip_prefix("Vec<")
+            .or_else(|| self.rust_type.strip_prefix("Option<"))
+            .and_then(|inner| inner.strip_suffix('>'))
+            .unwrap_or(&self.rust_type)
     }
 }
 
@@ -206,7 +204,24 @@ fn hint_of(rust_type: &str) -> TyHint {
     }
 }
 
-type Locals = Vec<(String, String)>; // (written name, emitted clone-on-use expression)
+#[derive(Debug, Clone)]
+struct LocalBinding {
+    name: String,
+    emitted: String,
+    read: String,
+    binding: Option<FieldBinding>,
+}
+
+type Locals = Vec<LocalBinding>;
+
+fn fresh_local_name(base: &str, locals: &Locals, used: &str) -> String {
+    let mut name = base.to_string();
+    while name == "res" || locals.iter().any(|local| local.emitted == name) || used.contains(&name)
+    {
+        name.push('_');
+    }
+    name
+}
 
 fn lower(
     expr: &Expr,
@@ -322,7 +337,12 @@ fn lower(
             let init_code = lower(init, fields, arena, TyHint::Unknown, locals)?;
             let let_name = escape_rust_keyword(&to_snake_case(&name.value));
             // Locals bind by value; uses clone (parity with rex-backend-rust).
-            locals.push((name.value.clone(), format!("{let_name}.clone()")));
+            locals.push(LocalBinding {
+                name: name.value.clone(),
+                emitted: let_name.clone(),
+                read: format!("{let_name}.clone()"),
+                binding: None,
+            });
             let body_code = lower(body, fields, arena, hint, locals);
             locals.pop();
             let body_code = body_code?;
@@ -428,19 +448,20 @@ fn operand_hint(
 }
 
 /// Resolve the binding behind a symbol expression, if any.
-fn binding_of<'a>(
+fn binding_of(
     expr: &Expr,
-    fields: &'a HashMap<String, FieldBinding>,
+    fields: &HashMap<String, FieldBinding>,
     locals: &Locals,
-) -> Option<&'a FieldBinding> {
+) -> Option<FieldBinding> {
     match &expr.kind {
         ExprKind::Name(name) => {
-            if locals.iter().any(|(n, _)| n == name) {
-                return None;
+            if let Some(local) = locals.iter().rev().find(|local| local.name == *name) {
+                return local.binding.clone();
             }
             fields
                 .get(name)
                 .or_else(|| fields.get(&to_snake_case(name)))
+                .cloned()
         }
         _ => None,
     }
@@ -473,8 +494,8 @@ fn symbol_for(
     locals: &Locals,
 ) -> Result<String, Unsupported> {
     // Locals first (shadowing), clone-on-use — parity with rex-backend-rust.
-    if let Some((_, emitted)) = locals.iter().find(|(n, _)| n == name) {
-        return Ok(emitted.clone());
+    if let Some(local) = locals.iter().rev().find(|local| local.name == name) {
+        return Ok(local.read.clone());
     }
     let binding = fields
         .get(name)
@@ -519,7 +540,7 @@ fn feature_access(
     arena: &ArenaIndex,
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
-    let recv_binding = binding_of(receiver, fields, locals).cloned();
+    let recv_binding = binding_of(receiver, fields, locals);
     let class_name = recv_binding
         .as_ref()
         .and_then(|b| b.class.clone())
@@ -552,10 +573,11 @@ fn feature_access(
         .unwrap_or(false);
     let id_expr = recv_code.clone();
 
+    let obj = fresh_local_name("o", locals, "");
     let plain = format!(
-        "res.{getter}({id_expr}).map(|o| {shape}).expect(\"dangling `{mirror}` id\")",
+        "res.{getter}({id_expr}).map(|{obj}| {shape}).expect(\"dangling `{mirror}` id\")",
         getter = class.getter,
-        shape = field_shape(target, "o"),
+        shape = field_shape(target, &obj),
         mirror = class.mirror,
     );
     if !optional_safe {
@@ -564,9 +586,9 @@ fn feature_access(
     let target_is_option = target.is_option();
     match (recv_is_option, target_is_option) {
         (true, _) => Ok(format!(
-            "({id_expr}.and_then(|id| res.{getter}(id)).map(|o| {shape}))",
+            "({id_expr}.and_then(|id| res.{getter}(id)).map(|{obj}| {shape}))",
             getter = class.getter,
-            shape = field_shape(target, "o"),
+            shape = field_shape(target, &obj),
         )),
         (false, true) => Ok(format!("({plain})")),
         (false, false) => Ok(format!("(Some({plain}))")),
@@ -584,7 +606,7 @@ fn call(
     arena: &ArenaIndex,
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
-    let recv_binding = binding_of(receiver, fields, locals).cloned();
+    let recv_binding = binding_of(receiver, fields, locals);
     let recv_hint = recv_binding
         .as_ref()
         .map(|b| hint_of(&b.rust_type))
@@ -649,8 +671,9 @@ fn call(
     let invoke = format!("{}({arg_list})", op.snake);
 
     if recv_is_option {
+        let obj = fresh_local_name("o", locals, &arg_list);
         Ok(format!(
-            "({id_expr}.and_then(|id| res.{getter}(id)).map(|o| {invoke}))",
+            "({id_expr}.and_then(|id| res.{getter}(id)).map(|{obj}| {obj}.{invoke}))",
             getter = class.getter
         ))
     } else {
@@ -738,12 +761,10 @@ fn algebra(
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
     use rex_expr::AlgebraKind;
-    let recv_binding = binding_of(receiver, fields, locals)
-        .cloned()
-        .ok_or_else(|| Unsupported {
-            kind: "collection algebra".to_string(),
-            detail: format!("`{kind:?}` receiver must be a feature"),
-        })?;
+    let recv_binding = binding_of(receiver, fields, locals).ok_or_else(|| Unsupported {
+        kind: "collection algebra".to_string(),
+        detail: format!("`{kind:?}` receiver must be a feature"),
+    })?;
     if !recv_binding.is_many() {
         return Err(Unsupported {
             kind: "collection algebra".to_string(),
@@ -756,14 +777,22 @@ fn algebra(
 
     // Closure params (the rex refs convention: map/any lend 1 ref,
     // find/filter lend 2).
-    let push_local = |locals: &mut Locals, var: &str, refs: usize| {
+    let push_local = |locals: &mut Locals, param: &str, refs: usize| {
+        let var = fresh_local_name(&escape_rust_keyword(&to_snake_case(param)), locals, "");
         let deref = "*".repeat(refs);
-        let read = if elem_copy {
-            format!("({deref}{var})")
-        } else {
-            format!("({deref}{var}).clone()")
+        let binding = FieldBinding {
+            recv: format!("({deref}{var})"),
+            clone: !elem_copy,
+            rust_type: recv_binding.element_type().to_string(),
+            class: recv_binding.class.clone(),
         };
-        locals.push((var.to_string(), read));
+        locals.push(LocalBinding {
+            name: param.to_string(),
+            emitted: var.clone(),
+            read: bind_read(&binding),
+            binding: Some(binding),
+        });
+        var
     };
 
     // `?.` wraps non-`first` results in Some (spec A1).
@@ -781,8 +810,7 @@ fn algebra(
     match kind {
         AlgebraKind::First => match lambda {
             Some((param, body)) => {
-                let var = escape_rust_keyword(&to_snake_case(param));
-                push_local(locals, param, 2);
+                let var = push_local(locals, param, 2);
                 let pred = lower(body, fields, arena, TyHint::Unknown, locals);
                 locals.pop();
                 let pred = pred?;
@@ -799,8 +827,7 @@ fn algebra(
                     detail: "`filter` requires a lambda".to_string(),
                 });
             };
-            let var = escape_rust_keyword(&to_snake_case(param));
-            push_local(locals, param, 2);
+            let var = push_local(locals, param, 2);
             let pred = lower(body, fields, arena, TyHint::Unknown, locals);
             locals.pop();
             let pred = pred?;
@@ -815,8 +842,7 @@ fn algebra(
                     detail: "`map` requires a lambda".to_string(),
                 });
             };
-            let var = escape_rust_keyword(&to_snake_case(param));
-            push_local(locals, param, 1);
+            let var = push_local(locals, param, 1);
             let mapped = lower(body, fields, arena, TyHint::Unknown, locals);
             locals.pop();
             let mapped = mapped?;
@@ -831,8 +857,7 @@ fn algebra(
                     detail: "`any` requires a lambda".to_string(),
                 });
             };
-            let var = escape_rust_keyword(&to_snake_case(param));
-            push_local(locals, param, 1);
+            let var = push_local(locals, param, 1);
             let pred = lower(body, fields, arena, TyHint::Unknown, locals);
             locals.pop();
             let pred = pred?;
@@ -1096,6 +1121,366 @@ mod tests {
                 && plain.contains("o.title.clone()")
                 && plain.contains("expect(\"dangling `Book` id\")"),
             "{plain}"
+        );
+    }
+
+    fn books_arena() -> (HashMap<String, FieldBinding>, ArenaIndex) {
+        let mut f = fields(&[]);
+        f.insert(
+            "books".to_string(),
+            FieldBinding::new("self.books".into(), true, "Vec<Uuid>".into()).with_class("Book"),
+        );
+        let mut arena = empty_arena();
+        let mut book_fields = fields(&[("title", true, "String"), ("pages", false, "i32")]);
+        book_fields.insert(
+            "related".to_string(),
+            FieldBinding::new("self.related".into(), true, "Option<Uuid>".into())
+                .with_class("Book"),
+        );
+        arena.insert(
+            "Book".to_string(),
+            ClassBinding {
+                mirror: "Book".into(),
+                getter: "get_book".into(),
+                id_type: "Uuid".into(),
+                fields: book_fields,
+                ops: HashMap::from([(
+                    "active".to_string(),
+                    OpBinding {
+                        snake: "active".into(),
+                        params: Vec::new(),
+                    },
+                )]),
+            },
+        );
+        (f, arena)
+    }
+
+    #[test]
+    fn map_lambda_navigates_element_fields_with_one_deref() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b.title)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (res.get_book((*b)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn map_lambda_calls_element_operations_with_one_deref() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b.active())", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (res.get_book((*b)).expect(\"dangling `Book` id\").active(res))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn any_lambda_navigates_element_fields_with_one_deref() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.any(b => b.pages > 10)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().any(|b| ((res.get_book((*b)).map(|o| o.pages).expect(\"dangling `Book` id\")) > 10i32)))".into())
+        );
+    }
+
+    #[test]
+    fn any_lambda_calls_element_operations_with_one_deref() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.any(b => b.active())", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().any(|b| (res.get_book((*b)).expect(\"dangling `Book` id\").active(res))))".into())
+        );
+    }
+
+    #[test]
+    fn first_lambda_navigates_element_fields_with_two_derefs() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.first(b => b.pages > 10)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().find(|b| ((res.get_book((**b)).map(|o| o.pages).expect(\"dangling `Book` id\")) > 10i32)).copied())".into())
+        );
+    }
+
+    #[test]
+    fn first_lambda_calls_element_operations_with_two_derefs() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.first(b => b.active())", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().find(|b| (res.get_book((**b)).expect(\"dangling `Book` id\").active(res))).copied())".into())
+        );
+    }
+
+    #[test]
+    fn filter_lambda_navigates_element_fields_with_two_derefs() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.filter(b => b.pages > 10)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().filter(|b| ((res.get_book((**b)).map(|o| o.pages).expect(\"dangling `Book` id\")) > 10i32)).copied().collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn filter_lambda_calls_element_operations_with_two_derefs() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.filter(b => b.active())", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().filter(|b| (res.get_book((**b)).expect(\"dangling `Book` id\").active(res))).copied().collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_param_metadata_shadows_same_named_self_feature() {
+        let (mut f, arena) = books_arena();
+        f.insert(
+            "b".to_string(),
+            FieldBinding::new("self.b".into(), false, "Uuid".into()).with_class("Other"),
+        );
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b.title)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (res.get_book((*b)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_safe_field_navigation_wraps_non_optional_elements() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b?.title)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (Some(res.get_book((*b)).map(|o| o.title.clone()).expect(\"dangling `Book` id\")))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_safe_operation_call_wraps_non_optional_elements() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b?.active())", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (Some(res.get_book((*b)).expect(\"dangling `Book` id\").active(res)))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_safe_field_navigation_maps_optional_elements() {
+        let (mut f, arena) = books_arena();
+        f.get_mut("books").unwrap().rust_type = "Vec<Option<Uuid>>".into();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b?.title)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| ((*b).clone().and_then(|id| res.get_book(id)).map(|o| o.title.clone()))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_safe_operation_call_maps_optional_elements() {
+        let (mut f, arena) = books_arena();
+        f.get_mut("books").unwrap().rust_type = "Vec<Option<Uuid>>".into();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b?.active())", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| ((*b).clone().and_then(|id| res.get_book(id)).map(|o| o.active(res)))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn nested_lambda_parameters_read_the_innermost_binding() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => books.first(b => b.active()))", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (self.books.clone().iter().find(|b_| (res.get_book((**b_)).expect(\"dangling `Book` id\").active(res))).copied())).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn untyped_let_shadows_lambda_parameter_metadata() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => let b = 1; b.title)", &f, &arena)
+                .map_err(|e| (e.kind, e.detail)),
+            Err((
+                "field access".into(),
+                "`b.title` — only class-id receivers navigate (arena lookups)".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn camel_case_lambda_parameter_uses_its_emitted_identifier() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(aBook => aBook.title)", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|a_book| (res.get_book((*a_book)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_field_navigation_keeps_the_arena_identifier() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(res => res.title)", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|res_| (res.get_book((*res_)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_operation_call_keeps_the_arena_identifier() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.any(res => res.active())", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().any(|res_| (res.get_book((*res_)).expect(\"dangling `Book` id\").active(res))))".into())
+        );
+    }
+
+    #[test]
+    fn normalized_lambda_parameters_avoid_active_emitted_locals() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(aBook => books.filter(a_book => a_book.pages > 10))", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|a_book| (self.books.clone().iter().filter(|a_book_| ((res.get_book((**a_book_)).map(|o| o.pages).expect(\"dangling `Book` id\")) > 10i32)).copied().collect::<Vec<_>>())).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn renamed_arena_parameters_avoid_active_emitted_locals() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(res => books.map(res => res.title))", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|res_| (self.books.clone().iter().map(|res__| (res.get_book((*res__)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn generated_object_names_avoid_nested_lambda_parameters() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(o => books.map(o => o.title))", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|o| (self.books.clone().iter().map(|o_| (res.get_book((*o_)).map(|o__| o__.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn optional_lambda_operation_arguments_keep_the_parameter_binding() {
+        let (mut f, mut arena) = books_arena();
+        f.get_mut("books").unwrap().rust_type = "Vec<Option<Uuid>>".into();
+        arena
+            .get_mut("Book")
+            .unwrap()
+            .ops
+            .get_mut("active")
+            .unwrap()
+            .params = vec!["bool".into()];
+        assert_eq!(
+            lower_expr_to_rust("books.map(o => o?.active(o == null))", &f, &arena)
+                .map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|o| ((*o).clone().and_then(|id| res.get_book(id)).map(|o_| o_.active(res, (*o).clone().is_none())))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn nested_collection_sum_refusal_preserves_complete_element_type() {
+        let f = fields(&[("books", true, "Vec<Vec<Uuid>>")]);
+        let err = lower_expr_to_rust("books.sum()", &f, &empty_arena()).unwrap_err();
+        assert_eq!(
+            (err.kind.as_str(), err.detail.as_str()),
+            (
+                "collection algebra",
+                "`sum` over non-numeric element type `Vec<Uuid>`"
+            )
+        );
+    }
+
+    #[test]
+    fn lambda_safe_field_navigation_keeps_optional_target() {
+        let (f, arena) = books_arena();
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b?.related)", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|b| (res.get_book((*b)).map(|o| o.related.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())".into())
+        );
+    }
+
+    #[test]
+    fn lambda_vec_elements_keep_nested_collection_navigation() {
+        let (mut f, arena) = books_arena();
+        f.get_mut("books").unwrap().rust_type = "Vec<Vec<Uuid>>".into();
+        assert_eq!(
+            lower_expr_to_rust("books.map(bs => bs.map(b => b.title))", &f, &arena).map_err(|e| e.to_string()),
+            Ok("(self.books.clone().iter().map(|bs| ((*bs).clone().iter().map(|b| (res.get_book((*b)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())).collect::<Vec<_>>())".into())
+        );
+
+        f.get_mut("books").unwrap().rust_type = "Vec<Vec<Vec<Uuid>>>".into();
+        let err = lower_expr_to_rust("books.map(bs => bs.sum())", &f, &arena).unwrap_err();
+        assert_eq!(
+            (err.kind.as_str(), err.detail.as_str()),
+            (
+                "collection algebra",
+                "`sum` over non-numeric element type `Vec<Uuid>`"
+            )
+        );
+    }
+
+    #[test]
+    fn non_copy_lambda_elements_keep_cloned_result_adapters() {
+        let (mut f, mut arena) = books_arena();
+        f.get_mut("books").unwrap().rust_type = "Vec<String>".into();
+        arena.get_mut("Book").unwrap().id_type = "String".into();
+        for (source, expected) in [
+            (
+                "books.first(b => b.active())",
+                "(self.books.clone().iter().find(|b| (res.get_book((**b).clone()).expect(\"dangling `Book` id\").active(res))).cloned())",
+            ),
+            (
+                "books.filter(b => b.active())",
+                "(self.books.clone().iter().filter(|b| (res.get_book((**b).clone()).expect(\"dangling `Book` id\").active(res))).cloned().collect::<Vec<_>>())",
+            ),
+        ] {
+            assert_eq!(
+                lower_expr_to_rust(source, &f, &arena).map_err(|e| e.to_string()),
+                Ok(expected.into()),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn lambda_elements_without_class_metadata_keep_named_refusals() {
+        let (mut f, arena) = books_arena();
+        f.get_mut("books").unwrap().class = None;
+        for (source, kind, detail) in [
+            (
+                "books.map(b => b.title)",
+                "field access",
+                "`b.title` — only class-id receivers navigate (arena lookups)",
+            ),
+            (
+                "books.map(b => b?.title)",
+                "safe navigation (`?.`)",
+                "`b.title` — only class-id receivers navigate (arena lookups)",
+            ),
+            (
+                "books.any(b => b.active())",
+                "an operation call",
+                "`b.active(..)` — receivers must carry a class id",
+            ),
+        ] {
+            let err = lower_expr_to_rust(source, &f, &arena).unwrap_err();
+            assert_eq!((err.kind.as_str(), err.detail.as_str()), (kind, detail));
+        }
+    }
+
+    #[test]
+    fn lambda_safe_navigation_chains_keep_named_refusal() {
+        let (f, arena) = books_arena();
+        let err = lower_expr_to_rust("books.map(b => b?.related?.title)", &f, &arena).unwrap_err();
+        assert_eq!(
+            (err.kind.as_str(), err.detail.as_str()),
+            (
+                "safe navigation (`?.`)",
+                "`b?.related.title` — only class-id receivers navigate (arena lookups)"
+            )
         );
     }
 
