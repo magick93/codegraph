@@ -2127,7 +2127,14 @@ event vocabulary is CLOSED (`created`/`updated`/`deleted`/
 `state_changed`) and `entity_type` is the full `domain.table` ref the
 installations SQL matches against `ep.allowed_entities` (POSTed event =
 `"{entity_type}.{event}"` — pinned by the payload snapshot in
-`extension_points_tests`).
+`extension_points_tests`). **Wasm gate (issue #536)**: the wasm32 leg of
+`post_event` (bindgen fetch, `!Send`) is `spawn_local`-ed instead of
+awaited — covered entities' handler futures stay `Send` — and
+`worker_main.tera` declares `mod integration_dispatch;` alongside
+`worker_lib.tera` (the bin target compiles the command modules too).
+Consumers must wasm-check their workers (`wrangler dev`/`worker-build`
+does it during `workers-up`-style flows); native `cargo check` cannot
+see this class.
 
 - **Coverage**: `build_entity_generators` computes the push-covered set
   (entities of points whose `directions` contain `push`) from the parsed

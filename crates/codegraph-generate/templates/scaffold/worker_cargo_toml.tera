@@ -65,4 +65,5 @@ sea-orm = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
 futures-channel = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
 console_error_panic_hook = { workspace = true }
