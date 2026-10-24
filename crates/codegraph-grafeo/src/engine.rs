@@ -60,7 +60,8 @@ impl GrafeoEngine {
             })?;
         }
         let config = grafeo::Config::persistent(path)
-            .with_storage_format(grafeo_engine::config::StorageFormat::SingleFile)
+            // Grafeo 0.6: every database is a single file (`StorageFormat`
+            // is deprecated); `Config::persistent` alone is the contract.
             // Ingest fans out one MATCH-per-edge (no label/property index
             // yet), so individual edge-insert queries on a large model run
             // tens of seconds — the engine's default 30s query timeout
@@ -95,7 +96,9 @@ impl GrafeoEngine {
             node_registry: NodeRegistry::new(),
         };
         for prop in schema_ddl::indexed_properties() {
-            engine.db.create_property_index(prop);
+            engine.db.create_property_index(prop).map_err(|e| {
+                GraphError::Connection(format!("create_property_index failed: {e}"))
+            })?;
         }
         Ok(engine)
     }
@@ -132,7 +135,9 @@ impl GrafeoEngine {
         }
         // Use programmatic API for indexes (GQL CREATE INDEX has parser issues with FOR keyword)
         for prop in schema_ddl::indexed_properties() {
-            self.db.create_property_index(prop);
+            self.db.create_property_index(prop).map_err(|e| {
+                GraphError::Connection(format!("create_property_index failed: {e}"))
+            })?;
         }
         Ok(())
     }

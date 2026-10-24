@@ -259,9 +259,7 @@ fn run_size(n_nodes: usize) -> PhaseReport {
     // to split any index-rebuild share out of the reopen.
     let no_index_path = dir.path().join("no_index.grafeo");
     {
-        let config = grafeo::Config::persistent(&no_index_path)
-            .with_storage_format(grafeo_engine::config::StorageFormat::SingleFile)
-            .without_query_timeout();
+        let config = grafeo::Config::persistent(&no_index_path).without_query_timeout();
         let raw = grafeo::GrafeoDB::with_config(config).expect("raw persistent db");
         let s = raw.session();
         insert_nodes(&s, n_nodes);
@@ -290,13 +288,19 @@ fn run_size(n_nodes: usize) -> PhaseReport {
         "read-only reopen must restore the codegraph property-index set (issue #485)"
     );
     for prop in schema_ddl::indexed_properties() {
-        reopened.db().drop_property_index(prop);
+        reopened
+            .db()
+            .drop_property_index(prop)
+            .expect("drop_property_index");
     }
     let (match_reopened_ms, match_hits) = run_match_workload(reopened.db());
 
     let ri_start = Instant::now();
     for prop in schema_ddl::indexed_properties() {
-        reopened.db().create_property_index(prop);
+        reopened
+            .db()
+            .create_property_index(prop)
+            .expect("create_property_index");
     }
     let restore_indexes_ms = ms(ri_start.elapsed());
     assert!(reopened.db().has_property_index("title"));
