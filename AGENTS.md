@@ -1549,9 +1549,13 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   the real fix is batching edge inserts or indexing the MATCH.
 - **Warm generate** (`run_with_graph_cache(args, Some(cache_dir))`, the
   consumer-wrapper pattern): an inputs hash over every model/config
-  input + the graph format version is stored beside the checkpoint; on
+  input + the graph format version + the grafeo storage generation
+  (`GRAFEO_STORAGE_GENERATION`) is stored beside the checkpoint; on
   a match the persisted graph reopens and ingestion is SKIPPED —
-  generation alone runs in ~1 min.
+  generation alone runs in ~1 min. The storage generation term exists
+  so a grafeo file-format change (0.6 replaced 0.5.x's) cold-re-ingests
+  instead of migrating the cache in place — the upgrade's one-time cost
+  is the full cold ingest.
 - **Poisoned-cache gotcha**: an aborted persistent ingest (timeout,
   crash) leaves committed WAL from the partial run in `graph.grafeo`.
   The next run misses the (unwritten) hash, reopens the SAME file, and
@@ -1559,6 +1563,9 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   silently missing projections (junction tables vanish, migration
   counts drop). There is no duplicate detection: after ANY failed
   persistent-ingest run, delete the cache directory before rerunning.
+  (Grafeo 0.6 helps: recovery now STOPS at WAL damage with
+  `GRAFEO-S002` instead of silently building a state that never
+  existed.)
 - **Generator-only changes don't invalidate the hash** (inputs are the
   model/config files): when iterating on generators against a consumer
   model, a warm cache makes each edit→generate→check cycle ~1 min.
@@ -2476,12 +2483,12 @@ still AND on top.
 - **Cadence**: monthly Tier-0 lockfile refresh (`cargo update`, lockfile-only PR — the #418 shape); quarterly review of Tier-3 majors against the #417 table. Majors are deliberate epic work — no drive-by major bumps.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
-  - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up.
+  - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
   - `rex-*` @ a714070 (bumped for the DDD Sculptor semantics, rexlang #47, and the IFML module composition/deep-navigation grammar) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
-- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo) and `RUSTSEC-2026-0308` (salsa 0.23 unsound — via rex-driver; fixed upstream in salsa 0.28.5; moves with the rexlang rev pin).
+- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo), `RUSTSEC-2026-0308` (salsa 0.23 unsound — via rex-driver; fixed upstream in salsa 0.28.5; moves with the rexlang rev pin), and `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh).
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
 
 ## Include Path System (`?include=`)

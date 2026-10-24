@@ -9,11 +9,12 @@ codegraph-core = { path = "../codegraph-core" }
 thiserror = "2"
 codegraph-naming = { path = "../codegraph-naming" }
 codegraph-type-contracts = { path = "../codegraph-type-contracts" }
-grafeo = "=0.5.43"
-grafeo-engine = "=0.5.43"
-grafeo-core = "=0.5.43"
-grafeo-common = "=0.5.43"
-grafeo-adapters = "=0.5.43"
+# 0.6.0 stores WAL durability behind the opt-in `storage` feature (the 0.5.x
+# defaults carried it); without it a persistent open reaches the file only at
+# a checkpoint. See the Dependency policy section in AGENTS.md.
+grafeo = { version = "=0.6.0", features = ["storage"] }
+grafeo-core = "=0.6.0"
+grafeo-common = "=0.6.0"
 async-trait = "0.1"
 rust_decimal = { version = "1", features = ["serde-with-str"] }
 uuid.workspace = true

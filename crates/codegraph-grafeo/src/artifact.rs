@@ -186,17 +186,34 @@ fn props_sort_key(edge: &EdgeRecord) -> String {
 }
 
 fn build_document(engine: &GrafeoEngine) -> Result<GraphDocument, ArtifactError> {
-    let store = engine.db().store();
+    // Grafeo 0.6: reads go through a pinned Snapshot (store + ReadView) —
+    // `store()`/`graph_store()` are gone. One snapshot also gives the whole
+    // export a consistent view.
+    let snapshot = engine
+        .db()
+        .snapshot()
+        .map_err(|e| ArtifactError::Graph(GraphError::Query(format!("export snapshot: {e}"))))?;
+    let view = snapshot.view();
+    let store = snapshot.store();
+    let read_err = |context: String| {
+        move |e| ArtifactError::Graph(GraphError::Query(format!("{context}: {e}")))
+    };
 
     let mut nodes = Vec::new();
     let mut node_id_to_key: HashMap<grafeo::NodeId, String> = HashMap::new();
     let mut seen_keys: HashSet<String> = HashSet::new();
-    for id in store.node_ids() {
-        let node = store.get_node(id).ok_or_else(|| {
-            ArtifactError::Graph(GraphError::Query(format!(
-                "node {id:?} vanished during export"
-            )))
-        })?;
+    for id in store
+        .node_ids(view)
+        .map_err(read_err("export node ids".to_string()))?
+    {
+        let node = store
+            .node(id, view)
+            .map_err(read_err(format!("export node {id:?}")))?
+            .ok_or_else(|| {
+                ArtifactError::Graph(GraphError::Query(format!(
+                    "node {id:?} vanished during export"
+                )))
+            })?;
         let mut labels = node
             .labels
             .iter()
@@ -233,13 +250,22 @@ fn build_document(engine: &GrafeoEngine) -> Result<GraphDocument, ArtifactError>
 
     let mut edges = Vec::new();
     let mut seen_edges: HashSet<String> = HashSet::new();
-    for id in store.node_ids() {
-        for (_dst, eid) in store.edges_from(id, Direction::Outgoing) {
-            let edge = store.get_edge(eid).ok_or_else(|| {
-                ArtifactError::Graph(GraphError::Query(format!(
-                    "edge {eid:?} vanished during export"
-                )))
-            })?;
+    for id in store
+        .node_ids(view)
+        .map_err(read_err("export node ids".to_string()))?
+    {
+        for (_dst, eid) in store
+            .edges(id, Direction::Outgoing, &[], view)
+            .map_err(read_err(format!("export edges from {id:?}")))?
+        {
+            let edge = store
+                .edge(eid, view)
+                .map_err(read_err(format!("export edge {eid:?}")))?
+                .ok_or_else(|| {
+                    ArtifactError::Graph(GraphError::Query(format!(
+                        "edge {eid:?} vanished during export"
+                    )))
+                })?;
             let edge_type = edge.edge_type.to_string();
             let mut properties: BTreeMap<String, PropValue> = BTreeMap::new();
             for (key, value) in edge.properties.to_btree_map() {

@@ -23,6 +23,7 @@ pub use codegraph_grafeo::artifact::{
     ArtifactError, EdgeRecord, ExportedArtifact, GraphDocument, NodeRecord, PropValue,
     canonical_bytes, export_ir, import_ir, normalize, parse_document, sha256_hex,
 };
+use codegraph_grafeo::schema_ddl::GRAFEO_STORAGE_GENERATION;
 pub use codegraph_grafeo::schema_ddl::GRAPH_FORMAT_VERSION as FORMAT_VERSION;
 
 /// Layout of the persisted-graph cache directory.
@@ -37,9 +38,10 @@ pub struct InputFile {
     pub bytes: Vec<u8>,
 }
 
-/// SHA-256 over the graph format version followed by every input file's
-/// path and contents, in sorted path order. Identical inputs (and an
-/// unchanged graph format) therefore always produce the same hash.
+/// SHA-256 over the graph format version and the grafeo storage generation,
+/// followed by every input file's path and contents, in sorted path order.
+/// Identical inputs (and an unchanged graph format and storage engine
+/// generation) therefore always produce the same hash.
 pub fn inputs_hash(files: &[InputFile]) -> String {
     use sha2::Digest;
 
@@ -48,6 +50,7 @@ pub fn inputs_hash(files: &[InputFile]) -> String {
 
     let mut hasher = sha2::Sha256::new();
     hasher.update(FORMAT_VERSION.to_le_bytes());
+    hasher.update(GRAFEO_STORAGE_GENERATION.to_le_bytes());
     for file in sorted {
         hasher.update(file.path.as_bytes());
         hasher.update([0u8]);

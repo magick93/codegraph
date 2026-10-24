@@ -9,6 +9,16 @@
 /// pre-existing node types — verified against the grafeo engine.
 pub const GRAPH_FORMAT_VERSION: u32 = 1;
 
+/// Generation of the grafeo storage engine's on-disk format, distinct from
+/// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
+/// document). Grafeo 0.6 replaced the 0.5.x file format: a persisted graph
+/// written by 0.5.x would otherwise be silently migrated in place on the
+/// first open (old files kept as `.pre-0.6`). Folding this into the
+/// persisted-graph cache inputs hash forces one clean cold re-ingest per
+/// engine-format change instead. Bump on every grafeo minor that changes
+/// the database file format.
+pub const GRAFEO_STORAGE_GENERATION: u32 = 2;
+
 /// Returns GQL DDL statements for node types and edge types.
 /// These match the `codegraph-core` shared types (derived from `db/schema.hx`).
 pub fn ddl_statements() -> Vec<&'static str> {
