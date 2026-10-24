@@ -47,6 +47,7 @@ tracing-subscriber = { version = "0.3" }
 tower-service = "0.3"
 http-body-util = "0.1"
 futures-channel = "0.3"
+wasm-bindgen-futures = "0.4"
 worker = { version = "0.8", default-features = false }
 # Wasm-only panic hook; no-op on native targets. worker-rs 0.8 ships its own
 # `console_log!`/`console_error!` macros unconditionally, so console logging

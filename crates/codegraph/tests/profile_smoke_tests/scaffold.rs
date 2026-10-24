@@ -758,4 +758,14 @@ directions = ["push"]
         "worker command module must carry the notify call site:\n{}",
         command.content
     );
+    // ...and the worker main declares the module: the bin target compiles
+    // the domain command modules, which reference `crate::integration_dispatch`
+    // (issue #536 — without this the wasm bin E0433s while the lib compiles).
+    assert!(
+        find("workers/compensation/src/main.rs")
+            .content
+            .contains("mod integration_dispatch;"),
+        "worker main must declare the integration_dispatch module:\n{}",
+        find("workers/compensation/src/main.rs").content
+    );
 }

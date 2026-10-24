@@ -19,7 +19,8 @@ mod middleware;
 use middleware::metrics_middleware;
 mod qs_query;
 mod worker;
-{% if has_webhooks %}mod webhook_api;
+{% if project.has_extension_points %}mod integration_dispatch;
+{% endif %}{% if has_webhooks %}mod webhook_api;
 mod webhook_dispatch;
 mod webhook_router;
 {% endif %}{% if project.hooks_api_crate %}mod hooks;mod hook_adapters;{% endif %}

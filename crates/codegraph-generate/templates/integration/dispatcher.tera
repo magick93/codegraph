@@ -160,6 +160,22 @@ impl IntegrationDispatcher {
                 "correlation_id": correlation_id.to_string(),
             });
 
+            // wasm32: the bindgen fetch future is !Send, and the handler
+            // future must stay Send — notify is fire-and-forget by contract,
+            // so the post_event leg is spawned locally instead of awaited
+            // (issue #536). Native awaits unchanged.
+            #[cfg(target_arch = "wasm32")]
+            {
+                let this = self.clone();
+                let worker_url = worker_url.clone();
+                let payload = payload.clone();
+                let signing_secret = signing_secret.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    this.post_event(&worker_url, &payload, &installation_id, signing_secret.as_deref())
+                        .await;
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             self.post_event(&worker_url, &payload, &installation_id, signing_secret.as_deref())
                 .await;
         }
