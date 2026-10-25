@@ -111,6 +111,24 @@ impl GrafeoEngine {
             .map_err(|e| GraphError::Connection(format!("checkpoint failed: {e}")))
     }
 
+    /// Total node count (one aggregate GQL query). Recorded beside the
+    /// persisted-graph cache inputs hash and re-verified on reopen so an
+    /// append-on-top re-ingest (issue #538) surfaces as a named hard error
+    /// instead of silent corruption.
+    pub fn node_count(&self) -> Result<u64, GraphError> {
+        let session = self.db.session();
+        let result = session
+            .execute("MATCH (n) RETURN count(n) AS nodes")
+            .map_err(|e| GraphError::Query(format!("node_count failed: {e}")))?;
+        result
+            .rows()
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|v| v.as_int64())
+            .map(|v| v as u64)
+            .ok_or_else(|| GraphError::Query("node_count returned no integer row".to_string()))
+    }
+
     /// Re-run schema DDL (idempotent due to IF NOT EXISTS).
     pub fn reinit_schema(&self) -> Result<(), GraphError> {
         self.init_schema()

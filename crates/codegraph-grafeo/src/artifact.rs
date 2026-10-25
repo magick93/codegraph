@@ -42,6 +42,10 @@ pub enum ArtifactError {
     UnsupportedValue { owner: String, kind: String },
     #[error("node {key} carries multiple labels; the artifact format is single-label")]
     MultiLabelNode { key: String },
+    #[error(
+        "persisted graph cache node count mismatch: marker records {stored} nodes but the reopened database holds {actual} — the cache was re-ingested on top of (issue #538); delete the cache directory and regenerate"
+    )]
+    CacheNodeCountMismatch { stored: u64, actual: u64 },
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
@@ -61,6 +65,7 @@ impl ArtifactError {
             ArtifactError::UnknownEdgeEndpoint { .. } => "unknown_edge_endpoint",
             ArtifactError::UnsupportedValue { .. } => "unsupported_value",
             ArtifactError::MultiLabelNode { .. } => "multi_label_node",
+            ArtifactError::CacheNodeCountMismatch { .. } => "cache_node_count_mismatch",
             ArtifactError::Io(_) => "io",
             ArtifactError::Json(_) => "json",
             ArtifactError::Graph(_) => "graph",

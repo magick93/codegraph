@@ -168,7 +168,10 @@ pub fn collect_run_inputs(
 /// The inputs marker lives outside the DB, so guarding the DB file does
 /// not affect the hash bookkeeping. Returns `Ok(None)` when the cache is
 /// absent, unreadable, or was written for different inputs (or an older
-/// graph format).
+/// graph format). A recorded node count that disagrees with the reopened
+/// database is a named hard error (issue #538: an append-on-top re-ingest
+/// must never be silently consumed); legacy hash-only markers (written
+/// before the count was recorded) are accepted without verification.
 pub fn open_reusable_engine(
     cache_dir: &Path,
     inputs_hash: &str,
@@ -179,21 +182,63 @@ pub fn open_reusable_engine(
         return Ok(None);
     }
     let stored = std::fs::read_to_string(&marker)?;
-    if stored.trim() != inputs_hash {
+    let mut parts = stored.split_whitespace();
+    let stored_hash = parts.next().unwrap_or_default();
+    let recorded_nodes: Option<u64> = parts.next().and_then(|t| t.parse().ok());
+    if stored_hash != inputs_hash {
         return Ok(None);
     }
-    codegraph_grafeo::GrafeoEngine::open_read_only(&graph_file)
-        .map(Some)
-        .map_err(ArtifactError::from)
+    let engine = codegraph_grafeo::GrafeoEngine::open_read_only(&graph_file)?;
+    if let Some(stored_nodes) = recorded_nodes {
+        let actual = engine.node_count()?;
+        if actual != stored_nodes {
+            return Err(ArtifactError::CacheNodeCountMismatch {
+                stored: stored_nodes,
+                actual,
+            });
+        }
+    }
+    Ok(Some(engine))
 }
 
-/// Record the inputs hash after a fresh ingestion so the next run can
-/// reuse the persisted graph.
-pub fn persist_cache_marker(cache_dir: &Path, inputs_hash: &str) -> Result<(), ArtifactError> {
+/// Record the inputs hash and node count after a fresh ingestion so the
+/// next run can reuse the persisted graph (and verify it — issue #538).
+pub fn persist_cache_marker(
+    cache_dir: &Path,
+    inputs_hash: &str,
+    node_count: u64,
+) -> Result<(), ArtifactError> {
     std::fs::create_dir_all(cache_dir)?;
     std::fs::write(
         cache_dir.join(CACHE_INPUTS_MARKER),
-        format!("{inputs_hash}\n"),
+        format!("{inputs_hash} {node_count}\n"),
     )?;
     Ok(())
+}
+
+/// Remove the persisted graph file (and any residual WAL sidecars) so a
+/// cache-miss run rebuilds from scratch instead of re-ingesting on top of
+/// the stale checkpoint (issue #538: `GrafeoEngine::persistent` REOPENS an
+/// existing single-file database, so creating the ingest target on the old
+/// file appended every node a second time). Missing files are fine; a
+/// half-removed state is safe because no inputs marker is written until the
+/// successful post-ingest checkpoint — the next run misses and wipes again.
+pub fn reset_cache_graph(cache_dir: &Path) {
+    let mut targets = vec![cache_dir.join(CACHE_GRAPH_FILE)];
+    if let Ok(entries) = std::fs::read_dir(cache_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(CACHE_GRAPH_FILE) && name != CACHE_GRAPH_FILE {
+                targets.push(entry.path());
+            }
+        }
+    }
+    for path in targets {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {} // a surviving stale file just means another miss-and-wipe
+        }
+    }
 }

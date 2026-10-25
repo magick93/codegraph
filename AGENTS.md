@@ -1556,16 +1556,23 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so a grafeo file-format change (0.6 replaced 0.5.x's) cold-re-ingests
   instead of migrating the cache in place — the upgrade's one-time cost
   is the full cold ingest.
-- **Poisoned-cache gotcha**: an aborted persistent ingest (timeout,
-  crash) leaves committed WAL from the partial run in `graph.grafeo`.
-  The next run misses the (unwritten) hash, reopens the SAME file, and
-  re-ingests on top of the partial graph — duplicated nodes and
-  silently missing projections (junction tables vanish, migration
-  counts drop). There is no duplicate detection: after ANY failed
-  persistent-ingest run, delete the cache directory before rerunning.
-  (Grafeo 0.6 helps: recovery now STOPS at WAL damage with
-  `GRAFEO-S002` instead of silently building a state that never
-  existed.)
+- **Poisoned-cache gotcha — FIXED (issue #538)**: the miss path (changed
+  inputs, or no/poisoned marker) now calls `artifact::reset_cache_graph`
+  FIRST, deleting `graph.grafeo` (and WAL sidecars) before the persistent
+  engine is created — `Config::persistent` REOPENS an existing single-file
+  DB, so re-ingesting onto the old file appended every node a second time
+  (the corruption surfaced as E0428 in codelist mod.rs, or not at all when
+  a generator deduped). An aborted re-ingest leaves the cache absent (the
+  marker is only written after the successful checkpoint), so the next run
+  misses and wipes again — self-healing, `rm -rf .graph-cache` is no longer
+  part of the loop. Defense-in-depth: the marker records the graph's node
+  count (`{hash} {node_count}`) and `open_reusable_engine` verifies it on
+  reopen — a mismatch is a named hard error
+  (`cache_node_count_mismatch`), never silently consumed. Legacy
+  hash-only markers are accepted unverified (the next successful ingest
+  upgrades the format). Note the trait queries (`list_schemas` etc.) do
+  NOT expose duplication — they dedupe by title; the artifact export is
+  the honest count (its content-keyed identity also fails on duplicates).
 - **Generator-only changes don't invalidate the hash** (inputs are the
   model/config files): when iterating on generators against a consumer
   model, a warm cache makes each edit→generate→check cycle ~1 min.

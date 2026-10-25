@@ -337,6 +337,15 @@ pub async fn run_with_graph_cache(
                 );
                 (Backend::from_engine(engine), true)
             } else {
+                // Cache miss (inputs changed, or no/poisoned marker): the
+                // stale graph must be rebuilt from scratch. Grafeo 0.6
+                // `Config::persistent` REOPENS an existing single-file
+                // database, so pointing the ingest target at the old file
+                // appended every node a second time (issue #538) — wipe it
+                // first. The marker is only written after the successful
+                // checkpoint below, so an aborted re-ingest leaves the cache
+                // absent (the next run misses and wipes again).
+                crate::artifact::reset_cache_graph(cache_dir);
                 let cached_config = BackendConfig {
                     data_dir: Some(cache_dir.join(crate::artifact::CACHE_GRAPH_FILE)),
                     ..BackendConfig::default()
@@ -842,10 +851,14 @@ pub async fn run_with_graph_cache(
     if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused)
         && let Some(hash) = inputs_hash.as_deref()
     {
+        let node_count = be
+            .engine()
+            .node_count()
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         be.engine()
             .checkpoint()
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-        crate::artifact::persist_cache_marker(cache_dir, hash)
+        crate::artifact::persist_cache_marker(cache_dir, hash, node_count)
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         println!(
             "Graph cache: persisted fresh graph (inputs hash {})",
