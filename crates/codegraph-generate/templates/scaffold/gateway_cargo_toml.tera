@@ -17,8 +17,8 @@ path = "src/main.rs"
 
 [features]
 default = ["native"]
-native = ["dep:reqwest", "dep:tracing-subscriber"]
-cloudflare-worker = ["dep:worker", "worker/axum", "worker/http"]
+native = ["dep:reqwest", "dep:tracing-subscriber"{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}, "cornucopia-queries/deadpool"{% endif %}]
+cloudflare-worker = ["dep:worker", "worker/axum", "worker/http"{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}, "worker/tokio-postgres", "cornucopia-queries/wasm-async"{% endif %}]
 
 [dependencies]
 serde = { workspace = true }
@@ -30,6 +30,17 @@ worker = { workspace = true, optional = true }
 tower-service = { workspace = true }
 http-body-util = { workspace = true }
 futures-channel = { workspace = true }
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+# Integration catalog surface (issue #521): the gateway hosts the
+# platform-level catalog/installations API — the cornucopia client plumbing
+# and the shared worker auth middleware compile here too.
+async-trait = { workspace = true }
+jsonwebtoken = { workspace = true }
+thiserror = { workspace = true }
+utoipa = { workspace = true }
+uuid = { workspace = true }
+cornucopia-queries = { path = "../../cornucopia-queries", default-features = false }
+{% endif %}
 
 # Native builds run an axum::serve listener (axum "tokio" feature); the
 # wasm32 slice serves requests through the worker runtime and must not pull
@@ -37,6 +48,13 @@ futures-channel = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["full"] }
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+# tokio-postgres without its default "runtime" feature: runtime enables
+# tokio/net → mio, which does not compile to wasm32-unknown-unknown.
+# deadpool-postgres re-enables the runtime on host targets itself.
+tokio-postgres = { workspace = true }
+deadpool-postgres = { workspace = true }
+{% endif %}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 axum = { workspace = true }

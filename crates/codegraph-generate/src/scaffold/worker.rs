@@ -558,6 +558,71 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             content: gateway_wrangler,
         });
 
+        // ── Gateway platform surface (issue #521) ─────────────────────────
+        // With extension points (and the cornucopia provider workers
+        // topology mandates) the gateway hosts the integration
+        // catalog/installations API directly: it gains the cornucopia client
+        // plumbing, the shared worker auth middleware, and a lean AppState.
+        // The catalog handler/router/config FILES themselves are emitted by
+        // the integration generators' gateway branch; this block is the
+        // shared compile closure they ride on. The gateway crate never
+        // depends on the hooks-api crate, so the shared templates render
+        // with the hooks re-export stripped.
+        if project.integration.has_extension_points && project.is_cornucopia() {
+            let gateway_shared_ctx = serde_json::json!({
+                "gateway_name": &ctx.gateway_name,
+                "worker_name": &ctx.gateway_name,
+                "name": "gateway",
+                "observability": gateway_observability,
+            });
+            let mut gateway_project = project.clone();
+            gateway_project.identity.hooks_api_crate = String::new();
+
+            let gateway_app_state = render_template_with_project(
+                tera,
+                "scaffold/gateway_app_state.tera",
+                &gateway_shared_ctx,
+                &gateway_project,
+            )?;
+            files.push(GeneratedFile {
+                path: gateway_dir.join("src").join("app_state.rs"),
+                content: gateway_app_state,
+            });
+
+            let gateway_db_client = render_template_with_project(
+                tera,
+                "scaffold/db_client.tera",
+                &gateway_shared_ctx,
+                &gateway_project,
+            )?;
+            files.push(GeneratedFile {
+                path: gateway_dir.join("src").join("db_client.rs"),
+                content: gateway_db_client,
+            });
+
+            let gateway_error = render_template_with_project(
+                tera,
+                "scaffold/error.tera",
+                &gateway_shared_ctx,
+                &gateway_project,
+            )?;
+            files.push(GeneratedFile {
+                path: gateway_dir.join("src").join("error.rs"),
+                content: gateway_error,
+            });
+
+            let gateway_middleware = render_template_with_project(
+                tera,
+                "scaffold/worker_middleware.tera",
+                &gateway_shared_ctx,
+                &gateway_project,
+            )?;
+            files.push(GeneratedFile {
+                path: gateway_dir.join("src").join("middleware.rs"),
+                content: gateway_middleware,
+            });
+        }
+
         // ── Per-domain worker crates ─────────────────────────────────────
         for domain in &ctx.domains {
             let base = workers_dir.join(&domain.name);
