@@ -12,6 +12,25 @@ command = "worker-build --release --no-default-features --features cloudflare-wo
 
 [vars]
 # Set in Cloudflare or in a local .dev.vars file.
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+# Auth for the integration catalog surface (issue #521) — monolith parity
+# naming; the shared worker auth middleware reads these. SUPABASE_JWT_SECRET
+# is the primary HS256 signing secret (JWT_SECRET is a fallback);
+# SUPABASE_URL (or PUBLIC_SUPABASE_URL) is required only for ES256 JWT
+# verification via the Supabase JWKS endpoint.
+SUPABASE_JWT_SECRET = ""
+JWT_SECRET = ""
+SUPABASE_URL = ""
+DATABASE_URL = ""
+
+# Platform database for the integration catalog/installations surface: the
+# gateway serves /api/v1/{version}/integrations/* directly (issue #521).
+# Local dev: point hyperdrive at your local Postgres.
+# localConnectionString = "postgres://user:pass@localhost:5432/postgres"
+[[hyperdrive]]
+binding = "PLATFORM_DB"
+id = "<REPLACE_WITH_HYPERDRIVE_ID>"
+{% endif %}
 {% for domain in domains %}
 {%- if domain.in_gateway %}
 

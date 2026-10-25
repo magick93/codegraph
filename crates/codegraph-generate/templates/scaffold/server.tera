@@ -570,7 +570,20 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health/ready", axum::routing::get(health_ready).with_state(state.clone()))
         .route("/metrics", axum::routing::get(move || std::future::ready(metrics_handle.render())))
         .nest("/api/{{ project.api_version }}", api_routes.with_state(state.clone()))
-        .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
+{% if project.has_extension_points %}
+        // Integration catalog/installations surface (issue #521): the
+        // generated router declares FULL paths (`/api/{version}/integrations/…`),
+        // so it merges at the root — closed with its own state and wrapped in
+        // the same auth middleware the /api stack carries.
+        .merge(
+            crate::integration_router::integration_router()
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::middleware::auth_middleware,
+                ))
+                .with_state(state.clone()),
+        )
+{% endif %}        .route("/api-catalog.json", axum::routing::get(crate::api::openapi::catalog::api_catalog))
         .merge(
             SwaggerUi::new("/swagger-ui")
                 .urls(vec![

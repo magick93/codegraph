@@ -36,6 +36,14 @@ impl GlobalGenerator for IntegrationCatalogGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Workers topology (issue #521): the root `src/` tree is compiled by
+        // no workspace member, so root-only emission is dead output. The
+        // catalog plane lands INSIDE the worker that mounts it — the
+        // gateway, the platform-level host.
+        if project.is_workers_topology() {
+            return generate_gateway_files(self.output_dir.as_path(), tera, project).await;
+        }
+
         let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
 
         let handler =
@@ -54,4 +62,36 @@ impl GlobalGenerator for IntegrationCatalogGenerator {
             },
         ])
     }
+}
+
+/// Gateway-hosted catalog surface: the cornucopia handler variant (workers
+/// topology mandates the cornucopia provider) plus the provider-agnostic
+/// router template, emitted into the gateway worker crate.
+async fn generate_gateway_files(
+    output_dir: &Path,
+    tera: &tera::Tera,
+    project: &ProjectConfig,
+) -> Result<Vec<GeneratedFile>> {
+    let ctx: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let gateway_src = output_dir.join("workers").join("gateway").join("src");
+
+    let handler = render_template_with_project(
+        tera,
+        "integration/catalog_handler_cornucopia.tera",
+        &ctx,
+        project,
+    )?;
+    let router =
+        render_template_with_project(tera, "integration/catalog_router.tera", &ctx, project)?;
+
+    Ok(vec![
+        GeneratedFile {
+            path: gateway_src.join("integration_catalog.rs"),
+            content: handler,
+        },
+        GeneratedFile {
+            path: gateway_src.join("integration_router.rs"),
+            content: router,
+        },
+    ])
 }

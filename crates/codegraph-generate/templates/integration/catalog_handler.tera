@@ -90,7 +90,7 @@ pub async fn list_installations(
 }
 
 /// Install an integration for the current tenant.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct InstallRequest {
     pub catalog_id: String,
     pub settings: Option<serde_json::Value>,

@@ -2193,6 +2193,59 @@ see this class.
 - Gate: `cargo test -p codegraph --test extension_points_tests` (6,
   node-free) + `doctor_validates_extension_points` in `init_tests`.
 
+### Catalog/installations API mounting (issue #521)
+
+The catalog/installations API is MOUNTED, not just emitted:
+
+- **Workers topology — the gateway is the host**: `integration_catalog` /
+  `integration_config` emit into `workers/gateway/src/` (the cornucopia
+  handler variant `integration/catalog_handler_cornucopia.tera` — raw SQL
+  over the per-request `GenericClient`, `set_config('app.organization_id')`
+  RLS scoping so the `platform_integrations` policies bind; workers topology
+  compiles no root `src/` tree, so root-only emission was dead output). The
+  gateway router (`gateway.tera` wasm + `gateway_main.tera` native) merges
+  `integration_router()` behind the shared worker auth middleware — static
+  segments win over the `/api/v1/{domain}/{*path}` catch-all, so
+  `/api/v1/{version}/integrations/*` resolves locally, everything else still
+  forwards. The gateway gains a LEAN AppState (`client_source`, `db_params`,
+  `jwt_secret`, `supabase_url` — `gateway_app_state.tera`) plus the shared
+  `middleware.rs`/`error.rs`/`db_client.rs` compile closure; it NEVER
+  depends on the hooks-api crate (shared templates render with
+  `hooks_api_crate` stripped). Cargo: cornucopia/auth deps gated on
+  ext-points + cornucopia provider, `native` enables
+  `cornucopia-queries/deadpool`, `cloudflare-worker` enables
+  `worker/tokio-postgres` + `cornucopia-queries/wasm-async`. wrangler: a
+  `[[hyperdrive]] binding = "PLATFORM_DB"` block + monolith-parity auth
+  `[vars]` (`SUPABASE_JWT_SECRET`/`JWT_SECRET`/`SUPABASE_URL`/`DATABASE_URL`).
+- **Monolith — mounted likewise**: `main.tera` declares
+  `mod integration_{dispatch,catalog,router,config};` (both admin-CLI and
+  plain branches — `mod integration_dispatch;` was missing entirely, an
+  E0433 with extension points on), `server.tera` merges
+  `crate::integration_router::integration_router()` at the ROOT (the router
+  declares full `/api/{version}/integrations/…` paths, so it cannot nest
+  under `/api/{version}`) behind the monolith auth middleware, and `lib.tera`
+  re-exports the modules. The inert `/integrations` status stub stays.
+  `InstallRequest` carries `#[derive(utoipa::ToSchema)]` so the
+  `#[utoipa::path(request_body = …)]` attrs compile now that the modules
+  actually do.
+- **Presence gating**: no `--extension-points` ⇒ no catalog files anywhere,
+  gateway stays the byte-identical thin proxy (no platform modules, no DB
+  deps, no hyperdrive block). The registry constructs the four integration
+  generators only when the parsed config is present — flag-off is inert even
+  with them plan-listed.
+- **Deferred**: settings validation of `installation_settings` against the
+  typed `{Point}Config` structs (both handler variants take raw JSON);
+  openapi/hurl coverage of the mounted routes; wasm32 compile leg of the
+  gateway catalog (workerd parity run); signing-secret provisioning endpoint
+  (#511 assumes this API can set it).
+- Gates: `workers_topology_mounts_integration_catalog_router`,
+  `workers_topology_without_extension_points_keeps_gateway_clean`,
+  `monolith_declares_and_mounts_integration_catalog`
+  (`--test profile_smoke_tests`, node-free) + `--test
+  workers_gateway_compile_tests -- --ignored` (cargo-checks the generated
+  gateway crate against a stub `cornucopia-queries` — no live DB needed;
+  ops-integration/nightly lane).
+
 ### Hooks parity under workers (issue #509 — the #502 refusal retired)
 
 `hooks_api_crate` under `deployment_topology = "workers"` is **supported**:

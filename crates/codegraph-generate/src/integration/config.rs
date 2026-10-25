@@ -96,9 +96,19 @@ impl GlobalGenerator for IntegrationConfigGenerator {
         let content =
             render_template_with_project(tera, "integration/config_struct.tera", &ctx, project)?;
 
-        Ok(vec![GeneratedFile {
-            path: self.output_dir.join("src").join("integration_config.rs"),
-            content,
-        }])
+        // Workers topology (issue #521): the typed config structs must
+        // compile into the mounting worker's crate — the gateway — not the
+        // uncompiled root `src/` tree.
+        let path = if project.is_workers_topology() {
+            self.output_dir
+                .join("workers")
+                .join("gateway")
+                .join("src")
+                .join("integration_config.rs")
+        } else {
+            self.output_dir.join("src").join("integration_config.rs")
+        };
+
+        Ok(vec![GeneratedFile { path, content }])
     }
 }
