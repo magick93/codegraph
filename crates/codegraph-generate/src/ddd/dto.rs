@@ -636,28 +636,28 @@ pub async fn build_dto_context(
                 .await
                 .ok()
                 .flatten();
-            let back_ref = format!(
-                "{}_id",
-                codegraph_naming::truncate_pg_identifier(&module_name)
-            );
             let has_back_ref = match &target {
                 Some(t) => db
                     .get_properties(&t.title)
                     .await
                     .map(|ps| {
                         ps.iter().any(|p| {
-                            p.pg_column_name == back_ref
-                                || p.pg_column_name
-                                    == format!(
-                                        "{}_id",
-                                        codegraph_naming::to_snake_case(schema_title)
-                                    )
+                            codegraph_naming::is_back_ref_column(
+                                &p.pg_column_name,
+                                &module_name,
+                                schema_title,
+                            )
                         })
                     })
                     .unwrap_or(false),
                 None => false,
             };
-            if !has_back_ref {
+            // The repository junction writer requires a resolvable target
+            // (`if !has_back_ref && let Some(t) = target` in the repository
+            // emitter). Emitting the DTO field when the target is dangling
+            // would accept ids no query ever writes — the #539 silent-drop
+            // shape. Both planes skip together.
+            if !has_back_ref && target.is_some() {
                 let field_def = codegraph_core::types::resolve_field(prop);
                 fields.push(DtoField {
                     name: field_def.rust_field_name.clone(),

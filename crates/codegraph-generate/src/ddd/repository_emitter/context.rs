@@ -532,22 +532,17 @@ pub(crate) async fn build_columns_and_children(
                     .await
                     .ok()
                     .flatten();
-                let back_ref = format!(
-                    "{}_id",
-                    codegraph_naming::truncate_pg_identifier(module_name)
-                );
                 let has_back_ref = match &target {
                     Some(t) => db
                         .get_properties(&t.title)
                         .await
                         .map(|ps| {
                             ps.iter().any(|p| {
-                                p.pg_column_name == back_ref
-                                    || p.pg_column_name
-                                        == format!(
-                                            "{}_id",
-                                            codegraph_naming::to_snake_case(entity_name)
-                                        )
+                                codegraph_naming::is_back_ref_column(
+                                    &p.pg_column_name,
+                                    module_name,
+                                    schema_title,
+                                )
                             })
                         })
                         .unwrap_or(false),

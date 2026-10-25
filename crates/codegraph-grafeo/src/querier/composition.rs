@@ -1103,26 +1103,19 @@ impl GrafeoEngine {
             .array_item_schema(self, &prop.name, schema_title)
             .await;
         let has_back_ref = match &target_title {
-            Some(target_schema) => {
-                let back_ref = format!(
-                    "{}_id",
-                    codegraph_naming::truncate_pg_identifier(&schema.pg_table_name)
-                );
-                loadout
-                    .properties(self, &target_schema.title)
-                    .await
-                    .map(|ps| {
-                        ps.iter().any(|p| {
-                            p.pg_column_name == back_ref
-                                || p.pg_column_name
-                                    == format!(
-                                        "{}_id",
-                                        codegraph_naming::to_snake_case(&schema.title)
-                                    )
-                        })
+            Some(target_schema) => loadout
+                .properties(self, &target_schema.title)
+                .await
+                .map(|ps| {
+                    ps.iter().any(|p| {
+                        codegraph_naming::is_back_ref_column(
+                            &p.pg_column_name,
+                            &schema.pg_table_name,
+                            &schema.title,
+                        )
                     })
-                    .unwrap_or(false)
-            }
+                })
+                .unwrap_or(false),
             None => false,
         };
 

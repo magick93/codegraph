@@ -10,7 +10,7 @@ use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use crate::ddd::repository_emitter::{
-    ChildTableInfo, EntityTree, RepositoryImplEmitter, TreeColumn,
+    ChildTableInfo, EntityTree, JunctionTableInfo, RepositoryImplEmitter, TreeColumn,
 };
 
 /// Generates annotated Cornucopia SQL files for an entity's CRUD surface.
@@ -276,6 +276,11 @@ fn render_entity_sql(
     // ── child tables (VO tables) ───────────────────────────────────────
     for child in &tree.child_tables {
         write_child_queries(&mut sql, &tree.schema_name, &entity_name, child);
+    }
+
+    // ── junction tables (array-of-entity-ref `refers`, issue #539) ─────
+    for j in &tree.junction_tables {
+        write_junction_queries(&mut sql, tree, j);
     }
 
     // ── nested filter helpers (child/grandchild EXISTS equivalents) ─────
@@ -1015,6 +1020,40 @@ fn write_child_queries(
     for grandchild in &child.child_tables {
         write_child_queries(sql, schema_name, entity_name, grandchild);
     }
+}
+
+/// Emit list/link/unlink queries for a junction (array-of-entity-ref `refers`)
+/// table (issue #539). The cornucopia path previously had NO junction writer:
+/// the DDL created the table, the DTO accepted the ids, and every create/update
+/// silently dropped them. The adapter calls these on create (link per id),
+/// update (unlink + re-link), and response construction (list).
+fn write_junction_queries(sql: &mut String, tree: &EntityTree, j: &JunctionTableInfo) {
+    let entity_name = snake_name(tree);
+    let table = format!("\"{}\".\"{}\"", j.sql_schema_name, j.sql_table_name);
+    let pfk = &j.parent_fk_column;
+    let cfk = &j.child_fk_column;
+    sql.push_str(&format!(
+        "--! list_{entity}_{junction} ({pfk}) : ({cfk})\n\
+         --- Linked ids for {entity}.{field}.\n\
+         SELECT \"{cfk}\"\n\
+         FROM {table}\n\
+         WHERE \"{pfk}\" = :{pfk}\n\
+         ORDER BY \"created_at\";\n\n\
+         --! link_{entity}_{junction} ({pfk}, {cfk})\n\
+         --- Link one {cfk} to a {entity} row.\n\
+         INSERT INTO {table} (\"{pfk}\", \"{cfk}\")\n\
+         VALUES (:{pfk}, :{cfk});\n\n\
+         --! unlink_{entity}_{junction} ({pfk})\n\
+         --- Unlink all ids from a {entity} row (update-replace).\n\
+         DELETE FROM {table}\n\
+         WHERE \"{pfk}\" = :{pfk};\n\n",
+        entity = entity_name,
+        junction = j.sql_table_name,
+        field = j.field_name,
+        table = table,
+        pfk = pfk,
+        cfk = cfk,
+    ));
 }
 
 /// Emit one helper query per nested (dot-notation) filter. The adapter uses

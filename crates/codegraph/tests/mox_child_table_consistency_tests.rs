@@ -534,3 +534,206 @@ async fn contains_only_vo_keeps_standalone_and_child_tables() {
     let legal = fs::read_to_string(migration("legal_document", &output).unwrap()).unwrap();
     assert!(legal.contains("person_id"), "{legal}");
 }
+
+/// (6) Ref-field agreement (issue #539): an array entity-ref the DTO plane
+/// accepts must have a repository-plane junction writer, and vice versa —
+/// the silent-drop shape (DTO accepts the ids, nothing writes the junction)
+/// must be named by the sweep. Constructed here with a DANGLING ref target:
+/// the DTO branch emits the junction field (no back-ref resolvable) while
+/// the repository branch needs a resolvable target to push the writer.
+#[tokio::test]
+async fn consistency_sweep_flags_dto_ref_fields_with_no_repository_writer() {
+    use codegraph_core::mock::MockEngineBuilder;
+    use codegraph_core::types::{PropertyNode, SchemaNode};
+    use codegraph_type_contracts::RefClassificationKind;
+
+    fn entity_schema(title: &str, table: &str) -> SchemaNode {
+        SchemaNode {
+            namespace: None,
+            schema_id: format!("core/json/{title}.json"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity_reference".to_string(),
+            domain: Some("core".to_string()),
+            rel_path: format!("core/json/{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: format!("{table}Root"),
+            sea_orm_type: "Entity".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: table.to_string(),
+            api_path_segment: String::new(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
+        }
+    }
+
+    fn string_prop(name: &str) -> PropertyNode {
+        PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: false,
+            is_nullable: true,
+            is_id: false,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: name.to_string(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: name.to_string(),
+            rust_field_type: "String".to_string(),
+            sea_orm_type: "Text".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            type_expr: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn array_ref_prop(name: &str, target: &str) -> PropertyNode {
+        PropertyNode {
+            is_array: true,
+            prop_type: "array".to_string(),
+            ref_target: Some(target.to_string()),
+            classification: Some("entity_reference".to_string()),
+            classification_kind: Some(RefClassificationKind::EntityReference),
+            ..string_prop(name)
+        }
+    }
+
+    let config = codegraph_config::config::parse_domain_config_str(DOMAINS_TOML).unwrap();
+    let order = vec![codegraph_generate::GenerationEntry {
+        schema_title: "Person".to_string(),
+        domain: "core".to_string(),
+        pg_schema: "core".to_string(),
+        is_cyclic: false,
+    }];
+
+    // Dangling ref target: BOTH planes skip together — the DTO emits no
+    // junction field, the repository pushes no writer — so the sweep is
+    // clean (the accepted-then-dropped field no longer exists).
+    let person = entity_schema("Person", "person");
+    let engine = MockEngineBuilder::default()
+        .with_schema(person.clone())
+        .with_properties(
+            "Person",
+            vec![string_prop("title"), array_ref_prop("pay_runs", "PayRun")],
+        )
+        .build();
+
+    let divergences = codegraph_generate::consistency::check_child_table_consistency(
+        &engine,
+        &config,
+        &order,
+        &[],
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !divergences.iter().any(|d| d.contains("pay_runs")),
+        "dangling targets skip both planes together: {divergences:?}"
+    );
+
+    // The same ref with a resolvable entity target — the
+    // repository plane writes the junction and the DDL universe carries the
+    // table, the sweep is clean.
+    use codegraph_core::types::{
+        ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget,
+    };
+    let pay_run = entity_schema("PayRun", "pay_run");
+    let engine = MockEngineBuilder::default()
+        .with_schema(person.clone())
+        .with_schema(pay_run.clone())
+        .with_properties(
+            "Person",
+            vec![string_prop("title"), array_ref_prop("pay_runs", "PayRun")],
+        )
+        .with_ref_target("pay_runs", "Person", pay_run)
+        .with_composition_tree(
+            "Person",
+            CompositionTree {
+                root: CompositionNode {
+                    field_name: "person".to_string(),
+                    schema_title: "Person".to_string(),
+                    table_schema: "core".to_string(),
+                    table_name: "person".to_string(),
+                    fk: None,
+                    is_collection: false,
+                    columns: vec![],
+                    jsonb_columns: vec![],
+                    children: vec![CompositionNode {
+                        field_name: "pay_runs".to_string(),
+                        schema_title: "PayRun".to_string(),
+                        table_schema: "core".to_string(),
+                        table_name: "person_pay_runs".to_string(),
+                        fk: Some(FkDirection::OnChild {
+                            column: "person_id".to_string(),
+                        }),
+                        is_collection: true,
+                        columns: vec![ColumnInfo {
+                            name: "pay_run_id".to_string(),
+                            description: None,
+                            rust_type: "uuid::Uuid".to_string(),
+                            postgres_type: "UUID".to_string(),
+                            is_optional: false,
+                            is_codelist_fk: false,
+                            composite_columns: vec![],
+                            is_array: false,
+                            classification: Some(RefClassificationKind::EntityReference),
+                            fk_target: Some(FkTarget {
+                                schema: "core".to_string(),
+                                table: "pay_run".to_string(),
+                                column: "id".to_string(),
+                                on_delete: "CASCADE".to_string(),
+                            }),
+                            check_values: vec![],
+                        }],
+                        jsonb_columns: vec![],
+                        children: vec![],
+                        composite_range: None,
+                        consumed_fields: vec![],
+                    }],
+                    composite_range: None,
+                    consumed_fields: vec![],
+                },
+            },
+        )
+        .build();
+
+    let divergences = codegraph_generate::consistency::check_child_table_consistency(
+        &engine,
+        &config,
+        &order,
+        &[],
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        !divergences.iter().any(|d| d.contains("pay_runs")),
+        "a written junction with its DTO field is clean: {divergences:?}"
+    );
+}

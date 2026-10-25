@@ -96,6 +96,57 @@ pub async fn check_child_table_consistency(
                 ));
             }
         }
+
+        // ── Ref-field agreement (issue #539): every entity-ref field the
+        // DTO plane accepts must have a repository-plane counterpart with
+        // the SAME name — arrays land as junction writers, scalars as FK
+        // columns. A mismatch is the silent-drop shape: the API accepts
+        // the ids (or a differently-named field) and every create/update
+        // drops them. The DTO↔repo probes are shared helpers; this gate
+        // pins that no plane ever drifts again.
+        let dto_ctx =
+            crate::ddd::dto::build_dto_context(db, &entry.schema_title, &entry.domain, config)
+                .await?;
+        for field in &dto_ctx.fields {
+            if !field.is_entity_ref || field.name == "id" {
+                continue;
+            }
+            if field.is_array {
+                let written = tree
+                    .junction_tables
+                    .iter()
+                    .any(|j| j.field_name == field.name);
+                if !written {
+                    divergences.insert(format!(
+                        "{}/{}: create/update DTO accepts ref array `{}` but the repository plane has no junction writer for it — `refers` links would be silently dropped",
+                        entry.domain, entry.schema_title, field.name,
+                    ));
+                }
+            } else {
+                let bound = tree
+                    .direct_columns
+                    .iter()
+                    .any(|c| c.is_entity_ref && c.field_name == field.name);
+                if !bound {
+                    divergences.insert(format!(
+                        "{}/{}: create/update DTO accepts ref field `{}` but the repository plane binds no FK column for it — the link would be silently dropped",
+                        entry.domain, entry.schema_title, field.name,
+                    ));
+                }
+            }
+        }
+        for j in &tree.junction_tables {
+            let carried = dto_ctx
+                .fields
+                .iter()
+                .any(|f| f.is_entity_ref && f.is_array && f.name == j.field_name);
+            if !carried {
+                divergences.insert(format!(
+                    "{}/{}: repository junction writer `{}` has no matching create/update DTO field — the junction would be written by nothing",
+                    entry.domain, entry.schema_title, j.field_name,
+                ));
+            }
+        }
     }
 
     Ok(divergences.into_iter().collect())
