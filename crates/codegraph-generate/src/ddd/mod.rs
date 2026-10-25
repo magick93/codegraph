@@ -15,3 +15,6 @@ pub mod validations;
 
 #[cfg(test)]
 mod design_generation_tests;
+
+#[cfg(test)]
+mod refers_junction_tests;

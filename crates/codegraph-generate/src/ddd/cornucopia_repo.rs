@@ -297,6 +297,45 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut CodeWriter) {
         }
     }
 
+    // Junction links (array-of-entity-ref `refers`, issue #539): the DTO
+    // carries the ids, so create writes one junction row per id.
+    for j in &tree.junction_tables {
+        wln!(code);
+        wln!(
+            code,
+            "        // Junction links: {schema}.{table}",
+            schema = j.sql_schema_name,
+            table = j.sql_table_name
+        );
+        if j.is_required {
+            wln!(code, "        for item in &cmd.{} {{", j.field_name);
+            wln!(
+                code,
+                "            {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(|e| e.to_string())?;",
+                qmod = qmod,
+                snake = tree.table_name,
+                junction = j.sql_table_name
+            );
+            wln!(code, "        }}");
+        } else {
+            wln!(
+                code,
+                "        if let Some(ref ids) = cmd.{} {{",
+                j.field_name
+            );
+            wln!(code, "            for item in ids {{");
+            wln!(
+                code,
+                "                {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(|e| e.to_string())?;",
+                qmod = qmod,
+                snake = tree.table_name,
+                junction = j.sql_table_name
+            );
+            wln!(code, "            }}");
+            wln!(code, "        }}");
+        }
+    }
+
     wln!(code, "        Ok(id)");
     wln!(code, "    }}");
 }
@@ -510,6 +549,39 @@ fn emit_adapter_update(tree: &EntityTree, code: &mut CodeWriter) {
         },
     );
     emit_child_replace(tree, &mut *code);
+    // Junction replace (issue #539): when the update carries the field,
+    // unlink existing rows and re-link the supplied ids.
+    for j in &tree.junction_tables {
+        wln!(code);
+        wln!(
+            code,
+            "        // Replace junction rows: {schema}.{table}",
+            schema = j.sql_schema_name,
+            table = j.sql_table_name
+        );
+        wln!(
+            code,
+            "        if let Some(ref ids) = cmd.{} {{",
+            j.field_name
+        );
+        wln!(
+            code,
+            "            {qmod}::unlink_{snake}_{junction}().bind(tx, &id).await.map_err(|e| e.to_string())?;",
+            qmod = qmod,
+            snake = tree.table_name,
+            junction = j.sql_table_name
+        );
+        wln!(code, "            for item in ids {{");
+        wln!(
+            code,
+            "                {qmod}::link_{snake}_{junction}().bind(tx, &id, item).await.map_err(|e| e.to_string())?;",
+            qmod = qmod,
+            snake = tree.table_name,
+            junction = j.sql_table_name
+        );
+        wln!(code, "            }}");
+        wln!(code, "        }}");
+    }
     wln!(code, "        Ok(())");
     wln!(code, "    }}");
 }
@@ -1151,6 +1223,20 @@ fn emit_response_expr(
         true,
         pad,
     );
+    // Junction reads (issue #539): linked ids hydrate the same array field
+    // the create/update DTO accepts.
+    for j in &tree.junction_tables {
+        wln!(
+            code,
+            "{pad}let {field}_rows: Vec<uuid::Uuid> = {qmod}::list_{snake}_{junction}().bind(db, &{pid}).all().await.map_err(|e| e.to_string())?.into_iter().map(|r| r.{cfk}).collect();",
+            field = j.field_name,
+            qmod = qmod(tree),
+            snake = tree.table_name,
+            junction = j.sql_table_name,
+            pid = format!("{row_var}.id"),
+            cfk = j.child_fk_column,
+        );
+    }
     wln!(code);
     wln!(code, "{pad}{prefix}{}Response {{", tree.entity_name);
     wln!(code, "{pad}    id: {row_var}.id,");
@@ -1184,6 +1270,21 @@ fn emit_response_expr(
         }
     }
     emit_child_field_population(code, &tree.child_tables, &format!("{pad}    "));
+    for j in &tree.junction_tables {
+        if j.is_required {
+            wln!(
+                code,
+                "{pad}    {field}: {field}_rows,",
+                field = j.field_name
+            );
+        } else {
+            wln!(
+                code,
+                "{pad}    {field}: Some({field}_rows),",
+                field = j.field_name
+            );
+        }
+    }
     if tree.has_workflow {
         wln!(code, "{pad}    workflow_state: None,");
     }

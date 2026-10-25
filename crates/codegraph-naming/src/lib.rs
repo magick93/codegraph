@@ -317,6 +317,53 @@ pub fn child_parent_fk_column(parent_table: &str) -> String {
     truncate_pg_identifier(&ensure_id_suffix(parent_table))
 }
 
+/// Candidate back-reference FK column names an array-of-entity-ref property
+/// (`refers Target[] x`) may lower to on the TARGET table (issue #539):
+/// the parent's own `{parent_table}_id` column plus the snake-cased full
+/// title variant (`CandidateType` → `candidate_id` AND `candidate_type_id`,
+/// since a scalar `refers CandidateType candidate_type` on the target lowers
+/// to the latter).
+///
+/// Single source of truth for the junction-vs-FK-on-child decision: the DTO
+/// builder, the repository emitter's classification loop, and the composition
+/// tree (DDL) must all probe through this helper — divergent candidate sets
+/// are what let a DTO field, a repository bind, and a DDL table disagree
+/// about the same `refers` edge.
+///
+/// # Examples
+/// ```
+/// use codegraph_naming::back_ref_column_candidates;
+/// assert_eq!(back_ref_column_candidates("candidate", "CandidateType"),
+///            vec!["candidate_id".to_string(), "candidate_type_id".to_string()]);
+/// assert_eq!(back_ref_column_candidates("case", "Case"),
+///            vec!["case_id".to_string()]);
+/// ```
+pub fn back_ref_column_candidates(parent_table: &str, parent_title: &str) -> Vec<String> {
+    let mut out = vec![child_parent_fk_column(parent_table)];
+    let title_candidate = child_parent_fk_column(&to_snake_case(parent_title));
+    if !out.contains(&title_candidate) {
+        out.push(title_candidate);
+    }
+    out
+}
+
+/// Whether a column on the target table is a back-reference to the parent:
+/// true when it matches any of [`back_ref_column_candidates`]. The one probe
+/// every plane shares for the array-entity-ref junction decision.
+///
+/// # Examples
+/// ```
+/// use codegraph_naming::is_back_ref_column;
+/// assert!(is_back_ref_column("candidate_id", "candidate", "CandidateType"));
+/// assert!(is_back_ref_column("candidate_type_id", "candidate", "CandidateType"));
+/// assert!(!is_back_ref_column("pay_run_id", "candidate", "CandidateType"));
+/// ```
+pub fn is_back_ref_column(column: &str, parent_table: &str, parent_title: &str) -> bool {
+    back_ref_column_candidates(parent_table, parent_title)
+        .iter()
+        .any(|c| c == column)
+}
+
 /// Whether a PostgreSQL identifier is a reserved word (and thus needs quoting).
 pub fn is_pg_reserved(name: &str) -> bool {
     PG_RESERVED.contains(&name.to_ascii_lowercase().as_str())
