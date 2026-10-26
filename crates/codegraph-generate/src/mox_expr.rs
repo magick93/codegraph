@@ -26,6 +26,7 @@
 //! | `xs.first(p)` / `first()` / `filter` / `map` / `any` / `size` / `sum` | A1–A6 collection algebra |
 //! | `x.field` / `x?.field` (class id x)  | `res.get_<class>(x).map(\|o\| ..)` arena navigation |
 //! | `x.op(args)` (class id x)            | `res.get_<class>(x).expect(..).<op>(res, args)` |
+//! | `xs.map(b => b.field)` (class-id xs) | the same arena navigation from the lambda body — params read `(*b)`/`(**b)` per the refs-1/refs-2 convention |
 //! | `d.plus_days(n)` / `plus_months` / `diff_days` | chrono date algebra (clamp/overflow per R5/R8) |
 //!
 //! `res` is the generated `Resource` arena (issue #508 R4): lookups are
@@ -206,7 +207,35 @@ fn hint_of(rust_type: &str) -> TyHint {
     }
 }
 
-type Locals = Vec<(String, String)>; // (written name, emitted clone-on-use expression)
+/// One in-scope local: a `let` binding or a collection-algebra lambda
+/// parameter. `written` is the normalized (snake_case) name both the
+/// emitted closure/`let` declares and body references resolve against;
+/// `read` is the clone-on-use read expression. Lambda parameters of a
+/// class-typed collection carry the element's [`FieldBinding`] (issue
+/// #519) so `feature_access`/`call` navigate through the arena.
+#[derive(Debug, Clone)]
+struct Local {
+    written: String,
+    read: String,
+    binding: Option<FieldBinding>,
+}
+
+impl Local {
+    /// Whether a body reference resolves to this local — either spelling
+    /// matches: the source identifier or its snake_case normalization
+    /// (issue #528).
+    fn matches(&self, name: &str) -> bool {
+        self.written == name || self.written == to_snake_case(name)
+    }
+}
+
+type Locals = Vec<Local>;
+
+/// Innermost binding wins (issue #527): scopes push onto the stack, so
+/// the innermost matching local is the last one.
+fn local_of<'a>(name: &str, locals: &'a Locals) -> Option<&'a Local> {
+    locals.iter().rev().find(|l| l.matches(name))
+}
 
 fn lower(
     expr: &Expr,
@@ -322,7 +351,11 @@ fn lower(
             let init_code = lower(init, fields, arena, TyHint::Unknown, locals)?;
             let let_name = escape_rust_keyword(&to_snake_case(&name.value));
             // Locals bind by value; uses clone (parity with rex-backend-rust).
-            locals.push((name.value.clone(), format!("{let_name}.clone()")));
+            locals.push(Local {
+                written: to_snake_case(&name.value),
+                read: format!("{let_name}.clone()"),
+                binding: None,
+            });
             let body_code = lower(body, fields, arena, hint, locals);
             locals.pop();
             let body_code = body_code?;
@@ -427,20 +460,24 @@ fn operand_hint(
     TyHint::Unknown
 }
 
-/// Resolve the binding behind a symbol expression, if any.
-fn binding_of<'a>(
+/// Resolve the binding behind a symbol expression, if any. Returns an
+/// owned binding: lambda-parameter locals carry the element's binding
+/// (issue #519), `let` locals and non-class locals return `None` — a
+/// local shadows same-named fields either way.
+fn binding_of(
     expr: &Expr,
-    fields: &'a HashMap<String, FieldBinding>,
+    fields: &HashMap<String, FieldBinding>,
     locals: &Locals,
-) -> Option<&'a FieldBinding> {
+) -> Option<FieldBinding> {
     match &expr.kind {
         ExprKind::Name(name) => {
-            if locals.iter().any(|(n, _)| n == name) {
-                return None;
+            if let Some(local) = local_of(name, locals) {
+                return local.binding.clone();
             }
             fields
                 .get(name)
                 .or_else(|| fields.get(&to_snake_case(name)))
+                .cloned()
         }
         _ => None,
     }
@@ -472,9 +509,10 @@ fn symbol_for(
     fields: &HashMap<String, FieldBinding>,
     locals: &Locals,
 ) -> Result<String, Unsupported> {
-    // Locals first (shadowing), clone-on-use — parity with rex-backend-rust.
-    if let Some((_, emitted)) = locals.iter().find(|(n, _)| n == name) {
-        return Ok(emitted.clone());
+    // Locals first (shadowing, innermost wins), clone-on-use — parity
+    // with rex-backend-rust.
+    if let Some(local) = local_of(name, locals) {
+        return Ok(local.read.clone());
     }
     let binding = fields
         .get(name)
@@ -519,7 +557,7 @@ fn feature_access(
     arena: &ArenaIndex,
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
-    let recv_binding = binding_of(receiver, fields, locals).cloned();
+    let recv_binding = binding_of(receiver, fields, locals);
     let class_name = recv_binding
         .as_ref()
         .and_then(|b| b.class.clone())
@@ -584,7 +622,7 @@ fn call(
     arena: &ArenaIndex,
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
-    let recv_binding = binding_of(receiver, fields, locals).cloned();
+    let recv_binding = binding_of(receiver, fields, locals);
     let recv_hint = recv_binding
         .as_ref()
         .map(|b| hint_of(&b.rust_type))
@@ -738,12 +776,10 @@ fn algebra(
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
     use rex_expr::AlgebraKind;
-    let recv_binding = binding_of(receiver, fields, locals)
-        .cloned()
-        .ok_or_else(|| Unsupported {
-            kind: "collection algebra".to_string(),
-            detail: format!("`{kind:?}` receiver must be a feature"),
-        })?;
+    let recv_binding = binding_of(receiver, fields, locals).ok_or_else(|| Unsupported {
+        kind: "collection algebra".to_string(),
+        detail: format!("`{kind:?}` receiver must be a feature"),
+    })?;
     if !recv_binding.is_many() {
         return Err(Unsupported {
             kind: "collection algebra".to_string(),
@@ -751,11 +787,15 @@ fn algebra(
         });
     }
     let recv_code = bind_read(&recv_binding);
-    let elem_copy = is_copy_rust_type(recv_binding.element_type());
+    let elem_type = recv_binding.element_type().to_string();
+    let elem_copy = is_copy_rust_type(&elem_type);
     let adapter = if elem_copy { ".copied()" } else { ".cloned()" };
 
     // Closure params (the rex refs convention: map/any lend 1 ref,
-    // find/filter lend 2).
+    // find/filter lend 2). The local keys by the name the closure
+    // declares — the normalized identifier (issue #528) — and, when the
+    // collection carries an element class, the element's FieldBinding so
+    // the body navigates through the arena (issue #519).
     let push_local = |locals: &mut Locals, var: &str, refs: usize| {
         let deref = "*".repeat(refs);
         let read = if elem_copy {
@@ -763,7 +803,14 @@ fn algebra(
         } else {
             format!("({deref}{var}).clone()")
         };
-        locals.push((var.to_string(), read));
+        let binding = recv_binding.class.clone().map(|class| {
+            FieldBinding::new(read.clone(), !elem_copy, elem_type.clone()).with_class(class)
+        });
+        locals.push(Local {
+            written: var.to_string(),
+            read,
+            binding,
+        });
     };
 
     // `?.` wraps non-`first` results in Some (spec A1).
@@ -782,7 +829,7 @@ fn algebra(
         AlgebraKind::First => match lambda {
             Some((param, body)) => {
                 let var = escape_rust_keyword(&to_snake_case(param));
-                push_local(locals, param, 2);
+                push_local(locals, &var, 2);
                 let pred = lower(body, fields, arena, TyHint::Unknown, locals);
                 locals.pop();
                 let pred = pred?;
@@ -800,7 +847,7 @@ fn algebra(
                 });
             };
             let var = escape_rust_keyword(&to_snake_case(param));
-            push_local(locals, param, 2);
+            push_local(locals, &var, 2);
             let pred = lower(body, fields, arena, TyHint::Unknown, locals);
             locals.pop();
             let pred = pred?;
@@ -816,7 +863,7 @@ fn algebra(
                 });
             };
             let var = escape_rust_keyword(&to_snake_case(param));
-            push_local(locals, param, 1);
+            push_local(locals, &var, 1);
             let mapped = lower(body, fields, arena, TyHint::Unknown, locals);
             locals.pop();
             let mapped = mapped?;
@@ -832,7 +879,7 @@ fn algebra(
                 });
             };
             let var = escape_rust_keyword(&to_snake_case(param));
-            push_local(locals, param, 1);
+            push_local(locals, &var, 1);
             let pred = lower(body, fields, arena, TyHint::Unknown, locals);
             locals.pop();
             let pred = pred?;
@@ -1064,6 +1111,136 @@ mod tests {
         assert_eq!(
             lower_expr_to_rust("pagesList.map(p => p + 1)", &f, &empty_arena()).unwrap(),
             "(self.pages_list.clone().iter().map(|p| ((*p) + 1i32)).collect::<Vec<_>>())"
+        );
+    }
+
+    // Issue #519 fixture: `books` is a to-many class ref (`Vec<Uuid>`)
+    // carrying the element class; `Book` exposes `title` (String), `pages`
+    // (i32) and the operation `active()` through the arena.
+    fn book_fixture(elem_type: &str) -> (HashMap<String, FieldBinding>, ArenaIndex) {
+        let mut f = fields(&[("name", true, "String")]);
+        f.insert(
+            "books".to_string(),
+            FieldBinding::new("self.books".into(), true, elem_type.to_string()).with_class("Book"),
+        );
+        let mut book_fields = HashMap::new();
+        book_fields.insert(
+            "title".to_string(),
+            FieldBinding::new("self.title".into(), true, "String".into()),
+        );
+        book_fields.insert(
+            "pages".to_string(),
+            FieldBinding::new("self.pages".into(), false, "i32".into()),
+        );
+        let mut ops = HashMap::new();
+        ops.insert(
+            "active".to_string(),
+            OpBinding {
+                snake: "active".to_string(),
+                params: Vec::new(),
+            },
+        );
+        let mut arena = ArenaIndex::new();
+        arena.insert(
+            "Book".to_string(),
+            ClassBinding {
+                mirror: "Book".into(),
+                getter: "get_book".into(),
+                id_type: "Uuid".into(),
+                fields: book_fields,
+                ops,
+            },
+        );
+        (f, arena)
+    }
+
+    fn pages_list_fixture() -> HashMap<String, FieldBinding> {
+        let mut f = fields(&[("count", false, "i32")]);
+        f.insert(
+            "pages_list".to_string(),
+            FieldBinding::new("self.pages_list".into(), true, "Vec<i32>".into()),
+        );
+        f
+    }
+
+    #[test]
+    fn camel_case_lambda_params_read_their_declared_identifier() {
+        let f = pages_list_fixture();
+        assert_eq!(
+            lower_expr_to_rust("pagesList.map(aBook => aBook + 1)", &f, &empty_arena()).unwrap(),
+            "(self.pages_list.clone().iter().map(|a_book| ((*a_book) + 1i32)).collect::<Vec<_>>())"
+        );
+    }
+
+    #[test]
+    fn nested_same_name_lambda_params_take_the_innermost_binding() {
+        let f = pages_list_fixture();
+        assert_eq!(
+            lower_expr_to_rust(
+                "pagesList.map(p => pagesList.first(p => p + 1))",
+                &f,
+                &empty_arena()
+            )
+            .unwrap(),
+            "(self.pages_list.clone().iter().map(|p| (self.pages_list.clone().iter().find(|p| ((**p) + 1i32)).copied())).collect::<Vec<_>>())"
+        );
+    }
+
+    #[test]
+    fn lambda_params_navigate_through_the_arena() {
+        let (f, arena) = book_fixture("Vec<Uuid>");
+        // map lends 1 ref: the element read is `(*b)`.
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b.title)", &f, &arena).unwrap(),
+            "(self.books.clone().iter().map(|b| (res.get_book((*b)).map(|o| o.title.clone()).expect(\"dangling `Book` id\"))).collect::<Vec<_>>())"
+        );
+        // find lends 2 refs: the element read is `(**b)`.
+        assert_eq!(
+            lower_expr_to_rust("books.first(b => b.pages > 10)", &f, &arena).unwrap(),
+            "(self.books.clone().iter().find(|b| ((res.get_book((**b)).map(|o| o.pages).expect(\"dangling `Book` id\")) > 10i32)).copied())"
+        );
+        // any lends 1 ref; declared ops invoke through the arena.
+        assert_eq!(
+            lower_expr_to_rust("books.any(b => b.active())", &f, &arena).unwrap(),
+            "(self.books.clone().iter().any(|b| (res.get_book((*b)).expect(\"dangling `Book` id\").active(res))))"
+        );
+    }
+
+    #[test]
+    fn option_element_lambda_params_navigate_safely() {
+        let (f, arena) = book_fixture("Vec<Option<Uuid>>");
+        assert_eq!(
+            lower_expr_to_rust("books.any(b => b?.title == \"x\")", &f, &arena).unwrap(),
+            "(self.books.clone().iter().any(|b| (((*b).clone().and_then(|id| res.get_book(id)).map(|o| o.title.clone())) == \"x\".to_string())))"
+        );
+    }
+
+    #[test]
+    fn unresolvable_lambda_bodies_keep_named_errors() {
+        let (f, arena) = book_fixture("Vec<Uuid>");
+        assert_eq!(
+            lower_expr_to_rust("books.map(b => b.ghost)", &f, &arena)
+                .unwrap_err()
+                .kind,
+            "unknown feature"
+        );
+        assert_eq!(
+            lower_expr_to_rust("books.any(b => b.rate(1))", &f, &arena)
+                .unwrap_err()
+                .kind,
+            "an operation call"
+        );
+        // A receiver class missing from the arena stays a named refusal.
+        let (mut f, arena) = book_fixture("Vec<Uuid>");
+        f.insert(
+            "shelves".to_string(),
+            FieldBinding::new("self.shelves".into(), true, "Vec<Uuid>".into()).with_class("Shelf"),
+        );
+        assert_eq!(
+            lower_expr_to_rust("shelves.map(r => r.title)", &f, &arena)
+                .unwrap_err()
+                .kind,
+            "unknown class"
         );
     }
 
