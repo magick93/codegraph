@@ -661,8 +661,16 @@ async fn cornucopia_command_keeps_all_hooks_without_wasm_gates() {
     }
 
     // The tx handle is the erased SPI adapter over the cornucopia DbTx.
+    // The adapter is bound to a local BEFORE TxContext::new borrows it —
+    // `&HookTxAdapter(&tx)` inline drops the temporary at the statement
+    // end while the context still borrows it (E0716; the #518 runtime pin
+    // executes this path against real Postgres).
     assert!(
-        content.contains("crate::hook_adapters::HookTxAdapter(&tx)"),
+        content.contains("let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);"),
+        "tx hooks must bind the adapter to a local before the context borrows it:\n{content}"
+    );
+    assert!(
+        content.contains("TxContext::new(\n                &tx_adapter,"),
         "tx hooks must adapt the open cornucopia transaction:\n{content}"
     );
 
