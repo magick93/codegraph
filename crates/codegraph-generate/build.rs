@@ -28,6 +28,18 @@ fn walk_templates(dir: &Path, base: &Path, names: &mut Vec<(String, String)>) {
     }
 }
 
+/// FNV-1a 64-bit — dependency-free deterministic content hash. The rev
+/// only needs to be stable for one binary vs its own scaffolds, so a
+/// simple hash beats pulling in a crypto dependency.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
+}
+
 fn main() {
     let templates_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
     if templates_dir.is_dir() {
@@ -51,6 +63,25 @@ fn main() {
         let mut templates = Vec::new();
         walk_templates(&templates_dir, &templates_dir, &mut templates);
         templates.sort();
+
+        // Template rev (issue #348): a content hash over the `project/`
+        // category (what `codegraph init` renders), embedded in the binary
+        // via `project_template_rev()` and stamped into every scaffold so
+        // doctor can flag wrappers rendered by different templates.
+        let mut rev = fnv1a(b"codegraph-project-templates");
+        for (name, abs) in templates
+            .iter()
+            .filter(|(name, _)| name.starts_with("project/"))
+        {
+            let content = fs::read(abs).unwrap_or_default();
+            let mut feed = rev.to_le_bytes().to_vec();
+            feed.extend_from_slice(name.as_bytes());
+            feed.push(b'\n');
+            feed.extend_from_slice(&content);
+            feed.push(b'\n');
+            rev = fnv1a(&feed);
+        }
+        println!("cargo:rustc-env=CODEGRAPH_TEMPLATE_REV={rev:016x}");
 
         // tera 2 validates include/extends/filter references in
         // finalize_templates, which runs at the end of every add_raw_template

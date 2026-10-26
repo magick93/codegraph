@@ -1588,6 +1588,51 @@ Adding a new template:
    Tera context).
 4. Update the `init` tests / `file_tree()` expectations if the layout changed.
 
+### Wrapper drift detection (issue #348)
+
+The scaffolded `{name}-graph` wrapper is rendered ONCE by `codegraph init`
+and compiles against the codegraph rev its workspace pins — when the
+driver's API moves, stale wrappers stop compiling or silently lose new
+CLI flags. Four layers keep the wrapper in lockstep (the crewbase case:
+six `RunArgs` fields hardcoded with no flags, plus a scaffold that didn't
+compile for `ddd/evt/deploy_files`):
+
+- **Single source of truth**: `driver::run_args_field_names()`
+  (`crates/codegraph/src/driver.rs`) derives the `RunArgs` field list from
+  the struct itself (derived `Debug` + exhaustive construction — the
+  compiler forces an update when the driver gains a field). No second
+  list exists to rot.
+- **Contract test** (`wrapper_drift_tests` — node-free PR-CI): every
+  `RunArgs` field must appear in the RENDERED wrapper's `RunArgs`
+  construction (full `field:` form or field-init shorthand). Adding a
+  driver field without updating `wrapper_main.tera` fails this test
+  naming the missing fields.
+- **Doctor drift check** (`init/wrapper_drift.rs`, wired into
+  `cmd_doctor`): scans `{config parent}/*-graph/src/main.rs` one level
+  deep and warns per drifted wrapper (+1 soft warning) naming each
+  field's CLI flag — missing fields (would not compile), hardcoded
+  `&[]`/`None` values (compiles, no flag reaches them), and template-rev
+  mismatches. Quiet when no wrapper exists. The hint is mechanical:
+  `re-render the wrapper: codegraph init --force`.
+- **Template rev**: `codegraph-generate/build.rs` hashes
+  `templates/project/*.tera` (FNV-1a, 16 hex) into
+  `CODEGRAPH_TEMPLATE_REV` (exposed via
+  `codegraph_generate::template_engine::project_template_rev()`); init
+  stamps it as a const in the wrapper main.rs; doctor flags scaffolds
+  rendered by different templates. Hard refusal stays init's existing
+  `--force` overwrite gate.
+- **Compile gate** (`wrapper_compile_tests -- --ignored`, the CI
+  `test-ops-integration` lane): scaffolds with `--codegraph-path` and
+  `cargo check`s the wrapper — the only guard against positional
+  `generate()`/`classify()` signature drift, which the mention-contract
+  cannot see. It caught the wrapper `Doctor` arm missing five `DoctorArgs`
+  fields on its first run.
+
+Wrapper flag parity rule: when the binary's `Run`/`Doctor`/`Classify`
+clap surface gains a flag that maps to a driver-args field, update
+`project/wrapper_main.tera` in the same PR — the contract test + doctor
+check + compile gate then hold the line.
+
 ## Consumer Performance & Persisted-Graph Cache (issue #275)
 
 Measured on the crewbase consumer loop (9 mox packages, ~38 entities,

@@ -1567,6 +1567,63 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         }
     }
 
+    // Wrapper drift (issue #348): diff every `*-graph` wrapper under the
+    // project root (domains.toml's parent) against this binary's driver
+    // API. Advisory — each drifted wrapper adds one soft warning with the
+    // per-field CLI-flag hint.
+    let drift_scan_root = args
+        .config
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    for drift in crate::init::wrapper_drift::check_wrapper_drift(&drift_scan_root) {
+        if !drift.is_drifted() {
+            continue;
+        }
+        soft_warnings += 1;
+        if !drift.missing.is_empty() {
+            let fields: Vec<String> = drift
+                .missing
+                .iter()
+                .map(|f| format!("{} ({})", f.field, f.flag))
+                .collect();
+            println!(
+                "WARN wrapper {} drifts from this codegraph's driver API — \
+                 missing RunArgs fields: {}",
+                drift.wrapper,
+                fields.join(", ")
+            );
+        }
+        if !drift.hardcoded.is_empty() {
+            let fields: Vec<String> = drift
+                .hardcoded
+                .iter()
+                .map(|f| format!("{} ({})", f.field, f.flag))
+                .collect();
+            println!(
+                "WARN wrapper {} hardcodes RunArgs fields with no CLI flag: {}",
+                drift.wrapper,
+                fields.join(", ")
+            );
+        }
+        if let Some(rev) = &drift.template_rev {
+            let stamped = if rev.stamped.is_empty() {
+                "<none>".to_string()
+            } else {
+                rev.stamped.clone()
+            };
+            println!(
+                "WARN wrapper {} was rendered by different templates \
+                 (template rev {stamped} ≠ {})",
+                drift.wrapper, rev.current
+            );
+        }
+        println!(
+            "     hint: re-render the wrapper: codegraph init --force (or add the flags by hand)"
+        );
+    }
+
     soft_warnings += check_codegraph_rev();
 
     match codegraph_ops::env::resolve_psql() {

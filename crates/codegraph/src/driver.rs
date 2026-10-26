@@ -24,6 +24,7 @@ pub enum ClassifyFormat {
 
 /// Arguments for the full pipeline (`run`): ingest the model sources
 /// (mox-first, then JSON schemas), classify, then run all generators.
+#[derive(Debug)]
 pub struct RunArgs<'a> {
     /// JSON schema directory. Optional when `mox_files` is provided
     /// (mox-first, issue #231); schemas-only runs are deprecated as the
@@ -83,6 +84,61 @@ pub struct RunArgs<'a> {
     /// check` over `<output>/Cargo.toml` after generation and fail the run
     /// when it fails. Defaults to false — no cargo invocation.
     pub check: bool,
+}
+
+/// The [`RunArgs`] field names, in declaration order — the single source of
+/// truth for wrapper drift detection (issue #348). Derived from the struct
+/// itself: the exhaustive construction below makes the compiler force an
+/// update here whenever the driver gains a field, so no second list can
+/// silently rot. The init contract test (`wrapper_drift_tests`) asserts
+/// the rendered wrapper mentions every name, and doctor diffs existing
+/// wrappers against this list.
+pub fn run_args_field_names() -> Vec<String> {
+    let empty_paths: &[PathBuf] = &[];
+    let empty_strings: &[String] = &[];
+    let args = RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: Path::new(""),
+        output: Path::new(""),
+        extension_points_path: None,
+        profile_name: "",
+        variant: None,
+        profiles_config_path: None,
+        no_post_gen: false,
+        template_dir: empty_paths,
+        ifml_files: empty_paths,
+        openapi_files: empty_paths,
+        mox_files: empty_paths,
+        rosetta_files: empty_paths,
+        ddd_files: empty_paths,
+        evt_files: empty_paths,
+        deploy_files: empty_paths,
+        ifml_framework: empty_strings,
+        ifml_components: None,
+        ifml_design_system: None,
+        ux_rules: None,
+        codegraph_rev: None,
+        check: false,
+    };
+    parse_struct_field_names(&format!("{args:?}"))
+}
+
+/// Extract field names from a derived-`Debug` struct dump
+/// (`RunArgs { a: v, b: v }`). Trivial values (None / [] / false / "")
+/// keep the parse exact: no value contains commas or braces.
+fn parse_struct_field_names(debug: &str) -> Vec<String> {
+    let Some((_, inner)) = debug.split_once('{') else {
+        return Vec::new();
+    };
+    let inner = inner.strip_suffix('}').unwrap_or(inner);
+    inner
+        .split(", ")
+        .filter_map(|pair| pair.split(':').next())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Arguments for the IFML-only UI generation path (`ifml_generate`).
@@ -1765,6 +1821,43 @@ fn codegraph_checkout_root() -> String {
 mod tests {
     use super::*;
     use codegraph_config::SemanticRole;
+
+    #[test]
+    fn run_args_field_names_lists_every_field_in_declaration_order() {
+        // Issue #348: the wrapper contract test and the doctor drift check
+        // both consume this list, so the pin here protects the Debug-parse
+        // derivation. The exhaustive construction inside
+        // `run_args_field_names` makes the compiler force an update when
+        // `RunArgs` gains a field; this pin catches a parser regression.
+        assert_eq!(
+            run_args_field_names(),
+            vec![
+                "schemas",
+                "classifier",
+                "config_path",
+                "output",
+                "extension_points_path",
+                "profile_name",
+                "variant",
+                "profiles_config_path",
+                "no_post_gen",
+                "template_dir",
+                "ifml_files",
+                "openapi_files",
+                "mox_files",
+                "rosetta_files",
+                "ddd_files",
+                "evt_files",
+                "deploy_files",
+                "ifml_framework",
+                "ifml_components",
+                "ifml_design_system",
+                "ux_rules",
+                "codegraph_rev",
+                "check",
+            ]
+        );
+    }
 
     #[test]
     fn resolve_codegraph_rev_explicit_value_wins() {
