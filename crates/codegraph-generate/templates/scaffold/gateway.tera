@@ -229,6 +229,50 @@ mod worker_impl {
         }
     }
 
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+    // ── Integration catalog platform surface (issue #521) ────────────────
+    // The gateway serves `/api/v1/{version}/integrations/*` itself: build
+    // the lean platform AppState from the PLATFORM_DB hyperdrive binding
+    // (the DATABASE_URL var is the local-dev / pre-Hyperdrive fallback).
+    use crate::app_state::AppState as PlatformAppState;
+    use crate::db_client::{DbConnectionParams, HyperdriveClientSource};
+
+    fn integration_app_state(env: &Env) -> Result<PlatformAppState, worker::Error> {
+        let connection_string = env
+            .hyperdrive("PLATFORM_DB")
+            .map(|h| h.connection_string())
+            .or_else(|_| env.var("DATABASE_URL").map(|v| v.to_string()))
+            .map_err(|e| {
+                worker::Error::RustError(format!(
+                    "PLATFORM_DB hyperdrive binding or DATABASE_URL var required: {e}"
+                ))
+            })?;
+        let params = DbConnectionParams::from_connection_string(&connection_string).map_err(
+            |e| {
+                worker::Error::RustError(format!(
+                    "failed to parse database connection parameters: {e}"
+                ))
+            },
+        )?;
+        let jwt_secret = env
+            .secret("SUPABASE_JWT_SECRET")
+            .or_else(|_| env.secret("JWT_SECRET"))
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let supabase_url = env
+            .var("SUPABASE_URL")
+            .or_else(|_| env.var("PUBLIC_SUPABASE_URL"))
+            .map(|v| v.to_string())
+            .ok();
+        Ok(PlatformAppState::new(
+            std::sync::Arc::new(HyperdriveClientSource::new(params.clone())),
+            params,
+            jwt_secret,
+            supabase_url,
+        ))
+    }
+{% endif %}
+
     #[event(fetch)]
     async fn fetch(
         req: HttpRequest,
@@ -256,6 +300,12 @@ mod worker_impl {
             }
             return Ok(res);
         }
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+        let integration_state = integration_app_state(&state.env)?;
+        let integration_routes = crate::integration_router::integration_router()
+            .layer(axum::middleware::from_fn_with_state(integration_state.clone(), crate::middleware::auth_middleware))
+            .with_state(integration_state);
+{% endif %}
         let mut app = Router::new()
             .route("/version", axum::routing::get(version))
             .route("/health", axum::routing::get(health))
@@ -265,6 +315,12 @@ mod worker_impl {
                 axum::routing::any(forward),
             )
             .with_state(state);
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+        // The catalog routes sit behind the shared worker auth middleware;
+        // static segments win over the `{domain}` catch-all, so
+        // `/api/v1/{version}/integrations/*` resolves here (issue #521).
+        app = app.merge(integration_routes);
+{% endif %}
         let mut response = app.call(req).await?;
         for (name, value) in crate::cors::cors_headers(&cors, origin.as_ref()) {
             response.headers_mut().insert(name, value);

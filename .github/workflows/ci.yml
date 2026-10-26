@@ -18,7 +18,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -35,14 +35,14 @@ jobs:
       # lld under the runner's disk ceiling (SIGBUS-on-link when ENOSPC).
       RUSTFLAGS: -C debuginfo=0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # ubuntu-latest ships ~25 GB of preinstalled tooling the build never
       # touches. `cargo test --workspace` on this workspace produces tens
       # of GB under target/, and an ENOSPC mid-link surfaces as
       # `collect2: fatal error: ld terminated with signal 7 [Bus error]`.
       # Swap is kept: rustc/lld OOM without it shows up as SIGKILL instead.
       - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@v2.0.0
         with:
           tool-cache: false
           android: true
@@ -62,7 +62,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
@@ -85,7 +85,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install psql
@@ -96,3 +96,5 @@ jobs:
         run: cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture
       - name: Wrapper compile gate (issue #348)
         run: cargo test -p codegraph --test wrapper_compile_tests -- --ignored --nocapture
+      - name: Run cornucopia hooks runtime pins (issue #518)
+        run: cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture

@@ -769,3 +769,684 @@ directions = ["push"]
         find("workers/compensation/src/main.rs").content
     );
 }
+
+/// Workers topology + extension points (issue #521): the integration
+/// catalog/installations API is MOUNTED, not just emitted. The gateway
+/// worker hosts the platform-level surface: the cornucopia catalog handlers
+/// + router + typed config structs compile INSIDE the gateway crate (workers
+/// topology compiles no root `src/` tree), the gateway router merges the
+/// catalog router behind the shared worker auth middleware, and the
+/// Cargo/wrangler graphs carry the DB + auth surface (PLATFORM_DB hyperdrive
+/// binding, monolith-parity auth vars).
+#[tokio::test]
+async fn workers_topology_mounts_integration_catalog_router() {
+    let (mock, config, tera, output_dir) = workers_scaffold_test_setup();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    let ext = codegraph_ext_points::parse_extension_points_str(
+        r#"
+[payroll-sync]
+name = "Payroll Sync"
+description = "Synchronise pay data"
+cardinality = "exclusive"
+entities = ["compensation.pay_run"]
+directions = ["push"]
+"#,
+    )
+    .unwrap();
+
+    let project = codegraph::generate::ProjectConfig {
+        database: codegraph::generate::DatabaseConfig {
+            database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+            persistence_provider: codegraph::profile::PersistenceProvider::Cornucopia,
+        },
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
+        integration: codegraph::generate::IntegrationFlags {
+            has_extension_points: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let plan = BuildPlan {
+        entity_generators: vec![
+            "ddl".to_string(),
+            "sea_orm_entity".to_string(),
+            "handler".to_string(),
+            "dto".to_string(),
+            "repository".to_string(),
+            "command".to_string(),
+            "query".to_string(),
+        ],
+        domain_generators: vec![
+            "errors".to_string(),
+            "router".to_string(),
+            "links".to_string(),
+        ],
+        global_generators: vec![
+            "worker_scaffold".to_string(),
+            "scaffold".to_string(),
+            "integration_tables".to_string(),
+            "integration_config".to_string(),
+            "integration_dispatch".to_string(),
+            "integration_catalog".to_string(),
+        ],
+        post_gen_scripts: vec![],
+        ifml_frameworks: vec![],
+        template_pack_path: None,
+        database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+        has_atproto: false,
+        atproto_tenancy: "shared_pds".to_string(),
+        has_fern: false,
+        has_emdash: false,
+        fern_sdk_languages: vec!["typescript".to_string()],
+        // Workers topology mandates the cornucopia persistence provider
+        // (BuildPlan validation) — the gateway's catalog surface is the
+        // cornucopia handler variant.
+        persistence_provider: codegraph::profile::PersistenceProvider::Cornucopia,
+        dto_key_casing: "snake".to_string(),
+        deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
+        namespace_layout: false,
+        ux_rules: false,
+        expr_ir: false,
+        ifml_e2e_auth: false,
+        testid_module: false,
+        structural_gates: false,
+        public_operations_rls: false,
+        features: toml::Table::new(),
+    };
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: Some(&ext),
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+
+    let find = |needle: &str| {
+        report
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with(needle))
+            .unwrap_or_else(|| panic!("missing generated file: {needle}"))
+    };
+
+    // 1. The catalog trio lands INSIDE the gateway crate — the workers
+    //    topology compiles no root `src/` tree, so root-only emission is
+    //    dead output (the bug in issue #521).
+    let router = find("workers/gateway/src/integration_router.rs");
+    assert!(
+        router.content.contains("pub fn integration_router()")
+            && router.content.contains("/integrations/installations"),
+        "gateway integration router must carry the installations routes:\n{}",
+        router.content
+    );
+    let handler = find("workers/gateway/src/integration_catalog.rs");
+    assert!(
+        handler.content.contains("pub async fn install_integration"),
+        "gateway catalog handlers must carry the installation CRUD:\n{}",
+        handler.content
+    );
+    // The gateway is a cornucopia worker: raw SQL rides the per-request
+    // GenericClient (DbClient), never SeaORM.
+    assert!(
+        handler.content.contains("GenericClient"),
+        "gateway catalog handlers must be the cornucopia variant:\n{}",
+        handler.content
+    );
+    assert!(
+        !handler.content.contains("query_all_raw"),
+        "gateway catalog handlers must not use the SeaORM monolith surface:\n{}",
+        handler.content
+    );
+    // RLS scoping rides the connection (platform_integrations policies key
+    // on get_current_org_id()), mirroring the worker webhook API.
+    assert!(
+        handler.content.contains("set_config('app.organization_id'"),
+        "gateway catalog handlers must scope the connection for RLS:\n{}",
+        handler.content
+    );
+    let config_rs = find("workers/gateway/src/integration_config.rs");
+    assert!(
+        config_rs.content.contains("pub struct PayrollSyncConfig"),
+        "gateway integration config must carry the typed point structs:\n{}",
+        config_rs.content
+    );
+
+    // 2. The compile closure: AppState (client source), the shared worker
+    //    auth middleware, the error type, and the cornucopia client
+    //    plumbing — all present in the gateway crate.
+    let app_state = find("workers/gateway/src/app_state.rs");
+    assert!(
+        app_state
+            .content
+            .contains("pub client_source: Arc<dyn ClientSource>"),
+        "gateway AppState must carry the cornucopia client source:\n{}",
+        app_state.content
+    );
+    let middleware = find("workers/gateway/src/middleware.rs");
+    assert!(
+        middleware.content.contains("pub async fn auth_middleware"),
+        "gateway must carry the shared worker auth middleware:\n{}",
+        middleware.content
+    );
+    find("workers/gateway/src/error.rs");
+    let db_client = find("workers/gateway/src/db_client.rs");
+    assert!(
+        db_client.content.contains("pub trait ClientSource"),
+        "gateway must carry the cornucopia client plumbing:\n{}",
+        db_client.content
+    );
+
+    // 3. The gateway lib declares the modules; the native bin declares its
+    //    own copies (worker-crate convention).
+    let lib = find("workers/gateway/src/lib.rs");
+    for module in [
+        "app_state",
+        "db_client",
+        "error",
+        "integration_catalog",
+        "integration_config",
+        "integration_router",
+        "middleware",
+    ] {
+        assert!(
+            lib.content.contains(&format!("pub mod {module};")),
+            "gateway lib must declare `pub mod {module};`:\n{}",
+            lib.content
+        );
+    }
+    let gateway_main = find("workers/gateway/src/main.rs");
+    for module in ["app_state", "db_client", "integration_router", "middleware"] {
+        assert!(
+            gateway_main.content.contains(&format!("mod {module};")),
+            "gateway main must declare `mod {module};`:\n{}",
+            gateway_main.content
+        );
+    }
+
+    // 4. The gateway router MERGES the catalog router behind the auth
+    //    middleware — wasm fetch and the native dev twin both mount it.
+    let worker = find("workers/gateway/src/worker.rs");
+    assert!(
+        worker
+            .content
+            .contains("crate::integration_router::integration_router()"),
+        "gateway wasm router must mount the catalog router:\n{}",
+        worker.content
+    );
+    assert!(
+        worker
+            .content
+            .contains("integration_state.clone(), crate::middleware::auth_middleware"),
+        "gateway catalog routes must sit behind the auth middleware:\n{}",
+        worker.content
+    );
+    assert!(
+        gateway_main
+            .content
+            .contains("crate::integration_router::integration_router()"),
+        "gateway native router must mount the catalog router:\n{}",
+        gateway_main.content
+    );
+
+    // 5. The Cargo graphs compile it: the gateway crate carries the
+    //    cornucopia/auth deps (workspace entries exist for the domain
+    //    workers already).
+    let cargo = find("workers/gateway/Cargo.toml");
+    for dep in [
+        "cornucopia-queries",
+        "tokio-postgres",
+        "jsonwebtoken",
+        "async-trait",
+    ] {
+        assert!(
+            cargo.content.contains(dep),
+            "gateway Cargo.toml must carry `{dep}`:\n{}",
+            cargo.content
+        );
+    }
+    let workspace = find("workers/Cargo.toml");
+    assert!(
+        workspace.content.contains("tokio-postgres"),
+        "workers workspace manifest must carry the cornucopia deps:\n{}",
+        workspace.content
+    );
+
+    // 6. wrangler carries the platform DB binding + the auth vars.
+    let wrangler = find("workers/gateway/wrangler.toml");
+    assert!(
+        wrangler.content.contains("binding = \"PLATFORM_DB\""),
+        "gateway wrangler must declare the PLATFORM_DB hyperdrive binding:\n{}",
+        wrangler.content
+    );
+    assert!(
+        wrangler.content.contains("SUPABASE_JWT_SECRET"),
+        "gateway wrangler must declare the auth vars:\n{}",
+        wrangler.content
+    );
+}
+
+/// Flag-off byte-identity (issue #521): without `--extension-points` the
+/// workers gateway stays EXACTLY the thin proxy it was — no catalog files,
+/// no platform modules, no DB/auth deps, no hyperdrive binding. Same
+/// fixture as the mount test (cornucopia + workers topology), flag off.
+#[tokio::test]
+async fn workers_topology_without_extension_points_keeps_gateway_clean() {
+    let (mock, config, tera, output_dir) = workers_scaffold_test_setup();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    let project = codegraph::generate::ProjectConfig {
+        database: codegraph::generate::DatabaseConfig {
+            database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+            persistence_provider: codegraph::profile::PersistenceProvider::Cornucopia,
+        },
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
+        ..Default::default()
+    };
+
+    let plan = BuildPlan {
+        entity_generators: vec![
+            "ddl".to_string(),
+            "sea_orm_entity".to_string(),
+            "handler".to_string(),
+            "dto".to_string(),
+            "repository".to_string(),
+            "command".to_string(),
+            "query".to_string(),
+        ],
+        domain_generators: vec![
+            "errors".to_string(),
+            "router".to_string(),
+            "links".to_string(),
+        ],
+        global_generators: vec![
+            "worker_scaffold".to_string(),
+            "scaffold".to_string(),
+            // The integration generators are still PLANned — the presence
+            // gate is the parsed --extension-points config (registry side),
+            // so a flag-off run must stay byte-identical even with them
+            // listed.
+            "integration_tables".to_string(),
+            "integration_config".to_string(),
+            "integration_dispatch".to_string(),
+            "integration_catalog".to_string(),
+        ],
+        post_gen_scripts: vec![],
+        ifml_frameworks: vec![],
+        template_pack_path: None,
+        database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+        has_atproto: false,
+        atproto_tenancy: "shared_pds".to_string(),
+        has_fern: false,
+        has_emdash: false,
+        fern_sdk_languages: vec!["typescript".to_string()],
+        persistence_provider: codegraph::profile::PersistenceProvider::Cornucopia,
+        dto_key_casing: "snake".to_string(),
+        deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
+        namespace_layout: false,
+        ux_rules: false,
+        expr_ir: false,
+        ifml_e2e_auth: false,
+        testid_module: false,
+        structural_gates: false,
+        public_operations_rls: false,
+        features: toml::Table::new(),
+    };
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+
+    // No integration file lands anywhere in the tree — not at the root (the
+    // pre-#521 dead output), not in the gateway crate.
+    let offenders: Vec<String> = report
+        .files
+        .iter()
+        .filter(|f| {
+            let path = f.path.to_string_lossy();
+            path.ends_with("integration_catalog.rs")
+                || path.ends_with("integration_router.rs")
+                || path.ends_with("integration_config.rs")
+                || path.ends_with("integration_dispatch.rs")
+        })
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "flag-off run must emit no integration plane files, found: {offenders:?}"
+    );
+
+    let find = |needle: &str| {
+        report
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with(needle))
+            .unwrap_or_else(|| panic!("missing generated file: {needle}"))
+    };
+
+    // The gateway stays the thin proxy: no platform modules, no mount, no
+    // DB/auth deps, no hyperdrive binding.
+    for forbidden in [
+        "workers/gateway/src/app_state.rs",
+        "workers/gateway/src/db_client.rs",
+        "workers/gateway/src/middleware.rs",
+    ] {
+        assert!(
+            !report
+                .files
+                .iter()
+                .any(|f| f.path.to_string_lossy().ends_with(forbidden)),
+            "flag-off gateway must not emit {forbidden}"
+        );
+    }
+    let lib = find("workers/gateway/src/lib.rs");
+    assert!(
+        !lib.content.contains("integration_") && !lib.content.contains("mod middleware;"),
+        "flag-off gateway lib must stay the thin proxy:\n{}",
+        lib.content
+    );
+    let worker = find("workers/gateway/src/worker.rs");
+    assert!(
+        !worker.content.contains("integration_router"),
+        "flag-off gateway router must not mount the catalog:\n{}",
+        worker.content
+    );
+    let gateway_main = find("workers/gateway/src/main.rs");
+    assert!(
+        !gateway_main.content.contains("integration_router"),
+        "flag-off gateway main must not mount the catalog:\n{}",
+        gateway_main.content
+    );
+    let cargo = find("workers/gateway/Cargo.toml");
+    assert!(
+        !cargo.content.contains("cornucopia-queries") && !cargo.content.contains("jsonwebtoken"),
+        "flag-off gateway Cargo must stay dependency-lean:\n{}",
+        cargo.content
+    );
+    let wrangler = find("workers/gateway/wrangler.toml");
+    assert!(
+        !wrangler.content.contains("PLATFORM_DB") && !wrangler.content.contains("hyperdrive"),
+        "flag-off gateway wrangler must stay proxy-only:\n{}",
+        wrangler.content
+    );
+}
+
+/// Monolith topology + extension points (issue #521, "monolith mounting
+/// likewise"): the generated catalog surface compiles (main declares the
+/// modules — including `integration_dispatch`, whose absence was a pre-#521
+/// E0433 with extension points on) and `server` merges the catalog router
+/// behind the monolith auth middleware. Flag-off keeps the stub-only shape.
+#[tokio::test]
+async fn monolith_declares_and_mounts_integration_catalog() {
+    let (mock, config, tera, output_dir) = workers_scaffold_test_setup();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    let ext = codegraph_ext_points::parse_extension_points_str(
+        r#"
+[payroll-sync]
+name = "Payroll Sync"
+description = "Synchronise pay data"
+cardinality = "exclusive"
+entities = ["compensation.pay_run"]
+directions = ["push"]
+"#,
+    )
+    .unwrap();
+
+    let project = codegraph::generate::ProjectConfig {
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        },
+        integration: codegraph::generate::IntegrationFlags {
+            has_extension_points: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let plan = BuildPlan {
+        entity_generators: vec![
+            "ddl".to_string(),
+            "sea_orm_entity".to_string(),
+            "handler".to_string(),
+            "dto".to_string(),
+            "repository".to_string(),
+            "command".to_string(),
+            "query".to_string(),
+        ],
+        domain_generators: vec![
+            "errors".to_string(),
+            "router".to_string(),
+            "links".to_string(),
+        ],
+        global_generators: vec![
+            "scaffold".to_string(),
+            "integration_tables".to_string(),
+            "integration_config".to_string(),
+            "integration_dispatch".to_string(),
+            "integration_catalog".to_string(),
+        ],
+        post_gen_scripts: vec![],
+        ifml_frameworks: vec![],
+        template_pack_path: None,
+        database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+        has_atproto: false,
+        atproto_tenancy: "shared_pds".to_string(),
+        has_fern: false,
+        has_emdash: false,
+        fern_sdk_languages: vec!["typescript".to_string()],
+        persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        dto_key_casing: "snake".to_string(),
+        deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
+        namespace_layout: false,
+        ux_rules: false,
+        expr_ir: false,
+        ifml_e2e_auth: false,
+        testid_module: false,
+        structural_gates: false,
+        public_operations_rls: false,
+        features: toml::Table::new(),
+    };
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: Some(&ext),
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+
+    let find = |needle: &str| {
+        report
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with(needle))
+            .unwrap_or_else(|| panic!("missing generated file: {needle}"))
+    };
+
+    // The catalog plane lands at the monolith root (SeaORM handler variant).
+    let catalog = find("src/integration_catalog.rs");
+    assert!(
+        catalog.content.contains("query_all_raw"),
+        "monolith catalog handlers stay the SeaORM variant:\n{}",
+        catalog.content
+    );
+    find("src/integration_router.rs");
+    find("src/integration_config.rs");
+
+    // main declares every integration module (both the admin-CLI and the
+    // plain binary branches render the same block).
+    let main = find("src/main.rs");
+    for module in [
+        "integration_dispatch",
+        "integration_catalog",
+        "integration_router",
+        "integration_config",
+    ] {
+        assert!(
+            main.content.contains(&format!("mod {module};")),
+            "monolith main must declare `mod {module};`:\n{}",
+            main.content
+        );
+    }
+
+    // server merges the generated router behind the monolith auth
+    // middleware (full paths inside the router forbid nesting under
+    // /api/{version}).
+    let server = find("src/server.rs");
+    assert!(
+        server
+            .content
+            .contains("crate::integration_router::integration_router()"),
+        "monolith server must mount the catalog router:\n{}",
+        server.content
+    );
+    assert!(
+        server
+            .content
+            .contains("from_fn_with_state(\n                    state.clone(),\n                    crate::middleware::auth_middleware,\n                )"),
+        "monolith catalog routes must sit behind the auth middleware:\n{}",
+        server.content
+    );
+
+    // lib re-exports the modules for integration tests.
+    let lib = find("src/lib.rs");
+    assert!(
+        lib.content.contains("pub mod integration_catalog;")
+            && lib.content.contains("pub mod integration_router;")
+            && lib.content.contains("pub mod integration_config;"),
+        "monolith lib must re-export the catalog modules:\n{}",
+        lib.content
+    );
+
+    // The inert status stub stays untouched.
+    assert!(
+        server
+            .content
+            .contains("crate::integrations::get_integrations"),
+        "the /integrations status stub route must remain:\n{}",
+        server.content
+    );
+
+    // Flag-off pin: without extension points, none of the above.
+    let (mock2, config2, tera2, output_dir2) = workers_scaffold_test_setup();
+    let project2 = codegraph::generate::ProjectConfig {
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
+        },
+        ..Default::default()
+    };
+    let report2 =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock2,
+            config: &config2,
+            output_dir: output_dir2.path(),
+            tera: &tera2,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project2),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+    let find2 = |needle: &str| {
+        report2
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with(needle))
+            .unwrap_or_else(|| panic!("missing generated file: {needle}"))
+    };
+    assert!(
+        !report2.files.iter().any(|f| f
+            .path
+            .to_string_lossy()
+            .ends_with("src/integration_catalog.rs")),
+        "flag-off monolith must emit no catalog surface"
+    );
+    let main2 = find2("src/main.rs");
+    assert!(
+        !main2.content.contains("mod integration_"),
+        "flag-off monolith main must declare no integration modules:\n{}",
+        main2.content
+    );
+    let server2 = find2("src/server.rs");
+    assert!(
+        !server2.content.contains("integration_router"),
+        "flag-off monolith server must not mount the catalog:\n{}",
+        server2.content
+    );
+}

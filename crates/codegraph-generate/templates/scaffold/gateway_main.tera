@@ -5,6 +5,14 @@
 
 mod cors;
 mod worker;
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}mod app_state;
+mod db_client;
+mod error;
+mod integration_catalog;
+mod integration_router;
+mod integration_config;
+mod middleware;
+{% endif %}
 
 #[cfg(feature = "native")]
 mod gateway_native {
@@ -162,6 +170,32 @@ mod gateway_native {
         if !cors.enabled() {
             tracing::warn!("CORS_ALLOWED_ORIGINS not set — CORS disabled (no cross-origin requests allowed). Set CORS_ALLOWED_ORIGINS=* to allow all.");
         }
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+        // Integration catalog AppState (issue #521): the gateway serves the
+        // platform-level catalog/installations API directly in dev too,
+        // through a deadpool-backed cornucopia client source.
+        let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+            "DATABASE_URL environment variable is required for the integration catalog surface (e.g. postgres://user:pass@localhost:5432/postgres)"
+        })?;
+        let jwt_secret = std::env::var("SUPABASE_JWT_SECRET")
+            .or_else(|_| std::env::var("JWT_SECRET"))
+            .unwrap_or_else(|_| "dev-jwt-secret".to_string());
+        let supabase_url = std::env::var("SUPABASE_URL")
+            .or_else(|_| std::env::var("PUBLIC_SUPABASE_URL"))
+            .ok();
+        let pool_cfg: tokio_postgres::Config = database_url.parse()?;
+        let pool = deadpool_postgres::Pool::builder(deadpool_postgres::Manager::new(
+            pool_cfg,
+            tokio_postgres::NoTls,
+        ))
+        .build()?;
+        let integration_state = crate::app_state::AppState::new(
+            std::sync::Arc::new(crate::db_client::DeadpoolClientSource::new(pool)),
+            crate::db_client::DbConnectionParams::from_connection_string(&database_url)?,
+            jwt_secret,
+            supabase_url,
+        );
+{% endif %}
         let app = Router::new()
             .route("/version", axum::routing::get(version))
             .route("/health", axum::routing::get(health))
@@ -170,6 +204,19 @@ mod gateway_native {
                 "/api/v1/{domain}/{*path}",
                 axum::routing::any(forward),
             )
+{% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
+            // The catalog routes ride the shared worker auth middleware;
+            // static segments win over the `{domain}` catch-all above, so
+            // `/api/v1/{version}/integrations/*` resolves here (issue #521).
+            .merge(
+                crate::integration_router::integration_router()
+                    .layer(axum::middleware::from_fn_with_state(
+                        integration_state.clone(),
+                        crate::middleware::auth_middleware,
+                    ))
+                    .with_state(integration_state),
+            )
+{% endif %}
             .layer(axum::middleware::from_fn(
                 move |req: axum::extract::Request, next: axum::middleware::Next| {
                     let cors = cors.clone();

@@ -262,8 +262,13 @@ impl {{ entity_name }}CommandHandler {
         {% if project.hooks_api_crate %}
         // --- before_create hook ---
         if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
             let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
-                &crate::hook_adapters::HookTxAdapter(&tx),
+                &tx_adapter,
                 correlation_id, organization_id, api_key_id, source,
             );
             match hooks.before_create(&mut ctx, &cmd).await {
@@ -308,8 +313,13 @@ impl {{ entity_name }}CommandHandler {
         {% if project.hooks_api_crate %}
         // --- after_create_tx hook ---
         if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
             let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
-                &crate::hook_adapters::HookTxAdapter(&tx),
+                &tx_adapter,
                 correlation_id, organization_id, api_key_id, source,
             );
             match hooks.after_create_tx(&mut ctx, id).await {
@@ -368,8 +378,13 @@ impl {{ entity_name }}CommandHandler {
         {% if project.hooks_api_crate %}
         // --- before_update hook ---
         if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
             let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
-                &crate::hook_adapters::HookTxAdapter(&tx),
+                &tx_adapter,
                 correlation_id, organization_id, api_key_id, &source,
             );
             match hooks.before_update(&mut ctx, id, &cmd).await {
@@ -399,8 +414,13 @@ impl {{ entity_name }}CommandHandler {
         {% if project.hooks_api_crate %}
         // --- after_update_tx hook ---
         if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
             let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
-                &crate::hook_adapters::HookTxAdapter(&tx),
+                &tx_adapter,
                 correlation_id, organization_id, api_key_id, &source,
             );
             match hooks.after_update_tx(&mut ctx, id).await {
@@ -459,8 +479,13 @@ impl {{ entity_name }}CommandHandler {
         {% if project.hooks_api_crate %}
         // --- before_delete hook ---
         if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
             let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
-                &crate::hook_adapters::HookTxAdapter(&tx),
+                &tx_adapter,
                 correlation_id, organization_id, api_key_id, &source,
             );
             match hooks.before_delete(&mut ctx, id).await {
@@ -490,8 +515,13 @@ impl {{ entity_name }}CommandHandler {
         {% if project.hooks_api_crate %}
         // --- after_delete_tx hook ---
         if let Some(hooks) = &self.hooks {
+            // Bind the adapter to a local first — `&HookTxAdapter(&tx)` as a
+            // call argument drops the temporary at the end of the statement
+            // while `ctx` still borrows it (E0716; caught by the #518
+            // hooks runtime pin — this site never compiled as a one-liner).
+            let tx_adapter = crate::hook_adapters::HookTxAdapter(&tx);
             let mut ctx = {{ project.hooks_api_crate }}::generated::types::TxContext::new(
-                &crate::hook_adapters::HookTxAdapter(&tx),
+                &tx_adapter,
                 correlation_id, organization_id, api_key_id, &source,
             );
             match hooks.after_delete_tx(&mut ctx, id).await {

@@ -355,13 +355,66 @@ generators become model-driven; `--evt-files` also rides `codegraph doctor`
   contract: no `.evt` ⇒ no `src/events/` and byte-identical common tree
   modulo the gated webhook files + module index). Flag-off byte-identity
   is pinned in-crate by `src/evt_golden/*` (dispatch/api_endpoints/lib/
-  cargo_toml) + `src/events/pgmq_setup_pre_evt_template.rs` + the canaries.
-- **Deferred**: CloudEvents envelope variant; delivery-policy DSL syntax
-  (upstream rexlang #31 slice 2); deployment-profile transport bindings
-  (#455 §13); full Connector SPI (#455 §14); workers-topology per-channel
-  drain (monolith-first this PR — per-domain worker drains only read
-  `events_{domain}`); publisher/aggregate binding + event domain
-  attribution (rexlang issue drafts, see below); LSP for `.evt`.
+  cargo_toml/consumers/emit) + `src/events/pgmq_setup_pre_evt_template.rs`
+  + the canaries.
+
+### Events under workers + the persistence-agnostic plane (issue #505)
+
+The events plane compiles and drains in the workers topology — the
+queue-backed answer to the push plane's fire-and-forget event loss (the
+IRB filing flow gets at-least-once delivery, not "eventually, with
+reconciliation").
+
+- **Leg 1 — un-SeaORM**: `events/consumers.tera` + `events/emit.tera` are
+  provider-parameterized. The sea_orm branch is byte-identical to
+  pre-#505 (pinned by `evt_golden/{consumers,emit}_pre_workers.rs` canaries);
+  the cornucopia branch types the plane on the persistence-agnostic
+  handle — `{Consumer}Context { db: &DbClient }`, `dispatch_registered(
+  source: &dyn ClientSource, envelope)` acquiring one client per consumer
+  dispatch, publish parameterized over `pgmq.send($1, $2)` (the sea_orm
+  escaping workaround is gone there), and **idempotent** `register_*`
+  (worker isolates may re-run bootstrap per request). Worker crates carry
+  no sea_orm on wasm32 — this is what makes the plane compile there.
+- **Leg 2 — placement** (`events/placement.rs`): the soundness invariant
+  is that a pgmq delete is queue-global while the registry is
+  process-local, so every queue gets EXACTLY ONE draining worker hosting
+  ALL its consumers. Ownership resolves name → payload-domain (the
+  derived `EventDefinition.domain`; all-primitive events don't vote) →
+  `.deploy` queue-component `connects` edge → **hard `Error::Config`**
+  naming the channel, the ambiguous candidates, and the deploy fix.
+  Consumers ride queue owners (a consumer subscribing to events on two
+  queues compiles into both owners; dispatch filters by event name).
+  Inert without `.evt`.
+- **Emission**: `EvtEventsGenerator::with_workers_topology` (set from
+  `ctx.workers_topology` in the registry) emits
+  `workers/{domain}/src/events/{mod,contracts,emit,consumers}.rs` per
+  queue-owning worker — contracts/emit are full per-worker copies
+  (publish fns carry ALL bound channels: producers are un-attributed app
+  code), consumers only the placed ones. The output-root `src/events/`
+  is NOT emitted under workers (it was dead output there). Non-cornucopia
+  workers + `.evt` warns once and emits nothing.
+- **Worker wiring**: `WorkerDomain.has_events`/`extra_event_queues` gate
+  `pub mod events;` (worker_lib/main), the scheduled handler (the drain
+  cron auto-adds like webhooks), the native `WebhookDispatcher` spawn,
+  the gated `anyhow` dep, and the dispatch module itself (emitted when
+  `has_webhooks || has_events` — it is the drain home for both planes;
+  wrangler queue blocks stay has_webhooks-gated). The drain's delete
+  condition becomes `all jobs dispatched && typed_failures == 0` —
+  trigger envelopes carry no `event` key and dispatch zero consumers, so
+  they delete as before. At-least-once: vt 30s < cron 60s ⇒ consumers
+  must be idempotent. The dispatch cycle runs once per owned queue
+  (own trigger queue + assigned channels).
+- **Gates**: `cargo test -p codegraph --test evt_workers_tests` (the
+  workers leg + flag-off byte-identity over the worker tree, node-free)
+  and the in-crate placement unit tests (`events::placement::tests`).
+- **Deferred**: `Transport::CloudflareQueues` (issue #543); Leg 3 hooks
+  contract retirement (issue #505); CloudEvents envelope variant;
+  delivery-policy DSL syntax (upstream rexlang #31 slice 2);
+  deployment-profile transport bindings (#455 §13); full Connector SPI
+  (#455 §14); publisher/aggregate binding + event domain attribution
+  (rexlang issue drafts, see below); webhook `DECLARED` vocabulary
+  validation parity in the cornucopia worker variant; DLQ policy for
+  permanently failing consumers; LSP for `.evt`.
 
 ## Deployment models as generator input (rexlang #49)
 
@@ -1317,6 +1370,7 @@ cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 # Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
 cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
+cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture  # #518: the generated cornucopia create path fires hooks + Abort rolls back over real Postgres
 cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
 # Full pipeline integration (requires protoc)
@@ -2235,8 +2289,68 @@ see this class.
   MAC check + 5-minute replay window, `EVENT_SIGNATURE_MAX_AGE_SECS`).
   Deliberately exceeds the webhook plane's precedent, whose timestamp
   header is unsigned; the webhook plane is untouched.
-- Gate: `cargo test -p codegraph --test extension_points_tests` (6,
-  node-free) + `doctor_validates_extension_points` in `init_tests`.
+- Gate: `cargo test -p codegraph --test extension_points_tests` (7,
+  node-free) + `doctor_validates_extension_points` in `init_tests`. The
+  signing construction carries a computed known-answer vector (#518):
+  `event_signature_computed_vector_and_verify_round_trip` extracts the
+  rendered `event_signature`/`verify_event_signature` into a scratch
+  crate and executes them against a python-pinned HMAC hex plus the
+  verify round-trip and the replay-window rejections (stale > 300s,
+  future > 60s, tampered body, wrong timestamp, missing `sha256=` prefix,
+  malformed hex).
+
+### Catalog/installations API mounting (issue #521)
+
+The catalog/installations API is MOUNTED, not just emitted:
+
+- **Workers topology — the gateway is the host**: `integration_catalog` /
+  `integration_config` emit into `workers/gateway/src/` (the cornucopia
+  handler variant `integration/catalog_handler_cornucopia.tera` — raw SQL
+  over the per-request `GenericClient`, `set_config('app.organization_id')`
+  RLS scoping so the `platform_integrations` policies bind; workers topology
+  compiles no root `src/` tree, so root-only emission was dead output). The
+  gateway router (`gateway.tera` wasm + `gateway_main.tera` native) merges
+  `integration_router()` behind the shared worker auth middleware — static
+  segments win over the `/api/v1/{domain}/{*path}` catch-all, so
+  `/api/v1/{version}/integrations/*` resolves locally, everything else still
+  forwards. The gateway gains a LEAN AppState (`client_source`, `db_params`,
+  `jwt_secret`, `supabase_url` — `gateway_app_state.tera`) plus the shared
+  `middleware.rs`/`error.rs`/`db_client.rs` compile closure; it NEVER
+  depends on the hooks-api crate (shared templates render with
+  `hooks_api_crate` stripped). Cargo: cornucopia/auth deps gated on
+  ext-points + cornucopia provider, `native` enables
+  `cornucopia-queries/deadpool`, `cloudflare-worker` enables
+  `worker/tokio-postgres` + `cornucopia-queries/wasm-async`. wrangler: a
+  `[[hyperdrive]] binding = "PLATFORM_DB"` block + monolith-parity auth
+  `[vars]` (`SUPABASE_JWT_SECRET`/`JWT_SECRET`/`SUPABASE_URL`/`DATABASE_URL`).
+- **Monolith — mounted likewise**: `main.tera` declares
+  `mod integration_{dispatch,catalog,router,config};` (both admin-CLI and
+  plain branches — `mod integration_dispatch;` was missing entirely, an
+  E0433 with extension points on), `server.tera` merges
+  `crate::integration_router::integration_router()` at the ROOT (the router
+  declares full `/api/{version}/integrations/…` paths, so it cannot nest
+  under `/api/{version}`) behind the monolith auth middleware, and `lib.tera`
+  re-exports the modules. The inert `/integrations` status stub stays.
+  `InstallRequest` carries `#[derive(utoipa::ToSchema)]` so the
+  `#[utoipa::path(request_body = …)]` attrs compile now that the modules
+  actually do.
+- **Presence gating**: no `--extension-points` ⇒ no catalog files anywhere,
+  gateway stays the byte-identical thin proxy (no platform modules, no DB
+  deps, no hyperdrive block). The registry constructs the four integration
+  generators only when the parsed config is present — flag-off is inert even
+  with them plan-listed.
+- **Deferred**: settings validation of `installation_settings` against the
+  typed `{Point}Config` structs (both handler variants take raw JSON);
+  openapi/hurl coverage of the mounted routes; wasm32 compile leg of the
+  gateway catalog (workerd parity run); signing-secret provisioning endpoint
+  (#511 assumes this API can set it).
+- Gates: `workers_topology_mounts_integration_catalog_router`,
+  `workers_topology_without_extension_points_keeps_gateway_clean`,
+  `monolith_declares_and_mounts_integration_catalog`
+  (`--test profile_smoke_tests`, node-free) + `--test
+  workers_gateway_compile_tests -- --ignored` (cargo-checks the generated
+  gateway crate against a stub `cornucopia-queries` — no live DB needed;
+  ops-integration/nightly lane).
 
 ### Hooks parity under workers (issue #509 — the #502 refusal retired)
 
@@ -2274,6 +2388,28 @@ Hyperdrive wasm32).
   template pins in `template_harness/command_query.rs`
   (`cornucopia_command_keeps_all_hooks_without_wasm_gates` — tx + post-commit
   sites present, adapter construction, zero wasm gates; `sea_orm_command_keeps_transactional_hooks`).
+- **Runtime pins + the never-compiled fix (issue #518)**: the #518 hooks
+  runtime test exposed that the #509 command.tera rework NEVER COMPILED —
+  `TxContext::new(&HookTxAdapter(&tx), …)` drops the adapter temporary at
+  the statement end while the context still borrows it (E0716), and
+  `native(&self) -> &dyn Any` cannot return a borrowed-generic `self`
+  (object default is `+ 'static`). Fixed: command.tera binds
+  `let tx_adapter = HookTxAdapter(&tx);` before every `TxContext::new`
+  (all six sites, both providers), and the `HookTx`/`HookConnSource`
+  traits plus their adapters/forwarders return `&(dyn Any + '_)` —
+  every touched block is hooks-gated, so flag-off output is byte-identical
+  (canaries re-verified). The runtime pin
+  (`hooks_cornucopia_runtime_tests -- --ignored`, Postgres via
+  `DATABASE_URL`) assembles the generated command path VERBATIM
+  (`command.rs`, `hook_adapters.rs`, `db_client.rs`, hooks `generated`
+  tree, repository trait/DTOs) over the runtime-capable cornucopia-queries
+  stub (now shared as `tests/test_framework/cornucopia_queries_stub.rs`)
+  plus ONE hand-written repository stand-in (same type/method shape, real
+  INSERT via `GenericClient` — the repo plane has its own pins), then runs
+  against real Postgres: `hook_fires_on_create_under_cornucopia` (hook
+  observes + SQL on the OPEN tx, post-commit marker on a fresh connection,
+  row lands) and `abort_rolls_back_under_cornucopia` (Conflict + row AND
+  marker absent). Wired into the `test-ops-integration` CI job.
 
 ### Per-domain worker config (domains.toml)
 

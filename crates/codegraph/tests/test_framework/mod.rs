@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod axum_server;
+pub mod cornucopia_queries_stub;
 pub mod extras;
 pub mod node_project;
 pub mod normalize;
