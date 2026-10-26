@@ -22,6 +22,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use codegraph_ext_points::parse_extension_points_str;
 
@@ -356,6 +357,168 @@ fn dispatcher_signs_events_with_the_installation_secret_on_both_legs() {
             "wasm leg must set the signature header:\n{wasm}"
         );
     }
+}
+
+// ── HMAC known-answer vector (issue #518, the #511 mandate) ──
+
+/// Extract the source span from `start_marker` through the closing brace
+/// of the enclosing function (brace-counted, provider-independent).
+fn extract_fn_span(source: &str, start_marker: &str) -> String {
+    let start = source
+        .find(start_marker)
+        .unwrap_or_else(|| panic!("dispatcher must carry `{start_marker}`"));
+    let open = start
+        + source[start..]
+            .find('{')
+            .unwrap_or_else(|| panic!("`{start_marker}` must open a body"));
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    for (i, b) in bytes[open..].iter().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return source[start..=open + i].to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("`{start_marker}` body never closes");
+}
+
+/// Issue #518 (the #511 mandate): the signing wire construction is a
+/// CONTRACT — `"{timestamp}.{body}"` with the literal dot, the
+/// `sha256=` hex prefix, the ±replay window — so the rendered
+/// `event_signature` / `verify_event_signature` functions are extracted
+/// VERBATIM from the dispatcher output, compiled into a scratch crate,
+/// and executed against a known-answer vector pinned from an independent
+/// HMAC-SHA256 implementation (python stdlib), plus the verify round-trip
+/// and the replay-window rejections. The existing containment pin above
+/// asserts the calls exist; THIS pin asserts they compute the right bytes.
+#[test]
+fn event_signature_computed_vector_and_verify_round_trip() {
+    let dispatcher = render_dispatcher("sea_orm");
+
+    // The replay-window const rides the contract (301s stale ⇒ rejected).
+    let const_start = dispatcher
+        .find("pub const EVENT_SIGNATURE_MAX_AGE_SECS")
+        .expect("dispatcher must declare EVENT_SIGNATURE_MAX_AGE_SECS");
+    let const_end = const_start
+        + dispatcher[const_start..]
+            .find(';')
+            .expect("const declaration must terminate");
+    let window_const = dispatcher[const_start..=const_end].to_string();
+    let signature_fn = extract_fn_span(&dispatcher, "fn event_signature(");
+    let verify_fn = extract_fn_span(&dispatcher, "pub fn verify_event_signature(");
+
+    let scratch = tempfile::tempdir().unwrap();
+    fs::write(
+        scratch.path().join("Cargo.toml"),
+        // Same crate pins the generated app declares (cargo_toml.tera).
+        r#"[package]
+name = "event-signature-kat"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "kat.rs"
+
+[dependencies]
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+"#,
+    )
+    .unwrap();
+
+    let kat_source = r##"//! Known-answer vector for the dispatcher signing contract (issue #518).
+//! The signing functions below are extracted VERBATIM from the rendered
+//! `integration/dispatcher.tera` output.
+
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+@WINDOW_CONST@
+
+@SIGNATURE_FN@
+
+@VERIFY_FN@
+
+#[cfg(test)]
+mod known_answer {
+    use super::*;
+
+    const SECRET: &str = "test-secret";
+    const TS: i64 = 1_717_171_717;
+    const BODY: &[u8] = br#"{"event":"recruiting.candidate.created","entity_id":"01933e2c-0000-7000-8000-000000000001"}"#;
+    /// Pinned from an independent HMAC-SHA256 implementation:
+    /// python3 hmac.new(b"test-secret", b"1717171717." + BODY, hashlib.sha256).
+    const EXPECTED: &str = "sha256=225f3684afa5f13827f89e01ac4efcd299a6b4252c55e7d1bd28e6784acd045b";
+
+    #[test]
+    fn known_answer_vector() {
+        assert_eq!(event_signature(SECRET, TS, BODY), EXPECTED);
+    }
+
+    #[test]
+    fn verify_round_trip_accepts_fresh_and_boundary_ages() {
+        let sig = event_signature(SECRET, TS, BODY);
+        assert_eq!(verify_event_signature(SECRET, TS, BODY, &sig, TS), Ok(()));
+        assert_eq!(
+            verify_event_signature(SECRET, TS, BODY, &sig, TS + EVENT_SIGNATURE_MAX_AGE_SECS),
+            Ok(())
+        );
+        assert_eq!(verify_event_signature(SECRET, TS, BODY, &sig, TS - 60), Ok(()));
+    }
+
+    #[test]
+    fn verify_rejects_stale_future_tampered_and_malformed() {
+        let sig = event_signature(SECRET, TS, BODY);
+        // Stale beyond the 5-minute window.
+        assert!(verify_event_signature(
+            SECRET, TS, BODY, &sig, TS + EVENT_SIGNATURE_MAX_AGE_SECS + 1
+        )
+        .is_err());
+        // More than 60s in the future.
+        assert!(verify_event_signature(SECRET, TS, BODY, &sig, TS - 61).is_err());
+        // Tampered body (the MAC covers the exact bytes).
+        assert!(verify_event_signature(SECRET, TS, b"tampered", &sig, TS).is_err());
+        // Wrong secret.
+        assert!(verify_event_signature("other-secret", TS, BODY, &sig, TS).is_err());
+        // Wrong timestamp (the timestamp is INSIDE the MAC).
+        assert!(verify_event_signature(SECRET, TS + 1, BODY, &sig, TS + 1).is_err());
+        // Missing the sha256= prefix.
+        let bare = sig.trim_start_matches("sha256=");
+        assert!(verify_event_signature(SECRET, TS, BODY, bare, TS).is_err());
+        // Malformed hex.
+        assert!(verify_event_signature(SECRET, TS, BODY, "sha256=zz", TS).is_err());
+    }
+}
+"##
+    .replace("@WINDOW_CONST@", &window_const)
+    .replace("@SIGNATURE_FN@", &signature_fn)
+    .replace("@VERIFY_FN@", &verify_fn);
+    fs::write(scratch.path().join("kat.rs"), kat_source).unwrap();
+
+    let out = Command::new("cargo")
+        .arg("test")
+        .arg("--manifest-path")
+        .arg(scratch.path().join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", scratch.path().join("target"))
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("cargo test must run for the signing KAT scratch crate");
+    assert!(
+        out.status.success(),
+        "the extracted signing functions must satisfy the known-answer vector:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
 }
 
 /// The installations table carries the nullable signing_secret column —
