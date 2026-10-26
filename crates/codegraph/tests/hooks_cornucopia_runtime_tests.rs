@@ -636,6 +636,11 @@ CREATE TABLE rsvp.hook_marker (
     entity_id uuid PRIMARY KEY
 );
 DO $$ BEGIN
+    -- The role is CLUSTER-wide while the two scratch tests run in parallel
+    -- (separate databases) — serialize the check-then-create with a
+    -- transaction advisory lock so concurrent runs cannot collide on
+    -- pg_authid's rolname unique index.
+    PERFORM pg_advisory_xact_lock(718509224);
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'app_user') THEN
         CREATE ROLE app_user NOLOGIN;
     END IF;
