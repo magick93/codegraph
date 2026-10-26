@@ -94,3 +94,5 @@ jobs:
         run: cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture
       - name: Run ops generator tests
         run: cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture
+      - name: Wrapper compile gate (issue #348)
+        run: cargo test -p codegraph --test wrapper_compile_tests -- --ignored --nocapture
