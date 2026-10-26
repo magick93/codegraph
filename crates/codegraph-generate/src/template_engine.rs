@@ -7,6 +7,16 @@ use crate::error::{Error, Result};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_templates.rs"));
 
+/// Content hash (FNV-1a, 16 hex) of the built-in `templates/project/`
+/// category at build time (issue #348) — the single source of truth for
+/// "which templates rendered this scaffold". Stamped into every
+/// `codegraph init` wrapper (`CODEGRAPH_TEMPLATE_REV` const); doctor
+/// compares it against the live value to flag wrappers rendered by
+/// different templates.
+pub fn project_template_rev() -> &'static str {
+    env!("CODEGRAPH_TEMPLATE_REV")
+}
+
 pub(crate) fn register_filters(tera: &mut Tera) {
     tera.register_filter("snake_case", snake_case_filter);
     tera.register_filter("upper_camel", upper_camel_filter);

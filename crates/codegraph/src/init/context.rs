@@ -43,6 +43,11 @@ pub struct ProjectTemplateContext {
     /// `{ codegraph_path }/crates/...` path dependencies instead of git+rev.
     /// Rendered verbatim into TOML — canonicalize before building the context.
     pub codegraph_path: Option<String>,
+    /// Content hash of the built-in project templates that rendered this
+    /// scaffold (issue #348). Stamped as `CODEGRAPH_TEMPLATE_REV` in the
+    /// wrapper main.rs; `codegraph doctor` compares it against the binary's
+    /// live hash to flag scaffolds rendered by different templates.
+    pub template_rev: String,
     pub domains: Vec<DomainSeed>,
     pub database_target: String,
     pub persistence_provider: String,
@@ -127,6 +132,7 @@ impl ProjectTemplateContext {
             graph_binary,
             codegraph_rev: codegraph_rev.to_string(),
             codegraph_path,
+            template_rev: crate::generate::template_engine::project_template_rev().to_string(),
             domains: domain_seeds,
             database_target: database_target.to_string(),
             persistence_provider: persistence_provider.to_string(),
