@@ -355,13 +355,66 @@ generators become model-driven; `--evt-files` also rides `codegraph doctor`
   contract: no `.evt` ⇒ no `src/events/` and byte-identical common tree
   modulo the gated webhook files + module index). Flag-off byte-identity
   is pinned in-crate by `src/evt_golden/*` (dispatch/api_endpoints/lib/
-  cargo_toml) + `src/events/pgmq_setup_pre_evt_template.rs` + the canaries.
-- **Deferred**: CloudEvents envelope variant; delivery-policy DSL syntax
-  (upstream rexlang #31 slice 2); deployment-profile transport bindings
-  (#455 §13); full Connector SPI (#455 §14); workers-topology per-channel
-  drain (monolith-first this PR — per-domain worker drains only read
-  `events_{domain}`); publisher/aggregate binding + event domain
-  attribution (rexlang issue drafts, see below); LSP for `.evt`.
+  cargo_toml/consumers/emit) + `src/events/pgmq_setup_pre_evt_template.rs`
+  + the canaries.
+
+### Events under workers + the persistence-agnostic plane (issue #505)
+
+The events plane compiles and drains in the workers topology — the
+queue-backed answer to the push plane's fire-and-forget event loss (the
+IRB filing flow gets at-least-once delivery, not "eventually, with
+reconciliation").
+
+- **Leg 1 — un-SeaORM**: `events/consumers.tera` + `events/emit.tera` are
+  provider-parameterized. The sea_orm branch is byte-identical to
+  pre-#505 (pinned by `evt_golden/{consumers,emit}_pre_workers.rs` canaries);
+  the cornucopia branch types the plane on the persistence-agnostic
+  handle — `{Consumer}Context { db: &DbClient }`, `dispatch_registered(
+  source: &dyn ClientSource, envelope)` acquiring one client per consumer
+  dispatch, publish parameterized over `pgmq.send($1, $2)` (the sea_orm
+  escaping workaround is gone there), and **idempotent** `register_*`
+  (worker isolates may re-run bootstrap per request). Worker crates carry
+  no sea_orm on wasm32 — this is what makes the plane compile there.
+- **Leg 2 — placement** (`events/placement.rs`): the soundness invariant
+  is that a pgmq delete is queue-global while the registry is
+  process-local, so every queue gets EXACTLY ONE draining worker hosting
+  ALL its consumers. Ownership resolves name → payload-domain (the
+  derived `EventDefinition.domain`; all-primitive events don't vote) →
+  `.deploy` queue-component `connects` edge → **hard `Error::Config`**
+  naming the channel, the ambiguous candidates, and the deploy fix.
+  Consumers ride queue owners (a consumer subscribing to events on two
+  queues compiles into both owners; dispatch filters by event name).
+  Inert without `.evt`.
+- **Emission**: `EvtEventsGenerator::with_workers_topology` (set from
+  `ctx.workers_topology` in the registry) emits
+  `workers/{domain}/src/events/{mod,contracts,emit,consumers}.rs` per
+  queue-owning worker — contracts/emit are full per-worker copies
+  (publish fns carry ALL bound channels: producers are un-attributed app
+  code), consumers only the placed ones. The output-root `src/events/`
+  is NOT emitted under workers (it was dead output there). Non-cornucopia
+  workers + `.evt` warns once and emits nothing.
+- **Worker wiring**: `WorkerDomain.has_events`/`extra_event_queues` gate
+  `pub mod events;` (worker_lib/main), the scheduled handler (the drain
+  cron auto-adds like webhooks), the native `WebhookDispatcher` spawn,
+  the gated `anyhow` dep, and the dispatch module itself (emitted when
+  `has_webhooks || has_events` — it is the drain home for both planes;
+  wrangler queue blocks stay has_webhooks-gated). The drain's delete
+  condition becomes `all jobs dispatched && typed_failures == 0` —
+  trigger envelopes carry no `event` key and dispatch zero consumers, so
+  they delete as before. At-least-once: vt 30s < cron 60s ⇒ consumers
+  must be idempotent. The dispatch cycle runs once per owned queue
+  (own trigger queue + assigned channels).
+- **Gates**: `cargo test -p codegraph --test evt_workers_tests` (the
+  workers leg + flag-off byte-identity over the worker tree, node-free)
+  and the in-crate placement unit tests (`events::placement::tests`).
+- **Deferred**: `Transport::CloudflareQueues` (issue #543); Leg 3 hooks
+  contract retirement (issue #505); CloudEvents envelope variant;
+  delivery-policy DSL syntax (upstream rexlang #31 slice 2);
+  deployment-profile transport bindings (#455 §13); full Connector SPI
+  (#455 §14); publisher/aggregate binding + event domain attribution
+  (rexlang issue drafts, see below); webhook `DECLARED` vocabulary
+  validation parity in the cornucopia worker variant; DLQ policy for
+  permanently failing consumers; LSP for `.evt`.
 
 ## Deployment models as generator input (rexlang #49)
 

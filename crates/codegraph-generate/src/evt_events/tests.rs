@@ -490,6 +490,10 @@ const API_ENDPOINTS_PRE_EVT: &str = include!("../evt_golden/api_endpoints_pre_ev
 const LIB_PRE_EVT: &str = include!("../evt_golden/lib_pre_evt.rs");
 /// The pre-#455 `scaffold/cargo_toml.tera` (verbatim).
 const CARGO_TOML_PRE_EVT: &str = include!("../evt_golden/cargo_toml_pre_evt.rs");
+/// The pre-#505 `events/consumers.tera` (verbatim — the sea_orm branch).
+const CONSUMERS_PRE_WORKERS: &str = include!("../evt_golden/consumers_pre_workers.rs");
+/// The pre-#505 `events/emit.tera` (verbatim — the sea_orm branch).
+const EMIT_PRE_WORKERS: &str = include!("../evt_golden/emit_pre_workers.rs");
 
 fn render_pre_evt(
     template_name: &str,
@@ -581,4 +585,195 @@ fn scaffold_templates_render_events_module_when_has_events() {
     let cargo =
         render_template_with_project(&tera(), "scaffold/cargo_toml.tera", &ctx, &project).unwrap();
     assert!(cargo.contains("anyhow = \"1\""), "{cargo}");
+}
+
+// ── #505 Leg 1: provider-parameterized events plane ─────────────────────
+
+/// The sea_orm branch of the provider-parameterized consumers/emit
+/// templates renders byte-identically to the pre-#505 templates (the
+/// monolith output contract).
+#[tokio::test]
+async fn consumers_and_emit_templates_flag_off_are_byte_identical_to_pre_workers() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let emit = super::emit_context(&arch);
+    render_pre_evt(
+        "events/consumers.tera",
+        CONSUMERS_PRE_WORKERS,
+        &consumers,
+        &project(),
+    );
+    render_pre_evt("events/emit.tera", EMIT_PRE_WORKERS, &emit, &project());
+}
+
+/// The cornucopia branch types the plane on the persistence-agnostic
+/// `DbClient`/`ClientSource` handle: zero sea_orm references, a
+/// per-consumer client acquisition in `dispatch_registered`, and the
+/// idempotent registration guard workers need.
+#[tokio::test]
+async fn consumers_and_emit_templates_render_cornucopia_shapes() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let mut project = project();
+    project.database.persistence_provider = crate::profile::PersistenceProvider::Cornucopia;
+    let files = generate_events(&db, &project).await;
+
+    let consumers = content_of(&files, "consumers.rs");
+    assert!(
+        !consumers.contains("DatabaseConnection"),
+        "no sea_orm types on the cornucopia branch: {consumers}"
+    );
+    assert!(consumers.contains("use crate::db_client::{ClientSource, DbClient};"));
+    assert!(consumers.contains("pub struct AuditWorkerContext<'a>"));
+    assert!(consumers.contains("pub db: &'a DbClient,"));
+    assert!(consumers.contains("pub trait AuditWorkerHandler"));
+    assert!(
+        consumers
+            .contains("pub(crate) async fn dispatch_registered(\n    source: &dyn ClientSource,"),
+        "the drain's entry point acquires per-dispatch clients: {consumers}"
+    );
+    assert!(
+        consumers.contains("let Ok(db) = source.client().await else {"),
+        "client acquisition failures count as consumer failures: {consumers}"
+    );
+    assert!(
+        consumers.contains("if guard.iter().any(|c| c.name == \"audit-worker\") {"),
+        "registration is idempotent for worker isolates: {consumers}"
+    );
+    let emit = content_of(&files, "emit.rs");
+    assert!(
+        !emit.contains("DatabaseConnection"),
+        "no sea_orm types on the cornucopia branch: {emit}"
+    );
+    assert!(emit.contains("use crate::db_client::DbClient;"));
+    assert!(emit.contains("client: &DbClient,"));
+    assert!(
+        emit.contains("SELECT pgmq.send($1, $2)"),
+        "the cornucopia publish is parameterized (no escaping workaround): {emit}"
+    );
+}
+
+// ── #505 Leg 2: events under the workers topology ───────────────────────
+
+fn generation_order_sales() -> Vec<crate::GenerationEntry> {
+    vec![crate::GenerationEntry {
+        schema_title: "OrderStatusType".to_string(),
+        domain: "sales".to_string(),
+        pg_schema: "sales".to_string(),
+        is_cyclic: false,
+    }]
+}
+
+/// Workers runs are cornucopia (the topology×provider rule); the events
+/// plane is typed on the DbClient handle there.
+fn cornucopia_project() -> ProjectConfig {
+    let mut project = project();
+    project.database.persistence_provider = crate::profile::PersistenceProvider::Cornucopia;
+    project
+}
+
+/// Under the workers topology the events plane routes into the owning
+/// worker crate: the output root carries nothing, the placement puts the
+/// channel queue on the payload-domain worker, and only placed consumers
+/// are emitted.
+#[tokio::test]
+async fn workers_topology_emits_events_into_worker_crates() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path()).with_workers_topology(true);
+    let files = generator
+        .generate(
+            &db,
+            &config(),
+            &generation_order_sales(),
+            &tera(),
+            &cornucopia_project(),
+        )
+        .await
+        .expect("workers evt_events generates");
+
+    let rels: Vec<String> = files
+        .iter()
+        .map(|f| f.path.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        rels.iter()
+            .all(|p| !p.contains("src/events") || p.contains("workers/sales/src/events")),
+        "no output-root events plane: {rels:?}"
+    );
+    let any = |needle: &str| rels.iter().any(|p| p.contains(needle));
+    for file in ["mod.rs", "contracts.rs", "emit.rs", "consumers.rs"] {
+        assert!(
+            any(&format!("workers/sales/src/events/{file}")),
+            "the sales worker carries {file}: {rels:?}"
+        );
+    }
+
+    // The consumer rides the queue owner.
+    let consumers = &files
+        .iter()
+        .find(|f| f.path.ends_with("consumers.rs"))
+        .unwrap()
+        .content;
+    assert!(
+        consumers.contains("pub trait AuditWorkerHandler"),
+        "audit-worker subscribes to OrderPlaced (on events_orders): {consumers}"
+    );
+    assert!(
+        consumers.contains("pub trait ShippingFanoutHandler"),
+        "shipping-fanout subscribes to OrderCancelled, also published on events_orders: {consumers}"
+    );
+
+    // Monolith emission is unchanged by the topology flag.
+    let monolith = EvtEventsGenerator::new(TempDir::new().unwrap().path());
+    let root_files = monolith
+        .generate(
+            &db,
+            &config(),
+            &generation_order_sales(),
+            &tera(),
+            &project(),
+        )
+        .await
+        .expect("monolith evt_events generates");
+    assert!(
+        root_files
+            .iter()
+            .all(|f| !f.path.to_string_lossy().contains("workers/")),
+        "monolith emission never touches workers/: {root_files:?}"
+    );
+}
+
+/// A channel whose queue has no owner (not a domain, ambiguous payload
+/// domains, no deploy override) is a generation error naming the fix.
+#[tokio::test]
+async fn workers_topology_unplaceable_channel_is_a_hard_error() {
+    let mut model = orders_evt_model();
+    // A second channel whose events span no resolvable domain (the
+    // OrderCancelled event is all-primitive in the fixture).
+    model.channels.push(EvtChannelNode {
+        source_path: "orders.evt".to_string(),
+        name: "pings".to_string(),
+        publishes: vec!["OrderCancelled".to_string()],
+        ordinal: 1,
+    });
+    let db = db_with(Some(model)).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path()).with_workers_topology(true);
+    let err = generator
+        .generate(
+            &db,
+            &config(),
+            &generation_order_sales(),
+            &tera(),
+            &cornucopia_project(),
+        )
+        .await
+        .expect_err("the unplaceable channel must fail generation");
+    let message = err.to_string();
+    assert!(message.contains("`pings'"), "{message}");
+    assert!(message.contains("events_pings"), "{message}");
+    assert!(message.contains("kind = \"queue\""), "{message}");
 }

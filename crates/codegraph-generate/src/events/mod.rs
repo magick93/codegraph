@@ -10,6 +10,7 @@
 //! pre-#455 byte-identical output.
 
 pub mod model;
+pub mod placement;
 
 pub use model::{
     ChildTrigger, DeliveryGuarantee, DeliveryPolicy, EventArchitecture, EventChannel,

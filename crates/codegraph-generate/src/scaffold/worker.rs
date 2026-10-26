@@ -223,6 +223,15 @@ pub struct WorkerDomain {
     /// Path to the hooks-api crate relative to this worker's crate dir
     /// (empty when hooks are disabled).
     pub hooks_api_path: String,
+    /// Whether this worker owns at least one event queue (issue #505): its
+    /// own domain trigger queue and/or channel queues assigned by the event
+    /// placement. Gates the `events` module, the scheduled drain, and the
+    /// typed-dispatch delete condition.
+    pub has_events: bool,
+    /// Channel queues the event placement assigned to this worker beyond
+    /// its own trigger queue (the extra dispatch-cycle drain targets, as
+    /// channel names — `events_{name}` is derived at both ends).
+    pub extra_event_queues: Vec<String>,
 }
 
 /// Context for the workers scaffold templates.
@@ -261,6 +270,7 @@ pub fn build_worker_domains(
     config: &DomainConfig,
     scaffold_domains: Vec<ScaffoldDomain>,
     deploy: Option<&DeployShape>,
+    placement: Option<&crate::events::placement::EventPlacement>,
 ) -> Vec<WorkerDomain> {
     let domain_names: HashSet<String> = scaffold_domains.iter().map(|d| d.name.clone()).collect();
     // A component represents a domain's worker when its name equals a
@@ -345,6 +355,20 @@ pub fn build_worker_domains(
             if has_webhooks && !cron_triggers.iter().any(|c| c == "*/1 * * * *") {
                 cron_triggers.push("*/1 * * * *".to_string());
             }
+            // Event placement (issue #505): the queues this worker owns
+            // beyond its own trigger queue, and the has_events gate.
+            let (has_events, extra_event_queues) = match placement {
+                Some(p) => {
+                    let extra = p.extra_drains(&d.name);
+                    (p.drains_any(&d.name) || !extra.is_empty(), extra)
+                }
+                None => (false, Vec::new()),
+            };
+            // An events-bearing domain needs the same periodic drain sweep
+            // (the typed consumers + any assigned channel queues).
+            if has_events && !cron_triggers.iter().any(|c| c == "*/1 * * * *") {
+                cron_triggers.push("*/1 * * * *".to_string());
+            }
             let queue_binding = entry
                 .map(|e| e.queue_binding_or("WEBHOOK_QUEUE"))
                 .unwrap_or_else(|| "WEBHOOK_QUEUE".to_string());
@@ -375,6 +399,8 @@ pub fn build_worker_domains(
                 observability: entry.map(|e| e.observability_or(false)).unwrap_or(false),
                 domain_types_path: String::new(),
                 hooks_api_path: String::new(),
+                has_events,
+                extra_event_queues,
             }
         })
         .collect()
@@ -441,6 +467,34 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         let deploy_models = db.get_deploy_models().await.unwrap_or_default();
         let deploy_shape = DeployShape::from_models(&deploy_models);
 
+        // Event placement (issue #505): with a non-empty `.evt`
+        // architecture every queue-owning worker gains the events module
+        // and the drain gains the typed-dispatch delete condition. The
+        // placement hard-errors on an unplaceable queue — a broken event
+        // model never half-scaffolds.
+        let arch = crate::evt_events::architecture_for(db, project, config).await?;
+        let event_placement = if arch.is_empty() {
+            None
+        } else if project.is_cornucopia() {
+            let worker_names: HashSet<String> =
+                scaffold_domains.iter().map(|d| d.name.clone()).collect();
+            Some(
+                crate::events::placement::compute_placement(
+                    &arch,
+                    config,
+                    &worker_names,
+                    deploy_shape.as_ref(),
+                )
+                .map_err(|e| crate::error::Error::Config(format!("events under workers: {e}")))?,
+            )
+        } else {
+            crate::events::model::warn_once(
+                "events-workers-non-cornucopia",
+                "the events plane under the workers topology requires the cornucopia provider; no events modules emitted",
+            );
+            None
+        };
+
         // Shared codegraph crate paths. The workspace manifest lives in the
         // `workers/` directory, so dependency paths are re-based from there
         // (empty when the consuming project pins them via git rev).
@@ -449,8 +503,13 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             resolve_path(&project.paths.codegraph_workflow_base, &workers_abs);
         let type_contracts_rel = resolve_path(&project.paths.type_contracts_base, &workers_abs);
 
-        let mut domains =
-            build_worker_domains(&app_name, config, scaffold_domains, deploy_shape.as_ref());
+        let mut domains = build_worker_domains(
+            &app_name,
+            config,
+            scaffold_domains,
+            deploy_shape.as_ref(),
+            event_placement.as_ref(),
+        );
         for domain in &mut domains {
             // The domain-types crate is scaffolded INSIDE the output
             // (`{output}/crates/…`) — output-anchored, the same
@@ -675,28 +734,34 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             // dispatch/delivery module. These are provider-conditional
             // templates (cornucopia `DbClient`), unlike the monolith's SeaORM
             // `webhook/*.tera` generators which stay byte-identical.
-            if domain.has_webhooks && project.is_cornucopia() {
-                let webhook_api = render_template_with_project(
-                    tera,
-                    "webhook/api_endpoints_cornucopia.tera",
-                    domain,
-                    project,
-                )?;
-                files.push(GeneratedFile {
-                    path: base.join("src").join("webhook_api.rs"),
-                    content: webhook_api,
-                });
+            // The dispatch module is also the drain home for the events
+            // plane (issue #505): a worker owning event queues without
+            // webhooks still emits it (the wrangler queue blocks stay
+            // has_webhooks-gated).
+            if (domain.has_webhooks || domain.has_events) && project.is_cornucopia() {
+                if domain.has_webhooks {
+                    let webhook_api = render_template_with_project(
+                        tera,
+                        "webhook/api_endpoints_cornucopia.tera",
+                        domain,
+                        project,
+                    )?;
+                    files.push(GeneratedFile {
+                        path: base.join("src").join("webhook_api.rs"),
+                        content: webhook_api,
+                    });
 
-                let webhook_router = render_template_with_project(
-                    tera,
-                    "webhook/api_router_cornucopia.tera",
-                    domain,
-                    project,
-                )?;
-                files.push(GeneratedFile {
-                    path: base.join("src").join("webhook_router.rs"),
-                    content: webhook_router,
-                });
+                    let webhook_router = render_template_with_project(
+                        tera,
+                        "webhook/api_router_cornucopia.tera",
+                        domain,
+                        project,
+                    )?;
+                    files.push(GeneratedFile {
+                        path: base.join("src").join("webhook_router.rs"),
+                        content: webhook_router,
+                    });
+                }
 
                 let webhook_dispatch = render_template_with_project(
                     tera,
@@ -879,7 +944,8 @@ service_bindings = ["timecard"]
     #[test]
     fn worker_name_defaults_to_app_domain() {
         let config = test_config();
-        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("common")], None);
+        let domains =
+            build_worker_domains("hr", &config, vec![scaffold_domain("common")], None, None);
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0].worker_name, "hr-common");
         assert_eq!(domains[0].worker_lib_name, "hr_common");
@@ -888,7 +954,8 @@ service_bindings = ["timecard"]
     #[test]
     fn explicit_worker_name_wins_over_convention() {
         let config = test_config();
-        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None);
+        let domains =
+            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
         assert_eq!(domains[0].worker_name, "hr-payroll-worker");
         assert_eq!(domains[0].worker_lib_name, "hr_payroll_worker");
     }
@@ -896,7 +963,8 @@ service_bindings = ["timecard"]
     #[test]
     fn service_bindings_fallback_to_depends_on() {
         let config = test_config();
-        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None);
+        let domains =
+            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
         assert_eq!(domains.len(), 1);
         let bindings = &domains[0].service_bindings;
         assert_eq!(bindings.len(), 1);
@@ -915,6 +983,7 @@ service_bindings = ["timecard"]
             &config,
             vec![scaffold_domain("common"), scaffold_domain("payroll")],
             None,
+            None,
         );
         let common = domains.iter().find(|d| d.name == "common").unwrap();
         assert_eq!(common.service_bindings.len(), 1);
@@ -930,6 +999,7 @@ service_bindings = ["timecard"]
             "hr",
             &config,
             vec![scaffold_domain("common"), scaffold_domain("payroll")],
+            None,
             None,
         );
         let payroll = domains.iter().find(|d| d.name == "payroll").unwrap();
@@ -982,8 +1052,13 @@ target_state = "escalated"
         )
         .unwrap();
 
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("recruiting")], None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("recruiting")],
+            None,
+            None,
+        );
         assert_eq!(domains.len(), 1);
         assert!(domains[0].has_workflow_timers);
         assert_eq!(domains[0].cron_triggers, vec!["*/1 * * * *"]);
@@ -1002,7 +1077,13 @@ entities = ["CodeType"]
 "#,
         )
         .unwrap();
-        let common = build_worker_domains("hr", &no_timers, vec![scaffold_domain("common")], None);
+        let common = build_worker_domains(
+            "hr",
+            &no_timers,
+            vec![scaffold_domain("common")],
+            None,
+            None,
+        );
         assert!(!common[0].has_workflow_timers);
         assert!(common[0].cron_triggers.is_empty());
     }
@@ -1027,7 +1108,8 @@ queue_max_concurrency = 10
         )
         .unwrap();
 
-        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("timecard")], None);
+        let domains =
+            build_worker_domains("hr", &config, vec![scaffold_domain("timecard")], None, None);
         assert_eq!(domains.len(), 1);
         let d = &domains[0];
         assert!(d.has_webhooks);
@@ -1056,7 +1138,8 @@ webhooks = true
         )
         .unwrap();
 
-        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None);
+        let domains =
+            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
         let d = &domains[0];
         assert!(d.has_webhooks);
         assert_eq!(d.queue_binding, "WEBHOOK_QUEUE");
@@ -1079,7 +1162,8 @@ entities = ["CodeType"]
 "#,
         )
         .unwrap();
-        let common = build_worker_domains("hr", &config, vec![scaffold_domain("common")], None);
+        let common =
+            build_worker_domains("hr", &config, vec![scaffold_domain("common")], None, None);
         assert!(!common[0].has_webhooks);
     }
 
@@ -1092,7 +1176,7 @@ entities = ["CodeType"]
 
         let config = test_config();
         let mut domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None);
+            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
         domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
 
         let rendered = render_template_with_project(
@@ -1154,7 +1238,7 @@ queue_max_concurrency = 10
         .unwrap();
 
         let mut domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("timecard")], None);
+            build_worker_domains("hr", &config, vec![scaffold_domain("timecard")], None, None);
         domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
 
         let rendered = render_template_with_project(
@@ -1205,7 +1289,8 @@ observability = true
         )
         .unwrap();
 
-        let domains = build_worker_domains("hr", &enabled, vec![scaffold_domain("payroll")], None);
+        let domains =
+            build_worker_domains("hr", &enabled, vec![scaffold_domain("payroll")], None, None);
         assert!(domains[0].observability);
         let rendered = render_template_with_project(
             &tera,
@@ -1236,7 +1321,8 @@ entities = ["CodeType"]
 "#,
         )
         .unwrap();
-        let domains = build_worker_domains("hr", &disabled, vec![scaffold_domain("common")], None);
+        let domains =
+            build_worker_domains("hr", &disabled, vec![scaffold_domain("common")], None, None);
         assert!(!domains[0].observability);
         let rendered = render_template_with_project(
             &tera,
@@ -1261,6 +1347,7 @@ entities = ["CodeType"]
             "hr",
             &config,
             vec![scaffold_domain("common"), scaffold_domain("payroll")],
+            None,
             None,
         );
         for domain in &mut domains {
@@ -1347,7 +1434,7 @@ entities = ["CodeType"]
             has_custom_routes: false,
             atproto_nsids: vec![],
         };
-        let mut domains = build_worker_domains("hr", &config, vec![full, query_only], None);
+        let mut domains = build_worker_domains("hr", &config, vec![full, query_only], None, None);
         for d in &mut domains {
             d.domain_types_path = "crates/hr-domain-types".to_string();
             d.hooks_api_path = "crates/hr-hooks-api".to_string();
@@ -1410,7 +1497,8 @@ entities = ["CodeType"]
             ..Default::default()
         };
         let config = test_config();
-        let domains = build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None);
+        let domains =
+            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
         let rendered =
             render_template_with_project(&tera, "scaffold/worker_lib.tera", &domains[0], &project)
                 .unwrap();
@@ -1527,6 +1615,7 @@ depends_on = ["core"]
             &config,
             vec![scaffold_domain("core"), scaffold_domain("payroll")],
             Some(&shape),
+            None,
         );
 
         let core = domains.iter().find(|d| d.name == "core").unwrap();
@@ -1578,6 +1667,7 @@ entities = ["PayRunType"]
             &config,
             vec![scaffold_domain("core"), scaffold_domain("payroll")],
             Some(&shape),
+            None,
         );
 
         let core = domains.iter().find(|d| d.name == "core").unwrap();
@@ -1619,8 +1709,13 @@ depends_on = ["audit"]
             ],
         );
 
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("core")], Some(&shape));
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("core")],
+            Some(&shape),
+            None,
+        );
 
         // Every outgoing edge of `core` targets a non-domain component, so
         // the deploy-derived binding list is empty (the `audit` fallback is
@@ -1688,6 +1783,7 @@ entities = ["TimeEntryType"]
                 scaffold_domain("timecard"),
             ],
             Some(&shape),
+            None,
         );
         for domain in &mut domains {
             domain.domain_types_path = "../../crates/hr-domain-types".to_string();

@@ -306,7 +306,14 @@ async fn drain_events_into_jobs(
                 subscription_id,
             });
         }
-        groups.push((queue_name.clone(), msg_id, jobs));
+{% if has_events %}        // Typed consumer dispatch (issue #505): the events plane's
+        // registry; failures keep the message queued. Trigger envelopes
+        // carry no `event` key and dispatch zero consumers.
+        let typed_ok =
+            crate::events::consumers::dispatch_registered(&*state.client_source, message.clone())
+                .await
+                == 0;
+{% endif %}        groups.push((queue_name.clone(), msg_id, jobs{% if has_events %}, typed_ok{% endif %}));
     }
 
     Ok(groups)
@@ -377,14 +384,14 @@ pub async fn dispatch_cycle(
         count += 1;
     }
 
-    for (queue_name, msg_id, jobs) in drain_events_into_jobs(state, domain).await? {
+    for (queue_name, msg_id, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
         let mut ok = true;
         for job in &jobs {
             if dispatch_one(env, queue_binding, job).await.is_err() {
                 ok = false;
             }
         }
-        if ok {
+        if ok{% if has_events %} && typed_ok{% endif %} {
             delete_pgmq_msg(state, &queue_name, msg_id).await?;
         }
         count += jobs.len();
@@ -402,14 +409,14 @@ pub async fn dispatch_cycle(state: &AppState, domain: &str) -> Result<usize, Str
         count += 1;
     }
 
-    for (queue_name, msg_id, jobs) in drain_events_into_jobs(state, domain).await? {
+    for (queue_name, msg_id, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
         let mut ok = true;
         for job in &jobs {
             if dispatch_one(state, job).await.is_err() {
                 ok = false;
             }
         }
-        if ok {
+        if ok{% if has_events %} && typed_ok{% endif %} {
             delete_pgmq_msg(state, &queue_name, msg_id).await?;
         }
         count += jobs.len();
@@ -442,6 +449,9 @@ impl WebhookDispatcher {
             if let Err(e) = dispatch_cycle(&self.state, "{{ name }}").await {
                 tracing::warn!(error = %e, "webhook dispatch cycle failed");
             }
-        }
+{% for queue in extra_event_queues %}            if let Err(e) = dispatch_cycle(&self.state, "{{ queue }}").await {
+                tracing::warn!(error = %e, "webhook dispatch cycle failed");
+            }
+{% endfor %}        }
     }
 }

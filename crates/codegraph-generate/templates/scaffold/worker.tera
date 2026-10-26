@@ -290,7 +290,7 @@ mod worker_impl {
         let state = app_state_from_env(&env).await?;
         Ok(router(state).call(req).await?)
     }
-{% if has_workflow_timers or has_webhooks %}
+{% if has_workflow_timers or has_webhooks or has_events %}
 
     /// Cron-triggered periodic sweep for the {{ name }} domain.
     ///
@@ -331,13 +331,18 @@ mod worker_impl {
             result.map_err(|e| worker::Error::RustError(e.to_string()))?;
         }
 {% endif %}
-{% if has_webhooks %}
+{% if has_webhooks or has_events %}
         // Drain events_{{ name }} from pgmq, create delivery rows, and enqueue
         // delivery jobs onto the domain's Cloudflare Queue.
         crate::webhook_dispatch::dispatch_cycle(&state, "{{ name }}", &env, "{{ queue_binding }}")
             .await
             .map_err(|e| worker::Error::RustError(e))?;
-{% endif %}
+{% for channel in extra_event_queues %}        // Drain the channel queue the event placement assigned to this worker
+        // (issue #505): typed consumer dispatch + webhook subscriptions.
+        crate::webhook_dispatch::dispatch_cycle(&state, "{{ channel }}", &env, "{{ queue_binding }}")
+            .await
+            .map_err(|e| worker::Error::RustError(e))?;
+{% endfor %}{% endif %}
         Ok(())
     }
 {% endif %}
