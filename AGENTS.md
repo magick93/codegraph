@@ -161,8 +161,15 @@ every emitted type resolves within the generated tree:
   byte-identical output. Gates:
   `cargo test -p codegraph --test mox_ops_tests` (6) +
   `mox_dto_tests` + `mox_plane_compile_tests` (3).
-- **Deferred / follow-ups**: lambda-param navigation in `mox_expr`
-  (closure params carry no class metadata — issue #519); class-ref
+- **Lambda family in `mox_expr` (issues #519, #527, #528 — fixed)**: the
+  locals stack carries an optional element `FieldBinding` per binding, so
+  closure params of class-typed collections navigate through the arena
+  (`b.title` → `res.get_book((*b)).map(|o| ..)`, refs-1/refs-2 reads);
+  lookups resolve innermost-first (nested same-name params shadow
+  correctly); params key by the normalized identifier the closure
+  declares (camelCase params read what they bind). Refusals keep the
+  named generation error.
+- **Deferred / follow-ups**: class-ref
   parameter/return lowering beyond `Uuid` slots with arena `From`
   conversions; op routes for non-primitive signature slots; `res`-aware
   derived-feature arena building in dto context; openapi/hurl coverage of
