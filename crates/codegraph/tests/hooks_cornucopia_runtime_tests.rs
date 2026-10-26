@@ -850,6 +850,12 @@ async fn hooks_fire_and_abort_rolls_back_under_cornucopia() {
         .arg("runtime")
         .arg("--")
         .arg("--nocapture")
+        // The scratch tests share the CLUSTER-wide `app_user` role (their
+        // databases are separate) — a DO block's check-then-create runs on
+        // the snapshot taken at statement entry, so a concurrent creator's
+        // commit is invisible and the rolname unique index fires. Serialize
+        // the scratch tests; the advisory lock in the DDL stays as defense.
+        .arg("--test-threads=1")
         .env("CARGO_TARGET_DIR", ws.join("target"))
         .env("CARGO_TERM_COLOR", "never")
         .output()
