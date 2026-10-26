@@ -1370,6 +1370,7 @@ cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 # Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
 cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
+cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture  # #518: the generated cornucopia create path fires hooks + Abort rolls back over real Postgres
 cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
 # Full pipeline integration (requires protoc)
@@ -2243,8 +2244,15 @@ see this class.
   MAC check + 5-minute replay window, `EVENT_SIGNATURE_MAX_AGE_SECS`).
   Deliberately exceeds the webhook plane's precedent, whose timestamp
   header is unsigned; the webhook plane is untouched.
-- Gate: `cargo test -p codegraph --test extension_points_tests` (6,
-  node-free) + `doctor_validates_extension_points` in `init_tests`.
+- Gate: `cargo test -p codegraph --test extension_points_tests` (7,
+  node-free) + `doctor_validates_extension_points` in `init_tests`. The
+  signing construction carries a computed known-answer vector (#518):
+  `event_signature_computed_vector_and_verify_round_trip` extracts the
+  rendered `event_signature`/`verify_event_signature` into a scratch
+  crate and executes them against a python-pinned HMAC hex plus the
+  verify round-trip and the replay-window rejections (stale > 300s,
+  future > 60s, tampered body, wrong timestamp, missing `sha256=` prefix,
+  malformed hex).
 
 ### Catalog/installations API mounting (issue #521)
 
@@ -2335,6 +2343,28 @@ Hyperdrive wasm32).
   template pins in `template_harness/command_query.rs`
   (`cornucopia_command_keeps_all_hooks_without_wasm_gates` — tx + post-commit
   sites present, adapter construction, zero wasm gates; `sea_orm_command_keeps_transactional_hooks`).
+- **Runtime pins + the never-compiled fix (issue #518)**: the #518 hooks
+  runtime test exposed that the #509 command.tera rework NEVER COMPILED —
+  `TxContext::new(&HookTxAdapter(&tx), …)` drops the adapter temporary at
+  the statement end while the context still borrows it (E0716), and
+  `native(&self) -> &dyn Any` cannot return a borrowed-generic `self`
+  (object default is `+ 'static`). Fixed: command.tera binds
+  `let tx_adapter = HookTxAdapter(&tx);` before every `TxContext::new`
+  (all six sites, both providers), and the `HookTx`/`HookConnSource`
+  traits plus their adapters/forwarders return `&(dyn Any + '_)` —
+  every touched block is hooks-gated, so flag-off output is byte-identical
+  (canaries re-verified). The runtime pin
+  (`hooks_cornucopia_runtime_tests -- --ignored`, Postgres via
+  `DATABASE_URL`) assembles the generated command path VERBATIM
+  (`command.rs`, `hook_adapters.rs`, `db_client.rs`, hooks `generated`
+  tree, repository trait/DTOs) over the runtime-capable cornucopia-queries
+  stub (now shared as `tests/test_framework/cornucopia_queries_stub.rs`)
+  plus ONE hand-written repository stand-in (same type/method shape, real
+  INSERT via `GenericClient` — the repo plane has its own pins), then runs
+  against real Postgres: `hook_fires_on_create_under_cornucopia` (hook
+  observes + SQL on the OPEN tx, post-commit marker on a fresh connection,
+  row lands) and `abort_rolls_back_under_cornucopia` (Conflict + row AND
+  marker absent). Wired into the `test-ops-integration` CI job.
 
 ### Per-domain worker config (domains.toml)
 

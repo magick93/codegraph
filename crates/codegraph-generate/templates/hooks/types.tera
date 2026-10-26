@@ -30,8 +30,10 @@ use {{ project.domain_types_crate }}::SourceContext;
 pub trait HookTx: Send + Sync {
     /// Execute raw SQL inside the open transaction.
     async fn execute(&self, sql: &str) -> Result<u64, String>;
-    /// The provider-native transaction handle (downcast hatch).
-    fn native(&self) -> &dyn Any;
+    /// The provider-native transaction handle (downcast hatch). The object
+    /// lifetime is tied to the borrow — adapter types borrow the open
+    /// transaction and are never 'static.
+    fn native(&self) -> &(dyn Any + '_);
 }
 
 /// A connection source for post-commit / query-time work, erased. sea_orm
@@ -42,8 +44,9 @@ pub trait HookTx: Send + Sync {
 pub trait HookConnSource: Send + Sync {
     /// Execute raw SQL on a fresh connection.
     async fn execute(&self, sql: &str) -> Result<u64, String>;
-    /// The provider-native connection handle (downcast hatch).
-    fn native(&self) -> &dyn Any;
+    /// The provider-native connection handle (downcast hatch). The object
+    /// lifetime is tied to the borrow (parity with `HookTx::native`).
+    fn native(&self) -> &(dyn Any + '_);
 }
 
 /// Context for transactional hooks (`before_*`, `after_*_tx`). Runs
@@ -80,7 +83,7 @@ impl<'a> TxContext<'a> {
     }
 
     /// The provider-native transaction handle (downcast hatch).
-    pub fn native(&self) -> &dyn Any {
+    pub fn native(&self) -> &(dyn Any + '_) {
         self.tx.native()
     }
 }
@@ -122,7 +125,7 @@ impl PostCommitContext {
     }
 
     /// The provider-native connection handle (downcast hatch).
-    pub fn native(&self) -> &dyn Any {
+    pub fn native(&self) -> &(dyn Any + '_) {
         self.conn.native()
     }
 }
