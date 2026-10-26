@@ -19,7 +19,8 @@ mod middleware;
 use middleware::metrics_middleware;
 mod qs_query;
 mod worker;
-{% if project.has_extension_points %}mod integration_dispatch;
+{% if has_events %}mod events;
+{% endif %}{% if project.has_extension_points %}mod integration_dispatch;
 {% endif %}{% if has_webhooks %}mod webhook_api;
 mod webhook_dispatch;
 mod webhook_router;
@@ -55,8 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = app_state::AppState::new(db, jwt_secret, supabase_url);
 {% endif %}
 
-{% if has_webhooks %}
-    // Native webhook dispatch loop: drains pgmq events and delivers inline via
+{% if has_webhooks or has_events %}
+    // Native webhook/event dispatch loop: drains pgmq queues (typed
+    // consumer dispatch + webhook subscriptions) and delivers inline via
     // reqwest (no Cloudflare Queue in dev/test). See webhook_dispatch.rs.
     let dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(state.clone());
     tokio::spawn(async move {

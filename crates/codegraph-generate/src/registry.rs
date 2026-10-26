@@ -384,10 +384,12 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     );
     // Typed event emission + subscriptions (issues #454/#455): the
     // generator itself gates on the architecture — no `.evt` input emits
-    // zero files — so it registers unconditionally.
-    global_gens.push(
-        Box::new(evt_events::EvtEventsGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
-    );
+    // zero files — so it registers unconditionally. Under the workers
+    // topology the plane routes into the owning worker crates (issue
+    // #505) instead of the output root.
+    global_gens.push(Box::new(
+        evt_events::EvtEventsGenerator::new(output_dir).with_workers_topology(ctx.workers_topology),
+    ) as Box<dyn GlobalGenerator>);
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {
         global_gens.push(

@@ -5,7 +5,163 @@
 //! The application installs handlers at startup (`register_*`); the
 //! drain calls [`dispatch_registered`] for every message it reads.
 
-use async_trait::async_trait;
+{% if project.persistence_provider == "cornucopia" %}use async_trait::async_trait;
+
+use crate::db_client::{ClientSource, DbClient};
+{% if contracts_use %}{{ contracts_use }}
+{% endif %}
+{% for consumer in consumers %}
+/// Context handed to `{{ consumer.name }}` handlers: the drain's database
+/// client.
+pub struct {{ consumer.context_struct }}<'a> {
+    pub db: &'a DbClient,
+}
+
+/// Handler contract for the `{{ consumer.name }}` consumer. The app
+/// overrides the event methods it cares about; the defaults are no-ops.
+#[async_trait]
+pub trait {{ consumer.handler_trait }}: Send + Sync {
+{% for event in consumer.events %}    async fn {{ event.method }}(
+        &self,
+        ctx: &{{ consumer.context_struct }}<'_>,
+        event: &{{ event.payload }},
+    ) -> anyhow::Result<()> {
+        let _ = (ctx, event);
+        Ok(())
+    }
+{% endfor %}}
+
+/// Dispatch one typed envelope to a `{{ consumer.handler_trait }}`.
+/// Returns `false` when the event is not subscribed, the payload is
+/// missing or fails to deserialize, or the handler errors.
+pub async fn dispatch_{{ consumer.name_snake }}(
+    handler: &dyn {{ consumer.handler_trait }},
+    ctx: &{{ consumer.context_struct }}<'_>,
+    envelope: &serde_json::Value,
+) -> bool {
+    let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    match event {
+{% for event in consumer.events %}        "{{ event.event_name }}" => {
+            let Some(payload) = envelope.get("payload") else {
+                tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "typed envelope without a payload; skipped");
+                return false;
+            };
+            let Ok(payload) = serde_json::from_value::<{{ event.payload }}>(payload.clone()) else {
+                tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "payload failed to deserialize; skipped");
+                return false;
+            };
+            match handler.{{ event.method }}(ctx, &payload).await {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(event = %event, consumer = "{{ consumer.name }}", error = %e, "consumer handler failed");
+                    false
+                }
+            }
+        }
+{% endfor %}        other => {
+            tracing::debug!(event = %other, consumer = "{{ consumer.name }}", "event not subscribed; skipped");
+            false
+        }
+    }
+}
+
+/// Install the handler for the `{{ consumer.name }}` consumer. Call once
+/// at startup, before the drain starts. Idempotent: a later registration
+/// under the same consumer name is ignored (worker isolates may re-run
+/// bootstrap per request lifetime).
+pub fn register_{{ consumer.name_snake }}(
+    handler: std::sync::Arc<dyn {{ consumer.handler_trait }}>,
+) {
+    let events: &'static [&'static str] = &[{% for event in consumer.events %}"{{ event.event_name }}"{% if not loop.last %}, {% endif %}{% endfor %}];
+    let dispatch: DispatchFn = std::sync::Arc::new(move |db, envelope| {
+        let handler = std::sync::Arc::clone(&handler);
+        Box::pin(async move {
+            let ctx = {{ consumer.context_struct }} { db: &db };
+            dispatch_{{ consumer.name_snake }}(handler.as_ref(), &ctx, &envelope).await
+        })
+    });
+    let mut guard = match registry().write() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if guard.iter().any(|c| c.name == "{{ consumer.name }}") {
+        return;
+    }
+    guard.push(RegisteredConsumer {
+        name: "{{ consumer.name }}",
+        events,
+        dispatch,
+    });
+}
+{% endfor %}
+/// A registered consumer: the events its subscription covers plus a
+/// dispatch closure carrying the app-installed handler. Arguments are
+/// owned (both are cheap to move) so the boxed future captures no
+/// borrowed lifetimes — the higher-ranked closure form does not infer.
+type DispatchFn = std::sync::Arc<
+    dyn Fn(
+            DbClient,
+            serde_json::Value,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+        + Send
+        + Sync,
+>;
+
+struct RegisteredConsumer {
+    #[allow(dead_code)]
+    name: &'static str,
+    events: &'static [&'static str],
+    dispatch: DispatchFn,
+}
+
+static REGISTRY: std::sync::OnceLock<std::sync::RwLock<Vec<RegisteredConsumer>>> =
+    std::sync::OnceLock::new();
+
+fn registry() -> &'static std::sync::RwLock<Vec<RegisteredConsumer>> {
+    REGISTRY.get_or_init(|| std::sync::RwLock::new(Vec::new()))
+}
+
+/// Drain entry point: dispatch one typed envelope to every registered
+/// consumer whose subscription covers the event. Returns the number of
+/// consumer dispatches that FAILED (0 = every covering consumer handled
+/// the event, or no consumer subscribes to it) — the drain keeps the
+/// message queued whenever this is non-zero. One client is acquired per
+/// consumer dispatch from the drain's [`ClientSource`]; with no
+/// registered consumers no client is acquired at all.
+pub(crate) async fn dispatch_registered(
+    source: &dyn ClientSource,
+    envelope: serde_json::Value,
+) -> usize {
+    let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
+        return 0;
+    };
+    // Clone the matching dispatch closures and drop the guard BEFORE the
+    // first await — the std RwLock guard is not Send.
+    let dispatches: Vec<DispatchFn> = {
+        let guard = match registry().read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard
+            .iter()
+            .filter(|consumer| consumer.events.contains(&event))
+            .map(|consumer| consumer.dispatch.clone())
+            .collect()
+    };
+    let mut failures = 0;
+    for dispatch in &dispatches {
+        let Ok(db) = source.client().await else {
+            failures += 1;
+            continue;
+        };
+        if !dispatch(db, envelope.clone()).await {
+            failures += 1;
+        }
+    }
+    failures
+}{% else %}use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 {% if contracts_use %}{{ contracts_use }}
 {% endif %}
@@ -149,4 +305,4 @@ pub(crate) async fn dispatch_registered(
         }
     }
     failures
-}
+}{% endif %}

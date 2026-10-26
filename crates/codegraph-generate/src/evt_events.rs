@@ -13,7 +13,7 @@
 //! untouched pre-#455 rendering of every other template (the acceptance
 //! contract: flag-off output is byte-identical).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -24,8 +24,11 @@ use serde::Serialize;
 use crate::GenerationEntry;
 use crate::db::dialect::dialect_for_target;
 use crate::error::Result;
+use crate::events::placement::compute_placement;
 use crate::events::{EventArchitecture, EventDefinition, PublicationSource, Transport};
 use crate::render_template_with_project;
+use crate::scaffold::generator::build_scaffold_domains;
+use crate::scaffold::worker::DeployShape;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use codegraph_config::DomainConfig;
 
@@ -369,11 +372,21 @@ fn emit_context(arch: &EventArchitecture) -> EmitContext {
     }
 }
 
-fn consumers_context(arch: &EventArchitecture) -> ConsumersContext {
+fn consumers_context_for(
+    arch: &EventArchitecture,
+    placed: Option<&HashSet<String>>,
+) -> ConsumersContext {
     let mut consumers = Vec::new();
     let mut payload_types = BTreeSet::new();
     let mut seen_consumers = std::collections::HashSet::new();
     for subscription in &arch.subscriptions {
+        if let Some(placed) = placed
+            && !placed.contains(&subscription.consumer)
+        {
+            // Not placed on this worker's crate — its handler trait is
+            // emitted where its queues drain.
+            continue;
+        }
         if !seen_consumers.insert(subscription.consumer.clone()) {
             warn_once(
                 &format!("duplicate-consumer:{}", subscription.consumer),
@@ -439,13 +452,24 @@ fn consumers_context(arch: &EventArchitecture) -> ConsumersContext {
 
 pub struct EvtEventsGenerator {
     output_dir: PathBuf,
+    workers_topology: bool,
 }
 
 impl EvtEventsGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            workers_topology: false,
         }
+    }
+
+    /// Workers-topology emission (issue #505): `src/events/` routes into
+    /// the per-domain worker crates (`workers/{domain}/src/events/`) —
+    /// the output-root module is dead output under workers (no workspace
+    /// member compiles it). Monolith emission is unchanged.
+    pub fn with_workers_topology(mut self, workers_topology: bool) -> Self {
+        self.workers_topology = workers_topology;
+        self
     }
 }
 
@@ -459,7 +483,7 @@ impl GlobalGenerator for EvtEventsGenerator {
         &self,
         db: &dyn GraphQuerier,
         config: &DomainConfig,
-        _generation_order: &[GenerationEntry],
+        generation_order: &[GenerationEntry],
         tera: &tera::Tera,
         project: &crate::ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
@@ -467,6 +491,11 @@ impl GlobalGenerator for EvtEventsGenerator {
         if arch.is_empty() {
             // The acceptance contract: no `.evt` input ⇒ zero files.
             return Ok(Vec::new());
+        }
+        if self.workers_topology {
+            return self
+                .generate_for_workers(db, config, generation_order, tera, project, &arch)
+                .await;
         }
 
         let events_dir = self.output_dir.join("src").join("events");
@@ -495,7 +524,7 @@ impl GlobalGenerator for EvtEventsGenerator {
 
         // consumers.rs — handler traits + the drain-facing registry
         // (transport-free).
-        let consumers = consumers_context(&arch);
+        let consumers = consumers_context_for(&arch, None);
         files.push(GeneratedFile {
             path: events_dir.join("consumers.rs"),
             content: render_template_with_project(
@@ -507,7 +536,23 @@ impl GlobalGenerator for EvtEventsGenerator {
         });
 
         // mod.rs — module declarations + the source `.evt` files.
-        let events_mod = EventsModContext {
+        let events_mod = self.events_mod_context(db, &arch).await?;
+        files.push(GeneratedFile {
+            path: events_dir.join("mod.rs"),
+            content: render_template_with_project(tera, "events/mod.tera", &events_mod, project)?,
+        });
+
+        Ok(files)
+    }
+}
+
+impl EvtEventsGenerator {
+    async fn events_mod_context(
+        &self,
+        db: &dyn GraphQuerier,
+        arch: &EventArchitecture,
+    ) -> Result<EventsModContext> {
+        Ok(EventsModContext {
             sources: db
                 .get_evt_models()
                 .await?
@@ -516,16 +561,100 @@ impl GlobalGenerator for EvtEventsGenerator {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-            payload_names: deduped_events(&arch)
+            payload_names: deduped_events(arch)
                 .iter()
                 .map(|event| payload_struct_name(&event.name))
                 .collect(),
-        };
-        files.push(GeneratedFile {
-            path: events_dir.join("mod.rs"),
-            content: render_template_with_project(tera, "events/mod.tera", &events_mod, project)?,
-        });
+        })
+    }
 
+    /// Workers-topology emission: the placement decides which worker
+    /// crates carry the events module. Every queue-owning worker gets
+    /// contracts, emit (the publish surface is producer-unattributed),
+    /// consumers (only the consumers placed on it), and mod. The
+    /// placement hard-errors when a queue has no owner, so a broken
+    /// placement never half-emits.
+    async fn generate_for_workers(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        generation_order: &[GenerationEntry],
+        tera: &tera::Tera,
+        project: &crate::ProjectConfig,
+        arch: &EventArchitecture,
+    ) -> Result<Vec<GeneratedFile>> {
+        if !project.is_cornucopia() {
+            warn_once(
+                "events-workers-non-cornucopia",
+                "the events plane under the workers topology requires the cornucopia provider; no events modules emitted",
+            );
+            return Ok(Vec::new());
+        }
+
+        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await;
+        let worker_domains: HashSet<String> =
+            scaffold_domains.iter().map(|d| d.name.clone()).collect();
+        let deploy_models = db.get_deploy_models().await.unwrap_or_default();
+        let deploy_shape = DeployShape::from_models(&deploy_models);
+        let placement = compute_placement(arch, config, &worker_domains, deploy_shape.as_ref())?;
+
+        // Contracts are a full per-worker copy (payload structs are cheap
+        // wrappers over the domain-types imports, which exist in every
+        // worker crate); emit carries the publish surface for ALL bound
+        // channels (producers are application code that may run in any
+        // worker).
+        let contracts = contracts_context(db, arch, &config.defaults.type_suffix).await?;
+        let emit = emit_context(arch);
+        let events_mod = self.events_mod_context(db, arch).await?;
+
+        let mut files = Vec::new();
+        for domain in &scaffold_domains {
+            if !placement.drains_any(&domain.name) {
+                continue;
+            }
+            let placed: HashSet<String> =
+                placement.consumers_for(&domain.name).into_iter().collect();
+            let consumers = consumers_context_for(arch, Some(&placed));
+            let base = self
+                .output_dir
+                .join("workers")
+                .join(&domain.name)
+                .join("src")
+                .join("events");
+            for (name, content) in [
+                (
+                    "contracts.rs",
+                    render_template_with_project(
+                        tera,
+                        "events/contracts.tera",
+                        &contracts,
+                        project,
+                    )?,
+                ),
+                (
+                    "emit.rs",
+                    render_template_with_project(tera, "events/emit.tera", &emit, project)?,
+                ),
+                (
+                    "consumers.rs",
+                    render_template_with_project(
+                        tera,
+                        "events/consumers.tera",
+                        &consumers,
+                        project,
+                    )?,
+                ),
+                (
+                    "mod.rs",
+                    render_template_with_project(tera, "events/mod.tera", &events_mod, project)?,
+                ),
+            ] {
+                files.push(GeneratedFile {
+                    path: base.join(name),
+                    content,
+                });
+            }
+        }
         Ok(files)
     }
 }

@@ -5,7 +5,89 @@
 //! unbound channels (database targets without a queue substrate) have no
 //! publish surface — the application must not publish onto them.
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+{% if project.persistence_provider == "cornucopia" %}use cornucopia_queries::client::GenericClient;
+use uuid::Uuid;
+
+use crate::db_client::DbClient;
+{% if contracts_use %}{{ contracts_use }}
+{% endif %}
+
+/// Per-publish context carried into the event envelope.
+#[derive(Debug, Clone, Copy)]
+pub struct EventContext {
+    pub tenant_id: Uuid,
+    pub correlation_id: Uuid,
+}
+{% for channel in channels %}
+/// Events published on the `{{ channel.name }}` channel.
+#[derive(Debug, Clone)]
+pub enum {{ channel.enum_name }} {
+{% for variant in channel.variants %}    {{ variant.variant }}({{ variant.payload }}),
+{% endfor %}}
+
+impl {{ channel.enum_name }} {
+    /// The declared event name.
+    pub fn event_name(&self) -> &'static str {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => "{{ variant.event_name }}",
+{% endfor %}        }
+    }
+
+    /// The pinned event version, when the declaration carried one.
+    pub fn event_version(&self) -> Option<&'static str> {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.version_expr }},
+{% endfor %}        }
+    }
+
+    /// The event's owning domain, when derivable from its payload types.
+    pub fn domain(&self) -> Option<&'static str> {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.domain_expr }},
+{% endfor %}        }
+    }
+
+    /// The typed payload, serialized.
+    pub fn payload(&self) -> serde_json::Value {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(payload) => {
+                serde_json::to_value(payload).unwrap_or_default()
+            }
+{% endfor %}        }
+    }
+}
+
+/// Publish an event onto the `{{ channel.name }}` channel (pgmq queue
+/// `{{ channel.queue }}`). The envelope carries the declared event name as
+/// both `event` and `event_type` so webhook subscription matching and the
+/// typed consumer routing share one message shape.
+pub async fn publish_{{ channel.name_snake }}(
+    client: &DbClient,
+    event: {{ channel.enum_name }},
+    ctx: &EventContext,
+) -> Result<(), tokio_postgres::Error> {
+    let envelope = serde_json::json!({
+        "event": event.event_name(),
+        "version": event.event_version(),
+        "channel": "{{ channel.name }}",
+        "payload": event.payload(),
+        "event_type": event.event_name(),
+        "domain": event.domain(),
+        "entity_table": serde_json::Value::Null,
+        "entity_id": serde_json::Value::Null,
+        "tenant_id": ctx.tenant_id,
+        "occurred_at": chrono::Utc::now().to_rfc3339(),
+        "correlation_id": ctx.correlation_id,
+    });
+    // Parameterized pgmq.send: tokio-postgres binds the JSONB payload
+    // directly (no sea_orm binding workaround, no escaping).
+    let queue = "{{ channel.queue }}";
+    client
+        .execute("SELECT pgmq.send($1, $2)", &[&queue, &envelope])
+        .await?;
+    Ok(())
+}
+{% endfor %}{% else %}use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 use uuid::Uuid;
 {% if contracts_use %}{{ contracts_use }}
 {% endif %}
@@ -89,3 +171,4 @@ pub async fn publish_{{ channel.name_snake }}(
     Ok(())
 }
 {% endfor %}
+{% endif %}
