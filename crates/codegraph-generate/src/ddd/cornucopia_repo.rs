@@ -1224,17 +1224,18 @@ fn emit_response_expr(
         pad,
     );
     // Junction reads (issue #539): linked ids hydrate the same array field
-    // the create/update DTO accepts.
+    // the create/update DTO accepts. The cornucopia junction list query
+    // selects ONE column, so its row type is the bare `uuid::Uuid` (no
+    // struct to project a `{child_fk}` field from) — collect directly.
     for j in &tree.junction_tables {
         wln!(
             code,
-            "{pad}let {field}_rows: Vec<uuid::Uuid> = {qmod}::list_{snake}_{junction}().bind(db, &{pid}).all().await.map_err(|e| e.to_string())?.into_iter().map(|r| r.{cfk}).collect();",
+            "{pad}let {field}_rows: Vec<uuid::Uuid> = {qmod}::list_{snake}_{junction}().bind(db, &{pid}).all().await.map_err(|e| e.to_string())?.into_iter().collect();",
             field = j.field_name,
             qmod = qmod(tree),
             snake = tree.table_name,
             junction = j.sql_table_name,
             pid = format!("{row_var}.id"),
-            cfk = j.child_fk_column,
         );
     }
     wln!(code);

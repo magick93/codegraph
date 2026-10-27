@@ -325,6 +325,16 @@ async fn refers_links_persist_through_create_and_update() {
             .contains("let pay_runs_rows: Vec<uuid::Uuid> = filing::list_filing_filing_pay_runs()"),
         "response reads junction ids: {adapter}"
     );
+    // The junction list query selects one column, so cornucopia's row type
+    // is the bare `uuid::Uuid` — the hydration collects the rows directly
+    // (a `.map(|r| r.pay_run_id)` projection is an E0609 on the generated
+    // crate; caught by the crewbase workers compile).
+    assert!(
+        adapter.contains(
+            "list_filing_filing_pay_runs().bind(db, &row.id).all().await.map_err(|e| e.to_string())?.into_iter().collect();"
+        ),
+        "single-column junction rows collect directly (no struct projection): {adapter}"
+    );
     assert!(
         adapter.contains("pay_runs: pay_runs_rows,"),
         "required junction field hydrates as the Vec: {adapter}"

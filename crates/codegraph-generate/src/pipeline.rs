@@ -246,6 +246,43 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
+    // Workers topology: each worker crate gets its own `src/codelist/mod.rs`
+    // re-exporting exactly the codelists its code references
+    // (`crate::codelist::<Name>`). Runs HERE — after the domain phase (the
+    // routed DTO/repository code under `workers/{domain}/src/`) and after
+    // the global phase (the events plane, `workers/{domain}/src/events/
+    // contracts.rs`) — because the scan reads the emitted tree. Running it
+    // inside `run_codelist_generators` (before both phases) left every
+    // worker re-export list empty on a fresh output tree whenever the
+    // worker references codelists — E0432 on the first generate of a clean
+    // checkout (the second run "fixed" it by scanning the previous run's
+    // files). Monolith never enters this branch: its single root re-export
+    // above already runs post-global.
+    if ctx.workers_topology {
+        let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir);
+        for (domain, _entity_titles) in all_domains_for_generation(ctx.config, &order) {
+            let worker_base = ctx.output_dir.join("workers").join(&domain);
+            match worker_codelist_gen
+                .generate_reexport_mod_for(ctx.db(), &worker_base, ctx.project)
+                .await
+            {
+                Ok(files) => {
+                    for file in &files {
+                        write_output(file)?;
+                    }
+                    report.files.extend(files);
+                }
+                Err(e) => {
+                    report.errors.push(report::GenerationError {
+                        entity: format!("(worker-codelists:{domain})"),
+                        generator: "rust_enum".into(),
+                        source: e,
+                    });
+                }
+            }
+        }
+    }
+
     // Validate that every entity in the generation order has entity-specific files
     report.validate_consistency(&order, &ctx.config.defaults.type_suffix);
 
@@ -596,12 +633,13 @@ fn write_entity_results(
 }
 
 /// Run the codelist generators: SQL migrations (codelists are not entities,
-/// so they run separately), Rust enums into the domain-types crate, the
-/// generated-app re-export module, and — in workers topology — per-worker
-/// codelist re-export modules.
+/// so they run separately), Rust enums into the domain-types crate, and the
+/// generated-app re-export module. (The per-worker re-export modules in
+/// workers topology run post-domain+global — see the caller — because the
+/// scan reads the emitted tree.)
 async fn run_codelist_generators(
     ctx: &GeneratorContext<'_>,
-    order: &[GenerationEntry],
+    _order: &[GenerationEntry],
     report: &mut report::GenerationReport,
 ) -> Result<()> {
     // Codelist SQL migration generators (codelists are not entities, run separately)
@@ -660,42 +698,6 @@ async fn run_codelist_generators(
                 generator: "domain_types_codelist".into(),
                 source: e,
             });
-        }
-    }
-
-    // In workers topology each worker crate gets its own `src/codelist/mod.rs`
-    // re-exporting exactly the codelists its routed DTO code references
-    // (`crate::codelist::<Name>`).  The root-anchored scan above finds
-    // nothing in workers topology (domain/api source lives under
-    // `workers/{domain}/src/`), so the worker `lib.rs`'s `pub mod codelist;`
-    // would otherwise not compile.  Monolith topology never enters this
-    // branch, keeping the root output byte-identical. The MONOLITH root
-    // re-export runs LATER (after the global phase) — the events plane
-    // (`src/events/contracts.rs`, emitted by the `evt_events` global
-    // generator) also references `crate::codelist::<Name>`, so the scan
-    // must see it.
-    if ctx.workers_topology {
-        let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir);
-        for (domain, _entity_titles) in all_domains_for_generation(ctx.config, order) {
-            let worker_base = ctx.output_dir.join("workers").join(&domain);
-            match worker_codelist_gen
-                .generate_reexport_mod_for(ctx.db(), &worker_base, ctx.project)
-                .await
-            {
-                Ok(files) => {
-                    for file in &files {
-                        write_output(file)?;
-                    }
-                    report.files.extend(files);
-                }
-                Err(e) => {
-                    report.errors.push(report::GenerationError {
-                        entity: format!("(worker-codelists:{domain})"),
-                        generator: "rust_enum".into(),
-                        source: e,
-                    });
-                }
-            }
         }
     }
 
