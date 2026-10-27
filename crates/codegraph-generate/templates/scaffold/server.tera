@@ -319,6 +319,9 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = crate::app_state::AppState {
 {% for domain in domains %}
+{%- if domain.has_manual_functions %}
+        {{ domain.name }}_manual_impls: None,
+{% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(

@@ -1,4 +1,16 @@
 /target
 /generated
+# Hand-owned function implementations survive regeneration but not git
+# (issues #450/#337): unignore the write-once manual.rs stubs so hand
+# implementations are versioned with the repo.
+!generated/
+generated/*
+!generated/src/
+generated/src/*
+!generated/src/domain/
+generated/src/domain/*
+!generated/src/domain/*/functions/
+generated/src/domain/*/functions/*
+!generated/src/domain/*/functions/manual.rs
 .env
 *.log

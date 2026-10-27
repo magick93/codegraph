@@ -28,6 +28,12 @@ pub enum DbPoolMode {
 #[derive(Clone)]
 pub struct AppState {
 {% for domain in domains %}
+{%- if domain.has_manual_functions %}
+    /// Hand-owned function provider slot (issues #450/#337): the HTTP
+    /// handlers for `implementation = "manual"` functions dispatch through
+    /// this trait; 501 until a provider is registered.
+    pub {{ domain.name }}_manual_impls: Option<std::sync::Arc<dyn crate::domain::{{ domain.name }}::functions::ManualImpls>>,
+{% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}
     pub {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler,{% endif %}

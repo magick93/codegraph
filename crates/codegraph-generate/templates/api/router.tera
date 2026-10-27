@@ -23,6 +23,11 @@ pub fn router() -> Router<AppState> {
         .nest("/{{ entity.path_segment }}", {{ entity.module_name }}_routes())
 {% endif %}
 {% endfor %}
+{%- if has_functions_http %}
+        // Modeled-function endpoints (issue #337 B1) — auth is inherited
+        // from the shared /api middleware layer that nests this router.
+        .merge(crate::api::{{ domain }}::functions_api::functions_routes())
+{%- endif %}
 }
 {% for entity in entities %}
 

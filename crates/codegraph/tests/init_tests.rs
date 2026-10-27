@@ -1992,3 +1992,72 @@ fn doctor_ext_points_push_covered_domain_with_matching_component_no_extra_warn()
          beyond the #511 signing advisory (+1)"
     );
 }
+
+// ── function bindings doctor gate (issues #450/#337) ────────────────────
+
+const FUNC_BINDINGS_ROSETTA: &str = "namespace gen.store\n\ntype WidgetType:\n\tlabel string (1..1)\n\nfunc OrderScore:\n\tinputs:\n\t\tamount number (1..1)\n\toutput:\n\t\tresult number (1..1)\n\tset result:\n\t\tamount\n";
+
+fn doctor_with_functions(domains_extra: &str) -> Option<String> {
+    let dir = TempDir::new().unwrap();
+    let project = dir.path().join("demo-app");
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+    let rosetta = project.join("model/store.rosetta");
+    fs::create_dir_all(rosetta.parent().unwrap()).unwrap();
+    fs::write(&rosetta, FUNC_BINDINGS_ROSETTA).unwrap();
+    let domains = project.join("domains.toml");
+    let mut toml = fs::read_to_string(&domains).unwrap();
+    // The scaffolded starter model declares a .mox file; drop that entry so
+    // the missing model does not muddy the function-binding signal.
+    toml = toml
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("mox_files"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    toml.push('\n');
+    toml.push_str(domains_extra);
+    fs::write(&domains, toml).unwrap();
+
+    let result = cmd_doctor(&DoctorArgs {
+        config: domains,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![],
+        rosetta_files: vec![rosetta],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+    });
+    match result {
+        Ok(summary) => Some(format!("ok: {} hard", summary.hard_failures)),
+        Err(e) => Some(format!("{e}")),
+    }
+}
+
+#[test]
+fn doctor_validates_function_bindings() {
+    // Known function, valid values: no hard failures.
+    let out = doctor_with_functions("\n[functions.\"OrderScore\"]\nimplementation = \"manual\"\n");
+    let out = out.unwrap();
+    assert!(
+        out.starts_with("ok:"),
+        "a known function with valid values must pass: {out}"
+    );
+
+    // Unknown function name: hard failure naming the offender.
+    let out = doctor_with_functions("\n[functions.\"NoSuchFunc\"]\n").unwrap();
+    assert!(
+        out.contains("hard check") || !out.starts_with("ok:"),
+        "{out}"
+    );
+
+    // Reserved implementation value: hard failure naming the slice issue.
+    let out =
+        doctor_with_functions("\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n").unwrap();
+    assert!(
+        out.contains("hard check") || !out.starts_with("ok:"),
+        "{out}"
+    );
+}

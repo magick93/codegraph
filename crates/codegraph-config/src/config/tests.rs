@@ -976,3 +976,86 @@ fn parse_namespaces_scalar_value_is_parse_error() {
     let err = parse_domain_config_str(toml).unwrap_err();
     assert!(err.to_string().contains("must be a table"), "{err}");
 }
+
+// ── Function bindings (issue #450 B0) ───────────────────────────────────
+
+#[test]
+fn function_bindings_parse_with_defaults() {
+    let toml = r#"
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+
+[functions."PlaceBid"]
+implementation = "manual"
+exposure = "http"
+
+[functions."OrderScore"]
+"#;
+    let config = parse_domain_config_str(toml).unwrap();
+    assert_eq!(config.functions.len(), 2);
+
+    let place_bid = &config.functions["PlaceBid"];
+    assert_eq!(place_bid.implementation, FunctionImplementation::Manual);
+    assert_eq!(place_bid.exposure, FunctionExposure::Http);
+
+    // An entry with no keys carries the standing defaults (dsl/internal).
+    let order_score = &config.functions["OrderScore"];
+    assert_eq!(order_score.implementation, FunctionImplementation::Dsl);
+    assert_eq!(order_score.exposure, FunctionExposure::Internal);
+
+    // Absent table → empty map (the byte-identity default).
+    let bare = parse_domain_config_str(
+        "[domains.store]\nlabel = \"Store\"\nschema_dir = \"s\"\npostgres_schema = \"s\"\n",
+    )
+    .unwrap();
+    assert!(bare.functions.is_empty());
+}
+
+#[test]
+fn function_binding_unknown_values_are_parse_errors() {
+    let toml = r#"
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+
+[functions."PlaceBid"]
+implementation = "serverless"
+"#;
+    let err = parse_domain_config_str(toml).unwrap_err();
+    assert!(err.to_string().contains("serverless"), "{err}");
+
+    let toml = r#"
+[functions."PlaceBid"]
+exposure = "grpc"
+"#;
+    let err = parse_domain_config_str(toml).unwrap_err();
+    assert!(err.to_string().contains("grpc"), "{err}");
+}
+
+#[test]
+fn reserved_implementations_and_exposures_are_rejected_naming_the_slice_issue() {
+    for (value, issue) in [("sql", "#339"), ("external", "#339"), ("event", "#340")] {
+        let key = if value == "event" {
+            "exposure"
+        } else {
+            "implementation"
+        };
+        let toml = format!(
+            "[domains.store]\nlabel = \"Store\"\nschema_dir = \"store\"\npostgres_schema = \"store\"\n\n[functions.\"PlaceBid\"]\n{key} = \"{value}\"\n"
+        );
+        let config = parse_domain_config_str(&toml).unwrap();
+        let err = config.functions.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("PlaceBid"), "{msg}");
+        assert!(msg.contains(value), "{msg}");
+        assert!(msg.contains(issue), "{msg}");
+    }
+
+    // dsl/manual + internal/http all validate clean.
+    let toml = "[domains.store]\nlabel = \"Store\"\nschema_dir = \"store\"\npostgres_schema = \"store\"\n\n[functions.\"A\"]\nimplementation = \"manual\"\nexposure = \"http\"\n\n[functions.\"B\"]\n";
+    let config = parse_domain_config_str(toml).unwrap();
+    config.functions.validate().unwrap();
+}

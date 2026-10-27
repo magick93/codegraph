@@ -106,6 +106,63 @@ Rosetta (Rune DSL) is the sibling primary model source (sigil-parsed,
 bridged, auto-scored): integration guide at `docs/rosetta.md`, construct
 matrix + defects ledger at `docs/rosetta-gap-analysis.md`.
 
+### Function bindings (issues #450 B0 + #337 B1)
+
+Per-function `implementation` (dsl|manual|sql|external) / `exposure`
+(internal|http|event) for modeled sigil funcs, configured in a top-level
+`[functions."Name"]` table in domains.toml (`codegraph-config/src/config/
+functions.rs` on `DomainConfig.functions`). Strict validation: unknown
+function name (vs graph), unknown/reserved values (`sql`/`external`/
+`event` are hard errors naming issues #339/#340 until their slices land),
+and — for HTTP-exposed functions — input/output types resolving to no
+generated Rust type. The driver checks run pre-generation
+(`validate.rs::check_function_bindings` for names/values +
+`codegraph-generate::ddd::functions_api::check_exposed_function_types`
+for API-plane resolvability) because the domain-generator phase collects
+errors non-fatally — a broken binding must never half-generate.
+
+- **Split layout**: a domain with a non-default binding emits
+  `functions/{mod,generated,manual}.rs` instead of `functions.rs`
+  (`ddd/functions.rs`): `generated.rs` = transpiled bodies, `mod.rs` =
+  the `ManualImpls` trait (sync+pure, one method per manual function),
+  `manual.rs` = **write-once** `DefaultManualImpls` stubs (generator
+  emits only when absent — hand edits survive regen; the trait re-emits,
+  so signature drift fails to compile in the hand file). Layout
+  transitions sweep the stale sibling themselves; `clean_generated_output`
+  preserves the `functions` dir (it would otherwise be swept as a stale
+  entity dir, destroying hand edits every run). manual.rs versioning:
+  gitignore-exception block seeded by the init scaffold (documented in
+  rosetta.md; `#[path]` outside `generated/` rejected as fragile).
+- **B1 HTTP** (`exposure = "http"`, riding the existing `functions`
+  capability): `src/api/{domain}/functions_api.rs` — request/response
+  DTOs from typed inputs, `#[utoipa::path]` POST handlers,
+  `functions_routes()` merged into the domain router via
+  `RouterContext.has_functions_http` (auth inherited from the shared
+  `/api` layer). Complete dsl fns call the generated body; partial
+  (any `todo!`/`TODO(#263)` in the emitted body) answer 501 naming the
+  gap; manual fns call `AppState.{domain}_manual_impls` (slot gated on
+  `ScaffoldDomain.has_manual_functions`, constructed `None`) and 501
+  until registered. Exposed signatures resolve through the API plane
+  (`functions_api::resolve_api_type`): primitives builtin, codelists →
+  `crate::codelist::{Enum}`, entities → `{Title}Response` (serde+
+  ToSchema derived); VOs/unknown are refused. OpenAPI registers paths +
+  schemas via `PerDomainOpenApiContext.functions` — no
+  `skip_serializing_if` on Tera-context vecs (empty must serialize as
+  `[]` or iteration errors).
+- **Byte-identity**: absent `[functions]` table (or all-default entries)
+  ⇒ single-file layout, no routes/OpenAPI/slots — pinned by
+  `function_binding_absent_is_byte_identical` plus the unchanged #263
+  goldens.
+- Gates: `cargo test -p codegraph --test rosetta_function_tests` (18:
+  binding resolution, byte-identity, split+write-once, HTTP surface,
+  501s, VO refusal, doctor-style errors) + `-- --ignored
+  emitted_crate_compiles_with_exposed_functions` (the E2 compile gate —
+  the emitted crate `cargo check`s clean with the surface; needs the
+  full dep stack) + `--test init_tests ::doctor_validates_function_bindings`.
+- Deferred: sql/external/event placements (#339/#340), VO-typed exposed
+  signatures (VO projection), worker-topology routing of the functions
+  plane, B2 eligibility-rule endpoint guards (#338).
+
 
 ## mox op/derived consuming generator (issue #501, quality bar #508, compile contract #517)
 

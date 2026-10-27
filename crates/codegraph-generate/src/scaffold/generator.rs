@@ -91,6 +91,11 @@ pub struct ScaffoldDomain {
     /// portable-record entities, in generation order. Used by server.tera to
     /// build Jetstream `?wantedCollections=` filters per domain consumer.
     pub atproto_nsids: Vec<String>,
+    /// True when the domain carries a hand-owned AND HTTP-exposed function
+    /// (issues #450/#337): app_state.tera emits the
+    /// `{domain}_manual_impls: Option<Arc<dyn ...::ManualImpls>>` slot and
+    /// server.tera constructs it `None`. Flag-off = byte-identical.
+    pub has_manual_functions: bool,
 }
 
 pub struct ScaffoldGenerator {
@@ -206,6 +211,13 @@ pub async fn build_scaffold_domains(
     config: &DomainConfig,
     generation_order: &[GenerationEntry],
 ) -> Vec<ScaffoldDomain> {
+    // Hand-owned + HTTP-exposed function domains (issues #450/#337) — the
+    // AppState `{domain}_manual_impls` provider slots.
+    let manual_domains: std::collections::HashSet<String> =
+        match crate::ddd::functions_api::domains_with_manual_http(db, config).await {
+            Ok(domains) => domains.into_iter().collect(),
+            Err(_) => Default::default(),
+        };
     let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
         std::collections::HashMap::new();
     let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
@@ -292,6 +304,7 @@ pub async fn build_scaffold_domains(
                 entities,
                 has_custom_routes: entry.custom_routes,
                 atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
+                has_manual_functions: manual_domains.contains(name.as_str()),
             })
         })
         .collect();
@@ -674,6 +687,7 @@ mod tests {
                 }],
                 has_custom_routes: false,
                 atproto_nsids: vec![],
+                has_manual_functions: false,
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),

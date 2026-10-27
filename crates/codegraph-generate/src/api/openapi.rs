@@ -28,6 +28,22 @@ pub struct OpenApiDomain {
     pub label: String,
     pub tier: String,
     pub entities: Vec<OpenApiEntity>,
+    /// HTTP-exposed modeled functions (issue #337 B1) — registered as
+    /// utoipa paths + schemas from `functions_api.rs`. Empty unless a
+    /// `[functions]` binding sets `exposure = "http"` (byte-identity).
+    /// (NO skip_serializing_if — the Tera context needs the empty vec.)
+    pub functions: Vec<OpenApiFunction>,
+}
+
+/// One HTTP-exposed function's OpenAPI registration context.
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenApiFunction {
+    /// The handler fn name (snake_case) in `functions_api.rs`.
+    pub fn_name: String,
+    /// The `{Fn}Request` schema struct.
+    pub request: String,
+    /// The `{Fn}Response` schema struct.
+    pub response: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,6 +75,10 @@ pub struct PerDomainOpenApiContext {
     pub domain_name: String,
     pub domain_label: String,
     pub entities: Vec<OpenApiEntity>,
+    /// HTTP-exposed modeled functions (issue #337 B1). Empty unless a
+    /// `[functions]` binding opts in.
+    /// (NO skip_serializing_if — the Tera context needs the empty vec.)
+    pub functions: Vec<OpenApiFunction>,
 }
 
 /// Context for the API catalog handler (`openapi_catalog.tera`).
@@ -118,6 +138,25 @@ impl GlobalGenerator for OpenApiGenerator {
         }
 
         let mut domains = Vec::new();
+
+        // HTTP-exposed functions per domain (issue #337 B1). Empty unless a
+        // `[functions]` binding opts in — the standing byte-identity default.
+        let mut functions_per_domain: std::collections::BTreeMap<String, Vec<OpenApiFunction>> =
+            Default::default();
+        for bound in crate::ddd::functions_api::bound_functions(db, config).await? {
+            if bound.is_http()
+                && let Some(domain) = &bound.node.domain
+            {
+                functions_per_domain
+                    .entry(domain.clone())
+                    .or_default()
+                    .push(OpenApiFunction {
+                        fn_name: crate::ddd::functions_api::fn_snake(&bound.node.name),
+                        request: crate::ddd::functions_api::request_struct(&bound.node.name),
+                        response: crate::ddd::functions_api::response_struct(&bound.node.name),
+                    });
+            }
+        }
 
         for (domain_name, domain_entry) in &config.domains {
             let domain_entities = entities_per_domain
@@ -227,12 +266,16 @@ impl GlobalGenerator for OpenApiGenerator {
                 });
             }
 
-            if !entities.is_empty() {
+            let functions = functions_per_domain
+                .remove(domain_name.as_str())
+                .unwrap_or_default();
+            if !entities.is_empty() || !functions.is_empty() {
                 domains.push(OpenApiDomain {
                     name: domain_name.clone(),
                     label: domain_entry.label.clone(),
                     tier: domain_entry.tier.clone(),
                     entities,
+                    functions,
                 });
             }
         }
@@ -273,6 +316,7 @@ impl GlobalGenerator for OpenApiGenerator {
                 domain_name: domain.name.clone(),
                 domain_label: domain.label.clone(),
                 entities: domain.entities.clone(),
+                functions: domain.functions.clone(),
             };
             let content =
                 render_template_with_project(tera, "api/openapi_domain.tera", &ctx, project)?;

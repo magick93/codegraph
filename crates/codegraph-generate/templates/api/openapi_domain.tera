@@ -26,6 +26,9 @@ use utoipa::OpenApi;
         crate::api::{{ domain_name }}::{{ entity.module_name }}_handler::list,
 {% endif %}
 {% endfor %}
+{%- for function in functions %}
+        crate::api::{{ domain_name }}::functions_api::{{ function.fn_name }},
+{%- endfor %}
     ),
     components(schemas(
 {% for entity in entities %}
@@ -40,6 +43,10 @@ use utoipa::OpenApi;
 {% endif %}
         crate::domain::{{ domain_name }}::{{ entity.module_name }}::dto_response::{{ entity.entity_name }}Response,
 {% endfor %}
+{%- for function in functions %}
+        crate::api::{{ domain_name }}::functions_api::{{ function.request }},
+        crate::api::{{ domain_name }}::functions_api::{{ function.response }},
+{%- endfor %}
     )),
     security(("ApiKeyAuth" = [])),
     tags(

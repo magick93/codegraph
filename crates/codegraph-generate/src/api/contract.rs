@@ -484,6 +484,7 @@ mod tests {
             entities: vec![entity("Relationship", "relationship", "relationship")],
             has_permission_middleware: false,
             has_custom_routes: false,
+            has_functions_http: false,
         };
         let contract = build_api_contract(&ctx);
         assert_eq!(contract.base_path, "/api/v1/community_graph");
@@ -520,6 +521,7 @@ mod tests {
             entities: vec![parent, child],
             has_permission_middleware: false,
             has_custom_routes: false,
+            has_functions_http: false,
         };
         let contract = build_api_contract(&ctx);
         let note = contract.entities.get("note").unwrap();
@@ -539,6 +541,7 @@ mod tests {
             entities: vec![test_router_entity()],
             has_permission_middleware: false,
             has_custom_routes: false,
+            has_functions_http: false,
         };
         let json = serde_json::to_value(build_api_contract(&ctx)).unwrap();
         assert_eq!(json["basePath"], "/api/v1/events");

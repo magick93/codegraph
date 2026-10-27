@@ -655,3 +655,38 @@ fn max_depth(node: &codegraph_core::types::CompositionNode) -> usize {
         1 + node.children.iter().map(max_depth).max().unwrap_or(0)
     }
 }
+
+/// Function-binding validation (issue #450 B0). Returns human-readable
+/// error strings (empty = valid) for everything the `[functions]` table
+/// can get wrong: reserved implementation/exposure values and bindings
+/// naming no modeled function. Shared by the driver (hard `Error::Config`)
+/// and doctor (FAIL lines) so the two cannot drift. No-op when the table
+/// is absent — the standing byte-identity default.
+pub async fn check_function_bindings(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<String> {
+    let mut errors = Vec::new();
+    if config.functions.is_empty() {
+        return errors;
+    }
+    if let Err(e) = config.functions.validate() {
+        errors.push(e.to_string());
+        return errors;
+    }
+    let known: std::collections::HashSet<String> = match db.list_functions().await {
+        Ok(functions) => functions.into_iter().map(|f| f.name).collect(),
+        Err(e) => {
+            errors.push(format!(
+                "[functions] bindings could not be checked against the graph: {e}"
+            ));
+            return errors;
+        }
+    };
+    for (name, _) in config.functions.iter() {
+        if !known.contains(name) {
+            errors.push(format!(
+                "functions.\"{name}\": no modeled function with this name — the \
+                 [functions] key must match a `func` declared in the .rosetta model"
+            ));
+        }
+    }
+    errors
+}

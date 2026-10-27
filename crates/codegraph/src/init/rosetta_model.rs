@@ -147,6 +147,24 @@ pub fn unmatched_namespaces<'a>(
         .collect()
 }
 
+/// Scan `func <Name>` declarations of a `.rosetta` source (line-scan
+/// contract, mirroring [`scan_rosetta_namespace`]). Only lines whose
+/// trimmed form starts with `func ` count; the name is the leading
+/// identifier run (covers `func Name:` and `func Name(attr: E->V):`).
+pub fn scan_rosetta_functions(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("func ")?;
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() { None } else { Some(name) }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

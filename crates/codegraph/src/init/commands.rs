@@ -688,6 +688,38 @@ fn check_rosetta_files(
                 );
             }
         }
+
+        // Function bindings (issues #450/#337): `[functions]` keys must
+        // match `func <Name>` declarations in the model, and the reserved
+        // implementation/exposure values are hard errors. (Type
+        // resolvability needs the graph — the run path enforces it via
+        // `check_exposed_function_types`.)
+        if let Some(config) = domain_config
+            && !config.functions.is_empty()
+        {
+            if let Err(e) = config.functions.validate() {
+                hard += 1;
+                println!("FAIL functions — {e}");
+                println!(
+                    "     hint: use implementation dsl|manual and exposure internal|http \
+                     until the reserved slices land (issues #339/#340)"
+                );
+            }
+            let declared: std::collections::HashSet<String> = file_texts
+                .iter()
+                .flat_map(|(_, text)| crate::init::rosetta_model::scan_rosetta_functions(text))
+                .collect();
+            for (name, _) in config.functions.iter() {
+                if !declared.contains(name) {
+                    hard += 1;
+                    println!(
+                        "FAIL functions — functions.\"{name}\": no `func {name}` in \
+                         the --rosetta-files model"
+                    );
+                    println!("     hint: the [functions] key must match a modeled function name");
+                }
+            }
+        }
     } else {
         // domains.toml already reported a hard failure above; still surface
         // the namespaces so the operator sees what would be dropped.

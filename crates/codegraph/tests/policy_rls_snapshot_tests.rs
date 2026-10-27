@@ -186,6 +186,7 @@ fn domain_config() -> DomainConfig {
             generation_mode: "full".into(),
             api_version: "v1".into(),
         },
+        functions: Default::default(),
         rbac: None,
         domains,
     }

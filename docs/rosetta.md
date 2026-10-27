@@ -256,6 +256,66 @@ comments — the module is the record, never a guess.
 
 All of these are OFF ⇒ byte-identical output.
 
+## Function bindings (issues #450 B0 + #337 B1)
+
+Where a modeled `func` body lives and how it is invoked is an **author
+decision**, configured in `domains.toml` under a top-level `[functions]`
+table (no DSL annotation surface; function names are namespace-unique in
+Rosetta, so the bare name is the key):
+
+```toml
+[functions."PlaceBid"]
+implementation = "manual"   # dsl (default) | manual | sql | external
+exposure = "http"           # internal (default) | http | event
+```
+
+- **`implementation`** — where the body lives:
+  - `dsl` — transpile `set`/`add` ops into generated Rust (today's
+    behavior).
+  - `manual` — hand-owned; never transpiled, even when fully transpilable
+    (kills the duplicate-impl trap of a later model edit).
+  - `sql` / `external` — **reserved**: hard config errors naming the
+    owning slices (#339/#450) until they land.
+- **`exposure`** — how it is invoked:
+  - `internal` — library call only (today's behavior).
+  - `http` — authenticated `POST /api/v1/{domain}/{snake_fn}` + OpenAPI
+    (B1). Complete `dsl` functions dispatch into the generated body;
+    partial ones (any `todo!`/`TODO(#263)` in the emitted body) answer
+    **501** naming the function and the gap; `manual` ones dispatch
+    through the `ManualImpls` provider and answer **501** until a provider
+    is registered on `AppState.{domain}_manual_impls`.
+  - `event` — **reserved** (issue #340).
+
+**Strict validation** (hard errors naming the offender): unknown function
+name, unknown enum value, reserved implementation/exposure values, and —
+for HTTP-exposed functions — input/output types that resolve to no
+generated Rust type (value objects, unknown titles). Exposed signatures
+resolve through the API plane: primitives stay builtin, codelists become
+`crate::codelist::{Enum}`, entities become `{Title}Response` DTOs.
+
+**Split layout**: a domain carrying a non-default binding emits
+`functions/{mod,generated,manual}.rs` instead of the single
+`functions.rs` — `generated.rs` carries the transpiled bodies,
+`mod.rs` the `ManualImpls` trait (one sync+pure method per manual
+function), and `manual.rs` the write-once `DefaultManualImpls` stubs.
+**manual.rs is write-once**: the generator emits it only when absent, so
+hand edits survive regeneration; the trait is re-emitted every run, so a
+model change that alters a signature fails to compile in the hand file
+instead of drifting. *Versioning decision (issue #450 rider)*: manual.rs
+lives under the gitignored `generated/` tree — consumers who want hand
+implementations versioned add the documented unignore block to their root
+`.gitignore` (new `codegraph init --rosetta` scaffolds seed it);
+a `#[path]` module outside `generated/` was rejected as fragile.
+
+Absent `[functions]` table (or only all-default entries) ⇒ byte-identical
+output: the single-file layout, no routes, no OpenAPI entries, no
+AppState slots.
+
+Deferred: `sql`/`external`/`event` placements (#339/#340), VO-typed
+signatures for exposed functions (VO projection), worker-topology
+function routing (the functions plane emits at the output root), and
+handler-site eligibility-rule guards (B2 #338).
+
 ## Mixed JSON + rosetta runs
 
 `--rosetta-files` and `--schemas` can be combined; the driver

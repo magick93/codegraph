@@ -72,6 +72,10 @@ pub struct RouterContext {
     /// The rendered router then calls `handwritten_routes::router()` (sibling
     /// module declared by mod.rs) instead of returning a bare `Router::new()`.
     pub has_custom_routes: bool,
+    /// True when the domain carries HTTP-exposed functions (issue #337 B1):
+    /// the rendered router merges `functions_api::functions_routes()` so the
+    /// modeled-function endpoints mount under `/api/{version}/{domain}`.
+    pub has_functions_http: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -549,6 +553,10 @@ impl DomainGenerator for RouterGenerator {
                 .get(domain)
                 .map(|d| d.custom_routes)
                 .unwrap_or(false),
+            has_functions_http: crate::ddd::functions_api::domains_with_http(db, config)
+                .await?
+                .iter()
+                .any(|d| d == domain),
         };
 
         let content = render_template_with_project(tera, "api/router.tera", &ctx, project)?;
@@ -892,6 +900,10 @@ pub async fn build_router_context(
             .get(domain)
             .map(|d| d.custom_routes)
             .unwrap_or(false),
+        has_functions_http: crate::ddd::functions_api::domains_with_http(db, config)
+            .await?
+            .iter()
+            .any(|d| d == domain),
     })
 }
 
@@ -1104,6 +1116,7 @@ mod tests {
             }],
             has_permission_middleware: true,
             has_custom_routes: false,
+            has_functions_http: false,
         }
     }
 

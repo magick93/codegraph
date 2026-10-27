@@ -975,6 +975,25 @@ pub async fn run_with_graph_cache(
 
     run_validation(be.querier(), &domain_config).await?;
 
+    // Function bindings (issue #450 B0): reserved values and unknown
+    // function names are hard config errors naming the offender. No-op
+    // when the `[functions]` table is absent.
+    let binding_errors =
+        crate::validate::check_function_bindings(be.querier(), &domain_config).await;
+    if !binding_errors.is_empty() {
+        return Err(crate::error::Error::Config(binding_errors.join("; ")));
+    }
+    // Issue #337: every HTTP-exposed function's signature must resolve to
+    // generated Rust types — a broken binding never half-generates.
+    let binding_errors = codegraph_generate::ddd::functions_api::check_exposed_function_types(
+        be.querier(),
+        &domain_config,
+    )
+    .await;
+    if !binding_errors.is_empty() {
+        return Err(crate::error::Error::Config(binding_errors.join("; ")));
+    }
+
     let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
 
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
