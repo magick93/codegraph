@@ -246,7 +246,7 @@ async fn ready_deliveries(state: &AppState) -> Result<Vec<DeliveryJob>, String> 
 async fn drain_events_into_jobs(
     state: &AppState,
     domain: &str,
-) -> Result<Vec<(String, i64, Vec<DeliveryJob>)>, String> {
+) -> Result<Vec<(String, i64, Vec<DeliveryJob>{% if has_events %}, bool{% endif %})>, String> {
     let client = state.client_source.client().await.map_err(|e| e.to_string())?;
     let queue_name = format!("events_{domain}");
     let rows = client
