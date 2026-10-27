@@ -27,7 +27,7 @@
 //! Gated behind the `rosetta_backend` profile feature via the capability
 //! registry — OFF ⇒ the generator never runs and output is byte-identical.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -37,10 +37,11 @@ use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
 use crate::ProjectConfig;
 use crate::code_writer::{CodeWriter, wln};
+use crate::ddd::functions_api::resolve_api_type;
 use crate::error::Result;
 use crate::rosetta_expr::{ExprContext, transpile_scoped};
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
-use codegraph_config::DomainConfig;
+use codegraph_config::{DomainConfig, FunctionExposure, FunctionImplementation};
 
 /// Rust primitive for a rosetta builtin type title. `None` for
 /// non-builtins (their titles resolve in the consumer crate — codelist
@@ -120,7 +121,7 @@ impl DomainGenerator for FunctionsGenerator {
         db: &dyn GraphQuerier,
         domain: &str,
         _entity_titles: &[String],
-        _config: &DomainConfig,
+        config: &DomainConfig,
         _tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
@@ -137,21 +138,191 @@ impl DomainGenerator for FunctionsGenerator {
         }
 
         let names: HashSet<&str> = functions.iter().map(|f| f.name.as_str()).collect();
-        let surfaces: Vec<FunctionSurface> = functions
+        let mut surfaces: Vec<FunctionSurface> = functions
             .iter()
             .map(|node| build_surface(node, &names))
             .collect();
 
-        let content = emit_domain_functions(domain, &surfaces, project);
-        Ok(vec![GeneratedFile {
-            path: self
-                .output_dir
-                .join("src")
-                .join("domain")
-                .join(domain)
-                .join("functions.rs"),
-            content,
-        }])
+        // Issue #450 B0: `[functions."Name"]` bindings place each function.
+        // The split layout (functions/{mod,generated,manual}.rs) activates
+        // for a domain only when a NON-DEFAULT binding is present — the
+        // absent table (and all-default entries) keep today's single-file
+        // emission byte-identical.
+        let is_manual = |s: &FunctionSurface| {
+            config
+                .functions
+                .get(&s.node.name)
+                .is_some_and(|b| b.implementation == FunctionImplementation::Manual)
+        };
+        let any_non_default = surfaces.iter().any(|s| {
+            config.functions.get(&s.node.name).is_some_and(|b| {
+                b.implementation != FunctionImplementation::Dsl
+                    || b.exposure != FunctionExposure::Internal
+            })
+        });
+
+        let module_dir = self.output_dir.join("src").join("domain").join(domain);
+
+        if !any_non_default {
+            // Transition sweep: a previously bound run may have left the
+            // split directory behind (the stale-cleanup pass preserves the
+            // `functions` dir for the write-once manual file).
+            let stale_dir = module_dir.join("functions");
+            if stale_dir.is_dir() {
+                let _ = std::fs::remove_dir_all(&stale_dir);
+            }
+            let content =
+                emit_domain_functions(domain, &surfaces, project, false, &BTreeSet::new());
+            return Ok(vec![GeneratedFile {
+                path: module_dir.join("functions.rs"),
+                content,
+            }]);
+        }
+
+        // Transition sweep: the stale single file would collide with the
+        // module directory of the same name.
+        let stale_file = module_dir.join("functions.rs");
+        if stale_file.is_file() {
+            let _ = std::fs::remove_file(&stale_file);
+        }
+
+        // Issue #337 B1: resolve the API-plane types for every HTTP-exposed
+        // function so the emitted DTOs, handler calls, and signatures agree
+        // and compile. Non-exposed functions (including manual/internal)
+        // keep today's verbatim signatures — the API plane is the only
+        // consumer that must resolve. Unresolvable types are a hard
+        // generation error naming the function and the input — never a
+        // bare name (the #517 contract).
+        let suffix = &config.defaults.type_suffix;
+        let mut imports_by_fn: HashMap<String, BTreeSet<String>> = HashMap::new();
+        for surface in &mut surfaces {
+            let Some(binding) = config.functions.get(&surface.node.name) else {
+                continue;
+            };
+            if binding.exposure != FunctionExposure::Http {
+                continue;
+            }
+            let mut imports = BTreeSet::new();
+            let fail = |function: &str, reason: String| {
+                codegraph_core::error::Error::Config(format!(
+                    "function '{function}': {reason} — exposed and manual functions need \
+                     primitive, codelist, or entity-typed signatures",
+                ))
+            };
+            for (slot, input) in surface.args.iter_mut().zip(&surface.node.inputs) {
+                let resolved = resolve_api_type(db, domain, &input.type_ref, suffix).await;
+                match resolved {
+                    Ok(arg) => {
+                        if let Some(path) = arg.import {
+                            imports.insert(path);
+                        }
+                        slot.1 = arg.rust_type;
+                    }
+                    Err(reason) => return Err(fail(&surface.node.name, reason)),
+                }
+            }
+            if let (Some(out_slot), Some(out_node)) = (&surface.output, &surface.node.output) {
+                let resolved = resolve_api_type(db, domain, &out_node.type_ref, suffix).await;
+                match resolved {
+                    Ok(arg) => {
+                        if let Some(path) = arg.import {
+                            imports.insert(path);
+                        }
+                        surface.output = Some((out_slot.0.clone(), arg.rust_type));
+                    }
+                    Err(reason) => return Err(fail(&surface.node.name, reason)),
+                }
+            }
+            imports_by_fn.insert(surface.node.name.clone(), imports);
+        }
+
+        let is_http = |s: &FunctionSurface| {
+            config
+                .functions
+                .get(&s.node.name)
+                .is_some_and(|b| b.exposure == FunctionExposure::Http)
+        };
+        let partial: HashSet<String> = surfaces
+            .iter()
+            .filter(|s| !is_manual(s) && is_http(s) && surface_is_partial(s, &surfaces, project))
+            .map(|s| s.node.name.clone())
+            .collect();
+        let manual_names: HashSet<String> = surfaces
+            .iter()
+            .filter(|s| is_manual(s))
+            .map(|s| s.node.name.clone())
+            .collect();
+
+        let (manual, generated): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
+            surfaces.into_iter().partition(is_manual);
+
+        let fn_imports = |names: &[&FunctionSurface]| {
+            names
+                .iter()
+                .filter_map(|s| imports_by_fn.get(&s.node.name))
+                .cloned()
+                .reduce(|a, b| a.union(&b).cloned().collect())
+                .unwrap_or_default()
+        };
+
+        // Write-once: the hand-owned stub file is emitted only when absent.
+        let manual_rs = module_dir.join("functions").join("manual.rs");
+        let manual_present = manual_rs.exists();
+
+        let mut files = Vec::new();
+        if !generated.is_empty() {
+            let generated_imports = fn_imports(&generated.iter().collect::<Vec<_>>());
+            files.push(GeneratedFile {
+                path: module_dir.join("functions").join("generated.rs"),
+                content: emit_domain_functions(
+                    domain,
+                    &generated,
+                    project,
+                    true,
+                    &generated_imports,
+                ),
+            });
+        }
+        if !manual.is_empty() && !manual_present {
+            let manual_imports = fn_imports(&manual.iter().collect::<Vec<_>>());
+            files.push(GeneratedFile {
+                path: manual_rs,
+                content: emit_manual_stub(domain, &manual, &manual_imports),
+            });
+        }
+        files.push(GeneratedFile {
+            path: module_dir.join("functions").join("mod.rs"),
+            content: emit_functions_module(domain, &manual, project, manual_present),
+        });
+
+        // Issue #337 B1: the HTTP surface for this domain's exposed
+        // functions. Absent bindings ⇒ no file (byte-identity).
+        let http: Vec<&FunctionSurface> = generated
+            .iter()
+            .chain(manual.iter())
+            .filter(|s| is_http(s))
+            .collect();
+        if !http.is_empty() {
+            let api_imports = fn_imports(&http);
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("src")
+                    .join("api")
+                    .join(domain)
+                    .join("functions_api.rs"),
+                content: emit_functions_api_rs(
+                    domain,
+                    &http,
+                    &partial,
+                    &manual_names,
+                    &api_imports,
+                    &project.identity.api_version,
+                    project,
+                ),
+            });
+        }
+        Ok(files)
     }
 }
 
@@ -285,12 +456,18 @@ fn operation_label(op: &FunctionOperation) -> String {
     }
 }
 
-/// Emit the complete `functions.rs` for one domain (deterministic by
-/// construction — surfaces arrive name-ordered).
+/// Emit the complete transpiled module body for one domain (deterministic
+/// by construction — surfaces arrive name-ordered). `cross_module_imports`
+/// is the split-layout flag: `generated.rs` re-imports `super::*` so a
+/// dispatch arm may delegate to a manual-bound child function (single-file
+/// emission never imports — byte-identity for the unbound default).
+/// `imports` carries the resolved API-plane `use` lines (split mode only).
 fn emit_domain_functions(
     domain: &str,
     functions: &[FunctionSurface],
     project: &ProjectConfig,
+    cross_module_imports: bool,
+    imports: &BTreeSet<String>,
 ) -> String {
     let mut code = CodeWriter::new();
     wln!(
@@ -310,12 +487,206 @@ fn emit_domain_functions(
     );
     wln!(code, "//! carry TODO(#263) markers instead of guesses.");
     wln!(code, "#![allow(dead_code)]");
+    if cross_module_imports {
+        wln!(code);
+        wln!(code, "use super::*;");
+        for path in imports {
+            wln!(code, "use {path};");
+        }
+    }
 
     for function in functions {
         emit_function(&mut code, function, project, functions);
     }
 
     code.into_string()
+}
+
+/// Emit the split layout's `mod.rs` (issue #450): module declarations,
+/// re-exports, and — when the domain carries manual-bound functions — the
+/// `ManualImpls` provider seam. `manual_present` records that the
+/// write-once stub file already exists on disk (its declaration is
+/// emitted regardless so hand edits keep compiling).
+fn emit_functions_module(
+    domain: &str,
+    manual: &[FunctionSurface],
+    project: &ProjectConfig,
+    manual_present: bool,
+) -> String {
+    let mut code = CodeWriter::new();
+    wln!(
+        code,
+        "//! Rosetta functions for the {domain} domain (issue #263; bindings issue #450).",
+        domain = domain,
+    );
+    wln!(code, "//!");
+    wln!(
+        code,
+        "//! Generated by {} — DO NOT EDIT. `generated.rs` carries the",
+        project.identity.generator_name
+    );
+    wln!(
+        code,
+        "//! transpiled bodies; `manual.rs` is the write-once hand-owned file"
+    );
+    wln!(code, "//! (regeneration never overwrites it).");
+    wln!(code, "#![allow(dead_code)]");
+    wln!(code);
+    wln!(code, "pub mod generated;");
+    wln!(code, "pub use generated::*;");
+
+    if manual.is_empty() {
+        return code.into_string();
+    }
+
+    wln!(code);
+    wln!(
+        code,
+        "pub mod manual;{}",
+        if manual_present {
+            " // write-once: not re-emitted"
+        } else {
+            ""
+        }
+    );
+    wln!(code, "pub use manual::*;");
+    wln!(code);
+    wln!(
+        code,
+        "/// Provider seam for hand-owned function implementations (issue #450)."
+    );
+    wln!(
+        code,
+        "/// Fill in the write-once `manual.rs` stubs, or implement this trait"
+    );
+    wln!(
+        code,
+        "/// yourself and wire the provider where the generated handlers (or"
+    );
+    wln!(code, "/// your own call sites) can reach it.");
+    wln!(code, "pub trait ManualImpls: Send + Sync {{");
+    for function in manual {
+        wln!(code);
+        if let Some(definition) = &function.node.definition {
+            wln!(code, "    /// {definition}");
+        }
+        let args = function
+            .args
+            .iter()
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let return_ty = match &function.output {
+            Some((_, ty)) => format!(" -> {ty}"),
+            None => String::new(),
+        };
+        wln!(
+            code,
+            "    fn {fn}(&self{args}){return_ty};",
+            fn = function.fn_name,
+            args = if args.is_empty() {
+                String::new()
+            } else {
+                format!(", {args}")
+            },
+        );
+    }
+    wln!(code, "}}");
+
+    code.into_string()
+}
+
+/// Emit the write-once `manual.rs` stub (issue #450): one
+/// `DefaultManualImpls` with a `todo!` body per manual-bound function.
+/// Hand implementations live HERE — the module is the record.
+fn emit_manual_stub(
+    domain: &str,
+    manual: &[FunctionSurface],
+    imports: &BTreeSet<String>,
+) -> String {
+    let mut code = CodeWriter::new();
+    wln!(
+        code,
+        "//! Hand-owned implementations for the {domain} domain (issue #450).",
+        domain = domain,
+    );
+    wln!(code, "//!");
+    wln!(
+        code,
+        "//! WRITE-ONCE: this file is emitted only when absent — regeneration"
+    );
+    wln!(
+        code,
+        "//! never overwrites hand edits. The `ManualImpls` trait it implements"
+    );
+    wln!(
+        code,
+        "//! is re-emitted into `mod.rs` on every run, so a model change that"
+    );
+    wln!(
+        code,
+        "//! alters a signature fails to compile here instead of drifting."
+    );
+    wln!(code, "#![allow(dead_code)]");
+    wln!(code);
+    wln!(code, "use super::ManualImpls;");
+    for path in imports {
+        wln!(code, "use {path};");
+    }
+    wln!(code);
+    wln!(
+        code,
+        "/// Default hand-owned provider: replace the `todo!` bodies in place."
+    );
+    wln!(code, "pub struct DefaultManualImpls;");
+    wln!(code);
+    wln!(code, "impl ManualImpls for DefaultManualImpls {{");
+    for function in manual {
+        wln!(code);
+        if let Some(definition) = &function.node.definition {
+            wln!(code, "    /// {definition}");
+        }
+        let args = function
+            .args
+            .iter()
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let return_ty = match &function.output {
+            Some((_, ty)) => format!(" -> {ty}"),
+            None => String::new(),
+        };
+        wln!(
+            code,
+            "    fn {fn}(&self{args}){return_ty} {{",
+            fn = function.fn_name,
+            args = if args.is_empty() {
+                String::new()
+            } else {
+                format!(", {args}")
+            },
+        );
+        // Silence unused-parameter warnings in the stub body; the args
+        // stay named so the hand impl keeps the model's vocabulary.
+        let owned: Vec<String> = function.args.iter().map(|(name, _)| name.clone()).collect();
+        wln!(code, "        let _ = (self{});", paren_tail(&owned));
+        wln!(
+            code,
+            "        todo!(\"hand-owned implementation of '{fn}' (modeled function '{name}')\")",
+            fn = function.fn_name,
+            name = function.node.name,
+        );
+        wln!(code, "    }}");
+    }
+    wln!(code, "}}");
+
+    code.into_string()
+}
+
+/// `(, a, b)` tail for the stub's `let _ = (self…);` discard — empty when
+/// the function takes no inputs.
+fn paren_tail(args: &[String]) -> String {
+    args.iter().map(|a| format!(", {a}")).collect::<String>()
 }
 
 /// Emit one free function (signature, match head or direct body).
@@ -627,6 +998,318 @@ fn emit_dispatch_body(
         enumeration,
     );
     wln!(code, "    }}");
+}
+
+// ── HTTP surface (issue #337 B1) ────────────────────────────────────────
+
+/// A function's emitted body is "partial" when it carries a `todo!` or a
+/// `TODO(#263)` marker — the record-in-the-module rule. Exposed partial
+/// functions answer 501 instead of risking a runtime panic.
+fn surface_is_partial(
+    surface: &FunctionSurface,
+    all: &[FunctionSurface],
+    project: &ProjectConfig,
+) -> bool {
+    let mut code = CodeWriter::new();
+    emit_function(&mut code, surface, project, all);
+    let text = code.into_string();
+    text.contains("todo!") || text.contains("TODO(#263)")
+}
+
+/// Emit `src/api/{domain}/functions_api.rs` (issue #337): authenticated
+/// POST endpoints for the domain's HTTP-exposed functions, dispatching
+/// into the functions module. Complete `dsl` functions call the generated
+/// body; partial ones answer 501 naming the gap; `manual` ones call the
+/// `ManualImpls` provider from AppState (501 until registered).
+fn emit_functions_api_rs(
+    domain: &str,
+    http: &[&FunctionSurface],
+    partial: &HashSet<String>,
+    manual: &HashSet<String>,
+    imports: &BTreeSet<String>,
+    api_version: &str,
+    project: &ProjectConfig,
+) -> String {
+    let mut code = CodeWriter::new();
+    wln!(
+        code,
+        "//! HTTP surface for exposed {domain} functions (issues #337 + #450).",
+        domain = domain,
+    );
+    wln!(code, "//!");
+    wln!(
+        code,
+        "//! Generated by {} — DO NOT EDIT. Authenticated POST endpoints",
+        project.identity.generator_name
+    );
+    wln!(
+        code,
+        "//! dispatching into `crate::domain::{domain}::functions`. Functions"
+    );
+    wln!(
+        code,
+        "//! whose bodies are not fully transpilable — and hand-owned functions"
+    );
+    wln!(
+        code,
+        "//! without a registered `ManualImpls` provider — answer 501 naming"
+    );
+    wln!(code, "//! the gap.");
+    wln!(code);
+    wln!(code, "use axum::extract::State;");
+    wln!(code, "use axum::http::StatusCode;");
+    wln!(code, "use axum::Json;");
+    wln!(code, "use serde::{{Deserialize, Serialize}};");
+    wln!(code, "use utoipa::ToSchema;");
+    wln!(code);
+    for path in imports {
+        wln!(code, "use {path};");
+    }
+    if !imports.is_empty() {
+        wln!(code);
+    }
+    wln!(code, "use crate::app_state::AppState;");
+    wln!(code);
+    wln!(code, "/// 501 payload naming the function and the gap.");
+    wln!(
+        code,
+        "fn not_implemented(function: &str, hint: &str) -> (StatusCode, Json<serde_json::Value>) {{"
+    );
+    wln!(code, "    (");
+    wln!(code, "        StatusCode::NOT_IMPLEMENTED,");
+    wln!(code, "        Json(serde_json::json!({{");
+    wln!(code, "            \"error\": \"not_implemented\",");
+    wln!(code, "            \"function\": function,");
+    wln!(code, "            \"hint\": hint,");
+    wln!(code, "        }})),");
+    wln!(code, "    )");
+    wln!(code, "}}");
+
+    let camel = project.codegen.dto_key_casing == crate::project_config::DtoKeyCasing::Camel;
+
+    for function in http {
+        let is_partial = partial.contains(&function.node.name);
+        let is_manual = manual.contains(&function.node.name);
+        emit_function_endpoint(
+            &mut code,
+            domain,
+            api_version,
+            function,
+            is_partial,
+            is_manual,
+            camel,
+        );
+    }
+
+    wln!(code);
+    wln!(
+        code,
+        "/// The domain's exposed-function routes, merged into the domain router"
+    );
+    wln!(
+        code,
+        "/// by `router.rs` (auth is inherited from the shared `/api` layer)."
+    );
+    wln!(
+        code,
+        "pub fn functions_routes() -> axum::Router<AppState> {{"
+    );
+    wln!(code, "    use axum::routing::post;");
+    wln!(code);
+    wln!(code, "    axum::Router::new()");
+    for function in http {
+        wln!(
+            code,
+            "        .route(\"/{fn_name}\", post({fn_name}))",
+            fn_name = function.fn_name,
+        );
+    }
+    wln!(code, "}}");
+
+    code.into_string()
+}
+
+/// Emit one endpoint: request/response DTOs, the `#[utoipa::path]`-attributed
+/// handler. (Routes register in `functions_routes`.)
+#[allow(clippy::too_many_arguments)]
+fn emit_function_endpoint(
+    code: &mut CodeWriter,
+    domain: &str,
+    api_version: &str,
+    function: &FunctionSurface,
+    partial: bool,
+    manual: bool,
+    camel: bool,
+) {
+    let endpoint = &function.fn_name;
+    let request = format!(
+        "{}Request",
+        codegraph_naming::to_pascal_case(&function.node.name)
+    );
+    let response = format!(
+        "{}Response",
+        codegraph_naming::to_pascal_case(&function.node.name)
+    );
+    let serde_attr = if camel {
+        "\n#[serde(rename_all = \"camelCase\")]"
+    } else {
+        ""
+    };
+
+    wln!(code);
+    if let Some(definition) = &function.node.definition {
+        wln!(code, "/// {definition}");
+    }
+    wln!(
+        code,
+        "#[derive(Debug, Deserialize, ToSchema)]{serde_attr}",
+        serde_attr = serde_attr,
+    );
+    wln!(code, "pub struct {request} {{");
+    for (name, ty) in &function.args {
+        wln!(code, "    pub {name}: {ty},");
+    }
+    wln!(code, "}}");
+    wln!(code);
+    if let Some(definition) = &function.node.definition {
+        wln!(code, "/// {definition}");
+    }
+    wln!(
+        code,
+        "#[derive(Debug, Serialize, ToSchema)]{serde_attr}",
+        serde_attr = serde_attr,
+    );
+    wln!(code, "pub struct {response} {{");
+    if let Some((out_name, out_ty)) = &function.output {
+        wln!(code, "    pub {out_name}: {out_ty},");
+    }
+    wln!(code, "}}");
+    wln!(code);
+    if let Some(definition) = &function.node.definition {
+        wln!(code, "/// {definition}");
+    }
+    wln!(code, "#[utoipa::path(");
+    wln!(code, "    post,");
+    wln!(
+        code,
+        "    path = \"/api/{api_version}/{domain}/{endpoint}\",",
+        api_version = api_version,
+        domain = domain,
+        endpoint = endpoint,
+    );
+    wln!(code, "    tag = \"{domain} functions\",", domain = domain,);
+    wln!(
+        code,
+        "    operation_id = \"{domain}_functions_{endpoint}\",",
+        domain = domain,
+        endpoint = endpoint,
+    );
+    wln!(code, "    request_body(content = {request}),");
+    wln!(code, "    responses(");
+    wln!(
+        code,
+        "        (status = 200, description = \"Function result\", body = {response}),"
+    );
+    wln!(
+        code,
+        "        (status = 501, description = \"Function not implemented (partial transpilation or awaiting hand-owned provider)\"),"
+    );
+    wln!(code, "    ),");
+    wln!(code, ")]");
+    wln!(
+        code,
+        "#[tracing::instrument(skip(state, body), fields(domain = \"{domain}\", function = \"{name}\"))]",
+        domain = domain,
+        name = function.node.name,
+    );
+    wln!(code, "pub async fn {endpoint}(");
+    wln!(code, "    State(state): State<AppState>,");
+    wln!(code, "    Json(body): Json<{request}>,");
+    wln!(
+        code,
+        ") -> Result<Json<{response}>, (StatusCode, Json<serde_json::Value>)> {{"
+    );
+
+    let arg_list = function
+        .args
+        .iter()
+        .map(|(name, _)| format!("body.{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if partial {
+        wln!(code, "    let _ = (state, body);");
+        wln!(code, "    Err(not_implemented(");
+        wln!(code, "        \"{name}\",", name = function.node.name,);
+        wln!(
+            code,
+            "        \"function body is not fully transpilable — see \
+             crate::domain::{domain}::functions for the TODO(#263) markers naming \
+             the missing constructs\",",
+            domain = domain,
+        );
+        wln!(code, "    ))");
+    } else if manual {
+        wln!(
+            code,
+            "    match state.{domain}_manual_impls.as_ref() {{",
+            domain = domain,
+        );
+        wln!(code, "        Some(provider) => {{");
+        if let Some((out_name, _)) = &function.output {
+            wln!(
+                code,
+                "            let {out} = provider.{endpoint}({args});",
+                out = out_name,
+                args = arg_list,
+            );
+            wln!(
+                code,
+                "            Ok(Json({response} {{ {out} }}))",
+                out = out_name,
+            );
+        } else {
+            wln!(
+                code,
+                "            provider.{endpoint}({args});",
+                args = arg_list,
+            );
+            wln!(code, "            Ok(Json({response} {{}}))");
+        }
+        wln!(code, "        }}");
+        wln!(code, "        None => Err(not_implemented(");
+        wln!(code, "            \"{name}\",", name = function.node.name,);
+        wln!(
+            code,
+            "            \"hand-owned function (implementation 'manual') awaiting its \
+             provider — implement crate::domain::{domain}::functions::ManualImpls \
+             and set AppState::{domain}_manual_impls\",",
+            domain = domain,
+        );
+        wln!(code, "        )),");
+        wln!(code, "    }}");
+    } else {
+        wln!(code, "    let _ = state;");
+        if let Some((out_name, _)) = &function.output {
+            wln!(
+                code,
+                "    let {out} = crate::domain::{domain}::functions::{endpoint}({args});",
+                out = out_name,
+                domain = domain,
+                args = arg_list,
+            );
+            wln!(code, "    Ok(Json({response} {{ {out} }}))", out = out_name,);
+        } else {
+            wln!(
+                code,
+                "    crate::domain::{domain}::functions::{endpoint}({args});",
+                domain = domain,
+                args = arg_list,
+            );
+            wln!(code, "    Ok(Json({response} {{}}))");
+        }
+    }
+    wln!(code, "}}");
 }
 
 #[cfg(test)]

@@ -238,6 +238,14 @@ pub(crate) fn clean_generated_output(
                 Some(n) => n.to_string(),
                 None => continue,
             };
+            // The `functions` module dir is owned by the FunctionsGenerator
+            // (issue #450): it is NOT an entity module, and it carries the
+            // write-once manual.rs — sweeping it here would destroy hand
+            // edits every run. The generator handles both layout
+            // transitions (split dir ↔ single file) itself.
+            if module_name == "functions" {
+                continue;
+            }
             // Only remove directories that are NOT in the expected set.
             // Directories in the expected set are left for generators to overwrite —
             // if a generator fails partway through, the previous working state is preserved.

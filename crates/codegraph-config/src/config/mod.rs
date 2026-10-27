@@ -7,6 +7,7 @@ use crate::error::DomainConfigError;
 
 mod domain;
 mod entity;
+mod functions;
 mod namespace;
 
 #[cfg(test)]
@@ -20,6 +21,7 @@ pub use entity::{
     PermissionConfig, RbacConfig, SearchConfig, TimerDef, TreeIncludeConfig, WorkflowConfig,
     default_min_roles, default_roles_hierarchy,
 };
+pub use functions::{FunctionBinding, FunctionBindings, FunctionExposure, FunctionImplementation};
 pub use namespace::NamespaceEntry;
 
 /// Default operations for entities.
@@ -55,6 +57,12 @@ pub struct DomainConfig {
     /// basejump default hierarchy.
     #[serde(default)]
     pub rbac: Option<RbacConfig>,
+    /// Per-function bindings (issue #450 B0): `[functions."Name"]` with
+    /// `implementation` (dsl|manual|sql|external) and `exposure`
+    /// (internal|http|event). Absent ⇒ every function keeps today's
+    /// dsl/internal behavior (byte-identical output).
+    #[serde(default)]
+    pub functions: FunctionBindings,
 }
 
 fn default_app_name() -> String {

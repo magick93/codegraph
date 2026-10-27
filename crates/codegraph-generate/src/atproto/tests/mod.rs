@@ -23,6 +23,7 @@ use crate::project_config::AtprotoConfig;
 pub(super) fn make_domain_config() -> codegraph_config::DomainConfig {
     let domains = std::collections::HashMap::new();
     codegraph_config::DomainConfig {
+        functions: Default::default(),
         namespaces: std::collections::HashMap::new(),
         defaults: Default::default(),
         domains,

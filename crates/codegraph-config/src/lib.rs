@@ -8,7 +8,8 @@ pub mod workflow_loader;
 
 pub use config::{
     ApprovalChainDef, ApprovalStepDef, DataGuard, DefaultsConfig, DomainConfig, DomainEntry,
-    DtoConfig, EntityConfig, NamespaceEntry, SearchConfig, TimerDef, UiDomainConfig, UiEntityEntry,
+    DtoConfig, EntityConfig, FunctionBinding, FunctionBindings, FunctionExposure,
+    FunctionImplementation, NamespaceEntry, SearchConfig, TimerDef, UiDomainConfig, UiEntityEntry,
     UiOverrideConfig, UiOverrideEntry, UiWizardConfig, WorkflowConfig, parse_ui_domains_config,
     parse_ui_domains_config_str, parse_ui_overrides_config, parse_ui_overrides_config_str,
 };

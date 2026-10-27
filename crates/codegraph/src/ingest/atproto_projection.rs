@@ -331,6 +331,7 @@ mod tests {
         DomainConfig {
             namespaces: HashMap::new(),
             defaults: DefaultsConfig::default(),
+            functions: Default::default(),
             rbac: None,
             domains,
         }
