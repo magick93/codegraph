@@ -87,6 +87,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # The worker wasm gate (issue #550) cargo-checks the generated
+          # worker plane on wasm32-unknown-unknown against a stubbed
+          # cornucopia-queries — no DB needed.
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Install psql
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
@@ -98,3 +103,5 @@ jobs:
         run: cargo test -p codegraph --test wrapper_compile_tests -- --ignored --nocapture
       - name: Run cornucopia hooks runtime pins (issue #518)
         run: cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture
+      - name: Worker wasm gate (issue #550)
+        run: cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture

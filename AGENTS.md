@@ -1434,6 +1434,7 @@ cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 # Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
 cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
+cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture  # #550: worker plane wasm32 gate (needs the wasm32-unknown-unknown target; DB-free — stubbed cornucopia-queries)
 cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture  # #518: the generated cornucopia create path fires hooks + Abort rolls back over real Postgres
 cargo test -p codegraph --test review_api_suite -- --ignored --nocapture     # live acceptance gate: fixture regen + testkit api + pool mode + authz over HTTP
 
@@ -2310,9 +2311,20 @@ installations SQL matches against `ep.allowed_entities` (POSTed event =
 awaited — covered entities' handler futures stay `Send` — and
 `worker_main.tera` declares `mod integration_dispatch;` alongside
 `worker_lib.tera` (the bin target compiles the command modules too).
-Consumers must wasm-check their workers (`wrangler dev`/`worker-build`
-does it during `workers-up`-style flows); native `cargo check` cannot
-see this class.
+**The gate is in CI (issue #550)**: `worker_wasm_compile_tests` (the
+`test-ops-integration` lane) generates a workers-topology fixture with
+extension points, stubs `cornucopia-queries` (shared
+`test_framework/cornucopia_queries_stub` + fixture query modules pinned
+to the emitted SQL's `--!` names by a tripwire), and compile-checks the
+emitted plane — the domain worker whole-package natively, then the
+worker lib AND gateway lib for `wasm32-unknown-unknown` with the
+`worker-build` feature set (`--no-default-features --features
+cloudflare-worker`). Teeth are encoded: reverting the `spawn_local` fix
+must be REJECTED on wasm (the axum `Handler` Send bound), and deleting
+`mod integration_dispatch;` from the emitted `main.rs` must be REJECTED
+natively (E0433). Consumers must still wasm-check their workers for
+surfaces the fixture does not carry (media fields, events/webhooks);
+native `cargo check` cannot see this class.
 
 - **Coverage**: `build_entity_generators` computes the push-covered set
   (entities of points whose `directions` contain `push`) from the parsed
@@ -2413,9 +2425,13 @@ The catalog/installations API is MOUNTED, not just emitted:
   with them plan-listed.
 - **Deferred**: settings validation of `installation_settings` against the
   typed `{Point}Config` structs (both handler variants take raw JSON);
-  openapi/hurl coverage of the mounted routes; wasm32 compile leg of the
-  gateway catalog (workerd parity run); signing-secret provisioning endpoint
-  (#511 assumes this API can set it).
+  openapi/hurl coverage of the mounted routes; signing-secret provisioning endpoint
+  (#511 assumes this API can set it). The wasm32 compile leg of the gateway
+  catalog is GATED by `worker_wasm_compile_tests` (issue #550) — the gate's
+  first run exposed that the gateway's `tokio-postgres` dep lived in the
+  native-only target table while the wasm `DbClient::Direct` variant
+  references it; the dep is now unconditional under the ext-points gate
+  (mirroring the worker crates).
 - Gates: `workers_topology_mounts_integration_catalog_router`,
   `workers_topology_without_extension_points_keeps_gateway_clean`,
   `monolith_declares_and_mounts_integration_catalog`
