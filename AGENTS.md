@@ -1396,6 +1396,14 @@ cargo run -- run --schemas /tmp/ifml-e2e/schemas \
   --output /tmp/ifml-e2e/output
 ```
 
+Local full-suite runs MUST mirror CI's `RUSTFLAGS: -C debuginfo=0`
+(set at workflow level in `.github/workflows/ci.yml`):
+`RUSTFLAGS="-C debuginfo=0" cargo test --workspace`. Without it every
+test binary links with full debuginfo (~3.6 GB each across ~200 test
+targets — a 294 GB target dir and hours of linking). Per-crate runs
+(e.g. `cargo test -p codegraph-generate --lib mox_expr`) are cheap
+either way; the flag matters for workspace-wide builds.
+
 ## Pipeline commands
 
 ```bash
