@@ -11,9 +11,11 @@
 //!
 //! - `workers_gateway_compile_tests` (compile gate for the gateway crate)
 //! - `hooks_cornucopia_runtime_tests` (the #509/#518 hook runtime pins)
+//! - `worker_wasm_compile_tests` (the #550 worker-plane wasm32 gate — the
+//!   only consumer that also compiles the query-module stubs)
 //!
 //! If `templates/scaffold/db_client.tera` changes its `GenericClient`
-//! surface, this stub must move with it — both consumers fail loudly if
+//! surface, this stub must move with it — all consumers fail loudly if
 //! the signature set drifts.
 
 /// No-op build.rs for the stub crate (the real build.rs runs cornucopia
@@ -28,14 +30,18 @@ publish = false
 
 [features]
 # The generated worker crates enable `deadpool` (native) / `wasm-async`
-# (wasm) for their builds; the stub carries the features for resolution but
-# needs no extra deps.
+# (wasm) for their builds; the stub carries the features for resolution.
+# `wasm-async` mirrors the real crate's feature (tokio-postgres js runtime +
+# chrono wasmbind) so the wasm32 feature unification matches production.
 deadpool = ["dep:deadpool-postgres"]
-wasm-async = []
+wasm-async = ["tokio-postgres/js", "chrono/wasmbind"]
 
 [dependencies]
 tokio-postgres = { version = "0.7", default-features = false, features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }
 deadpool-postgres = { version = "0.14", optional = true }
+# Row/param shapes name uuid + chrono types (the real crate generates them too).
+uuid = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 "#;
 
 pub const LIB_RS: &str = r#"//! Check-time stub (test scaffold): `client::GenericClient` with the exact
@@ -102,9 +108,160 @@ pub mod client {
             I::Item: BorrowToSql;
     }
 
-    // The real cornucopia provides GenericClient impls for the deadpool
-    // handle types (the generated `DbClient::Deadpool` arms delegate to
-    // them); the stub mirrors that surface by deref-delegating to Client.
+    // The real cornucopia provides GenericClient impls for the raw
+    // tokio-postgres handles (the generated `DbClient::Direct` /
+    // `DbTx::Direct` arms delegate to them)...
+    impl GenericClient for tokio_postgres::Client {
+        fn stmt_cache() -> bool
+        where
+            Self: Sized,
+        {
+            false
+        }
+
+        fn prepare(
+            &self,
+            query: &str,
+        ) -> impl Future<Output = Result<Statement, Error>> + Send {
+            async move { tokio_postgres::Client::prepare(self, query).await }
+        }
+
+        fn execute<T>(
+            &self,
+            query: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<u64, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Client::execute(self, query, params).await }
+        }
+
+        fn query_one<T>(
+            &self,
+            statement: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<Row, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Client::query_one(self, statement, params).await }
+        }
+
+        fn query_opt<T>(
+            &self,
+            statement: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<Option<Row>, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Client::query_opt(self, statement, params).await }
+        }
+
+        fn query<T>(
+            &self,
+            query: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<Vec<Row>, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Client::query(self, query, params).await }
+        }
+
+        fn query_raw<T, I>(
+            &self,
+            statement: &T,
+            params: I,
+        ) -> impl Future<Output = Result<RowStream, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+            I: IntoIterator + Sync + Send,
+            I::IntoIter: ExactSizeIterator,
+            I::Item: BorrowToSql,
+        {
+            async move { tokio_postgres::Client::query_raw(self, statement, params).await }
+        }
+    }
+
+    impl GenericClient for tokio_postgres::Transaction<'_> {
+        fn stmt_cache() -> bool
+        where
+            Self: Sized,
+        {
+            false
+        }
+
+        fn prepare(
+            &self,
+            query: &str,
+        ) -> impl Future<Output = Result<Statement, Error>> + Send {
+            async move { tokio_postgres::Transaction::prepare(self, query).await }
+        }
+
+        fn execute<T>(
+            &self,
+            query: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<u64, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Transaction::execute(self, query, params).await }
+        }
+
+        fn query_one<T>(
+            &self,
+            statement: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<Row, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Transaction::query_one(self, statement, params).await }
+        }
+
+        fn query_opt<T>(
+            &self,
+            statement: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<Option<Row>, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Transaction::query_opt(self, statement, params).await }
+        }
+
+        fn query<T>(
+            &self,
+            query: &T,
+            params: &[&(dyn ToSql + Sync)],
+        ) -> impl Future<Output = Result<Vec<Row>, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+        {
+            async move { tokio_postgres::Transaction::query(self, query, params).await }
+        }
+
+        fn query_raw<T, I>(
+            &self,
+            statement: &T,
+            params: I,
+        ) -> impl Future<Output = Result<RowStream, Error>> + Send
+        where
+            T: ?Sized + ToStatement + Sync + Send,
+            I: IntoIterator + Sync + Send,
+            I::IntoIter: ExactSizeIterator,
+            I::Item: BorrowToSql,
+        {
+            async move { tokio_postgres::Transaction::query_raw(self, statement, params).await }
+        }
+    }
+
+    // ...and for the deadpool handle types (the generated
+    // `DbClient::Deadpool` arms delegate to them); the stub mirrors that
+    // surface by deref-delegating to Client.
     #[cfg(all(not(target_arch = "wasm32"), feature = "deadpool"))]
     impl GenericClient for deadpool_postgres::Object {
         fn stmt_cache() -> bool

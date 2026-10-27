@@ -40,6 +40,13 @@ thiserror = { workspace = true }
 utoipa = { workspace = true }
 uuid = { workspace = true }
 cornucopia-queries = { path = "../../cornucopia-queries", default-features = false }
+# tokio-postgres is UNCONDITIONAL (issue #550): the wasm32 DbClient::Direct
+# variant references it, so it cannot live in the native-only target table
+# (same shape as the worker crates). Default features stay off — the
+# "runtime" feature enables tokio/net → mio, which does not compile to
+# wasm32-unknown-unknown; the wasm leg gets the `js` feature through
+# cornucopia-queries/wasm-async.
+tokio-postgres = { workspace = true }
 {% endif %}
 
 # Native builds run an axum::serve listener (axum "tokio" feature); the
@@ -49,10 +56,8 @@ cornucopia-queries = { path = "../../cornucopia-queries", default-features = fal
 axum = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["full"] }
 {% if project.has_extension_points and project.persistence_provider == "cornucopia" %}
-# tokio-postgres without its default "runtime" feature: runtime enables
-# tokio/net → mio, which does not compile to wasm32-unknown-unknown.
-# deadpool-postgres re-enables the runtime on host targets itself.
-tokio-postgres = { workspace = true }
+# deadpool-postgres re-enables the runtime on host targets itself; the wasm
+# slice uses the Hyperdrive client source instead.
 deadpool-postgres = { workspace = true }
 {% endif %}
 
