@@ -48,7 +48,7 @@ use super::super::context::{IfmlComponent, IfmlViewContainer};
 use super::super::route_generator::workflow_for_entity;
 use super::super::selectors::{ComponentSelectors, is_collection, is_details, is_form};
 use super::fixtures::{form_spec, url_pattern, view_route};
-use super::kernel::{BASE_PAGE_TS, UX_TABLE_TS};
+use super::kernel::{API_TS, BASE_PAGE_TS, UX_TABLE_TS};
 use super::pom_render::render_pom_page;
 use super::spec_payload::ViewTestSpec;
 
@@ -579,6 +579,14 @@ pub(crate) fn pom_file_set(poms: &[(&str, &ViewPom)]) -> Vec<(PathBuf, String)> 
         (
             PathBuf::from("tests/pages/support/ux-table.ts"),
             UX_TABLE_TS.to_string(),
+        ),
+        // Issue #558: the API-origin resolver every spec/journey seed goes
+        // through — the Playwright `request` fixture resolves RELATIVE URLs
+        // against the app baseURL (the SvelteKit preview), which has no
+        // /api routes under a split gateway topology.
+        (
+            PathBuf::from("tests/pages/support/api.ts"),
+            API_TS.to_string(),
         ),
     ];
     for (kebab, pom) in poms {

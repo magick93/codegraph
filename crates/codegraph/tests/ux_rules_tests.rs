@@ -1507,7 +1507,8 @@ entities = ["CustomerType"]
     );
     assert!(spec.contains("test.describe('grid ux'"), "{spec}");
     assert!(
-        spec.contains("const UX_BASE = '/api/v1/sales/customer';"),
+        spec.contains("const UX_BASE = apiUrl('/api/v1/sales/customer');"),
+        // Issue #558: fixture posts resolve the API origin.
         "{spec}"
     );
     assert!(spec.contains("const UX_LOCALE = 'en-NZ';"), "{spec}");

@@ -161,9 +161,15 @@ impl GraphQuerier for MockEngine {
 
     async fn get_structured_sub_fields(
         &self,
-        _schema_title: &str,
+        schema_title: &str,
     ) -> Result<Vec<StructuredSubField>, GraphError> {
-        Ok(vec![])
+        Ok(self
+            .structured_sub_fields
+            .lock()
+            .unwrap()
+            .get(schema_title)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn get_composite_range(

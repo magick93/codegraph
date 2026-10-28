@@ -531,7 +531,7 @@ async fn journeys_bind_a_persona_permitted_on_every_view() {
 
     let home = read(&ui, "tests/ifml/home.journey.spec.ts");
     assert!(
-        home.contains("import { asPersona, admin } from './support/personas';"),
+        home.contains("import { apiKeyFor, asPersona, admin } from './support/personas'"),
         "journeys drive through the persona fixtures (integrated: under support/):\n{home}"
     );
     assert!(
@@ -604,7 +604,7 @@ async fn standalone_ifml_only_plan_keeps_the_disjoint_tree() {
 
     let home = read(&svelte, "tests/journeys/home.journey.spec.ts");
     assert!(
-        home.contains("import { asPersona, admin } from '../e2e/personas';"),
+        home.contains("import { apiKeyFor, asPersona, admin } from '../e2e/personas'"),
         "standalone journeys import the tests/e2e personas module:\n{home}"
     );
     let setup = read(&svelte, "tests/e2e/auth.setup.ts");

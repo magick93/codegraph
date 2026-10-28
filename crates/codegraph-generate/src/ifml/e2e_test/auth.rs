@@ -667,6 +667,11 @@ pub(crate) async fn build_workflow_journeys(
             let Some((_, to)) = pick_transition(&workflow) else {
                 continue;
             };
+            if !super::fixtures::required_refs_satisfiable(db, Some(entity)).await {
+                // Issue #558: a required entity-ref defeats the flat seed
+                // body — the handoff journey can never create its row.
+                continue;
+            }
             let creator = journey_persona(personas, vc, None).unwrap_or_default();
             let driver =
                 journey_persona(personas, vc, Some(&creator)).unwrap_or_else(|| creator.clone());
@@ -751,10 +756,16 @@ pub(crate) fn render_workflow_journey(journey: &WorkflowJourney, personas_import
         "import {{ apiKeyFor, personaContext, {}, {} }} from '{personas_import}';\n",
         journey.creator, journey.driver
     ));
+    s.push_str("import { apiUrl } from '../pages/support/api';\n");
     s.push_str(&format!(
         "import {{ {class} }} from '../pages/{kebab}-page';\n\n"
     ));
-    s.push_str(&format!("const {api_const} = '{}';\n", journey.base_path));
+    // Issue #558: the API origin — relative posts resolve against the app
+    // baseURL (the preview server), which has no /api routes.
+    s.push_str(&format!(
+        "const {api_const} = apiUrl('{}');\n",
+        journey.base_path
+    ));
     s.push_str(&format!(
         "const {data_const} = {};\n\n",
         journey.data_literal
@@ -920,8 +931,9 @@ pub(crate) fn render_view_journey(journey: &ViewJourney, personas_import: &str) 
         .as_deref()
         .expect("journey payloads always carry a permitted persona");
     s.push_str(&format!(
-        "import {{ asPersona, {persona} }} from '{personas_import}';\n"
+        "import {{ apiKeyFor, asPersona, {persona} }} from '{personas_import}';\n"
     ));
+    s.push_str("import { apiUrl } from '../pages/support/api';\n");
 
     // Page-class imports: the source class plus every walked target class,
     // in walk order.
@@ -961,10 +973,13 @@ pub(crate) fn render_view_journey(journey: &ViewJourney, personas_import: &str) 
         ));
 
         // Row-data seeds: fire-and-create with an ok assertion (the row
-        // hops need rows to click).
+        // hops need rows to click). Issue #558: seeds go to the API origin
+        // carrying the persona's provisioned key.
+        s.push_str(&format!("\t\tconst seedKey = apiKeyFor({persona});\n"));
+        s.push_str("\t\tconst seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;\n");
         for (index, seed) in journey.seeds.iter().enumerate() {
             s.push_str(&format!(
-                "\t\t\tconst rowSeed{index} = await request.post('{}', {{ data: {} }});\n",
+                "\t\tconst rowSeed{index} = await request.post(apiUrl('{}'), {{ headers: seedHeaders, data: {} }});\n",
                 seed.base_path,
                 seed.data_literal()
             ));
@@ -976,7 +991,7 @@ pub(crate) fn render_view_journey(journey: &ViewJourney, personas_import: &str) 
         // The open seed (param'd source views) captures its id for open().
         if let (Some(param), Some(seed)) = (&journey.open_param, &journey.open_seed) {
             s.push_str(&format!(
-                "\t\t\tconst seeded = await (await request.post('{}', {{ data: {} }})).json();\n",
+                "\t\tconst seeded = await (await request.post(apiUrl('{}'), {{ headers: seedHeaders, data: {} }})).json();\n",
                 seed.base_path,
                 seed.data_literal()
             ));

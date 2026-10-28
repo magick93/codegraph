@@ -142,10 +142,11 @@ pub struct CodegenConfig {
     #[serde(default)]
     pub ifml_e2e_auth: bool,
     /// One testid vocabulary (issue #468 W3): when true the `ui_testids`
-    /// global generator emits `ui/src/lib/testids.ts` and the generated
-    /// POM/spec templates import it, binding the test surface to the same
-    /// `ux::plan::ids` table the page markup renders from. Default false =
-    /// byte-identical (POM/spec templates keep their literals).
+    /// global generator emits `ui/src/lib/testids.js` + `testids.d.ts` and
+    /// the generated POM/spec templates import it, binding the test surface
+    /// to the same `ux::plan::ids` table the page markup renders from.
+    /// Default false = byte-identical (POM/spec templates keep their
+    /// literals).
     #[serde(default)]
     pub testid_module: bool,
     /// Post-generation structural gates (issue #468): when true the run

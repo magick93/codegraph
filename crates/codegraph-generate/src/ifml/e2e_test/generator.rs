@@ -252,7 +252,31 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 workflow_specs.push((vc.name.clone(), workflow_tests));
             }
         }
-        if specs.is_empty() && workflow_specs.is_empty() {
+        let spec_by_view: HashMap<&str, &ViewTestSpec> = specs
+            .iter()
+            .map(|spec| (spec.view_name.as_str(), spec))
+            .collect();
+        // Issue #560: the bail-out predates the auth/ux/journey spec
+        // families — it must only fire when NOTHING will be emitted, not
+        // when the base-spec families alone are empty (a persona-only
+        // guarded model still produces auth specs + journeys).
+        let base_spec_content = |spec: &ViewTestSpec| {
+            if auth_enabled {
+                has_tests_excluding_personas(spec)
+            } else {
+                has_tests(spec)
+            }
+        };
+        let has_auth_surface = auth_enabled
+            && model
+                .view_containers
+                .iter()
+                .any(|vc| !vc.roles.is_empty() || !vc.requires.is_empty());
+        if !specs.iter().any(base_spec_content)
+            && workflow_specs.is_empty()
+            && ux_specs.is_empty()
+            && !has_auth_surface
+        {
             eprintln!(
                 "warning: ifml_e2e_test: model has {} view(s) but none assembled \
                  a render/click-through/validation/round-trip spec",
@@ -272,6 +296,20 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         let active_specs: HashSet<String> = model
             .view_containers
             .iter()
+            // Issue #560: views whose base spec was suppressed (persona-only
+            // under the auth flag) must not keep a stale file alive.
+            .filter(|vc| {
+                spec_by_view
+                    .get(vc.name.as_str())
+                    .map(|spec| {
+                        if auth_enabled {
+                            has_tests_excluding_personas(spec)
+                        } else {
+                            has_tests(spec)
+                        }
+                    })
+                    .unwrap_or(false)
+            })
             .map(|vc| format!("{}.spec.ts", to_kebab_case(&vc.name)))
             .collect();
         let active_workflow_specs: HashSet<String> = workflow_specs
@@ -410,10 +448,6 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
             }
         }
-        let spec_by_view: HashMap<&str, &ViewTestSpec> = specs
-            .iter()
-            .map(|spec| (spec.view_name.as_str(), spec))
-            .collect();
         let pom_plans: Vec<(String, ViewPom)> = model
             .view_containers
             .iter()
@@ -467,6 +501,16 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         let mut files: Vec<GeneratedFile> = specs
             .iter()
+            // Issue #560: under the auth flag the persona tests render in
+            // `{view}.auth.spec.ts` — a view whose ONLY payload is personas
+            // must not emit a base spec with an empty describe body.
+            .filter(|spec| {
+                if auth_enabled {
+                    has_tests_excluding_personas(spec)
+                } else {
+                    true
+                }
+            })
             .map(|spec| GeneratedFile {
                 path: self
                     .output_dir
@@ -647,6 +691,15 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 fn has_tests(spec: &ViewTestSpec) -> bool {
     spec.render.is_some()
         || !spec.personas.is_empty()
+        || !spec.click_throughs.is_empty()
+        || !spec.validations.is_empty()
+        || !spec.round_trips.is_empty()
+}
+
+/// [`has_tests`] minus the persona payload — the base-spec content test for
+/// runs where personas render in `{view}.auth.spec.ts` instead (issue #560).
+fn has_tests_excluding_personas(spec: &ViewTestSpec) -> bool {
+    spec.render.is_some()
         || !spec.click_throughs.is_empty()
         || !spec.validations.is_empty()
         || !spec.round_trips.is_empty()

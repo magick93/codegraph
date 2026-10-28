@@ -57,11 +57,12 @@ pub fn run_structural_gates(output_dir: &Path, project: &ProjectConfig) -> Resul
         return Ok(());
     }
     if project.codegen.testid_module {
-        // The module must exist for the POM imports to resolve.
-        let module = output_dir.join("ui/src/lib/testids.ts");
+        // The module must exist for the POM imports to resolve — under the
+        // exact spelling they use (`#lib/testids.js`, issue #561).
+        let module = output_dir.join("ui/src/lib/testids.js");
         if !module.is_file() {
             return Err(Error::Config(
-                "structural_gates: ui/src/lib/testids.ts is missing but \
+                "structural_gates: ui/src/lib/testids.js is missing but \
                  testid_module is on — add the `ui_testids` generator to the \
                  profile's [ui] generators"
                     .to_string(),
@@ -183,7 +184,7 @@ mod tests {
     fn raw_pom_composition_fails_when_the_module_is_on() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("ui/src/lib")).unwrap();
-        std::fs::write(dir.path().join("ui/src/lib/testids.ts"), "export {}").unwrap();
+        std::fs::write(dir.path().join("ui/src/lib/testids.js"), "export {}").unwrap();
         let pom = dir.path().join("ui/tests/generated/hr/person.page.ts");
         std::fs::create_dir_all(pom.parent().unwrap()).unwrap();
         std::fs::write(&pom, "const t = `[data-testid=\"${this.module}-table\"]`;").unwrap();
@@ -208,6 +209,6 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let err = run_structural_gates(dir.path(), &project(true, true))
             .expect_err("missing module must fail");
-        assert!(format!("{err}").contains("testids.ts is missing"), "{err}");
+        assert!(format!("{err}").contains("testids.js is missing"), "{err}");
     }
 }

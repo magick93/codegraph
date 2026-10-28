@@ -1,8 +1,14 @@
-//! The generated `ui/src/lib/testids.ts` module (issue #468 W3, feature
-//! `testid_module`): the TypeScript projection of [`crate::ux::plan::ids`]
-//! that the generated POMs and specs import. Page markup carries the same
-//! vocabulary via the `tid` render contexts ([`super::testids::for_module`]),
-//! so all three surfaces — markup, POM, specs — read one Rust table.
+//! The generated `ui/src/lib/testids.js` + `testids.d.ts` modules (issue
+//! #468 W3, feature `testid_module`): the projection of
+//! [`crate::ux::plan::ids`] that the generated POMs and specs import. Page
+//! markup carries the same vocabulary via the `tid` render contexts
+//! ([`super::testids::for_module`]), so all three surfaces — markup, POM,
+//! specs — read one Rust table.
+//!
+//! The runtime module is plain JS under the exact spelling the POMs import
+//! (`#lib/testids.js` — a node package-import that resolves the literal
+//! path, no TS substitution; issue #561), with the typed surface restored
+//! by the adjacent `.d.ts`.
 
 use std::path::{Path, PathBuf};
 
@@ -115,15 +121,27 @@ impl GlobalGenerator for UiTestidsGenerator {
             entities,
             shared: super::testids::shared(),
         };
-        let content = render_template_with_project(tera, "ui/testids.ts.tera", &ctx, project)?;
-        Ok(vec![GeneratedFile {
-            path: self
-                .output_dir
-                .join("ui")
-                .join("src")
-                .join("lib")
-                .join("testids.ts"),
-            content,
-        }])
+        let js = render_template_with_project(tera, "ui/testids.js.tera", &ctx, project)?;
+        let dts = render_template_with_project(tera, "ui/testids.d.ts.tera", &ctx, project)?;
+        Ok(vec![
+            GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("ui")
+                    .join("src")
+                    .join("lib")
+                    .join("testids.js"),
+                content: js,
+            },
+            GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("ui")
+                    .join("src")
+                    .join("lib")
+                    .join("testids.d.ts"),
+                content: dts,
+            },
+        ])
     }
 }

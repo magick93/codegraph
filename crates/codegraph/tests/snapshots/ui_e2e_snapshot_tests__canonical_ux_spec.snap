@@ -318,21 +318,22 @@ test.describe('Refund UX list rendering', () => {
       expect(body).toContain('name, headcount, total_amount, due_at, created_at');
     }
 
-    // Valid ?sort=&order= flips first-row ordering on two distinct rows.
-    // Null placeholder cells (—) are ordering-insensitive and can pin the
-    // first row in both directions (nulls + pagination), so the flip is
-    // only asserted when both first-row texts are real values.
+    // Valid ?sort=&order= reorders the column. The comparison reads the
+    // WHOLE column in both directions (issue #562): sibling rows seeded by
+    // earlier tests share the rendered fixture value, so the first row can
+    // legitimately stay put. The two rows this block creates carry distinct
+    // values, so asc vs desc cannot render the same ordering. The desc read
+    // goes through expect.poll — a bare textContent() read races the
+    // re-render.
     {
       await createUxFixture(orgContext);
       await createUxFixture(orgContext, { 'name': 'Test Name B' });
       await ui.openListAt('?sort=name&order=asc');
-      const cell = ui.cell(1);
-      const asc = ((await cell.textContent()) ?? '').trim();
+      const ascValues = await ui.columnValues(1);
       await ui.openListAt('?sort=name&order=desc');
-      const desc = ((await cell.textContent()) ?? '').trim();
-      if (asc !== '\u2014' && desc !== '\u2014' && asc !== '' && desc !== '') {
-        expect(desc).not.toBe(asc);
-      }
+      await expect
+        .poll(async () => (await ui.columnValues(1)).join('\u0000'), { timeout: 15_000 })
+        .not.toBe(ascValues.join('\u0000'));
     }
 
   });

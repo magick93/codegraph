@@ -72,8 +72,8 @@ pub struct BuildPlan {
     /// IFML test-side auth surface (issue #463): `ifml_e2e_auth` feature.
     pub ifml_e2e_auth: bool,
     /// One testid vocabulary (issue #468 W3): `testid_module` feature —
-    /// emits `ui/src/lib/testids.ts` and switches the POM/spec templates
-    /// to import it. Default false = byte-identical.
+    /// emits `ui/src/lib/testids.js` + `testids.d.ts` and switches the
+    /// POM/spec templates to import it. Default false = byte-identical.
     pub testid_module: bool,
     /// Post-generation structural gates (issue #468): `structural_gates`
     /// feature — the run hard-fails on retired vocabulary in the emitted

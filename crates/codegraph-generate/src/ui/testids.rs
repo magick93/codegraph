@@ -4,9 +4,9 @@
 //! into (a) per-render Tera contexts (`tid.*`) so page/form/child-section
 //! templates interpolate the same strings the Rust table computes — page
 //! markup cannot drift from `ids::` because it renders FROM it — and (b)
-//! the `ui/src/lib/testids.ts` module (feature `testid_module`) that the
-//! generated POMs and specs import, so the test surface is bound to the
-//! same source at TypeScript compile time.
+//! the `ui/src/lib/testids.js` + `testids.d.ts` modules (feature
+//! `testid_module`) that the generated POMs and specs import, so the test
+//! surface is bound to the same source at TypeScript compile time.
 
 use serde::Serialize;
 

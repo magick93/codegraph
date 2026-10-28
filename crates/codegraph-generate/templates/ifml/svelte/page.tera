@@ -1,5 +1,19 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+{%- if has_api_surface %}
+	import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
+
+	// Issue #557: browser-side posts resolve the API ORIGIN and carry the
+	// Bearer key — a relative same-origin post dies under a split gateway
+	// topology and an unauthenticated request 401s at the gateway. Empty
+	// PUBLIC_API_URL keeps the relative form (the dev/preview proxy).
+	const API_BASE = PUBLIC_API_URL ?? '';
+	const API_KEY = PUBLIC_API_KEY ?? '';
+	const apiHeaders: Record<string, string> = {
+		'Content-Type': 'application/json',
+		...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+	};
+{%- endif %}
 {%- if needs_goto %}
 	import { goto } from '$app/navigation';
 {%- endif %}
@@ -59,6 +73,9 @@
 	let submitting = $state(false);
 	let formError = $state('');
 {%- endif %}
+{%- if has_action_buttons %}
+	let actionError = $state('');
+{%- endif %}
 {%- for evt in view_events %}
 {%- if evt.action_kind == "navigate" and evt.event_type == "load" %}
 
@@ -103,22 +120,22 @@
 			const isEdit = !!viewParams.{{ comp.submit.edit_param }};
 			let response;
 			if (isEdit) {
-				response = await fetch({{ comp.submit.url_expr }}, {
+				response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
 					method: '{{ comp.submit.method }}',
-					headers: { 'Content-Type': 'application/json' },
+					headers: apiHeaders,
 					body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
 				});
 			} else {
-				response = await fetch({{ comp.submit.create_url_expr }}, {
+				response = await fetch(`${API_BASE}` + {{ comp.submit.create_url_expr }}, {
 					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
+					headers: apiHeaders,
 					body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
 				});
 			}
 {%- else %}
-			const response = await fetch({{ comp.submit.url_expr }}, {
+			const response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
 				method: '{{ comp.submit.method }}',
-				headers: { 'Content-Type': 'application/json' },
+				headers: apiHeaders,
 				body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
 			});
 {%- endif %}
@@ -141,9 +158,9 @@
 {%- if comp.transition_url_expr %}
 
 	async function transition_{{ comp.js_name }}(to: string) {
-		const response = await fetch({{ comp.transition_url_expr }}, {
+		const response = await fetch(`${API_BASE}` + {{ comp.transition_url_expr }}, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
+			headers: apiHeaders,
 			body: JSON.stringify({ target_state: to })
 		});
 		if (response.ok) {
@@ -151,6 +168,28 @@
 		}
 	}
 {%- endif %}
+{%- endif %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+
+	async function {{ btn.handler_name }}() {
+		actionError = '';
+		try {
+			const response = await fetch(`${API_BASE}` + {{ btn.url_expr }}, {
+				method: 'POST',
+				headers: apiHeaders,
+				body: JSON.stringify({})
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				actionError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+				return;
+			}
+			await invalidateAll();
+		} finally {
+		}
+	}
+{%- endfor %}
 {%- endif %}
 {%- endfor %}
 {%- if ux %}
@@ -408,6 +447,12 @@
 {%- for btn in comp.buttons %}
 {{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
 {%- endfor %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}
+{%- endif %}
 
 {% elif comp.chart %}
 <div class="chart" data-chart-kind="{{ comp.chart.kind }}"{% if comp.chart.label_field %} data-label-field="{{ comp.chart.label_field }}"{% endif %}{% if comp.chart.value_fields %} data-value-fields="{{ comp.chart.value_fields | join(sep=',') }}"{% endif %}></div>
@@ -473,6 +518,12 @@
 {%- for btn in comp.buttons %}
 {{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
 {%- endfor %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}
+{%- endif %}
 
 {% elif comp.component_type == "details" %}
 <dl data-testid="{{ comp.name }}-details">
@@ -480,7 +531,13 @@
 	<dt>{{ field }}</dt>
 	<dd>{data.item.{{ field }}}</dd>
 	{% endfor %}
-</dl>{% if comp.workflow %}
+</dl>
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}{%- endif %}
+{% if comp.workflow %}
 {{ comp.workflow.badge_html }}
 {%- if comp.transition_url_expr %}
 {%- for t in comp.workflow.transitions %}

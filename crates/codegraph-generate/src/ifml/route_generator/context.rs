@@ -45,6 +45,13 @@ pub struct PageSvelteContext {
     /// import).
     pub(super) needs_invalidate: bool,
     pub(super) has_submit: bool,
+    /// Whether the page reaches the API at all (submit handler or workflow
+    /// transition posts) — gates the PUBLIC_API_URL/auth-header block
+    /// (issue #557).
+    pub(super) has_api_surface: bool,
+    /// Whether any component carries action-event controls (issue #559):
+    /// gates the shared `actionError` state + the op handlers.
+    pub(super) has_action_buttons: bool,
     /// Semantic slot role of the view: `modal-view` for modals, else
     /// `shell` for landmarks.
     pub(super) view_role: Option<SemanticRole>,
@@ -275,6 +282,11 @@ pub struct PageComponentContext {
     pub(crate) submit_button: Option<RenderButton>,
     /// Mapped cancel/back/click buttons rendered after the form.
     pub(crate) buttons: Vec<RenderButton>,
+    /// IFML action-event controls (issue #559): fallback buttons + their
+    /// generated POST handlers. Empty when the component carries no action
+    /// events (or no API surface / id param) — byte-identical markup.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) action_buttons: Vec<RenderActionButton>,
     /// Workflow state display for the bound entity, resolved from the
     /// owning domain's config; `None` renders no badge (byte-identical).
     pub(crate) workflow: Option<RenderWorkflow>,
@@ -500,6 +512,29 @@ pub struct RenderButton {
     /// Capability requirements of the source event; composed with the view
     /// gate into `gate_open`/`gate_close` by the page post-pass.
     pub event_requires: Vec<String>,
+    /// Ready-to-render gate markers around the button: the view gate
+    /// AND-composed with the event's `requires` check; empty when no gate
+    /// applies.
+    pub gate_open: String,
+    pub gate_close: String,
+}
+
+/// An IFML action-event control (issue #559): the fallback-markup button
+/// plus its generated POST handler for the conventional
+/// `{base}/{id}/actions/{op}` route (the worker-side mounting of that
+/// route is a separate slice).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RenderActionButton {
+    /// Humanized op name ("RequestFiling" → "Request filing").
+    pub label: String,
+    /// The generated script handler (`call_request_filing`).
+    pub handler_name: String,
+    /// `{comp}-action-{op-kebab}`.
+    pub testid: String,
+    /// JS template literal for the op URL (`` `{base}/${viewParams.id}/actions/{op}` ``).
+    pub url_expr: String,
+    /// Capability requirements of the source event.
+    pub requires: Vec<String>,
     /// Ready-to-render gate markers around the button: the view gate
     /// AND-composed with the event's `requires` check; empty when no gate
     /// applies.
@@ -984,6 +1019,17 @@ pub(super) async fn build_page_context(
                     btn.gate_close = gate.close;
                 }
             }
+            for btn in &mut comp.action_buttons {
+                if btn.requires.is_empty() {
+                    btn.gate_open = control_gate.open.clone();
+                    btn.gate_close = control_gate.close.clone();
+                } else {
+                    needs_can_import = true;
+                    let gate = control_gate.compose_with_event(&btn.requires);
+                    btn.gate_open = gate.open;
+                    btn.gate_close = gate.close;
+                }
+            }
         }
     }
     if needs_can_import && !control_gate.imports.iter().any(|name| name == "can") {
@@ -995,8 +1041,15 @@ pub(super) async fn build_page_context(
         .collect();
     let needs_invalidate = components
         .iter()
-        .any(|comp| comp.transition_url_expr.is_some());
+        .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
 
+    let has_api_surface = has_submit
+        || components
+            .iter()
+            .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
+    let has_action_buttons = components
+        .iter()
+        .any(|comp| !comp.action_buttons.is_empty());
     Ok(PageSvelteContext {
         api_version: api_version.to_string(),
         name: vc.name.clone(),
@@ -1017,6 +1070,8 @@ pub(super) async fn build_page_context(
         needs_on_mount,
         needs_invalidate,
         has_submit,
+        has_api_surface,
+        has_action_buttons,
         groups,
         view_role: semantic_view_role(vc),
         container_role: semantic_container_role(vc),
@@ -1194,6 +1249,35 @@ pub(super) async fn page_component_context(
 
     let submit = build_submit(c, api.as_ref(), id_param, &events);
     let submit_handler = submit.as_ref().map(|s| s.handler_name.clone());
+    // Issue #559: IFML action events (`on request -> action("RequestFiling",
+    // ...)`) render an action-control button POSTing the conventional
+    // `{base}/{id}/actions/{op}` route. Gated on the component's API
+    // surface + the view's id param — row-scoped op routes stay deferred.
+    let action_buttons: Vec<RenderActionButton> = if api.is_some() && id_param.is_some() {
+        events
+            .iter()
+            .filter(|e| e.action_kind == "action" && !e.target.is_empty())
+            .map(|e| {
+                let op_snake = codegraph_naming::to_snake_case(&e.target);
+                let op_kebab = codegraph_naming::to_kebab_case(&e.target);
+                RenderActionButton {
+                    label: humanize_event_label(&e.target),
+                    handler_name: format!("call_{}", op_snake),
+                    testid: format!("{}-action-{}", c.name, op_kebab),
+                    url_expr: format!(
+                        "`{}/${{viewParams.{}}}/actions/{op_snake}`",
+                        api.as_ref().expect("api checked").base_path,
+                        id_param.as_ref().expect("id_param checked"),
+                    ),
+                    requires: e.requires.clone(),
+                    gate_open: String::new(),
+                    gate_close: String::new(),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let submit_prop = submit_handler
         .as_ref()
         .map(|handler| format!("onsubmit={{{handler}}}"));
@@ -1281,6 +1365,7 @@ pub(super) async fn page_component_context(
         submit_handler,
         submit_button,
         buttons,
+        action_buttons,
         workflow,
         fetch_list: false,
         fetch_item: false,

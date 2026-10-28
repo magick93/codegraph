@@ -312,6 +312,99 @@ async fn ui_form_generator_produces_form_component() {
     );
 }
 
+// === Prose never breaks the TS/Svelte template literals (issue #560) ===
+
+#[tokio::test]
+async fn ui_form_escapes_template_literal_metacharacters_in_subfield_docs() {
+    // A doc comment carrying backticks (the exact crewbase #560 payload)
+    // must arrive in the emitted Svelte ESCAPED — raw interpolation into a
+    // `description: \`...\`` template literal is a js_parse_error that kills
+    // the whole UI build.
+    let phone_schema = SchemaNode {
+        title: "PhoneType".into(),
+        rust_type_name: "Phone".into(),
+        pg_table_name: "phone".into(),
+        api_path_segment: "phones".into(),
+        is_entity: false,
+        is_primitive_wrapper: true,
+        schema_id: "recruiting/json/PhoneType.json".into(),
+        rel_path: "recruiting/json/PhoneType.json".into(),
+        classification: "structured_wrapper".into(),
+        domain: Some("recruiting".into()),
+        ..candidate_schema()
+    };
+    let mut phone_prop = candidate_properties()[0].clone();
+    phone_prop.name = "phone".into();
+    phone_prop.rust_field_name = "phone".into();
+    phone_prop.pg_column_name = "phone".into();
+    phone_prop.ref_target = Some("recruiting/json/PhoneType.json".into());
+    phone_prop.classification = Some("value_object".into());
+    let doc =
+        "issued (`idNumber`, not `number`) — a bare `number` collides; C:\\path and ${interp}";
+    let mock = MockEngine::builder()
+        .with_schema(candidate_schema())
+        .with_schema(phone_schema)
+        .with_properties("CandidateType", vec![phone_prop])
+        .with_ref_target("phone", "CandidateType", {
+            let mut s = SchemaNode {
+                ..candidate_schema()
+            };
+            s.title = "PhoneType".into();
+            s.rust_type_name = "Phone".into();
+            s.pg_table_name = "phone".into();
+            s.is_primitive_wrapper = true;
+            s.classification = "structured_wrapper".into();
+            s
+        })
+        .with_structured_sub_fields(
+            "PhoneType",
+            vec![codegraph_core::types::StructuredSubField {
+                name: "idNumber".into(),
+                description: doc.into(),
+                is_required: true,
+            }],
+        )
+        .build();
+
+    let generator = generate::ui::form::UiFormGenerator::new(
+        &std::env::temp_dir().join("hr-graph-test-ui-form-escape"),
+    );
+    let files = generator
+        .generate(
+            &mock,
+            "CandidateType",
+            "recruiting",
+            &test_domain_config(),
+            &test_tera(),
+            &test_project_config(),
+        )
+        .await
+        .unwrap();
+
+    let form = &files[0].content;
+    let line = form
+        .lines()
+        .find(|l| l.contains("idNumber") && l.contains("description:"))
+        .expect("the structured sub-field line is rendered")
+        .to_string();
+    assert!(
+        !line.contains("(`idNumber`"),
+        "raw backticks in a template literal are a js_parse_error:\n{line}"
+    );
+    assert!(
+        line.contains("\\`idNumber\\`, not \\`number\\`"),
+        "backticks must be escaped for the template literal:\n{line}"
+    );
+    assert!(
+        line.contains("\\$") && line.contains("{interp}"),
+        "${{ must be escaped or the literal interpolates:\n{line}"
+    );
+    assert!(
+        line.contains("C:\\\\path"),
+        "backslashes must be doubled inside the literal:\n{line}"
+    );
+}
+
 #[tokio::test]
 async fn ui_cosmos_form_generator_types_initial_data() {
     let mock = setup_mock();

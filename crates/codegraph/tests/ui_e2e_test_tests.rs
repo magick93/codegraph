@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use codegraph::generate::ProjectConfig;
-use codegraph::generate::traits::EntityGenerator;
+use codegraph::generate::traits::{EntityGenerator, GlobalGenerator};
 use codegraph::generate::ui::e2e_test::UiE2eTestGenerator;
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::mock::MockEngine;
@@ -1694,6 +1694,23 @@ fn ux_spec_sort_block_pins_allow_list_and_flip() {
     );
     assert!(content.contains("order=asc"), "{content}");
     assert!(content.contains("order=desc"), "{content}");
+    // Issue #562: the flip must compare the WHOLE column ordering, not the
+    // first cell — when sibling rows share the rendered value (the generated
+    // date/timestamp fixtures do) the first row legitimately stays put. The
+    // read also goes through expect.poll: a plain textContent() read races
+    // the re-render, which produced the deterministic `not.toBe` failures.
+    assert!(
+        content.contains("await ui.columnValues("),
+        "the flip reads the full column through the POM kernel:\n{content}"
+    );
+    assert!(
+        content.contains("expect.poll"),
+        "the desc read polls until the re-render lands:\n{content}"
+    );
+    assert!(
+        !content.contains("expect(desc).not.toBe(asc);"),
+        "the single-cell first-row flip premise is retired (issue #562):\n{content}"
+    );
 }
 
 #[test]
@@ -1827,6 +1844,120 @@ fn testid_module_pom_resolves_locators_through_the_module() {
     assert!(!page.contains("#lib/testids.js"), "{page}");
     assert!(page.contains("${this.module}-table"), "{page}");
     assert!(page.contains("data-testid=\"confirm-dialog\""), "{page}");
+}
+
+// ── The testids module path matches the POM import spelling (issue #561) ──
+
+#[test]
+fn testid_module_emits_the_exact_spelling_the_poms_import() {
+    // The POM page classes import `#lib/testids.js` — a node package-import
+    // that resolves the LITERAL path (no TS `.js`→`.ts` substitution). The
+    // generator emitted `testids.ts`, so every generated page object failed
+    // at Playwright runtime with `Cannot find module '.../testids.js'`
+    // (issue #561). The module must exist under the importers' exact
+    // spelling, with the typed surface intact beside it.
+    let person = schema("PersonType", "person", "Person", "hr", "person");
+    let engine = MockEngine::builder()
+        .with_schema(person)
+        .with_properties("PersonType", vec![scalar("full_name", "TEXT", true)])
+        .build();
+    let config = config(&[("hr", "PersonType")]);
+    let project = codegraph::generate::ProjectConfig {
+        codegen: codegraph::generate::CodegenConfig {
+            testid_module: true,
+            ..Default::default()
+        },
+        ..ProjectConfig::default()
+    };
+    let order = vec![codegraph::generate::GenerationEntry {
+        schema_title: "PersonType".into(),
+        domain: "hr".into(),
+        pg_schema: "hr".into(),
+        is_cyclic: false,
+    }];
+
+    let output = tempfile::TempDir::new().unwrap();
+    let generator = codegraph::generate::ui::testids_gen::UiTestidsGenerator::new(output.path());
+    let files = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(generator.generate(&engine, &config, &order, &tera(), &project))
+        .expect("UiTestidsGenerator failed");
+    let paths: Vec<String> = files
+        .iter()
+        .map(|f| f.path.to_string_lossy().to_string())
+        .collect();
+
+    // The importers' exact spelling exists.
+    assert!(
+        paths.iter().any(|p| p.ends_with("ui/src/lib/testids.js")),
+        "testids.js (the imported spelling) must be emitted; got {paths:?}"
+    );
+    // The typed surface survives beside it for tsc/svelte-check.
+    assert!(
+        paths.iter().any(|p| p.ends_with("ui/src/lib/testids.d.ts")),
+        "testids.d.ts must be emitted; got {paths:?}"
+    );
+    // The dead spelling is gone — nothing may import a module that no
+    // longer exists.
+    assert!(
+        !paths.iter().any(|p| p.ends_with("ui/src/lib/testids.ts")),
+        "testids.ts must NOT be emitted (the importers use testids.js); got {paths:?}"
+    );
+    let js = &files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("testids.js"))
+        .unwrap()
+        .content;
+    assert!(js.contains("export const testids"), "{js}");
+    assert!(js.contains("export function tidFor"), "{js}");
+    let dts = &files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("testids.d.ts"))
+        .unwrap()
+        .content;
+    assert!(dts.contains("export interface EntityTestids"), "{dts}");
+    assert!(dts.contains("export declare const testids"), "{dts}");
+}
+
+// ── The auth suite asserts API status, not root-page error text (issue #563) ──
+
+#[test]
+fn auth_test_rejects_via_api_status_not_the_root_page_premise() {
+    // Issue #563: the generated root page renders WITHOUT calling a gated
+    // API surface, so "strip the Authorization header, visit /, expect an
+    // error alert" can never pass — it only ever passed because a missing
+    // anon key 500'd every page load. The auth suite must assert on the
+    // NETWORK status (the middleware 401s any path without a Bearer),
+    // which is satisfiable on every generated app.
+    let mut tera = tera();
+    let template = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../codegraph-generate/templates/ui/test/auth.test.tera"),
+    )
+    .expect("auth.test.tera exists");
+    tera.add_raw_template("auth_test", &template).unwrap();
+    let ctx = tera::Context::from_serialize(&serde_json::json!({
+        "project": { "generator_name": "codegraph" }
+    }))
+    .unwrap();
+    let content = tera.render("auth_test", &ctx).unwrap();
+
+    assert!(
+        content.contains("PUBLIC_API_URL"),
+        "the auth probes go straight at the API origin:\n{content}"
+    );
+    assert!(
+        content.contains("expect(res.status()).toBe(401)"),
+        "unauthenticated/garbage-key rejections assert the response status:\n{content}"
+    );
+    assert!(
+        !content.contains("or(page.getByText(/error"),
+        "the root-page error-text premise is retired (issue #563):\n{content}"
+    );
+    assert!(
+        !content.contains("page.route('**/api/**'"),
+        "header-stripping page intercepts are gone — the probe hits the API directly:\n{content}"
+    );
 }
 
 // ── Identity PKs ride the dep payload (issue #479) ──────────────────────

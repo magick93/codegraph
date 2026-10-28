@@ -201,7 +201,7 @@
 				isArray={{ "{" }}{{ field.is_array }}{{ "}" }}
 				fieldName="{{ field.name }}"
 				subFields={[
-					{% for sf in field.structured_sub_fields %}{ name: '{{ sf.name }}', label: '{{ sf.label }}', required: {{ sf.is_required }}, showByDefault: {{ sf.show_by_default }}, description: `{{ sf.description | safe }}` },
+					{% for sf in field.structured_sub_fields %}{ name: '{{ sf.name }}', label: '{{ sf.label }}', required: {{ sf.is_required }}, showByDefault: {{ sf.show_by_default }}, description: `{{ sf.description | js_template_literal }}` },
 					{% endfor %}
 				]}
 				bind:value={{ "{" }}{{ field.name }}{{ "}" }}
