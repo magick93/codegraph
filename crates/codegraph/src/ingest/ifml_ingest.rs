@@ -338,7 +338,14 @@ async fn ingest_view_component(
     let component_type = comp
         .component_type
         .as_ref()
-        .map(|t| t.as_str().to_string())
+        .map(|t| match t.as_str() {
+            // Issue #559: the DSL spells the kind `detail` (singular) while
+            // every generator branch matches `details` — normalize once at
+            // the graph boundary so detail views lower like first-class
+            // details components.
+            "detail" => "details".to_string(),
+            other => other.to_string(),
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
     let spec = comp

@@ -1,7 +1,8 @@
 import type { PageLoad } from './$types';
 {% if has_fetch %}
 import { error } from '@sveltejs/kit';
-{% endif %}
+import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
+{%- endif %}
 {%- if view_roles or view_requires %}
 import { redirect } from '@sveltejs/kit';
 {%- if not integrated %}
@@ -17,6 +18,20 @@ import { can } from '$lib/roles';
 
 {{ guard_consts }}
 {%- endif %}
+{%- endif %}
+{%- if has_fetch %}
+
+// Issue #557: fetches resolve the API ORIGIN (PUBLIC_API_URL) and carry
+// the Bearer key — a relative same-origin fetch dies under a split
+// gateway topology and an unauthenticated request 401s at the gateway.
+// Empty PUBLIC_API_URL keeps the relative form (the dev/preview proxy
+// contract).
+const API_BASE = PUBLIC_API_URL ?? '';
+const API_KEY = PUBLIC_API_KEY ?? '';
+const apiHeaders: Record<string, string> = {
+	Accept: 'application/json',
+	...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+};
 {%- endif %}
 export const load: PageLoad = async ({ params, url, fetch{% if integrated and (view_roles or view_requires) %}, parent{% endif %} }) => {
 {%- if view_roles or view_requires %}
@@ -67,7 +82,7 @@ export const load: PageLoad = async ({ params, url, fetch{% if integrated and (v
 {%- endif %}
 {% for comp in components %}
 {%- if comp.fetch_list %}
-	const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}{% if comp.paginate %}?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}{% endif %}`);
+	const {{ comp.name }}Response = await fetch(`${API_BASE}{{ comp.api.base_path }}{% if comp.paginate %}?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}{% endif %}`, { headers: apiHeaders });
 	if (!{{ comp.name }}Response.ok) {
 		error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
 	}
@@ -76,14 +91,14 @@ export const load: PageLoad = async ({ params, url, fetch{% if integrated and (v
 {%- elif comp.fetch_item %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
-		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
+		const {{ comp.name }}Response = await fetch(`${API_BASE}{{ comp.api.base_path }}/${ {{ comp.id_param }} }`, { headers: apiHeaders });
 		if (!{{ comp.name }}Response.ok) {
 			error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
 		}
 		const {{ comp.name }}Json = await {{ comp.name }}Response.json();
 		const {{ comp.name }}Item = {{ comp.name }}Json.data ?? {{ comp.name }}Json;
 {%- if comp.workflow %}
-		const {{ comp.name }}WfResponse = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }/workflow`);
+		const {{ comp.name }}WfResponse = await fetch(`${API_BASE}{{ comp.api.base_path }}/${ {{ comp.id_param }} }/workflow`, { headers: apiHeaders });
 		if ({{ comp.name }}WfResponse.ok) {
 			const {{ comp.name }}WfJson = await {{ comp.name }}WfResponse.json();
 			{{ comp.name }}Item.workflow_state = {{ comp.name }}WfJson.data ?? {{ comp.name }}WfJson;
@@ -94,14 +109,14 @@ export const load: PageLoad = async ({ params, url, fetch{% if integrated and (v
 {%- elif comp.fetch_form %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
-		const {{ comp.name }}Response = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }`);
+		const {{ comp.name }}Response = await fetch(`${API_BASE}{{ comp.api.base_path }}/${ {{ comp.id_param }} }`, { headers: apiHeaders });
 		if (!{{ comp.name }}Response.ok) {
 			error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
 		}
 		const {{ comp.name }}Json = await {{ comp.name }}Response.json();
 		const {{ comp.name }}Data = {{ comp.name }}Json.data ?? {{ comp.name }}Json;
 {%- if comp.workflow %}
-		const {{ comp.name }}WfResponse = await fetch(`{{ comp.api.base_path }}/${ {{ comp.id_param }} }/workflow`);
+		const {{ comp.name }}WfResponse = await fetch(`${API_BASE}{{ comp.api.base_path }}/${ {{ comp.id_param }} }/workflow`, { headers: apiHeaders });
 		if ({{ comp.name }}WfResponse.ok) {
 			const {{ comp.name }}WfJson = await {{ comp.name }}WfResponse.json();
 			{{ comp.name }}Data.workflow_state = {{ comp.name }}WfJson.data ?? {{ comp.name }}WfJson;

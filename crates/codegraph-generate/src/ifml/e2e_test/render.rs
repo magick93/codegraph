@@ -101,7 +101,8 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool) -> String
         "// IFML Playwright E2E tests for view {}.\n// All selectors live in the {} page class (issue #317).\n\n",
         spec.view_name, class
     ));
-    s.push_str("import { test, expect } from '@playwright/test';\n\n");
+    s.push_str("import { test, expect } from '@playwright/test';\n");
+    s.push_str("import { apiUrl } from '../pages/support/api';\n\n");
     s.push_str(&format!(
         "import {{ {class} }} from '../pages/{}-page';\n\n",
         to_kebab_case(&spec.view_name)
@@ -189,7 +190,7 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool) -> String
         ));
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
         s.push_str(&format!(
-            "\t\tconst fixture = await request.post('{}', {{ data: {} }});\n",
+            "\t\tconst fixture = await request.post(apiUrl('{}'), {{ data: {} }});\n",
             flow.fixture.base_path,
             flow.fixture.data_literal()
         ));
@@ -234,7 +235,7 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool) -> String
         s.push_str("\ttest('form round trip persists changes', async ({ page, request }) => {\n");
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
         s.push_str(&format!(
-            "\t\tconst created = await (await request.post('{}', {{ data: {} }})).json();\n",
+            "\t\tconst created = await (await request.post(apiUrl('{}'), {{ data: {} }})).json();\n",
             round_trip.fixture.base_path,
             round_trip.fixture.data_literal()
         ));
@@ -257,7 +258,7 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool) -> String
             to_pascal_case(component)
         ));
         s.push_str(&format!(
-            "\t\tconst persisted = await (await request.get(`{}/${{createdId}}`)).json();\n",
+            "\t\tconst persisted = await (await request.get(apiUrl(`{}/${{createdId}}`))).json();\n",
             round_trip.fixture.base_path
         ));
         s.push_str(&format!(
@@ -288,7 +289,8 @@ pub(crate) fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest
         "// IFML Playwright E2E workflow tests for view {}.\n// State badges + transition buttons are driven through the {} page class.\n\n",
         vc.name, class
     ));
-    s.push_str("import { test, expect } from '@playwright/test';\n\n");
+    s.push_str("import { test, expect } from '@playwright/test';\n");
+    s.push_str("import { apiUrl } from '../pages/support/api';\n\n");
     s.push_str(&format!(
         "import {{ {class} }} from '../pages/{}-page';\n\n",
         to_kebab_case(&vc.name)
@@ -306,7 +308,7 @@ pub(crate) fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest
         ));
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
         s.push_str(&format!(
-            "\t\tconst created = await (await request.post('{}', {{ data: {} }})).json();\n",
+            "\t\tconst created = await (await request.post(apiUrl('{}'), {{ data: {} }})).json();\n",
             workflow.fixture.base_path,
             workflow.fixture.data_literal()
         ));
@@ -327,7 +329,7 @@ pub(crate) fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest
             ));
             s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
             s.push_str(&format!(
-                "\t\tconst created = await (await request.post('{}', {{ data: {} }})).json();\n",
+                "\t\tconst created = await (await request.post(apiUrl('{}'), {{ data: {} }})).json();\n",
                 workflow.fixture.base_path,
                 workflow.fixture.data_literal()
             ));
@@ -347,7 +349,7 @@ pub(crate) fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest
             // (`current_state` is authoritative; the entity status column is
             // the fallback for pipelines that sync it).
             s.push_str(&format!(
-                "\t\tconst fetched = await (await request.get(`{}/${{createdId}}/workflow`)).json();\n",
+                "\t\tconst fetched = await (await request.get(apiUrl(`{}/${{createdId}}/workflow`))).json();\n",
                 workflow.fixture.base_path
             ));
             s.push_str(&format!(
@@ -398,7 +400,8 @@ pub(crate) fn render_ux_spec(view_name: &str, test: &UxViewTest) -> String {
         test.route.trim_start_matches('/'),
         component
     ));
-    s.push_str("import { test, expect } from '@playwright/test';\n\n");
+    s.push_str("import { test, expect } from '@playwright/test';\n");
+    s.push_str("import { apiUrl } from '../pages/support/api';\n\n");
     s.push_str(&format!(
         "import {{ {class} }} from '../pages/{}-page';\n\n",
         to_kebab_case(view_name)
@@ -408,7 +411,7 @@ pub(crate) fn render_ux_spec(view_name: &str, test: &UxViewTest) -> String {
         js_string(component)
     ));
     s.push_str(&format!(
-        "\tconst UX_BASE = '{}';\n",
+        "\tconst UX_BASE = apiUrl('{}');\n",
         test.fixture.base_path
     ));
     s.push_str(&format!(

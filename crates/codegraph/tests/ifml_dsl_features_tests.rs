@@ -305,3 +305,64 @@ view "Refunds" {
         "events without requires carry an empty list: {click_json}"
     );
 }
+
+#[tokio::test]
+async fn test_detail_component_type_normalizes_to_details() {
+    // Issue #559: the DSL spells the component kind `type: detail`
+    // (singular) while every generator branch matches `details` (plural) —
+    // detail views lowered to EMPTY pages (no markup, no fetch, no
+    // heading) and sibling components were dropped. The ingest normalizes
+    // the spelling once, at the graph boundary.
+    let ifml = r#"
+view "TaxEventDetail" {
+    params { id: Uuid };
+
+    component "event" {
+        type: detail;
+        data: TaxEvent;
+        fields: [title, status];
+    }
+}
+
+view "FilingDetail" {
+    params { id: Uuid };
+
+    component "filing" {
+        type: detail;
+        data: Filing;
+        fields: [period, status];
+    }
+
+    component "lines" {
+        type: list;
+        data: FilingLine;
+        fields: [code, amount];
+    }
+}
+"#;
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
+    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML");
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let detail = engine
+        .get_ifml_view_components("TaxEventDetail")
+        .await
+        .unwrap();
+    assert_eq!(detail.len(), 1);
+    assert_eq!(
+        detail[0].component_type, "details",
+        "`type: detail` must ingest as `details` so every generator branch matches"
+    );
+
+    let filing = engine
+        .get_ifml_view_components("FilingDetail")
+        .await
+        .unwrap();
+    let kinds: Vec<&str> = filing.iter().map(|c| c.component_type.as_str()).collect();
+    assert!(
+        kinds.contains(&"details") && kinds.contains(&"list"),
+        "both declared components lower: {kinds:?}"
+    );
+}

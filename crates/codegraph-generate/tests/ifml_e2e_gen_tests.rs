@@ -10,8 +10,8 @@ use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, EdgeProperties, EdgeType,
-    EventNode, GrantEdge, ParameterDefinitionNode, PropertyNode, SchemaNode, ViewComponentNode,
-    ViewContainerNode,
+    EnumValue, EventNode, GrantEdge, ParameterDefinitionNode, PropertyNode, SchemaNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use codegraph_generate::ProjectConfig;
 use codegraph_generate::ifml::e2e_test::IfmlE2eTestGenerator;
@@ -456,7 +456,10 @@ async fn emits_render_click_through_and_form_tests_with_schemas() {
 
     let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
     assert!(
-        edit_spec.contains("request.post('/api/v1/sales/customer'"),
+        edit_spec.contains("request.post(apiUrl('/api/v1/sales/customer')"),
+        // Issue #558: the Playwright `request` fixture resolves RELATIVE
+        // URLs against the app baseURL (the SvelteKit preview) — the API
+        // lives on another origin under a split gateway topology.
         "{edit_spec}"
     );
     // Validation negatives run on the create path (empty form): no fixture
@@ -1065,7 +1068,7 @@ async fn workflow_spec_emitted_for_schema_backed_workflow_entity() {
         "{list_spec}"
     );
     assert!(
-        list_spec.contains("request.post('/api/v1/sales/customer'"),
+        list_spec.contains("request.post(apiUrl('/api/v1/sales/customer')"),
         "{list_spec}"
     );
     assert!(list_spec.contains("'name': 'Test name'"), "{list_spec}");
@@ -1355,4 +1358,289 @@ testids = { root = "refund-form" }
         page.contains("getByTestId('refund-form')"),
         "the mapped root lands in the page class: {page}"
     );
+}
+
+#[tokio::test]
+async fn persona_only_views_never_emit_empty_describes() {
+    // Issue #560: with the auth feature on, persona tests move OUT of the
+    // base `{view}.spec.ts` into `{view}.auth.spec.ts` — but `has_tests`
+    // still counted personas, so a guarded view whose ONLY content was
+    // personas emitted a base spec whose describe body was empty
+    // (`test.describe('X', {})`). Either content or no file.
+    let engine = MockEngine::new();
+    // A guarded view with NO components: no render test (guarded), no
+    // click-throughs/validations/round-trips — personas are the whole
+    // payload.
+    ingest_guarded_view(
+        &engine,
+        "RefundQueue",
+        Some("Refund Queue"),
+        false,
+        &["admin"],
+        &[],
+    )
+    .await;
+    ingest_policy(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let generator = IfmlE2eTestGenerator::new(dir.path(), "svelte");
+    let files = generator
+        .generate(
+            &engine,
+            &test_config(),
+            &[],
+            &tera::Tera::default(),
+            &ProjectConfig {
+                codegen: codegraph_generate::CodegenConfig {
+                    ifml_e2e_auth: true,
+                    ..Default::default()
+                },
+                ..ProjectConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().ends_with("refund-queue.spec.ts")),
+        "a persona-only view must not emit an empty base spec; got {:?}",
+        files
+            .iter()
+            .map(|f| f.path.display().to_string())
+            .collect::<Vec<_>>()
+    );
+    // The persona content itself is NOT dropped — it lives in the auth spec.
+    let auth = content_of(&files, "tests/ifml/refund-queue.auth.spec.ts");
+    assert!(auth.contains("test.describe('Refund Queue auth'"), "{auth}");
+}
+
+// ── Fixture seeds are absolute, authed, and type-valid (issue #558) ────────
+
+/// A codelist backing `CustomerType.status`.
+async fn ingest_status_codelist(db: &MockEngine) {
+    let codelist = SchemaNode {
+        title: "RequestStatusKind".into(),
+        rust_type_name: "RequestStatusKind".into(),
+        pg_table_name: "request_status_kind".into(),
+        api_path_segment: "request-status-kind".into(),
+        is_entity: false,
+        is_codelist: true,
+        schema_id: "sales/RequestStatusKind.json".into(),
+        rel_path: "sales/RequestStatusKind.json".into(),
+        classification: "codelist".into(),
+        domain: Some("sales".into()),
+        ..customer_schema()
+    };
+    db.ingest_schema(&codelist).await.unwrap();
+    db.ingest_property(
+        "CustomerType",
+        "sales/customer_type.json",
+        &PropertyNode {
+            name: "status".into(),
+            rust_field_name: "status".into(),
+            pg_column_name: "status".into(),
+            pg_column_type: "TEXT".into(),
+            rust_field_type: "RequestStatusKind".into(),
+            ref_target: Some("sales/RequestStatusKind.json".into()),
+            is_required: true,
+            ..property("status", "String")
+        },
+    )
+    .await
+    .unwrap();
+    db.ingest_enum_value(
+        "RequestStatusKind",
+        &EnumValue {
+            value: "draft".into(),
+            display_name: Some("Draft".into()),
+            sort_order: 0,
+        },
+    )
+    .await
+    .unwrap();
+    db.ingest_enum_value(
+        "RequestStatusKind",
+        &EnumValue {
+            value: "submitted".into(),
+            display_name: Some("Submitted".into()),
+            sort_order: 1,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn fixture_bodies_are_type_valid_for_uuid_date_and_codelist_fields() {
+    // Issue #558: literal 'Test <field>' strings for typed fields 422 —
+    // UUID PKs, dates, and codelist-backed fields need real values.
+    const TYPED_FORM_SPEC: &str = r#"{"type":"form","value":{"fields":[
+        {"name":"name","input":{"type":"text"},"required":true,"validations":[],"values":[]},
+        {"name":"status","input":{"type":"dropdown"},"required":true,"validations":[],"values":[]},
+        {"name":"externalRef","input":{"type":"text"},"required":false,"validations":[],"values":[]},
+        {"name":"dueDate","input":{"type":"date"},"required":false,"validations":[],"values":[]}
+    ]}}"#;
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_status_codelist(&engine).await;
+    ingest_view(&engine, "CustomerList", Some("Customer Management")).await;
+    ingest_view(&engine, "CustomerEdit", None).await;
+    ingest_component(
+        &engine,
+        "CustomerEdit",
+        "editor",
+        "form",
+        &["name", "status", "externalRef", "dueDate"],
+        Some(TYPED_FORM_SPEC),
+    )
+    .await;
+    ingest_id_param(&engine, "CustomerEdit", "customerId").await;
+    ingest_event(&engine, "editor", "comp_editor_save", "save").await;
+    ingest_navigation_flow(&engine, "comp_editor_save", "CustomerList", None).await;
+    // A camelCase uuid PK (`filingId` style) + a date column.
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &PropertyNode {
+                name: "externalRef".into(),
+                rust_field_name: "externalRef".into(),
+                pg_column_name: "external_ref".into(),
+                pg_column_type: "UUID".into(),
+                rust_field_type: "Uuid".into(),
+                format: Some("uuid".into()),
+                is_required: false,
+                is_nullable: true,
+                ..property("externalRef", "Uuid")
+            },
+        )
+        .await
+        .unwrap();
+    engine
+        .ingest_property(
+            "CustomerType",
+            "sales/customer_type.json",
+            &PropertyNode {
+                name: "dueDate".into(),
+                rust_field_name: "dueDate".into(),
+                pg_column_name: "due_date".into(),
+                pg_column_type: "DATE".into(),
+                rust_field_type: "NaiveDate".into(),
+                is_required: false,
+                is_nullable: true,
+                ..property("dueDate", "NaiveDate")
+            },
+        )
+        .await
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
+
+    assert!(
+        !edit_spec.contains("'Test status'"),
+        "codelist fields seed a real enum variant:\n{edit_spec}"
+    );
+    assert!(
+        edit_spec.contains("'draft'"),
+        "the first declared variant seeds the codelist field:\n{edit_spec}"
+    );
+    assert!(
+        !edit_spec.contains("'Test externalRef'"),
+        "uuid fields seed a valid UUID literal:\n{edit_spec}"
+    );
+    assert!(
+        edit_spec.contains("Math.random().toString(16)"),
+        "uuid literals randomize like the entity-plane fixtures:\n{edit_spec}"
+    );
+    assert!(
+        !edit_spec.contains("'Test dueDate'"),
+        "date fields seed an ISO date:\n{edit_spec}"
+    );
+    assert!(edit_spec.contains("'2024-01-15'"), "{edit_spec}");
+}
+
+#[tokio::test]
+async fn fixtures_come_from_the_support_api_module() {
+    // The absolute-URL helper lives beside the kernel so every spec and
+    // journey resolves the API origin the same way.
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let files = generate(&engine, dir.path(), None).await;
+    let api = content_of(&files, "tests/pages/support/api.ts");
+    assert!(
+        api.contains("PUBLIC_API_URL") && api.contains("export function apiUrl("),
+        "{api}"
+    );
+    let edit_spec = content_of(&files, "tests/ifml/customer-edit.spec.ts");
+    assert!(
+        edit_spec.contains("from '../pages/support/api'"),
+        "{edit_spec}"
+    );
+}
+
+#[tokio::test]
+async fn journeys_post_fixtures_with_the_persona_api_key() {
+    // Issue #558: journeys seed through PUBLIC_API_URL with the persona's
+    // provisioned key — relative same-origin posts 404 at the preview
+    // server and an unauthenticated post 401s at the gateway.
+    let engine = MockEngine::new();
+    ingest_customer_schema(&engine).await;
+    ingest_ifml_model(&engine).await;
+    ingest_policy(&engine).await;
+    ingest_guarded_view(
+        &engine,
+        "CustomerList",
+        Some("Customer Management"),
+        false,
+        &["Admin"],
+        &[],
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+
+    let generator = IfmlE2eTestGenerator::new(dir.path(), "svelte");
+    let files = generator
+        .generate(
+            &engine,
+            &test_config(),
+            &[],
+            &tera::Tera::default(),
+            &ProjectConfig {
+                codegen: codegraph_generate::CodegenConfig {
+                    ifml_e2e_auth: true,
+                    ..Default::default()
+                },
+                ..ProjectConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let journeys: Vec<_> = files
+        .iter()
+        .filter(|f| f.path.to_string_lossy().contains("journey"))
+        .collect();
+    assert!(!journeys.is_empty(), "the guarded model emits journeys");
+    for journey in journeys {
+        let body = &journey.content;
+        if body.contains("request.post(") {
+            assert!(
+                body.contains("apiUrl("),
+                "journey seeds resolve the API origin: {}",
+                journey.path.display()
+            );
+            assert!(
+                body.contains("Authorization"),
+                "journey seeds carry the persona key: {}",
+                journey.path.display()
+            );
+        }
+    }
 }

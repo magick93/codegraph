@@ -27,6 +27,7 @@ pub(crate) fn register_filters(tera: &mut Tera) {
     tera.register_filter("dollar_quote", dollar_quote_filter);
     tera.register_filter("strip_pg_quotes", strip_pg_quotes_filter);
     tera.register_filter("quote_pg", quote_pg_filter);
+    tera.register_filter("js_template_literal", js_template_literal_filter);
 }
 
 /// Initialize the Tera template engine with embedded templates.
@@ -244,9 +245,55 @@ fn dollar_quote_filter(
     Ok(tera::Value::from(format!("'{}'", escaped)))
 }
 
+/// Escape prose for interpolation into a JS/TS **template literal** (issue
+/// #560): backslashes double first, then backticks and `${` sequences — the
+/// unescaped forms are a js_parse_error (backtick) or an unintended
+/// interpolation (`${`). Doc comments and other model prose reaching
+/// `` `{{ x | js_template_literal }}` `` sites must go through this.
+fn js_template_literal_filter(
+    value: &tera::Value,
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
+    let s = value
+        .as_str()
+        .ok_or_else(|| tera::Error::message("js_template_literal filter expects a string"))?;
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            '$' if chars.peek() == Some(&'{') => {
+                out.push_str("\\${");
+                chars.next();
+            }
+            _ => out.push(ch),
+        }
+    }
+    Ok(tera::Value::from(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn js_template_literal_filter_escapes_backtick_dollar_and_backslash() {
+        let mut tera = Tera::default();
+        register_filters(&mut tera);
+        tera.add_raw_template("t", "{{ prose | js_template_literal }}")
+            .unwrap();
+        let ctx = tera::Context::from_serialize(&serde_json::json!({
+            "prose": "issued (`idNumber`, not `number`) — C:\\path and ${interp} but $ alone stays"
+        }))
+        .unwrap();
+        let out = tera.render("t", &ctx).unwrap();
+        assert_eq!(
+            out,
+            "issued (\\`idNumber\\`, not \\`number\\`) — C:\\\\path and \\${interp} but $ alone stays"
+        );
+    }
 
     /// Render the IFML layout template with a minimal shell context — the
     /// smallest template whose pack override proves the merge precedence.

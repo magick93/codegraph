@@ -70,11 +70,23 @@ pub const SPECLESS_CUSTOMERLIST_PAGE: &str = r##"<script lang="ts">
 pub const SPECLESS_CUSTOMERLIST_LOAD: &str = r##"import type { PageLoad } from './$types';
 
 import { error } from '@sveltejs/kit';
+import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
 
+// Issue #557: fetches resolve the API ORIGIN (PUBLIC_API_URL) and carry
+// the Bearer key — a relative same-origin fetch dies under a split
+// gateway topology and an unauthenticated request 401s at the gateway.
+// Empty PUBLIC_API_URL keeps the relative form (the dev/preview proxy
+// contract).
+const API_BASE = PUBLIC_API_URL ?? '';
+const API_KEY = PUBLIC_API_KEY ?? '';
+const apiHeaders: Record<string, string> = {
+	Accept: 'application/json',
+	...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+};
 export const load: PageLoad = async ({ params, url, fetch }) => {
 	const result: Record<string, unknown> = {};
 
-	const gridResponse = await fetch(`/api/v1/sales/customer?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}`);
+	const gridResponse = await fetch(`${API_BASE}/api/v1/sales/customer?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}`, { headers: apiHeaders });
 	if (!gridResponse.ok) {
 		error(gridResponse.status, 'Failed to load customer');
 	}
@@ -111,12 +123,25 @@ pub const SPECLESS_CUSTOMERDETAIL_PAGE: &str = r##"<script lang="ts">
 
 
 
+
 "##;
 
 pub const SPECLESS_CUSTOMERDETAIL_LOAD: &str = r##"import type { PageLoad } from './$types';
 
 import { error } from '@sveltejs/kit';
+import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
 
+// Issue #557: fetches resolve the API ORIGIN (PUBLIC_API_URL) and carry
+// the Bearer key — a relative same-origin fetch dies under a split
+// gateway topology and an unauthenticated request 401s at the gateway.
+// Empty PUBLIC_API_URL keeps the relative form (the dev/preview proxy
+// contract).
+const API_BASE = PUBLIC_API_URL ?? '';
+const API_KEY = PUBLIC_API_KEY ?? '';
+const apiHeaders: Record<string, string> = {
+	Accept: 'application/json',
+	...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+};
 export const load: PageLoad = async ({ params, url, fetch }) => {
 	const result: Record<string, unknown> = {};
 	const viewParams: Record<string, string> = {};
@@ -125,7 +150,7 @@ export const load: PageLoad = async ({ params, url, fetch }) => {
 
 	const customerId = viewParams['customerId'];
 	if (customerId) {
-		const infoResponse = await fetch(`/api/v1/sales/customer/${ customerId }`);
+		const infoResponse = await fetch(`${API_BASE}/api/v1/sales/customer/${ customerId }`, { headers: apiHeaders });
 		if (!infoResponse.ok) {
 			error(infoResponse.status, 'Failed to load customer');
 		}

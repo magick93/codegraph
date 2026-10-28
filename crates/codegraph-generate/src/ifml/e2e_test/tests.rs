@@ -181,7 +181,7 @@ fn spec_render_includes_all_test_kinds() {
         rendered.contains("await expect(ui.containerRoot()).toBeVisible();"),
         "{rendered}"
     );
-    assert!(rendered.contains("request.post('/api/v1/sales/customer'"));
+    assert!(rendered.contains("request.post(apiUrl('/api/v1/sales/customer')"));
     assert!(
         rendered.contains("await ui.navigateToCustomerDetail();"),
         "{rendered}"
@@ -272,7 +272,7 @@ fn ux_spec_renders_chip_tone_and_intl_assertions() {
     );
     // Fixture + in-spec Intl computation.
     assert!(
-        rendered.contains("const UX_BASE = '/api/v1/refunds/refund-request';"),
+        rendered.contains("const UX_BASE = apiUrl('/api/v1/refunds/refund-request');"),
         "{rendered}"
     );
     assert!(
@@ -820,11 +820,16 @@ fn view_journey_spec_walks_hops_and_arrivals() {
     };
 
     let rendered = super::auth::render_view_journey(&journey, "../e2e/personas");
-    assert!(rendered.contains("import { asPersona, admin } from '../e2e/personas';"));
+    assert!(
+        rendered.contains("import { apiKeyFor, asPersona, admin } from '../e2e/personas';")
+            && rendered.contains("import { apiUrl } from '../pages/support/api';"),
+    );
     assert!(rendered.contains("asPersona(admin);"));
     assert!(rendered.contains("test('journey: CustomerList → CustomerDetail → CustomerEdit'"));
     // Seeds + open through the source page class.
-    assert!(rendered.contains("const rowSeed0 = await request.post('/api/v1/sales/customer'"));
+    assert!(
+        rendered.contains("const rowSeed0 = await request.post(apiUrl('/api/v1/sales/customer')")
+    );
     assert!(rendered.contains("let ui = new CustomerListPage(page);"));
     assert!(rendered.contains("await ui.open();"));
     // Hop 1: drive + assert URL + arrival surface.

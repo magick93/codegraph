@@ -395,16 +395,23 @@ async fn persona_fixture_replaces_inline_init_script_stubs() {
         );
     }
 
-    for spec in [
-        "tests/ifml/request-list.spec.ts",
-        "tests/ifml/review-queue.spec.ts",
-    ] {
-        let body = read(&ui, spec);
+    {
+        let body = read(&ui, "tests/ifml/request-list.spec.ts");
         assert!(
             !body.contains("addInitScript"),
-            "{spec} must drive personas through the fixture, not inline addInitScript:\n{body}"
+            "base specs drive personas through the fixture, not inline addInitScript:\n{body}"
         );
     }
+    // Issue #560: ReviewQueue's ONLY base-spec content was personas — under
+    // the auth flag those live in the auth spec, so the base spec (which
+    // would have been an empty describe) is suppressed entirely.
+    assert!(
+        !ui.join("tests")
+            .join("ifml")
+            .join("review-queue.spec.ts")
+            .exists(),
+        "a persona-only view must not emit an empty base spec"
+    );
 }
 
 /// The `{view}.auth.spec.ts` family: unauthenticated/garbage-key behavior,

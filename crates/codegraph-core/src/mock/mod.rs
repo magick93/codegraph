@@ -18,6 +18,7 @@ pub struct MockEngine {
     enum_values: Mutex<HashMap<String, Vec<EnumValue>>>,
     trees: Mutex<HashMap<String, CompositionTree>>,
     composite_ranges: Mutex<HashMap<String, CompositeRange>>,
+    structured_sub_fields: Mutex<HashMap<String, Vec<StructuredSubField>>>,
     consumed_fields: Mutex<HashMap<String, Vec<(PropertyNode, String)>>>,
     /// Maps (property_name, schema_title) -> target SchemaNode for $ref resolution
     ref_targets: Mutex<HashMap<(String, String), SchemaNode>>,
@@ -110,6 +111,7 @@ impl MockEngine {
             enum_values: Mutex::new(HashMap::new()),
             trees: Mutex::new(HashMap::new()),
             composite_ranges: Mutex::new(HashMap::new()),
+            structured_sub_fields: Mutex::new(HashMap::new()),
             consumed_fields: Mutex::new(HashMap::new()),
             ref_targets: Mutex::new(HashMap::new()),
             parent_candidates: Mutex::new(Vec::new()),

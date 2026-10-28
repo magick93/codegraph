@@ -420,8 +420,9 @@ view "CustomerEdit" {
     );
     assert!(
         page.contains(
-            "response = await fetch(`/api/v1/sales/customer/${viewParams.customerId}`, {"
+            "response = await fetch(`${API_BASE}` + `/api/v1/sales/customer/${viewParams.customerId}`, {"
         ) && page.contains("if (isEdit) {"),
+        // Issue #557: submit URLs concatenate the PUBLIC_API_URL origin.
         "edit submits must read the id from the query-param viewParams: {page}"
     );
     assert!(page.contains("method: 'PUT'"), "{page}");
@@ -447,8 +448,9 @@ view "CustomerEdit" {
         load.contains("const customerId = viewParams['customerId'];"),
         "load resolves params from the query string only: {load}"
     );
+    // Issue #557: load fetches resolve the PUBLIC_API_URL origin.
     assert!(
-        load.contains("`/api/v1/sales/customer/${ customerId }`"),
+        load.contains("`${API_BASE}/api/v1/sales/customer/${ customerId }`"),
         "{load}"
     );
 }

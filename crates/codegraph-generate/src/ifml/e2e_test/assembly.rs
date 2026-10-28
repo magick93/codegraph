@@ -169,6 +169,12 @@ impl IfmlE2eTestGenerator {
             }
         });
 
+        // Issue #558: an entity with a required entity-ref can never be
+        // created by a flat seed body — no fixture, no click-through.
+        if !self.seed_is_creatable(db, component).await {
+            return None;
+        }
+
         Some(ClickThroughTest {
             title: format!(
                 "{} navigates to {}",
@@ -180,11 +186,36 @@ impl IfmlE2eTestGenerator {
             row_testid,
             fixture: Fixture {
                 base_path: api.base_path.clone(),
-                entries: fixture_entries(component),
+                entries: self.typed_fixture_entries(db, component).await,
             },
             target_pattern,
             modal,
         })
+    }
+
+    /// Fixture payload with type-valid values (issue #558): codelist-backed
+    /// fields seed their first enum value — prose would violate the
+    /// column's FK to the codelist table.
+    pub(super) async fn typed_fixture_entries(
+        &self,
+        db: &dyn GraphQuerier,
+        c: &IfmlComponent,
+    ) -> Vec<(String, String)> {
+        let mut entries = fixture_entries(c);
+        for (field, value) in entries.iter_mut() {
+            if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
+                *value = format!("'{}'", js_string(&code));
+            }
+        }
+        entries
+    }
+
+    /// Whether a flat create body can satisfy the entity's required fields:
+    /// a required entity-ref needs a real parent row, which a flat body can
+    /// never carry (issue #558) — seeds for such entities are dropped
+    /// instead of guaranteed-422.
+    pub(super) async fn seed_is_creatable(&self, db: &dyn GraphQuerier, c: &IfmlComponent) -> bool {
+        super::fixtures::required_refs_satisfiable(db, c.entity.as_deref()).await
     }
 
     pub(super) async fn build_validation_test(
@@ -238,6 +269,11 @@ impl IfmlE2eTestGenerator {
 
         let (field, original, updated) = modifiable_field(c, form)?;
         let save = save_navigation_target(vc, c)?;
+        // Issue #558: a required entity-ref can never be satisfied by the
+        // seed body — no fixture, no round trip.
+        if !self.seed_is_creatable(db, c).await {
+            return None;
+        }
 
         Some(RoundTripTest {
             component: c.name.clone(),
@@ -250,7 +286,7 @@ impl IfmlE2eTestGenerator {
             updated,
             fixture: Fixture {
                 base_path: api.base_path,
-                entries: fixture_entries(c),
+                entries: self.typed_fixture_entries(db, c).await,
             },
             target_pattern: url_pattern(&view_route(&save.0), &save.1),
         })
@@ -321,6 +357,11 @@ impl IfmlE2eTestGenerator {
             return None;
         }
         if (is_details(c) || is_form(c)) && !api.has_read {
+            return None;
+        }
+        // Issue #558: a required entity-ref can never be satisfied by the
+        // seed body — no fixture, no workflow test.
+        if !self.seed_is_creatable(db, c).await {
             return None;
         }
 
@@ -763,6 +804,11 @@ impl IfmlE2eTestGenerator {
                     if !api.has_create {
                         continue;
                     }
+                    if !self.seed_is_creatable(db, c).await {
+                        // Issue #558: a required entity-ref can never be
+                        // satisfied by a flat seed body — no row, no hop.
+                        continue;
+                    }
                     JourneyHop {
                         source_component: c.name.clone(),
                         kind: JourneyHopKind::Row,
@@ -856,6 +902,11 @@ impl IfmlE2eTestGenerator {
                 continue;
             };
             if !api.has_create {
+                continue;
+            }
+            if !self.seed_is_creatable(db, c).await {
+                // Issue #558: the open seed needs a real row; a required
+                // entity-ref defeats the flat body — no seed, no journey.
                 continue;
             }
             return Some((

@@ -8,6 +8,7 @@ pub struct MockEngineBuilder {
     properties: HashMap<String, Vec<PropertyNode>>,
     trees: HashMap<String, CompositionTree>,
     composite_ranges: HashMap<String, CompositeRange>,
+    structured_sub_fields: HashMap<String, Vec<StructuredSubField>>,
     consumed_fields: HashMap<String, Vec<(PropertyNode, String)>>,
     ref_targets: HashMap<(String, String), SchemaNode>,
     parent_candidates: Vec<ParentCandidate>,
@@ -37,6 +38,18 @@ impl MockEngineBuilder {
     pub fn with_composite_range(mut self, schema_title: &str, range: CompositeRange) -> Self {
         self.composite_ranges
             .insert(schema_title.to_string(), range);
+        self
+    }
+
+    /// Register the structured (wrapper) sub-fields `get_structured_sub_fields`
+    /// returns for `schema_title`.
+    pub fn with_structured_sub_fields(
+        mut self,
+        schema_title: &str,
+        fields: Vec<StructuredSubField>,
+    ) -> Self {
+        self.structured_sub_fields
+            .insert(schema_title.to_string(), fields);
         self
     }
 
@@ -140,6 +153,12 @@ impl MockEngineBuilder {
             let mut composite_ranges = engine.composite_ranges.lock().unwrap();
             for (k, v) in self.composite_ranges {
                 composite_ranges.insert(k, v);
+            }
+        }
+        {
+            let mut sub_fields = engine.structured_sub_fields.lock().unwrap();
+            for (k, v) in self.structured_sub_fields {
+                sub_fields.insert(k, v);
             }
         }
         {

@@ -139,10 +139,57 @@ pub(crate) fn js_value_for_type(field: &str, rust_type: &str) -> String {
     if super::super::control_core::is_numeric_rust_type(&t) {
         return "42".to_string();
     }
+    if t.contains("uuid") {
+        // Random valid UUID literal (issue #558): 'Test <field>' 422s on
+        // every uuid column — identity PKs included (#479 parity).
+        return "`00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`"
+            .to_string();
+    }
+    if t.contains("naivedate") || t.contains("date") && !t.contains("datetime") {
+        // ISO date (issue #558): date columns reject prose.
+        return "'2024-01-15'".to_string();
+    }
     if t.contains("datetime") || t.contains("timestamp") {
         return "'2024-01-15T10:30:00Z'".to_string();
     }
     format!("'Test {field}'")
+}
+
+/// Resolve the schema node for an entity title (exact, then `+Type`).
+pub(crate) async fn schema_for_entity(
+    db: &dyn GraphQuerier,
+    entity: &str,
+) -> Option<codegraph_core::types::SchemaNode> {
+    match db.get_schema(entity).await {
+        Ok(Some(schema)) => Some(schema),
+        Ok(None) => db.get_schema(&format!("{entity}Type")).await.ok()?,
+        Err(_) => None,
+    }
+}
+
+/// Whether a flat create body can satisfy the entity's required fields
+/// (issue #558): a required entity-ref needs a real parent row, which a
+/// flat body can never carry — seeds for such entities are DROPPED (never
+/// a guaranteed-422 POST). Unknown entities (runs without schemas) are
+/// conservatively creatable.
+pub(crate) async fn required_refs_satisfiable(db: &dyn GraphQuerier, entity: Option<&str>) -> bool {
+    let Some(entity) = entity else {
+        return true;
+    };
+    let Some(schema) = schema_for_entity(db, entity).await else {
+        return true;
+    };
+    let Ok(props) = db.get_properties(&schema.title).await else {
+        return true;
+    };
+    !props.iter().any(|p| {
+        p.is_required
+            && p.name != "id"
+            && matches!(
+                p.effective_kind(),
+                Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+            )
+    })
 }
 
 /// The first enum value of the codelist backing `field` on `entity`'s

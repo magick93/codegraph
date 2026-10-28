@@ -1,5 +1,7 @@
 //! Tests for the `ui_testids` global generator (issue #468 W3): the
-//! `ui/src/lib/testids.ts` projection of `ux::plan::ids`.
+//! `ui/src/lib/testids.js` + `testids.d.ts` projection of `ux::plan::ids`
+//! (issue #561: the runtime module carries the exact spelling the POM
+//! imports — `#lib/testids.js`).
 
 use codegraph::generate::ProjectConfig;
 use codegraph::generate::traits::GlobalGenerator;
@@ -137,16 +139,16 @@ fn testid_module_emits_typed_module_from_the_graph() {
     });
     let (_, module) = files
         .iter()
-        .find(|(p, _)| p.ends_with("ui/src/lib/testids.ts"))
-        .expect("testids.ts emitted");
+        .find(|(p, _)| p.ends_with("ui/src/lib/testids.js"))
+        .expect("testids.js emitted");
 
     // Per-entity entries with the entity's own field unions.
     assert!(
-        module.contains("person: entity('person', [\n    'full_name',\n  ] as const),"),
+        module.contains("person: entity('person', [\n    'full_name',\n  ]),"),
         "{module}"
     );
     assert!(
-        module.contains("worker: entity('worker', [\n    'hire_date',\n  ] as const),"),
+        module.contains("worker: entity('worker', [\n    'hire_date',\n  ]),"),
         "{module}"
     );
     // The normalized dialog vocabulary (issue #468 finding 3).
@@ -166,6 +168,20 @@ fn testid_module_emits_typed_module_from_the_graph() {
         "{module}"
     );
     assert!(module.contains("export function tidFor("), "{module}");
+
+    // The typed surface beside it: per-entity field unions so
+    // `testids.person.field('nope')` stays a compile error.
+    let (_, dts) = files
+        .iter()
+        .find(|(p, _)| p.ends_with("ui/src/lib/testids.d.ts"))
+        .expect("testids.d.ts emitted");
+    assert!(
+        dts.contains("person: EntityTestids<\n    | 'full_name'\n  >;"),
+        "{dts}"
+    );
+    assert!(dts.contains("export interface EntityTestids"), "{dts}");
+    assert!(dts.contains("export declare const testids"), "{dts}");
+    assert!(dts.contains("export declare function tidFor("), "{dts}");
 }
 
 #[test]

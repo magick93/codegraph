@@ -2573,6 +2573,8 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         needs_on_mount: false,
         needs_invalidate: false,
         has_submit: false,
+        has_api_surface: false,
+        has_action_buttons: false,
         view_role: None,
         container_role: None,
         roles: Vec::new(),
@@ -4033,5 +4035,177 @@ fn integrated_guard_decides_server_side_via_parent_roles() {
     assert!(
         !rendered.contains("import { browser } from '$app/environment';"),
         "{rendered}"
+    );
+}
+
+// ── View data loads + form posts resolve the API origin (issue #557) ────────
+
+fn fetch_component(name: &str) -> super::context::PageLoadComponentContext {
+    super::context::PageLoadComponentContext {
+        name: name.to_string(),
+        component_type: "list".to_string(),
+        entity: "Customer".to_string(),
+        route_name: "customer".to_string(),
+        api: Some(crate::ifml::api_paths::ResolvedApi {
+            base_path: "/api/v1/sales/customer".to_string(),
+            has_list: true,
+            has_create: true,
+            has_read: true,
+            has_update: true,
+            has_delete: true,
+        }),
+        id_param: None,
+        workflow: false,
+        paginate: false,
+        fetch_list: true,
+        fetch_item: false,
+        fetch_form: false,
+    }
+}
+
+#[test]
+fn load_fetches_resolve_the_api_origin_and_carry_the_auth_header() {
+    // Issue #557: a relative same-origin fetch dies under a split gateway
+    // topology (the preview server has no /api routes) and the missing
+    // Authorization header 401s even with a proxy. Loads resolve
+    // PUBLIC_API_URL and carry the key like the entity plane's client.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let ctx = super::context::PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerList".to_string(),
+        components: vec![fetch_component("grid")],
+        has_fetch: true,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: false,
+        denial_target: "/".to_string(),
+    };
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+
+    assert!(
+        rendered.contains("PUBLIC_API_URL"),
+        "the load resolves the API origin from PUBLIC_API_URL:\n{rendered}"
+    );
+    assert!(rendered.contains("const API_BASE"), "{rendered}");
+    assert!(
+        rendered.contains("Authorization"),
+        "load fetches carry the Bearer header:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("${API_BASE}/api/v1/sales/customer"),
+        "the fetch URL is prefixed with the API origin:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("await fetch(`/api/v1/"),
+        "no same-origin relative fetch may remain:\n{rendered}"
+    );
+}
+
+#[test]
+fn paramless_untyped_load_stays_free_of_api_plumbing() {
+    // A view with no fetch surface gains no API_BASE/auth plumbing —
+    // flag-presence discipline for the template, too.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let ctx = super::context::PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "StaticPage".to_string(),
+        components: Vec::new(),
+        has_fetch: false,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: false,
+        denial_target: "/".to_string(),
+    };
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+    assert!(!rendered.contains("API_BASE"), "{rendered}");
+    assert!(!rendered.contains("PUBLIC_API_URL"), "{rendered}");
+}
+
+#[test]
+fn form_submits_resolve_the_api_origin_and_carry_the_auth_header() {
+    // Issue #557 (form leg): browser-side POSTs go to PUBLIC_API_URL with
+    // the Bearer key — same-origin posts hit the preview server and
+    // unauthenticated posts 401 at the gateway.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let ctx = page_context_for(&vc, None);
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+
+    assert!(
+        rendered.contains("PUBLIC_API_URL"),
+        "the page resolves the API origin:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("`${API_BASE}` + "),
+        "submit URLs concatenate the API origin:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("apiHeaders"),
+        "submits send the auth-bearing header set:\n{rendered}"
+    );
+}
+
+#[test]
+fn page_without_submit_carries_no_api_plumbing() {
+    // Presence discipline: a view with no submit/transition surface gains
+    // no API_BASE block at all.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let vc = plain_vc("Static");
+    let ctx = page_context_for(&vc, None);
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(!rendered.contains("API_BASE"), "{rendered}");
+    assert!(!rendered.contains("PUBLIC_API_URL"), "{rendered}");
+}
+
+#[test]
+fn action_events_render_controls_that_post_the_service_op() {
+    // Issue #559: `on request -> action("RequestFiling", ...)` emitted no
+    // control and no HTTP call — the domain's signature flows had NO UI
+    // surface at all. Action events on fetch-backed components render an
+    // action-control button that POSTs the conventional
+    // `{base}/{id}/actions/{op}` route (the worker-side route mounting
+    // stays its own slice).
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = plain_vc("FilingDetail");
+    vc.params = vec![id_param()];
+    let mut comp = component_with_spec(None);
+    comp.name = "filing".to_string();
+    comp.component_type = "details".to_string();
+    comp.entity = Some("Filing".to_string());
+    comp.fields = vec!["period".to_string(), "status".to_string()];
+    comp.events.push(IfmlEvent {
+        name: "comp_filing_request".to_string(),
+        event_type: "request".to_string(),
+        params: Vec::new(),
+        requires: vec!["request_filing".to_string()],
+        action: IfmlAction::Action("RequestFiling".to_string()),
+    });
+    vc.components = vec![comp];
+    let ctx = page_context_for(&vc, None);
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+
+    assert!(
+        rendered.contains("data-testid=\"filing-action-request-filing\""),
+        "the action event renders a named control:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("call_request_filing"),
+        "the control drives a generated handler:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("actions/request_filing"),
+        "the handler posts the conventional op route:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("apiHeaders"),
+        "the op post carries the auth header set:\n{rendered}"
     );
 }

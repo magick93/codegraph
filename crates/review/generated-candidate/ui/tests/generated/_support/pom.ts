@@ -76,6 +76,19 @@ export class UxTable {
     return this.page.locator('tbody tr:first-child td:first-child');
   }
 
+  /** Every rendered cell text of the 1-based data column, in row order —
+   * the sort-flip comparison reads the whole column ordering, not the
+   * first cell (issue #562: sibling rows can share the rendered value). */
+  async columnValues(tdIndex: number): Promise<string[]> {
+    const cells = this.page.locator(`tbody tr td:nth-child(${tdIndex})`);
+    const count = await cells.count();
+    const values: string[] = [];
+    for (let i = 0; i < count; i++) {
+      values.push(((await cells.nth(i).textContent()) ?? '').trim());
+    }
+    return values;
+  }
+
   async headerCount(): Promise<number> {
     return this.page.locator('thead th').count();
   }

@@ -1,6 +1,5 @@
 ---
 source: crates/codegraph/tests/policy_rls_tests.rs
-assertion_line: 291
 expression: hashes
 ---
 ".codegraph-manifest.json": dda55991beef88cd3ec55454cfd5e59de5797749344e45ae9e221952deaacc2f
@@ -883,14 +882,14 @@ ui/src/routes/recruiting/candidate/descriptor.ts: c754fef9d6bdbde43cae478d858724
 ui/src/routes/rsvp/rsvp/descriptor.ts: 79049336d44261d728cb01e11750f5f4af8076c227fde1469e0486a0c4b1749d
 ui/src/routes/version/+page.svelte: 598f46b21d94986cf07ef6265affdc1686e1ce85cc81122eb8bb53951070deae
 ui/src/routes/version/+server.ts: 8f1562b09fce4ab4c72e7f9a6e1a6ea48b75d8c6c28eda0a02034cbfb6220349
-ui/tests/e2e/auth.test.ts: c91188a60a7b14bd3d680018eead7b1795a9945593442228a596259b4f3d8aa2
+ui/tests/e2e/auth.test.ts: 2aecebc42e3d5189c210cfd4f2bb4778700d616c05b4e35bf07e1efb96d8a4b8
 ui/tests/e2e/auth/global-setup.ts: d46e20d5314b4133a56bd0368823e339fc79b1f94a05366c5a4e71580b62324f
 ui/tests/e2e/auth/global-teardown.ts: d69a514f7eed1d9ebc206fc041dc2b19f397233acd1664e4c55091543b5019b6
 ui/tests/e2e/fixtures/personas.ts: 8e4b297126c9f9e956635a1df6870139be90b9970d7ae3be726f53a46e182ee1
 ui/tests/e2e/helpers.ts: 6d456986b14e8017a5b0cfa3c280ba4db799a1ff848bdfb0934ef2e751a76e8a
 ui/tests/e2e/webhooks/webhooks-crud.test.ts: e1f1c8519513f8328ed0e492991041e25a21f92849643b6dd3689e5d2043c943
 ui/tests/e2e/webhooks/webhooks-delivery.test.ts: a98c50e5a719c55163980b70087798c71b9ff5eae86767f5cfe32ef082013663
-ui/tests/generated/_support/pom.ts: c815d9f0f3c6abf6a55e8b1647691a1313a772646e43cd459047a5604413de0f
+ui/tests/generated/_support/pom.ts: 2459641de575bda37317d4a9b6328fd0107e18a1441e3abc6572d55757d4689e
 ui/tests/generated/common/amount.api.crud.test.ts: 80642e828dd84d11624daed28734313e73d09195419bdb1a6b9c94b0918d5234
 ui/tests/generated/common/amount.employee.view.test.ts: c9ffd963856a3668dc23cd1130091be748577432f76c416a75f453e695f4e743
 ui/tests/generated/common/amount.isolation.test.ts: 9023c9b3a3e30ecec3f2d223d6cfd5f9fefb3fffffd11ce823ab6caa3dd79fa4

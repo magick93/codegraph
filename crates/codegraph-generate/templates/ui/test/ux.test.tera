@@ -318,21 +318,22 @@ test.describe('{{ entity_name }} UX list rendering', () => {
       expect(body).toContain('{{ ux_spec.sort.valid_fields_text }}');
     }
 {% if ux_spec.sort.flip %}
-    // Valid ?sort=&order= flips first-row ordering on two distinct rows.
-    // Null placeholder cells (—) are ordering-insensitive and can pin the
-    // first row in both directions (nulls + pagination), so the flip is
-    // only asserted when both first-row texts are real values.
+    // Valid ?sort=&order= reorders the column. The comparison reads the
+    // WHOLE column in both directions (issue #562): sibling rows seeded by
+    // earlier tests share the rendered fixture value, so the first row can
+    // legitimately stay put. The two rows this block creates carry distinct
+    // values, so asc vs desc cannot render the same ordering. The desc read
+    // goes through expect.poll — a bare textContent() read races the
+    // re-render.
     {
       await createUxFixture(orgContext);
       await createUxFixture(orgContext, { '{{ ux_spec.sort.flip.key }}': {{ ux_spec.sort.flip.alt_literal }} });
       await ui.openListAt('?sort={{ ux_spec.sort.flip.key }}&order=asc');
-      const cell = ui.cell({{ ux_spec.sort.flip.td_index }});
-      const asc = ((await cell.textContent()) ?? '').trim();
+      const ascValues = await ui.columnValues({{ ux_spec.sort.flip.td_index }});
       await ui.openListAt('?sort={{ ux_spec.sort.flip.key }}&order=desc');
-      const desc = ((await cell.textContent()) ?? '').trim();
-      if (asc !== '\u2014' && desc !== '\u2014' && asc !== '' && desc !== '') {
-        expect(desc).not.toBe(asc);
-      }
+      await expect
+        .poll(async () => (await ui.columnValues({{ ux_spec.sort.flip.td_index }})).join('\u0000'), { timeout: 15_000 })
+        .not.toBe(ascValues.join('\u0000'));
     }
 {% endif %}
   });

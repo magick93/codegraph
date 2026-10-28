@@ -1003,7 +1003,7 @@ Residue-of-the-pass notes that postdate the sections above:
   (`quality_gates.rs`, run from `pipeline.rs`) — scans the emitted tree
   and HARD-FAILS on retired vocabulary (`confirm-confirm` double-confirm;
   `${this.module}-` POM compositions when `testid_module` is on) and
-  verifies `ui/src/lib/testids.ts` exists when `testid_module` is on.
+  verifies `ui/src/lib/testids.js` exists when `testid_module` is on.
   Profile features under `[features]` in profiles.toml, default OFF =
   zero behavior (byte-identity discipline).
 - **`testid_module` (W3)**: ONE testid vocabulary — POM locators resolve
@@ -1783,6 +1783,7 @@ Implemented in `crates/codegraph-generate/src/template_engine.rs`:
 | `dollar_quote` | Wraps a string in single quotes with proper escaping |
 | `strip_pg_quotes` | Removes double-quote characters from PostgreSQL identifiers |
 | `quote_pg` | Double-quotes a PostgreSQL identifier if it is a reserved word |
+| `js_template_literal` | Escapes prose (backslash, backtick, `${`) for interpolation into a JS/TS template literal (issue #560) |
 
 ### Example: overriding SQLite templates
 
