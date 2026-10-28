@@ -21,7 +21,7 @@ pub mod qs_query;
 pub mod worker;
 {% if has_events %}pub mod events;
 {% endif %}{% if has_webhooks %}pub mod webhook_api;
-pub mod webhook_dispatch;
 pub mod webhook_router;
+{% endif %}{% if has_webhooks or has_events %}pub mod webhook_dispatch;
 {% endif %}{% if project.has_extension_points %}pub mod integration_dispatch;
 {% endif %}{% if project.hooks_api_crate %}pub mod hooks;pub mod hook_adapters;{% endif %}
