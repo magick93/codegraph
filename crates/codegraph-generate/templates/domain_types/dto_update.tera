@@ -39,6 +39,13 @@ pub struct Update{{ entity_name }}Request {
 {%- if has_validate %}
     #[garde(skip)]
 {%- endif %}
+{%- if field.is_array and field.is_entity_ref %}
+{%- if project.dto_key_casing == "camel" %}
+    #[serde(alias = "{{ (field.name ~ "_id") | lower_camel }}")]
+{%- else %}
+    #[serde(alias = "{{ field.name }}_id")]
+{%- endif %}
+{%- endif %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
 {%- if field.is_array %}
     pub {{ field.name }}: Option<Vec<uuid::Uuid>>,

@@ -39,4 +39,20 @@ The workspace pins codegraph crates to git rev `{{ codegraph_rev }}` in
 `Cargo.toml`. During codegraph development, re-run init with
 `--codegraph-path` to switch the workspace to local path dependencies.
 
+## Modeling contract: optionality and ref naming
+
+- **Features are required by default.** A plain feature (`date due_date`)
+  demands a value in every create payload; declare the `[0..1]` multiplicity
+  (`date[0..1] due_date`) for an optional (`Option`) field. The models in
+  `model/` use plain features everywhere — widen with `[0..1]` when a field
+  should not be mandatory.
+- **Ref fields have one name per relation.** A scalar `refers` arrives and is
+  accepted as `x_id: Uuid`; an array `refers` (junction) is accepted as
+  `x: [Uuid]` — and also as `x_id` (a serde alias, so the scalar spelling
+  works there too). Request and response DTOs use the same name.
+- **Wrong field names are rejected, never ignored.** Create/update DTOs
+  carry `#[serde(deny_unknown_fields)]`: a misspelled or near-miss field
+  fails with a 422 whose message names the accepted spellings, so a link can
+  never silently land as NULL.
+
 See <https://github.com/magick93/codegraph> for the generator project.

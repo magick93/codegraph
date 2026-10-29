@@ -20,6 +20,7 @@ pub fn project_template_rev() -> &'static str {
 pub(crate) fn register_filters(tera: &mut Tera) {
     tera.register_filter("snake_case", snake_case_filter);
     tera.register_filter("upper_camel", upper_camel_filter);
+    tera.register_filter("lower_camel", lower_camel_filter);
     tera.register_filter("pascal_case", pascal_case_filter);
     tera.register_filter("kebab_case", kebab_case_filter);
     tera.register_filter("pluralize", pluralize_filter);
@@ -146,6 +147,36 @@ fn upper_camel_filter(
     Ok(tera::Value::from(codegraph_naming::to_pascal_case(
         &stripped,
     )))
+}
+
+/// snake_case → lowerCamelCase, matching serde's `rename_all = "camelCase"`
+/// semantics. Used for request-DTO serde aliases under camel key casing
+/// (issue #554).
+fn lower_camel_filter(
+    value: &tera::Value,
+    _kwargs: tera::Kwargs,
+    _state: &tera::State,
+) -> tera::TeraResult<tera::Value> {
+    let s = value
+        .as_str()
+        .ok_or_else(|| tera::Error::message("lower_camel filter expects a string"))?;
+    let pascal: String = s
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect();
+    let mut chars = pascal.chars();
+    let camel = match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => pascal,
+    };
+    Ok(tera::Value::from(camel))
 }
 
 fn pascal_case_filter(
