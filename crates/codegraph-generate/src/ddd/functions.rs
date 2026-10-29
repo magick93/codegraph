@@ -37,7 +37,7 @@ use codegraph_naming::{escape_rust_keyword, to_snake_case};
 
 use crate::ProjectConfig;
 use crate::code_writer::{CodeWriter, wln};
-use crate::ddd::functions_api::resolve_api_type;
+use crate::ddd::functions_api::{request_struct, resolve_api_type, response_struct};
 use crate::error::Result;
 use crate::rosetta_expr::{ExprContext, transpile_scoped};
 use crate::traits::{DomainGenerator, DomainGeneratorKind, GeneratedFile};
@@ -188,18 +188,21 @@ impl DomainGenerator for FunctionsGenerator {
 
         // Issue #337 B1: resolve the API-plane types for every HTTP-exposed
         // function so the emitted DTOs, handler calls, and signatures agree
-        // and compile. Non-exposed functions (including manual/internal)
-        // keep today's verbatim signatures — the API plane is the only
-        // consumer that must resolve. Unresolvable types are a hard
-        // generation error naming the function and the input — never a
-        // bare name (the #517 contract).
+        // and compile. Issue #450 slice C: `implementation = "external"`
+        // resolves the same way — its typed req/resp structs ride the same
+        // serde surface. Everything else keeps today's verbatim
+        // signatures. Unresolvable types are a hard generation error
+        // naming the function and the input — never a bare name (the #517
+        // contract).
         let suffix = &config.defaults.type_suffix;
         let mut imports_by_fn: HashMap<String, BTreeSet<String>> = HashMap::new();
         for surface in &mut surfaces {
             let Some(binding) = config.functions.get(&surface.node.name) else {
                 continue;
             };
-            if binding.exposure != FunctionExposure::Http {
+            if binding.exposure != FunctionExposure::Http
+                && binding.implementation != FunctionImplementation::External
+            {
                 continue;
             }
             let mut imports = BTreeSet::new();
@@ -324,11 +327,21 @@ impl DomainGenerator for FunctionsGenerator {
             .map(|s| s.node.name.clone())
             .collect();
 
+        let is_external = |s: &FunctionSurface| {
+            config
+                .functions
+                .get(&s.node.name)
+                .is_some_and(|b| b.implementation == FunctionImplementation::External)
+        };
         let (manual, rest): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
             surfaces.into_iter().partition(is_manual);
-        let (sql_bound, generated): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
+        let (sql_bound, rest2): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
             rest.into_iter().partition(is_sql);
+        let (external, generated): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
+            rest2.into_iter().partition(is_external);
         let sql_names: HashSet<String> = sql_bound.iter().map(|s| s.node.name.clone()).collect();
+        let external_names: HashSet<String> =
+            external.iter().map(|s| s.node.name.clone()).collect();
 
         let fn_imports = |names: &[&FunctionSurface]| {
             names
@@ -357,11 +370,12 @@ impl DomainGenerator for FunctionsGenerator {
                 ),
             });
         }
-        if !manual.is_empty() && !manual_present {
-            let manual_imports = fn_imports(&manual.iter().collect::<Vec<_>>());
+        if (!manual.is_empty() || !external.is_empty()) && !manual_present {
+            let manual_imports =
+                fn_imports(&manual.iter().chain(external.iter()).collect::<Vec<_>>());
             files.push(GeneratedFile {
                 path: manual_rs,
-                content: emit_manual_stub(domain, &manual, &manual_imports),
+                content: emit_manual_stub(domain, &manual, &external, &manual_imports),
             });
         }
         // Issue #450 slice B: the sql call plane — regenerated every run
@@ -384,6 +398,7 @@ impl DomainGenerator for FunctionsGenerator {
                 &manual,
                 &sql_bound,
                 &sql_plans,
+                &external,
                 project,
                 manual_present,
             ),
@@ -395,6 +410,7 @@ impl DomainGenerator for FunctionsGenerator {
             .iter()
             .chain(manual.iter())
             .chain(sql_bound.iter())
+            .chain(external.iter())
             .filter(|s| is_http(s))
             .collect();
         if !http.is_empty() {
@@ -413,6 +429,7 @@ impl DomainGenerator for FunctionsGenerator {
                     &manual_names,
                     &sql_names,
                     &sql_gapped,
+                    &external_names,
                     &api_imports,
                     &project.identity.api_version,
                     project,
@@ -609,6 +626,7 @@ fn emit_functions_module(
     manual: &[FunctionSurface],
     sql_bound: &[FunctionSurface],
     sql_plans: &[crate::ddd::functions_sql::SqlFnPlan],
+    external: &[FunctionSurface],
     project: &ProjectConfig,
     manual_present: bool,
 ) -> String {
@@ -640,6 +658,10 @@ fn emit_functions_module(
         wln!(code, "pub use sql_impl::*;");
         let plan_refs: Vec<&crate::ddd::functions_sql::SqlFnPlan> = sql_plans.iter().collect();
         crate::ddd::functions_sql::emit_sql_trait_block(&mut code, &plan_refs);
+    }
+
+    if !external.is_empty() {
+        emit_external_surface(&mut code, external, project);
     }
 
     if manual.is_empty() {
@@ -709,9 +731,11 @@ fn emit_functions_module(
 fn emit_manual_stub(
     domain: &str,
     manual: &[FunctionSurface],
+    external: &[FunctionSurface],
     imports: &BTreeSet<String>,
 ) -> String {
     let mut code = CodeWriter::new();
+    let manual_only = external.is_empty();
     wln!(
         code,
         "//! Hand-owned implementations for the {domain} domain (issue #450).",
@@ -724,11 +748,11 @@ fn emit_manual_stub(
     );
     wln!(
         code,
-        "//! never overwrites hand edits. The `ManualImpls` trait it implements"
+        "//! never overwrites hand edits. The traits it implements are"
     );
     wln!(
         code,
-        "//! is re-emitted into `mod.rs` on every run, so a model change that"
+        "//! re-emitted into `mod.rs` on every run, so a model change that"
     );
     wln!(
         code,
@@ -736,58 +760,287 @@ fn emit_manual_stub(
     );
     wln!(code, "#![allow(dead_code)]");
     wln!(code);
-    wln!(code, "use super::ManualImpls;");
+    if !manual_only {
+        wln!(code, "use async_trait::async_trait;");
+    }
+    if !manual.is_empty() {
+        wln!(code, "use super::ManualImpls;");
+    }
+    if !external.is_empty() {
+        wln!(code, "use super::ExternalFnImpls;");
+        wln!(
+            code,
+            "use super::{{{}Request, {}Response}};",
+            request_struct(&external[0].node.name),
+            response_struct(&external[0].node.name)
+        );
+        for function in external.iter().skip(1) {
+            wln!(
+                code,
+                "use super::{{{}Request, {}Response}};",
+                request_struct(&function.node.name),
+                response_struct(&function.node.name)
+            );
+        }
+    }
     for path in imports {
         wln!(code, "use {path};");
     }
+    if !manual.is_empty() {
+        wln!(code);
+        wln!(
+            code,
+            "/// Default hand-owned provider: replace the `todo!` bodies in place."
+        );
+        wln!(code, "pub struct DefaultManualImpls;");
+        wln!(code);
+        wln!(code, "impl ManualImpls for DefaultManualImpls {{");
+        for function in manual {
+            wln!(code);
+            if let Some(definition) = &function.node.definition {
+                wln!(code, "    /// {definition}");
+            }
+            let args = function
+                .args
+                .iter()
+                .map(|(name, ty)| format!("{name}: {ty}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let return_ty = match &function.output {
+                Some((_, ty)) => format!(" -> {ty}"),
+                None => String::new(),
+            };
+            wln!(
+                code,
+                "    fn {fn}(&self{args}){return_ty} {{",
+                fn = function.fn_name,
+                args = if args.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {args}")
+                },
+            );
+            // Silence unused-parameter warnings in the stub body; the args
+            // stay named so the hand impl keeps the model's vocabulary.
+            let owned: Vec<String> = function.args.iter().map(|(name, _)| name.clone()).collect();
+            wln!(code, "        let _ = (self{});", paren_tail(&owned));
+            wln!(
+                code,
+                "        todo!(\"hand-owned implementation of '{fn}' (modeled function '{name}')\")",
+                fn = function.fn_name,
+                name = function.node.name,
+            );
+            wln!(code, "    }}");
+        }
+        wln!(code, "}}");
+    }
+    if !external.is_empty() {
+        emit_external_hook(&mut code, external);
+    }
+
+    code.into_string()
+}
+
+/// The external-function client surface in `mod.rs` (issue #339): typed
+/// req/resp structs derived from the modeled signature plus the async
+/// `ExternalFnImpls` trait. The write-once hook in `manual.rs` implements
+/// it with a pre-wired HTTP client.
+fn emit_external_surface(
+    code: &mut CodeWriter,
+    external: &[FunctionSurface],
+    project: &ProjectConfig,
+) {
+    let camel = project.codegen.dto_key_casing == crate::project_config::DtoKeyCasing::Camel;
+    let serde_attr = if camel {
+        "\n#[serde(rename_all = \"camelCase\")]"
+    } else {
+        ""
+    };
     wln!(code);
     wln!(
         code,
-        "/// Default hand-owned provider: replace the `todo!` bodies in place."
+        "/// Typed wire structs + provider seam for external-bound functions"
     );
-    wln!(code, "pub struct DefaultManualImpls;");
-    wln!(code);
-    wln!(code, "impl ManualImpls for DefaultManualImpls {{");
-    for function in manual {
+    wln!(
+        code,
+        "/// (issue #339). The write-once hook in `manual.rs` ships a"
+    );
+    wln!(code, "/// pre-wired HTTP client implementing this trait.");
+    wln!(code, "#[async_trait::async_trait]");
+    wln!(code, "pub trait ExternalFnImpls: Send + Sync {{");
+    for function in external {
         wln!(code);
         if let Some(definition) = &function.node.definition {
             wln!(code, "    /// {definition}");
         }
-        let args = function
-            .args
-            .iter()
-            .map(|(name, ty)| format!("{name}: {ty}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let return_ty = match &function.output {
-            Some((_, ty)) => format!(" -> {ty}"),
-            None => String::new(),
-        };
         wln!(
             code,
-            "    fn {fn}(&self{args}){return_ty} {{",
+            "    async fn {fn}(",
             fn = function.fn_name,
-            args = if args.is_empty() {
-                String::new()
-            } else {
-                format!(", {args}")
-            },
         );
-        // Silence unused-parameter warnings in the stub body; the args
-        // stay named so the hand impl keeps the model's vocabulary.
-        let owned: Vec<String> = function.args.iter().map(|(name, _)| name.clone()).collect();
-        wln!(code, "        let _ = (self{});", paren_tail(&owned));
+        wln!(code, "        &self,");
+        wln!(code, "        base_url: &str,");
         wln!(
             code,
-            "        todo!(\"hand-owned implementation of '{fn}' (modeled function '{name}')\")",
-            fn = function.fn_name,
-            name = function.node.name,
+            "        request: {Request},",
+            Request = request_struct(&function.node.name),
         );
+        wln!(
+            code,
+            "    ) -> Result<{Response}, String>;",
+            Response = response_struct(&function.node.name)
+        );
+    }
+    wln!(code, "}}");
+    for function in external {
+        wln!(code);
+        if let Some(definition) = &function.node.definition {
+            wln!(code, "/// {definition}");
+        }
+        wln!(
+            code,
+            "#[derive(Debug, Clone, Serialize, Deserialize)]{serde_attr}",
+            serde_attr = serde_attr,
+        );
+        wln!(
+            code,
+            "pub struct {Request} {{",
+            Request = request_struct(&function.node.name),
+        );
+        for (name, ty) in &function.args {
+            wln!(code, "    pub {name}: {ty},");
+        }
+        wln!(code, "}}");
+        wln!(code);
+        if let Some(definition) = &function.node.definition {
+            wln!(code, "/// {definition}");
+        }
+        wln!(
+            code,
+            "#[derive(Debug, Clone, Serialize, Deserialize)]{serde_attr}",
+            serde_attr = serde_attr,
+        );
+        wln!(
+            code,
+            "pub struct {Response} {{",
+            Response = response_struct(&function.node.name),
+        );
+        if let Some((out_name, out_ty)) = &function.output {
+            wln!(code, "    pub {out_name}: {out_ty},");
+        }
+        wln!(code, "}}");
+    }
+}
+
+/// The write-once pre-wired hook (issue #339): `DefaultExternalImpls`
+/// carries an injected `reqwest::Client` and one handler per external
+/// function — POST `{base_url}/{fn_snake}` with the typed request struct,
+/// decoding the typed response. Path/auth are the hand-owned part
+/// (`TODO(#339)`).
+fn emit_external_hook(code: &mut CodeWriter, external: &[FunctionSurface]) {
+    wln!(code);
+    wln!(code);
+    wln!(
+        code,
+        "/// Prewired external-service client for the external-bound functions"
+    );
+    wln!(
+        code,
+        "/// (issue #339). Register it as `AppState.{{domain}}_external_impls`"
+    );
+    wln!(
+        code,
+        "/// and set the `{{DOMAIN}}_SERVICE_BASE_URL` config slot; fill in the"
+    );
+    wln!(code, "/// endpoint path + auth per function.");
+    wln!(code, "pub struct DefaultExternalImpls {{");
+    wln!(code, "    pub client: reqwest::Client,");
+    wln!(code, "}}");
+    wln!(code);
+    wln!(code, "impl DefaultExternalImpls {{");
+    wln!(code, "    pub fn new() -> Self {{");
+    wln!(code, "        Self {{");
+    wln!(code, "            client: reqwest::Client::new(),");
+    wln!(code, "        }}");
+    wln!(code, "    }}");
+    wln!(code, "}}");
+    wln!(code);
+    wln!(code, "impl Default for DefaultExternalImpls {{");
+    wln!(code, "    fn default() -> Self {{");
+    wln!(code, "        Self::new()");
+    wln!(code, "    }}");
+    wln!(code, "}}");
+    wln!(code);
+    wln!(code, "#[async_trait]");
+    wln!(code, "impl ExternalFnImpls for DefaultExternalImpls {{");
+    for function in external {
+        wln!(code);
+        if let Some(definition) = &function.node.definition {
+            wln!(code, "    /// {definition}");
+        }
+        wln!(
+            code,
+            "    async fn {fn}(",
+            fn = function.fn_name,
+        );
+        wln!(code, "        &self,");
+        wln!(code, "        base_url: &str,");
+        wln!(
+            code,
+            "        request: {Request},",
+            Request = request_struct(&function.node.name),
+        );
+        wln!(
+            code,
+            "    ) -> Result<{Response}, String> {{",
+            Response = response_struct(&function.node.name),
+        );
+        wln!(
+            code,
+            "        // TODO(#339): point this at the real endpoint path + auth scheme."
+        );
+        wln!(code, "        let url = format!(\"{{base_url}}/{fn}\");", fn = function.fn_name);
+        wln!(code, "        let response = self");
+        wln!(code, "            .client");
+        wln!(code, "            .post(url)");
+        wln!(code, "            .json(&request)");
+        wln!(code, "            .send()");
+        wln!(code, "            .await");
+        wln!(
+            code,
+            "            .map_err(|e| format!(\"{fn} request failed: {{e}}\"))?;",
+            fn = function.fn_name,
+        );
+        if function.output.is_some() {
+            wln!(code, "        response");
+            wln!(code, "            .error_for_status()");
+            wln!(
+                code,
+                "            .map_err(|e| format!(\"{fn} failed: {{e}}\"))?",
+                fn = function.fn_name,
+            );
+            wln!(
+                code,
+                "            .json::<{Response}>()",
+                Response = response_struct(&function.node.name),
+            );
+            wln!(code, "            .await");
+            wln!(
+                code,
+                "            .map_err(|e| format!(\"{fn} decode failed: {{e}}\"))",
+                fn = function.fn_name,
+            );
+        } else {
+            wln!(
+                code,
+                "        response.error_for_status().map_err(|e| format!(\"{fn} failed: {{e}}\"))?;",
+                fn = function.fn_name,
+            );
+            wln!(code, "        Ok(())");
+        }
         wln!(code, "    }}");
     }
     wln!(code, "}}");
-
-    code.into_string()
 }
 
 /// `(, a, b)` tail for the stub's `let _ = (self…);` discard — empty when
@@ -1137,6 +1390,7 @@ fn emit_functions_api_rs(
     manual: &HashSet<String>,
     sql_names: &HashSet<String>,
     sql_gapped: &HashSet<String>,
+    external: &HashSet<String>,
     imports: &BTreeSet<String>,
     api_version: &str,
     project: &ProjectConfig,
@@ -1221,6 +1475,7 @@ fn emit_functions_api_rs(
         let is_manual = manual.contains(&function.node.name);
         let is_sql = sql_names.contains(&function.node.name);
         let is_sql_gapped = sql_gapped.contains(&function.node.name);
+        let is_external = external.contains(&function.node.name);
         emit_function_endpoint(
             &mut code,
             domain,
@@ -1230,6 +1485,7 @@ fn emit_functions_api_rs(
             is_manual,
             is_sql,
             is_sql_gapped,
+            is_external,
             camel,
         );
     }
@@ -1276,6 +1532,7 @@ fn emit_function_endpoint(
     manual: bool,
     sql: bool,
     sql_gap: bool,
+    external: bool,
     camel: bool,
 ) {
     let endpoint = &function.fn_name;
@@ -1438,6 +1695,57 @@ fn emit_function_endpoint(
              provider — implement crate::domain::{domain}::functions::ManualImpls \
              and set AppState::{domain}_manual_impls\",",
             domain = domain,
+        );
+        wln!(code, "        )),");
+        wln!(code, "    }}");
+    } else if external {
+        let env_var = format!("{}_SERVICE_BASE_URL", domain.to_uppercase());
+        let field_inits = function
+            .args
+            .iter()
+            .map(|(name, _)| format!("{name}: body.{name}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        wln!(
+            code,
+            "    let request = crate::domain::{domain}::functions::{Request} {{ {field_inits} }};",
+            domain = domain,
+            Request = request_struct(&function.node.name),
+            field_inits = field_inits,
+        );
+        wln!(
+            code,
+            "    match (state.{domain}_external_impls.as_ref(), state.{domain}_service_base_url.as_deref()) {{",
+            domain = domain,
+        );
+        wln!(code, "        (Some(provider), Some(base_url)) => {{");
+        wln!(
+            code,
+            "            let response = provider.{endpoint}(base_url, request).await.map_err(|e| internal_error(\"{name}\", e))?;",
+            endpoint = endpoint,
+            name = function.node.name,
+        );
+        if let Some((out_name, _)) = &function.output {
+            wln!(
+                code,
+                "            Ok(Json({response} {{ {out}: response.{out} }}))",
+                response = response,
+                out = out_name,
+            );
+        } else {
+            wln!(code, "            Ok(Json({response} {{}}))");
+        }
+        wln!(code, "        }}");
+        wln!(code, "        _ => Err(not_implemented(");
+        wln!(code, "            \"{name}\",", name = function.node.name,);
+        wln!(
+            code,
+            "            \"external function awaiting its provider — implement \
+             crate::domain::{domain}::functions::ExternalFnImpls, set \
+             AppState.{domain}_external_impls, and configure the \
+             {env_var} env var\",",
+            domain = domain,
+            env_var = env_var,
         );
         wln!(code, "        )),");
         wln!(code, "    }}");

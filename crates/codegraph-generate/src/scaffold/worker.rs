@@ -964,6 +964,7 @@ service_bindings = ["timecard"]
             has_custom_routes: false,
             atproto_nsids: vec![],
             has_manual_functions: false,
+            has_external_functions: false,
         }
     }
 
@@ -1575,6 +1576,7 @@ entities = ["CodeType"]
             has_custom_routes: false,
             atproto_nsids: vec![],
             has_manual_functions: false,
+            has_external_functions: false,
         };
         let mut domains = build_worker_domains(
             "hr",

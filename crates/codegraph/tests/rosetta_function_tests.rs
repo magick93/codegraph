@@ -1647,6 +1647,168 @@ implementation = "sql"
     );
 }
 
+// ── Issue #450 slice C: implementation = "external" (B3, issue #339) ────
+
+/// `implementation = "external"` emits typed request/response structs
+/// (serde round-trip-compatible with the modeled signature), a
+/// `{domain}_service_base_url` config slot, and a write-once manual hook
+/// pre-wired with an HTTP client + serde against the structs (#339).
+#[tokio::test]
+async fn external_function_emits_client_structs_and_prewired_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."HandSet"]
+implementation = "external"
+
+[functions."BrokenAnswer"]
+exposure = "event"
+"#;
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        domains,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("external-bound pipeline succeeds");
+
+    let module = read_split_file(dir.path(), "mod.rs").expect("mod.rs emitted");
+    assert!(
+        module.contains("pub trait ExternalFnImpls"),
+        "{module}"
+    );
+    // The typed request struct mirrors the modeled inputs; the response
+    // struct carries the declared output — serde round-trips the wire
+    // shape (compile-checked by the ignored E2 gate).
+    assert!(
+        module.contains("#[derive(Debug, Clone, Serialize, Deserialize)]"),
+        "{module}"
+    );
+    assert!(module.contains("pub struct HandSetRequest"), "{module}");
+    assert!(module.contains("pub amount: f64,"), "{module}");
+    assert!(module.contains("pub struct HandSetResponse"), "{module}");
+    assert!(module.contains("pub result: f64,"), "{module}");
+
+    // The write-once hook is pre-wired: reqwest POST + serde both ways.
+    let manual = read_split_file(dir.path(), "manual.rs").expect("manual.rs emitted");
+    assert!(
+        manual.contains("pub struct DefaultExternalImpls"),
+        "{manual}"
+    );
+    assert!(manual.contains("reqwest::Client"), "{manual}");
+    assert!(
+        manual.contains(".json(&request)"),
+        "the hook serializes the typed request: {manual}"
+    );
+    assert!(
+        manual.contains("json::<HandSetResponse>()"),
+        "the hook deserializes the typed response: {manual}"
+    );
+
+    // (b) external + http: the endpoint dispatches through the provider
+    // slot and the base-url config; unregistered answers 501 naming both.
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."HandSet"]
+implementation = "external"
+exposure = "http"
+"#;
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        domains,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("external+http pipeline succeeds");
+    let api = std::fs::read_to_string(dir.path().join("generated/src/api/store/functions_api.rs"))
+        .expect("functions_api.rs emitted");
+    assert!(
+        api.contains("state.store_external_impls.as_ref()"),
+        "{api}"
+    );
+    assert!(
+        api.contains("state.store_service_base_url.as_deref()"),
+        "{api}"
+    );
+    assert!(
+        api.contains("provider.hand_set(base_url, request).await"),
+        "{api}"
+    );
+    assert!(
+        api.contains("STORE_SERVICE_BASE_URL"),
+        "the 501 hint names the env config: {api}"
+    );
+
+    // (c) the AppState carries the provider slot + the config URL slot.
+    let dir = tempfile::tempdir().unwrap();
+    let profiles = r#"
+[profiles.default.meta]
+name = "rosetta-func-slot"
+version = "1.0.0"
+description = "external AppState slot gate"
+
+[profiles.default.features]
+rosetta_backend = true
+
+[profiles.default.api]
+generators = ["functions", "scaffold"]
+"#;
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."HandSet"]
+implementation = "external"
+"#;
+    run_binding_api_pipeline_with(dir.path(), BINDING_API_MODEL, domains, profiles)
+        .await
+        .expect("scaffold pipeline succeeds");
+    let app_state = std::fs::read_to_string(dir.path().join("generated/src/app_state.rs"))
+        .expect("app_state.rs");
+    assert!(
+        app_state.contains(
+            "pub store_external_impls: Option<std::sync::Arc<dyn crate::domain::store::functions::ExternalFnImpls>>"
+        ),
+        "{app_state}"
+    );
+    assert!(
+        app_state.contains("pub store_service_base_url: Option<String>"),
+        "{app_state}"
+    );
+    let server =
+        std::fs::read_to_string(dir.path().join("generated/src/server.rs")).expect("server.rs");
+    assert!(server.contains("store_external_impls: None,"), "{server}");
+    assert!(
+        server.contains(r#"store_service_base_url: std::env::var("STORE_SERVICE_BASE_URL").ok(),"#),
+        "{server}"
+    );
+}
+
 /// The E2 compile gate (issue #337): the emitted crate `cargo check`s
 /// cleanly with an exposed-function surface present. Ignored — it needs
 /// the full dependency stack; run it in the ops-integration lane or by

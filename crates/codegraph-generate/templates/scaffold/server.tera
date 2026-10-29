@@ -322,6 +322,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {%- if domain.has_manual_functions %}
         {{ domain.name }}_manual_impls: None,
 {% endif %}
+{%- if domain.has_external_functions %}
+        {{ domain.name }}_external_impls: None,
+        {{ domain.name }}_service_base_url: std::env::var("{{ domain.name | upper }}_SERVICE_BASE_URL").ok(),
+{% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(

@@ -34,6 +34,14 @@ pub struct AppState {
     /// this trait; 501 until a provider is registered.
     pub {{ domain.name }}_manual_impls: Option<std::sync::Arc<dyn crate::domain::{{ domain.name }}::functions::ManualImpls>>,
 {% endif %}
+{%- if domain.has_external_functions %}
+    /// External-service provider slot + config URL (issues #450/#339): the
+    /// HTTP handlers for `implementation = "external"` functions dispatch
+    /// through this trait with the service base URL; 501 until a provider
+    /// is registered and the URL configured.
+    pub {{ domain.name }}_external_impls: Option<std::sync::Arc<dyn crate::domain::{{ domain.name }}::functions::ExternalFnImpls>>,
+    pub {{ domain.name }}_service_base_url: Option<String>,
+{% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}
     pub {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler,{% endif %}

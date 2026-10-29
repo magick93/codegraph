@@ -96,6 +96,11 @@ pub struct ScaffoldDomain {
     /// `{domain}_manual_impls: Option<Arc<dyn ...::ManualImpls>>` slot and
     /// server.tera constructs it `None`. Flag-off = byte-identical.
     pub has_manual_functions: bool,
+    /// External-bound function domains (issue #450 slice C / #339):
+    /// app_state.tera emits the `{domain}_external_impls` provider slot +
+    /// the `{domain}_service_base_url` config slot; server.tera constructs
+    /// them `None` / env-read. Flag-off = byte-identical.
+    pub has_external_functions: bool,
 }
 
 pub struct ScaffoldGenerator {
@@ -218,6 +223,14 @@ pub async fn build_scaffold_domains(
             Ok(domains) => domains.into_iter().collect(),
             Err(_) => Default::default(),
         };
+    // External-bound function domains (issue #450 slice C / issue #339) —
+    // the `{domain}_external_impls` provider + `{domain}_service_base_url`
+    // config slots.
+    let external_domains: std::collections::HashSet<String> =
+        match crate::ddd::functions_api::domains_with_external(db, config).await {
+            Ok(domains) => domains.into_iter().collect(),
+            Err(_) => Default::default(),
+        };
     let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
         std::collections::HashMap::new();
     let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
@@ -305,6 +318,7 @@ pub async fn build_scaffold_domains(
                 has_custom_routes: entry.custom_routes,
                 atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
                 has_manual_functions: manual_domains.contains(name.as_str()),
+                has_external_functions: external_domains.contains(name.as_str()),
             })
         })
         .collect();
@@ -688,6 +702,7 @@ mod tests {
                 has_custom_routes: false,
                 atproto_nsids: vec![],
                 has_manual_functions: false,
+                has_external_functions: false,
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),

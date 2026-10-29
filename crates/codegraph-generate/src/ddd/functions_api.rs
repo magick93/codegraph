@@ -99,6 +99,24 @@ pub async fn domains_with_manual_http(
     Ok(domains)
 }
 
+/// Domains carrying at least one `implementation = "external"` function,
+/// sorted — these get the AppState provider slot (`{domain}_external_impls`)
+/// and the `{domain}_service_base_url` config slot (issue #450 slice C).
+pub async fn domains_with_external(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Result<Vec<String>> {
+    let mut domains: Vec<String> = bound_functions(db, config)
+        .await?
+        .iter()
+        .filter(|f| f.implementation == FunctionImplementation::External)
+        .filter_map(|f| f.node.domain.clone())
+        .collect();
+    domains.sort();
+    domains.dedup();
+    Ok(domains)
+}
+
 // ── API-plane type resolution (issue #337) ──────────────────────────────
 
 /// One API-plane-resolved type: the Rust type plus the `use` path that
