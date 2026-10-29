@@ -107,7 +107,7 @@ pub struct {{ entity_name }}CommandHandler {
     db: DatabaseConnection,
 {% if project.hooks_api_crate %}
     hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
-{% endif %}{% if project.has_extension_points %}
+{% endif %}{% if worker_has_dispatch %}
     dispatcher: Option<std::sync::Arc<crate::integration_dispatch::IntegrationDispatcher>>,
 {% endif %}
 }
@@ -124,7 +124,7 @@ impl {{ entity_name }}CommandHandler {
         db: DatabaseConnection,
 {% if project.hooks_api_crate %}
         hooks: Option<Arc<dyn {{ project.hooks_api_crate }}::generated::{{ domain }}::{{ module_name }}::{{ entity_name }}Lifecycle>>,
-{% endif %}{% if project.has_extension_points %}
+{% endif %}{% if worker_has_dispatch %}
         dispatcher: Option<std::sync::Arc<crate::integration_dispatch::IntegrationDispatcher>>,
 {% endif %}
     ) -> Self {
@@ -137,7 +137,7 @@ impl {{ entity_name }}CommandHandler {
             db,
 {% if project.hooks_api_crate %}
             hooks,
-{% endif %}{% if project.has_extension_points %}
+{% endif %}{% if worker_has_dispatch %}
             dispatcher,
 {% endif %}
         }

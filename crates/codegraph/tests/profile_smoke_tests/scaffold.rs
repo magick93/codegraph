@@ -770,6 +770,173 @@ directions = ["push"]
     );
 }
 
+/// Workers topology + extension points, MULTI-domain coverage (issue #553):
+/// the dispatcher surface is per-DOMAIN, not project-wide. The fixture has
+/// two domains — `compensation` (push-covered via `compensation.pay_run`)
+/// and `common` (uncovered) — so the uncovered worker's module tree must be
+/// consistent: no orphan `mod integration_dispatch;` declarations, no
+/// dispatcher construction, and no command-plane type references to the
+/// module that was never emitted. Before the fix the scaffold gated on the
+/// PROJECT-level `has_extension_points` flag, so `common`'s worker declared
+/// the module (E0583) and constructed a dispatcher (E0433) for a file the
+/// generator never wrote.
+#[tokio::test]
+async fn uncovered_domain_worker_has_no_dispatch_surface() {
+    let (mock, config, tera, output_dir) = workers_scaffold_test_setup();
+    let domain_types_tmp = tempfile::TempDir::new().unwrap();
+    let hooks_tmp = tempfile::TempDir::new().unwrap();
+
+    // Only compensation is push-covered — common carries no covered entity.
+    let ext = codegraph_ext_points::parse_extension_points_str(
+        r#"
+[payroll-sync]
+name = "Payroll Sync"
+description = "Synchronise pay data"
+cardinality = "exclusive"
+entities = ["compensation.pay_run"]
+directions = ["push"]
+"#,
+    )
+    .unwrap();
+
+    let project = codegraph::generate::ProjectConfig {
+        deployment: codegraph::generate::DeploymentConfig {
+            deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
+        integration: codegraph::generate::IntegrationFlags {
+            has_extension_points: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let plan = BuildPlan {
+        entity_generators: vec![
+            "ddl".to_string(),
+            "sea_orm_entity".to_string(),
+            "handler".to_string(),
+            "dto".to_string(),
+            "repository".to_string(),
+            "command".to_string(),
+            "query".to_string(),
+        ],
+        domain_generators: vec![
+            "errors".to_string(),
+            "router".to_string(),
+            "links".to_string(),
+        ],
+        global_generators: vec![
+            "worker_scaffold".to_string(),
+            "scaffold".to_string(),
+            "integration_dispatch".to_string(),
+        ],
+        post_gen_scripts: vec![],
+        ifml_frameworks: vec![],
+        template_pack_path: None,
+        database_target: codegraph::generate::db::dialect::DatabaseTarget::Postgres,
+        has_atproto: false,
+        atproto_tenancy: "shared_pds".to_string(),
+        has_fern: false,
+        has_emdash: false,
+        fern_sdk_languages: vec!["typescript".to_string()],
+        persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        dto_key_casing: "snake".to_string(),
+        deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
+        namespace_layout: false,
+        ux_rules: false,
+        expr_ir: false,
+        ifml_e2e_auth: false,
+        testid_module: false,
+        structural_gates: false,
+        public_operations_rls: false,
+        features: toml::Table::new(),
+    };
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            db: &mock,
+            config: &config,
+            output_dir: output_dir.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: Some(&ext),
+            seed_config: None,
+            build_plan: Some(&plan),
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+
+    let find = |needle: &str| {
+        report
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with(needle))
+            .unwrap_or_else(|| panic!("missing generated file: {needle}"))
+    };
+    let find_opt = |needle: &str| {
+        report
+            .files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with(needle))
+            .map(|f| f.content.clone())
+    };
+
+    // The uncovered worker carries NO dispatcher module at all.
+    assert!(
+        find_opt("workers/common/src/integration_dispatch.rs").is_none(),
+        "uncovered worker must not receive the integration_dispatch module"
+    );
+
+    // No orphan module declarations: the lib and bin must not reference the
+    // module that was never emitted.
+    let lib = find("workers/common/src/lib.rs");
+    assert!(
+        !lib.content.contains("integration_dispatch"),
+        "uncovered worker lib must not declare the integration_dispatch module:\n{}",
+        lib.content
+    );
+    let main = find("workers/common/src/main.rs");
+    assert!(
+        !main.content.contains("integration_dispatch"),
+        "uncovered worker main must not declare the integration_dispatch module:\n{}",
+        main.content
+    );
+
+    // No dispatcher construction in the AppState.
+    let app_state = find("workers/common/src/app_state.rs");
+    assert!(
+        !app_state.content.contains("integration_dispatcher"),
+        "uncovered worker AppState must not construct the dispatcher:\n{}",
+        app_state.content
+    );
+
+    // The command plane must not type-reference the absent module.
+    let command = find("workers/common/src/domain/common/code/command.rs");
+    assert!(
+        !command.content.contains("integration_dispatch"),
+        "uncovered worker command module must not reference the dispatcher:\n{}",
+        command.content
+    );
+
+    // Contrast: the covered domain keeps its full surface (also pinned by
+    // workers_topology_emits_integration_dispatcher_per_worker).
+    assert!(
+        find_opt("workers/compensation/src/integration_dispatch.rs").is_some(),
+        "covered worker must still receive the integration_dispatch module"
+    );
+}
+
 /// Workers topology + extension points (issue #521): the integration
 /// catalog/installations API is MOUNTED, not just emitted. The gateway
 /// worker hosts the platform-level surface: the cornucopia catalog handlers

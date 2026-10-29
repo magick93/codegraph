@@ -25,6 +25,13 @@ pub struct CommandContext {
     /// A push-direction extension point covers this entity (issue #503):
     /// the command layer carries dispatcher.notify call sites.
     pub has_extension_points: bool,
+    /// Whether THIS entity's crate carries the dispatcher module at all
+    /// (issue #553): gates the dispatcher field/param TYPE, which
+    /// references `crate::integration_dispatch`. Monolith: the project
+    /// flag (one crate, module always present when the flag is on).
+    /// Workers: the domain's push coverage — an uncovered worker emits no
+    /// module, so its handlers must drop the param entirely.
+    pub worker_has_dispatch: bool,
     /// The full `domain.table` ref the dispatcher addresses and the
     /// installations SQL matches against `ep.allowed_entities`.
     pub entity_ref: String,
@@ -128,6 +135,7 @@ impl EntityGenerator for CommandGenerator {
             has_extension_points: self
                 .extension_covered
                 .contains(&format!("{domain}.{}", module_name)),
+            worker_has_dispatch: worker_has_dispatch(project, &domain, &self.extension_covered),
             entity_ref: format!("{domain}.{}", module_name),
             module_name: module_name.clone(),
             domain: domain.clone(),
@@ -145,5 +153,26 @@ impl EntityGenerator for CommandGenerator {
                 .join("command.rs"),
             content,
         }])
+    }
+}
+
+/// Whether the crate carrying this entity's command module also carries the
+/// `integration_dispatch` module (issue #553). The monolith is ONE crate:
+/// the dispatcher param rides the project flag and signatures stay uniform
+/// across entities. Under the workers topology each domain worker is its
+/// own crate and the module exists only for push-covered domains — the
+/// dispatcher field/param must be dropped there, or the handlers
+/// type-reference a module the worker never received (E0433).
+fn worker_has_dispatch(
+    project: &ProjectConfig,
+    domain: &str,
+    extension_covered: &std::collections::HashSet<String>,
+) -> bool {
+    if project.deployment.deployment_topology == crate::profile::DeploymentTopology::Workers {
+        extension_covered
+            .iter()
+            .any(|entity| entity.split('.').next() == Some(domain))
+    } else {
+        project.integration.has_extension_points
     }
 }
