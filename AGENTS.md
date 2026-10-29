@@ -1091,6 +1091,34 @@ stays node-free/DB-free. The playwright-ts retirement removed
 `e2e-tests/`; the wired `playwright-entity`/`playwright-global` (Rust
 fixture crate) are untouched.
 
+## Compile-pin policy (issue #551)
+
+**Every generator that emits Rust ships a test that COMPILES its output.**
+String-assert suites ("the generated source contains X") passed through
+both silent-emission incidents that motivated the policy — #517's
+unresolvable `mox_types` mirror and #536's wasm break. Template shape:
+`mox_plane_compile_tests` — emit the fixture plane into a scratch crate
+carrying ONLY the plane's dependency set and `cargo check` it (native +
+`wasm32-unknown-unknown` where the generator claims both). Pins that
+cannot compile (need a live DB at build time) must document why and name
+their runtime substitute.
+
+| Plane | Pin | Notes |
+|-------|-----|-------|
+| mox plane (`mox_types` + ops) | `mox_plane_compile_tests` | native + wasm32, sea_orm-free (#517) |
+| SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere) |
+| command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
+| worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
+| gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
+| full app (every generator the default plan emits) | `grafeo_e2e_tests -- grafeo_generated_code_compiles` | the whole-tree backstop; failures are not plane-attributable |
+| wrapper binary | `wrapper_compile_tests -- --ignored` | #348 |
+| runtime substitutes for live-DB planes | `hooks_cornucopia_runtime_tests` (cornucopia hooks over real Postgres, #518), `review_api_suite` (real HTTP) | compile pins for these shapes ride the stubs above |
+
+Adding a new Rust-emitting generator: add its compile pin in the SAME PR
+(follow `crates/codegraph/tests/README.md`); the full-app gate is a
+backstop, never the pin. Teeth are validated à la #550 — break the
+emission, the pin must fail, revert.
+
 ## UX Rules (#286 ux-rules branch)
 
 Codified UX rules for generated UIs ("form follows data"): a ux-rules TOML
@@ -1425,6 +1453,11 @@ cargo test -p codegraph --test profile_smoke_tests
 # Generated integration testing (#463) — node-free PR-CI pins
 cargo test -p codegraph --test hurl_contract_tests    # 2, hurl golden + [hurl] manifest coupling
 cargo test -p codegraph --test ifml_auth_setup_tests  # 5, auth.setup/personas/auth specs/journeys/POM
+
+# Compile-pin policy (#551) — node-free PR-CI pins (scratch-crate cargo check)
+cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native + wasm32 (#517)
+cargo test -p codegraph --test repository_compile_tests  # 3, SeaORM repository impl + design finders
+cargo test -p codegraph --test command_compile_tests     # 1, command/query + dispatcher + hooks types
 
 # Ops harness tests (codegraph-ops + ops generator)
 cargo test -p codegraph-ops            # 238 harness tests (suites, proc, db, migrate, ext, metrics, doctor, bundle, registry, freshness, results)
