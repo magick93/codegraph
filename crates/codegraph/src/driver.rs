@@ -975,11 +975,18 @@ pub async fn run_with_graph_cache(
 
     run_validation(be.querier(), &domain_config).await?;
 
-    // Function bindings (issue #450 B0): reserved values and unknown
-    // function names are hard config errors naming the offender. No-op
-    // when the `[functions]` table is absent.
-    let binding_errors =
-        crate::validate::check_function_bindings(be.querier(), &domain_config).await;
+    // Function bindings (issue #450): unknown function names are hard
+    // config errors naming the offender; `sql` bindings are refused on
+    // the sqlite dialect. No-op when the `[functions]` table is absent.
+    let binding_errors = crate::validate::check_function_bindings(
+        be.querier(),
+        &domain_config,
+        &build_plan
+            .as_ref()
+            .map(|p| p.database_target().to_string())
+            .unwrap_or_else(|| "postgres".to_string()),
+    )
+    .await;
     if !binding_errors.is_empty() {
         return Err(crate::error::Error::Config(binding_errors.join("; ")));
     }

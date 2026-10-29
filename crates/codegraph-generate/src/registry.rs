@@ -438,6 +438,14 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         db::public_operations_rls::PublicOperationsRlsGenerator::new(output_dir)
             .with_dialect(ctx.make_dialect()),
     ) as Box<dyn GlobalGenerator>);
+    // SQL-bound function migration (issue #450): the generator itself
+    // gates on the `[functions]` bindings — no `implementation = "sql"`
+    // entry emits zero files — so it registers unconditionally (the
+    // binding is the flag; the evt_events precedent). Postgres only.
+    global_gens.push(
+        Box::new(ddd::functions_sql::FunctionsSqlGenerator::new(output_dir))
+            as Box<dyn GlobalGenerator>,
+    );
     // atproto global generators
     global_gens.push(Box::new(atproto::scaffold_gen::LexiconScaffoldEmitter::new(
         output_dir,
@@ -510,9 +518,20 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             if ctx.workers_topology && generator.name() == "worker_scaffold" {
                 ctx.plan_has_global("worker_scaffold") || ctx.plan_has_global("scaffold")
             } else {
-                generator.name() == "evt_events" && evt_events_implied || {
-                    ctx.plan_has_global(generator.name())
-                }
+                // Binding-driven function planes (issue #450): the
+                // `[functions]` table is the flag, not the generator list —
+                // presence-gated inside, so they run on every plan. An
+                // event-exposed function also implies `webhook_dispatch`
+                // (the drain home its consumers dispatch through) even on
+                // a plan that omits it — the spawn without the module
+                // would be E0433.
+                let function_event_bindings = ctx.config.functions.iter().any(|(_, binding)| {
+                    binding.exposure == codegraph_config::FunctionExposure::Event
+                });
+                generator.name() == "evt_events" && evt_events_implied
+                    || generator.name() == "functions_sql"
+                    || generator.name() == "webhook_dispatch" && function_event_bindings
+                    || { ctx.plan_has_global(generator.name()) }
             }
         })
         .filter(|generator| {

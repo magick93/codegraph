@@ -662,12 +662,16 @@ fn max_depth(node: &codegraph_core::types::CompositionNode) -> usize {
 /// naming no modeled function. Shared by the driver (hard `Error::Config`)
 /// and doctor (FAIL lines) so the two cannot drift. No-op when the table
 /// is absent — the standing byte-identity default.
-pub async fn check_function_bindings(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<String> {
+pub async fn check_function_bindings(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    database_target: &str,
+) -> Vec<String> {
     let mut errors = Vec::new();
     if config.functions.is_empty() {
         return errors;
     }
-    if let Err(e) = config.functions.validate() {
+    if let Err(e) = config.functions.validate_for_target(database_target) {
         errors.push(e.to_string());
         return errors;
     }

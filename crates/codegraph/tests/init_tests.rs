@@ -1997,7 +1997,7 @@ fn doctor_ext_points_push_covered_domain_with_matching_component_no_extra_warn()
 
 const FUNC_BINDINGS_ROSETTA: &str = "namespace gen.store\n\ntype WidgetType:\n\tlabel string (1..1)\n\nfunc OrderScore:\n\tinputs:\n\t\tamount number (1..1)\n\toutput:\n\t\tresult number (1..1)\n\tset result:\n\t\tamount\n";
 
-fn doctor_with_functions(domains_extra: &str) -> Option<String> {
+fn doctor_with_functions(domains_extra: &str, profiles_extra: Option<&str>) -> Option<String> {
     let dir = TempDir::new().unwrap();
     let project = dir.path().join("demo-app");
     cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
@@ -2017,11 +2017,36 @@ fn doctor_with_functions(domains_extra: &str) -> Option<String> {
     toml.push_str(domains_extra);
     fs::write(&domains, toml).unwrap();
 
+    let profiles_config = profiles_extra.map(|extra| {
+        let profiles = project.join("profiles.toml");
+        fs::write(
+            &profiles,
+            format!(
+                r#"
+[profiles.default.meta]
+name = "demo-app"
+version = "1.0.0"
+description = "function bindings doctor gate"
+
+[profiles.default.features]
+rosetta_backend = true
+database_target = "sqlite"
+
+[profiles.default.api]
+generators = ["functions"]
+{extra}
+"#
+            ),
+        )
+        .unwrap();
+        profiles
+    });
+
     let result = cmd_doctor(&DoctorArgs {
         config: domains,
         schemas: None,
         classifier: None,
-        profiles_config: None,
+        profiles_config,
         mox_files: vec![],
         rosetta_files: vec![rosetta],
         ddd_files: vec![],
@@ -2039,7 +2064,10 @@ fn doctor_with_functions(domains_extra: &str) -> Option<String> {
 #[test]
 fn doctor_validates_function_bindings() {
     // Known function, valid values: no hard failures.
-    let out = doctor_with_functions("\n[functions.\"OrderScore\"]\nimplementation = \"manual\"\n");
+    let out = doctor_with_functions(
+        "\n[functions.\"OrderScore\"]\nimplementation = \"manual\"\n",
+        None,
+    );
     let out = out.unwrap();
     assert!(
         out.starts_with("ok:"),
@@ -2047,17 +2075,28 @@ fn doctor_validates_function_bindings() {
     );
 
     // Unknown function name: hard failure naming the offender.
-    let out = doctor_with_functions("\n[functions.\"NoSuchFunc\"]\n").unwrap();
+    let out = doctor_with_functions("\n[functions.\"NoSuchFunc\"]\n", None).unwrap();
     assert!(
         out.contains("hard check") || !out.starts_with("ok:"),
         "{out}"
     );
 
-    // Reserved implementation value: hard failure naming the slice issue.
-    let out =
-        doctor_with_functions("\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n").unwrap();
+    // `sql` on the postgres target (no profiles.toml ⇒ default): passes.
+    let out = doctor_with_functions(
+        "\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n",
+        None,
+    )
+    .unwrap();
+    assert!(out.starts_with("ok:"), "sql on postgres must pass: {out}");
+
+    // `sql` on a sqlite-target profile: hard failure naming the function.
+    let out = doctor_with_functions(
+        "\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n",
+        Some(""),
+    )
+    .unwrap();
     assert!(
         out.contains("hard check") || !out.starts_with("ok:"),
-        "{out}"
+        "sql on sqlite must fail: {out}"
     );
 }

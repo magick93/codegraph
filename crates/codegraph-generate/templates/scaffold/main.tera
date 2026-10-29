@@ -24,8 +24,8 @@ mod config;
 mod doctor;
 mod migration;
 {% if has_webhooks %}
-mod webhook_api;
-mod webhook_dispatch;
+mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
+mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 mod webhook_router;
 {% endif %}{% if has_events %}
 mod events;{% endif %}
@@ -400,8 +400,8 @@ mod middleware;
 {% endif %}mod qs_query;
 mod server;
 {% if has_webhooks %}
-mod webhook_api;
-mod webhook_dispatch;
+mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
+mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 mod webhook_router;
 {% endif %}{% if has_events %}
 mod events;{% endif %}

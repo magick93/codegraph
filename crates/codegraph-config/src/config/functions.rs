@@ -30,9 +30,11 @@ pub enum FunctionImplementation {
     /// (kills the duplicate-impl trap of a later model edit).
     Manual,
     /// Postgres function lowered from the same `Expr::to_json` payloads
-    /// (reserved — lands with the `sql` placement slice, issue #450).
+    /// (issue #450 — Postgres only; refused on `database_target = "sqlite"`).
     Sql,
-    /// Typed external HTTP call (reserved — lands with B3, issue #339).
+    /// Typed external HTTP call — typed req/resp structs, a
+    /// `{domain}_service_base_url` config slot, and a pre-wired write-once
+    /// client hook (B3, issue #339).
     External,
 }
 
@@ -57,7 +59,8 @@ pub enum FunctionExposure {
     /// Authenticated `POST /api/v1/{domain}/{snake_fn}` + OpenAPI (B1,
     /// issue #337).
     Http,
-    /// pgmq `events_{domain}` consumer routing (reserved — B4, issue #340).
+    /// pgmq `events_{domain}` consumer routing to a regen-safe handler
+    /// stub (B4, issue #340).
     Event,
 }
 
@@ -103,26 +106,20 @@ impl FunctionBindings {
     }
 
     /// Strict validation for everything checkable WITHOUT the graph:
-    /// the reserved `sql`/`external` implementations and the reserved
-    /// `event` exposure are hard errors naming the owning slice issue.
+    /// `implementation = "sql"` requires the Postgres dialect (a PL/pgSQL
+    /// function has no sqlite counterpart) — any other binding value is
+    /// legal since the placement slices landed (issues #450/#339/#340).
     /// Graph-known function names are validated by the driver's
     /// `ValidationPass` (it is the only layer that has the graph).
-    pub fn validate(&self) -> Result<(), DomainConfigError> {
+    pub fn validate_for_target(&self, database_target: &str) -> Result<(), DomainConfigError> {
         for (name, binding) in &self.0 {
-            match binding.implementation {
-                FunctionImplementation::Dsl | FunctionImplementation::Manual => {}
-                FunctionImplementation::Sql | FunctionImplementation::External => {
-                    return Err(DomainConfigError::Invalid(format!(
-                        "functions.\"{name}\": implementation \"{}\" is reserved but not yet \
-                         supported — lands with the placement slices (issues #339/#450)",
-                        binding.implementation.as_str(),
-                    )));
-                }
-            }
-            if matches!(binding.exposure, FunctionExposure::Event) {
+            if binding.implementation == FunctionImplementation::Sql
+                && database_target.eq_ignore_ascii_case("sqlite")
+            {
                 return Err(DomainConfigError::Invalid(format!(
-                    "functions.\"{name}\": exposure \"event\" is reserved but not yet \
-                         supported — lands with the event-exposure slice (issue #340)"
+                    "functions.\"{name}\": implementation \"sql\" requires \
+                     database_target = \"postgres\" — a Postgres function has \
+                     no sqlite counterpart"
                 )));
             }
         }

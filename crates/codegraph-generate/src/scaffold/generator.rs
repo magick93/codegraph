@@ -50,6 +50,11 @@ pub struct ScaffoldContext {
     /// byte-identical on flag-off runs.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_events: bool,
+    /// Whether any modeled function carries `exposure = "event"`
+    /// (issue #450 slice D) — widens the server.rs drain spawn without
+    /// the webhook CRUD surface. Skipped when false (byte-identity).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_function_events: bool,
     /// Resolved path (relative to the output dir when possible) of the
     /// `hr-seed` crate, discovered by walking up from the output dir and
     /// CWD looking for a sibling `hr-seed` directory.
@@ -96,6 +101,11 @@ pub struct ScaffoldDomain {
     /// `{domain}_manual_impls: Option<Arc<dyn ...::ManualImpls>>` slot and
     /// server.tera constructs it `None`. Flag-off = byte-identical.
     pub has_manual_functions: bool,
+    /// External-bound function domains (issue #450 slice C / #339):
+    /// app_state.tera emits the `{domain}_external_impls` provider slot +
+    /// the `{domain}_service_base_url` config slot; server.tera constructs
+    /// them `None` / env-read. Flag-off = byte-identical.
+    pub has_external_functions: bool,
 }
 
 pub struct ScaffoldGenerator {
@@ -218,6 +228,14 @@ pub async fn build_scaffold_domains(
             Ok(domains) => domains.into_iter().collect(),
             Err(_) => Default::default(),
         };
+    // External-bound function domains (issue #450 slice C / issue #339) —
+    // the `{domain}_external_impls` provider + `{domain}_service_base_url`
+    // config slots.
+    let external_domains: std::collections::HashSet<String> =
+        match crate::ddd::functions_api::domains_with_external(db, config).await {
+            Ok(domains) => domains.into_iter().collect(),
+            Err(_) => Default::default(),
+        };
     let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
         std::collections::HashMap::new();
     let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
@@ -305,6 +323,7 @@ pub async fn build_scaffold_domains(
                 has_custom_routes: entry.custom_routes,
                 atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
                 has_manual_functions: manual_domains.contains(name.as_str()),
+                has_external_functions: external_domains.contains(name.as_str()),
             })
         })
         .collect();
@@ -363,9 +382,11 @@ impl GlobalGenerator for ScaffoldGenerator {
         // generator registers unconditionally and emits the `src/events/`
         // module only when the architecture is non-empty, so lib.rs must
         // declare it under exactly the same condition.
-        let has_events = !crate::evt_events::architecture_for(db, project, config)
-            .await?
-            .is_empty();
+        let architecture = crate::evt_events::architecture_for(db, project, config).await?;
+        let has_events = !architecture.is_empty();
+        // Issue #450 slice D: event-exposed functions widen the drain
+        // spawn (server.rs) without the webhook CRUD surface.
+        let has_function_events = !architecture.function_consumers.is_empty();
 
         let ctx = ScaffoldContext {
             app_name: project.identity.app_name.clone(),
@@ -390,6 +411,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_labels: self.has_labels,
             has_seed: self.has_seed,
             has_events,
+            has_function_events,
             seed_crate_path,
             migration_strategy: self.migration_strategy.clone(),
         };
@@ -688,6 +710,7 @@ mod tests {
                 has_custom_routes: false,
                 atproto_nsids: vec![],
                 has_manual_functions: false,
+                has_external_functions: false,
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),
@@ -708,6 +731,7 @@ mod tests {
             has_labels: false,
             has_seed: false,
             has_events: false,
+            has_function_events: false,
             seed_crate_path: String::new(),
             migration_strategy: "sea-orm".to_string(),
         }

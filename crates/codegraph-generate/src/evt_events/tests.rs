@@ -556,6 +556,7 @@ fn scaffold_ctx(has_events: bool) -> ScaffoldContext {
         has_labels: false,
         has_seed: false,
         has_events,
+        has_function_events: false,
         seed_crate_path: String::new(),
         migration_strategy: "sea-orm".to_string(),
     }

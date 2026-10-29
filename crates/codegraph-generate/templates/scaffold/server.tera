@@ -322,6 +322,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {%- if domain.has_manual_functions %}
         {{ domain.name }}_manual_impls: None,
 {% endif %}
+{%- if domain.has_external_functions %}
+        {{ domain.name }}_external_impls: None,
+        {{ domain.name }}_service_base_url: std::env::var("{{ domain.name | upper }}_SERVICE_BASE_URL").ok(),
+{% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}
         {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler::new(
@@ -386,7 +390,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let timer_token = shutdown_token.child_token();
     tokio::spawn(async move { timer_service.run(timer_token).await });
 
-{% if has_webhooks %}
+{% if has_webhooks or has_function_events %}
     // Webhook dispatch worker
     let webhook_dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(db.clone())?;
     let wd_token = shutdown_token.child_token();

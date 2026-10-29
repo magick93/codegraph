@@ -1330,10 +1330,607 @@ generators = ["functions", "scaffold"]
     assert!(server.contains("store_manual_impls: None,"), "{server}");
 }
 
-/// The E2 compile gate (issue #337): the emitted crate `cargo check`s
-/// cleanly with an exposed-function surface present. Ignored — it needs
-/// the full dependency stack; run it in the ops-integration lane or by
-/// hand: `cargo test -p codegraph --test rosetta_function_tests -- --ignored`.
+// ── Issue #450 slices: sql / external / event ───────────────────────────
+
+/// Primitive-typed functions only: the binding-validation fixture for the
+/// previously reserved values (entity-typed inputs are refused on the sql
+/// plane, so the fixture avoids them).
+const PRIMITIVE_FN_MODEL: &str = r#"namespace gen.store
+
+enum OrderStatus:
+	Draft
+	Shipped
+
+type WidgetType:
+	label string (1..1)
+
+func SurchargeFor: <"price surcharge for a status">
+	inputs:
+		status OrderStatus (1..1)
+		amount number (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		amount + 1.0
+
+func HandSet: <"hand-owned amount">
+	inputs:
+		amount number (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		amount
+
+func BrokenAnswer(status: OrderStatus->Draft):
+	inputs:
+		status OrderStatus (1..1)
+		amount number (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		amount
+"#;
+
+const PRIMITIVE_FN_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+
+[functions."HandSet"]
+implementation = "external"
+
+[functions."BrokenAnswer"]
+exposure = "event"
+"#;
+
+/// Issue #450: the previously reserved `sql`/`external` implementations and
+/// the `event` exposure are accepted from domains.toml — parsing and
+/// validation no longer refuse them (their generation slices are B3/B4).
+/// `sql` on a `database_target = "sqlite"` profile stays a hard error
+/// naming the function: a Postgres function has no sqlite counterpart.
+#[tokio::test]
+async fn sql_external_event_bindings_resolve_from_domains_toml() {
+    let dir = tempfile::tempdir().unwrap();
+    run_binding_api_pipeline_with(
+        dir.path(),
+        PRIMITIVE_FN_MODEL,
+        PRIMITIVE_FN_DOMAINS_TOML,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("sql/external/event bindings parse and validate");
+
+    // sql + sqlite is a hard config error naming the function.
+    let dir = tempfile::tempdir().unwrap();
+    let model = dir.path().join("gen.rosetta");
+    std::fs::write(&model, PRIMITIVE_FN_MODEL).unwrap();
+    let domains = dir.path().join("domains.toml");
+    std::fs::write(&domains, PRIMITIVE_FN_DOMAINS_TOML).unwrap();
+    let profiles = dir.path().join("profiles.toml");
+    std::fs::write(
+        &profiles,
+        r#"
+[profiles.default.meta]
+name = "rosetta-func-sqlite"
+version = "1.0.0"
+description = "sql binding on sqlite refusal"
+
+[profiles.default.features]
+rosetta_backend = true
+database_target = "sqlite"
+
+[profiles.default.api]
+generators = ["dto", "functions"]
+"#,
+    )
+    .unwrap();
+    let err = codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &domains,
+        output: &dir.path().join("generated"),
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &[],
+        rosetta_files: &[model],
+        ddd_files: &[],
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect_err("sql binding on sqlite must fail the run");
+    let msg = err.to_string();
+    assert!(msg.contains("SurchargeFor"), "{msg}");
+    assert!(msg.contains("sqlite"), "{msg}");
+}
+
+// ── Issue #450 slice B: implementation = "sql" ──────────────────────────
+
+/// sql bindings only (internal exposure): the migration + the async call
+/// plane.
+const SQL_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+
+[functions."BrokenAnswer"]
+implementation = "sql"
+"#;
+
+/// sql + http on the same function: the endpoint dispatches through the
+/// generated `DefaultSqlImpls`.
+const SQL_HTTP_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+exposure = "http"
+"#;
+
+/// `implementation = "sql"` lowers the modeled body into ONE Postgres
+/// migration (`CREATE FUNCTION {schema}.{fn_snake}` from the same
+/// `Expr::to_json` payloads) and emits an async `SqlFnImpls` trait +
+/// `DefaultSqlImpls` that call it through the pool. HTTP-exposed sql
+/// functions dispatch through the generated default impl.
+#[tokio::test]
+async fn sql_bound_function_emits_create_function_migration_and_async_impl() {
+    // (a) internal exposure: the migration + the async impl plane.
+    let dir = tempfile::tempdir().unwrap();
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        SQL_DOMAINS_TOML,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("sql-bound pipeline succeeds");
+
+    let migration =
+        std::fs::read_to_string(dir.path().join("generated/migrations/022000_functions.sql"))
+            .expect("functions migration emitted");
+    assert!(
+        migration.contains("CREATE OR REPLACE FUNCTION store.surcharge_for("),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("p_amount double precision"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("RETURNS double precision"),
+        "{migration}"
+    );
+    assert!(migration.contains("LANGUAGE plpgsql"), "{migration}");
+    assert!(migration.contains("RETURN p_amount + 1.0;"), "{migration}");
+    assert!(
+        migration.contains(
+            "GRANT EXECUTE ON FUNCTION store.surcharge_for(text, double precision) TO app_user;"
+        ),
+        "{migration}"
+    );
+
+    let sql_impl = read_split_file(dir.path(), "sql_impl.rs").expect("sql_impl.rs emitted");
+    assert!(
+        sql_impl.contains("pub struct DefaultSqlImpls"),
+        "{sql_impl}"
+    );
+    assert!(
+        sql_impl.contains(
+            "async fn surcharge_for(&self, db: &DatabaseConnection, status: OrderStatus, amount: f64)"
+        ),
+        "{sql_impl}"
+    );
+    assert!(
+        sql_impl.contains("SELECT * FROM store.surcharge_for($1, $2)"),
+        "{sql_impl}"
+    );
+    assert!(
+        sql_impl.contains("enum_text(&status)"),
+        "codelist inputs bind through the serde text form: {sql_impl}"
+    );
+
+    let module = read_split_file(dir.path(), "mod.rs").expect("mod.rs emitted");
+    assert!(module.contains("pub trait SqlFnImpls"), "{module}");
+    assert!(
+        module.contains("async fn surcharge_for(&self, db: &sea_orm::DatabaseConnection, status: OrderStatus, amount: f64)"),
+        "{module}"
+    );
+    assert!(module.contains("pub mod sql_impl;"), "{module}");
+
+    // (b) http exposure: the endpoint dispatches through DefaultSqlImpls.
+    let dir = tempfile::tempdir().unwrap();
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        SQL_HTTP_DOMAINS_TOML,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("sql+http pipeline succeeds");
+    let api = std::fs::read_to_string(dir.path().join("generated/src/api/store/functions_api.rs"))
+        .expect("functions_api.rs emitted");
+    assert!(
+        api.contains("let provider = crate::domain::store::functions::DefaultSqlImpls;"),
+        "{api}"
+    );
+    assert!(
+        api.contains("provider.surcharge_for(&state.db, body.status, body.amount).await"),
+        "{api}"
+    );
+}
+
+/// A sql-bound function whose modeled body uses constructs outside the
+/// sql-function subset (a dispatch head, collection algebra, navigation)
+/// keeps its migration + signature but the body is a stub that names the
+/// gap — the module is the record, never a guess.
+#[tokio::test]
+async fn sql_body_out_of_subset_falls_back_to_stub_naming_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."BrokenAnswer"]
+implementation = "sql"
+"#;
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        domains,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("out-of-subset sql pipeline still succeeds (stub, not error)");
+
+    let migration =
+        std::fs::read_to_string(dir.path().join("generated/migrations/022000_functions.sql"))
+            .expect("functions migration emitted");
+    assert!(
+        migration.contains("CREATE OR REPLACE FUNCTION store.broken_answer("),
+        "{migration}"
+    );
+    assert!(migration.contains("RAISE EXCEPTION"), "{migration}");
+    assert!(migration.contains("BrokenAnswer"), "{migration}");
+    assert!(
+        migration.contains("TODO(#450)"),
+        "the stub must carry the completion-brief marker: {migration}"
+    );
+
+    let sql_impl = read_split_file(dir.path(), "sql_impl.rs").expect("sql_impl.rs emitted");
+    assert!(
+        sql_impl.contains("TODO(#450)"),
+        "the Rust side records the completion brief too: {sql_impl}"
+    );
+}
+
+// ── Issue #450 slice C: implementation = "external" (B3, issue #339) ────
+
+/// `implementation = "external"` emits typed request/response structs
+/// (serde round-trip-compatible with the modeled signature), a
+/// `{domain}_service_base_url` config slot, and a write-once manual hook
+/// pre-wired with an HTTP client + serde against the structs (#339).
+#[tokio::test]
+async fn external_function_emits_client_structs_and_prewired_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."HandSet"]
+implementation = "external"
+
+[functions."BrokenAnswer"]
+exposure = "event"
+"#;
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        domains,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("external-bound pipeline succeeds");
+
+    let module = read_split_file(dir.path(), "mod.rs").expect("mod.rs emitted");
+    assert!(module.contains("pub trait ExternalFnImpls"), "{module}");
+    // The typed request struct mirrors the modeled inputs; the response
+    // struct carries the declared output — serde round-trips the wire
+    // shape (compile-checked by the ignored E2 gate).
+    assert!(
+        module.contains("#[derive(Debug, Clone, Serialize, Deserialize)]"),
+        "{module}"
+    );
+    assert!(module.contains("pub struct HandSetRequest"), "{module}");
+    assert!(module.contains("pub amount: f64,"), "{module}");
+    assert!(module.contains("pub struct HandSetResponse"), "{module}");
+    assert!(module.contains("pub result: f64,"), "{module}");
+
+    // The write-once hook is pre-wired: reqwest POST + serde both ways.
+    let manual = read_split_file(dir.path(), "manual.rs").expect("manual.rs emitted");
+    assert!(
+        manual.contains("pub struct DefaultExternalImpls"),
+        "{manual}"
+    );
+    assert!(manual.contains("reqwest::Client"), "{manual}");
+    assert!(
+        manual.contains(".json(&request)"),
+        "the hook serializes the typed request: {manual}"
+    );
+    assert!(
+        manual.contains("json::<HandSetResponse>()"),
+        "the hook deserializes the typed response: {manual}"
+    );
+
+    // (b) external + http: the endpoint dispatches through the provider
+    // slot and the base-url config; unregistered answers 501 naming both.
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."HandSet"]
+implementation = "external"
+exposure = "http"
+"#;
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        domains,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("external+http pipeline succeeds");
+    let api = std::fs::read_to_string(dir.path().join("generated/src/api/store/functions_api.rs"))
+        .expect("functions_api.rs emitted");
+    assert!(api.contains("state.store_external_impls.as_ref()"), "{api}");
+    assert!(
+        api.contains("state.store_service_base_url.as_deref()"),
+        "{api}"
+    );
+    assert!(
+        api.contains("provider.hand_set(base_url, request).await"),
+        "{api}"
+    );
+    assert!(
+        api.contains("STORE_SERVICE_BASE_URL"),
+        "the 501 hint names the env config: {api}"
+    );
+
+    // (c) the AppState carries the provider slot + the config URL slot.
+    let dir = tempfile::tempdir().unwrap();
+    let profiles = r#"
+[profiles.default.meta]
+name = "rosetta-func-slot"
+version = "1.0.0"
+description = "external AppState slot gate"
+
+[profiles.default.features]
+rosetta_backend = true
+
+[profiles.default.api]
+generators = ["functions", "scaffold"]
+"#;
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."HandSet"]
+implementation = "external"
+"#;
+    run_binding_api_pipeline_with(dir.path(), BINDING_API_MODEL, domains, profiles)
+        .await
+        .expect("scaffold pipeline succeeds");
+    let app_state = std::fs::read_to_string(dir.path().join("generated/src/app_state.rs"))
+        .expect("app_state.rs");
+    assert!(
+        app_state.contains(
+            "pub store_external_impls: Option<std::sync::Arc<dyn crate::domain::store::functions::ExternalFnImpls>>"
+        ),
+        "{app_state}"
+    );
+    assert!(
+        app_state.contains("pub store_service_base_url: Option<String>"),
+        "{app_state}"
+    );
+    let server =
+        std::fs::read_to_string(dir.path().join("generated/src/server.rs")).expect("server.rs");
+    assert!(server.contains("store_external_impls: None,"), "{server}");
+    assert!(
+        server.contains(r#"store_service_base_url: std::env::var("STORE_SERVICE_BASE_URL").ok(),"#),
+        "{server}"
+    );
+}
+
+// ── Issue #450 slice D: exposure = "event" (B4, issue #340) ─────────────
+
+/// `exposure = "event"` folds the modeled function into the events plane
+/// as a regen-safe consumer keyed by the envelope `event` field (the
+/// function's snake name): a `FunctionEventHandler` trait with default
+/// no-op methods + the standard registry, riding the existing drain.
+#[tokio::test]
+async fn event_exposed_function_emits_consumer_with_regen_safe_handler() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+exposure = "event"
+"#;
+    let profiles = r#"
+[profiles.default.meta]
+name = "rosetta-func-event"
+version = "1.0.0"
+description = "function event exposure gate"
+
+[profiles.default.features]
+rosetta_backend = true
+
+[profiles.default.api]
+generators = ["functions", "scaffold", "webhook_dispatch"]
+"#;
+    run_binding_api_pipeline_with(dir.path(), PRIMITIVE_FN_MODEL, domains, profiles)
+        .await
+        .expect("event-exposed pipeline succeeds");
+
+    // The events module exists WITHOUT any .evt input, and the function
+    // consumer rides the standard consumer machinery.
+    let consumers = std::fs::read_to_string(dir.path().join("generated/src/events/consumers.rs"))
+        .expect("events consumers emitted");
+    assert!(
+        consumers.contains("pub trait FunctionEventHandler"),
+        "{consumers}"
+    );
+    assert!(
+        consumers.contains("async fn on_surcharge_for"),
+        "{consumers}"
+    );
+    assert!(
+        consumers.contains("event: &serde_json::Value"),
+        "function consumers receive the raw envelope payload: {consumers}"
+    );
+    assert!(
+        consumers.contains("pub fn register_function_events"),
+        "{consumers}"
+    );
+    assert!(
+        consumers.contains("dispatch_function_events"),
+        "{consumers}"
+    );
+    // The drain's delete condition dispatches through the registry.
+    let dispatch = std::fs::read_to_string(dir.path().join("generated/src/webhook_dispatch.rs"))
+        .expect("webhook_dispatch emitted");
+    assert!(
+        dispatch.contains("crate::events::consumers::dispatch_registered"),
+        "{dispatch}"
+    );
+}
+
+/// A monolith with event-exposed functions but NO webhook capability still
+/// spawns the events drain — the spawn gate widens from `has_webhooks` to
+/// include function-event consumers.
+#[tokio::test]
+async fn monolith_spawns_events_drain_for_function_consumers_without_webhooks() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+exposure = "event"
+"#;
+    let profiles = r#"
+[profiles.default.meta]
+name = "rosetta-func-event-drain"
+version = "1.0.0"
+description = "function event drain spawn gate"
+
+[profiles.default.features]
+rosetta_backend = true
+
+[profiles.default.api]
+generators = ["functions", "scaffold", "webhook_dispatch"]
+"#;
+    run_binding_api_pipeline_with(dir.path(), PRIMITIVE_FN_MODEL, domains, profiles)
+        .await
+        .expect("event-drain pipeline succeeds");
+    let server =
+        std::fs::read_to_string(dir.path().join("generated/src/server.rs")).expect("server.rs");
+    assert!(
+        server.contains("WebhookDispatcher::new(db.clone())"),
+        "the events drain spawns without webhooks: {server}"
+    );
+    assert!(
+        server.contains("webhook_dispatcher.run(wd_token)"),
+        "{server}"
+    );
+    // No webhook CRUD surface — only the drain.
+    let lib = std::fs::read_to_string(dir.path().join("generated/src/lib.rs")).expect("lib.rs");
+    assert!(lib.contains("pub mod events;"), "{lib}");
+}
+
+/// The E2 compile gate (issue #337 + the #551 compile-pin policy): the
+/// emitted crate `cargo check`s cleanly with an exposed-function surface
+/// present — carrying ALL THREE #450 slices (sql + external + event) so
+/// the async trait classes, the typed client structs, the prewired hook,
+/// the event consumers, and the widened drain spawn compile together.
+/// Ignored — it needs the full dependency stack; run it in the
+/// ops-integration lane or by hand:
+/// `cargo test -p codegraph --test rosetta_function_tests -- --ignored`.
 #[tokio::test]
 #[ignore = "compiles the emitted crate (minutes); ops-integration lane"]
 async fn emitted_crate_compiles_with_exposed_functions() {
@@ -1381,7 +1978,34 @@ generators = ["ddl", "sea_orm_entity", "codelist", "dto", "repository", "command
         Some((head, _)) => head.to_string(),
         None => BINDING_API_MODEL.to_string(),
     };
-    run_binding_api_pipeline_with(dir.path(), &model, BINDING_API_DOMAINS_TOML, &profiles)
+    // All three #450 slices ride the gate: SurchargeFor lowers to a
+    // Postgres function (async `SqlFnImpls` dispatch), BrokenAnswer gets
+    // the external client structs + prewired hook, HandSet stays manual —
+    // and its `event` exposure folds the events plane + drain in without
+    // any .evt input (webhook_dispatch is implied by the binding).
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+exposure = "http"
+
+[functions."BrokenAnswer"]
+implementation = "external"
+exposure = "http"
+
+[functions."HandSet"]
+implementation = "manual"
+exposure = "event"
+"#;
+    run_binding_api_pipeline_with(dir.path(), &model, domains, &profiles)
         .await
         .expect("compile-gate pipeline succeeds");
 
