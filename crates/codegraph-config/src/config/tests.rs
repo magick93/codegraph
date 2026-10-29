@@ -1036,26 +1036,38 @@ exposure = "grpc"
 }
 
 #[test]
-fn reserved_implementations_and_exposures_are_rejected_naming_the_slice_issue() {
-    for (value, issue) in [("sql", "#339"), ("external", "#339"), ("event", "#340")] {
-        let key = if value == "event" {
-            "exposure"
-        } else {
-            "implementation"
-        };
+fn all_binding_values_parse_and_sql_sqlite_refusal_is_target_aware() {
+    // The previously reserved values now parse AND validate clean —
+    // the placement slices landed (issues #450/#339/#340).
+    for (key, value) in [
+        ("implementation", "sql"),
+        ("implementation", "external"),
+        ("exposure", "event"),
+    ] {
         let toml = format!(
             "[domains.store]\nlabel = \"Store\"\nschema_dir = \"store\"\npostgres_schema = \"store\"\n\n[functions.\"PlaceBid\"]\n{key} = \"{value}\"\n"
         );
         let config = parse_domain_config_str(&toml).unwrap();
-        let err = config.functions.validate().unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("PlaceBid"), "{msg}");
-        assert!(msg.contains(value), "{msg}");
-        assert!(msg.contains(issue), "{msg}");
+        config.functions.validate_for_target("postgres").unwrap();
     }
+
+    // `sql` on sqlite is a hard error naming the function; other values
+    // are dialect-agnostic.
+    let toml = "[domains.store]\nlabel = \"Store\"\nschema_dir = \"store\"\npostgres_schema = \"store\"\n\n[functions.\"PlaceBid\"]\nimplementation = \"sql\"\n";
+    let config = parse_domain_config_str(toml).unwrap();
+    let err = config.functions.validate_for_target("sqlite").unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("PlaceBid"), "{msg}");
+    assert!(msg.contains("sqlite"), "{msg}");
+    assert!(msg.contains("postgres"), "{msg}");
+    let config = parse_domain_config_str(
+        "[domains.store]\nlabel = \"Store\"\nschema_dir = \"store\"\npostgres_schema = \"store\"\n\n[functions.\"PlaceBid\"]\nimplementation = \"manual\"\nexposure = \"event\"\n",
+    )
+    .unwrap();
+    config.functions.validate_for_target("sqlite").unwrap();
 
     // dsl/manual + internal/http all validate clean.
     let toml = "[domains.store]\nlabel = \"Store\"\nschema_dir = \"store\"\npostgres_schema = \"store\"\n\n[functions.\"A\"]\nimplementation = \"manual\"\nexposure = \"http\"\n\n[functions.\"B\"]\n";
     let config = parse_domain_config_str(toml).unwrap();
-    config.functions.validate().unwrap();
+    config.functions.validate_for_target("postgres").unwrap();
 }

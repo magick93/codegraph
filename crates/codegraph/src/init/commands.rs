@@ -604,6 +604,7 @@ fn declared_package(text: &str) -> Option<String> {
 fn check_rosetta_files(
     rosetta_files: &[PathBuf],
     domain_config: Option<&codegraph_config::config::DomainConfig>,
+    database_target: &str,
 ) -> (usize, usize) {
     let mut hard = 0;
     let mut soft = 0;
@@ -690,19 +691,19 @@ fn check_rosetta_files(
         }
 
         // Function bindings (issues #450/#337): `[functions]` keys must
-        // match `func <Name>` declarations in the model, and the reserved
-        // implementation/exposure values are hard errors. (Type
-        // resolvability needs the graph — the run path enforces it via
+        // match `func <Name>` declarations in the model, and `sql`
+        // bindings require the Postgres dialect. (Type resolvability
+        // needs the graph — the run path enforces it via
         // `check_exposed_function_types`.)
         if let Some(config) = domain_config
             && !config.functions.is_empty()
         {
-            if let Err(e) = config.functions.validate() {
+            if let Err(e) = config.functions.validate_for_target(database_target) {
                 hard += 1;
                 println!("FAIL functions — {e}");
                 println!(
-                    "     hint: use implementation dsl|manual and exposure internal|http \
-                     until the reserved slices land (issues #339/#340)"
+                    "     hint: implementation \"sql\" needs database_target = \"postgres\" \
+                     in profiles.toml"
                 );
             }
             let declared: std::collections::HashSet<String> = file_texts
@@ -1480,7 +1481,14 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         soft_warnings += incomplete;
         model_warnings += incomplete;
     } else if rosetta_mode {
-        let (hard, soft) = check_rosetta_files(&args.rosetta_files, domain_config.as_ref().ok());
+        let (hard, soft) = check_rosetta_files(
+            &args.rosetta_files,
+            domain_config.as_ref().ok(),
+            &build_plan
+                .as_ref()
+                .map(|p| p.database_target().to_string())
+                .unwrap_or_else(|| "postgres".to_string()),
+        );
         hard_failures += hard;
         soft_warnings += soft;
         model_warnings += soft;

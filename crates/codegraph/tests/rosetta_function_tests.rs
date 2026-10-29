@@ -1330,6 +1330,111 @@ generators = ["functions", "scaffold"]
     assert!(server.contains("store_manual_impls: None,"), "{server}");
 }
 
+// ── Issue #450 remaining slices: sql / external / event ────────────────
+
+/// Issue #450: the previously reserved `sql`/`external` implementations and
+/// the `event` exposure are accepted from domains.toml — parsing and
+/// validation no longer refuse them (their generation slices are B3/B4).
+/// `sql` on a `database_target = "sqlite"` profile stays a hard error
+/// naming the function: a Postgres function has no sqlite counterpart.
+#[tokio::test]
+async fn sql_external_event_bindings_resolve_from_domains_toml() {
+    // (a) implementation = "sql" parses + validates on the postgres target.
+    let dir = tempfile::tempdir().unwrap();
+    run_generator_pipeline_with_functions(
+        dir.path(),
+        GENERATOR_MODEL,
+        true,
+        false,
+        Some("[functions.\"OrderScore\"]\nimplementation = \"sql\"\n"),
+    )
+    .await
+    .expect("sql implementation is accepted on the default postgres target");
+
+    // (b) implementation = "external" parses + validates.
+    let dir = tempfile::tempdir().unwrap();
+    run_generator_pipeline_with_functions(
+        dir.path(),
+        GENERATOR_MODEL,
+        true,
+        false,
+        Some("[functions.\"OrderScore\"]\nimplementation = \"external\"\n"),
+    )
+    .await
+    .expect("external implementation is accepted");
+
+    // (c) exposure = "event" parses + validates.
+    let dir = tempfile::tempdir().unwrap();
+    run_generator_pipeline_with_functions(
+        dir.path(),
+        GENERATOR_MODEL,
+        true,
+        false,
+        Some("[functions.\"OrderScore\"]\nexposure = \"event\"\n"),
+    )
+    .await
+    .expect("event exposure is accepted");
+
+    // (d) sql + sqlite is a hard config error naming the function.
+    let dir = tempfile::tempdir().unwrap();
+    let model = dir.path().join("gen.rosetta");
+    std::fs::write(&model, GENERATOR_MODEL).unwrap();
+    let domains = dir.path().join("domains.toml");
+    std::fs::write(
+        &domains,
+        format!("{DOMAINS_TOML}\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n"),
+    )
+    .unwrap();
+    let profiles = dir.path().join("profiles.toml");
+    std::fs::write(
+        &profiles,
+        r#"
+[profiles.default.meta]
+name = "rosetta-func-sqlite"
+version = "1.0.0"
+description = "sql binding on sqlite refusal"
+
+[profiles.default.features]
+rosetta_backend = true
+database_target = "sqlite"
+
+[profiles.default.api]
+generators = ["dto", "functions"]
+"#,
+    )
+    .unwrap();
+    let err = codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &domains,
+        output: &dir.path().join("generated"),
+        extension_points_path: None,
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &[],
+        rosetta_files: &[model],
+        ddd_files: &[],
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect_err("sql binding on sqlite must fail the run");
+    let msg = err.to_string();
+    assert!(msg.contains("OrderScore"), "{msg}");
+    assert!(msg.contains("sqlite"), "{msg}");
+}
+
 /// The E2 compile gate (issue #337): the emitted crate `cargo check`s
 /// cleanly with an exposed-function surface present. Ignored — it needs
 /// the full dependency stack; run it in the ops-integration lane or by
