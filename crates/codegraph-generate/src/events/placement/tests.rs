@@ -91,6 +91,7 @@ fn arch(
         channels,
         domain_channels,
         subscriptions,
+        function_consumers: Vec::new(),
     }
 }
 
