@@ -57,7 +57,7 @@ impl {{ project.hooks_api_crate }}::generated::types::HookConnSource for HookCon
 use std::any::Any;
 
 use async_trait::async_trait;
-use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
+use sea_orm::ConnectionTrait;
 
 /// Adapts the open SeaORM transaction to `HookTx`.
 pub struct HookTxAdapter<'a>(pub &'a sea_orm::DatabaseTransaction);
@@ -66,7 +66,7 @@ pub struct HookTxAdapter<'a>(pub &'a sea_orm::DatabaseTransaction);
 impl {{ project.hooks_api_crate }}::generated::types::HookTx for HookTxAdapter<'_> {
     async fn execute(&self, sql: &str) -> Result<u64, String> {
         self.0
-            .execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .execute_unprepared(sql)
             .await
             .map(|r| r.rows_affected())
             .map_err(|e| e.to_string())
@@ -84,7 +84,7 @@ pub struct HookConnSourceAdapter(pub sea_orm::DatabaseConnection);
 impl {{ project.hooks_api_crate }}::generated::types::HookConnSource for HookConnSourceAdapter {
     async fn execute(&self, sql: &str) -> Result<u64, String> {
         self.0
-            .execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .execute_unprepared(sql)
             .await
             .map(|r| r.rows_affected())
             .map_err(|e| e.to_string())

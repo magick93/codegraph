@@ -596,6 +596,7 @@ impl super::RepositoryImplEmitter {
             wln!(code, "        }}");
             wln!(code);
             wln!(code, "        Ok(results)");
+            wln!(code, "    }}");
         } else {
             wln!(code, "        let row = query.one(db)");
             wln!(code, "            .await?;");
@@ -605,10 +606,11 @@ impl super::RepositoryImplEmitter {
             wln!(code, "            None => return Ok(None),");
             wln!(code, "        }};");
             // Child reads key on row.id — the `id` variable is not in a
-            // finder's scope (its parameters are the declared ones).
+            // finder's scope (its parameters are the declared ones). The
+            // shared construction helper closes the fn itself (the
+            // `find_by_id` contract) — do not close again.
             emit_response_construction_for(code, tree, "row.id");
         }
-        wln!(code, "    }}");
     }
 }
 
