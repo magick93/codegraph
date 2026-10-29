@@ -233,6 +233,12 @@ fn tera() -> tera::Tera {
 /// pay_run carries no back-ref column), an OPTIONAL scalar `refers WorkerType
 /// worker` (FK column worker_id), and a contained VO array `contains
 /// PaySlipType[] paySlips` — the issue #539 shape end to end.
+///
+/// Also carries the issue #554 crewbase shapes: TaxCalculation with a scalar
+/// `refers PayRunType pay_run` (writable as `pay_run_id`), and
+/// PayRunFilingType with a junction NAMED `pay_run` (`refers PayRunType[]
+/// pay_run` — the singular-named junction whose `_id` spelling is the
+/// near-miss callers actually send).
 async fn db_with_filing_model() -> codegraph_core::mock::MockEngine {
     let pay_run = entity_schema("PayRunType", "pay_run", "PayRun");
     let worker = entity_schema("WorkerType", "worker", "Worker");
@@ -244,6 +250,7 @@ async fn db_with_filing_model() -> codegraph_core::mock::MockEngine {
         .with_schema(pay_slip.clone())
         .with_ref_target("pay_runs", "FilingType", pay_run.clone())
         .with_ref_target("pay_slips", "FilingType", pay_slip)
+        .with_ref_target("pay_run", "PayRunFilingType", pay_run.clone())
         .with_properties(
             "FilingType",
             vec![
@@ -255,6 +262,30 @@ async fn db_with_filing_model() -> codegraph_core::mock::MockEngine {
         )
         .with_properties("PayRunType", vec![string_prop("reference", true)])
         .with_properties("PaySlipType", vec![string_prop("amount", false)])
+        .with_schema(entity_schema(
+            "TaxCalculationType",
+            "tax_calculation",
+            "TaxCalculation",
+        ))
+        .with_properties(
+            "TaxCalculationType",
+            vec![
+                string_prop("amount", true),
+                optional_scalar_ref_prop("pay_run", "PayRunType"),
+            ],
+        )
+        .with_schema(entity_schema(
+            "PayRunFilingType",
+            "pay_run_filing",
+            "PayRunFiling",
+        ))
+        .with_properties(
+            "PayRunFilingType",
+            vec![
+                string_prop("external_ref", true),
+                required_array_ref_prop("pay_run", "PayRunType"),
+            ],
+        )
         .build()
 }
 
@@ -636,4 +667,296 @@ async fn dangling_ref_target_emits_no_junction_field() {
         !response.contains("pub pay_runs"),
         "response DTO must not expose a ref field nothing can hydrate: {response}"
     );
+}
+
+// ── issue #554: near-miss rejection, junction alias, naming sweep ──────
+
+/// Render `dto_create.rs` for `title` under `project`. The two utoipa tokens
+/// are stripped for the scratch crate (ToSchema is not the behavior under
+/// test; every serde attribute stays verbatim).
+async fn rendered_create_dto(
+    db: &codegraph_core::mock::MockEngine,
+    title: &str,
+    project: &ProjectConfig,
+) -> String {
+    rendered_dto(db, title, project, "dto_create.rs").await
+}
+
+/// Render `dto_update.rs` for `title` under `project` (same utoipa strip).
+async fn rendered_update_dto(
+    db: &codegraph_core::mock::MockEngine,
+    title: &str,
+    project: &ProjectConfig,
+) -> String {
+    rendered_dto(db, title, project, "dto_update.rs").await
+}
+
+async fn rendered_dto(
+    db: &codegraph_core::mock::MockEngine,
+    title: &str,
+    project: &ProjectConfig,
+    file: &str,
+) -> String {
+    let output_dir = TempDir::new().unwrap();
+    let dto_files = crate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+        output_dir.path().to_path_buf(),
+    )
+    .generate(db, title, "library", &config(), &tera(), project)
+    .await
+    .expect("dtos generate");
+    let source = dto_files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with(file))
+        .unwrap_or_else(|| panic!("{file} emitted for {title}"))
+        .content
+        .clone();
+    source
+        .replace("use utoipa::ToSchema;\n", "")
+        .replace(", ToSchema", "")
+}
+
+/// Build a scratch crate whose lib embeds `(module_name, dto_source)` pairs
+/// verbatim and run the KAT `test_source` inside it. The scratch deps pin
+/// exactly what the DTO surface needs (serde + uuid); cargo runs with an
+/// isolated target dir, node-free and DB-free.
+fn run_serde_kat(modules: &[(&str, &str)], test_source: &str) {
+    let scratch = TempDir::new().unwrap();
+    let mut kat = String::from("//! DTO serde-behavior KAT (issue #554).\n");
+    for (module, source) in modules {
+        kat.push_str(&format!("\npub mod {module} {{\n{source}\n}}\n"));
+    }
+    kat.push_str("\n#[cfg(test)]\nmod kat {\n    use super::*;\n\n");
+    kat.push_str("    const ID: &str = \"01933e2c-0000-7000-8000-000000000001\";\n\n");
+    kat.push_str(test_source);
+    kat.push_str("\n}\n");
+
+    std::fs::write(
+        scratch.path().join("Cargo.toml"),
+        r#"[package]
+name = "dto-ref-name-kat"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "kat.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde"] }
+garde = { version = "0.22", features = ["derive"] }
+"#,
+    )
+    .unwrap();
+    std::fs::write(scratch.path().join("kat.rs"), kat).unwrap();
+
+    let out = std::process::Command::new("cargo")
+        .arg("test")
+        .arg("--manifest-path")
+        .arg(scratch.path().join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", scratch.path().join("target"))
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .expect("cargo test must run for the DTO serde KAT scratch crate");
+    assert!(
+        out.status.success(),
+        "the emitted DTO must satisfy the serde behavior contract:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+/// The #554 TDD mandate: a wrong-named ref field (the bare model name for a
+/// `_id`-spelled scalar ref, or a truly unknown key) must be a serde ERROR —
+/// the 4xx the handler maps — whose message names the accepted spelling,
+/// never a silent serde ignore that lands the link as NULL.
+#[tokio::test]
+async fn create_rejects_unknown_and_near_miss_field_names() {
+    let db = db_with_filing_model().await;
+    let project = ProjectConfig::default();
+    let filing = rendered_create_dto(&db, "FilingType", &project).await;
+    let tax = rendered_create_dto(&db, "TaxCalculationType", &project).await;
+
+    let kat = r##"
+    #[test]
+    fn near_miss_scalar_ref_is_rejected_naming_the_accepted_spelling() {
+        // The bare model name where the DTO carries `worker_id`.
+        let body = format!(r#"{{"title":"t","pay_runs":["{ID}"],"worker":"{ID}"}}"#);
+        let err = serde_json::from_str::<filing::CreateFilingRequest>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("worker_id"),
+            "the accepted spelling must be named in the error: {err}"
+        );
+        // The cross-entity near-miss from the issue: `pay_run` where
+        // TaxCalculation carries `pay_run_id`.
+        let body = format!(r#"{{"amount":"1","pay_run":"{ID}"}}"#);
+        let err = serde_json::from_str::<tax::CreateTaxCalculationRequest>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("pay_run_id"),
+            "the accepted spelling must be named in the error: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_fields_are_rejected() {
+        let err = serde_json::from_str::<filing::CreateFilingRequest>(
+            r#"{"title":"t","pay_runs":[],"bogus":1}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("bogus"), "{err}");
+    }
+"##;
+    run_serde_kat(&[("filing", &filing), ("tax", &tax)], kat);
+}
+
+/// Requirement 2 of the issue: where the Vec (junction) form stays, a serde
+/// alias covers both spellings — the `{name}_id` spelling lands on the same
+/// canonical field (create AND update), under snake AND camel key casing.
+/// Scalar `_id` refs stay alias-free: their bare near-miss is REJECTED
+/// (pinned by `create_rejects_unknown_and_near_miss_field_names`).
+#[tokio::test]
+async fn junction_create_accepts_the_scalar_id_spelling_via_serde_alias() {
+    let db = db_with_filing_model().await;
+    let snake = ProjectConfig::default();
+    let camel = ProjectConfig {
+        codegen: crate::project_config::CodegenConfig {
+            dto_key_casing: crate::project_config::DtoKeyCasing::Camel,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // The generated dto dir nests create/update as sibling modules (the
+    // update file imports children via `use super::dto_create::…`), so the
+    // KAT embeds both under the generated module structure to compile the
+    // update surface (stacked `alias` + `default` serde attrs) for real.
+    let nest = |create: String, update: String| {
+        format!("pub mod dto_create {{\n{create}\n}}\npub mod dto_update {{\n{update}\n}}")
+    };
+    let filing_snake = nest(
+        rendered_create_dto(&db, "FilingType", &snake).await,
+        rendered_update_dto(&db, "FilingType", &snake).await,
+    );
+    let pay_run_filing = nest(
+        rendered_create_dto(&db, "PayRunFilingType", &snake).await,
+        rendered_update_dto(&db, "PayRunFilingType", &snake).await,
+    );
+    let filing_camel = nest(
+        rendered_create_dto(&db, "FilingType", &camel).await,
+        rendered_update_dto(&db, "FilingType", &camel).await,
+    );
+
+    let kat = r##"
+    #[test]
+    fn junction_accepts_both_spellings_on_the_canonical_field() {
+        // Canonical Vec spelling still works.
+        let dto: filing::dto_create::CreateFilingRequest =
+            serde_json::from_str(&format!(r#"{{"title":"t","pay_runs":["{ID}"]}}"#)).unwrap();
+        assert_eq!(dto.pay_runs.len(), 1);
+        // The `{name}_id` spelling aliases onto the same field.
+        let dto: filing::dto_create::CreateFilingRequest =
+            serde_json::from_str(&format!(r#"{{"title":"t","pay_runs_id":["{ID}"]}}"#)).unwrap();
+        assert_eq!(dto.pay_runs.len(), 1);
+        // The crewbase shape: a junction NAMED `pay_run` accepts `pay_run_id`
+        // — the exact near-miss from the issue.
+        let dto: pay_run_filing::dto_create::CreatePayRunFilingRequest =
+            serde_json::from_str(&format!(r#"{{"external_ref":"x","pay_run_id":["{ID}"]}}"#))
+                .unwrap();
+        assert_eq!(dto.pay_run.len(), 1);
+    }
+
+    #[test]
+    fn update_dto_aliases_onto_the_canonical_field_too() {
+        let dto: filing::dto_update::UpdateFilingRequest =
+            serde_json::from_str(&format!(r#"{{"pay_runs_id":["{ID}"]}}"#)).unwrap();
+        assert_eq!(dto.pay_runs.unwrap().len(), 1);
+        let dto: filing::dto_update::UpdateFilingRequest =
+            serde_json::from_str(&format!(r#"{{"pay_runs":["{ID}"]}}"#)).unwrap();
+        assert_eq!(dto.pay_runs.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn camel_casing_alias_follows_the_dto_key_casing() {
+        let dto: filing_camel::dto_create::CreateFilingRequest =
+            serde_json::from_str(&format!(r#"{{"title":"t","payRunsId":["{ID}"]}}"#)).unwrap();
+        assert_eq!(dto.pay_runs.len(), 1);
+        let dto: filing_camel::dto_update::UpdateFilingRequest =
+            serde_json::from_str(&format!(r#"{{"payRunsId":["{ID}"]}}"#)).unwrap();
+        assert_eq!(dto.pay_runs.unwrap().len(), 1);
+    }
+"##;
+    run_serde_kat(
+        &[
+            ("filing", &filing_snake),
+            ("pay_run_filing", &pay_run_filing),
+            ("filing_camel", &filing_camel),
+        ],
+        kat,
+    );
+}
+
+/// The #554 TDD mandate: for EVERY entity, each entity-ref field the create
+/// DTO accepts must surface under the SAME name in the update and response
+/// DTOs — one ref-naming convention across request/response.
+#[tokio::test]
+async fn request_and_response_ref_names_match() {
+    let db = db_with_filing_model().await;
+    let cfg = config();
+    let project = ProjectConfig::default();
+
+    for (title, ref_names) in [
+        ("FilingType", vec!["pay_runs", "worker_id"]),
+        ("TaxCalculationType", vec!["pay_run_id"]),
+        ("PayRunFilingType", vec!["pay_run"]),
+        ("PayRunType", vec![]),
+        ("WorkerType", vec![]),
+    ] {
+        let ctx = crate::ddd::dto::build_dto_context(&db, title, "library", &cfg)
+            .await
+            .unwrap_or_else(|e| panic!("{title}: dto context builds: {e}"));
+        let ctx_refs: Vec<&str> = ctx
+            .fields
+            .iter()
+            .filter(|f| f.is_entity_ref && f.name != "id")
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(
+            ctx_refs, ref_names,
+            "{title}: the context carries exactly the modeled ref fields"
+        );
+
+        let output_dir = TempDir::new().unwrap();
+        let dto_files = crate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+            output_dir.path().to_path_buf(),
+        )
+        .generate(&db, title, "library", &cfg, &tera(), &project)
+        .await
+        .unwrap_or_else(|e| panic!("{title}: dtos generate: {e}"));
+        let find = |suffix: &str| {
+            dto_files
+                .iter()
+                .find(|f| f.path.to_string_lossy().ends_with(suffix))
+                .unwrap_or_else(|| panic!("{title}: {suffix} emitted"))
+                .content
+                .clone()
+        };
+        let create = find("dto_create.rs");
+        let update = find("dto_update.rs");
+        let response = find("dto_response.rs");
+
+        for name in &ref_names {
+            assert!(
+                create.contains(&format!("pub {name}:")),
+                "{title}: create DTO carries ref field `{name}`: {create}"
+            );
+            assert!(
+                update.contains(&format!("pub {name}:")),
+                "{title}: update DTO carries ref field `{name}`: {update}"
+            );
+            assert!(
+                response.contains(&format!("pub {name}:")),
+                "{title}: response DTO carries ref field `{name}`: {response}"
+            );
+        }
+    }
 }

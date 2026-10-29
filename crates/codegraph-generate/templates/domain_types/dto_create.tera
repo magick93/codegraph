@@ -58,6 +58,13 @@ pub struct Create{{ entity_name }}Request {
     #[garde(skip)]
 {%- endif %}
 {%- if field.is_array %}
+{%- if field.is_entity_ref %}
+{%- if project.dto_key_casing == "camel" %}
+    #[serde(alias = "{{ (field.name ~ "_id") | lower_camel }}")]
+{%- else %}
+    #[serde(alias = "{{ field.name }}_id")]
+{%- endif %}
+{%- endif %}
 {%- if field.is_required %}
     pub {{ field.name }}: Vec<uuid::Uuid>,
 {%- else %}

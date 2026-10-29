@@ -1809,6 +1809,7 @@ Implemented in `crates/codegraph-generate/src/template_engine.rs`:
 |--------|-------------|
 | `snake_case` | Converts a string to `snake_case` |
 | `upper_camel` | Converts to UpperCamelCase (strips trailing `Type` suffix first) |
+| `lower_camel` | Converts to lowerCamelCase (serde `rename_all = "camelCase"` semantics, issue #554) |
 | `pascal_case` | Converts to PascalCase |
 | `kebab_case` | Converts to `kebab-case` |
 | `pluralize` | Pluralizes a word (simple rules: `s`/`es`/`ies`) |
@@ -2181,6 +2182,36 @@ Tool prerequisites (validated per-suite; missing tools error or skip):
    keep `output::section` titles meaningful.
 7. If the generated manifest needs new seed values, extend
    `OpsManifest` in `codegraph-config` + the generator in codegraph-generate `ops.rs`.
+
+## DTO ref-name ergonomics (issues #539 + #554)
+
+The generated create/update request DTOs are a strict, self-describing
+surface:
+
+- **One ref-naming convention** (per entity, request == response ==
+  repository bind): scalar `refers` → `x_id: uuid::Uuid`
+  (`resolve_field` appends `_id`), array `refers` (junction) → the modeled
+  feature name `x: Vec<uuid::Uuid>`. Pinned by
+  `ref_field_names_agree_across_create_response_and_repository` and swept
+  across every fixture entity by `request_and_response_ref_names_match`
+  (`codegraph-generate/src/ddd/refers_junction_tests.rs`).
+- **Unknown/near-miss field names are rejected, never ignored**:
+  `#[serde(deny_unknown_fields)]` on `Create`/`Update` requests (responses
+  stay lax), surfaced as a 422 by the #479 `serde_path_to_error` →
+  `FieldError` chain — serde's message names every accepted spelling, so a
+  wrong-named ref can never silently land as NULL.
+- **Junction alias (#554)**: junction Vec fields carry
+  `#[serde(alias = "{name}_id")]` (camel: `#[serde(alias = "{Name}Id")]`
+  via the `lower_camel` filter), so the scalar `_id` spelling — the
+  near-miss callers actually send (crewbase `pay_run` vs `pay_run_id`) —
+  lands on the same canonical field, on create AND update. Scalar `_id`
+  fields stay alias-free: their bare near-miss is rejected (naming
+  `x_id`) rather than silently aliased.
+- The optionality contract (plain feature = required, `T[0..1]` = Option)
+  is documented in the init scaffold README's "Modeling contract" section.
+- Gates: `cargo test -p codegraph-generate --lib -- refers_junction` (10;
+  the two serde-behavior KATs compile the emitted DTOs verbatim into a
+  scratch crate — cargo-only, node-free/DB-free).
 
 ## Persistence Provider System
 
