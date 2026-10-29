@@ -72,16 +72,22 @@ public_operations_rls = false
 # operations, aliases as let-bindings, dispatch heads as match). Pair it
 # with function_postconditions = true to emit post-condition
 # `debug_assert!` checks (default OFF = absent).
-# Function bindings (issues #450/#337): a [functions."Name"] table in
-# domains.toml places each modeled func — implementation =
+# Function bindings (issues #450/#337/#339/#340): a [functions."Name"]
+# table in domains.toml places each modeled func — implementation =
 # dsl (default) | manual | sql | external, exposure = internal (default) |
 # http | event. A domain carrying a non-default binding emits the split
-# layout functions/{mod,generated,manual}.rs (manual.rs is write-once —
-# regeneration never overwrites hand edits); exposure = "http" additionally
-# mounts authenticated POST /api/v1/{domain}/{fn} endpoints with OpenAPI
-# entries and 501 answers for partial/manual functions. The reserved
-# sql/external/event values are hard config errors until their slices
-# (issues #339/#340) land. Absent table = byte-identical output.
+# layout functions/{mod,generated,manual,sql_impl}.rs (manual.rs is
+# write-once — regeneration never overwrites hand edits); exposure =
+# "http" additionally mounts authenticated POST /api/v1/{domain}/{fn}
+# endpoints with OpenAPI entries and 501 answers for partial/manual/
+# gapped functions. implementation = "sql" emits migrations/022000_functions.sql
+# (CREATE FUNCTION from the modeled body's closed-subset lowering; Postgres
+# only — refused on database_target = "sqlite") plus an async SqlFnImpls
+# call plane; implementation = "external" emits typed client structs, a
+# {domain}_service_base_url config slot, and a prewired reqwest hook;
+# exposure = "event" folds the function into the events plane as a
+# regen-safe consumer and spawns the drain without webhooks. Absent table
+# = byte-identical output.
 # Same gate also enables "rules" (issue #264): add it to an [api]
 # generators list to emit per-domain src/domain/<domain>/rules.rs —
 # reporting rules as computed-field functions attached to their input

@@ -112,10 +112,12 @@ Per-function `implementation` (dsl|manual|sql|external) / `exposure`
 (internal|http|event) for modeled sigil funcs, configured in a top-level
 `[functions."Name"]` table in domains.toml (`codegraph-config/src/config/
 functions.rs` on `DomainConfig.functions`). Strict validation: unknown
-function name (vs graph), unknown/reserved values (`sql`/`external`/
-`event` are hard errors naming issues #339/#340 until their slices land),
-and — for HTTP-exposed functions — input/output types resolving to no
-generated Rust type. The driver checks run pre-generation
+function name (vs graph), `implementation = "sql"` on
+`database_target = "sqlite"` (a Postgres function has no sqlite
+counterpart — `FunctionBindings::validate_for_target`, enforced on the
+run path via `BuildPlan.database_target` and in doctor), and — for
+HTTP-exposed functions — input/output types resolving to no generated
+Rust type. The driver checks run pre-generation
 (`validate.rs::check_function_bindings` for names/values +
 `codegraph-generate::ddd::functions_api::check_exposed_function_types`
 for API-plane resolvability) because the domain-generator phase collects
@@ -153,15 +155,73 @@ errors non-fatally — a broken binding must never half-generate.
   ⇒ single-file layout, no routes/OpenAPI/slots — pinned by
   `function_binding_absent_is_byte_identical` plus the unchanged #263
   goldens.
-- Gates: `cargo test -p codegraph --test rosetta_function_tests` (18:
-  binding resolution, byte-identity, split+write-once, HTTP surface,
-  501s, VO refusal, doctor-style errors) + `-- --ignored
+- **sql** (`implementation = "sql"`, slice B): `migrations/022000_functions.sql`
+  (new global `functions_sql` generator, Postgres-only, binding-driven so
+  it registers unconditionally) — one `CREATE OR REPLACE FUNCTION
+  {schema}.{fn_snake}` per function, LANGUAGE plpgsql, lowered from the
+  same `Expr::to_json` payloads (`ddd/functions_sql.rs`: literals, input/
+  output refs, `+ - * /`, comparisons, and/or/not, CASE WHEN, alias reads
+  via JSON-level substitution; a single plain set-on-output collapses to
+  a pure RETURN; `GRANT EXECUTE … TO app_user`). Out-of-subset bodies
+  (dispatch heads, extends, collection algebra, navigation, pathed/
+  alias-targeted assignment) keep the migration + signature but emit a
+  `RAISE EXCEPTION` stub + completion brief — the module is the record.
+  Signature slots resolve to primitives, dates-as-text, and codelists
+  (`text` on the wire — serde round-trips the generated enum both
+  directions via `enum_text`/`enum_from_text`); entity/VO/array/optional
+  slots are hard generation errors naming the function (#517 contract).
+  Call plane: async `SqlFnImpls` trait in `functions/mod.rs` (the #450
+  async trait class — explicit `&DatabaseConnection`) + regenerated
+  `functions/sql_impl.rs` `DefaultSqlImpls` running
+  `SELECT * FROM {schema}.{fn}($1, …)`; http-exposed sql fns dispatch
+  through the default impl (gapped bodies 501 naming the migration).
+- **external** (`implementation = "external"`, slice C / issue #339):
+  `functions/mod.rs` emits typed `{Fn}Request`/`{Fn}Response` structs
+  (serde, dto-casing-aware) + the async `ExternalFnImpls` trait; the
+  write-once `manual.rs` gains `DefaultExternalImpls` — an injected
+  `reqwest::Client` with one pre-wired handler per function (POST
+  `{base_url}/{fn_snake}`, `.json(&request)`, decoding
+  `json::<{Fn}Response>()`; path/auth stay the hand-owned `TODO(#339)`
+  part). AppState: `{domain}_external_impls` provider slot +
+  `{domain}_service_base_url` config slot (env
+  `{DOMAIN}_SERVICE_BASE_URL`), gated on
+  `ScaffoldDomain.has_external_functions` (`domains_with_external`).
+  external+http endpoints dispatch through the slot + URL; unregistered
+  answers 501 naming the trait, the slot, and the env var. External
+  signatures resolve through the API plane (primitives, codelists,
+  entity Response DTOs — VO-typed refused).
+- **event** (`exposure = "event"`, slice D / issue #340):
+  `EventArchitecture.function_consumers` folds event-exposed functions in
+  BEFORE the `.evt` early return — one synthetic consumer group
+  (`FunctionEventHandler`/`FunctionEventsContext`/
+  `register_function_events`) through the existing
+  `consumers_context_for`, so `consumers.tera` is UNTOUCHED (payload =
+  raw envelope JSON; keyed on the envelope `event` field = the fn snake
+  name; the existing registry/dispatch/delete-condition machinery fires).
+  `is_empty()` counts function consumers — a functions-only project
+  emits the events module + drain with no `.evt` input. The monolith
+  drain spawn widens to `has_webhooks or has_function_events`
+  (`ScaffoldContext.has_function_events`, skip-if-false); lib/main
+  declare `pub mod webhook_dispatch;` under the same disjunction, and
+  `webhook_dispatch` is IMPLIED into the plan when a function-event
+  binding exists (the spawn without the module would be E0433) — the
+  webhook CRUD surface stays capability-gated. Workers topology warns
+  once and skips function-consumer placement (functions-plane worker
+  routing is the recorded deferral).
+- Gates: `cargo test -p codegraph --test rosetta_function_tests` (24:
+  binding resolution, sqlite refusal, byte-identity, split+write-once,
+  HTTP surface, 501s, VO refusal, sql migration+impl, external
+  structs/hook/slots, event consumers + drain) + `-- --ignored
   emitted_crate_compiles_with_exposed_functions` (the E2 compile gate —
-  the emitted crate `cargo check`s clean with the surface; needs the
-  full dep stack) + `--test init_tests ::doctor_validates_function_bindings`.
-- Deferred: sql/external/event placements (#339/#340), VO-typed exposed
-  signatures (VO projection), worker-topology routing of the functions
-  plane, B2 eligibility-rule endpoint guards (#338).
+  now carrying ALL THREE slices so the async traits, client structs,
+  hooks, consumers, and drain compile together; needs the full dep
+  stack) + `--test init_tests ::doctor_validates_function_bindings` +
+  the in-crate `ddd::functions_sql` lowering unit tests.
+- Deferred: VO-typed exposed signatures (VO projection),
+  worker-topology routing of the functions plane (incl. function-event
+  consumer placement), B2 eligibility-rule endpoint guards (#338), the
+  `.evt`-only monolith drain-spawn gap (pre-existing — the spawn widened
+  for function events only), sql auto-invocation from event consumers.
 
 
 ## mox op/derived consuming generator (issue #501, quality bar #508, compile contract #517)
