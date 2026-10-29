@@ -2368,21 +2368,42 @@ native `cargo check` cannot see this class.
   byte-identical output.
 - **Project flag**: `IntegrationFlags.has_extension_points` (driver sets
   it from the parsed config on both run paths; plan-less runs pass an
-  explicit ProjectConfig when config is present). Gates the AppState
-  `integration_dispatcher: Option<Arc<..>>` field and the
+  explicit ProjectConfig when config is present). Gates the MONOLITH
+  AppState `integration_dispatcher: Option<Arc<..>>` field and the
   `CommandHandler::new` dispatcher param (project-level — signatures stay
   uniform across entities; per-entity call sites gate on the covered
   set).
+- **Per-domain gating (issue #553)**: the workers topology gates the
+  dispatch surface on the DOMAIN's push coverage, not the project flag —
+  a multi-domain consumer with one covered domain no longer gets 9 E0583s
+  or 9 dead dispatchers. `WorkerDomain.has_integration_dispatch`
+  (mirrors `has_webhooks`, injected from the same covered-domain set the
+  dispatcher emission uses — `WorkerScaffoldGenerator::
+  with_push_covered_domains`) gates the `mod integration_dispatch;`
+  declarations (`worker_lib.tera`/`worker_main.tera`) and the AppState
+  field/construction (`worker_app_state.tera`), and
+  `CommandContext.worker_has_dispatch` (monolith ⇒ project flag,
+  workers ⇒ domain coverage) drops the dispatcher field/param TYPE in
+  uncovered workers' command handlers (the type references
+  `crate::integration_dispatch` — keeping it E0433s). The notify call
+  sites stay per-entity. Consumer workarounds (the crewbase post-gen
+  copy of the dispatcher into every worker) become deletable. Gate:
+  `uncovered_domain_worker_has_no_dispatch_surface`
+  (`profile_smoke_tests` — multi-domain fixture, one covered) +
+  `integration_dispatch_flag_rides_push_covered_domains`
+  (`scaffold/worker.rs` unit tests).
 - **Dispatcher legs** (`integration/dispatcher.tera`): SeaORM
   `DatabaseConnection` (monolith) vs cornucopia `ClientSource` +
   `GenericClient` raw SQL (cornucopia); reqwest native vs `worker::Fetch`
   wasm32 HTTP legs. Under workers topology the generator emits
   `workers/{domain}/src/integration_dispatch.rs` per covered domain and
   `worker_app_state.tera` constructs the dispatcher from the
-  `ClientSource` — the monolith (SeaORM) constructs from `app_db`; a
-  cornucopia MONOLITH carries `None` (cornucopia is de-facto
-  workers-only). Fire-and-forget with a 10s timeout is a documented v1
-  decision (#340 is the queue-backed path).
+  `ClientSource` (both emission and construction per-domain since #553 —
+  uncovered workers carry no dispatch surface at all) — the monolith
+  (SeaORM) constructs from `app_db`; a cornucopia MONOLITH carries
+  `None` (cornucopia is de-facto workers-only). Fire-and-forget with a
+  10s timeout is a documented v1 decision (#340 is the queue-backed
+  path).
 - **Profile lists**: the four integration generators are
   `plan_has_global`-gated but were listed in NO profile — profiled runs
   never emitted the plane at all (only plan-less did). They now ride the

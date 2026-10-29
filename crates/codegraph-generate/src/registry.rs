@@ -259,6 +259,30 @@ pub(crate) fn build_domain_generators(
 /// and integration generators when extension points are configured.
 pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGenerator>> {
     let output_dir = ctx.output_dir;
+    // Push-covered entity refs ("domain.table") — the entities whose command
+    // layer carries notify call sites (issue #503). Pull-only points never
+    // notify. Derived once here: the dispatcher module emission, the worker
+    // scaffold's per-domain dispatch gating (#553), and the command-plane
+    // injection all consume the SAME set.
+    let push_covered: std::collections::HashSet<String> = ctx
+        .ext_points
+        .map(|ext| {
+            ext.points
+                .values()
+                .filter(|def| {
+                    def.directions
+                        .contains(&codegraph_ext_points::Direction::Push)
+                })
+                .flat_map(|def| def.entities.iter().cloned())
+                .collect()
+        })
+        .unwrap_or_default();
+    // The domains owning at least one push-covered entity — each one's
+    // worker crate carries the dispatcher module (issue #553).
+    let push_covered_domains: std::collections::HashSet<String> = push_covered
+        .iter()
+        .filter_map(|entity| entity.split('.').next().map(str::to_string))
+        .collect();
     let mut global_gens: Vec<Box<dyn GlobalGenerator>> = vec![
         Box::new(
             db::basejump_setup::BasejumpSetupGenerator::new(output_dir)
@@ -301,10 +325,10 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     // collide with them.  In monolith topology it keeps its original position
     // in the generator list so monolith output stays byte-identical.
     if ctx.workers_topology {
-        global_gens.push(
-            Box::new(scaffold::worker::WorkerScaffoldGenerator::new(output_dir))
-                as Box<dyn GlobalGenerator>,
-        );
+        global_gens.push(Box::new(
+            scaffold::worker::WorkerScaffoldGenerator::new(output_dir)
+                .with_push_covered_domains(push_covered_domains.clone()),
+        ) as Box<dyn GlobalGenerator>);
     } else {
         global_gens.push(Box::new(
             scaffold::generator::ScaffoldGenerator::new(
@@ -559,27 +583,12 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     }
 
     if let Some(ext) = ctx.ext_points {
-        // Push-covered entity refs ("domain.table") — the entities whose
-        // command layer carries notify call sites (issue #503). Pull-only
-        // points never notify.
-        let push_covered: std::collections::HashSet<String> = ext
-            .points
-            .values()
-            .filter(|def| {
-                def.directions
-                    .contains(&codegraph_ext_points::Direction::Push)
-            })
-            .flat_map(|def| def.entities.iter().cloned())
-            .collect();
         // Under workers topology each covered domain's worker crate gets a
-        // local copy of the dispatcher module.
+        // local copy of the dispatcher module (the covered-domain set is the
+        // one derived at the top of this function — issue #553).
         let worker_domains: Vec<String> = if ctx.workers_topology {
-            let mut domains: Vec<String> = push_covered
-                .iter()
-                .filter_map(|entity| entity.split('.').next().map(str::to_string))
-                .collect();
+            let mut domains: Vec<String> = push_covered_domains.iter().cloned().collect();
             domains.sort();
-            domains.dedup();
             domains
         } else {
             Vec::new()

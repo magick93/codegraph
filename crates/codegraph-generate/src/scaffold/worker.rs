@@ -232,6 +232,14 @@ pub struct WorkerDomain {
     /// its own trigger queue (the extra dispatch-cycle drain targets, as
     /// channel names — `events_{name}` is derived at both ends).
     pub extra_event_queues: Vec<String>,
+    /// Whether this domain's worker carries the push-integration dispatcher
+    /// (issue #553): the domain has at least one push-covered entity, i.e.
+    /// the generator emits `src/integration_dispatch.rs` into THIS crate.
+    /// Gates the module declaration (lib + main), the AppState dispatcher
+    /// field/construction, and the command-plane dispatcher param — the
+    /// per-domain half of the project-level `has_extension_points` flag
+    /// (mirrors `has_webhooks`).
+    pub has_integration_dispatch: bool,
 }
 
 /// Context for the workers scaffold templates.
@@ -271,6 +279,7 @@ pub fn build_worker_domains(
     scaffold_domains: Vec<ScaffoldDomain>,
     deploy: Option<&DeployShape>,
     placement: Option<&crate::events::placement::EventPlacement>,
+    push_covered_domains: &HashSet<String>,
 ) -> Vec<WorkerDomain> {
     let domain_names: HashSet<String> = scaffold_domains.iter().map(|d| d.name.clone()).collect();
     // A component represents a domain's worker when its name equals a
@@ -401,6 +410,7 @@ pub fn build_worker_domains(
                 hooks_api_path: String::new(),
                 has_events,
                 extra_event_queues,
+                has_integration_dispatch: push_covered_domains.contains(&d.name),
             }
         })
         .collect()
@@ -410,13 +420,27 @@ pub fn build_worker_domains(
 /// workspace manifest, and the gateway worker crate.
 pub struct WorkerScaffoldGenerator {
     output_dir: PathBuf,
+    /// Domains whose worker crate carries the push-integration dispatcher
+    /// (issue #553 — the domains with push-covered entities). Empty without
+    /// extension points: every worker's `has_integration_dispatch` is false
+    /// and output is byte-identical to the pre-#503 scaffold.
+    push_covered_domains: HashSet<String>,
 }
 
 impl WorkerScaffoldGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            push_covered_domains: HashSet::new(),
         }
+    }
+
+    /// Route the per-domain dispatch gating (issue #553): the same
+    /// push-covered domain set the command layer's notify call sites and
+    /// the dispatcher module emission use.
+    pub fn with_push_covered_domains(mut self, domains: HashSet<String>) -> Self {
+        self.push_covered_domains = domains;
+        self
     }
 }
 
@@ -509,6 +533,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             scaffold_domains,
             deploy_shape.as_ref(),
             event_placement.as_ref(),
+            &self.push_covered_domains,
         );
         for domain in &mut domains {
             // The domain-types crate is scaffolded INSIDE the output
@@ -945,8 +970,14 @@ service_bindings = ["timecard"]
     #[test]
     fn worker_name_defaults_to_app_domain() {
         let config = test_config();
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("common")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("common")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0].worker_name, "hr-common");
         assert_eq!(domains[0].worker_lib_name, "hr_common");
@@ -955,8 +986,14 @@ service_bindings = ["timecard"]
     #[test]
     fn explicit_worker_name_wins_over_convention() {
         let config = test_config();
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert_eq!(domains[0].worker_name, "hr-payroll-worker");
         assert_eq!(domains[0].worker_lib_name, "hr_payroll_worker");
     }
@@ -964,8 +1001,14 @@ service_bindings = ["timecard"]
     #[test]
     fn service_bindings_fallback_to_depends_on() {
         let config = test_config();
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert_eq!(domains.len(), 1);
         let bindings = &domains[0].service_bindings;
         assert_eq!(bindings.len(), 1);
@@ -985,6 +1028,7 @@ service_bindings = ["timecard"]
             vec![scaffold_domain("common"), scaffold_domain("payroll")],
             None,
             None,
+            &HashSet::new(),
         );
         let common = domains.iter().find(|d| d.name == "common").unwrap();
         assert_eq!(common.service_bindings.len(), 1);
@@ -1002,6 +1046,7 @@ service_bindings = ["timecard"]
             vec![scaffold_domain("common"), scaffold_domain("payroll")],
             None,
             None,
+            &HashSet::new(),
         );
         let payroll = domains.iter().find(|d| d.name == "payroll").unwrap();
         assert_eq!(payroll.hyperdrive_binding, "PAYROLL_DB");
@@ -1059,6 +1104,7 @@ target_state = "escalated"
             vec![scaffold_domain("recruiting")],
             None,
             None,
+            &HashSet::new(),
         );
         assert_eq!(domains.len(), 1);
         assert!(domains[0].has_workflow_timers);
@@ -1084,6 +1130,7 @@ entities = ["CodeType"]
             vec![scaffold_domain("common")],
             None,
             None,
+            &HashSet::new(),
         );
         assert!(!common[0].has_workflow_timers);
         assert!(common[0].cron_triggers.is_empty());
@@ -1109,8 +1156,14 @@ queue_max_concurrency = 10
         )
         .unwrap();
 
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("timecard")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("timecard")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert_eq!(domains.len(), 1);
         let d = &domains[0];
         assert!(d.has_webhooks);
@@ -1139,8 +1192,14 @@ webhooks = true
         )
         .unwrap();
 
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         let d = &domains[0];
         assert!(d.has_webhooks);
         assert_eq!(d.queue_binding, "WEBHOOK_QUEUE");
@@ -1163,9 +1222,65 @@ entities = ["CodeType"]
 "#,
         )
         .unwrap();
-        let common =
-            build_worker_domains("hr", &config, vec![scaffold_domain("common")], None, None);
+        let common = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("common")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert!(!common[0].has_webhooks);
+    }
+
+    #[test]
+    fn integration_dispatch_flag_rides_push_covered_domains() {
+        let config = parse_domain_config_str(
+            r#"
+[defaults]
+operations = ["create", "read"]
+
+[domains.compensation]
+label = "Compensation"
+schema_dir = "compensation"
+postgres_schema = "compensation"
+entities = ["PayRunType"]
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+entities = ["CodeType"]
+"#,
+        )
+        .unwrap();
+
+        // Only compensation carries a push-covered entity (issue #553).
+        let covered: HashSet<String> = ["compensation".to_string()].into_iter().collect();
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("compensation"), scaffold_domain("common")],
+            None,
+            None,
+            &covered,
+        );
+        let compensation = domains.iter().find(|d| d.name == "compensation").unwrap();
+        let common = domains.iter().find(|d| d.name == "common").unwrap();
+        assert!(compensation.has_integration_dispatch);
+        assert!(!common.has_integration_dispatch);
+
+        // Without extension points every worker is uncovered — flag-off
+        // byte-identity.
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("compensation"), scaffold_domain("common")],
+            None,
+            None,
+            &HashSet::new(),
+        );
+        assert!(domains.iter().all(|d| !d.has_integration_dispatch));
     }
 
     /// Render the per-domain wrangler template and assert the TOML output.
@@ -1176,8 +1291,14 @@ entities = ["CodeType"]
         let project = ProjectConfig::default();
 
         let config = test_config();
-        let mut domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
+        let mut domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
 
         let rendered = render_template_with_project(
@@ -1238,8 +1359,14 @@ queue_max_concurrency = 10
         )
         .unwrap();
 
-        let mut domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("timecard")], None, None);
+        let mut domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("timecard")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
 
         let rendered = render_template_with_project(
@@ -1290,8 +1417,14 @@ observability = true
         )
         .unwrap();
 
-        let domains =
-            build_worker_domains("hr", &enabled, vec![scaffold_domain("payroll")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &enabled,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert!(domains[0].observability);
         let rendered = render_template_with_project(
             &tera,
@@ -1322,8 +1455,14 @@ entities = ["CodeType"]
 "#,
         )
         .unwrap();
-        let domains =
-            build_worker_domains("hr", &disabled, vec![scaffold_domain("common")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &disabled,
+            vec![scaffold_domain("common")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         assert!(!domains[0].observability);
         let rendered = render_template_with_project(
             &tera,
@@ -1350,6 +1489,7 @@ entities = ["CodeType"]
             vec![scaffold_domain("common"), scaffold_domain("payroll")],
             None,
             None,
+            &HashSet::new(),
         );
         for domain in &mut domains {
             domain.domain_types_path = "../../crates/hr-domain-types".to_string();
@@ -1436,7 +1576,14 @@ entities = ["CodeType"]
             atproto_nsids: vec![],
             has_manual_functions: false,
         };
-        let mut domains = build_worker_domains("hr", &config, vec![full, query_only], None, None);
+        let mut domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![full, query_only],
+            None,
+            None,
+            &HashSet::new(),
+        );
         for d in &mut domains {
             d.domain_types_path = "crates/hr-domain-types".to_string();
             d.hooks_api_path = "crates/hr-hooks-api".to_string();
@@ -1499,8 +1646,14 @@ entities = ["CodeType"]
             ..Default::default()
         };
         let config = test_config();
-        let domains =
-            build_worker_domains("hr", &config, vec![scaffold_domain("payroll")], None, None);
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+        );
         let rendered =
             render_template_with_project(&tera, "scaffold/worker_lib.tera", &domains[0], &project)
                 .unwrap();
@@ -1618,6 +1771,7 @@ depends_on = ["core"]
             vec![scaffold_domain("core"), scaffold_domain("payroll")],
             Some(&shape),
             None,
+            &HashSet::new(),
         );
 
         let core = domains.iter().find(|d| d.name == "core").unwrap();
@@ -1670,6 +1824,7 @@ entities = ["PayRunType"]
             vec![scaffold_domain("core"), scaffold_domain("payroll")],
             Some(&shape),
             None,
+            &HashSet::new(),
         );
 
         let core = domains.iter().find(|d| d.name == "core").unwrap();
@@ -1717,6 +1872,7 @@ depends_on = ["audit"]
             vec![scaffold_domain("core")],
             Some(&shape),
             None,
+            &HashSet::new(),
         );
 
         // Every outgoing edge of `core` targets a non-domain component, so
@@ -1786,6 +1942,7 @@ entities = ["TimeEntryType"]
             ],
             Some(&shape),
             None,
+            &HashSet::new(),
         );
         for domain in &mut domains {
             domain.domain_types_path = "../../crates/hr-domain-types".to_string();
