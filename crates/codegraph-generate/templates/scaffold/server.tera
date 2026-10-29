@@ -390,7 +390,7 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     let timer_token = shutdown_token.child_token();
     tokio::spawn(async move { timer_service.run(timer_token).await });
 
-{% if has_webhooks %}
+{% if has_webhooks or has_function_events %}
     // Webhook dispatch worker
     let webhook_dispatcher = crate::webhook_dispatch::WebhookDispatcher::new(db.clone())?;
     let wd_token = shutdown_token.child_token();

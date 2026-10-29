@@ -1682,10 +1682,7 @@ exposure = "event"
     .expect("external-bound pipeline succeeds");
 
     let module = read_split_file(dir.path(), "mod.rs").expect("mod.rs emitted");
-    assert!(
-        module.contains("pub trait ExternalFnImpls"),
-        "{module}"
-    );
+    assert!(module.contains("pub trait ExternalFnImpls"), "{module}");
     // The typed request struct mirrors the modeled inputs; the response
     // struct carries the declared output — serde round-trips the wire
     // shape (compile-checked by the ignored E2 gate).
@@ -1741,10 +1738,7 @@ exposure = "http"
     .expect("external+http pipeline succeeds");
     let api = std::fs::read_to_string(dir.path().join("generated/src/api/store/functions_api.rs"))
         .expect("functions_api.rs emitted");
-    assert!(
-        api.contains("state.store_external_impls.as_ref()"),
-        "{api}"
-    );
+    assert!(api.contains("state.store_external_impls.as_ref()"), "{api}");
     assert!(
         api.contains("state.store_service_base_url.as_deref()"),
         "{api}"
@@ -1807,6 +1801,126 @@ implementation = "external"
         server.contains(r#"store_service_base_url: std::env::var("STORE_SERVICE_BASE_URL").ok(),"#),
         "{server}"
     );
+}
+
+// ── Issue #450 slice D: exposure = "event" (B4, issue #340) ─────────────
+
+/// `exposure = "event"` folds the modeled function into the events plane
+/// as a regen-safe consumer keyed by the envelope `event` field (the
+/// function's snake name): a `FunctionEventHandler` trait with default
+/// no-op methods + the standard registry, riding the existing drain.
+#[tokio::test]
+async fn event_exposed_function_emits_consumer_with_regen_safe_handler() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+exposure = "event"
+"#;
+    let profiles = r#"
+[profiles.default.meta]
+name = "rosetta-func-event"
+version = "1.0.0"
+description = "function event exposure gate"
+
+[profiles.default.features]
+rosetta_backend = true
+
+[profiles.default.api]
+generators = ["functions", "scaffold", "webhook_dispatch"]
+"#;
+    run_binding_api_pipeline_with(dir.path(), PRIMITIVE_FN_MODEL, domains, profiles)
+        .await
+        .expect("event-exposed pipeline succeeds");
+
+    // The events module exists WITHOUT any .evt input, and the function
+    // consumer rides the standard consumer machinery.
+    let consumers = std::fs::read_to_string(dir.path().join("generated/src/events/consumers.rs"))
+        .expect("events consumers emitted");
+    assert!(
+        consumers.contains("pub trait FunctionEventHandler"),
+        "{consumers}"
+    );
+    assert!(
+        consumers.contains("async fn on_surcharge_for"),
+        "{consumers}"
+    );
+    assert!(
+        consumers.contains("event: &serde_json::Value"),
+        "function consumers receive the raw envelope payload: {consumers}"
+    );
+    assert!(
+        consumers.contains("pub fn register_function_events"),
+        "{consumers}"
+    );
+    assert!(
+        consumers.contains("dispatch_function_events"),
+        "{consumers}"
+    );
+    // The drain's delete condition dispatches through the registry.
+    let dispatch = std::fs::read_to_string(dir.path().join("generated/src/webhook_dispatch.rs"))
+        .expect("webhook_dispatch emitted");
+    assert!(
+        dispatch.contains("crate::events::consumers::dispatch_registered"),
+        "{dispatch}"
+    );
+}
+
+/// A monolith with event-exposed functions but NO webhook capability still
+/// spawns the events drain — the spawn gate widens from `has_webhooks` to
+/// include function-event consumers.
+#[tokio::test]
+async fn monolith_spawns_events_drain_for_function_consumers_without_webhooks() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+exposure = "event"
+"#;
+    let profiles = r#"
+[profiles.default.meta]
+name = "rosetta-func-event-drain"
+version = "1.0.0"
+description = "function event drain spawn gate"
+
+[profiles.default.features]
+rosetta_backend = true
+
+[profiles.default.api]
+generators = ["functions", "scaffold", "webhook_dispatch"]
+"#;
+    run_binding_api_pipeline_with(dir.path(), PRIMITIVE_FN_MODEL, domains, profiles)
+        .await
+        .expect("event-drain pipeline succeeds");
+    let server =
+        std::fs::read_to_string(dir.path().join("generated/src/server.rs")).expect("server.rs");
+    assert!(
+        server.contains("WebhookDispatcher::new(db.clone())"),
+        "the events drain spawns without webhooks: {server}"
+    );
+    assert!(
+        server.contains("webhook_dispatcher.run(wd_token)"),
+        "{server}"
+    );
+    // No webhook CRUD surface — only the drain.
+    let lib = std::fs::read_to_string(dir.path().join("generated/src/lib.rs")).expect("lib.rs");
+    assert!(lib.contains("pub mod events;"), "{lib}");
 }
 
 /// The E2 compile gate (issue #337): the emitted crate `cargo check`s

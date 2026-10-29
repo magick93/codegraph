@@ -520,9 +520,17 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             } else {
                 // Binding-driven function planes (issue #450): the
                 // `[functions]` table is the flag, not the generator list —
-                // presence-gated inside, so they run on every plan.
+                // presence-gated inside, so they run on every plan. An
+                // event-exposed function also implies `webhook_dispatch`
+                // (the drain home its consumers dispatch through) even on
+                // a plan that omits it — the spawn without the module
+                // would be E0433.
+                let function_event_bindings = ctx.config.functions.iter().any(|(_, binding)| {
+                    binding.exposure == codegraph_config::FunctionExposure::Event
+                });
                 generator.name() == "evt_events" && evt_events_implied
                     || generator.name() == "functions_sql"
+                    || generator.name() == "webhook_dispatch" && function_event_bindings
                     || { ctx.plan_has_global(generator.name()) }
             }
         })

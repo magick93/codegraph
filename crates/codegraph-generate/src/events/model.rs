@@ -15,9 +15,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
-use codegraph_config::DomainConfig;
+use codegraph_config::{DomainConfig, FunctionExposure};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::EvtEventField;
+use codegraph_naming::{escape_rust_keyword, to_snake_case};
 use serde::Serialize;
 
 use crate::db::ddl::DdlContext;
@@ -241,16 +242,34 @@ pub struct QueueInfo {
     pub domain: Option<String>,
 }
 
+/// One event-exposed modeled function (issue #450 slice D): a synthetic
+/// consumer keyed by the function's snake name — the envelope `event`
+/// field it dispatches on. The payload is the raw envelope JSON (the
+/// modeled signature has no declared .evt contract; handlers deserialize
+/// what they need).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionConsumer {
+    /// The modeled function name (diagnostics + doc comments).
+    pub name: String,
+    /// snake_case name — the envelope `event` value and the handler
+    /// method suffix (`on_{fn_name}`).
+    pub fn_name: String,
+    /// The owning domain (queue attribution under the workers topology).
+    pub domain: Option<String>,
+}
+
 /// The semantic event architecture: every declared event, channel
 /// (DSL + implicit per-domain trigger channels), and subscription, with
-/// transport bindings resolved against the generation target.
+/// transport bindings resolved against the generation target — plus the
+/// event-exposed modeled functions folded in as synthetic consumers
+/// (issue #450 slice D).
 ///
 /// Built once per generation run by consumers that need it
 /// ([`crate::db::event_trigger::PgmqSetupGenerator`] today; the events
 /// generators next phase). Empty when the graph carries no `.evt` models
-/// — every consumer gates on [`EventArchitecture::is_empty`], and
-/// flag-off runs never reach the (entity-count-proportional) trigger
-/// enumeration.
+/// AND no event-exposed function bindings — every consumer gates on
+/// [`EventArchitecture::is_empty`], and flag-off runs never reach the
+/// (entity-count-proportional) trigger enumeration.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EventArchitecture {
     /// Declared events, ordered by (source_path, ordinal).
@@ -263,6 +282,11 @@ pub struct EventArchitecture {
     pub domain_channels: Vec<EventChannel>,
     /// Declared subscriptions, ordered by (source_path, ordinal).
     pub subscriptions: Vec<EventSubscription>,
+    /// Event-exposed modeled functions (`exposure = "event"` bindings,
+    /// issue #450 slice D), ordered by (domain, name). Monolith-plane
+    /// consumers — the workers placement skips them (warned once): the
+    /// functions plane is monolith-only this slice.
+    pub function_consumers: Vec<FunctionConsumer>,
 }
 
 /// One trigger-bearing table from the shared enumeration: the domain it
@@ -287,11 +311,26 @@ impl EventArchitecture {
         config: &DomainConfig,
     ) -> Result<Self> {
         let models = db.get_evt_models().await?;
+        // Issue #450 slice D: event-exposed functions fold in BEFORE the
+        // `.evt` early return — the fold is cheap (one list_functions
+        // read), and it is what makes the architecture (and therefore the
+        // events module + drain) non-empty for a functions-only project.
+        let function_consumers = Self::collect_function_consumers(db, config).await?;
         if models.is_empty() {
-            // Byte-identity + cost gate: no `.evt` input ⇒ empty
-            // architecture; the trigger enumeration (the only
-            // expensive part — one DDL context per entity) never runs.
-            return Ok(Self::default());
+            // Byte-identity + cost gate: no `.evt` input and no
+            // event-exposed functions ⇒ empty architecture; the trigger
+            // enumeration (the only expensive part — one DDL context per
+            // entity) never runs.
+            if function_consumers.is_empty() {
+                return Ok(Self::default());
+            }
+            return Ok(Self {
+                events: Vec::new(),
+                channels: Vec::new(),
+                domain_channels: Vec::new(),
+                subscriptions: Vec::new(),
+                function_consumers,
+            });
         }
 
         let events = Self::collect_events(db, &models).await?;
@@ -313,17 +352,49 @@ impl EventArchitecture {
             channels,
             domain_channels,
             subscriptions,
+            function_consumers,
         })
     }
 
-    /// `true` when the graph carried no `.evt` input. Every consumer must
-    /// gate on this — the no-`.evt` output must stay byte-identical to
-    /// the pre-#455 generator output.
+    /// The event-exposed modeled functions (`exposure = "event"` bindings,
+    /// issue #450 slice D) in `(domain, name)` order — the deterministic
+    /// `list_functions` order. Names unknown to the graph cannot occur on
+    /// validated runs (the driver rejects them pre-generation); unknown
+    /// names are skipped here rather than failing a late phase.
+    async fn collect_function_consumers(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Result<Vec<FunctionConsumer>> {
+        if config.functions.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for node in db.list_functions().await? {
+            let Some(binding) = config.functions.get(&node.name) else {
+                continue;
+            };
+            if binding.exposure != FunctionExposure::Event {
+                continue;
+            }
+            out.push(FunctionConsumer {
+                name: node.name.clone(),
+                fn_name: escape_rust_keyword(&to_snake_case(&node.name)),
+                domain: node.domain.clone(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// `true` when the graph carried no `.evt` input AND no event-exposed
+    /// function bindings. Every consumer must gate on this — the
+    /// fully-absent output must stay byte-identical to the pre-#455
+    /// generator output.
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
             && self.channels.is_empty()
             && self.domain_channels.is_empty()
             && self.subscriptions.is_empty()
+            && self.function_consumers.is_empty()
     }
 
     /// Look up a declared event by name (first match in

@@ -50,6 +50,11 @@ pub struct ScaffoldContext {
     /// byte-identical on flag-off runs.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_events: bool,
+    /// Whether any modeled function carries `exposure = "event"`
+    /// (issue #450 slice D) — widens the server.rs drain spawn without
+    /// the webhook CRUD surface. Skipped when false (byte-identity).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_function_events: bool,
     /// Resolved path (relative to the output dir when possible) of the
     /// `hr-seed` crate, discovered by walking up from the output dir and
     /// CWD looking for a sibling `hr-seed` directory.
@@ -377,9 +382,11 @@ impl GlobalGenerator for ScaffoldGenerator {
         // generator registers unconditionally and emits the `src/events/`
         // module only when the architecture is non-empty, so lib.rs must
         // declare it under exactly the same condition.
-        let has_events = !crate::evt_events::architecture_for(db, project, config)
-            .await?
-            .is_empty();
+        let architecture = crate::evt_events::architecture_for(db, project, config).await?;
+        let has_events = !architecture.is_empty();
+        // Issue #450 slice D: event-exposed functions widen the drain
+        // spawn (server.rs) without the webhook CRUD surface.
+        let has_function_events = !architecture.function_consumers.is_empty();
 
         let ctx = ScaffoldContext {
             app_name: project.identity.app_name.clone(),
@@ -404,6 +411,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_labels: self.has_labels,
             has_seed: self.has_seed,
             has_events,
+            has_function_events,
             seed_crate_path,
             migration_strategy: self.migration_strategy.clone(),
         };
@@ -723,6 +731,7 @@ mod tests {
             has_labels: false,
             has_seed: false,
             has_events: false,
+            has_function_events: false,
             seed_crate_path: String::new(),
             migration_strategy: "sea-orm".to_string(),
         }

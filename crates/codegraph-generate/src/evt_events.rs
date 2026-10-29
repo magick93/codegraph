@@ -435,6 +435,36 @@ fn consumers_context_for(
             events,
         });
     }
+    // Issue #450 slice D: event-exposed modeled functions fold in as ONE
+    // synthetic consumer group (payload = raw envelope JSON — the modeled
+    // signature has no declared .evt contract). Monolith only: the
+    // workers placement has no tier for function consumers (the functions
+    // plane is monolith-only this slice), so a placed (worker) render
+    // skips them with one warning.
+    if placed.is_none() && !arch.function_consumers.is_empty() {
+        let events = arch
+            .function_consumers
+            .iter()
+            .map(|function| HandlerEventContext {
+                method: format!("on_{}", function.fn_name),
+                payload: "serde_json::Value".to_string(),
+                event_name: function.fn_name.clone(),
+            })
+            .collect();
+        consumers.push(ConsumerContext {
+            name: "FunctionEvents".to_string(),
+            name_snake: "function_events".to_string(),
+            context_struct: "FunctionEventsContext".to_string(),
+            handler_trait: "FunctionEventHandler".to_string(),
+            events,
+        });
+    } else if placed.is_some() && !arch.function_consumers.is_empty() {
+        warn_once(
+            "function-events-workers",
+            "event-exposed functions ride the monolith drain only; the workers \
+             topology does not place function consumers yet (issue #450 deferral)",
+        );
+    }
     ConsumersContext {
         contracts_use: if payload_types.is_empty() {
             String::new()

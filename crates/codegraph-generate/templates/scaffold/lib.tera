@@ -17,8 +17,8 @@ pub mod metrics_middleware;
 {% if project.persistence_provider == "cornucopia" %}pub mod db_client;
 {% endif %}{% if project.hooks_api_crate %}pub mod hook_adapters;
 {% endif %}{% if has_webhooks %}
-pub mod webhook_api;
-pub mod webhook_dispatch;
+pub mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
+pub mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 pub mod webhook_router;
 {% endif %}{% if has_events %}
 pub mod events;{% endif %}
