@@ -242,9 +242,80 @@ impl DomainGenerator for FunctionsGenerator {
                 .get(&s.node.name)
                 .is_some_and(|b| b.exposure == FunctionExposure::Http)
         };
+
+        // Issue #450 slice B: `implementation = "sql"` resolves the
+        // signature on the sql plane (primitives, dates-as-text, codelists
+        // — hard error naming the function otherwise) and plans the
+        // Postgres body. The migration itself is the global
+        // `functions_sql` generator; this plane emits the call side
+        // (`SqlFnImpls` trait + `DefaultSqlImpls`).
+        let is_sql = |s: &FunctionSurface| {
+            config
+                .functions
+                .get(&s.node.name)
+                .is_some_and(|b| b.implementation == FunctionImplementation::Sql)
+        };
+        let mut sql_plans: Vec<crate::ddd::functions_sql::SqlFnPlan> = Vec::new();
+        if surfaces.iter().any(is_sql) {
+            let codelists: HashSet<String> = db
+                .list_codelists()
+                .await?
+                .into_iter()
+                .map(|c| c.name)
+                .collect();
+            let entry = config.domains.get(domain).ok_or_else(|| {
+                codegraph_core::error::Error::Config(format!(
+                    "domain '{domain}' is not configured in domains.toml"
+                ))
+            })?;
+            for surface in &mut surfaces {
+                if !is_sql(surface) {
+                    continue;
+                }
+                for (slot, input) in surface.args.iter_mut().zip(&surface.node.inputs) {
+                    let (rust, _pg) = crate::ddd::functions_sql::resolve_sql_type(
+                        &surface.node.name,
+                        &format!("input '{}'", input.name),
+                        &input.type_ref,
+                        &codelists,
+                    )
+                    .map_err(codegraph_core::error::Error::Config)?;
+                    slot.1 = rust;
+                }
+                if let (Some(out_slot), Some(out_node)) = (&surface.output, &surface.node.output) {
+                    let (rust, _pg) = crate::ddd::functions_sql::resolve_sql_type(
+                        &surface.node.name,
+                        &format!("output '{}'", out_node.name),
+                        &out_node.type_ref,
+                        &codelists,
+                    )
+                    .map_err(codegraph_core::error::Error::Config)?;
+                    surface.output = Some((out_slot.0.clone(), rust));
+                }
+                sql_plans.push(
+                    crate::ddd::functions_sql::plan_sql_function(
+                        &surface.node,
+                        &entry.postgres_schema,
+                        &codelists,
+                    )
+                    .map_err(codegraph_core::error::Error::Config)?,
+                );
+            }
+        }
+        let sql_gapped: HashSet<String> = sql_plans
+            .iter()
+            .filter(|p| p.body.is_err())
+            .map(|p| p.name.clone())
+            .collect();
+
         let partial: HashSet<String> = surfaces
             .iter()
-            .filter(|s| !is_manual(s) && is_http(s) && surface_is_partial(s, &surfaces, project))
+            .filter(|s| {
+                !is_manual(s)
+                    && !is_sql(s)
+                    && is_http(s)
+                    && surface_is_partial(s, &surfaces, project)
+            })
             .map(|s| s.node.name.clone())
             .collect();
         let manual_names: HashSet<String> = surfaces
@@ -253,8 +324,11 @@ impl DomainGenerator for FunctionsGenerator {
             .map(|s| s.node.name.clone())
             .collect();
 
-        let (manual, generated): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
+        let (manual, rest): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
             surfaces.into_iter().partition(is_manual);
+        let (sql_bound, generated): (Vec<FunctionSurface>, Vec<FunctionSurface>) =
+            rest.into_iter().partition(is_sql);
+        let sql_names: HashSet<String> = sql_bound.iter().map(|s| s.node.name.clone()).collect();
 
         let fn_imports = |names: &[&FunctionSurface]| {
             names
@@ -290,9 +364,29 @@ impl DomainGenerator for FunctionsGenerator {
                 content: emit_manual_stub(domain, &manual, &manual_imports),
             });
         }
+        // Issue #450 slice B: the sql call plane — regenerated every run
+        // (it is derived output; the migration is its record).
+        if !sql_bound.is_empty() {
+            let plan_refs: Vec<&crate::ddd::functions_sql::SqlFnPlan> = sql_plans.iter().collect();
+            files.push(GeneratedFile {
+                path: module_dir.join("functions").join("sql_impl.rs"),
+                content: crate::ddd::functions_sql::emit_sql_impl_rs(
+                    domain,
+                    &plan_refs,
+                    &project.identity.generator_name,
+                ),
+            });
+        }
         files.push(GeneratedFile {
             path: module_dir.join("functions").join("mod.rs"),
-            content: emit_functions_module(domain, &manual, project, manual_present),
+            content: emit_functions_module(
+                domain,
+                &manual,
+                &sql_bound,
+                &sql_plans,
+                project,
+                manual_present,
+            ),
         });
 
         // Issue #337 B1: the HTTP surface for this domain's exposed
@@ -300,6 +394,7 @@ impl DomainGenerator for FunctionsGenerator {
         let http: Vec<&FunctionSurface> = generated
             .iter()
             .chain(manual.iter())
+            .chain(sql_bound.iter())
             .filter(|s| is_http(s))
             .collect();
         if !http.is_empty() {
@@ -316,6 +411,8 @@ impl DomainGenerator for FunctionsGenerator {
                     &http,
                     &partial,
                     &manual_names,
+                    &sql_names,
+                    &sql_gapped,
                     &api_imports,
                     &project.identity.api_version,
                     project,
@@ -510,6 +607,8 @@ fn emit_domain_functions(
 fn emit_functions_module(
     domain: &str,
     manual: &[FunctionSurface],
+    sql_bound: &[FunctionSurface],
+    sql_plans: &[crate::ddd::functions_sql::SqlFnPlan],
     project: &ProjectConfig,
     manual_present: bool,
 ) -> String {
@@ -534,6 +633,14 @@ fn emit_functions_module(
     wln!(code);
     wln!(code, "pub mod generated;");
     wln!(code, "pub use generated::*;");
+
+    if !sql_bound.is_empty() {
+        wln!(code);
+        wln!(code, "pub mod sql_impl;");
+        wln!(code, "pub use sql_impl::*;");
+        let plan_refs: Vec<&crate::ddd::functions_sql::SqlFnPlan> = sql_plans.iter().collect();
+        crate::ddd::functions_sql::emit_sql_trait_block(&mut code, &plan_refs);
+    }
 
     if manual.is_empty() {
         return code.into_string();
@@ -1020,12 +1127,16 @@ fn surface_is_partial(
 /// POST endpoints for the domain's HTTP-exposed functions, dispatching
 /// into the functions module. Complete `dsl` functions call the generated
 /// body; partial ones answer 501 naming the gap; `manual` ones call the
-/// `ManualImpls` provider from AppState (501 until registered).
+/// `ManualImpls` provider from AppState (501 until registered); `sql`
+/// ones dispatch through the generated `DefaultSqlImpls` (issue #450).
+#[allow(clippy::too_many_arguments)]
 fn emit_functions_api_rs(
     domain: &str,
     http: &[&FunctionSurface],
     partial: &HashSet<String>,
     manual: &HashSet<String>,
+    sql_names: &HashSet<String>,
+    sql_gapped: &HashSet<String>,
     imports: &BTreeSet<String>,
     api_version: &str,
     project: &ProjectConfig,
@@ -1084,12 +1195,32 @@ fn emit_functions_api_rs(
     wln!(code, "        }})),");
     wln!(code, "    )");
     wln!(code, "}}");
+    wln!(code);
+    wln!(
+        code,
+        "/// 500 payload for a failed sql-bound call (issue #450)."
+    );
+    wln!(
+        code,
+        "fn internal_error(function: &str, error: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {{"
+    );
+    wln!(code, "    (");
+    wln!(code, "        StatusCode::INTERNAL_SERVER_ERROR,");
+    wln!(code, "        Json(serde_json::json!({{");
+    wln!(code, "            \"error\": \"internal_error\",");
+    wln!(code, "            \"function\": function,");
+    wln!(code, "            \"detail\": error.to_string(),");
+    wln!(code, "        }})),");
+    wln!(code, "    )");
+    wln!(code, "}}");
 
     let camel = project.codegen.dto_key_casing == crate::project_config::DtoKeyCasing::Camel;
 
     for function in http {
         let is_partial = partial.contains(&function.node.name);
         let is_manual = manual.contains(&function.node.name);
+        let is_sql = sql_names.contains(&function.node.name);
+        let is_sql_gapped = sql_gapped.contains(&function.node.name);
         emit_function_endpoint(
             &mut code,
             domain,
@@ -1097,6 +1228,8 @@ fn emit_functions_api_rs(
             function,
             is_partial,
             is_manual,
+            is_sql,
+            is_sql_gapped,
             camel,
         );
     }
@@ -1130,7 +1263,9 @@ fn emit_functions_api_rs(
 }
 
 /// Emit one endpoint: request/response DTOs, the `#[utoipa::path]`-attributed
-/// handler. (Routes register in `functions_routes`.)
+/// handler. (Routes register in `functions_routes`.) `sql_gap` marks a
+/// sql-bound function whose modeled body did not lower — its migration
+/// stub raises, so the endpoint answers 501 naming the migration.
 #[allow(clippy::too_many_arguments)]
 fn emit_function_endpoint(
     code: &mut CodeWriter,
@@ -1139,6 +1274,8 @@ fn emit_function_endpoint(
     function: &FunctionSurface,
     partial: bool,
     manual: bool,
+    sql: bool,
+    sql_gap: bool,
     camel: bool,
 ) {
     let endpoint = &function.fn_name;
@@ -1248,7 +1385,23 @@ fn emit_function_endpoint(
              the missing constructs\",",
             domain = domain,
         );
-        wln!(code, "    ))");
+        wln!(code, "    ))")
+    } else if sql && sql_gap {
+        // sql-bound whose modeled body did not lower: the migration stub
+        // raises, so the endpoint answers 501 naming the migration.
+        wln!(code, "    let _ = (state, body);");
+        wln!(code, "    Err(not_implemented(");
+        wln!(code, "        \"{name}\",", name = function.node.name,);
+        wln!(
+            code,
+            "        \"sql-bound function whose modeled body did not lower to \
+             the sql-function subset — the migration stub raises until it \
+             lands; see migrations/{:06}_functions.sql and \
+             crate::domain::{domain}::functions::sql_impl\",",
+            crate::ddd::functions_sql::FUNCTIONS_SQL_MIGRATION_SEQ,
+            domain = domain,
+        );
+        wln!(code, "    ))")
     } else if manual {
         wln!(
             code,
@@ -1288,6 +1441,32 @@ fn emit_function_endpoint(
         );
         wln!(code, "        )),");
         wln!(code, "    }}");
+    } else if sql {
+        wln!(
+            code,
+            "    let provider = crate::domain::{domain}::functions::DefaultSqlImpls;",
+            domain = domain,
+        );
+        if let Some((out_name, _)) = &function.output {
+            wln!(
+                code,
+                "    let {out} = provider.{endpoint}(&state.db, {args}).await.map_err(|e| internal_error(\"{name}\", e))?;",
+                out = out_name,
+                endpoint = endpoint,
+                args = arg_list,
+                name = function.node.name,
+            );
+            wln!(code, "    Ok(Json({response} {{ {out} }}))", out = out_name,);
+        } else {
+            wln!(
+                code,
+                "    provider.{endpoint}(&state.db, {args}).await.map_err(|e| internal_error(\"{name}\", e))?;",
+                endpoint = endpoint,
+                args = arg_list,
+                name = function.node.name,
+            );
+            wln!(code, "    Ok(Json({response} {{}}))");
+        }
     } else {
         wln!(code, "    let _ = state;");
         if let Some((out_name, _)) = &function.output {

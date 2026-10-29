@@ -1330,7 +1330,69 @@ generators = ["functions", "scaffold"]
     assert!(server.contains("store_manual_impls: None,"), "{server}");
 }
 
-// ── Issue #450 remaining slices: sql / external / event ────────────────
+// ── Issue #450 slices: sql / external / event ───────────────────────────
+
+/// Primitive-typed functions only: the binding-validation fixture for the
+/// previously reserved values (entity-typed inputs are refused on the sql
+/// plane, so the fixture avoids them).
+const PRIMITIVE_FN_MODEL: &str = r#"namespace gen.store
+
+enum OrderStatus:
+	Draft
+	Shipped
+
+type WidgetType:
+	label string (1..1)
+
+func SurchargeFor: <"price surcharge for a status">
+	inputs:
+		status OrderStatus (1..1)
+		amount number (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		amount + 1.0
+
+func HandSet: <"hand-owned amount">
+	inputs:
+		amount number (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		amount
+
+func BrokenAnswer(status: OrderStatus->Draft):
+	inputs:
+		status OrderStatus (1..1)
+		amount number (1..1)
+	output:
+		result number (1..1)
+
+	set result:
+		amount
+"#;
+
+const PRIMITIVE_FN_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+
+[functions."HandSet"]
+implementation = "external"
+
+[functions."BrokenAnswer"]
+exposure = "event"
+"#;
 
 /// Issue #450: the previously reserved `sql`/`external` implementations and
 /// the `event` exposure are accepted from domains.toml — parsing and
@@ -1339,52 +1401,22 @@ generators = ["functions", "scaffold"]
 /// naming the function: a Postgres function has no sqlite counterpart.
 #[tokio::test]
 async fn sql_external_event_bindings_resolve_from_domains_toml() {
-    // (a) implementation = "sql" parses + validates on the postgres target.
     let dir = tempfile::tempdir().unwrap();
-    run_generator_pipeline_with_functions(
+    run_binding_api_pipeline_with(
         dir.path(),
-        GENERATOR_MODEL,
-        true,
-        false,
-        Some("[functions.\"OrderScore\"]\nimplementation = \"sql\"\n"),
+        PRIMITIVE_FN_MODEL,
+        PRIMITIVE_FN_DOMAINS_TOML,
+        BINDING_API_PROFILES_TOML,
     )
     .await
-    .expect("sql implementation is accepted on the default postgres target");
+    .expect("sql/external/event bindings parse and validate");
 
-    // (b) implementation = "external" parses + validates.
-    let dir = tempfile::tempdir().unwrap();
-    run_generator_pipeline_with_functions(
-        dir.path(),
-        GENERATOR_MODEL,
-        true,
-        false,
-        Some("[functions.\"OrderScore\"]\nimplementation = \"external\"\n"),
-    )
-    .await
-    .expect("external implementation is accepted");
-
-    // (c) exposure = "event" parses + validates.
-    let dir = tempfile::tempdir().unwrap();
-    run_generator_pipeline_with_functions(
-        dir.path(),
-        GENERATOR_MODEL,
-        true,
-        false,
-        Some("[functions.\"OrderScore\"]\nexposure = \"event\"\n"),
-    )
-    .await
-    .expect("event exposure is accepted");
-
-    // (d) sql + sqlite is a hard config error naming the function.
+    // sql + sqlite is a hard config error naming the function.
     let dir = tempfile::tempdir().unwrap();
     let model = dir.path().join("gen.rosetta");
-    std::fs::write(&model, GENERATOR_MODEL).unwrap();
+    std::fs::write(&model, PRIMITIVE_FN_MODEL).unwrap();
     let domains = dir.path().join("domains.toml");
-    std::fs::write(
-        &domains,
-        format!("{DOMAINS_TOML}\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n"),
-    )
-    .unwrap();
+    std::fs::write(&domains, PRIMITIVE_FN_DOMAINS_TOML).unwrap();
     let profiles = dir.path().join("profiles.toml");
     std::fs::write(
         &profiles,
@@ -1431,8 +1463,188 @@ generators = ["dto", "functions"]
     .await
     .expect_err("sql binding on sqlite must fail the run");
     let msg = err.to_string();
-    assert!(msg.contains("OrderScore"), "{msg}");
+    assert!(msg.contains("SurchargeFor"), "{msg}");
     assert!(msg.contains("sqlite"), "{msg}");
+}
+
+// ── Issue #450 slice B: implementation = "sql" ──────────────────────────
+
+/// sql bindings only (internal exposure): the migration + the async call
+/// plane.
+const SQL_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+
+[functions."BrokenAnswer"]
+implementation = "sql"
+"#;
+
+/// sql + http on the same function: the endpoint dispatches through the
+/// generated `DefaultSqlImpls`.
+const SQL_HTTP_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+exposure = "http"
+"#;
+
+/// `implementation = "sql"` lowers the modeled body into ONE Postgres
+/// migration (`CREATE FUNCTION {schema}.{fn_snake}` from the same
+/// `Expr::to_json` payloads) and emits an async `SqlFnImpls` trait +
+/// `DefaultSqlImpls` that call it through the pool. HTTP-exposed sql
+/// functions dispatch through the generated default impl.
+#[tokio::test]
+async fn sql_bound_function_emits_create_function_migration_and_async_impl() {
+    // (a) internal exposure: the migration + the async impl plane.
+    let dir = tempfile::tempdir().unwrap();
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        SQL_DOMAINS_TOML,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("sql-bound pipeline succeeds");
+
+    let migration =
+        std::fs::read_to_string(dir.path().join("generated/migrations/022000_functions.sql"))
+            .expect("functions migration emitted");
+    assert!(
+        migration.contains("CREATE OR REPLACE FUNCTION store.surcharge_for("),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("p_amount double precision"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("RETURNS double precision"),
+        "{migration}"
+    );
+    assert!(migration.contains("LANGUAGE plpgsql"), "{migration}");
+    assert!(migration.contains("RETURN p_amount + 1.0;"), "{migration}");
+    assert!(
+        migration.contains(
+            "GRANT EXECUTE ON FUNCTION store.surcharge_for(text, double precision) TO app_user;"
+        ),
+        "{migration}"
+    );
+
+    let sql_impl = read_split_file(dir.path(), "sql_impl.rs").expect("sql_impl.rs emitted");
+    assert!(
+        sql_impl.contains("pub struct DefaultSqlImpls"),
+        "{sql_impl}"
+    );
+    assert!(
+        sql_impl.contains(
+            "async fn surcharge_for(&self, db: &DatabaseConnection, status: OrderStatus, amount: f64)"
+        ),
+        "{sql_impl}"
+    );
+    assert!(
+        sql_impl.contains("SELECT * FROM store.surcharge_for($1, $2)"),
+        "{sql_impl}"
+    );
+    assert!(
+        sql_impl.contains("enum_text(&status)"),
+        "codelist inputs bind through the serde text form: {sql_impl}"
+    );
+
+    let module = read_split_file(dir.path(), "mod.rs").expect("mod.rs emitted");
+    assert!(module.contains("pub trait SqlFnImpls"), "{module}");
+    assert!(
+        module.contains("async fn surcharge_for(&self, db: &sea_orm::DatabaseConnection, status: OrderStatus, amount: f64)"),
+        "{module}"
+    );
+    assert!(module.contains("pub mod sql_impl;"), "{module}");
+
+    // (b) http exposure: the endpoint dispatches through DefaultSqlImpls.
+    let dir = tempfile::tempdir().unwrap();
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        SQL_HTTP_DOMAINS_TOML,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("sql+http pipeline succeeds");
+    let api = std::fs::read_to_string(dir.path().join("generated/src/api/store/functions_api.rs"))
+        .expect("functions_api.rs emitted");
+    assert!(
+        api.contains("let provider = crate::domain::store::functions::DefaultSqlImpls;"),
+        "{api}"
+    );
+    assert!(
+        api.contains("provider.surcharge_for(&state.db, body.status, body.amount).await"),
+        "{api}"
+    );
+}
+
+/// A sql-bound function whose modeled body uses constructs outside the
+/// sql-function subset (a dispatch head, collection algebra, navigation)
+/// keeps its migration + signature but the body is a stub that names the
+/// gap — the module is the record, never a guess.
+#[tokio::test]
+async fn sql_body_out_of_subset_falls_back_to_stub_naming_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."BrokenAnswer"]
+implementation = "sql"
+"#;
+    run_binding_api_pipeline_with(
+        dir.path(),
+        BINDING_API_MODEL,
+        domains,
+        BINDING_API_PROFILES_TOML,
+    )
+    .await
+    .expect("out-of-subset sql pipeline still succeeds (stub, not error)");
+
+    let migration =
+        std::fs::read_to_string(dir.path().join("generated/migrations/022000_functions.sql"))
+            .expect("functions migration emitted");
+    assert!(
+        migration.contains("CREATE OR REPLACE FUNCTION store.broken_answer("),
+        "{migration}"
+    );
+    assert!(migration.contains("RAISE EXCEPTION"), "{migration}");
+    assert!(migration.contains("BrokenAnswer"), "{migration}");
+    assert!(
+        migration.contains("TODO(#450)"),
+        "the stub must carry the completion-brief marker: {migration}"
+    );
+
+    let sql_impl = read_split_file(dir.path(), "sql_impl.rs").expect("sql_impl.rs emitted");
+    assert!(
+        sql_impl.contains("TODO(#450)"),
+        "the Rust side records the completion brief too: {sql_impl}"
+    );
 }
 
 /// The E2 compile gate (issue #337): the emitted crate `cargo check`s

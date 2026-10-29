@@ -316,6 +316,7 @@ pub enum GlobalGeneratorKind {
     IntegrationDispatch,
     IntegrationCatalog,
     PublicOperationsRls,
+    FunctionsSql,
 }
 
 impl GlobalGeneratorKind {
@@ -368,6 +369,7 @@ impl GlobalGeneratorKind {
             Self::IntegrationDispatch => "integration_dispatch",
             Self::IntegrationCatalog => "integration_catalog",
             Self::PublicOperationsRls => "public_operations_rls",
+            Self::FunctionsSql => "functions_sql",
         }
     }
 
@@ -420,6 +422,7 @@ impl GlobalGeneratorKind {
             "integration_dispatch" => Self::IntegrationDispatch,
             "integration_catalog" => Self::IntegrationCatalog,
             "public_operations_rls" => Self::PublicOperationsRls,
+            "functions_sql" => Self::FunctionsSql,
             _ => return None,
         })
     }

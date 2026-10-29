@@ -2064,8 +2064,10 @@ generators = ["functions"]
 #[test]
 fn doctor_validates_function_bindings() {
     // Known function, valid values: no hard failures.
-    let out =
-        doctor_with_functions("\n[functions.\"OrderScore\"]\nimplementation = \"manual\"\n", None);
+    let out = doctor_with_functions(
+        "\n[functions.\"OrderScore\"]\nimplementation = \"manual\"\n",
+        None,
+    );
     let out = out.unwrap();
     assert!(
         out.starts_with("ok:"),
@@ -2080,9 +2082,11 @@ fn doctor_validates_function_bindings() {
     );
 
     // `sql` on the postgres target (no profiles.toml ⇒ default): passes.
-    let out =
-        doctor_with_functions("\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n", None)
-            .unwrap();
+    let out = doctor_with_functions(
+        "\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n",
+        None,
+    )
+    .unwrap();
     assert!(out.starts_with("ok:"), "sql on postgres must pass: {out}");
 
     // `sql` on a sqlite-target profile: hard failure naming the function.
