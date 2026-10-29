@@ -1923,10 +1923,14 @@ generators = ["functions", "scaffold", "webhook_dispatch"]
     assert!(lib.contains("pub mod events;"), "{lib}");
 }
 
-/// The E2 compile gate (issue #337): the emitted crate `cargo check`s
-/// cleanly with an exposed-function surface present. Ignored — it needs
-/// the full dependency stack; run it in the ops-integration lane or by
-/// hand: `cargo test -p codegraph --test rosetta_function_tests -- --ignored`.
+/// The E2 compile gate (issue #337 + the #551 compile-pin policy): the
+/// emitted crate `cargo check`s cleanly with an exposed-function surface
+/// present — carrying ALL THREE #450 slices (sql + external + event) so
+/// the async trait classes, the typed client structs, the prewired hook,
+/// the event consumers, and the widened drain spawn compile together.
+/// Ignored — it needs the full dependency stack; run it in the
+/// ops-integration lane or by hand:
+/// `cargo test -p codegraph --test rosetta_function_tests -- --ignored`.
 #[tokio::test]
 #[ignore = "compiles the emitted crate (minutes); ops-integration lane"]
 async fn emitted_crate_compiles_with_exposed_functions() {
@@ -1974,7 +1978,34 @@ generators = ["ddl", "sea_orm_entity", "codelist", "dto", "repository", "command
         Some((head, _)) => head.to_string(),
         None => BINDING_API_MODEL.to_string(),
     };
-    run_binding_api_pipeline_with(dir.path(), &model, BINDING_API_DOMAINS_TOML, &profiles)
+    // All three #450 slices ride the gate: SurchargeFor lowers to a
+    // Postgres function (async `SqlFnImpls` dispatch), BrokenAnswer gets
+    // the external client structs + prewired hook, HandSet stays manual —
+    // and its `event` exposure folds the events plane + drain in without
+    // any .evt input (webhook_dispatch is implied by the binding).
+    let domains = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.store]
+label = "Store"
+schema_dir = "store"
+postgres_schema = "store"
+entities = ["WidgetType"]
+
+[functions."SurchargeFor"]
+implementation = "sql"
+exposure = "http"
+
+[functions."BrokenAnswer"]
+implementation = "external"
+exposure = "http"
+
+[functions."HandSet"]
+implementation = "manual"
+exposure = "event"
+"#;
+    run_binding_api_pipeline_with(dir.path(), &model, domains, &profiles)
         .await
         .expect("compile-gate pipeline succeeds");
 
