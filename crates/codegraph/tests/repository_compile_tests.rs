@@ -232,6 +232,7 @@ async fn generate_tree(
             domain_types_base: Some(&domain_types_dir),
             hooks_base: None,
             ext_points: None,
+            integration_manifests: None,
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             ifml_components: None,

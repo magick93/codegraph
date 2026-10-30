@@ -130,6 +130,7 @@ pub(crate) async fn generate_full_app_from(output_dir: &std::path::Path, fixture
     let ui_domains = codegraph_config::UiDomainConfig::default();
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &engine,
             config: &config,
             output_dir,

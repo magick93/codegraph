@@ -42,6 +42,9 @@ pub(crate) struct GeneratorContext<'a> {
     pub(crate) hooks_base: Option<&'a Path>,
     /// Extension points config for integration infrastructure generators.
     pub(crate) ext_points: Option<&'a codegraph_ext_points::ExtensionPointsConfig>,
+    /// Integration catalog manifests (issue #552) — ride with `ext_points`
+    /// into the integration tables generator (catalog seed migration).
+    pub(crate) integration_manifests: Option<&'a codegraph_ext_points::IntegrationManifestSet>,
     /// Build profile plan controlling which generators to run.
     pub(crate) build_plan: Option<&'a crate::profile::BuildPlan>,
     /// Directory of the `domains.toml` config used for this run; sibling
@@ -134,6 +137,7 @@ pub(crate) async fn build_generator_context<'a>(
         domain_types_base,
         hooks_base,
         ext_points,
+        integration_manifests,
         build_plan, // used for has_webhooks / profile-based filter
         ifml_frameworks,
         ifml_components,
@@ -198,6 +202,7 @@ pub(crate) async fn build_generator_context<'a>(
         domain_types_base,
         hooks_base,
         ext_points,
+        integration_manifests,
         build_plan,
         domain_config_dir,
         ifml_frameworks,

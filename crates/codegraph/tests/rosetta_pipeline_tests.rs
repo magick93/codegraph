@@ -52,6 +52,7 @@ fn run_args<'a>(
     output: &'a std::path::Path,
 ) -> codegraph::driver::RunArgs<'a> {
     codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: config,
@@ -284,6 +285,7 @@ async fn rosetta_entity_reference_columns_survive_ddl_and_entity() {
     let hooks_tmp = tempfile::tempdir().unwrap();
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: backend.querier(),
             config: &config,
             output_dir: &output,
@@ -478,6 +480,7 @@ postgres_schema = "zzz"
     let hooks_tmp = tempfile::tempdir().unwrap();
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: backend.querier(),
             config: &config,
             output_dir: &output,
@@ -615,6 +618,7 @@ force_entities = ["ZetaType"]
     let rosetta = vec![model, zeta_model];
 
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &domains,

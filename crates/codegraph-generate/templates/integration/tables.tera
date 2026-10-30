@@ -13,7 +13,8 @@ CREATE TABLE platform_integrations.extension_points (
     allowed_directions TEXT[] NOT NULL
 );
 
--- Integration catalog (populated from manifests at deploy time)
+-- Integration catalog (seeded from --integration-manifests: see
+-- 0010_integration_catalog_seed.sql)
 CREATE TABLE platform_integrations.catalog (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

@@ -272,6 +272,7 @@ fn run_args<'a>(
     output: &'a Path,
 ) -> codegraph::driver::RunArgs<'a> {
     codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &fixture.config,

@@ -556,6 +556,7 @@ fn check_flag_plumbs_through_run_args() {
     let ifml_files: Vec<std::path::PathBuf> = Vec::new();
 
     let args = codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &config_path,
@@ -722,6 +723,7 @@ output = "generated/"
 
     // Good output + gate on: the run must pass end to end.
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &config,

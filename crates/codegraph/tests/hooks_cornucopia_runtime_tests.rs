@@ -155,6 +155,7 @@ async fn generate_tree(label: &str) -> GeneratedTree {
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &engine,
             config: &config,
             output_dir: &app_dir,

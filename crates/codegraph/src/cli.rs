@@ -31,6 +31,11 @@ pub enum Commands {
         /// Path to extension-points.toml (optional)
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Paths to integration catalog manifest TOML files (issue #552);
+        /// seed platform_integrations.catalog + optional demo installations.
+        /// Requires --extension-points. May be specified multiple times.
+        #[arg(long)]
+        integration_manifests: Vec<PathBuf>,
         /// Paths to additional template directories. Templates in these directories
         /// shadow codegraph's built-in templates by name. May be specified multiple
         /// times; later directories take precedence.
@@ -110,6 +115,11 @@ pub enum Commands {
         /// Path to extension-points.toml (optional)
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Paths to integration catalog manifest TOML files (issue #552);
+        /// seed platform_integrations.catalog + optional demo installations.
+        /// Requires --extension-points. May be specified multiple times.
+        #[arg(long)]
+        integration_manifests: Vec<PathBuf>,
         /// Profile name to use from profiles.toml (default: "default")
         #[arg(long, default_value = "default")]
         profile: String,

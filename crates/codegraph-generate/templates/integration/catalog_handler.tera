@@ -94,6 +94,10 @@ pub async fn list_installations(
 pub struct InstallRequest {
     pub catalog_id: String,
     pub settings: Option<serde_json::Value>,
+    /// Optional HMAC-SHA256 signing secret for event delivery (issue #511,
+    /// provisionable via the API since #552 — no raw SQL). NULL/omitted ⇒
+    /// unsigned delivery.
+    pub signing_secret: Option<String>,
 }
 
 #[utoipa::path(
@@ -127,14 +131,15 @@ pub async fn install_integration(
     let row = state.db
         .query_one_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
-            "INSERT INTO platform_integrations.installations (platform_organization_id, catalog_id, extension_point_id, status, installed_by)
-             VALUES ($1, $2, $3, 'active', $4)
+            "INSERT INTO platform_integrations.installations (platform_organization_id, catalog_id, extension_point_id, status, installed_by, signing_secret)
+             VALUES ($1, $2, $3, 'active', $4, $5)
              RETURNING id",
             [
                 auth.organization_id.into(),
                 body.catalog_id.clone().into(),
                 extension_point_id.into(),
                 auth.user_id.into(),
+                body.signing_secret.into(),
             ],
         ))
         .await
@@ -304,6 +309,59 @@ pub async fn update_installation_settings(
         .map_err(|e| AppError::internal(format!("Settings update failed: {e}")))?;
 
     Ok(Json(serde_json::json!({ "data": { "id": installation_id.to_string(), "settings": body } })))
+}
+
+/// Provision (or clear) the HMAC signing secret for an installation
+/// (issue #511 rider, API-provisionable since #552 — no raw SQL). The
+/// dispatcher SELECTs `i.signing_secret` fresh on every dispatch, so the
+/// next dispatch picks the new value up. The secret itself is never
+/// echoed back.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct SigningSecretRequest {
+    /// The new secret, or null to clear it (unsigned delivery).
+    pub signing_secret: Option<String>,
+}
+
+#[utoipa::path(
+    put,
+    path = "/api/{{ project.api_version }}/integrations/installations/{id}/signing-secret",
+    tag = "Integrations",
+    request_body = SigningSecretRequest,
+    params(("id" = Uuid, Path, description = "Installation ID")),
+    responses(
+        (status = 200, description = "OK"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn set_signing_secret(
+    State(state): State<AppState>,
+    axum::extract::Extension(auth): axum::extract::Extension<AuthInfo>,
+    Path(installation_id): Path<Uuid>,
+    Json(body): Json<SigningSecretRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let provisioned = body.signing_secret.is_some();
+    let affected = state.db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "UPDATE platform_integrations.installations
+             SET signing_secret = $1
+             WHERE id = $2 AND platform_organization_id = $3",
+            [
+                body.signing_secret.into(),
+                installation_id.into(),
+                auth.organization_id.into(),
+            ],
+        ))
+        .await
+        .map_err(|e| AppError::internal(format!("Signing secret update failed: {e}")))?;
+
+    if affected.rows_affected() == 0 {
+        return Err(AppError::not_found("Installation not found"));
+    }
+
+    Ok(Json(serde_json::json!({
+        "data": { "id": installation_id.to_string(), "signing_secret_set": provisioned }
+    })))
 }
 
 /// List extension points.

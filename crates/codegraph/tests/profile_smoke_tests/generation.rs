@@ -144,6 +144,7 @@ async fn generation_with_api_profile_produces_fewer_files_than_full() {
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -221,6 +222,7 @@ async fn generation_with_ui_profile_produces_only_ui_files() {
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -268,6 +270,7 @@ async fn generation_with_cli_profile_produces_only_cli_files() {
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -317,6 +320,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
     let hk1 = tempfile::TempDir::new().unwrap();
     let report_full =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output1.path(),
@@ -350,6 +354,7 @@ async fn generation_with_lite_variant_produces_fewer_files_than_full_api() {
     let hk2 = tempfile::TempDir::new().unwrap();
     let report_lite =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output2.path(),
@@ -407,6 +412,7 @@ generation_mode = "ddd_only"
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),

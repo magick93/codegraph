@@ -94,6 +94,7 @@ fn run_args<'a>(fixture: &'a Fixture, output: &'a Path) -> codegraph::driver::Ru
         config_path: &fixture.config,
         output,
         extension_points_path: None,
+        integration_manifests: &[],
         profile_name: "default",
         variant: None,
         // The workspace profiles.toml: pins that `hurl_contract` is ON in

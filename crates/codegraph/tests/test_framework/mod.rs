@@ -53,6 +53,7 @@ impl<'a> GeneratorTest<'a> {
                 domain_types_base: None,
                 hooks_base: None,
                 ext_points: None,
+                integration_manifests: None,
                 build_plan: None,
                 ifml_frameworks: Vec::new(),
                 ifml_components: None,

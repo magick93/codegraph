@@ -229,6 +229,7 @@ directions = ["push"]
             domain_types_base: Some(domain_types_tmp.path()),
             hooks_base: Some(hooks_tmp.path()),
             ext_points: Some(&ext),
+            integration_manifests: None,
             seed_config: None,
             build_plan: Some(&plan),
             ifml_frameworks: vec![],

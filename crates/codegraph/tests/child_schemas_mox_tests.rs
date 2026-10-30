@@ -178,6 +178,7 @@ fn run_args<'a>(
     root: &'a Path,
 ) -> codegraph::driver::RunArgs<'a> {
     codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas,
         classifier,
         config_path,

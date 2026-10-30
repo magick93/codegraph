@@ -169,6 +169,7 @@ pub(crate) async fn run_routing_generators_with_parts(
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),

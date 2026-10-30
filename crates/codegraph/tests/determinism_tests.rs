@@ -134,6 +134,7 @@ async fn run_generation(
         .collect();
 
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &config_path,
@@ -431,6 +432,7 @@ async fn run_json_schema_generation(output_dir: &Path) {
     let ui_domains = codegraph_config::UiDomainConfig::default();
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &engine,
             config: &config,
             output_dir,

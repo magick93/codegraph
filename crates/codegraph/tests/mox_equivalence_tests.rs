@@ -347,6 +347,7 @@ fn run_args<'a>(
         config_path,
         output,
         extension_points_path: None,
+        integration_manifests: &[],
         profile_name: "default",
         variant: None,
         // Nonexistent path ⇒ the no-plan (all generators) backward-compat

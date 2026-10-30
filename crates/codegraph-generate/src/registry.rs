@@ -613,10 +613,10 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
             Vec::new()
         };
         let integration_gens: [Box<dyn GlobalGenerator>; 4] = [
-            Box::new(integration::tables::IntegrationTablesGenerator::new(
-                output_dir,
-                ext.clone(),
-            )),
+            Box::new(
+                integration::tables::IntegrationTablesGenerator::new(output_dir, ext.clone())
+                    .with_manifests(ctx.integration_manifests),
+            ),
             Box::new(integration::config::IntegrationConfigGenerator::new(
                 output_dir,
                 ext.clone(),

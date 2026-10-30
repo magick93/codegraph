@@ -109,6 +109,7 @@ fn run_args<'a>(
     output: &'a Path,
 ) -> codegraph::driver::RunArgs<'a> {
     codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas,
         classifier: schemas.map(|_| Path::new("tests/fixtures/classifier.toml")),
         config_path: &fixture.config,
