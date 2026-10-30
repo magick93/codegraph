@@ -973,6 +973,44 @@ without schemas degrade to render tests). Emitted `playwright.config.ts`/`packag
 never overwrite existing files; the config gains env-gated Bearer auth
 (`IFML_API_KEY` → `extraHTTPHeaders`) for runs against an authenticated API.
 
+### IFML remote-functions data plane (issue #557, `ifml_remote_functions`)
+
+Master's first #557 slice resolved `PUBLIC_API_URL` and attached a
+`PUBLIC_API_KEY` Bearer on CLIENT-side fetches — the key is baked into the
+browser bundle. The `ifml_remote_functions` feature (default/fullstack ON;
+absent = the client plane, byte-identical) replaces it with SvelteKit
+**remote functions** (kit ≥ 2.27, `experimental.remoteFunctions` +
+`compilerOptions.experimental.async`): per-view colocated
+`src/routes/[{group}/]{view}/data.remote.ts` modules whose
+`query('unchecked', …)` / `command('unchecked', …)` exports execute on the
+SvelteKit server and post through an if-absent `$lib/server/api` helper
+(`apiFetch`) against `IFML_API_ORIGIN` with `Authorization` from the
+incoming RPC request's header (per-persona test keys arrive via
+`extraHTTPHeaders` and are forwarded — RLS isolation stays real) falling
+back to `IFML_API_KEY` private env. The browser only calls kit's generated
+same-origin RPC endpoints — the origin and credentials never reach the
+client, and the split-topology 404/401 class (the issue's failure mode)
+disappears with no CORS/proxy dependence. `+page.ts` loads keep their
+`result.items/item/formData/params` contract (guards/POM untouched) and
+await the queries; submit/transition/#559-action posts call commands
+returning `{ ok, message? }` (the formError UX is preserved). The skeleton
+emits TWO variants gated on the flag (base: kit `^2.20` + plain vite
+config; remote: kit `^2.27` + the experimental options) — files are
+if-absent, so flipping the flag on an existing tree needs
+`svelte/package.json` + `svelte/vite.config.ts` removed to pick the new
+toolchain up. The gate fixture carries the flag and the gate harness now
+threads `plan.codegen` flags (`ifml_e2e_auth` was silently dropped there
+forever); `EXPECTED_FAILURES` in `assert_gate_specs` carries the 6
+pre-existing auth/journey-surface failures surfaced by that threading
+(#572). Related surfaced-and-fixed: fixture POST bodies stripped the
+workflow-managed `status` key (create DTOs `deny_unknown_fields`, #539
+voided the "inert key" premise) and follow the DTO wire-key casing
+(`Fixture.casing` / `form_payload_block(casing)`); journey fills quote
+typed literals and use valid emails. Env contract for consumers:
+`IFML_API_ORIGIN` + `IFML_API_KEY` on the SvelteKit server process.
+Deferred: component-level awaits (retire `+page.ts`, #571); the #572
+denial-presentation/journey-arrival fixes.
+
 ### IFML app skeleton (`ifml-skeleton` generator)
 
 `IfmlSkeletonGenerator` (Global, `ifml_skeleton`/`ifml_skeleton_{fw}` capabilities;

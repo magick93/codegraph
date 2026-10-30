@@ -8,6 +8,10 @@ type HelpersFn = Box<dyn Fn() -> PathBuf + Send + Sync>;
 pub struct OutputPaths {
     pub route_page: RoutePageFn,
     pub route_load: Option<RouteLoadFn>,
+    /// Colocated remote-functions module (issue #557):
+    /// `src/routes/[{group}/]{view}/data.remote.ts` — svelte only, so the
+    /// remote-functions plane is svelte-only by construction.
+    pub route_remote: Option<RouteLoadFn>,
     pub navigation_map: NavMapFn,
     pub route_helpers: Option<HelpersFn>,
     /// The SvelteKit route group the view pages live under (issue #468
@@ -37,11 +41,18 @@ impl OutputPaths {
                 None => "src/routes".to_string(),
             };
             let load_dir = routes_dir.clone();
+            let remote_dir = load_dir.clone();
             paths.route_page = Box::new(move |name| {
                 PathBuf::from(format!("{routes_dir}/{}/+page.svelte", name.to_lowercase()))
             });
             paths.route_load = Some(Box::new(move |name| {
                 PathBuf::from(format!("{load_dir}/{}/+page.ts", name.to_lowercase()))
+            }));
+            paths.route_remote = Some(Box::new(move |name| {
+                PathBuf::from(format!(
+                    "{remote_dir}/{}/data.remote.ts",
+                    name.to_lowercase()
+                ))
             }));
             paths.route_root = route_root.map(str::to_string);
         }
@@ -62,6 +73,9 @@ impl OutputPaths {
                 route_load: Some(Box::new(|name| {
                     PathBuf::from(format!("src/routes/{}/+page.ts", name.to_lowercase()))
                 })),
+                route_remote: Some(Box::new(|name| {
+                    PathBuf::from(format!("src/routes/{}/data.remote.ts", name.to_lowercase()))
+                })),
                 navigation_map: Box::new(|| PathBuf::from("src/lib/routes.ts")),
                 route_helpers: Some(Box::new(|| PathBuf::from("src/lib/route-helpers.ts"))),
                 route_root: None,
@@ -79,6 +93,7 @@ impl OutputPaths {
                         codegraph_naming::to_kebab_case(name)
                     ))
                 })),
+                route_remote: None,
                 navigation_map: Box::new(|| PathBuf::from("src/lib/routes.ts")),
                 route_helpers: None,
                 route_root: None,
@@ -91,6 +106,7 @@ impl OutputPaths {
                     ))
                 }),
                 route_load: None,
+                route_remote: None,
                 navigation_map: Box::new(|| PathBuf::from("src/lib/routes.ts")),
                 route_helpers: None,
                 route_root: None,
@@ -103,6 +119,7 @@ impl OutputPaths {
                     ))
                 }),
                 route_load: None,
+                route_remote: None,
                 navigation_map: Box::new(|| PathBuf::from("lib/app/routes.dart")),
                 route_helpers: None,
                 route_root: None,
@@ -110,6 +127,7 @@ impl OutputPaths {
             "swiftui" => Self {
                 route_page: Box::new(|name| PathBuf::from(format!("Views/{}View.swift", name))),
                 route_load: None,
+                route_remote: None,
                 navigation_map: Box::new(|| PathBuf::from("App/Navigation/RouteMap.swift")),
                 route_helpers: None,
                 route_root: None,
@@ -121,6 +139,7 @@ impl OutputPaths {
                 route_load: Some(Box::new(|name| {
                     PathBuf::from(format!("src/routes/{}/+page.ts", name.to_lowercase()))
                 })),
+                route_remote: None,
                 navigation_map: Box::new(|| PathBuf::from("src/lib/routes.ts")),
                 route_helpers: Some(Box::new(|| PathBuf::from("src/lib/route-helpers.ts"))),
                 route_root: None,

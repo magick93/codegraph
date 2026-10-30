@@ -104,6 +104,13 @@ ux_rules = true
 # public.create_api_key), persona fixtures, {view}.auth.spec.ts, journey
 # specs, and the extended POM surface. Off = byte-identical.
 ifml_e2e_auth = true
+# IFML remote-functions data plane (issue #557). When true the svelte view
+# loads/posts call server-executed `data.remote.ts` exports ($app/server
+# query/command) — the API origin (IFML_API_ORIGIN) and its credentials
+# (IFML_API_KEY / the incoming request's Authorization header) never reach
+# the browser. Requires SvelteKit >= 2.27 (the ifml-skeleton pins it).
+# Off = the PUBLIC_API_URL/apiHeaders client plane, byte-identical.
+ifml_remote_functions = true
 
 [profiles.default.api]
 generators = [
@@ -258,6 +265,7 @@ validation_level = "strict"
 grpc_backend = true
 ux_rules = true
 ifml_e2e_auth = true
+ifml_remote_functions = true
 
 [profiles.fullstack.api]
 generators = [

@@ -141,6 +141,15 @@ pub struct CodegenConfig {
     /// specs, and the extended POM surface. Default false = byte-identical.
     #[serde(default)]
     pub ifml_e2e_auth: bool,
+    /// IFML remote-functions data plane (issue #557): when true the svelte
+    /// view loads/posts call server-executed `data.remote.ts` exports
+    /// (`$app/server` query/command) — the API origin and its credentials
+    /// never reach the browser. Requires SvelteKit >= 2.27 with the
+    /// `remoteFunctions`/`async` experimental options (the ifml-skeleton
+    /// emits both). Default false = the PUBLIC_API_URL/apiHeaders client
+    /// plane, byte-identical.
+    #[serde(default)]
+    pub ifml_remote_functions: bool,
     /// One testid vocabulary (issue #468 W3): when true the `ui_testids`
     /// global generator emits `ui/src/lib/testids.js` + `testids.d.ts` and
     /// the generated POM/spec templates import it, binding the test surface
@@ -168,6 +177,7 @@ impl Default for CodegenConfig {
             namespace_layout: false,
             expr_ir: false,
             ifml_e2e_auth: false,
+            ifml_remote_functions: false,
             testid_module: false,
             structural_gates: false,
             types_import_prefix: "codegraph_type_contracts".into(),
@@ -437,6 +447,7 @@ mod tests {
             ("namespace_layout", serde_json::json!(false)),
             ("expr_ir", serde_json::json!(false)),
             ("ifml_e2e_auth", serde_json::json!(false)),
+            ("ifml_remote_functions", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),

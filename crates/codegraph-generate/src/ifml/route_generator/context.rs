@@ -9,11 +9,13 @@ use serde::Serialize;
 use crate::ProjectConfig;
 use crate::ifml::api_paths::{ResolvedApi, id_param_from, resolve_entity_api};
 use crate::ifml::context::{IfmlComponent, IfmlViewContainer};
+use crate::project_config::DtoKeyCasing;
 
 use super::load::form_payload_block;
 use super::render::{
     build_submit, button_context, container_context, humanize_event_label, modal_context,
-    primary_event_requires, render_chart, render_event, render_form, render_table, sanitize_ident,
+    primary_event_requires, remote_camel, remote_pascal, render_chart, render_event, render_form,
+    render_table, sanitize_ident,
 };
 use super::roles::{
     component_role, is_collection, is_form_component, kind_of, mapped_fields, mapping_context,
@@ -49,6 +51,12 @@ pub struct PageSvelteContext {
     /// transition posts) — gates the PUBLIC_API_URL/auth-header block
     /// (issue #557).
     pub(super) has_api_surface: bool,
+    /// Remote-functions data plane (issue #557): when true the page's
+    /// loads/posts call the view's server-executed `data.remote.ts` exports
+    /// instead of client `fetch` — the API origin and its credentials never
+    /// reach the browser. Flag off keeps the PUBLIC_API_URL/apiHeaders
+    /// client plane byte-identical.
+    pub(super) remote_api: bool,
     /// Whether any component carries action-event controls (issue #559):
     /// gates the shared `actionError` state + the op handlers.
     pub(super) has_action_buttons: bool,
@@ -301,6 +309,12 @@ pub struct PageComponentContext {
     /// handler: `{base}/${id}/actions/transition`; `None` when the component
     /// carries no transition buttons.
     pub(crate) transition_url_expr: Option<String>,
+    /// Remote-functions transition command (issue #557): `Some` when the
+    /// `ifml_remote_functions` flag routes the transition post through the
+    /// view's server-executed `data.remote.ts` export instead of a client
+    /// fetch. Set exactly when [`Self::transition_url_expr`] is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) remote_transition: Option<RemoteCommand>,
     /// Markup gate for the submit control: the view gate AND-composed with
     /// the primary save/submit event's `requires` check. Equals the view
     /// gate (byte-identical) when no event-level requires exist.
@@ -397,6 +411,11 @@ pub struct RenderSubmit {
     /// POSTs this (collection). `None` for views without an id param, which
     /// always POST the collection.
     pub(super) create_url_expr: Option<String>,
+    /// Remote-functions command (issue #557): `Some` when the
+    /// `ifml_remote_functions` flag routes the post through the view's
+    /// server-executed `data.remote.ts` export instead of a client fetch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) remote_command: Option<RemoteCommand>,
     /// Name of the id param gating the edit branch (`!!viewParams.<name>`).
     pub(super) edit_param: Option<String>,
     /// Navigation target URL expression from the view's save event.
@@ -404,6 +423,42 @@ pub struct RenderSubmit {
     /// Emit the conservative client-side check that surfaces the first
     /// failing validation message before the network request.
     pub(super) client_validate: bool,
+}
+
+/// Remote-functions command wiring (issue #557): one server-executed
+/// mutation export in the view's `data.remote.ts`. The client calls the
+/// export; the server performs the actual API post through
+/// `$lib/server/api` (origin + credentials never reach the browser).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RemoteCommand {
+    /// Export name in the view's `data.remote.ts`
+    /// (`submitGrid` / `transitionGrid` / `requestFiling`).
+    pub export: String,
+    /// Collection path including version + domain
+    /// (e.g. `/api/v1/sales/customer`).
+    pub base_path: String,
+    /// The `viewParams` key the caller reads the row id from. `None`
+    /// passes `null` (create-mode submit: the server POSTs the collection).
+    pub(super) id_param: Option<String>,
+    /// What the server-side handler posts:
+    /// `Create` → POST `{base}`; `Update` → PUT `{base}/{id}`;
+    /// `Transition` → POST `{base}/{id}/actions/transition` with
+    /// `{ target_state }`; `Op` → POST `{base}/{id}/actions/{op}`.
+    #[serde(skip_serializing)]
+    pub kind: RemoteCommandKind,
+}
+
+/// The server-side HTTP shape a [`RemoteCommand`] export performs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemoteCommandKind {
+    /// POST the collection (form create mode).
+    Create,
+    /// PUT the item (form edit mode).
+    Update,
+    /// POST `{base}/{id}/actions/transition` with `{ target_state }`.
+    Transition,
+    /// POST `{base}/{id}/actions/{op}` (issue #559 action events).
+    Op(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -533,8 +588,15 @@ pub struct RenderActionButton {
     pub testid: String,
     /// JS template literal for the op URL (`` `{base}/${viewParams.id}/actions/{op}` ``).
     pub url_expr: String,
+    /// The snake_cased op the event targets (`request_filing`).
+    pub(super) op: String,
     /// Capability requirements of the source event.
     pub requires: Vec<String>,
+    /// Remote-functions command (issue #557): `Some` when the
+    /// `ifml_remote_functions` flag routes the op post through the view's
+    /// server-executed `data.remote.ts` export instead of a client fetch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) remote_command: Option<RemoteCommand>,
     /// Ready-to-render gate markers around the button: the view gate
     /// AND-composed with the event's `requires` check; empty when no gate
     /// applies.
@@ -753,6 +815,11 @@ pub struct PageLoadContext {
     /// during SSR, before any data fetch). Standalone keeps the
     /// browser-gated guard (no layout provides server roles).
     pub(super) integrated: bool,
+    /// Remote-functions data plane (issue #557): when true the load awaits
+    /// the view's server-executed `data.remote.ts` query instead of
+    /// client-fetching the API. Flag off keeps the PUBLIC_API_URL/apiHeaders
+    /// client plane byte-identical.
+    pub(super) remote_api: bool,
     /// Redirect target when a guard fails: the first unguarded view's
     /// route, else `/`.
     pub(super) denial_target: String,
@@ -785,6 +852,12 @@ pub struct PageLoadComponentContext {
     pub(super) fetch_list: bool,
     pub(super) fetch_item: bool,
     pub(super) fetch_form: bool,
+    /// Remote-functions query export (issue #557): the `data.remote.ts`
+    /// export name (`getGrid`) this load awaits instead of client-fetching.
+    /// `Some` exactly when any fetch kind is active under the
+    /// `ifml_remote_functions` flag; `None` renders no import/call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) remote_query: Option<String>,
 }
 
 /// The lowered TypeScript guard for a view's `condition:`, or `None`.
@@ -821,6 +894,9 @@ pub(super) async fn build_page_context(
     project: &ProjectConfig,
 ) -> crate::error::Result<PageSvelteContext> {
     let id_param = id_param_from(&vc.params);
+    // Remote-functions data plane (issue #557): flag-driven — commands
+    // replace the client fetch/`apiHeaders` posts when on.
+    let remote = project.codegen.ifml_remote_functions;
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
     let container = container_context(vc, mappings);
 
@@ -837,6 +913,7 @@ pub(super) async fn build_page_context(
             &mut api_cache,
             modal_targets,
             ux,
+            project.codegen.dto_key_casing,
         )
         .await;
         components.push(ctx);
@@ -874,6 +951,7 @@ pub(super) async fn build_page_context(
                     &mut api_cache,
                     modal_targets,
                     ux,
+                    project.codegen.dto_key_casing,
                 )
                 .await;
                 ctx.in_container = true;
@@ -1000,6 +1078,43 @@ pub(super) async fn build_page_context(
                         "`{}/${{viewParams.{param}}}/actions/transition`",
                         api.base_path
                     ));
+                    if remote {
+                        comp.remote_transition = Some(RemoteCommand {
+                            export: format!("transition{}", remote_pascal(&comp.name)),
+                            base_path: api.base_path.clone(),
+                            id_param: Some(param.clone()),
+                            kind: RemoteCommandKind::Transition,
+                        });
+                    }
+                }
+            }
+
+            if remote
+                && let Some(submit) = &mut comp.submit
+                && let Some(api) = &comp.api
+            {
+                submit.remote_command = Some(RemoteCommand {
+                    export: format!("submit{}", remote_pascal(&comp.name)),
+                    base_path: api.base_path.clone(),
+                    id_param: submit.edit_param.clone(),
+                    kind: if submit.edit_param.is_some() {
+                        RemoteCommandKind::Update
+                    } else {
+                        RemoteCommandKind::Create
+                    },
+                });
+            }
+
+            if remote {
+                for btn in &mut comp.action_buttons {
+                    if let Some(api) = &comp.api {
+                        btn.remote_command = Some(RemoteCommand {
+                            export: remote_camel(&btn.op),
+                            base_path: api.base_path.clone(),
+                            id_param: id_param.clone(),
+                            kind: RemoteCommandKind::Op(btn.op.clone()),
+                        });
+                    }
                 }
             }
 
@@ -1071,6 +1186,7 @@ pub(super) async fn build_page_context(
         needs_invalidate,
         has_submit,
         has_api_surface,
+        remote_api: remote,
         has_action_buttons,
         groups,
         view_role: semantic_view_role(vc),
@@ -1097,6 +1213,7 @@ pub(super) async fn page_component_context(
     api_cache: &mut HashMap<String, Option<ResolvedApi>>,
     modal_targets: &HashSet<String>,
     ux: Option<&UxGeneration<'_>>,
+    dto_casing: DtoKeyCasing,
 ) -> PageComponentContext {
     let (mut table, form, chart) = match c.spec {
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
@@ -1269,7 +1386,9 @@ pub(super) async fn page_component_context(
                         api.as_ref().expect("api checked").base_path,
                         id_param.as_ref().expect("id_param checked"),
                     ),
+                    op: op_snake.clone(),
                     requires: e.requires.clone(),
+                    remote_command: None,
                     gate_open: String::new(),
                     gate_close: String::new(),
                 }
@@ -1334,8 +1453,17 @@ pub(super) async fn page_component_context(
     );
     let workflow = component_workflow(config, c);
     let form_state = is_form_component(c) && mapping.is_none();
+    // The workflow status field is WORKFLOW-MANAGED: the create/update DTOs
+    // exclude it and `deny_unknown_fields` (#539) rejects the key — the
+    // typed submit payload must not carry it (the DDL default materializes
+    // the initial state).
     let form_payload = if form_state {
-        form_payload_block(c, form.as_ref())
+        form_payload_block(
+            c,
+            form.as_ref(),
+            workflow.as_ref().map(|w| w.status_field.as_str()),
+            dto_casing,
+        )
     } else {
         String::new()
     };
@@ -1371,6 +1499,7 @@ pub(super) async fn page_component_context(
         fetch_item: false,
         fetch_form: false,
         transition_url_expr: None,
+        remote_transition: None,
         submit_gate: ControlGateContext::default(),
         form_state,
         form_payload,

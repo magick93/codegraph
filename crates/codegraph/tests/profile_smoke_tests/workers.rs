@@ -50,6 +50,7 @@ async fn run_routing_generators(
         ux_rules: false,
         expr_ir: false,
         ifml_e2e_auth: false,
+        ifml_remote_functions: false,
         testid_module: false,
         structural_gates: false,
         public_operations_rls: false,

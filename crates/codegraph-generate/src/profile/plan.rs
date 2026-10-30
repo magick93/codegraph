@@ -71,6 +71,10 @@ pub struct BuildPlan {
     pub ux_rules: bool,
     /// IFML test-side auth surface (issue #463): `ifml_e2e_auth` feature.
     pub ifml_e2e_auth: bool,
+    /// IFML remote-functions data plane (issue #557): `ifml_remote_functions`
+    /// feature — view loads/posts run through server-executed SvelteKit
+    /// remote functions instead of client fetches.
+    pub ifml_remote_functions: bool,
     /// One testid vocabulary (issue #468 W3): `testid_module` feature —
     /// emits `ui/src/lib/testids.js` + `testids.d.ts` and switches the
     /// POM/spec templates to import it. Default false = byte-identical.
@@ -292,6 +296,17 @@ impl BuildPlan {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // Parse ifml_remote_functions from features (issue #557; default:
+        // false). Like ux_rules, a non-bool value is a parse error naming
+        // the key — the flag gates an output plane, so a typo'd
+        // `ifml_remote_functions = "yes"` must not silently disable it.
+        let ifml_remote_functions = match profile.features.get("ifml_remote_functions") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"ifml_remote_functions\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
         // Parse testid_module from features (issue #468 W3; default: false).
         let testid_module = profile
             .features
@@ -334,6 +349,7 @@ impl BuildPlan {
             ux_rules,
             expr_ir,
             ifml_e2e_auth,
+            ifml_remote_functions,
             testid_module,
             structural_gates,
             public_operations_rls,
@@ -396,6 +412,7 @@ impl BuildPlan {
             ux_rules: false,
             expr_ir: false,
             ifml_e2e_auth: false,
+            ifml_remote_functions: false,
             testid_module: false,
             structural_gates: false,
             public_operations_rls: false,

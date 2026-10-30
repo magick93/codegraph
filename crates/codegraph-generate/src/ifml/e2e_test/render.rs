@@ -747,8 +747,10 @@ pub(crate) async fn ux_chip_checks(
 pub(crate) async fn ux_fixture_entries(
     db: &dyn GraphQuerier,
     c: &IfmlComponent,
+    workflow_status: Option<&str>,
 ) -> Vec<(String, String)> {
-    let mut entries = fixture_entries(c);
+    let entries = fixture_entries(c);
+    let mut entries = super::fixtures::strip_workflow_status(entries, workflow_status);
     for (field, value) in entries.iter_mut() {
         if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
             *value = format!("'{}'", js_string(&code));

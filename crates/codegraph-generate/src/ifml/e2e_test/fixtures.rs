@@ -1,6 +1,7 @@
 //! Fixture payloads and TS-literal/URL-pattern helpers for the IFML e2e
 //! generator (issue #317 module split).
 
+use heck::ToLowerCamelCase;
 use rex_ifml::{ComponentSpec, FormSpec};
 
 use super::super::api_paths::{ResolvedApi, resolve_entity_api};
@@ -8,10 +9,17 @@ use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContai
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 
+use crate::project_config::DtoKeyCasing;
+
 #[derive(Debug, Clone)]
 pub struct Fixture {
     pub base_path: String,
     pub entries: Vec<(String, String)>,
+    /// The DTO wire-key casing (#539 follow-through): the create/update
+    /// DTOs `deny_unknown_fields`, so the JSON keys must match the serde
+    /// contract — the schema property name (`submittedAt`) is NOT the key
+    /// under the default snake casing (`submitted_at`).
+    pub casing: DtoKeyCasing,
 }
 
 impl Fixture {
@@ -19,10 +27,39 @@ impl Fixture {
         let inner = self
             .entries
             .iter()
-            .map(|(k, v)| format!("'{k}': {v}"))
+            .map(|(k, v)| format!("'{}': {v}", self.wire_key(k)))
             .collect::<Vec<_>>()
             .join(", ");
         format!("{{ {inner} }}")
+    }
+
+    /// The DTO serde key for a schema property name: the Rust field name
+    /// (`to_snake_case`) verbatim under the snake casing, camelCased under
+    /// the camel casing (the `rename_all = "camelCase"` contract).
+    fn wire_key(&self, schema_field: &str) -> String {
+        let rust_field = codegraph_naming::to_snake_case(schema_field);
+        match self.casing {
+            DtoKeyCasing::Snake => rust_field,
+            DtoKeyCasing::Camel => rust_field.to_lower_camel_case(),
+        }
+    }
+}
+
+/// Drop the workflow status field from a create-body entry list. The status
+/// is WORKFLOW-MANAGED: the create DTO excludes it, and since #539 the DTOs
+/// `deny_unknown_fields` — the pre-#539 "inert key on the wire" premise is
+/// void and the key 422s. The row's state materializes via the DDL column
+/// DEFAULT (the initial state), which is what the state-chip assertions pin.
+pub(crate) fn strip_workflow_status(
+    entries: Vec<(String, String)>,
+    status_field: Option<&str>,
+) -> Vec<(String, String)> {
+    match status_field {
+        Some(status) => entries
+            .into_iter()
+            .filter(|(field, _)| field != status)
+            .collect(),
+        None => entries,
     }
 }
 
@@ -133,6 +170,12 @@ pub(crate) fn modifiable_field(
 
 pub(crate) fn js_value_for_type(field: &str, rust_type: &str) -> String {
     let t = rust_type.to_ascii_lowercase();
+    if t.contains("string") && field.to_ascii_lowercase().contains("email") {
+        // Email inputs: prose fails the browser's type=email validation and
+        // the client-validate check blocks the submit (the journey leg of
+        // the gate caught it).
+        return "'test@example.com'".to_string();
+    }
     if t.contains("bool") {
         return "true".to_string();
     }

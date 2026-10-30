@@ -20,6 +20,7 @@ use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 mod context;
 mod hydration;
 mod load;
+mod remote;
 mod render;
 mod roles;
 #[cfg(test)]
@@ -31,11 +32,11 @@ pub(crate) use hydration::{actor_role_tokens, role_token_matches};
 
 pub use context::{
     ControlGateContext, LayoutSvelteContext, PageComponentContext, PageLoadComponentContext,
-    PageLoadContext, PageSvelteContext, PageUxContext, RenderButton, RenderChart, RenderColumn,
-    RenderColumnUx, RenderContainer, RenderEvent, RenderForm, RenderGroup, RenderImport,
-    RenderInputField, RenderMapping, RenderModal, RenderNavItem, RenderRowMenuEvent,
-    RenderShellNav, RenderSubmit, RenderTable, RenderTimeline, RenderTransition, RenderViewParam,
-    RenderWorkflow, TableLayout,
+    PageLoadContext, PageSvelteContext, PageUxContext, RemoteCommand, RemoteCommandKind,
+    RenderButton, RenderChart, RenderColumn, RenderColumnUx, RenderContainer, RenderEvent,
+    RenderForm, RenderGroup, RenderImport, RenderInputField, RenderMapping, RenderModal,
+    RenderNavItem, RenderRowMenuEvent, RenderShellNav, RenderSubmit, RenderTable, RenderTimeline,
+    RenderTransition, RenderViewParam, RenderWorkflow, TableLayout,
 };
 pub(crate) use render::{
     mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
@@ -195,6 +196,27 @@ impl GlobalGenerator for IfmlRouteGenerator {
         let page_template = format!("ifml/{}/page.tera", self.framework);
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
+        // Remote-functions data plane (issue #557): svelte-only (the
+        // `data.remote.ts` convention is SvelteKit); other frameworks with
+        // the flag on warn once and keep the client plane.
+        let remote = if project.codegen.ifml_remote_functions {
+            if self.framework == "svelte" {
+                true
+            } else {
+                eprintln!(
+                    "warning: ifml_route: ifml_remote_functions is svelte-only \
+                     (framework '{}'): keeping the client fetch plane",
+                    self.framework
+                );
+                false
+            }
+        } else {
+            false
+        };
+        // If-absent emission (roles.ts convention): a consumer-owned
+        // server helper survives regeneration.
+        let mut server_helper_needed = false;
+
         let modal_targets: HashSet<String> = model
             .view_containers
             .iter()
@@ -251,6 +273,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
                     &ctx.components,
                     &denial,
                     self.output_paths.route_root() == Some(ROUTE_GROUP),
+                    remote,
                 );
                 match render_template(tera, &load_template, &load_ctx) {
                     Ok(content) => files.push(GeneratedFile {
@@ -262,6 +285,44 @@ impl GlobalGenerator for IfmlRouteGenerator {
                         load_template, vc.name
                     ),
                 }
+
+                if remote {
+                    let mut module = remote::RemoteModuleContext::from_load(&load_ctx);
+                    for comp in &ctx.components {
+                        if let Some(submit) = comp.submit.as_ref()
+                            && let Some(command) = &submit.remote_command
+                        {
+                            module.push_command(command);
+                        }
+                        if let Some(command) = &comp.remote_transition {
+                            module.push_command(command);
+                        }
+                        for btn in &comp.action_buttons {
+                            if let Some(command) = &btn.remote_command {
+                                module.push_command(command);
+                            }
+                        }
+                    }
+                    if let Some(route_remote_fn) = self.output_paths.route_remote.as_ref()
+                        && !module.is_empty()
+                    {
+                        files.push(GeneratedFile {
+                            path: self.output_dir.join(route_remote_fn(&vc.name)),
+                            content: module.render(),
+                        });
+                        server_helper_needed = true;
+                    }
+                }
+            }
+        }
+
+        if remote && server_helper_needed {
+            let helper = self.output_dir.join("src/lib/server/api.ts");
+            if !helper.exists() {
+                files.push(GeneratedFile {
+                    path: helper,
+                    content: remote::render_server_api_helper(),
+                });
             }
         }
 

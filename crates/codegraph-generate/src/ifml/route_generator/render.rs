@@ -56,6 +56,7 @@ pub(super) fn build_submit(
         method,
         create_url_expr,
         edit_param,
+        remote_command: None,
         navigate_url,
         client_validate: form_has_messages(c),
     })
@@ -445,6 +446,23 @@ pub(super) fn nav_url_expr(target: &str, binding: &HashMap<String, String>) -> S
     pairs.sort();
     let query: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}=${{{v}}}")).collect();
     format!("`{path}?{}`", query.join("&"))
+}
+
+/// Pascal-cased component name for remote-function export names
+/// (`grid` → `getGrid`, `home_grid` → `getHomeGrid`).
+pub(super) fn remote_pascal(name: &str) -> String {
+    codegraph_naming::to_pascal_case(name)
+}
+
+/// camel-cased op name for remote-function export names
+/// (`request_filing` → `requestFiling`).
+pub(super) fn remote_camel(op_snake: &str) -> String {
+    let pascal = codegraph_naming::to_pascal_case(op_snake);
+    let mut chars = pascal.chars();
+    match chars.next() {
+        Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        None => pascal,
+    }
 }
 
 pub(super) fn sanitize_ident(name: &str) -> String {

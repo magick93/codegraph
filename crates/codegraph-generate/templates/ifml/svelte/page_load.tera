@@ -1,7 +1,15 @@
 import type { PageLoad } from './$types';
 {% if has_fetch %}
+{%- if remote_api -%}
+{%- for comp in components %}
+{%- if comp.remote_query %}
+import { {{ comp.remote_query }} } from './data.remote';
+{%- endif %}
+{%- endfor %}
+{%- else %}
 import { error } from '@sveltejs/kit';
 import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
+{%- endif %}
 {%- endif %}
 {%- if view_roles or view_requires %}
 import { redirect } from '@sveltejs/kit';
@@ -19,7 +27,7 @@ import { can } from '$lib/roles';
 {{ guard_consts }}
 {%- endif %}
 {%- endif %}
-{%- if has_fetch %}
+{%- if has_fetch and not remote_api %}
 
 // Issue #557: fetches resolve the API ORIGIN (PUBLIC_API_URL) and carry
 // the Bearer key — a relative same-origin fetch dies under a split
@@ -33,7 +41,7 @@ const apiHeaders: Record<string, string> = {
 	...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
 };
 {%- endif %}
-export const load: PageLoad = async ({ params, url, fetch{% if integrated and (view_roles or view_requires) %}, parent{% endif %} }) => {
+export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch{% endif %}{% if integrated and (view_roles or view_requires) %}, parent{% endif %} }) => {
 {%- if view_roles or view_requires %}
 {%- if integrated %}
 	// Server-decided gating (issue #468 W-a): the (views)/+layout.server.ts
@@ -81,6 +89,21 @@ export const load: PageLoad = async ({ params, url, fetch{% if integrated and (v
 	result.params = viewParams;
 {%- endif %}
 {% for comp in components %}
+{%- if remote_api %}
+{%- if comp.remote_query and comp.fetch_list %}
+	result.items = await {{ comp.remote_query }}({% if comp.paginate %}{ page: url.searchParams.get('page') ?? '0', pageSize: url.searchParams.get('page_size') ?? '20' }{% endif %});
+{%- elif comp.remote_query and comp.fetch_item %}
+	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
+	if ({{ comp.id_param }}) {
+		result.item = await {{ comp.remote_query }}({{ comp.id_param }});
+	}
+{%- elif comp.remote_query and comp.fetch_form %}
+	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
+	if ({{ comp.id_param }}) {
+		result.formData = await {{ comp.remote_query }}({{ comp.id_param }});
+	}
+{%- endif %}
+{%- else %}
 {%- if comp.fetch_list %}
 	const {{ comp.name }}Response = await fetch(`${API_BASE}{{ comp.api.base_path }}{% if comp.paginate %}?page=${url.searchParams.get('page') ?? '0'}&page_size=${url.searchParams.get('page_size') ?? '20'}{% endif %}`, { headers: apiHeaders });
 	if (!{{ comp.name }}Response.ok) {
@@ -124,6 +147,7 @@ export const load: PageLoad = async ({ params, url, fetch{% if integrated and (v
 {%- endif %}
 		result.formData = {{ comp.name }}Data;
 	}
+{%- endif %}
 {%- endif %}
 {%- endfor %}
 
