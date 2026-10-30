@@ -12,6 +12,7 @@ pub mod profile;
 pub mod quality_gates;
 pub mod report;
 pub mod rosetta_expr;
+pub mod server_api;
 pub mod template_engine;
 pub mod traits;
 pub mod type_registry;

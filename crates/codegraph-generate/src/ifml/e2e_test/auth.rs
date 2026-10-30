@@ -14,7 +14,7 @@
 //!   `.auth/{persona}.json` storage states carrying the apiKey, roles, and
 //!   capabilities. Provisioning is best-effort: without `DATABASE_URL` (or
 //!   against an unmigrated database) it warns and skips, so suites keep
-//!   running under the project-level `IFML_API_KEY` header.
+//!   running under the project-level `API_KEY` header.
 //! - [`render_personas`] — `tests/e2e/personas.ts`: per-persona `test.use`
 //!   fixtures (storage state + Bearer header) and the ONE place seeding
 //!   `__USER_ROLES__` / `__USER_CAPABILITIES__` (from generation-time
@@ -136,7 +136,7 @@ pub(crate) fn render_auth_setup(personas: &[PersonaSpec]) -> String {
     s.push_str("// DATABASE_URL) and writes the .auth/{persona}.json storage states carrying\n");
     s.push_str("// the apiKey, roles, and capabilities. Without DATABASE_URL (or against an\n");
     s.push_str("// unmigrated database) provisioning is skipped with a warning and personas\n");
-    s.push_str("// fall back to the suite-level IFML_API_KEY header.\n\n");
+    s.push_str("// fall back to the suite-level API_KEY header.\n\n");
     s.push_str("import { execFileSync } from 'node:child_process';\n");
     s.push_str("import { mkdirSync, writeFileSync } from 'node:fs';\n");
     s.push_str("import { join } from 'node:path';\n\n");

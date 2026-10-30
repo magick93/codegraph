@@ -176,6 +176,21 @@ impl GlobalGenerator for UiScaffoldGenerator {
             );
         }
 
+        // The shared server-side API helper (issue #574 S1): the ONE
+        // origin/auth contract for every server-side fetch — the entity
+        // +page.server.ts loads now, the IFML remote functions share the
+        // identical source. Emitted if-absent so hand edits survive
+        // regeneration; `$lib/server/**` is SvelteKit's server-only
+        // convention (a client import is a build error), the structural
+        // guardrail keeping credentials server-side.
+        let server_api = lib.join("server").join("api.ts");
+        if !server_api.exists() {
+            files.push(GeneratedFile {
+                path: server_api,
+                content: crate::server_api::server_api_helper_ts().to_string(),
+            });
+        }
+
         Ok(files)
     }
 }

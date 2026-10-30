@@ -54,12 +54,15 @@ pub fn run_specs(
             ("CI", "1"),
             ("IFML_PREVIEW_PORT", preview_port_env.as_str()),
             ("IFML_GATE_REPORT", report_env.as_str()),
-            ("IFML_API_ORIGIN", api_origin_env.as_str()),
-            ("IFML_GATE_API_KEY", api_key),
+            // The neutral server contract (issue #574 S1): the helper and
+            // the vite proxy read API_ORIGIN/API_KEY (the deprecated
+            // IFML_* spellings are fallbacks only).
+            ("API_ORIGIN", api_origin_env.as_str()),
+            ("GATE_API_KEY", api_key),
             // The remote-functions plane (#557): the SvelteKit server's
-            // fallback credential (app contract name — distinct from the
-            // harness's IFML_GATE_API_KEY proxy injection).
-            ("IFML_API_KEY", api_key),
+            // fallback credential (distinct from the harness's GATE_API_KEY
+            // proxy injection).
+            ("API_KEY", api_key),
         ],
         Duration::from_secs(900),
     )?;

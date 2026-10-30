@@ -367,7 +367,7 @@ listed for completeness:
 | `CODEGRAPH_ROOT` | exported via `--codegraph-root` | Inherited by hooks, cargo, and the generated app; lets manifests reference the codegraph checkout via `{env:CODEGRAPH_ROOT}`. |
 | `CORNUCOPIA_DATABASE_URL` | exported | Build-time Postgres URL for the cornucopia provider's `build.rs` (also set for app-binary spawns). |
 | `PSQL_PATH`, `NPX_PATH` | read | Directory overrides for psql / npx discovery (PATH and common install locations are probed otherwise). |
-| `IFML_API_KEY` | read (generated config) | NOT consumed by the harness itself: the generated IFML Playwright config uses it for env-gated Bearer auth (`extraHTTPHeaders`) when running against an authenticated API. |
+| `API_KEY` | read (generated config) | NOT consumed by the harness itself: the generated IFML Playwright config uses it for env-gated Bearer auth (`extraHTTPHeaders`) when running against an authenticated API (issue #574 S1; the deprecated `IFML_API_KEY` spelling still reads as a fallback in the generated server helper). |
 
 Files: the shared API-key provision file is
 `/tmp/codegraph-ops-api-key`. `read_or_provision_api_key` (used by the
