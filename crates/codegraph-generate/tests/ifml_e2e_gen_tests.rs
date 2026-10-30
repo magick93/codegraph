@@ -1040,11 +1040,11 @@ async fn playwright_config_gates_bearer_auth_behind_env() {
         "config must carry the extraHTTPHeaders hook: {config}"
     );
     assert!(
-        config.contains("process.env.IFML_API_KEY"),
+        config.contains("process.env.API_KEY"),
         "auth must be env-gated: {config}"
     );
     assert!(
-        config.contains("Bearer ${process.env.IFML_API_KEY}"),
+        config.contains("Bearer ${process.env.API_KEY}"),
         "the key rides the authorization header: {config}"
     );
 }

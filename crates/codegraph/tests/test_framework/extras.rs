@@ -13,11 +13,11 @@ use std::fs;
 use std::path::Path;
 
 const VITE_CONFIG: &str = r#"// Gate-owned: unlike the generator's skeleton proxy this
-// injects the gate API key (IFML_GATE_API_KEY) as a Bearer header.
+// injects the gate API key (GATE_API_KEY) as a Bearer header.
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-const apiOrigin = process.env.IFML_API_ORIGIN ?? 'http://127.0.0.1:3000';
+const apiOrigin = process.env.API_ORIGIN ?? 'http://127.0.0.1:3000';
 
 const apiProxy = {
 	'/api': {
@@ -25,8 +25,8 @@ const apiProxy = {
 		changeOrigin: true,
 		configure: (proxy: any) => {
 			proxy.on('proxyReq', (proxyReq: any) => {
-				if (process.env.IFML_GATE_API_KEY) {
-					proxyReq.setHeader('authorization', `Bearer ${process.env.IFML_GATE_API_KEY}`);
+				if (process.env.GATE_API_KEY) {
+					proxyReq.setHeader('authorization', `Bearer ${process.env.GATE_API_KEY}`);
 				}
 			});
 		}

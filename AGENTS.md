@@ -971,7 +971,8 @@ NavigationFlow, API-created fixtures, `waitForURL` with bound params), validatio
 negatives and CRUD round-trips only when the bound entity is schema-backed (runs
 without schemas degrade to render tests). Emitted `playwright.config.ts`/`package.json`
 never overwrite existing files; the config gains env-gated Bearer auth
-(`IFML_API_KEY` → `extraHTTPHeaders`) for runs against an authenticated API.
+(`API_KEY` → `extraHTTPHeaders`, issue #574 S1) for runs against an
+authenticated API.
 
 ### IFML remote-functions data plane (issue #557, `ifml_remote_functions`)
 
@@ -984,10 +985,9 @@ absent = the client plane, byte-identical) replaces it with SvelteKit
 `src/routes/[{group}/]{view}/data.remote.ts` modules whose
 `query('unchecked', …)` / `command('unchecked', …)` exports execute on the
 SvelteKit server and post through an if-absent `$lib/server/api` helper
-(`apiFetch`) against `IFML_API_ORIGIN` with `Authorization` from the
+(`apiFetch`) against the origin with `Authorization` forwarded from the
 incoming RPC request's header (per-persona test keys arrive via
-`extraHTTPHeaders` and are forwarded — RLS isolation stays real) falling
-back to `IFML_API_KEY` private env. The browser only calls kit's generated
+`extraHTTPHeaders` — RLS isolation stays real). The browser only calls kit's generated
 same-origin RPC endpoints — the origin and credentials never reach the
 client, and the split-topology 404/401 class (the issue's failure mode)
 disappears with no CORS/proxy dependence. `+page.ts` loads keep their
@@ -1006,10 +1006,54 @@ pre-existing auth/journey-surface failures surfaced by that threading
 workflow-managed `status` key (create DTOs `deny_unknown_fields`, #539
 voided the "inert key" premise) and follow the DTO wire-key casing
 (`Fixture.casing` / `form_payload_block(casing)`); journey fills quote
-typed literals and use valid emails. Env contract for consumers:
-`IFML_API_ORIGIN` + `IFML_API_KEY` on the SvelteKit server process.
-Deferred: component-level awaits (retire `+page.ts`, #571); the #572
-denial-presentation/journey-arrival fixes.
+typed literals and use valid emails. Deferred: component-level awaits
+(retire `+page.ts`, #571); the #572 denial-presentation/journey-arrival
+fixes.
+
+### Neutral server contract (issue #574 S1, `server_api`)
+
+One env/auth story for EVERY server-side fetch in generated SvelteKit
+trees — the IFML plane's remote functions AND the entity plane's
+`+page.server.ts` loads. The helper source lives ONCE in
+`codegraph-generate/src/server_api.rs` (`server_api_helper_ts()`);
+`ui::scaffold` (entity, if-absent) and `ifml::route_generator` (when a
+remote module needs it) emit the identical `src/lib/server/api.ts` — the
+planes cannot drift.
+
+- **Env names**: `API_ORIGIN` + `API_KEY`; the `IFML_API_ORIGIN`/
+  `IFML_API_KEY` spellings read as DEPRECATED fallbacks (crewbase
+  configured them days ago). The vite dev/preview proxy
+  (`process.env.API_ORIGIN`) and the generated playwright config
+  (`process.env.API_KEY` Bearer) renamed to match; the gate harness
+  (`test_framework/playwright.rs` + `extras.rs`) sets the new names
+  (`API_ORIGIN`/`API_KEY`/`GATE_API_KEY` — the last is the proxy's
+  key-injection env).
+- **Auth precedence** in `apiFetch`: (1) an explicit caller header — the
+  entity loads pass the session's `locals.apiKey` this way; (2) the
+  incoming request's `Authorization` header (persona keys on remote RPCs);
+  (3) the session leg — `getRequestEvent().locals.apiKey` (hooks.server.ts
+  parks the Supabase cookie session there); (4) `API_KEY ?? IFML_API_KEY`
+  env. The `locals` read is cast (`as { apiKey?: string }`) because the
+  IFML standalone `App.Locals` is empty while the entity one declares
+  `apiKey`.
+- **Entity loads** (`list_load`/`detail_load`/`edit_load` + the migrated
+  `orgchart_load` template) fetch through `apiFetch` with
+  origin-relative paths (`/api/{version}/…`) — `PUBLIC_API_URL`,
+  `BASE_URL` consts, and `skFetch` are gone from the loads; the
+  `PUBLIC_API_KEY` client plane (stores/api_client) is S2's retirement.
+  This changed flag-off output UNCONDITIONALLY: the ux canaries
+  (`ux_rules_pre_feature{,_ifml}_tree.sha256`) and the `policy_rls`
+  full-tree hash snapshot are re-blessed in the same PR, and the review
+  fixture regenerated — enumerated diff: every `+page.server.ts` (fetch
+  through the helper), the new `ui/src/lib/server/api.ts`, and the two
+  env names in the IFML tree's vite/playwright configs.
+- Known gap (pre-existing, not S1): `UiOrgchartGenerator` has NO registry
+  construction site — the `ui_orgchart` capability exists but no run path
+  builds the generator, so the org-chart load is asserted against only at
+  the template level.
+- Gates: `cargo test -p codegraph --test server_contract_tests` (2,
+  node-free) + the updated `ifml_remote_functions_tests` env pins +
+  `server_api.rs` unit tests.
 
 ### IFML app skeleton (`ifml-skeleton` generator)
 
@@ -1018,8 +1062,9 @@ runs first via `GlobalGenerator::sequential_first()` so the e2e generator's
 if-absent stubs never clobber it) emits a buildable SvelteKit app skeleton
 never-overwrite: `package.json` (svelte ^5.56, kit, vite, adapter-auto,
 svelte-check, typescript, @playwright/test; dev/build/preview/check/test:e2e
-scripts), `vite.config.ts` (`sveltekit()` + `/api` proxy → `IFML_API_ORIGIN`
-env, default `http://127.0.0.1:3000`), `svelte.config.js`, `tsconfig.json`,
+scripts), `vite.config.ts` (`sveltekit()` + `/api` proxy → `API_ORIGIN`
+env (issue #574 S1), default `http://127.0.0.1:3000`), `svelte.config.js`,
+`tsconfig.json`,
 `src/app.html`, `src/app.d.ts`. Svelte-only; other frameworks keep the
 e2e-generator stubs. Forms branch at runtime: id-param views emit
 `const isEdit = !!viewParams[<param>]` → POST collection (create) vs PUT item

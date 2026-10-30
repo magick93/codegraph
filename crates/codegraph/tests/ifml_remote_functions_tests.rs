@@ -6,9 +6,10 @@
 //! is baked into the browser bundle. The remote-functions plane replaces
 //! it: view loads/posts call server-executed `data.remote.ts` exports
 //! (`$app/server` query/command) that post through `$lib/server/api`
-//! against `IFML_API_ORIGIN` — the origin and credentials never reach the
-//! client, and the same-origin RPC hop removes the split-topology 404/401
-//! class entirely.
+//! against the neutral `API_ORIGIN` (issue #574 S1; the deprecated
+//! `IFML_API_ORIGIN` spelling reads as the fallback) — the origin and
+//! credentials never reach the client, and the same-origin RPC hop removes
+//! the split-topology 404/401 class entirely.
 //!
 //! Pins:
 //!
@@ -18,8 +19,9 @@
 //!   `command('unchecked', ...)` for submit/transition/action posts;
 //! - view `+page.ts`/`+page.svelte` — `await get…()` / `await submit…({…})`
 //!   call sites and ZERO client `PUBLIC_API_KEY` plumbing;
-//! - flag off — none of the above; the client `API_BASE`/`apiHeaders`
-//!   plane stays byte-identical.
+//! - flag off — no `data.remote.ts` anywhere; the (views) client
+//!   `API_BASE`/`apiHeaders` plane stays (the entity plane's loads share
+//!   the helper unconditionally since #574 S1).
 //!
 //! ```text
 //! cargo test -p codegraph --test ifml_remote_functions_tests
@@ -211,14 +213,25 @@ async fn remote_functions_flag_emits_the_server_side_data_plane() {
         helper.contains("$env/dynamic/private"),
         "the origin comes from private env, never the public bundle:\n{helper}"
     );
-    assert!(helper.contains("IFML_API_ORIGIN"), "{helper}");
     assert!(
-        helper.contains("IFML_API_KEY"),
-        "the deployment key is the fallback credential:\n{helper}"
+        helper.contains("env.API_ORIGIN ?? env.IFML_API_ORIGIN"),
+        "the neutral origin env wins; the deprecated IFML spelling is the fallback:\n{helper}"
+    );
+    assert!(
+        helper.contains("env.API_KEY ?? env.IFML_API_KEY"),
+        "the neutral key env wins; the deprecated IFML spelling is the fallback:\n{helper}"
     );
     assert!(
         helper.contains("getRequestEvent()"),
         "the incoming RPC request's Authorization header is forwarded (persona isolation):\n{helper}"
+    );
+    assert!(
+        helper.contains("headers.has('Authorization')"),
+        "an explicit caller header wins over the forwarded/env legs (issue #574 S1):\n{helper}"
+    );
+    assert!(
+        helper.contains("apiKey"),
+        "the session leg: hooks.server.ts parks the Supabase cookie session on locals.apiKey:\n{helper}"
     );
 
     // The list view's remote module + load.
@@ -296,15 +309,17 @@ async fn remote_functions_off_keeps_the_client_plane() {
     walk(&ui, &mut files);
     let stray: Vec<&PathBuf> = files
         .iter()
-        .filter(|p| {
-            p.file_name().is_some_and(|n| n == "data.remote.ts")
-                || p.ends_with("src/lib/server/api.ts")
-        })
+        .filter(|p| p.file_name().is_some_and(|n| n == "data.remote.ts"))
         .collect();
     assert!(
         stray.is_empty(),
-        "flag off must emit no remote surface: {stray:?}"
+        "flag off must emit no remote-function surface: {stray:?}"
     );
+    // (views) keeps no server helper import of its own: `src/lib/server/
+    // api.ts` exists only because the ENTITY plane's +page.server.ts loads
+    // share it (issue #574 S1) — the (views) client plane must not touch it.
+    let home_load = read(&ui, "src/routes/(views)/home/+page.ts");
+    assert!(!home_load.contains("$lib/server/api"), "{home_load}");
 
     // The client API_BASE/apiHeaders plane stays.
     let home_load = read(&ui, "src/routes/(views)/home/+page.ts");

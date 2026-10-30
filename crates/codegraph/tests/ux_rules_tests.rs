@@ -970,12 +970,9 @@ fn ux_rules_sort_plane_wires_handler_query_and_list_page() {
         project.join("generated/ui/src/routes/(app)/common/task/+page.server.ts"),
     )
     .unwrap();
+    assert!(load.contains("qs.set('sort', sort);"), "{load}");
     assert!(
-        load.contains("apiUrl.searchParams.set('sort', sort);"),
-        "{load}"
-    );
-    assert!(
-        load.contains("apiUrl.searchParams.set('order', order === 'desc' ? 'desc' : 'asc');"),
+        load.contains("qs.set('order', order === 'desc' ? 'desc' : 'asc');"),
         "{load}"
     );
     assert!(load.contains("sort: sort ?? null,"), "{load}");
@@ -1020,7 +1017,7 @@ fn ux_rules_sort_plane_stays_out_of_timeline_layout() {
     )
     .unwrap();
     assert!(
-        !load.contains("searchParams.set('sort'"),
+        !load.contains("qs.set('sort'") && !load.contains("searchParams.set('sort'"),
         "timeline load must not forward sort:\n{load}"
     );
 }

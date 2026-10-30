@@ -2,7 +2,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-const apiOrigin = process.env.IFML_API_ORIGIN ?? 'http://127.0.0.1:3000';
+const apiOrigin = process.env.API_ORIGIN ?? 'http://127.0.0.1:3000';
 
 const apiProxy = {
 	'/api': {
