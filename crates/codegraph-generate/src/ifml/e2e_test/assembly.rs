@@ -185,8 +185,9 @@ impl IfmlE2eTestGenerator {
             target_view: edge.target_container.clone(),
             row_testid,
             fixture: Fixture {
+                casing: self.dto_casing,
                 base_path: api.base_path.clone(),
-                entries: self.typed_fixture_entries(db, component).await,
+                entries: self.typed_fixture_entries(db, config, component).await,
             },
             target_pattern,
             modal,
@@ -199,6 +200,7 @@ impl IfmlE2eTestGenerator {
     pub(super) async fn typed_fixture_entries(
         &self,
         db: &dyn GraphQuerier,
+        config: &DomainConfig,
         c: &IfmlComponent,
     ) -> Vec<(String, String)> {
         let mut entries = fixture_entries(c);
@@ -207,7 +209,12 @@ impl IfmlE2eTestGenerator {
                 *value = format!("'{}'", js_string(&code));
             }
         }
-        entries
+        let status = c
+            .entity
+            .as_deref()
+            .and_then(|entity| workflow_for_entity(config, entity))
+            .map(|w| w.status_field);
+        super::fixtures::strip_workflow_status(entries, status.as_deref())
     }
 
     /// Whether a flat create body can satisfy the entity's required fields:
@@ -285,8 +292,9 @@ impl IfmlE2eTestGenerator {
             original,
             updated,
             fixture: Fixture {
+                casing: self.dto_casing,
                 base_path: api.base_path,
-                entries: self.typed_fixture_entries(db, c).await,
+                entries: self.typed_fixture_entries(db, config, c).await,
             },
             target_pattern: url_pattern(&view_route(&save.0), &save.1),
         })
@@ -392,6 +400,7 @@ impl IfmlE2eTestGenerator {
             is_collection: is_collection(c),
             transition,
             fixture: Fixture {
+                casing: self.dto_casing,
                 base_path: api.base_path,
                 entries: self.valid_fixture_entries(db, c, &workflow).await,
             },
@@ -411,12 +420,10 @@ impl IfmlE2eTestGenerator {
         c: &IfmlComponent,
         workflow: &RenderWorkflow,
     ) -> Vec<(String, String)> {
-        let mut entries = fixture_entries(c);
+        let entries = fixture_entries(c);
+        let entries = super::fixtures::strip_workflow_status(entries, Some(&workflow.status_field));
+        let mut entries = entries;
         for (field, value) in entries.iter_mut() {
-            if *field == workflow.status_field {
-                *value = format!("'{}'", js_string(&workflow.initial_state));
-                continue;
-            }
             if let Some(code) = codelist_fixture_value(db, c.entity.as_deref(), field).await {
                 *value = format!("'{}'", js_string(&code));
             }
@@ -545,7 +552,8 @@ impl IfmlE2eTestGenerator {
                 return None;
             }
             let plan = plans.get(entity)?;
-            let entries = ux_fixture_entries(db, c).await;
+            let status_field = workflow_for_entity(config, entity).map(|w| w.status_field);
+            let entries = ux_fixture_entries(db, c, status_field.as_deref()).await;
             let route = view_route(&vc.name);
             let columns = ux_column_checks(c, plan, &entries);
             // The workflow status column pins a chip to the initial state
@@ -593,6 +601,7 @@ impl IfmlE2eTestGenerator {
                 component_name: c.name.clone(),
                 route,
                 fixture: Fixture {
+                    casing: self.dto_casing,
                     base_path: api.base_path,
                     entries,
                 },
@@ -815,8 +824,9 @@ impl IfmlE2eTestGenerator {
                         target_view: target.clone(),
                         target_pattern: pattern,
                         seed: Some(Fixture {
+                            casing: self.dto_casing,
                             base_path: api.base_path,
-                            entries: self.valid_journey_entries(db, c).await,
+                            entries: self.valid_journey_entries(db, config, c).await,
                         }),
                         fills: Vec::new(),
                     }
@@ -838,8 +848,13 @@ impl IfmlE2eTestGenerator {
                     // The submit control only renders once the page's form
                     // handler exists (api-backed); required fields must be
                     // filled first — one fill per typed field with a fixture
-                    // value.
-                    let entries = self.valid_journey_entries(db, c).await;
+                    // value. The POM fill methods type the DOM value as
+                    // `string`, so the fixture's typed JS literals (`42`,
+                    // `true`, the random-UUID template) become their string
+                    // forms here (the svelte-check leg of the gate caught
+                    // the raw literals — the journey plane never typechecked
+                    // before the gate threaded the auth flag).
+                    let entries = self.valid_journey_entries(db, config, c).await;
                     let fills = super::fixtures::form_spec(c)
                         .map(|form| {
                             form.fields
@@ -848,7 +863,7 @@ impl IfmlE2eTestGenerator {
                                     let literal = entries
                                         .iter()
                                         .find(|(name, _)| name == &field.name)
-                                        .map(|(_, value)| value.clone())?;
+                                        .map(|(_, value)| pom_fill_literal(value))?;
                                     Some((
                                         format!(
                                             "fill{}{}",
@@ -912,8 +927,9 @@ impl IfmlE2eTestGenerator {
             return Some((
                 Some(param.to_string()),
                 Some(Fixture {
+                    casing: self.dto_casing,
                     base_path: api.base_path,
-                    entries: self.valid_journey_entries(db, c).await,
+                    entries: self.valid_journey_entries(db, config, c).await,
                 }),
             ));
         }
@@ -927,6 +943,7 @@ impl IfmlE2eTestGenerator {
     pub(super) async fn valid_journey_entries(
         &self,
         db: &dyn GraphQuerier,
+        config: &DomainConfig,
         c: &IfmlComponent,
     ) -> Vec<(String, String)> {
         let mut entries = fixture_entries(c);
@@ -935,7 +952,26 @@ impl IfmlE2eTestGenerator {
                 *value = format!("'{}'", js_string(&code));
             }
         }
-        entries
+        let status = c
+            .entity
+            .as_deref()
+            .and_then(|entity| workflow_for_entity(config, entity))
+            .map(|w| w.status_field);
+        super::fixtures::strip_workflow_status(entries, status.as_deref())
+    }
+}
+
+/// The POM fill methods type the DOM value as `string`: a typed JS fixture
+/// literal (`42`, `true`) becomes its quoted form, and the random-UUID
+/// template literal (an API-payload nicety) collapses to a static valid
+/// UUID — a form fill needs *a* valid value, not a fresh one.
+fn pom_fill_literal(literal: &str) -> String {
+    if literal.starts_with('\'') {
+        literal.to_string()
+    } else if literal.starts_with('`') {
+        "'00000000-0000-4000-8000-000000000000'".to_string()
+    } else {
+        format!("'{literal}'")
     }
 }
 

@@ -1,8 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
+use heck::ToLowerCamelCase;
+
 use crate::ifml::api_paths::id_param_from;
 use crate::ifml::context::{IfmlComponent, IfmlViewContainer};
 use crate::ifml::control_core;
+use crate::project_config::DtoKeyCasing;
 
 use super::context::{
     FetchState, PageComponentContext, PageLoadComponentContext, PageLoadContext, RenderForm,
@@ -11,16 +14,45 @@ use super::context::{
 use super::render::sanitize_ident;
 use super::workflow::js_quote;
 
+/// The DTO serde key for a schema property name (issue #539
+/// follow-through): the Rust field name (`to_snake_case`) verbatim under
+/// the snake casing, camelCased under the camel casing — the typed submit
+/// payload must match the create/update DTOs' `deny_unknown_fields`
+/// contract.
+pub(super) fn dto_wire_key(schema_field: &str, casing: DtoKeyCasing) -> String {
+    let rust_field = codegraph_naming::to_snake_case(schema_field);
+    match casing {
+        DtoKeyCasing::Snake => rust_field,
+        DtoKeyCasing::Camel => rust_field.to_lower_camel_case(),
+    }
+}
+
 /// Typed submit-payload construction for a fallback form: coerces FormData
 /// string values to the bound schema's types (numbers, booleans, datetimes)
-/// so the generated API accepts the body. Empty when no type information is
-/// available (byte-identical untyped `formData` body).
-pub(super) fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -> String {
+/// so the generated API accepts the body. `workflow_status` (the entity's
+/// workflow-managed field, when any) is SKIPPED — the create/update DTOs
+/// exclude it and `deny_unknown_fields` (#539) rejects the key. Empty when
+/// no type information is available (byte-identical untyped `formData`
+/// body).
+pub(super) fn form_payload_block(
+    c: &IfmlComponent,
+    form: Option<&RenderForm>,
+    workflow_status: Option<&str>,
+    casing: DtoKeyCasing,
+) -> String {
     let field_names: Vec<String> = match form {
-        Some(form) if !form.fields.is_empty() => {
-            form.fields.iter().map(|f| f.name.clone()).collect()
-        }
-        _ => c.fields.clone(),
+        Some(form) if !form.fields.is_empty() => form
+            .fields
+            .iter()
+            .map(|f| f.name.clone())
+            .filter(|name| Some(name.as_str()) != workflow_status)
+            .collect(),
+        _ => c
+            .fields
+            .iter()
+            .filter(|name| Some(name.as_str()) != workflow_status)
+            .cloned()
+            .collect(),
     };
     if field_names.is_empty() {
         return String::new();
@@ -60,7 +92,8 @@ pub(super) fn form_payload_block(c: &IfmlComponent, form: Option<&RenderForm>) -
         } else {
             value
         };
-        lines.push(format!("\t\tpayload.{name} = {expr};"));
+        let wire_key = dto_wire_key(name, casing);
+        lines.push(format!("\t\tpayload.{wire_key} = {expr};"));
     }
     let mut block = String::from("\t\tconst payload: Record<string, unknown> = {};\n");
     block.push_str(&lines.join("\n"));
@@ -76,12 +109,18 @@ pub(crate) fn is_numeric_rust_type(rust_type: &str) -> bool {
 /// contract; each fetch resolves the entity API path from the graph. View
 /// parameters resolve from the query string only (views have no dynamic
 /// route segments) and are returned to the page as `result.params`.
+///
+/// `remote` (issue #557): when the `ifml_remote_functions` flag is on, the
+/// fetch resolves through the view's server-executed `data.remote.ts`
+/// query instead of a client fetch — the API origin and credentials never
+/// reach the browser.
 pub(super) fn build_load_context(
     api_version: &str,
     vc: &IfmlViewContainer,
     components: &[PageComponentContext],
     denial_target: &str,
     integrated: bool,
+    remote: bool,
 ) -> PageLoadContext {
     let id_param = id_param_from(&vc.params);
     // The graph may carry duplicate HasParameter edges (see
@@ -114,6 +153,12 @@ pub(super) fn build_load_context(
         );
         has_fetch |= fetch_list || fetch_item || fetch_form;
 
+        let remote_query = if remote && (fetch_list || fetch_item || fetch_form) {
+            Some(super::render::remote_pascal(&comp.name)).map(|pascal| format!("get{pascal}"))
+        } else {
+            None
+        };
+
         load_components.push(PageLoadComponentContext {
             name: sanitize_ident(&comp.name),
             component_type: comp.component_type.clone(),
@@ -126,6 +171,7 @@ pub(super) fn build_load_context(
             fetch_list,
             fetch_item,
             fetch_form,
+            remote_query,
         });
     }
 
@@ -141,6 +187,7 @@ pub(super) fn build_load_context(
         view_requires: vc.requires.clone(),
         guard_consts: guard_consts(vc),
         integrated,
+        remote_api: remote,
         denial_target: denial_target.to_string(),
     }
 }

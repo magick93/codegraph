@@ -29,6 +29,9 @@ pub struct SpecReport {
     pub failed: usize,
     pub passed: usize,
     pub titles: Vec<String>,
+    /// Titles of the failed specs (expected-failure accounting in the
+    /// gate: known pre-existing surface failures vs real regressions).
+    pub failures: Vec<String>,
 }
 
 /// Run the project's playwright specs against a booted API. `report_path`
@@ -53,6 +56,10 @@ pub fn run_specs(
             ("IFML_GATE_REPORT", report_env.as_str()),
             ("IFML_API_ORIGIN", api_origin_env.as_str()),
             ("IFML_GATE_API_KEY", api_key),
+            // The remote-functions plane (#557): the SvelteKit server's
+            // fallback credential (app contract name — distinct from the
+            // harness's IFML_GATE_API_KEY proxy injection).
+            ("IFML_API_KEY", api_key),
         ],
         Duration::from_secs(900),
     )?;
@@ -61,10 +68,12 @@ pub fn run_specs(
     let value: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("parse playwright report: {e}"))?;
     let mut titles = Vec::new();
+    let mut failures = Vec::new();
     let mut failed = 0usize;
     let mut passed = 0usize;
-    collect_specs(&value, &mut titles, &mut failed, &mut passed);
+    collect_specs(&value, &mut titles, &mut failed, &mut passed, &mut failures);
     Ok(SpecReport {
+        failures,
         failed,
         passed,
         titles,
@@ -76,6 +85,7 @@ fn collect_specs(
     titles: &mut Vec<String>,
     failed: &mut usize,
     passed: &mut usize,
+    failures: &mut Vec<String>,
 ) {
     if let Some(specs) = node.get("specs").and_then(|s| s.as_array()) {
         for spec in specs {
@@ -85,17 +95,18 @@ fn collect_specs(
                 .unwrap_or_default()
                 .to_string();
             let ok = spec.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
-            titles.push(title);
+            titles.push(title.clone());
             if ok {
                 *passed += 1;
             } else {
                 *failed += 1;
+                failures.push(title);
             }
         }
     }
     if let Some(suites) = node.get("suites").and_then(|s| s.as_array()) {
         for suite in suites {
-            collect_specs(suite, titles, failed, passed);
+            collect_specs(suite, titles, failed, passed, failures);
         }
     }
 }

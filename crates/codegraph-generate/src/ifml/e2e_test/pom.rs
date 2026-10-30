@@ -612,6 +612,7 @@ mod surface_tests {
     use super::super::spec_payload::{
         ClickThroughTest, PersonaTest, RenderTest, RoundTripTest, ValidationTest, ViewTestSpec,
     };
+    use crate::project_config::DtoKeyCasing;
 
     fn list_view() -> IfmlViewContainer {
         let navigate = |target: &str| IfmlEvent {
@@ -781,6 +782,7 @@ received = ["review"]
                 target_view: "CustomerDetail".to_string(),
                 row_testid: "grid-row".to_string(),
                 fixture: Fixture {
+                    casing: DtoKeyCasing::default(),
                     base_path: "/api/v1/sales/customer".to_string(),
                     entries: vec![],
                 },
@@ -804,6 +806,7 @@ received = ["review"]
                 original: "'Test name'".to_string(),
                 updated: "Updated name".to_string(),
                 fixture: Fixture {
+                    casing: DtoKeyCasing::default(),
                     base_path: "/api/v1/sales/customer".to_string(),
                     entries: vec![],
                 },

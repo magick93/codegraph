@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-{%- if has_api_surface %}
+{%- if has_api_surface and not remote_api %}
 	import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
 
 	// Issue #557: browser-side posts resolve the API ORIGIN and carry the
@@ -13,6 +13,23 @@
 		'Content-Type': 'application/json',
 		...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
 	};
+{%- endif %}
+{%- if remote_api %}
+{%- for comp in components %}
+{%- if comp.submit and comp.submit.remote_command %}
+	import { {{ comp.submit.remote_command.export }} } from './data.remote';
+{%- endif %}
+{%- if comp.remote_transition %}
+	import { {{ comp.remote_transition.export }} } from './data.remote';
+{%- endif %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{%- if btn.remote_command %}
+	import { {{ btn.remote_command.export }} } from './data.remote';
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
 {%- endif %}
 {%- if needs_goto %}
 	import { goto } from '$app/navigation';
@@ -116,6 +133,17 @@
 		submitting = true;
 		formError = '';
 		try {
+{%- if comp.submit.remote_command %}
+			const result = await {{ comp.submit.remote_command.export }}({
+{% if comp.submit.remote_command.id_param %}				id: viewParams.{{ comp.submit.remote_command.id_param }} || null,
+{% else %}				id: null,
+{% endif %}				data: {% if comp.form_payload %}payload{% else %}formData{% endif %}
+			});
+			if (!result.ok) {
+				formError = result.message ?? 'Request failed';
+				return;
+			}
+{%- else %}
 {%- if comp.submit.create_url_expr %}
 			const isEdit = !!viewParams.{{ comp.submit.edit_param }};
 			let response;
@@ -144,6 +172,7 @@
 				formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
 				return;
 			}
+{%- endif %}
 {%- if comp.submit.navigate_url %}
 			goto({{ comp.submit.navigate_url }});
 {%- endif %}
@@ -155,7 +184,15 @@
 {%- endfor %}
 {%- for comp in components %}
 {%- if comp.workflow %}
-{%- if comp.transition_url_expr %}
+{%- if comp.remote_transition %}
+
+	async function transition_{{ comp.js_name }}(to: string) {
+		const result = await {{ comp.remote_transition.export }}({ id: viewParams.{{ comp.remote_transition.id_param }}, to });
+		if (result.ok) {
+			await invalidateAll();
+		}
+	}
+{%- elif comp.transition_url_expr %}
 
 	async function transition_{{ comp.js_name }}(to: string) {
 		const response = await fetch(`${API_BASE}` + {{ comp.transition_url_expr }}, {
@@ -175,6 +212,14 @@
 	async function {{ btn.handler_name }}() {
 		actionError = '';
 		try {
+{%- if btn.remote_command %}
+			const result = await {{ btn.remote_command.export }}({ id: viewParams.{{ btn.remote_command.id_param }} });
+			if (!result.ok) {
+				actionError = result.message ?? 'Request failed';
+				return;
+			}
+			await invalidateAll();
+{% else %}
 			const response = await fetch(`${API_BASE}` + {{ btn.url_expr }}, {
 				method: 'POST',
 				headers: apiHeaders,
@@ -186,6 +231,7 @@
 				return;
 			}
 			await invalidateAll();
+{% endif %}
 		} finally {
 		}
 	}

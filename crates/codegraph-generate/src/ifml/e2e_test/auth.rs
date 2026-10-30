@@ -268,9 +268,12 @@ pub(crate) fn render_personas(personas: &[PersonaSpec]) -> String {
     s.push_str("\tconst apiKey = storedApiKey(spec);\n");
     s.push_str("\treturn apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined;\n}\n\n");
     s.push_str(
-        "function seedPersona(context: BrowserContext, spec: PersonaSpec): Promise<void> {\n",
+        // addInitScript resolves to a Disposable in recent playwright
+        // typings — the seeding is fire-and-forget per context (the
+        // svelte-check leg caught the Promise<void> annotation).
+        "function seedPersona(context: BrowserContext, spec: PersonaSpec): void {\n",
     );
-    s.push_str("\treturn context.addInitScript(\n");
+    s.push_str("\tcontext.addInitScript(\n");
     s.push_str("\t\t([roles, capabilities]) => {\n");
     s.push_str("\t\t\t(globalThis as any).__USER_ROLES__ = roles;\n");
     s.push_str("\t\t\t(globalThis as any).__USER_CAPABILITIES__ = capabilities;\n");
@@ -637,6 +640,7 @@ pub(crate) async fn build_workflow_journeys(
     api_version: &str,
     model: &IfmlModel,
     personas: &[PersonaSpec],
+    dto_casing: crate::project_config::DtoKeyCasing,
 ) -> Vec<WorkflowJourney> {
     let mut out = Vec::new();
     for vc in &model.view_containers {
@@ -677,14 +681,14 @@ pub(crate) async fn build_workflow_journeys(
                 journey_persona(personas, vc, Some(&creator)).unwrap_or_else(|| creator.clone());
             let mut entries = fixture_entries(c);
             for (field, value) in entries.iter_mut() {
-                if *field == workflow.status_field {
-                    *value = format!("'{}'", js_string(&workflow.initial_state));
-                    continue;
-                }
                 if let Some(code) = codelist_fixture_value(db, Some(entity), field).await {
                     *value = format!("'{}'", js_string(&code));
                 }
             }
+            let entries = super::fixtures::strip_workflow_status(
+                entries,
+                Some(workflow.status_field.as_str()),
+            );
             out.push(WorkflowJourney {
                 entity: entity.to_string(),
                 view_name: vc.name.clone(),
@@ -693,6 +697,7 @@ pub(crate) async fn build_workflow_journeys(
                 data_literal: Fixture {
                     base_path: String::new(),
                     entries,
+                    casing: dto_casing,
                 }
                 .data_literal(),
                 id_param: view_id_param.clone(),

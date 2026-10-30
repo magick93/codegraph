@@ -4,6 +4,7 @@
 //! churn with the POM rewiring (specs now drive the emitted page classes
 //! and carry zero raw testid construction).
 
+use crate::project_config::DtoKeyCasing;
 use codegraph_config::DomainConfig;
 use codegraph_config::ux::Display;
 use codegraph_core::mock::MockEngine;
@@ -66,6 +67,7 @@ fn modal_click_through_renders_wrapper_and_close_assertions() {
             target_view: "CustomerDialog".to_string(),
             row_testid: "grid-row".to_string(),
             fixture: Fixture {
+                casing: DtoKeyCasing::default(),
                 base_path: "/api/v1/sales/customer".to_string(),
                 entries: vec![],
             },
@@ -142,6 +144,7 @@ fn spec_render_includes_all_test_kinds() {
             target_view: "CustomerDetail".to_string(),
             row_testid: "grid-row".to_string(),
             fixture: Fixture {
+                casing: DtoKeyCasing::default(),
                 base_path: "/api/v1/sales/customer".to_string(),
                 entries: vec![("name".to_string(), "'Test name'".to_string())],
             },
@@ -195,6 +198,7 @@ fn ux_test_fixture() -> UxViewTest {
         component_name: "grid".to_string(),
         route: "/refundrequestlist".to_string(),
         fixture: Fixture {
+            casing: DtoKeyCasing::default(),
             base_path: "/api/v1/refunds/refund-request".to_string(),
             entries: vec![
                 ("title".to_string(), "'Test title'".to_string()),
@@ -779,6 +783,7 @@ fn view_journey_spec_walks_hops_and_arrivals() {
         target_view: target.to_string(),
         target_pattern: format!("{}$", escape_regex(&view_route(target))),
         seed: Some(Fixture {
+            casing: DtoKeyCasing::default(),
             base_path: "/api/v1/sales/customer".to_string(),
             entries: vec![("name".to_string(), "'Test name'".to_string())],
         }),
@@ -791,6 +796,7 @@ fn view_journey_spec_walks_hops_and_arrivals() {
         open_param: None,
         open_seed: None,
         seeds: vec![Fixture {
+            casing: DtoKeyCasing::default(),
             base_path: "/api/v1/sales/customer".to_string(),
             entries: vec![("name".to_string(), "'Test name'".to_string())],
         }],

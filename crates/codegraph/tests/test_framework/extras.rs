@@ -34,7 +34,21 @@ const apiProxy = {
 };
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [
+		sveltekit({
+			// Issue #557: the (views) data plane rides SvelteKit remote
+			// functions — must match the generator skeleton's options or the
+			// generated data.remote.ts modules fail to compile.
+			experimental: {
+				remoteFunctions: true
+			},
+			compilerOptions: {
+				experimental: {
+					async: true
+				}
+			}
+		})
+	],
 	server: { proxy: apiProxy },
 	preview: { proxy: apiProxy }
 });
@@ -70,6 +84,13 @@ export default defineConfig({
 const SWEEP_SPEC: &str = r#"// Gate-owned sweep assertions (issue #205 Wave A). DO NOT EDIT inside the
 // generated tree — this file is rewritten by the gate harness
 // (crates/codegraph/tests/test_framework/extras.rs).
+//
+// Issue #557 (remote-functions plane): the form POSTs through the view's
+// server-executed command (a kit RPC endpoint), so the submit is observed
+// by its OUTCOME — the client redirect to the detail route — and
+// persistence is asserted through the request-fixture GET. The fixture
+// body excludes the workflow-managed status field (the create DTO
+// deny_unknown_fields rejects it).
 import { test, expect } from '@playwright/test';
 
 const COLLECTION = '/api/v1/refunds/refund-request';
@@ -78,22 +99,16 @@ test.describe('IFML sweep', () => {
 	test('create round trip persists a new refund request from the plain form route', async ({
 		page,
 		request
+	}: {
+		page: any;
+		request: any;
 	}) => {
 		await page.goto('/refundrequestform');
 		const form = page.getByTestId('editor-form');
 		await form.locator('[name="title"]').fill('Sweep create');
 		await form.locator('[name="amount"]').fill('4242');
-		const submitRequest = page.waitForRequest(
-			(req) => req.url().includes('/refund-request') && ['POST', 'PUT'].includes(req.method()),
-			{ timeout: 10_000 }
-		);
 		await form.locator('button').first().click();
-		const submit = await submitRequest;
-		expect(
-			`${submit.method()} ${new URL(submit.url()).pathname}`,
-			`create mode (no ?id) must submit 'POST ${COLLECTION}' with no trailing item id`
-		).toBe(`POST ${COLLECTION}`);
-		await page.waitForURL(/\/refundrequestdetail/);
+		await page.waitForURL(/\/refundrequestdetail/, { timeout: 10_000 });
 		const response = await request.get(COLLECTION);
 		expect(response.ok(), `GET ${COLLECTION} must succeed`).toBeTruthy();
 		const body = await response.json();
@@ -104,16 +119,15 @@ test.describe('IFML sweep', () => {
 		).toBe(true);
 	});
 
-	test('details shows the persisted values of the loaded item', async ({ page, request }) => {
+	test('details shows the persisted values of the loaded item', async ({ page, request }: { page: any; request: any }) => {
 		const created = await (
 			await request.post(COLLECTION, {
 				data: {
 					title: 'Sweep details',
 					amount: 42,
-					requesterEmail: 'sweep@example.com',
-					submittedAt: '2024-01-15T10:30:00Z',
+					requester_email: 'sweep@example.com',
+					submitted_at: '2024-01-15T10:30:00Z',
 					urgent: true,
-					status: 'draft',
 					reason: 'Damaged'
 				}
 			})
@@ -126,7 +140,7 @@ test.describe('IFML sweep', () => {
 
 	test('sibling xor containers render one labeled tabs group on the landmark view', async ({
 		page
-	}) => {
+	}: { page: any }) => {
 		await page.goto('/home');
 		await expect(page.getByTestId('shipping-label')).toBeVisible();
 		await expect(page.getByTestId('payment-label')).toBeVisible();

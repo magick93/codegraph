@@ -24,6 +24,10 @@ framework_svelte = true
 # (per-persona API-key provisioning, persona fixtures, auth specs, and the
 # journey specs) against the real API alongside the fallback ux markup.
 ifml_e2e_auth = true
+# Remote-functions data plane (issue #557): the gate proves the (views)
+# loads/posts run server-side (data.remote.ts + $lib/server/api) against
+# the real API — the browser never carries the API key.
+ifml_remote_functions = true
 # ux-rules plane ON (issue #303): the gate proves the fallback ux markup
 # (chips, money alignment/formatting, overflow actions) against the real
 # API. No `ifml_design_system` here DELIBERATELY: the fixture's

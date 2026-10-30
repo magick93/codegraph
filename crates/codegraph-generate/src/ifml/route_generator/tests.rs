@@ -4,7 +4,7 @@ use super::render::*;
 use super::ux::*;
 use super::*;
 use crate::ifml::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
-use crate::project_config::CodegenConfig;
+use crate::project_config::{CodegenConfig, DtoKeyCasing};
 use crate::template_engine::create_tera;
 use codegraph_config::ux::UxRules;
 use codegraph_config::{DomainConfig, IfmlComponentMappings, SemanticRole};
@@ -131,6 +131,7 @@ fn page_component_context_for_tests(
         &mut cache,
         &HashSet::new(),
         None,
+        DtoKeyCasing::default(),
     ))
 }
 
@@ -188,6 +189,7 @@ fn page_component_context_with_config(
         &mut cache,
         &HashSet::new(),
         None,
+        DtoKeyCasing::default(),
     ))
 }
 
@@ -1019,6 +1021,7 @@ fn page_component_context_with_ux(
         &mut cache,
         &HashSet::new(),
         uxgen,
+        DtoKeyCasing::default(),
     ))
 }
 
@@ -1138,6 +1141,7 @@ export = "DataTable"
         &mut cache,
         &HashSet::new(),
         Some(&uxgen),
+        DtoKeyCasing::default(),
     ));
 
     assert!(ctx.mapping.is_some(), "whole-component mapping resolves");
@@ -1563,7 +1567,7 @@ fn form_payload_coerces_by_input_and_rust_types() {
         Some(ComponentSpec::Form(form)) => Some(render_form(form)),
         _ => None,
     };
-    let block = form_payload_block(&c, form.as_ref());
+    let block = form_payload_block(&c, form.as_ref(), None, DtoKeyCasing::default());
     assert!(
         block.contains("\t\tpayload.title = formData.title;"),
         "{block}"
@@ -1580,14 +1584,15 @@ fn form_payload_coerces_by_input_and_rust_types() {
     );
     assert!(
         block.contains(
-            "\t\tpayload.submittedAt = formData.submittedAt === '' ? null : new Date(String(formData.submittedAt)).toISOString();"
+            "\t\tpayload.submitted_at = formData.submittedAt === '' ? null : new Date(String(formData.submittedAt)).toISOString();"
         ),
-        "{block}"
+        "the wire key follows the DTO serde contract (#539 deny_unknown_fields), \
+         the DOM read keeps the input name:\n{block}"
     );
 
     let no_types = component_with_spec(None);
     assert_eq!(
-        form_payload_block(&no_types, None),
+        form_payload_block(&no_types, None, None, DtoKeyCasing::default()),
         String::new(),
         "components without form fields keep the untyped body"
     );
@@ -1755,7 +1760,7 @@ fn load_context_renders_param_default_fallbacks() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[list, details], "/", false);
+    let ctx = build_load_context("v1", &vc, &[list, details], "/", false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("viewParams['slug'] = url.searchParams.get('slug') ?? 'home';"),
@@ -1789,7 +1794,7 @@ fn load_context_renders_param_default_fallbacks() {
         ..vc
     };
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
-    let ctx = build_load_context("v1", &bare_vc, &[list], "/", false);
+    let ctx = build_load_context("v1", &bare_vc, &[list], "/", false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("viewParams['customerId'] = url.searchParams.get('customerId') ?? '';"),
@@ -1802,7 +1807,7 @@ fn paramless_view_load_stays_free_of_param_resolution() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(!rendered.contains("viewParams"), "{rendered}");
     assert!(!rendered.contains("result.params"), "{rendered}");
@@ -1827,7 +1832,7 @@ fn role_guard_renders_at_top_of_load_function() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[], "/", false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { redirect } from '@sveltejs/kit';"),
@@ -1882,7 +1887,7 @@ fn no_roles_load_is_byte_identical_to_pre_guard_output() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[], "/", false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert_eq!(
         rendered,
@@ -2070,7 +2075,7 @@ fn capability_guard_renders_can_checks_and_denial_target() {
     ]);
     let target = denial_target(&model);
     assert_eq!(target, "/customerlist");
-    let ctx = build_load_context("v1", &model.view_containers[0], &[], &target, false);
+    let ctx = build_load_context("v1", &model.view_containers[0], &[], &target, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { redirect } from '@sveltejs/kit';"),
@@ -2107,7 +2112,7 @@ fn combined_guard_renders_capability_check_before_roles_check() {
         vec!["admin".to_string()],
         vec!["manage_refunds".to_string()],
     );
-    let ctx = build_load_context("v1", &vc, &[], "/", false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { currentRoles } from '$lib/roles';"),
@@ -2574,6 +2579,7 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         needs_invalidate: false,
         has_submit: false,
         has_api_surface: false,
+        remote_api: false,
         has_action_buttons: false,
         view_role: None,
         container_role: None,
@@ -2753,7 +2759,7 @@ fn load_context_wires_first_list_with_pagination() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[list, second_list, details], "/", false);
+    let ctx = build_load_context("v1", &vc, &[list, second_list, details], "/", false, false);
     assert!(ctx.has_fetch);
     assert_eq!(ctx.components.len(), 3);
     assert!(ctx.components[0].fetch_list);
@@ -4004,7 +4010,7 @@ fn integrated_guard_decides_server_side_via_parent_roles() {
         vec!["admin".to_string()],
         vec!["manage_refunds".to_string()],
     );
-    let ctx = build_load_context("v1", &vc, &[], "/", true);
+    let ctx = build_load_context("v1", &vc, &[], "/", true, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("async ({ params, url, fetch, parent }) => {"),
@@ -4060,6 +4066,7 @@ fn fetch_component(name: &str) -> super::context::PageLoadComponentContext {
         fetch_list: true,
         fetch_item: false,
         fetch_form: false,
+        remote_query: None,
     }
 }
 
@@ -4081,6 +4088,7 @@ fn load_fetches_resolve_the_api_origin_and_carry_the_auth_header() {
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        remote_api: false,
         denial_target: "/".to_string(),
     };
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
@@ -4120,6 +4128,7 @@ fn paramless_untyped_load_stays_free_of_api_plumbing() {
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        remote_api: false,
         denial_target: "/".to_string(),
     };
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
@@ -4207,5 +4216,280 @@ fn action_events_render_controls_that_post_the_service_op() {
     assert!(
         rendered.contains("apiHeaders"),
         "the op post carries the auth header set:\n{rendered}"
+    );
+}
+
+// ── Remote-functions data plane (issue #557, `ifml_remote_functions`) ───────
+
+fn remote_project() -> ProjectConfig {
+    ProjectConfig {
+        codegen: CodegenConfig {
+            ifml_remote_functions: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn page_context_for_project(vc: &IfmlViewContainer, project: &ProjectConfig) -> PageSvelteContext {
+    futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &test_config(),
+        "v1",
+        vc,
+        None,
+        &HashSet::new(),
+        None,
+        project,
+    ))
+    .expect("page ctx")
+}
+
+#[test]
+fn remote_load_awaits_the_view_query_instead_of_client_fetching() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
+    let vc = plain_vc("CustomerList");
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, true);
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+
+    assert!(
+        rendered.contains("import { getGrid } from './data.remote';"),
+        "the load imports the view's server-executed query:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "result.items = await getGrid({ page: url.searchParams.get('page') ?? '0', pageSize: url.searchParams.get('page_size') ?? '20' });"
+        ),
+        "the list fetch awaits the remote query with pagination args:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("await fetch("),
+        "no client fetch may remain under the remote plane:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("PUBLIC_API_KEY"),
+        "the API key must never reach the client bundle:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("import { error }"),
+        "the load no longer needs kit's error() — the query throws server-side:\n{rendered}"
+    );
+}
+
+#[test]
+fn remote_item_query_takes_the_view_id_param() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut details = component_with_spec(None);
+    details.name = "card".to_string();
+    details.component_type = "details".to_string();
+    let mut vc = plain_vc("CustomerDetail");
+    vc.params = vec![id_param()];
+    let ctx = build_load_context(
+        "v1",
+        &vc,
+        &[page_component_context_sync(&details)],
+        "/",
+        false,
+        true,
+    );
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+
+    assert!(
+        rendered.contains("import { getCard } from './data.remote';"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("result.item = await getCard(customerId);"),
+        "the item fetch passes the resolved view param:\n{rendered}"
+    );
+    assert!(!rendered.contains("await fetch("), "{rendered}");
+}
+
+#[test]
+fn remote_off_load_keeps_the_client_fetch_plane_byte_identical() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
+    let vc = plain_vc("CustomerList");
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, false);
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+
+    assert!(rendered.contains("const API_BASE"), "{rendered}");
+    assert!(rendered.contains("Authorization"), "{rendered}");
+    assert!(
+        rendered.contains("await fetch(`${API_BASE}/api/v1/customer"),
+        "flag off keeps the client fetch plane:\n{rendered}"
+    );
+    assert!(!rendered.contains("data.remote"), "{rendered}");
+    assert!(
+        rendered.contains("async ({ params, url, fetch }) => {"),
+        "flag off keeps the load signature byte-identical:\n{rendered}"
+    );
+}
+
+#[test]
+fn remote_submit_calls_the_server_executed_command() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.components[0].events.push(save_event());
+    let ctx = page_context_for_project(&vc, &remote_project());
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+
+    assert!(
+        rendered.contains("import { submitEditor } from './data.remote';"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("const result = await submitEditor({"),
+        "the submit posts through the server-executed command:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("id: null,"),
+        "a create view passes a null id (server POSTs the collection):\n{rendered}"
+    );
+    assert!(
+        rendered.contains("formError = result.message ?? 'Request failed';"),
+        "the command result drives the existing formError UX:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("PUBLIC_API_KEY"),
+        "the client PUBLIC key block must be gone:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("await fetch("),
+        "no client fetch may remain under the remote plane:\n{rendered}"
+    );
+}
+
+#[test]
+fn remote_edit_submit_passes_the_view_param_id() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let ctx = page_context_for_project(&vc, &remote_project());
+    let submit = ctx.components[0].submit.as_ref().expect("form submit");
+    let command = submit.remote_command.as_ref().expect("remote command");
+    assert_eq!(command.export, "submitEditor");
+    assert_eq!(command.base_path, "/api/v1/customer");
+    assert_eq!(command.id_param.as_deref(), Some("customerId"));
+
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("id: viewParams.customerId || null,"),
+        "edit views forward the row id (server PUTs the item):\n{rendered}"
+    );
+}
+
+#[test]
+fn remote_transition_and_action_ops_call_commands() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    vc.components[0].events.push(IfmlEvent {
+        name: "comp_editor_request".to_string(),
+        event_type: "request".to_string(),
+        params: Vec::new(),
+        requires: Vec::new(),
+        action: IfmlAction::Action("RequestFiling".to_string()),
+    });
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &workflow_transitions_config(),
+        "v1",
+        &vc,
+        None,
+        &HashSet::new(),
+        None,
+        &remote_project(),
+    ))
+    .expect("page ctx");
+    let comp = &ctx.components[0];
+    let transition = comp.remote_transition.as_ref().expect("remote transition");
+    assert_eq!(transition.export, "transitionEditor");
+    assert_eq!(
+        transition.id_param.as_deref(),
+        Some("customerId"),
+        "the transition reads the view's id param"
+    );
+    let action = comp
+        .action_buttons
+        .iter()
+        .find_map(|b| b.remote_command.as_ref())
+        .expect("remote action command");
+    assert_eq!(action.export, "requestFiling");
+    assert_eq!(action.base_path, "/api/v1/customer");
+
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered
+            .contains("const result = await transitionEditor({ id: viewParams.customerId, to });"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("const result = await requestFiling({ id: viewParams.customerId });"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("PUBLIC_API_KEY"), "{rendered}");
+    assert!(!rendered.contains("await fetch("), "{rendered}");
+}
+
+#[test]
+fn remote_off_page_keeps_the_client_post_plane() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.components[0].events.push(save_event());
+    let ctx = page_context_for(&vc, None);
+    assert!(
+        ctx.components[0]
+            .submit
+            .as_ref()
+            .expect("submit")
+            .remote_command
+            .is_none()
+    );
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(rendered.contains("const apiHeaders"), "{rendered}");
+    assert!(
+        rendered.contains("await fetch(`${API_BASE}` +"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("data.remote"), "{rendered}");
+}
+
+#[test]
+fn form_payload_keys_follow_the_dto_wire_casing() {
+    // Issue #539 follow-through: the create/update DTOs deny unknown
+    // fields — the typed submit payload's keys must be the serde wire keys
+    // (snake under the default casing), not the schema property names.
+    let mut c = component_with_spec(Some(ComponentSpec::Form(FormSpec {
+        fields: vec![
+            field_def("title", InputFieldType::Text),
+            field_def("submittedAt", InputFieldType::DateTime),
+        ],
+    })));
+    c.fields_with_types = vec![
+        ("title".to_string(), "String".to_string()),
+        ("submittedAt".to_string(), "DateTime".to_string()),
+    ];
+    let form = render_form(&FormSpec {
+        fields: vec![
+            field_def("title", InputFieldType::Text),
+            field_def("submittedAt", InputFieldType::DateTime),
+        ],
+    });
+
+    let block = form_payload_block(&c, Some(&form), None, DtoKeyCasing::Snake);
+    assert!(
+        block.contains("payload.submitted_at ="),
+        "snake casing emits the rust field name as the wire key:\n{block}"
+    );
+    assert!(!block.contains("payload.submittedAt"), "{block}");
+
+    let camel = form_payload_block(&c, Some(&form), None, DtoKeyCasing::Camel);
+    assert!(
+        camel.contains("payload.submittedAt ="),
+        "camel casing camelCases the rust field name:\n{camel}"
     );
 }

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::GenerationEntry;
 use crate::ProjectConfig;
 use crate::error::Result;
+use crate::project_config::DtoKeyCasing;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use async_trait::async_trait;
 use codegraph_config::{DomainConfig, IfmlComponentMappings};
@@ -74,6 +75,9 @@ pub struct IfmlE2eTestGenerator {
     /// `tests/ifml/support/` instead of `tests/e2e/` (no collision with the
     /// entity suite's `tests/e2e/fixtures/personas.ts`).
     integrated: bool,
+    /// The DTO wire-key casing (#539 follow-through): fixture POST bodies
+    /// must match the create/update DTOs' serde contract.
+    pub(super) dto_casing: DtoKeyCasing,
 }
 
 /// Where the auth-bootstrap family lives, relative to the output root.
@@ -104,7 +108,15 @@ impl IfmlE2eTestGenerator {
             framework: framework.to_string(),
             mappings: None,
             integrated: false,
+            dto_casing: DtoKeyCasing::default(),
         }
+    }
+
+    /// The DTO wire-key casing the fixture bodies serialize with (set from
+    /// the build plan in the registry).
+    pub fn with_dto_casing(mut self, casing: DtoKeyCasing) -> Self {
+        self.dto_casing = casing;
+        self
     }
 
     pub fn with_mappings(mut self, mappings: Option<IfmlComponentMappings>) -> Self {
@@ -405,6 +417,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 &project.identity.api_version,
                 &model,
                 &personas,
+                self.dto_casing,
             )
             .await
         } else {

@@ -962,8 +962,8 @@ async fn form_fixtures_derive_typed_values_from_spec_fields() {
         "boolean fields must post booleans: {edit_spec}"
     );
     assert!(
-        edit_spec.contains("'submittedAt': '2024-01-15T10:30:00Z'"),
-        "datetime fields must post ISO strings: {edit_spec}"
+        edit_spec.contains("'submitted_at': '2024-01-15T10:30:00Z'"),
+        "datetime fields must post ISO strings under the DTO wire key          (snake casing, #539 deny_unknown_fields): {edit_spec}"
     );
     assert!(
         edit_spec.contains("'reason': 'Damaged'"),

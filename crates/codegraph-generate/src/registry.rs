@@ -590,7 +590,15 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         }
         if ctx.build_plan.is_none() || ctx.plan_has_global(&format!("ifml_e2e_test_{}", fw)) {
             let mut e2e_gen = ifml::e2e_test::IfmlE2eTestGenerator::new(&fw_output, fw)
-                .with_mappings(ctx.ifml_components.cloned());
+                .with_mappings(ctx.ifml_components.cloned())
+                .with_dto_casing(match ctx.build_plan {
+                    // The fixture POST bodies must match the DTOs' serde
+                    // key contract (deny_unknown_fields, #539).
+                    Some(plan) => {
+                        crate::project_config::DtoKeyCasing::from_config(&plan.dto_key_casing)
+                    }
+                    None => crate::project_config::DtoKeyCasing::default(),
+                });
             if integrated {
                 // Specs/journeys/bootstrap move under ui/tests/ifml (support
                 // under ui/tests/ifml/support) so they never collide with the
