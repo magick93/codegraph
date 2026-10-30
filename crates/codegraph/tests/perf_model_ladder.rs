@@ -172,6 +172,7 @@ fn write_model(pkgs: usize, entities: usize, props: usize) -> ModelLayout {
 
 fn run_args<'a>(layout: &'a ModelLayout, output: &'a Path) -> RunArgs<'a> {
     RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &layout.config,

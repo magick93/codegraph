@@ -2569,10 +2569,60 @@ The catalog/installations API is MOUNTED, not just emitted:
   deps, no hyperdrive block). The registry constructs the four integration
   generators only when the parsed config is present — flag-off is inert even
   with them plan-listed.
-- **Deferred**: settings validation of `installation_settings` against the
+
+### Integration catalog manifests (issue #552)
+
+`tables.tera`'s "populated from manifests at deploy time" promise is now
+kept at GENERATE time: repeatable `--integration-manifests <file>` (on
+`generate` and `run`; rides `RunArgs.integration_manifests` — the wrapper
+template carries it) parses `[integration.<id>]` catalog entries +
+`[[installation]]` demo installs (singular TOML key spellings: `integration`,
+`installation`) into `codegraph_ext_points::IntegrationManifestSet`
+(parse/merge/validate/`render_worker_url`/fnv1a `manifest_hash` live in
+codegraph-ext-points). The `IntegrationTablesGenerator` (`.with_manifests`)
+then emits `migrations/0010_integration_catalog_seed.sql` after the
+extension-point seed: one idempotent `ON CONFLICT (id) DO UPDATE` upsert
+per catalog row (worker_url `{app_name}` templated against
+`project.identity.app_name` at context build — unknown placeholders pass
+through verbatim; `manifest_hash` = fnv1a-64 hex over the canonical field
+list, so a manifest edit changes the row hash) plus the optional demo
+installations (`ON CONFLICT (platform_organization_id, catalog_id)
+DO NOTHING`, status default `active`) — the declarative retirement of
+consumers' hand-written `900000_push_plane_bootstrap.sql`.
+
+Validation is a generation-time config error (never half-generation, run
+from `run_generators_with_opts` BEFORE any generation): manifests without
+`--extension-points` (the rows reference extension point ids only the
+plane defines), unknown `extension_point` refs, demo installs referencing
+undeclared catalogs, malformed organization UUIDs, and statuses outside
+the DDL CHECK set. Absent manifests ⇒ no 0010 file, byte-identical
+migration set (presence gating).
+
+**Signing-secret provisioning (the #511 rider)**: `InstallRequest` gains
+`signing_secret: Option<String>` (persisted by the install INSERT), and
+both handler variants (monolith SeaORM + gateway cornucopia) grow
+`set_signing_secret` — `PUT /integrations/installations/{id}/signing-secret`
+with `{signing_secret: string | null}` (null = clear, back to unsigned
+delivery), mounted by `catalog_router.tera`. The endpoint UPDATEs
+`platform_integrations.installations.signing_secret` — the column the
+dispatcher SELECTs fresh on EVERY dispatch, so the next dispatch picks the
+value up with no restart; the secret is never echoed back.
+
+- Gates: `cargo test -p codegraph --test integration_manifest_tests` (5:
+  `manifest_seeds_catalog_row` with worker_url templating +
+  demo-installation pins, `absent_manifests_emits_no_catalog_seed`,
+  unknown-point + missing-ext-points config errors,
+  `installation_settings_accepts_signing_secret` over BOTH provider legs
+  + router), plus `cargo test -p codegraph-ext-points` (manifest parse/
+  merge/validate/templating unit tests) — all node-free.
+- **Deferred**: `doctor --integration-manifests` (the generate path
+  validates; doctor parity would mirror `check_extension_points`);
+  openapi/hurl coverage of the signing-secret route; a live-API hurl
+  leg in the ops api suite.
+
+- **Deferred (pre-#552)**: settings validation of `installation_settings` against the
   typed `{Point}Config` structs (both handler variants take raw JSON);
-  openapi/hurl coverage of the mounted routes; signing-secret provisioning endpoint
-  (#511 assumes this API can set it). The wasm32 compile leg of the gateway
+  openapi/hurl coverage of the mounted routes. The wasm32 compile leg of the gateway
   catalog is GATED by `worker_wasm_compile_tests` (issue #550) — the gate's
   first run exposed that the gateway's `tokio-postgres` dep lived in the
   native-only target table while the wasm `DbClient::Direct` variant

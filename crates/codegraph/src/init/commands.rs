@@ -1129,7 +1129,8 @@ fn check_extension_points(
     );
     println!(
         "     hint: provision platform_integrations.installations.signing_secret per \
-         installation; receivers verify with \
+         installation (PUT /api/v1/integrations/installations/{{id}}/signing-secret \
+         since issue #552 — no raw SQL); receivers verify with \
          integration_dispatch::verify_event_signature"
     );
 

@@ -85,6 +85,7 @@ async fn run_generation(fixture_root: &Path, output_dir: &Path) {
         config_path: &config_path,
         output: output_dir,
         extension_points_path: None,
+        integration_manifests: &[],
         profile_name: "default",
         variant: None,
         profiles_config_path: Some(PathBuf::from("definitely-absent-profiles.toml")),

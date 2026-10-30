@@ -100,6 +100,7 @@ pub fn add_domain_entry(p: &SchemaProject, domain: &str, entities: &[&str]) {
 /// mox equivalence harness (no profiles plan, no post-gen).
 pub fn driver_args(p: &SchemaProject) -> codegraph::driver::RunArgs<'_> {
     codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: Some(&p.schemas),
         classifier: Some(&p.classifier),
         config_path: &p.config,

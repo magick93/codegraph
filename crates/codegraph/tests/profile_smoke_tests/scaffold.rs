@@ -200,6 +200,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -694,6 +695,7 @@ directions = ["push"]
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -855,6 +857,7 @@ directions = ["push"]
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -1029,6 +1032,7 @@ directions = ["push"]
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -1288,6 +1292,7 @@ async fn workers_topology_without_extension_points_keeps_gateway_clean() {
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -1465,6 +1470,7 @@ directions = ["push"]
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: output_dir.path(),
@@ -1569,6 +1575,7 @@ directions = ["push"]
     };
     let report2 =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock2,
             config: &config2,
             output_dir: output_dir2.path(),

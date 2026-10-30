@@ -300,6 +300,7 @@ async fn run_generator_pipeline(
     let output = dir.join("generated");
 
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &domains,

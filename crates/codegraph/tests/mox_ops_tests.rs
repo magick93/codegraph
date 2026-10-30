@@ -207,6 +207,7 @@ async fn run_generation(
             domain_types_base: Some(domain_types_dir),
             hooks_base: Some(hooks_tmp),
             ext_points: None,
+            integration_manifests: None,
             build_plan: Some(&plan),
             ifml_frameworks: vec![],
             ifml_components: None,

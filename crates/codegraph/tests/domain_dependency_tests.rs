@@ -447,6 +447,7 @@ async fn consumer_generates_against_pinned_face() {
         config_path: &config_path,
         output: &output,
         extension_points_path: None,
+        integration_manifests: &[],
         profile_name: "default",
         variant: None,
         profiles_config_path: Some(consumer_dir.join("profiles.toml")),

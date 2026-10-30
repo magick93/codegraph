@@ -47,6 +47,7 @@ async fn run_pipeline(config: &Path, output: &Path, evt_files: &[PathBuf]) {
         config_path: config,
         output,
         extension_points_path: None,
+        integration_manifests: &[],
         profile_name: "default",
         variant: None,
         // Nonexistent path ⇒ the no-plan (all generators) backward-compat

@@ -81,6 +81,7 @@ async fn run_fixture() -> (tempfile::TempDir, PathBuf) {
     let (dir, domains, rosetta) = fixture_in_tempdir();
     let output = dir.path().join("generated");
     let args = codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &domains,

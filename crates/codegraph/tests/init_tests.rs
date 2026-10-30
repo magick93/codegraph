@@ -337,6 +337,7 @@ async fn init_scaffold_runs_mox_first() {
     let mox_files = vec![project.join("model/common.mox")];
     let output = project.join("generated");
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &project.join("domains.toml"),
@@ -1157,6 +1158,7 @@ async fn init_rosetta_scaffold_runs_rosetta_first() {
     let rosetta_files = vec![project.join("model/common.rosetta")];
     let output = project.join("generated");
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &project.join("domains.toml"),

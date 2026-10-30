@@ -50,6 +50,7 @@ fn write_cache_fixture() -> CacheFixture {
 
 fn cache_run_args<'a>(fx: &'a CacheFixture, output: &'a Path) -> codegraph::driver::RunArgs<'a> {
     codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &fx.config,

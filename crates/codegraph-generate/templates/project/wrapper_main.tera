@@ -38,6 +38,10 @@ enum Commands {
         /// Extension points config path.
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Integration catalog manifest TOML files (issue #552); seeds
+        /// platform_integrations.catalog. Requires --extension-points.
+        #[arg(long)]
+        integration_manifests: Vec<PathBuf>,
         /// Profile name.
         #[arg(long, default_value = "default")]
         profile: String,
@@ -129,6 +133,10 @@ enum Commands {
         /// Extension points config path.
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Integration catalog manifest TOML files (issue #552); seeds
+        /// platform_integrations.catalog. Requires --extension-points.
+        #[arg(long)]
+        integration_manifests: Vec<PathBuf>,
         /// Path to a ux-rules.toml; rules shadow the built-in ux-default pack.
         #[arg(long)]
         ux_rules: Option<PathBuf>,
@@ -208,6 +216,7 @@ async fn main() -> Result<()> {
             config,
             output,
             extension_points,
+            integration_manifests,
             profile,
             variant,
             profiles_config,
@@ -233,6 +242,7 @@ async fn main() -> Result<()> {
                 config_path: &config,
                 output: &output,
                 extension_points_path: extension_points.as_deref(),
+                integration_manifests: &integration_manifests,
                 profile_name: &profile,
                 variant: variant.as_deref(),
                 profiles_config_path: profiles_config,
@@ -286,6 +296,7 @@ async fn main() -> Result<()> {
             config,
             output,
             extension_points,
+            integration_manifests,
             ux_rules,
             check,
         } => {
@@ -294,6 +305,7 @@ async fn main() -> Result<()> {
                 &config,
                 &output,
                 extension_points.as_deref(),
+                &integration_manifests,
                 &dirs,
                 &[],
                 None,

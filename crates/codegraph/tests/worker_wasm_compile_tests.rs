@@ -599,6 +599,7 @@ directions = ["push"]
 
     let report =
         codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
             db: &mock,
             config: &config,
             output_dir: &output_dir,

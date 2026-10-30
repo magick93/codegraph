@@ -36,6 +36,11 @@ pub struct RunArgs<'a> {
     pub config_path: &'a Path,
     pub output: &'a Path,
     pub extension_points_path: Option<&'a Path>,
+    /// Integration catalog manifest files (issue #552). When non-empty the
+    /// integration tables generator additionally emits
+    /// `0010_integration_catalog_seed.sql` (catalog rows + optional demo
+    /// installations). Requires `extension_points_path`.
+    pub integration_manifests: &'a [PathBuf],
     pub profile_name: &'a str,
     pub variant: Option<&'a str>,
     pub profiles_config_path: Option<PathBuf>,
@@ -102,6 +107,7 @@ pub fn run_args_field_names() -> Vec<String> {
         config_path: Path::new(""),
         output: Path::new(""),
         extension_points_path: None,
+        integration_manifests: empty_paths,
         profile_name: "",
         variant: None,
         profiles_config_path: None,
@@ -302,6 +308,7 @@ pub async fn run_with_graph_cache(
         config_path,
         output,
         extension_points_path,
+        integration_manifests,
         profile_name,
         variant,
         profiles_config_path,
@@ -953,6 +960,19 @@ pub async fn run_with_graph_cache(
         None => None,
     };
 
+    // Integration catalog manifests (issue #552): parse + merge the
+    // repeatable --integration-manifests files; validation against the
+    // extension points happens in the generation pipeline (a broken
+    // manifest is a config error, never half-generation).
+    let integration_manifests = if integration_manifests.is_empty() {
+        None
+    } else {
+        Some(
+            codegraph_ext_points::parse_integration_manifests(integration_manifests)
+                .map_err(crate::error::Error::Config)?,
+        )
+    };
+
     // Pass 4-ish: resolve ux-rules (issue #293) once — CLI file merged over
     // the pack, or pack-only when the profile enables the feature. Threaded
     // into GeneratorOpts for generators and into ProjectConfig.ux so every
@@ -1017,6 +1037,7 @@ pub async fn run_with_graph_cache(
         domain_types_base: domain_types_base_path.as_deref(),
         hooks_base: None,
         ext_points: ext_config.as_ref(),
+        integration_manifests: integration_manifests.as_ref(),
         build_plan: build_plan.as_ref(),
         ifml_frameworks: ifml_framework.to_vec(),
         ifml_components: ifml_component_mappings.as_ref(),
@@ -1494,6 +1515,7 @@ pub async fn generate(
     config_path: &Path,
     output: &Path,
     extension_points_path: Option<&Path>,
+    integration_manifests_paths: &[PathBuf],
     template_dir: &[PathBuf],
     ifml_frameworks: &[String],
     ifml_components: Option<&Path>,
@@ -1521,6 +1543,16 @@ pub async fn generate(
                 .map_err(|e| crate::error::Error::Config(e.to_string()))?,
         ),
         None => None,
+    };
+
+    // Integration catalog manifests (issue #552) — see `run`.
+    let integration_manifests = if integration_manifests_paths.is_empty() {
+        None
+    } else {
+        Some(
+            codegraph_ext_points::parse_integration_manifests(integration_manifests_paths)
+                .map_err(crate::error::Error::Config)?,
+        )
     };
 
     let api_resources = be
@@ -1562,6 +1594,7 @@ pub async fn generate(
         domain_types_base: None,
         hooks_base: None,
         ext_points: ext_config.as_ref(),
+        integration_manifests: integration_manifests.as_ref(),
         build_plan: None,
         ifml_frameworks: ifml_frameworks.to_vec(),
         ifml_components: ifml_component_mappings.as_ref(),
@@ -1863,6 +1896,7 @@ mod tests {
                 "config_path",
                 "output",
                 "extension_points_path",
+                "integration_manifests",
                 "profile_name",
                 "variant",
                 "profiles_config_path",

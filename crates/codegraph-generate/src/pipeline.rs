@@ -48,6 +48,7 @@ pub async fn run_generators(
         domain_types_base: None,
         hooks_base: None,
         ext_points: None,
+        integration_manifests: None,
         build_plan: None,
         ifml_frameworks: vec![],
         ifml_components: None,
@@ -85,6 +86,7 @@ pub async fn run_generators_with_domain_types_base(
         domain_types_base: Some(domain_types_base),
         hooks_base: Some(hooks_base),
         ext_points: None,
+        integration_manifests: None,
         build_plan: None,
         ifml_frameworks: vec![],
         ifml_components: None,
@@ -98,6 +100,21 @@ pub async fn run_generators_with_domain_types_base(
 
 /// Run generators with full configuration via [`GeneratorOpts`].
 pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report::GenerationReport> {
+    // Integration catalog manifests (issue #552): they seed rows keyed on
+    // extension point ids, so they require the plane and every ref must
+    // resolve — a broken manifest is a config error, never half-generation.
+    if let Some(manifests) = opts.integration_manifests {
+        let Some(ext_points) = opts.ext_points else {
+            return Err(Error::Config(
+                "--integration-manifests requires --extension-points: catalog rows reference \
+                 extension point ids that only the integration plane defines"
+                    .to_string(),
+            ));
+        };
+        codegraph_ext_points::validate_integration_manifests(manifests, ext_points)
+            .map_err(Error::Config)?;
+    }
+
     // Project config is threaded explicitly to every generator/helper that
     // needs it (no global state).
     let default_project = ProjectConfig::default();

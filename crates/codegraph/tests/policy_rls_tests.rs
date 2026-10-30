@@ -197,6 +197,7 @@ async fn run_fixture_generation(output_dir: &Path) -> BTreeMap<String, Vec<u8>> 
     };
 
     let report = run_generators_with_opts(GeneratorOpts {
+        integration_manifests: None,
         db: &engine,
         config: &config,
         output_dir,

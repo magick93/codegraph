@@ -698,6 +698,7 @@ async fn run_gate(root: &Path, output: &Path, mox: &[PathBuf], gated: bool) {
     )
     .unwrap();
     let mut args = codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &root.join("domains.toml"),

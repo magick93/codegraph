@@ -291,6 +291,7 @@ async fn legacy_entities_list_flips_rosetta_titles_end_to_end() {
     let output = dir.path().join("generated");
     let rosetta = vec![model];
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &domains,
@@ -366,6 +367,7 @@ async fn legacy_entities_list_flips_rosetta_titles_end_to_end() {
         schemas: None,
         classifier: None,
         config_path: &domains2,
+        integration_manifests: &[],
         output: &output2,
         extension_points_path: None,
         profile_name: "default",

@@ -513,6 +513,12 @@ pub struct GeneratorOpts<'a> {
     pub hooks_base: Option<&'a Path>,
     /// Extension points config for integration infrastructure generators.
     pub ext_points: Option<&'a codegraph_ext_points::ExtensionPointsConfig>,
+    /// Integration catalog manifests (issue #552). When present (and
+    /// `ext_points` is set) the integration tables generator additionally
+    /// emits `0010_integration_catalog_seed.sql` — the declarative
+    /// replacement for hand-written `platform_integrations.catalog`
+    /// bootstrap SQL.
+    pub integration_manifests: Option<&'a codegraph_ext_points::IntegrationManifestSet>,
     /// Build profile plan controlling which generators to run.
     pub build_plan: Option<&'a crate::profile::BuildPlan>,
     /// IFML framework targets (e.g. "svelte", "react").

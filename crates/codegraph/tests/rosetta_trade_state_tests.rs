@@ -93,6 +93,7 @@ async fn full_pipeline_runs_clean_over_the_real_cdm_fragment() {
     std::fs::write(&profiles, PROFILES_TOML).unwrap();
 
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &fixture_domains(),
@@ -359,6 +360,7 @@ async fn fragment_conditions_land_as_nodes_and_emit_into_validations() {
     let profiles = dir.path().join("profiles.toml");
     std::fs::write(&profiles, PROFILES_TOML).unwrap();
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &fixture_domains(),
@@ -459,6 +461,7 @@ async fn generated_functions_show_copy_from_before_and_no_dispatch() {
     let profiles = dir.path().join("profiles.toml");
     std::fs::write(&profiles, PROFILES_TOML).unwrap();
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &fixture_domains(),
@@ -541,6 +544,7 @@ async fn trade_state_operations_config_yields_no_update_or_delete_surface() {
     let profiles = dir.path().join("profiles.toml");
     std::fs::write(&profiles, PROFILES_TOML).unwrap();
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: &fixture_domains(),

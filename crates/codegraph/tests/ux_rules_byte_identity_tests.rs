@@ -108,6 +108,7 @@ fn fixture_with_flag_off(dir: &TempDir) -> (PathBuf, PathBuf) {
 async fn run_pipeline(output: &Path, mox_file: &Path, config: &Path, profiles: &Path) {
     let mox_files = vec![mox_file.to_path_buf()];
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: None,
         classifier: None,
         config_path: config,

@@ -201,6 +201,7 @@ async fn regenerate_fixture() -> Result<(), String> {
 
     let tera = create_tera(Path::new("unused")).map_err(|e| format!("tera: {e}"))?;
     let report = run_generators_with_opts(GeneratorOpts {
+        integration_manifests: None,
         db: &engine,
         config: &config,
         output_dir: &output_dir,

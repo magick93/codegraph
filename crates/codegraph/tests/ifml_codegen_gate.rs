@@ -365,6 +365,7 @@ async fn run_pipeline() -> Result<(), String> {
             domain_types_base: Some(&domain_types_dir),
             hooks_base: Some(hooks_tmp.path()),
             ext_points: None,
+            integration_manifests: None,
             build_plan: Some(&plan),
             ifml_frameworks: vec!["svelte".to_string()],
             ifml_components: Some(&pack),

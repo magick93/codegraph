@@ -120,6 +120,7 @@ async fn persisted_bounds_un_dead_the_garde_branches_in_dto_create() {
     let output = dir.path().join("generated");
 
     codegraph::driver::run(codegraph::driver::RunArgs {
+        integration_manifests: &[],
         schemas: Some(&schemas_root),
         classifier: Some(&classifier),
         config_path: &domains,
