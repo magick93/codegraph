@@ -159,7 +159,7 @@ fn capabilities() -> HashMap<String, GeneratorCapability> {
 }
 
 /// Base capabilities without IFML generators.
-fn base_capabilities() -> HashMap<String, GeneratorCapability> {
+pub(crate) fn base_capabilities() -> HashMap<String, GeneratorCapability> {
     use GeneratorKind::{Domain, Entity, Global};
     use GeneratorTarget::*;
 
@@ -223,7 +223,7 @@ fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("ui_scaffold",          Global, Ui,    &[], &[]),
         cap("ui_types",             Global, Ui,    &[], &[]),
         cap("ui_codelist",          Global, Ui,    &[], &[]),
-        cap("ui_orgchart",          Global, Ui,    &[], &[]),
+        cap("ui_charts",            Global, Ui,    &[], &[]),
         cap("ui_testids",           Global, Ui,    &[], &[]),
         cap("hook_registry",        Global, Common, &[], &[]),
         cap("domain_types_scaffold", Global, Common, &[], &[]),

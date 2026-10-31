@@ -274,6 +274,83 @@ search row-filtering stay a documented follow-up).
   path params), workers-topology guard routing.
 
 
+## Chart plane (issue #577)
+
+Charts are MODELED artifacts, not bolt-ons: a top-level `[charts."name"]`
+table in domains.toml (the `[functions]` precedent) ingests into
+`ChartDefinition` graph nodes (the 6-layer node-family pattern), and the
+registry-wired `ui_charts` global generator renders one SvelteKit route per
+chart. An OrgChart is one chart kind among a CLOSED vocabulary —
+`org | bar | line | pie | radar | metric` (the #574-era `ui_orgchart`
+generator, which read no graph data and hardcoded the crewbase surface, is
+retired).
+
+- **Config** (`codegraph-config/src/config/charts.rs` on
+  `DomainConfig.charts`): `kind` (closed serde enum, unknown = hard parse
+  error), `entity` (exact → `+type_suffix` resolution), optional
+  `title`/`route` (default kebab of the name), and a per-kind payload table
+  that MUST match the kind (`[charts."x".org]` / `.series` / `.metric` —
+  missing or foreign tables are hard errors). Org:
+  `hierarchy_field` (default: the entity config's), `label_fields`,
+  `detail_fields`, `max_depth`. Series (bar/line/pie/radar):
+  `label_field`, `value_fields`, `aggregate` (sum|avg|count|min|max).
+  Metric: `value_field`, `aggregate`, `label`. Kind string sets are pinned
+  equal to the core mirror (`codegraph_core::types::ChartKind`) by a KAT.
+- **Ingest** (driver **Pass 1f**, `ingest/chart_ingest.rs`, after the
+  schema passes): resolves entity refs (exact → suffix → WARN + `None`)
+  and field references against the graph (`ChartBindsEntity` /
+  `ChartBindsProperty(role)` edges — misses WARN and drop). Unresolved
+  bindings are GENERATION errors naming the chart (never bare names in
+  templates). The deprecated per-entity `has_orgchart = true` is sugar:
+  WARN + a synthesized org chart keyed `{kebab entity}-org` — ONLY when
+  the entity config also carries `hierarchy_field` (entities without one
+  were promised nothing by the dead generator, so the sugar skips them
+  with a WARN; `sugar_skipped_no_hierarchy` counts them).
+- **Generation** (`codegraph-generate/src/charts/mod.rs` +
+  `templates/ui/charts/{page,load}.tera`): `ChartRoute::resolve` rehydrates
+  the payload, resolves the real endpoint through the SAME chain the IFML
+  plane uses (`ifml::api_paths::resolve_entity_api`), and validates —
+  no-list bindings, org charts without a resolvable self-referencing
+  hierarchy, and unknown fields are hard `Error::Config`s naming the
+  chart. Loads fetch the entity's RLS-scoped collection through the #574
+  S1 contract (`apiFetch`, origin-relative) and aggregate CLIENT-SIDE over
+  one `page_size=200` page (documented v1 decision — no aggregate API
+  plane); org loads assemble the hierarchy over the configured
+  `hierarchy_field` in TS. Pages are self-contained Svelte 5 (recursive
+  `{#snippet}` tree, flex bars, SVG line/radar, conic-gradient pie, metric
+  block) with the testid contract `chart-{route}` / `-node` / `-plot` /
+  `-empty`; no chart library, no consumer-owned imports (the
+  `@crewbase/ui` build break is gone). The `--ifml-components` mapping
+  hook renders `type = "{kind}chart"` mapped components instead of the
+  built-in markup (conventional props: `nodes` / `series` / `value` +
+  `label`). `ui_scaffold`'s app layout gains a nav entry per chart
+  (`ChartNavItem`, gated loop — no charts ⇒ byte-identical).
+- **Capability audit (the #577 class-killer)**: `registry.rs::
+  charts_capability_audit::every_global_capability_has_a_registry_
+  constructor` builds a MAXIMAL context (a plan listing every Global
+  capability name, extension points, emdash plugins, monolith + workers
+  union) and asserts every `cap(..., Global, ...)` entry in
+  `base_capabilities()` has a construction site — a listed-but-never-built
+  generator fails the test naming the capability. Teeth validated: the
+  audit's first runs caught the graph itself missing, and removing the
+  charts construction fails with exactly `["ui_charts"]`.
+- **Gates**: `cargo test -p codegraph --test charts_pipeline_tests` (11:
+  grafeo round-trip + bindings, sugar synth + skip, ingest/generation
+  validation errors naming the chart, org/series/metric emission
+  contracts incl. apiFetch + model-driven paths + no `@crewbase`, mapped
+  component, no-charts ⇒ nothing, BTreeMap determinism) +
+  `charts_capability_audit` in-crate + `cargo test -p codegraph-config --
+  lib -- charts` (5). Byte-identity: no charts + no sugar ⇒ zero files
+  and unchanged templates (canaries hold).
+- **Deferred**: server-side aggregate endpoints (`?aggregate=` GROUP BY
+  plane); IFML `type: chart` ChartSpec ↔ ChartDefinition unification (+ an
+  `org` kind upstream in rexlang — tracked in the rexlang repo);
+  ux-rules rule 31 second half (`[[collection]] display = "chart"` →
+  `CollectionPlan::Chart`); dashboard composition (multi-chart routes);
+  chart-aware doctor/LSP validation; e2e render specs via the entity POM;
+  remote-functions (`data.remote.ts`) chart loads riding
+  `entity_remote_functions`.
+
 ## mox op/derived consuming generator (issue #501, quality bar #508, compile contract #517)
 
 The #218 ingest surface (`MoxOperationNode`/`MoxDerivedFeatureNode`)

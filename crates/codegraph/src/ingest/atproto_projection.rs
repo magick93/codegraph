@@ -332,6 +332,7 @@ mod tests {
             namespaces: HashMap::new(),
             defaults: DefaultsConfig::default(),
             functions: Default::default(),
+            charts: Default::default(),
             rbac: None,
             domains,
         }

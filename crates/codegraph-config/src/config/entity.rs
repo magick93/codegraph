@@ -141,9 +141,12 @@ pub struct EntityConfig {
     /// Requires `hierarchy_field` to be set.
     #[serde(default)]
     pub tree_include: Option<Vec<TreeIncludeConfig>>,
-    /// Whether to generate an org-chart SvelteKit page for this entity.
-    /// When set on an entity (e.g. OrganizationType), the pipeline produces
-    /// (app)/org-chart/+page.server.ts and +page.svelte.
+    /// DEPRECATED (issue #577): declare a chart in the top-level
+    /// `[charts]` table instead — `has_orgchart = true` is accepted as
+    /// sugar (WARN) that synthesizes an org chart for the entity, but
+    /// ONLY when the entity config also carries a `hierarchy_field`
+    /// (entities without one were never emitted anything by the dead
+    /// generator, so the sugar skips them with a WARN too).
     #[serde(default)]
     pub has_orgchart: bool,
     /// Allowed eager-load include paths for `?include=` query parameter.

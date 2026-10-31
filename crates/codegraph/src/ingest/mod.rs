@@ -1,6 +1,7 @@
 pub mod api_ingest;
 pub mod async_ingest;
 pub mod atproto_projection;
+pub mod chart_ingest;
 pub mod ddd_ingest;
 pub mod dependencies;
 pub mod deploy_ingest;

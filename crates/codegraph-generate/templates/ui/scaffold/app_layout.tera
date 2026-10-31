@@ -104,6 +104,17 @@
 								</a>
 							</Sidebar.MenuButton>
 						</Sidebar.MenuItem>
+{%- if nav_charts %}
+{%- for chart in nav_charts %}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton>
+								<a href="{{ chart.href }}" data-active={page.url.pathname === '{{ chart.href }}'}>
+									{{ chart.label }}
+								</a>
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+{%- endfor %}
+{%- endif %}
 					</Sidebar.Menu>
 				</Sidebar.GroupContent>
 			</Sidebar.Group>

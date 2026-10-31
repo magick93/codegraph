@@ -2,6 +2,7 @@ mod annotation;
 mod api;
 mod atproto;
 mod authorization;
+mod chart;
 mod codelist;
 mod composite;
 mod composition;
@@ -43,6 +44,7 @@ pub use authorization::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
     NeverBothGroup, Permit, resolve_effective_permits,
 };
+pub use chart::{ChartDefinitionNode, ChartKind, ChartPropertyBinding};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};

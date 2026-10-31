@@ -370,6 +370,23 @@ impl GraphQuerier for MockEngine {
             .collect())
     }
 
+    async fn get_chart_definitions(&self) -> Result<Vec<ChartDefinitionNode>, GraphError> {
+        let mut charts: Vec<ChartDefinitionNode> = self
+            .chart_definitions
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        // Mirror the grafeo readback order: (domain, name).
+        charts.sort_by(|a, b| (&a.domain, &a.name).cmp(&(&b.domain, &b.name)));
+        Ok(charts)
+    }
+
+    async fn get_chart_property_bindings(&self) -> Result<Vec<ChartPropertyBinding>, GraphError> {
+        Ok(self.chart_property_bindings.lock().unwrap().clone())
+    }
+
     async fn get_ifml_view_components(
         &self,
         container_name: &str,

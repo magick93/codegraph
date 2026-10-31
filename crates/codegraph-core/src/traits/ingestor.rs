@@ -1,14 +1,14 @@
 use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode, DataBindingNode,
-    DddModelGraph, DeployModelGraph, EdgeProperties, EdgeType, EnumValue, ErrorDefinitionNode,
-    EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats, InteractionNode,
-    LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDomainModel, NamespaceImport,
-    NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode, PolicyNode, PropertyNode,
-    RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner, RelationshipNode,
-    RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode, ViewComponentNode,
-    ViewContainerNode,
+    ChartDefinitionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode,
+    DataBindingNode, DddModelGraph, DeployModelGraph, EdgeProperties, EdgeType, EnumValue,
+    ErrorDefinitionNode, EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats,
+    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDomainModel,
+    NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
+    PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner,
+    RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode,
+    ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -78,6 +78,14 @@ pub trait GraphIngestor: Send + Sync {
     ) -> Result<String, GraphError>;
 
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError>;
+
+    /// Ingest one chart definition (chart plane, issue #577). Binding
+    /// edges land via [`Self::ingest_edge`] (`ChartBindsEntity` /
+    /// `ChartBindsProperty`).
+    async fn ingest_chart_definition(
+        &self,
+        node: &ChartDefinitionNode,
+    ) -> Result<String, GraphError>;
 
     async fn ingest_atproto_namespace(
         &self,
