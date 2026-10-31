@@ -128,10 +128,7 @@ impl ZodField {
             ZodKind::Date => "z.iso.date()".to_string(),
             ZodKind::DateTime => "z.iso.datetime()".to_string(),
             ZodKind::Enum(values) => {
-                let items: Vec<String> = values
-                    .iter()
-                    .map(|v| ts_string_literal(v))
-                    .collect();
+                let items: Vec<String> = values.iter().map(|v| ts_string_literal(v)).collect();
                 format!("z.enum([{}])", items.join(", "))
             }
             ZodKind::Array(elem) => {
@@ -257,10 +254,7 @@ mod tests {
     fn enum_kind_renders_closed_value_set_with_escaping() {
         let field = ZodField {
             name: "status".into(),
-            kind: ZodKind::Enum(vec![
-                "draft".into(),
-                "has \"quotes\"".into(),
-            ]),
+            kind: ZodKind::Enum(vec!["draft".into(), "has \"quotes\"".into()]),
             required: true,
             checks: vec![],
         };

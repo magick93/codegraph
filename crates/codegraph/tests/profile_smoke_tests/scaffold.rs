@@ -152,6 +152,8 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
     let hooks_tmp = tempfile::TempDir::new().unwrap();
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),
@@ -653,6 +655,8 @@ directions = ["push"]
     };
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),
@@ -817,6 +821,8 @@ directions = ["push"]
     };
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),
@@ -988,6 +994,8 @@ directions = ["push"]
     };
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),
@@ -1249,6 +1257,8 @@ async fn workers_topology_without_extension_points_keeps_gateway_clean() {
     };
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),
@@ -1434,6 +1444,8 @@ directions = ["push"]
     };
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),

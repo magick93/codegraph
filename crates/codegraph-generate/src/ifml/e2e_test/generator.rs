@@ -195,6 +195,9 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         // Test-side auth bootstrap (issue #463): flag off ⇒ no personas,
         // no auth specs, no journeys — byte-identical output.
         let auth_enabled = project.codegen.ifml_e2e_auth;
+        // TanStack form layer (issue #580): the validation spec family
+        // gains the per-field message-visibility assertion under the flag.
+        let tanstack = project.codegen.ifml_tanstack_forms;
 
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
@@ -534,7 +537,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 // `{view}.auth.spec.ts` family; a persona-only payload
                 // renders an empty base describe (the file itself stays —
                 // the suite layout is stable across flag toggles).
-                content: render_spec(spec, !auth_enabled),
+                content: render_spec(spec, !auth_enabled, tanstack),
             })
             .collect();
 

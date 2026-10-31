@@ -132,6 +132,7 @@ fn page_component_context_for_tests(
         &HashSet::new(),
         None,
         DtoKeyCasing::default(),
+        false,
     ))
 }
 
@@ -190,6 +191,7 @@ fn page_component_context_with_config(
         &HashSet::new(),
         None,
         DtoKeyCasing::default(),
+        false,
     ))
 }
 
@@ -1022,6 +1024,7 @@ fn page_component_context_with_ux(
         &HashSet::new(),
         uxgen,
         DtoKeyCasing::default(),
+        false,
     ))
 }
 
@@ -1142,6 +1145,7 @@ export = "DataTable"
         &HashSet::new(),
         Some(&uxgen),
         DtoKeyCasing::default(),
+        false,
     ));
 
     assert!(ctx.mapping.is_some(), "whole-component mapping resolves");
@@ -2581,6 +2585,7 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         has_api_surface: false,
         remote_api: false,
         has_action_buttons: false,
+        tanstack_forms: false,
         view_role: None,
         container_role: None,
         roles: Vec::new(),

@@ -849,6 +849,38 @@ fn routes_dir_for(
     }
 }
 
+/// The TanStack page-wrapper context (issue #580): the page context plus
+/// the submit-leg selector. Serialized flat so the tanstack templates see
+/// the same variables the hand-rolled ones do.
+#[derive(Debug, Serialize)]
+struct UiTanstackPageContext<'a> {
+    #[serde(flatten)]
+    page: &'a UiPageContext,
+    /// The submit legs wire the remote command plane (issue #574 S2);
+    /// false falls back to the store plane (message-only errors — stores
+    /// throw plain errors, so no fieldErrors exist to map).
+    remote: bool,
+}
+
+/// Render a form/edit page wrapper. Flag-off templates render through the
+/// raw page context — the literal pre-#580 path — so their output cannot
+/// shift by a byte; the tanstack variants render the flattened context.
+fn render_form_page(
+    tera: &tera::Tera,
+    ctx: &UiPageContext,
+    project: &ProjectConfig,
+    template: &str,
+    tanstack: bool,
+    remote: bool,
+) -> Result<String> {
+    if tanstack {
+        let page_ctx = UiTanstackPageContext { page: ctx, remote };
+        render_template_with_project(tera, template, &page_ctx, project)
+    } else {
+        render_template_with_project(tera, template, ctx, project)
+    }
+}
+
 fn emit_ui_pages(
     tera: &tera::Tera,
     ctx: &UiPageContext,
@@ -859,6 +891,12 @@ fn emit_ui_pages(
     // The entity remote-functions data plane (issue #574 S2): colocated
     // `data.remote.ts` per route; loads/pages branch on the same flag.
     let remote = project.codegen.entity_remote_functions;
+    // The TanStack form layer (issue #580): the form/edit page wrappers
+    // hand the submit to the `{Entity}Form`'s `onsubmit` contract; the
+    // legs wire the remote command plane when it is present, else the
+    // store plane (message-only errors). Selection happens HERE in Rust —
+    // the flag-off templates' bytes are untouched.
+    let tanstack = project.codegen.entity_form;
     let api_version = project.identity.api_version.as_str();
 
     // List page
@@ -925,12 +963,14 @@ fn emit_ui_pages(
 
     // Create page
     if ctx.has_create {
-        let page_template = if remote {
+        let page_template = if tanstack {
+            "ui/form_page_tanstack.tera"
+        } else if remote {
             "ui/form_page_remote.tera"
         } else {
             "ui/form_page.tera"
         };
-        let content = render_template_with_project(tera, page_template, ctx, project)?;
+        let content = render_form_page(tera, ctx, project, page_template, tanstack, remote)?;
         files.push(GeneratedFile {
             path: routes_dir.join("new").join("+page.svelte"),
             content,
@@ -939,12 +979,14 @@ fn emit_ui_pages(
 
     // Edit page
     if ctx.has_update {
-        let page_template = if remote {
+        let page_template = if tanstack {
+            "ui/edit_page_tanstack.tera"
+        } else if remote {
             "ui/edit_page_remote.tera"
         } else {
             "ui/edit_page.tera"
         };
-        let content = render_template_with_project(tera, page_template, ctx, project)?;
+        let content = render_form_page(tera, ctx, project, page_template, tanstack, remote)?;
         files.push(GeneratedFile {
             path: routes_dir
                 .join(format!("[{}]", ctx.param_name))
@@ -971,7 +1013,7 @@ fn emit_ui_pages(
                     .join(format!("[{}]", ctx.param_name))
                     .join("edit")
                     .join("data.remote.ts"),
-                content: remote::render_edit_module(ctx, api_version),
+                content: remote::render_edit_module(ctx, api_version, project.codegen.entity_form),
             });
         }
     }
@@ -980,7 +1022,7 @@ fn emit_ui_pages(
     if remote && ctx.has_create {
         files.push(GeneratedFile {
             path: routes_dir.join("new").join("data.remote.ts"),
-            content: remote::render_create_module(ctx, api_version),
+            content: remote::render_create_module(ctx, api_version, project.codegen.entity_form),
         });
     }
 

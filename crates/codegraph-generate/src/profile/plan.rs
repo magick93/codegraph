@@ -336,9 +336,9 @@ impl BuildPlan {
         // Parse entity_form from features (issue #580; default: false).
         // Same non-bool-is-an-error rule: the flag gates an output plane.
         let entity_form = match profile.features.get("entity_form") {
-            Some(v) => v
-                .as_bool()
-                .ok_or_else(|| Error::Config("feature \"entity_form\" must be a boolean".to_string()))?,
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"entity_form\" must be a boolean".to_string())
+            })?,
             None => false,
         };
 

@@ -407,8 +407,7 @@ async fn run_ifml_pipeline(output: &Path, ifml_file: &Path, config: &Path) {
 }
 
 fn ifml_snapshot_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/forms_pre_feature_ifml_tree.sha256")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/forms_pre_feature_ifml_tree.sha256")
 }
 
 #[tokio::test]

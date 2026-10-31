@@ -795,6 +795,7 @@ received = ["review"]
                 form_testid: "editor-form".to_string(),
                 submit_testid: "editor-submit".to_string(),
                 field: "name".to_string(),
+                message: None,
             }],
             round_trips: vec![RoundTripTest {
                 component: "editor".to_string(),

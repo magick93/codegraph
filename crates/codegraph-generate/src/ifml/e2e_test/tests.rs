@@ -83,7 +83,7 @@ fn modal_click_through_renders_wrapper_and_close_assertions() {
         personas: Vec::new(),
     };
 
-    let rendered = render_spec(&spec, true);
+    let rendered = render_spec(&spec, true, false);
     // The flow (and its modal close) is a page-class method; the spec body
     // carries no raw testid construction (#317).
     assert!(
@@ -156,7 +156,7 @@ fn spec_render_includes_all_test_kinds() {
         personas: Vec::new(),
     };
 
-    let rendered = render_spec(&spec, true);
+    let rendered = render_spec(&spec, true, false);
     assert!(rendered.contains("import { test, expect } from '@playwright/test';"));
     assert!(
         rendered.contains("import { CustomerListPage } from '../pages/customer-list-page';"),
