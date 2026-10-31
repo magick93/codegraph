@@ -10,6 +10,7 @@ mod handler_router;
 mod harness;
 mod include_resolution;
 mod repository;
+mod rules_guards;
 mod scaffold;
 mod webhook;
 mod workflow;

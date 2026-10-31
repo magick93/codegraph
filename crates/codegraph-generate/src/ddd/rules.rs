@@ -28,8 +28,13 @@
 //! Eligibility guards resolve their guarded operations through the
 //! ApiOperation precedent (`resolve_entity_operations`, the same
 //! priority chain the api generator uses) and name the operation nodes in
-//! the guard's doc comment. Handler-site insertion is a documented
-//! follow-up — this generator does not rewrite route generation.
+//! the guard's doc comment. Handler-site insertion (issue #338) IS done
+//! here: `eligibility_guards_for` is the shared resolution the
+//! `HandlerGenerator` consumes to emit load-or-404 → evaluate → 403
+//! blocks before the gated operations, and this generator types every
+//! emitted rule function over the entity's real record type
+//! (`{Entity}Response`) so the call sites compile. list/search
+//! row-filtering remains a documented follow-up.
 //!
 //! A separate generator from `functions` (issue #263) on purpose: profile
 //! independence — consumers can adopt rules without the func machinery —
@@ -157,6 +162,10 @@ struct RuleSurface {
     fn_name: String,
     /// The Rust input type text (bare title), when the rule has one.
     input_type: Option<String>,
+    /// The resolved record type the function takes (issue #338) —
+    /// `{Entity}Response` — with its import line. `None` when the input
+    /// title does not resolve in the domain (the bare sigil title stays).
+    record: Option<(String, String)>,
     /// The transpiled body, or the rejection reason.
     body: std::result::Result<String, TranspileFailure>,
     /// The inferred primitive return type, when known.
@@ -170,6 +179,153 @@ enum TranspileFailure {
     Unsupported { kind: String, detail: String },
     NoReceiver,
     UnknownReturnType { kind: String },
+}
+
+/// One handler-site eligibility guard (issue #338): the compiled boolean
+/// the `HandlerGenerator` evaluates before the gated operations. Serialized
+/// into the Tera context (`#[serde(skip_serializing_if = "Vec::is_empty")]`
+/// on the context key — empty ⇒ byte-identical handler).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EligibilityGuard {
+    /// The sigil rule name (as authored).
+    pub rule_name: String,
+    /// Rust fn name in `src/domain/{domain}/rules.rs`.
+    pub fn_name: String,
+    /// Fully-qualified call path the handler emits
+    /// (`crate::domain::{domain}::rules::{fn_name}`).
+    pub call_path: String,
+    /// The gated operations — the entity's resolved ApiOperations
+    /// restricted to `handler_guarded_operations`.
+    pub operations: Vec<String>,
+}
+
+/// The operations the handler plane guards: load-or-404 → evaluate → 403
+/// for create/read/update/delete. `list`/`search` need row filtering — a
+/// documented follow-up, never wired here.
+fn handler_guarded_operations(resolved: &[String]) -> Vec<String> {
+    resolved
+        .iter()
+        .filter(|op| matches!(op.as_str(), "create" | "read" | "update" | "delete"))
+        .cloned()
+        .collect()
+}
+
+/// Field knowledge for one entity title (the deduped `generate()`
+/// construction), shared with the guard resolver.
+async fn field_knowledge_for(db: &dyn GraphQuerier, title: &str) -> Result<FieldKnowledge> {
+    let mut deduped: HashSet<String> = HashSet::new();
+    let props: Vec<PropertyNode> = db
+        .get_properties(title)
+        .await?
+        .into_iter()
+        .filter(|p| deduped.insert(p.rust_field_name.clone()))
+        .collect();
+    Ok(FieldKnowledge::build(&props))
+}
+
+/// Transpile one rule body over its input entity's field knowledge.
+fn compile_rule_body(
+    node: &RuleNode,
+    fields: &FieldKnowledge,
+) -> std::result::Result<String, TranspileFailure> {
+    if node.input_type.is_none() {
+        return Err(TranspileFailure::NoReceiver);
+    }
+    // No enum-type knowledge on the rules plane yet: enum literals keep
+    // the untyped receiver-field policy here.
+    let no_enums = HashSet::new();
+    let ctx = ExprContext {
+        receiver: "input",
+        optional_fields: &fields.optional_fields,
+        collection_fields: &fields.collection_fields,
+        numeric_fields: &fields.numeric_fields,
+        integer_fields: &fields.integer_fields,
+        enum_types: &no_enums,
+    };
+    let payload: serde_json::Value = serde_json::from_str(&node.expr_json)
+        .unwrap_or_else(|_| serde_json::Value::String(node.expr_json.clone()));
+    match transpile(&payload, &ctx) {
+        Ok(code) => Ok(code),
+        Err(e) => Err(TranspileFailure::Unsupported {
+            kind: e.kind,
+            detail: e.detail,
+        }),
+    }
+}
+
+/// Whether the rule body transpiles AND infers `bool` — the callable-guard
+/// decision shared by the generator emission and the handler wiring.
+fn rule_compiles_to_bool(node: &RuleNode, fields: &FieldKnowledge) -> bool {
+    let payload: serde_json::Value = serde_json::from_str(&node.expr_json)
+        .unwrap_or_else(|_| serde_json::Value::String(node.expr_json.clone()));
+    if infer_return_type(&payload) != Some("bool") {
+        return false;
+    }
+    compile_rule_body(node, fields).is_ok()
+}
+
+/// Resolve the handler-site eligibility guards for one entity (issue
+/// #338). Shared by the `HandlerGenerator` (context building) and this
+/// module's doc wiring so both planes always agree. Rules whose body does
+/// not transpile to `bool` keep the TODO-marker shape — no guard exists
+/// to call.
+pub async fn eligibility_guards_for(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+) -> Result<Vec<EligibilityGuard>> {
+    let mut guards = Vec::new();
+    for node in db.list_rules().await? {
+        // list_rules orders by (domain, name) — deterministic guard order.
+        if node.kind != RuleKind::Eligibility
+            || node.domain.as_deref() != Some(domain)
+            || node.input_type.as_deref() != Some(schema_title)
+        {
+            continue;
+        }
+        let knowledge = field_knowledge_for(db, schema_title).await?;
+        if !rule_compiles_to_bool(&node, &knowledge) {
+            continue;
+        }
+        let operations = handler_guarded_operations(
+            &resolve_entity_operations(db, config, domain, schema_title).await,
+        );
+        if operations.is_empty() {
+            continue;
+        }
+        let fn_name = escape_rust_keyword(&to_snake_case(&node.name));
+        guards.push(EligibilityGuard {
+            rule_name: node.name.clone(),
+            call_path: format!("crate::domain::{domain}::rules::{fn_name}"),
+            fn_name,
+            operations,
+        });
+    }
+    Ok(guards)
+}
+
+/// The record type + import path for a rule input entity: the schema's
+/// `{rust_type_name}Response` from `crate::domain/{domain}/{table}/
+/// dto_response`. `None` when the title does not resolve in the domain —
+/// emission keeps the bare sigil title (the pre-#338 shape).
+async fn record_type_for(
+    db: &dyn GraphQuerier,
+    domain: &str,
+    title: &str,
+) -> Result<Option<(String, String)>> {
+    let Some(schema) = db.get_schema_in_domain(title, domain).await? else {
+        return Ok(None);
+    };
+    if schema.pg_table_name.is_empty() {
+        return Ok(None);
+    }
+    let record_type = format!("{}Response", schema.rust_type_name);
+    let import = format!(
+        "use crate::domain::{domain}::{}::dto_response::{record_type};",
+        schema.pg_table_name
+    );
+    Ok(Some((record_type, import)))
 }
 
 pub struct RulesGenerator {
@@ -212,25 +368,24 @@ impl DomainGenerator for RulesGenerator {
         }
 
         // Field knowledge per input entity (deduped — several rules may
-        // share an input type).
+        // share an input type), plus the record type each input resolves
+        // to (issue #338: emitted functions take the entity's real
+        // `{Entity}Response` so handler guard call sites compile).
         let mut knowledge: HashMap<String, FieldKnowledge> = HashMap::new();
+        let mut record_types: HashMap<String, (String, String)> = HashMap::new();
         for title in rules.iter().filter_map(|r| r.input_type.as_deref()) {
             if knowledge.contains_key(title) {
                 continue;
             }
-            let mut deduped: HashSet<String> = HashSet::new();
-            let props: Vec<PropertyNode> = db
-                .get_properties(title)
-                .await?
-                .into_iter()
-                .filter(|p| deduped.insert(p.rust_field_name.clone()))
-                .collect();
-            knowledge.insert(title.to_string(), FieldKnowledge::build(&props));
+            knowledge.insert(title.to_string(), field_knowledge_for(db, title).await?);
+            if let Some(resolved) = record_type_for(db, domain, title).await? {
+                record_types.insert(title.to_string(), resolved);
+            }
         }
 
         let mut surfaces: Vec<RuleSurface> = Vec::with_capacity(rules.len());
         for node in &rules {
-            surfaces.push(build_surface(db, node, &knowledge, domain, config).await);
+            surfaces.push(build_surface(db, node, &knowledge, &record_types, domain, config).await);
         }
 
         let content = emit_domain_rules(domain, &surfaces, project);
@@ -251,37 +406,22 @@ async fn build_surface(
     db: &dyn GraphQuerier,
     node: &RuleNode,
     knowledge: &HashMap<String, FieldKnowledge>,
+    record_types: &HashMap<String, (String, String)>,
     domain: &str,
     config: &DomainConfig,
 ) -> RuleSurface {
     let fn_name = escape_rust_keyword(&to_snake_case(&node.name));
     let input_type = node.input_type.clone();
+    let record = input_type
+        .as_deref()
+        .and_then(|title| record_types.get(title).cloned());
 
     let body = match &node.input_type {
         None => Err(TranspileFailure::NoReceiver),
         Some(title) => {
             let empty = FieldKnowledge::default();
             let fields = knowledge.get(title).unwrap_or(&empty);
-            // No enum-type knowledge on the rules plane yet: enum literals
-            // keep the untyped receiver-field policy here.
-            let no_enums = HashSet::new();
-            let ctx = ExprContext {
-                receiver: "input",
-                optional_fields: &fields.optional_fields,
-                collection_fields: &fields.collection_fields,
-                numeric_fields: &fields.numeric_fields,
-                integer_fields: &fields.integer_fields,
-                enum_types: &no_enums,
-            };
-            let payload: serde_json::Value = serde_json::from_str(&node.expr_json)
-                .unwrap_or_else(|_| serde_json::Value::String(node.expr_json.clone()));
-            match transpile(&payload, &ctx) {
-                Ok(code) => Ok(code),
-                Err(e) => Err(TranspileFailure::Unsupported {
-                    kind: e.kind,
-                    detail: e.detail,
-                }),
-            }
+            compile_rule_body(node, fields)
         }
     };
 
@@ -327,6 +467,7 @@ async fn build_surface(
         node: node.clone(),
         fn_name,
         input_type,
+        record,
         body,
         return_type,
         guarded_operations,
@@ -362,6 +503,18 @@ fn emit_domain_rules(domain: &str, rules: &[RuleSurface], project: &ProjectConfi
     );
     wln!(code, "//! TODO(#264) markers instead of guesses.");
     wln!(code, "#![allow(dead_code)]");
+
+    // Record-type imports (issue #338): every emitted function takes the
+    // entity's real `{Entity}Response` from its dto_response module.
+    let mut imports: Vec<&String> = rules
+        .iter()
+        .filter_map(|r| r.record.as_ref().map(|(_, import)| import))
+        .collect();
+    imports.sort();
+    imports.dedup();
+    for import in imports {
+        wln!(code, "{import}");
+    }
 
     let reporting: Vec<&RuleSurface> = rules
         .iter()
@@ -412,7 +565,7 @@ fn emit_rule(code: &mut CodeWriter, rule: &RuleSurface) {
         );
     }
     // Guard wiring follows the ApiOperation precedent: name the operation
-    // nodes this guard gates.
+    // nodes this guard gates, and state the #338 handler-site contract.
     if rule.node.kind == RuleKind::Eligibility {
         if rule.guarded_operations.is_empty() {
             wln!(code, "///");
@@ -428,17 +581,18 @@ fn emit_rule(code: &mut CodeWriter, rule: &RuleSurface) {
             wln!(code, "///");
             wln!(
                 code,
-                "/// Guard wiring: gates the `{ops}` ApiOperations — call this guard at",
+                "/// Guard wiring: gates the `{ops}` ApiOperations — handler-site guards",
                 ops = rule.guarded_operations.join("`, `"),
             );
             wln!(
                 code,
-                "/// the handler site (deny with 403 when it returns false). Route-"
+                "/// (issue #338) load the record (404 when absent), evaluate this guard,"
             );
             wln!(
                 code,
-                "/// generator insertion is a documented follow-up, not done here."
+                "/// and deny with 403 when it returns false. list/search row-filtering"
             );
+            wln!(code, "/// is a documented follow-up.");
         }
     }
 
@@ -484,7 +638,14 @@ fn emit_rule(code: &mut CodeWriter, rule: &RuleSurface) {
         code,
         "pub fn {fn}(input: &{input}) -> {ret} {{",
         fn = rule.fn_name,
-        input = input,
+        // Issue #338: the function takes the entity's real record type so
+        // handler guard call sites compile; an unresolvable input keeps
+        // the bare sigil title (pre-#338 shape).
+        input = rule
+            .record
+            .as_ref()
+            .map(|(record, _)| record.clone())
+            .unwrap_or_else(|| input.clone()),
         ret = return_type,
     );
     wln!(code, "    {body}");

@@ -446,10 +446,18 @@ async fn rules_generator_emits_golden_rust_when_enabled() {
 
     let content = read_rules_rs(dir.path()).expect("rules.rs emitted");
 
-    // Reporting rule → computed-field function: borrowed input, inferred
-    // bool return, transpiled body over the `input` receiver.
+    // Issue #338: every emitted function takes the entity's real record
+    // type, imported from its dto_response module, so the #338 handler
+    // guard call sites compile against the same shape.
     assert!(
-        content.contains("pub fn high_value_total(input: &OrderType) -> bool {"),
+        content.contains("use crate::domain::store::order::dto_response::OrderResponse;"),
+        "{content}"
+    );
+
+    // Reporting rule → computed-field function: borrowed record input,
+    // inferred bool return, transpiled body over the `input` receiver.
+    assert!(
+        content.contains("pub fn high_value_total(input: &OrderResponse) -> bool {"),
         "{content}"
     );
     assert!(content.contains("input.total > 100.0"), "{content}");
@@ -457,7 +465,7 @@ async fn rules_generator_emits_golden_rust_when_enabled() {
     // Collection knowledge flows from the entity's PropertyNodes: `tags`
     // is an array, so count transpiles (i64).
     assert!(
-        content.contains("pub fn tag_count(input: &OrderType) -> i64 {"),
+        content.contains("pub fn tag_count(input: &OrderResponse) -> i64 {"),
         "{content}"
     );
 
@@ -473,9 +481,12 @@ async fn rules_generator_emits_golden_rust_when_enabled() {
 
     // Eligibility rule → endpoint guard fn + ApiOperation wiring doc
     // (resolve_entity_operations falls back to the configured defaults:
-    // create/read/update/delete/list over the normalized resource).
+    // create/read/update/delete/list over the normalized resource). The
+    // handler-site guards (issue #338) evaluate it before
+    // create/read/update/delete; list/search row-filtering stays a
+    // documented follow-up.
     assert!(
-        content.contains("pub fn eligible_order(input: &OrderType) -> bool {"),
+        content.contains("pub fn eligible_order(input: &OrderResponse) -> bool {"),
         "{content}"
     );
     assert!(
@@ -485,6 +496,11 @@ async fn rules_generator_emits_golden_rust_when_enabled() {
     assert!(
         content
             .contains("`create_Order`, `read_Order`, `update_Order`, `delete_Order`, `list_Order`"),
+        "{content}"
+    );
+    assert!(
+        content
+            .contains("/// (issue #338) load the record (404 when absent), evaluate this guard,"),
         "{content}"
     );
     assert!(

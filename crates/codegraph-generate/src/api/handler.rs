@@ -153,11 +153,23 @@ pub struct HandlerContext {
     /// no op routes and the handler stays byte-identical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_ops: Vec<MoxOpRoute>,
+    /// Handler-site eligibility guards (issue #338): the compiled rule
+    /// booleans evaluated before the gated operations. Empty = no guard
+    /// surface and the handler stays byte-identical. Populated only when
+    /// the plan carries the `rules` generator (the emitted `rules.rs`
+    /// module must exist for the call sites to resolve) and the topology
+    /// is monolith (the rules module is not worker-routed).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub eligibility_guards: Vec<crate::ddd::rules::EligibilityGuard>,
 }
 
 pub struct HandlerGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
+    /// Whether the plan carries the `rules` domain generator (registry
+    /// wiring): handler-site eligibility guards (issue #338) resolve only
+    /// when the emitted `rules.rs` module exists to answer the calls.
+    rules_guards: bool,
 }
 
 impl HandlerGenerator {
@@ -165,11 +177,21 @@ impl HandlerGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            rules_guards: false,
         }
     }
 
     pub fn with_parent_candidates(mut self, candidates: Vec<ParentCandidate>) -> Self {
         self.parent_candidates = candidates;
+        self
+    }
+
+    /// Enable handler-site eligibility guards (issue #338). The registry
+    /// derives this from the build plan's `rules` generator membership —
+    /// guards call `crate::domain::{domain}::rules::…`, which only exists
+    /// when the `RulesGenerator` runs.
+    pub fn with_rules_guards(mut self, enabled: bool) -> Self {
+        self.rules_guards = enabled;
         self
     }
 }
@@ -333,6 +355,17 @@ impl EntityGenerator for HandlerGenerator {
         // Mox op action routes (issue #508 R2).
         let mox_ops = routable_mox_ops(db, schema_title, &entity_name).await;
 
+        // Handler-site eligibility guards (issue #338). Gated on the plan
+        // carrying `rules` (the call targets must exist) and monolith
+        // topology (rules.rs is not worker-routed, so a worker-crate
+        // handler could not resolve the module). Empty otherwise —
+        // byte-identical handler.
+        let eligibility_guards = if self.rules_guards && !project.is_workers_topology() {
+            crate::ddd::rules::eligibility_guards_for(db, config, &domain, schema_title).await?
+        } else {
+            Vec::new()
+        };
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -346,6 +379,7 @@ impl EntityGenerator for HandlerGenerator {
             tag,
             operations,
             mox_ops,
+            eligibility_guards,
             parent_ref: topo.parent_ref,
             parent_entity,
             parent_path_segment: topo.parent_path_segment,

@@ -79,7 +79,12 @@ pub(crate) fn build_entity_generators(
         Box::new(ddd::dto::DtoGenerator::new(base("dto"))) as Box<dyn EntityGenerator>,
         Box::new(
             api::handler::HandlerGenerator::new(base("handler"))
-                .with_parent_candidates(parent_candidates.to_vec()),
+                .with_parent_candidates(parent_candidates.to_vec())
+                // Handler-site eligibility guards (issue #338): the call
+                // targets live in the `rules` generator's module, so the
+                // flag rides the plan. Plan-less runs never emit the
+                // rules module — guards stay off.
+                .with_rules_guards(ctx.build_plan.is_some_and(|bp| bp.has_domain_gen("rules"))),
         ) as Box<dyn EntityGenerator>,
         Box::new(
             api::workflow_action::WorkflowActionGenerator::new(base("workflow_action"))
