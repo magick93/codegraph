@@ -55,8 +55,8 @@ Facts that matter for storage:
 |---|---|---|
 | `rank` storage | `String [0..1] rank` in the `.mox` model → `PgType::Text` | `board.card.rank TEXT` column, SeaORM entity field, `Option<String>` on create/update/response DTOs, hurl contract fields |
 | Key format validation on create | mox constraint `pattern "…"` → `#[garde(pattern(r"…"))]` on the **create** DTO | `crates/codegraph-generate/templates/domain_types/dto_create.tera:26` |
-| Cards under lists (URL nesting + automatic FK filter) | `parent`/`parent_ref`/`role = "child"` in `domains.toml` | `GET /api/v1/board/lists/{list_id}/cards` — the parent id is injected into every list/read call (`templates/api/handler.tera:790`) |
-| Ad-hoc filtering | `filter_fields` per entity in `domains.toml` → `ALLOWED_FILTER_KEYS` + `?filter[list_id]=…` | `templates/api/handler.tera:658-666` |
+| Cards under lists (URL nesting + automatic FK filter) | `parent`/`parent_ref`/`role = "child"` in `domains.toml` | `GET /api/v1/board/lists/{list_id}/cards` — the parent id is injected into every list/read call (`templates/api/handler.tera:809`) |
+| Ad-hoc filtering | `filter_fields` per entity in `domains.toml` → `ALLOWED_FILTER_KEYS` + `?filter[list_id]=…` | `templates/api/handler.tera:678` |
 | Ordered reads | `ux_rules = true` (ON in the init scaffold) → `?sort=rank&order=asc`, validated against a per-entity allow-list, always appended with `, id ASC` as tiebreaker | `crates/codegraph-generate/src/ux/sort.rs`, `templates/api/handler.tera:690`, `src/ddd/repository_emitter/query_search.rs:15-57` |
 | Typed UI data plane | `#lib/api/client.ts` (browser) and `$lib/server/api.ts` `apiFetch` (server-side, credentials never reach the client — issue #574) | emitted if-absent, hand edits survive |
 
