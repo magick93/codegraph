@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/common/event-base/[event_base_id]/edit/+page.svelte";

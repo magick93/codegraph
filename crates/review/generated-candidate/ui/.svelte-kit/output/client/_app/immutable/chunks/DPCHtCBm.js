@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Scheme Agency Id`)),n=((t={},n={})=>(n.locale??e(),`Scheme Id`)),r=((t={},n={})=>(n.locale??e(),`Scheme Version Id`)),i=((t={},n={})=>(n.locale??e(),`Value`));export{t as i,r as n,n as r,i as t};

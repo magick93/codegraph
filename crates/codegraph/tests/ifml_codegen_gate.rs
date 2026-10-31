@@ -326,6 +326,8 @@ async fn run_pipeline() -> Result<(), String> {
             // never emitted; issue #557 adds the remote-functions plane).
             ifml_e2e_auth: plan.ifml_e2e_auth,
             ifml_remote_functions: plan.ifml_remote_functions,
+            ifml_tanstack_forms: plan.ifml_tanstack_forms,
+            entity_form: plan.entity_form,
             ..Default::default()
         },
         cargo: codegraph::generate::CargoConfig {

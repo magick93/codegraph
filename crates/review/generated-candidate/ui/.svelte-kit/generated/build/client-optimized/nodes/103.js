@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/recruiting/grant-review-note/[grant_review_note_id]/+page.svelte";

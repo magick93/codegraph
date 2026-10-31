@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Application Id`)),n=((t={},n={})=>(n.locale??e(),`Applied Date`)),r=((t={},n={})=>(n.locale??e(),`Candidate Id`)),i=((t={},n={})=>(n.locale??e(),`Status`));export{t as i,r as n,n as r,i as t};

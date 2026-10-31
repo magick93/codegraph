@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/compensation/pay-runs/[pay_run_id]/+page.svelte";

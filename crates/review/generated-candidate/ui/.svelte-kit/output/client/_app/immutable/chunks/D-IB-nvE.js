@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Event Id`)),n=((t={},n={})=>(n.locale??e(),`Status`)),r=((t={},n={})=>(n.locale??e(),`Timestamp`));export{n,t as r,r as t};

@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Code`)),n=((t={},n={})=>(n.locale??e(),`Display Name`)),r=((t={},n={})=>(n.locale??e(),`Sort Order`));export{n,t as r,r as t};

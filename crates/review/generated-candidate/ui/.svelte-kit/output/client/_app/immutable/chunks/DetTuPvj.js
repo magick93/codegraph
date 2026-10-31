@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Deleting…`)),n=((t,n={})=>(n.locale??e(),`${t?.entity} deleted successfully`));export{t as n,n as t};

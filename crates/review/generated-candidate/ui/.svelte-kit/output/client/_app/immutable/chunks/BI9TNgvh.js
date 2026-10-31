@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Action Date`)),n=((t={},n={})=>(n.locale??e(),`Descriptions`)),r=((t={},n={})=>(n.locale??e(),`Id`));export{n,t as r,r as t};

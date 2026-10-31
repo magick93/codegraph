@@ -1,0 +1,1 @@
+{"version":3,"file":"badge.js","names":[],"sources":["../../../../src/lib/components/ui/badge/index.js"],"sourcesContent":["// Gate-owned stub barrel (entity ui gate).\nexport function Badge(_props) {}\n"],"mappings":";AACA,SAAgB,MAAM,QAAQ,CAAC"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"layout.svelte.js","names":[],"sources":["../../../../../node_modules/@sveltejs/kit/src/runtime/components/layout.svelte"],"sourcesContent":["<script>\n\tconst { children } = $props();\n</script>\n\n{@render children()}\n"],"ignoreList":[0],"mappings":";;AAAA,SAAA,OAAA,YAAA,SAAA;CACC,MAAM,EAAE,aAAU;CAGV,SAAQ,UAAA;;AAFT"}

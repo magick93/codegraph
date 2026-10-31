@@ -1,0 +1,1 @@
+import{et as e,it as t,rt as n}from"../chunks/DAkl6bz8.js";import"../chunks/CAdt_Xon.js";function r(r,i){t(i,!0),e(()=>i.data.organization?.name??`Your Organization`),n()}export{r as component};

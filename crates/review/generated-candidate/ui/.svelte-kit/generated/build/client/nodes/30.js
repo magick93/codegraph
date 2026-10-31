@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/common/effective-date/[effective_date_id]/+page.svelte";

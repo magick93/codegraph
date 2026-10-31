@@ -1,0 +1,1 @@
+{"version":3,"file":"button.js","names":[],"sources":["../../../../src/lib/components/ui/button/index.js"],"sourcesContent":["// Gate-owned stub barrel (entity ui gate).\nexport function Button(_props) {}\n"],"mappings":";AACA,SAAgB,OAAO,QAAQ,CAAC"}

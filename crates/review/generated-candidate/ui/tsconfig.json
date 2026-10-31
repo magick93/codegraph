@@ -1,0 +1,23 @@
+// Gate-owned (entity ui gate): the consumer monorepo owns the real one.
+// kit 3 root-tsconfig contract: extend $app/tsconfig — kit's sync
+// generates node_modules/$app/tsconfig.json (no .svelte-kit/tsconfig.json).
+{
+	"extends": "$app/tsconfig",
+	"compilerOptions": {
+		"allowJs": true,
+		"checkJs": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"sourceMap": true,
+		// NOT strict: the generated tree has never been held to a strict
+		// typecheck (consumer tsconfigs aren't). The gate's bar is
+		// compile + type-RESOLUTION correctness; strict-cleanliness is a
+		// tracked follow-up.
+		"strict": false,
+		"moduleResolution": "bundler",
+		"types": ["node", "$app/types"]
+	},
+	"exclude": ["src/forms", "node_modules"]
+}

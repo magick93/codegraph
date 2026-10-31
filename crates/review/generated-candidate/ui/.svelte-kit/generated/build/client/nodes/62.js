@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/common/process-history/[process_history_id]/+page.svelte";

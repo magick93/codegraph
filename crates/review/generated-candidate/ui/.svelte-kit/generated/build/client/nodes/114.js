@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/settings/webhooks/[id]/edit/+page.svelte";

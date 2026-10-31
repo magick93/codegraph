@@ -207,7 +207,7 @@
 				<field.{% endraw %}{{ field.component }}{% raw %}
 					label={% endraw %}{{ field.label_ts }}{% raw %}
 					testid="{% endraw %}{{ field.testid }}{% raw %}"
-					{% endraw %}{% if field.kind == "select" %}values={{ field.values_ts }}
+					{% endraw %}{% if field.kind == "select" %}values={% raw %}{{% endraw %}{{ field.values_ts }}{% raw %}}{% endraw %}
 					{% endif %}{% raw %}required={% endraw %}{{ field.required }}{% raw %}
 					description={% endraw %}{{ field.description_ts }}{% raw %}
 				/>
@@ -232,6 +232,8 @@
 				{/if}
 			{/snippet}{% endraw %}
 		</form.Subscribe>
+		{% raw %}{/if}
+{% endraw %}
 
 		<form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
 			{% raw %}{#snippet children({ canSubmit, isSubmitting })}

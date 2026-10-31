@@ -1,0 +1,1 @@
+{"version":3,"file":"input.js","names":[],"sources":["../../../../src/lib/components/ui/input/index.js"],"sourcesContent":["// Gate-owned stub barrel (entity ui gate).\nexport function Input(_props) {}\n"],"mappings":";AACA,SAAgB,MAAM,QAAQ,CAAC"}

@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/common/distribution-base/[distribution_base_id]/+page.svelte";
