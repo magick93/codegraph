@@ -36,8 +36,8 @@
     "cookie": "^1.0.2"
   },
   "dependencies": {
-    "@crewbase/ui": "file:stubs/@crewbase/ui","@community-os/ui": "file:stubs/@community-os/ui",
-    "@crewbase/entities": "file:stubs/@crewbase/entities",
+    "@crewbase/ui": "workspace:*",
+    "@crewbase/entities": "workspace:*",
     "@internationalized/date": "^3.8.0",
     "@lucide/svelte": "^1.0.0",
     "@supabase/supabase-js": "^2.49.0",

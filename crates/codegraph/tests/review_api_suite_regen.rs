@@ -8,6 +8,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use codegraph_core::traits::GraphQuerier;
+
 pub fn manifest_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
@@ -95,6 +97,23 @@ pub async fn regenerate_fixture() -> Result<(), String> {
         .collect();
 
     let engine = GrafeoEngine::in_memory().map_err(|e| format!("grafeo: {e}"))?;
+    // Pass 1b (the driver's ordering): the rosetta eligibility-rule model
+    // (issue #338) bridges before the JSON pass — the GrantApplication
+    // entity + its `PositiveGrant` rule give the api suite a modeled guard
+    // to exercise over real HTTP.
+    let rosetta_model = mdir.join("tests/fixtures/rosetta/grant.rosetta");
+    let rosetta_outcome = codegraph::ingest::rosetta_ingest::ingest_rosetta_files(
+        &engine,
+        &engine,
+        &[rosetta_model],
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .map_err(|e| format!("ingest fixture rosetta model: {e}"))?;
+    if rosetta_outcome.stats.rules_ingested == 0 {
+        return Err("the rosetta fixture model bridged zero rules — the eligibility guard cannot be exercised".into());
+    }
     codegraph::ingest::async_ingest::ingest_schemas(
         &engine,
         Path::new("tests/fixtures/schemas"),
@@ -105,6 +124,58 @@ pub async fn regenerate_fixture() -> Result<(), String> {
     )
     .await
     .map_err(|e| format!("ingest fixture schemas: {e}"))?;
+
+    // Auto-classify (the driver's pass): rosetta-bridged types are
+    // auto-scored — GrantApplicationType must land as an ENTITY or the
+    // guarded handler plane never generates.
+    let classifier_types: HashSet<String> = classifier
+        .primitive_wrappers
+        .keys()
+        .cloned()
+        .chain(classifier.array_wrappers.keys().cloned())
+        .chain(classifier.range_wrappers.keys().cloned())
+        .chain(
+            classifier
+                .composite_wrappers
+                .iter()
+                .map(|cw| cw.schema.clone()),
+        )
+        .collect();
+    let all_data = engine
+        .get_classification_data()
+        .await
+        .map_err(|e| format!("classification data: {e}"))?;
+    let auto_classifier =
+        codegraph::classify::AutoClassifier::new(classifier_types, classifier.naming_rules.clone());
+    let mut classified_entities = entity_names.clone();
+    let mut sorted_domain_names: Vec<&String> = config.domains.keys().collect();
+    sorted_domain_names.sort();
+    for domain_name in &sorted_domain_names {
+        let domain_entry = &config.domains[domain_name.as_str()];
+        let domain_schemas: Vec<_> = all_data
+            .iter()
+            .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+            .cloned()
+            .collect();
+        let result = auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+        for score in &result.entities {
+            classified_entities.insert(score.title.clone());
+        }
+    }
+    codegraph::ingest::async_ingest::reclassify_with_entities(
+        &engine,
+        &engine,
+        &classified_entities,
+    )
+    .await
+    .map_err(|e| format!("reclassify with entities: {e}"))?;
+    if !classified_entities.contains("GrantApplicationType") {
+        return Err(
+            "the rosetta fixture entity did not auto-classify as an entity — the guarded \
+             handler plane would never generate"
+                .into(),
+        );
+    }
 
     // The generated app must compile without touching the network: path deps
     // into this workspace, domain-types inside the app output.
@@ -119,6 +190,18 @@ pub async fn regenerate_fixture() -> Result<(), String> {
         section
             .generators
             .retain(|g| !g.starts_with("grpc_") && g != "ops");
+    }
+    // The eligibility-rule guard plane (issue #338): the fixture plan
+    // carries the `rules` generator (requires the `rosetta_backend`
+    // feature) so the emitted app ships `src/domain/recruiting/rules.rs`
+    // and the handler guards that call into it.
+    resolved
+        .features
+        .insert("rosetta_backend".into(), toml::Value::Boolean(true));
+    if let Some(api) = resolved.sections.get_mut("api")
+        && !api.generators.iter().any(|g| g == "rules")
+    {
+        api.generators.push("rules".into());
     }
     let plan =
         BuildPlan::from_profile(&resolved, &registry).map_err(|e| format!("build plan: {e}"))?;

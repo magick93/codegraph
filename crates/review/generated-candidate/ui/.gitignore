@@ -1,5 +1,0 @@
-# Gate-owned (entity ui gate, issue #574 S2): the gate installs and
-# builds inside the fixture tree — those artifacts never commit.
-node_modules/
-package-lock.json
-.svelte-kit/

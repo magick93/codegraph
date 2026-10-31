@@ -8,3 +8,4 @@
 
 # nested build artifacts (never commit)
 crates/review/generated-candidate/target/
+crates/review/generated-candidate/Cargo.lock

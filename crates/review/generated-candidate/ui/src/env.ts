@@ -5,6 +5,10 @@ export const variables = defineEnvVars({
 		public: true,
 		schema: (value) => value
 	},
+	PUBLIC_API_KEY: {
+		public: true,
+		schema: (value) => value
+	},
 	PUBLIC_API_URL: {
 		public: true,
 		schema: (value) => value

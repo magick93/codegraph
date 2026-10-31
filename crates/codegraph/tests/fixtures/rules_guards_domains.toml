@@ -1,0 +1,10 @@
+# Minimal domain config for the rules-guard harness tests (issue #338):
+# CandidateType resolves ALL five operations so every handler plane exists.
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+entities = ["CandidateType"]

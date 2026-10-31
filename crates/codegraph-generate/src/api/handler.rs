@@ -153,11 +153,164 @@ pub struct HandlerContext {
     /// no op routes and the handler stays byte-identical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_ops: Vec<MoxOpRoute>,
+    /// Handler-site eligibility guards (issue #338): the compiled rule
+    /// booleans evaluated before the gated operations. Empty = no guard
+    /// surface and the handler stays byte-identical. Populated only when
+    /// the plan carries the `rules` generator (the emitted `rules.rs`
+    /// module must exist for the call sites to resolve) and the topology
+    /// is monolith (the rules module is not worker-routed).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub eligibility_guards: Vec<crate::ddd::rules::EligibilityGuard>,
+    /// Pre-rendered guard code blocks (issue #338), whitespace-exact so
+    /// the template renders them inline; empty strings when inactive.
+    /// `*_ownership_prefix` binds the existing ownership load (`let
+    /// existing = `) when guards need the loaded record; `*_guard_block`
+    /// carries the load-or-404 (root) and/or the guard call lines.
+    #[serde(default)]
+    pub update_ownership_prefix: String,
+    #[serde(default)]
+    pub update_guard_block: String,
+    #[serde(default)]
+    pub delete_ownership_prefix: String,
+    #[serde(default)]
+    pub delete_guard_block: String,
+    #[serde(default)]
+    pub read_guard_block: String,
+    #[serde(default)]
+    pub create_guard_block: String,
+}
+
+/// Pre-rendered eligibility-guard code blocks (issue #338). Empty fields
+/// keep the handler byte-identical; every block is whitespace-exact and
+/// carries NO trailing newline (the template supplies the line break).
+struct GuardBlocks {
+    update_ownership_prefix: String,
+    update_guard_block: String,
+    delete_ownership_prefix: String,
+    delete_guard_block: String,
+    read_guard_block: String,
+    create_guard_block: String,
+}
+
+fn build_guard_blocks(
+    role: &str,
+    domain: &str,
+    module_name: &str,
+    entity_name: &str,
+    is_auditable: bool,
+    domain_types_crate: &str,
+    guards: &[crate::ddd::rules::EligibilityGuard],
+) -> GuardBlocks {
+    let mut blocks = GuardBlocks {
+        update_ownership_prefix: String::new(),
+        update_guard_block: String::new(),
+        delete_ownership_prefix: String::new(),
+        delete_guard_block: String::new(),
+        read_guard_block: String::new(),
+        create_guard_block: String::new(),
+    };
+    if guards.is_empty() {
+        return blocks;
+    }
+    let is_child = role == "child";
+    let audit_arg = if is_auditable { ", false" } else { "" };
+    let session_args = "api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()";
+
+    let find_by_id =
+        format!("state.{domain}_{module_name}_queries.find_by_id(id{audit_arg}, {session_args})");
+    let load_or_404 = |load: &str| -> String {
+        format!(
+            "    // Eligibility guards (issue #338): load-or-404 before the operation.\n    let existing = {load}.await\n        .map_err(|e: {domain_pascal}Error| {{\n                    AppError::from_domain_error(e.http_status(), e.to_string(), \"Failed to find {entity}\")\n                        .with_correlation_id(correlation_id)\n                }})?\n        .ok_or_else(|| AppError::not_found(format!(\"{entity} {{id}} not found\"))\n            .with_correlation_id(correlation_id))?;",
+            domain_pascal = codegraph_naming::to_pascal_case(domain),
+            entity = entity_name,
+            load = load,
+        )
+    };
+    let guard_call = |g: &crate::ddd::rules::EligibilityGuard, var: &str| -> String {
+        format!(
+            "    // Eligibility rule '{rule}' (issue #338): deny with 403 when it fails.\n    if !{path}(&{var}) {{\n        return Err(AppError::forbidden(format!(\"Eligibility rule '{rule}' denied this {entity} operation\"))\n            .with_correlation_id(correlation_id));\n    }}",
+            rule = g.rule_name,
+            path = g.call_path,
+            var = var,
+            entity = entity_name,
+        )
+    };
+
+    // update/delete evaluate over the loaded record: the root handler has
+    // no load before the guard (the block adds load-or-404); the child
+    // handler's existing ownership load gains the `let existing` binding
+    // and the block is guard lines only.
+    let mut update_guards = String::new();
+    let mut delete_guards = String::new();
+    let mut read_guards = String::new();
+    let mut create_guards = String::new();
+    for g in guards {
+        if g.operations.iter().any(|op| op == "update") {
+            update_guards.push_str(&guard_call(g, "existing"));
+            update_guards.push('\n');
+        }
+        if g.operations.iter().any(|op| op == "delete") {
+            delete_guards.push_str(&guard_call(g, "existing"));
+            delete_guards.push('\n');
+        }
+        if g.operations.iter().any(|op| op == "read") {
+            read_guards.push_str(&guard_call(g, "response"));
+            read_guards.push('\n');
+        }
+        if g.operations.iter().any(|op| op == "create") {
+            create_guards.push_str(&guard_call(g, "response"));
+            create_guards.push('\n');
+        }
+    }
+
+    if !update_guards.is_empty() {
+        if is_child {
+            blocks.update_ownership_prefix = "let existing = ".to_string();
+            blocks.update_guard_block = update_guards.trim_end().to_string();
+        } else {
+            blocks.update_guard_block =
+                format!("{}\n{}", load_or_404(&find_by_id), update_guards.trim_end());
+        }
+    }
+    if !delete_guards.is_empty() {
+        if is_child {
+            blocks.delete_ownership_prefix = "let existing = ".to_string();
+            blocks.delete_guard_block = delete_guards.trim_end().to_string();
+        } else {
+            blocks.delete_guard_block =
+                format!("{}\n{}", load_or_404(&find_by_id), delete_guards.trim_end());
+        }
+    }
+    if !read_guards.is_empty() {
+        // Leading newline: the template glues the block onto the load
+        // statement's `?;`, so the first guard line starts its own line.
+        blocks.read_guard_block = format!("\n{}", read_guards.trim_end());
+    }
+    if !create_guards.is_empty() {
+        // An ineligible create is compensated: the just-created row is
+        // removed (best effort) and the caller is denied with 403.
+        let compensation = format!(
+            "state.{domain}_{module_name}_commands.delete(id, {crate_name}::SourceContext::api(), correlation_id, {session_args})",
+            crate_name = domain_types_crate,
+        );
+        create_guards = create_guards.replace(
+            "        return Err(AppError::forbidden",
+            &format!(
+                "        tracing::warn!(entity_id = %id, \"eligibility rule denied create — compensating\");\n        if let Err(comp_err) = {compensation}.await {{\n            tracing::error!(entity_id = %id, \"eligibility-rule compensation delete failed: {{comp_err}}\");\n        }}\n        return Err(AppError::forbidden"
+            ),
+        );
+        blocks.create_guard_block = format!("\n{}", create_guards.trim_end());
+    }
+    blocks
 }
 
 pub struct HandlerGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
+    /// Whether the plan carries the `rules` domain generator (registry
+    /// wiring): handler-site eligibility guards (issue #338) resolve only
+    /// when the emitted `rules.rs` module exists to answer the calls.
+    rules_guards: bool,
 }
 
 impl HandlerGenerator {
@@ -165,11 +318,21 @@ impl HandlerGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            rules_guards: false,
         }
     }
 
     pub fn with_parent_candidates(mut self, candidates: Vec<ParentCandidate>) -> Self {
         self.parent_candidates = candidates;
+        self
+    }
+
+    /// Enable handler-site eligibility guards (issue #338). The registry
+    /// derives this from the build plan's `rules` generator membership —
+    /// guards call `crate::domain::{domain}::rules::…`, which only exists
+    /// when the `RulesGenerator` runs.
+    pub fn with_rules_guards(mut self, enabled: bool) -> Self {
+        self.rules_guards = enabled;
         self
     }
 }
@@ -333,6 +496,26 @@ impl EntityGenerator for HandlerGenerator {
         // Mox op action routes (issue #508 R2).
         let mox_ops = routable_mox_ops(db, schema_title, &entity_name).await;
 
+        // Handler-site eligibility guards (issue #338). Gated on the plan
+        // carrying `rules` (the call targets must exist) and monolith
+        // topology (rules.rs is not worker-routed, so a worker-crate
+        // handler could not resolve the module). Empty otherwise —
+        // byte-identical handler.
+        let eligibility_guards = if self.rules_guards && !project.is_workers_topology() {
+            crate::ddd::rules::eligibility_guards_for(db, config, &domain, schema_title).await?
+        } else {
+            Vec::new()
+        };
+        let guard_blocks = build_guard_blocks(
+            &topo.role,
+            &domain,
+            &module_name,
+            &entity_name,
+            is_auditable,
+            &project.identity.domain_types_crate,
+            &eligibility_guards,
+        );
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -346,6 +529,7 @@ impl EntityGenerator for HandlerGenerator {
             tag,
             operations,
             mox_ops,
+            eligibility_guards,
             parent_ref: topo.parent_ref,
             parent_entity,
             parent_path_segment: topo.parent_path_segment,
@@ -378,6 +562,12 @@ impl EntityGenerator for HandlerGenerator {
             handler_imports,
             is_auditable,
             ux_sort_fields,
+            update_ownership_prefix: guard_blocks.update_ownership_prefix,
+            update_guard_block: guard_blocks.update_guard_block,
+            delete_ownership_prefix: guard_blocks.delete_ownership_prefix,
+            delete_guard_block: guard_blocks.delete_guard_block,
+            read_guard_block: guard_blocks.read_guard_block,
+            create_guard_block: guard_blocks.create_guard_block,
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;

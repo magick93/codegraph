@@ -1,33 +1,39 @@
 
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { Button } from '#lib/components/ui/button/index.js';
   import { Input } from '#lib/components/ui/input/index.js';
   import { Label } from '#lib/components/ui/label/index.js';
   import { Textarea } from '#lib/components/ui/textarea/index.js';
-  import { createEndpoint, updateEndpoint } from './data.remote';
-
-  interface WebhookEndpoint {
-    id: string;
-    url: string;
-    description: string | null;
-    headers: Record<string, string>;
-  }
+  import { apiGet, apiPost, apiPut } from '#lib/api/client.ts';
 
   const isEdit = $derived(!!page.params.id);
   const endpointId = $derived(page.params.id);
-  // The edit route's load provides the endpoint; the new route carries no
-  // load, so the prop is read defensively (issue #574 S2).
-  const existing = $derived(
-    (data as { endpoint?: WebhookEndpoint } | undefined)?.endpoint ?? null
-  );
 
-  let url = $state(existing?.url ?? '');
-  let description = $state(existing?.description ?? '');
-  let headersJson = $state(existing ? JSON.stringify(existing.headers ?? {}, null, 2) : '{}');
+  let url = $state('');
+  let description = $state('');
+  let headersJson = $state('{}');
   let saving = $state(false);
   let error = $state<string | null>(null);
+
+  onMount(() => {
+    if (isEdit) {
+      loadEndpoint();
+    }
+  });
+
+  async function loadEndpoint() {
+    try {
+      const ep = await apiGet<WebhookEndpoint>(`/webhooks/webhook-endpoints/${endpointId}`);
+      url = ep.url;
+      description = ep.description ?? '';
+      headersJson = JSON.stringify(ep.headers, null, 2);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load endpoint';
+    }
+  }
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
@@ -43,11 +49,11 @@
 
       const body = { url, description: description || null, headers };
       const result = isEdit
-        ? await updateEndpoint(endpointId, body)
-        : await createEndpoint(body);
+        ? await apiPut<any>(`/webhooks/webhook-endpoints/${endpointId}`, body)
+        : await apiPost<any>('/webhooks/webhook-endpoints', body);
 
-      if (!result.ok) {
-        throw new Error(result.message ?? 'Request failed');
+      if (!result?.id) {
+        throw new Error('Server returned invalid response');
       }
 
       await goto(`/settings/webhooks/${result.id}`);
@@ -58,7 +64,6 @@
     }
   }
 </script>
-
 
 <div class="space-y-6 p-6 max-w-2xl">
   <div>
