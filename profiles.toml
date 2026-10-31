@@ -119,6 +119,16 @@ ifml_remote_functions = true
 # remoteFunctions/async experimental SvelteKit options (the ui scaffold
 # emits them under the flag). Off = byte-identical.
 entity_remote_functions = true
+# TanStack Form layer on the entity plane (issue #580). When true the
+# generated {Entity}Form renders through @tanstack/svelte-form fields with
+# a zod schema lowered from DTO required/optionality + #261 constraints,
+# and 422 VALIDATION_ERROR field details map onto the matching fields.
+# Off = the hand-rolled form, byte-identical.
+entity_form = true
+# TanStack Form layer on the IFML plane (issue #580). When true typed form
+# components render TanStack AppFields with a zod schema lowered from the
+# DSL validations + messages. Off = the hand-rolled form, byte-identical.
+ifml_tanstack_forms = true
 
 [profiles.default.api]
 generators = [
@@ -275,6 +285,8 @@ ux_rules = true
 ifml_e2e_auth = true
 ifml_remote_functions = true
 entity_remote_functions = true
+entity_form = true
+ifml_tanstack_forms = true
 
 [profiles.fullstack.api]
 generators = [

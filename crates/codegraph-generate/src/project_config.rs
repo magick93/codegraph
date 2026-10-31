@@ -159,6 +159,20 @@ pub struct CodegenConfig {
     /// Default false = byte-identical (stores + client plane stay).
     #[serde(default)]
     pub entity_remote_functions: bool,
+    /// TanStack Form layer on the entity plane (issue #580): when true the
+    /// generated `{Entity}Form` component renders through
+    /// `@tanstack/svelte-form` fields with a zod schema lowered from DTO
+    /// required/optionality + #261 constraints, and the form/edit page
+    /// wrappers map 422 `VALIDATION_ERROR` field details onto the fields.
+    /// Default false = the hand-rolled form, byte-identical.
+    #[serde(default)]
+    pub entity_form: bool,
+    /// TanStack Form layer on the IFML plane (issue #580): when true typed
+    /// form components render TanStack `AppField`s with a zod schema
+    /// lowered from the DSL validations + messages. Default false = the
+    /// hand-rolled form, byte-identical.
+    #[serde(default)]
+    pub ifml_tanstack_forms: bool,
     /// One testid vocabulary (issue #468 W3): when true the `ui_testids`
     /// global generator emits `ui/src/lib/testids.js` + `testids.d.ts` and
     /// the generated POM/spec templates import it, binding the test surface
@@ -188,6 +202,8 @@ impl Default for CodegenConfig {
             ifml_e2e_auth: false,
             ifml_remote_functions: false,
             entity_remote_functions: false,
+            entity_form: false,
+            ifml_tanstack_forms: false,
             testid_module: false,
             structural_gates: false,
             types_import_prefix: "codegraph_type_contracts".into(),
@@ -459,6 +475,8 @@ mod tests {
             ("ifml_e2e_auth", serde_json::json!(false)),
             ("ifml_remote_functions", serde_json::json!(false)),
             ("entity_remote_functions", serde_json::json!(false)),
+            ("entity_form", serde_json::json!(false)),
+            ("ifml_tanstack_forms", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),

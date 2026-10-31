@@ -35,7 +35,12 @@ ifml_remote_functions = true
 # surface runs server-side (colocated data.remote.ts per route) — the
 # browser stores and the public API key client plane retire.
 entity_remote_functions = true
-{% if features.rosetta %}rosetta_backend = true
+# TanStack Form layer (issue #580): the generated forms (entity + IFML)
+# render through @tanstack/svelte-form with a zod schema lowered from the
+# model's constraints; 422 VALIDATION_ERROR details map onto fields.
+entity_form = true
+{% if features.ifml %}ifml_tanstack_forms = true
+{% endif %}{% if features.rosetta %}rosetta_backend = true
 {% endif %}has_admin_cli = true
 # UX rules plane (issue #293): the built-in ux-default pack resolves into
 # ProjectConfig.ux; override per project with `--ux-rules <file>`.
