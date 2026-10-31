@@ -1178,6 +1178,56 @@ the proven #573 IFML pattern:
   + the review fixture regenerated (incl. the S1-era shell `descriptor.ts`
   moves).
 
+### TanStack Form layer + zod validation lowering (issue #580, S3 of #574)
+
+The form layer itself — the last hand-rolled UI surface — is replaced by
+TanStack Form (`@tanstack/svelte-form`) with zod consumed directly as a
+Standard Schema. Two flags (default/fullstack ON, init scaffold ON;
+absent = byte-identical, variant selection in Rust):
+
+- **`entity_form`** (entity plane): `{Entity}Form.svelte` renders
+  `<form.AppField>`s (one per control kind from `classify_input_type`) with a
+  zod schema lowered in RUST (`ui/form.rs::tanstack_form_plan` over the
+  shared `forms::` IR) from DTO required/optionality + #261 min/max bounds +
+  codelist `z.enum([...])`; `form.Subscribe` drives the submit button
+  (`canSubmit`/`isSubmitting` — no hand-rolled `$state` machines); junction
+  `refers T[]` features render `mode="array"` `pushValue`/`removeValue` rows
+  (the capability upgrade — generated forms could not edit them at all
+  before). Page wrappers wire `onsubmit` to the #579 `createItem`/`updateItem`
+  and map the API's 422 `VALIDATION_ERROR` `details: [{field,message}]` onto
+  the matching fields (`ui/remote.rs` flag-gated `fieldErrors` fail legs —
+  the UI finally consumes per-field server errors).
+- **`ifml_tanstack_forms`** (IFML plane): `page_tanstack.tera` variant over
+  whatever transport the #573 flag selects (remote command or client fetch);
+  `ifml/zod_glue.rs` lowers the DSL `validations` Expression subset
+  (`len(x)`/numeric comparisons/`minItems`/`maxItems` — unsupported forms
+  SKIP, never emit invalid zod) with positionally-paired `messages` →
+  `.message`; schema-backed entities win required/optionality from the graph
+  (`ux_props_for_entity`). The `data-validate-message` POM contract is
+  RETAINED (populated from field error state); the validation spec family
+  asserts per-field message visibility.
+- **Shared**: `codegraph-generate/src/forms/` owns the zod SHAPE
+  (`ZodObject/ZodField/ZodKind/ZodCheck`), `ts_string_literal` (the #560
+  lesson — all prose reaching emitted TS), and the npm version pins
+  (`@tanstack/svelte-form ^1.33.5`, `zod ^4.6.7` — Emitted-contract majors:
+  changes ship with fixture regen + enumerated diff). The `$lib/forms`
+  creator scaffold (`createFormCreator`/`createFormCreatorContexts`, one
+  field component per control kind) is if-absent, rendered from Rust consts
+  in BOTH planes so they cannot drift. Datetime fields keep native validity +
+  server 422 (zod's `z.iso.datetime()` rejects `datetime-local` values);
+  untyped fallback forms stay hand-rolled under the IFML flag.
+- Gates: `cargo test -p codegraph --test entity_form_tests` (3) +
+  `--test ifml_tanstack_forms_tests` (5) + `--test forms_byte_identity_tests`
+  (4 — the #580 canaries, `FORMS_BLESS=1` rebless) all node-free; the
+  flag-ON trees compile via `entity_codegen_gate` (its first flag-ON run
+  caught an unclosed `{#if}` and a `values=[...]`-without-`={}` in the
+  template — the gate is the arbiter) and the IFML gate (fixture carries
+  the flag; validation category asserts the message visibility).
+  Byte-identity: the ux entity canary re-blessed for the scaffold-seeding
+  diff (enumerated: form components → TanStack variants, wrappers,
+  `data.remote.ts` fieldErrors legs, `ui/src/lib/forms/`, package.json pins);
+  flag-off templates byte-untouched.
+
 ### IFML app skeleton (`ifml-skeleton` generator)
 
 `IfmlSkeletonGenerator` (Global, `ifml_skeleton`/`ifml_skeleton_{fw}` capabilities;

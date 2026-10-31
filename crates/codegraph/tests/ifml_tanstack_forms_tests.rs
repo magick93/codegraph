@@ -273,10 +273,10 @@ async fn ifml_tanstack_forms_flag_emits_the_form_plane() {
     );
     assert!(page.contains("import { z } from 'zod';"), "{page}");
     assert!(
-        page.contains("<form.AppField name=\"title\">"),
+        page.contains("<editorForm.AppField name=\"title\">"),
         "typed fields render AppField slots:\n{page}"
     );
-    assert!(page.contains("<form.AppField name=\"status\">"), "{page}");
+    assert!(page.contains("<editorForm.AppField name=\"status\">"), "{page}");
     assert!(
         page.contains("z.string().min(2, \"Title too short\")"),
         "the DSL len validation lowers into the zod schema:\n{page}"
@@ -338,7 +338,7 @@ async fn ifml_tanstack_forms_composes_with_the_client_fetch_transport() {
         &output.join("ui"),
         "src/routes/(views)/requestform/+page.svelte",
     );
-    assert!(page.contains("<form.AppField name=\"title\">"), "{page}");
+    assert!(page.contains("<editorForm.AppField name=\"title\">"), "{page}");
     assert!(
         page.contains("await fetch(`${API_BASE}` +"),
         "remote off ⇒ the client fetch transport:\n{page}"
@@ -407,7 +407,7 @@ async fn ifml_tanstack_forms_skeleton_carries_the_dependencies() {
 
     // Standalone route shape renders the same plane.
     let page = read(&out, "svelte/src/routes/requestform/+page.svelte");
-    assert!(page.contains("<form.AppField name=\"title\">"), "{page}");
+    assert!(page.contains("<editorForm.AppField name=\"title\">"), "{page}");
     assert!(
         page.contains("z.string().min(2, \"Title too short\")"),
         "{page}"

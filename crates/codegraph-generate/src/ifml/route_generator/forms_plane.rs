@@ -108,12 +108,14 @@ const FIELD_TEXT: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid,
 		type = 'text'
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
@@ -139,11 +141,13 @@ const FIELD_EMAIL: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
@@ -168,18 +172,20 @@ const FIELD_NUMBER: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
 		testid?: string;
 	} = $props();
 
-	const field = useFieldContext<number>();
+	const field = useFieldContext<number | undefined>();
 
 	const errorMessage = $derived(
 		field.state.meta.errors
@@ -197,11 +203,13 @@ const FIELD_CHECKBOX: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
@@ -226,12 +234,14 @@ const FIELD_SELECT: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid,
 		values = []
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
@@ -257,11 +267,13 @@ const FIELD_DATETIME: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
@@ -286,11 +298,13 @@ const FIELD_TEXTAREA: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;
@@ -315,12 +329,14 @@ const FIELD_RADIO: &str = concat!(
     r#"	import { useFieldContext } from '$lib/forms/form-context';
 
 	let {
+		name = '',
 		required = false,
 		message = '',
 		serverMessage = '',
 		testid,
 		values = []
 	}: {
+		name?: string;
 		required?: boolean;
 		message?: string;
 		serverMessage?: string;

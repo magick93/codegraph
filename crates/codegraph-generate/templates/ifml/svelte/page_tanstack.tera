@@ -193,11 +193,11 @@
 {%- if comp.tanstack %}
 
 {{ comp.tanstack.schema_src }}
-	const {{ comp.js_name }}Form = createAppForm({
+	const {{ comp.js_name }}Form = createAppForm(() => ({
 		defaultValues: {
 {{ comp.tanstack.defaults }}
 		},
-		validators: { onSubmit: {{ comp.tanstack.schema_name }} },
+		validators: { onSubmit: {{ comp.tanstack.schema_name }} as never },
 		onSubmit: async ({ value }) => {
 			formError = '';
 			fieldErrors = {};
@@ -274,7 +274,7 @@
 				submitting = false;
 			}
 		}
-	});
+	}));
 {%- endif %}
 {%- endfor %}
 {%- for comp in components %}
@@ -543,21 +543,21 @@
 {%- if comp.tanstack %}
 <form data-testid="{{ comp.name }}-form" onsubmit={(e) => { e.preventDefault(); {{ comp.js_name }}Form.handleSubmit(); }}>
 	{% for field in comp.tanstack.fields %}
-	<form.AppField name="{{ field.name }}">
+	<{{ comp.js_name }}Form.AppField name="{{ field.name }}">
 		{% raw %}{#snippet children()}{% endraw %}
 		{{ field.invocation }}
 		{% raw %}{/snippet}{% endraw %}
-	</form.AppField>
+	</{{ comp.js_name }}Form.AppField>
 	{% endfor %}
 {% if comp.submit_handler %}
 	{% raw %}{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
 	{{ comp.submit_gate.open }}
-	<form.Subscribe selector={({ canSubmit, isSubmitting }) => ({ canSubmit, isSubmitting })}>
+	<{{ comp.js_name }}Form.Subscribe selector={({ canSubmit, isSubmitting }) => ({ canSubmit, isSubmitting })}>
 		{% raw %}{#snippet children(sub)}{% endraw %}
-		<button type="submit" data-testid="{{ comp.name }}-submit" disabled={!sub.canSubmit || sub.isSubmitting}>Submit</button>
+		<button type="submit" data-testid="{{ comp.tanstack.submit_testid }}" disabled={!sub.canSubmit || sub.isSubmitting}>Submit</button>
 		{% raw %}{/snippet}{% endraw %}
-	</form.Subscribe>
+	</{{ comp.js_name }}Form.Subscribe>
 	{{ comp.submit_gate.close }}{% if comp.workflow %}
 	{{ comp.workflow.badge_html }}
 {%- if comp.transition_url_expr %}

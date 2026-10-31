@@ -378,6 +378,12 @@ pub fn tanstack_form_plan(fields: &[UiField], module: &str, entity_name: &str) -
                 "String(initialData?.{n} ?? '').replace(/Z$/, '')",
                 n = field.name
             ),
+            // Optional string-family fields default to `undefined` — an
+            // optional email/enum zod branch rejects `''`, so a `?? ''`
+            // default would leave the form permanently invalid.
+            _ if !field.is_required => {
+                format!("initialData?.{n} || undefined", n = field.name)
+            }
             _ => format!("String(initialData?.{} ?? '')", field.name),
         };
 

@@ -667,7 +667,7 @@ pub(super) fn render_form_tanstack(
         let component = tanstack_component(&html);
         let testid = format!("{}-{}", sanitize_ident(component_name), field.name);
         let mut invocation = format!(
-            "<{component} name={} data-testid={}",
+            "<{component} name={} testid={}",
             ts_string_literal(&field.name),
             ts_string_literal(&testid)
         );
@@ -692,17 +692,34 @@ pub(super) fn render_form_tanstack(
             invocation,
         });
 
-        default_lines.push(match kind {
-            ZodKind::Boolean => format!(
+        // Optional fields default to `undefined` — an optional email/enum
+        // zod branch REJECTS `''`, so a `?? ''` default would leave the
+        // form permanently invalid (`canSubmit` never true). `|| undefined`
+        // also folds an empty-string load value to undefined for the
+        // string family; `false`/`0` stay meaningful for bool/number.
+        default_lines.push(match (&kind, prop_required) {
+            (ZodKind::Boolean, true) => format!(
                 "\t\t\t{0}: ({form_state_var}.{0} ?? false) as boolean,",
                 field.name
             ),
-            ZodKind::Number => format!(
+            (ZodKind::Boolean, false) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? undefined) as boolean | undefined,",
+                field.name
+            ),
+            (ZodKind::Number, true) => format!(
                 "\t\t\t{0}: ({form_state_var}.{0} ?? undefined) as number | undefined,",
                 field.name
             ),
-            _ => format!(
+            (ZodKind::Number, false) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? undefined) as number | undefined,",
+                field.name
+            ),
+            (_, true) => format!(
                 "\t\t\t{0}: ({form_state_var}.{0} ?? '') as string,",
+                field.name
+            ),
+            (_, false) => format!(
+                "\t\t\t{0}: (({form_state_var}.{0} || undefined)) as string | undefined,",
                 field.name
             ),
         });
@@ -748,6 +765,7 @@ pub(super) fn render_form_tanstack(
         defaults: default_lines.join("\n"),
         payload,
         fields: slots,
+        submit_testid: String::new(),
     }
 }
 

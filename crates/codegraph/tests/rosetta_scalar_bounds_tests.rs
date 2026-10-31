@@ -148,19 +148,33 @@ async fn persisted_bounds_un_dead_the_garde_branches_in_dto_create() {
     .await
     .unwrap();
 
-    let dto_create = walkdir::WalkDir::new(&output)
+    // The #447 plan-less layout emits TWO dto_create.rs files (the
+    // domain-types full DTO and the app-side re-export) — walkdir's
+    // directory-order `find` raced between them (the re-export carries no
+    // garde attrs). Assert over ALL of them: the garde content must exist
+    // somewhere in the emitted tree.
+    let dto_creates: Vec<PathBuf> = walkdir::WalkDir::new(&output)
         .into_iter()
         .filter_map(|e| e.ok())
-        .find(|e| e.file_type().is_file() && e.file_name().to_string_lossy() == "dto_create.rs")
-        .unwrap_or_else(|| panic!("dto_create.rs missing under {}", output.display()));
-    let content = std::fs::read_to_string(dto_create.path()).unwrap();
+        .filter(|e| e.file_type().is_file() && e.file_name().to_string_lossy() == "dto_create.rs")
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    assert!(
+        !dto_creates.is_empty(),
+        "dto_create.rs missing under {}",
+        output.display()
+    );
+    let all_content: String = dto_creates
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap_or_default())
+        .collect();
 
     assert!(
-        content.contains("#[garde(range(min = 2, max = 10))]"),
-        "integer bounds must emit a garde range check; content:\n{content}"
+        all_content.contains("#[garde(range(min = 2, max = 10))]"),
+        "integer bounds must emit a garde range check; content:\n{all_content}"
     );
     assert!(
-        content.contains("#[garde(length(min = 3, max = 12))]"),
-        "string bounds must emit a garde length check; content:\n{content}"
+        all_content.contains("#[garde(length(min = 3, max = 12))]"),
+        "string bounds must emit a garde length check; content:\n{all_content}"
     );
 }

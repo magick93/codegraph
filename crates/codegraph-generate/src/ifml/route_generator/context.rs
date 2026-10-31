@@ -788,6 +788,11 @@ pub struct RenderFormTanstack {
     pub payload: String,
     /// One slot per form field, in declaration order.
     pub fields: Vec<RenderTanstackField>,
+    /// The submit button's testid — the SAME value the POM's
+    /// `ComponentSelectors::for_component` resolves (mapping tier first,
+    /// action-control slot, `{comp}-submit` fallback), so the TanStack
+    /// page and the page class can never drift.
+    pub submit_testid: String,
 }
 
 /// One TanStack field slot: the DSL name (the `<form.AppField name>` slot),
@@ -1553,6 +1558,17 @@ pub(super) async fn page_component_context(
         }
         _ => None,
     };
+    // The TanStack submit button must carry the SAME testid the POM's
+    // selector resolution produces (mapping tier > action-control slot >
+    // `{comp}-submit` fallback) — the specs drive the view through the
+    // page class, so the page and the class cannot drift.
+    let tanstack_form = tanstack_form.map(|mut t| {
+        t.submit_testid =
+            crate::ifml::selectors::ComponentSelectors::for_component(mappings, &vc.name, c)
+                .submit
+                .unwrap_or_else(|| format!("{}-submit", c.name));
+        t
+    });
     // The workflow status field is WORKFLOW-MANAGED: the create/update DTOs
     // exclude it and `deny_unknown_fields` (#539) rejects the key — the
     // typed submit payload must not carry it (the DDL default materializes
