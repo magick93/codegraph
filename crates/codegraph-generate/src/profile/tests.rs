@@ -893,6 +893,45 @@ generators = ["ddl"]
         );
     }
 
+    // ── TanStack form flags (issue #580) ──
+
+    #[test]
+    fn build_plan_form_flags_default_to_false() {
+        let plan = plan_with_features("auth = true").unwrap();
+        assert!(!plan.entity_form);
+        assert!(!plan.ifml_tanstack_forms);
+    }
+
+    #[test]
+    fn build_plan_form_flags_parse_bool_values() {
+        let plan = plan_with_features("entity_form = true\nifml_tanstack_forms = true").unwrap();
+        assert!(plan.entity_form);
+        assert!(plan.ifml_tanstack_forms);
+        let plan = plan_with_features("entity_form = false\nifml_tanstack_forms = false").unwrap();
+        assert!(!plan.entity_form);
+        assert!(!plan.ifml_tanstack_forms);
+    }
+
+    #[test]
+    fn build_plan_entity_form_non_bool_errors_naming_the_key() {
+        let err = plan_with_features("entity_form = \"yes\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("entity_form") && msg.contains("boolean"),
+            "expected entity_form type error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_plan_ifml_tanstack_forms_non_bool_errors_naming_the_key() {
+        let err = plan_with_features("ifml_tanstack_forms = \"yes\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("ifml_tanstack_forms") && msg.contains("boolean"),
+            "expected ifml_tanstack_forms type error, got: {msg}"
+        );
+    }
+
     // ── dependency_strategy feature (issue #347) ──
 
     #[test]

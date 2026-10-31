@@ -118,6 +118,11 @@ pub struct ValidationTest {
     pub form_testid: String,
     pub submit_testid: String,
     pub field: String,
+    /// The first required field's validation message, when any: the
+    /// TanStack form layer (issue #580) extends the spec with a
+    /// per-field `data-validate-message` visibility assertion when both
+    /// the flag and a message are present.
+    pub message: Option<String>,
 }
 
 #[derive(Debug)]

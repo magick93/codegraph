@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/rsvp/rsvp/[rsvp_id]/edit/+page.svelte";

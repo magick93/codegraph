@@ -28,6 +28,11 @@ ifml_e2e_auth = true
 # loads/posts run server-side (data.remote.ts + $lib/server/api) against
 # the real API — the browser never carries the API key.
 ifml_remote_functions = true
+# TanStack Form layer (issue #580): the gate proves typed form views
+# render TanStack AppFields with the zod schema lowered from the DSL
+# validations, and the validation spec asserts per-field
+# data-validate-message visibility against the real API.
+ifml_tanstack_forms = true
 # ux-rules plane ON (issue #303): the gate proves the fallback ux markup
 # (chips, money alignment/formatting, overflow actions) against the real
 # API. No `ifml_design_system` here DELIBERATELY: the fixture's

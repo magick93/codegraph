@@ -239,6 +239,8 @@ pub async fn regenerate_fixture() -> Result<(), String> {
             ifml_e2e_auth: plan.ifml_e2e_auth,
             ifml_remote_functions: plan.ifml_remote_functions,
             entity_remote_functions: plan.entity_remote_functions,
+            entity_form: plan.entity_form,
+            ifml_tanstack_forms: plan.ifml_tanstack_forms,
             testid_module: plan.testid_module,
             structural_gates: plan.structural_gates,
             types_import_prefix: config.defaults.types_import_prefix.clone(),

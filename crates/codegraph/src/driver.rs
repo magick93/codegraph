@@ -511,6 +511,8 @@ pub async fn run_with_graph_cache(
                 ifml_e2e_auth: plan.ifml_e2e_auth,
                 ifml_remote_functions: plan.ifml_remote_functions,
                 entity_remote_functions: plan.entity_remote_functions,
+                entity_form: plan.entity_form,
+                ifml_tanstack_forms: plan.ifml_tanstack_forms,
                 testid_module: plan.testid_module,
                 structural_gates: plan.structural_gates,
                 types_import_prefix: domain_config.defaults.types_import_prefix.clone(),
@@ -1446,6 +1448,8 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.codegen.ifml_e2e_auth = plan.ifml_e2e_auth;
         project_config.codegen.ifml_remote_functions = plan.ifml_remote_functions;
         project_config.codegen.entity_remote_functions = plan.entity_remote_functions;
+        project_config.codegen.entity_form = plan.entity_form;
+        project_config.codegen.ifml_tanstack_forms = plan.ifml_tanstack_forms;
         project_config.codegen.testid_module = plan.testid_module;
         project_config.codegen.structural_gates = plan.structural_gates;
         project_config.integration.public_operations_rls = plan.public_operations_rls;

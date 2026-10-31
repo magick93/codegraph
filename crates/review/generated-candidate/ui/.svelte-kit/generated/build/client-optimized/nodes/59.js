@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/common/position-schedule-type-code-list/[position_schedule_type_code_list_id]/edit/+page.svelte";

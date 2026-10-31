@@ -19,7 +19,10 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: postgres:16
+        # The Supabase postgres image: the generated stack relies on the
+        # `auth` schema (BaseJump sessions, auth.uid() RLS) which only this
+        # image ships.
+        image: public.ecr.aws/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres

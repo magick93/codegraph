@@ -86,6 +86,18 @@ pub struct AppState {
 
 
 
+    pub recruiting_grant_application_commands: crate::domain::recruiting::grant_application::command::GrantApplicationCommandHandler,
+    pub recruiting_grant_application_queries: crate::domain::recruiting::grant_application::query::GrantApplicationQueryHandler,
+
+    pub recruiting_grant_audit_trail_commands: crate::domain::recruiting::grant_audit_trail::command::GrantAuditTrailCommandHandler,
+    pub recruiting_grant_audit_trail_queries: crate::domain::recruiting::grant_audit_trail::query::GrantAuditTrailQueryHandler,
+
+    pub recruiting_grant_panel_minute_commands: crate::domain::recruiting::grant_panel_minute::command::GrantPanelMinuteCommandHandler,
+    pub recruiting_grant_panel_minute_queries: crate::domain::recruiting::grant_panel_minute::query::GrantPanelMinuteQueryHandler,
+
+    pub recruiting_grant_review_note_commands: crate::domain::recruiting::grant_review_note::command::GrantReviewNoteCommandHandler,
+    pub recruiting_grant_review_note_queries: crate::domain::recruiting::grant_review_note::query::GrantReviewNoteQueryHandler,
+
     pub recruiting_application_commands: crate::domain::recruiting::application::command::ApplicationCommandHandler,
     pub recruiting_application_queries: crate::domain::recruiting::application::query::ApplicationQueryHandler,
 

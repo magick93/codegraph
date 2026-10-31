@@ -62,13 +62,22 @@ impl GlobalGenerator for IfmlSkeletonGenerator {
         // pre-#557 skeleton (byte-identity). Files are if-absent, so
         // flipping the flag on an existing tree needs the two skeleton
         // files removed to pick the new toolchain up.
-        let (package_json, vite_config) = if project.codegen.ifml_remote_functions {
+        let (base_package_json, vite_config) = if project.codegen.ifml_remote_functions {
             (PACKAGE_JSON_REMOTE, VITE_CONFIG_REMOTE)
         } else {
             (PACKAGE_JSON, VITE_CONFIG)
         };
-        let files = [
-            ("package.json", package_json),
+        // Issue #580: the TanStack form layer carries the
+        // @tanstack/svelte-form + zod dependencies. Composed with (not
+        // exclusive to) the remote variant; flag off emits the exact base
+        // package.json byte-identically.
+        let package_json = if project.codegen.ifml_tanstack_forms {
+            package_json_with_tanstack(base_package_json)
+        } else {
+            base_package_json.to_string()
+        };
+        let files: [(&str, &str); 6] = [
+            ("package.json", &package_json),
             ("vite.config.ts", vite_config),
             ("svelte.config.js", SVELTE_CONFIG),
             ("tsconfig.json", TSCONFIG),
@@ -83,6 +92,22 @@ impl GlobalGenerator for IfmlSkeletonGenerator {
                 content: content.to_string(),
             })
             .collect())
+    }
+}
+
+/// Insert the TanStack form layer's pinned dependencies into a base
+/// package.json: deterministic lines after the `@types/node` entry. The
+/// versions come from the shared `forms` consts so the emitted pins and
+/// the generated schema source cannot drift.
+fn package_json_with_tanstack(base: &str) -> String {
+    let deps = format!(
+        "    \"@types/node\": \"^22.0.0\",\n    \"@tanstack/svelte-form\": \"{}\",\n    \"zod\": \"{}\",\n",
+        crate::forms::TANSTACK_SVELTE_FORM_VERSION,
+        crate::forms::ZOD_VERSION
+    );
+    match base.replace("    \"@types/node\": \"^22.0.0\",\n", &deps) {
+        replaced if replaced != base => replaced,
+        _ => base.to_string(),
     }
 }
 
@@ -340,5 +365,29 @@ entities = ["CustomerType"]
             PACKAGE_JSON.contains("\"@sveltejs/kit\": \"^2.20.0\""),
             "flag off keeps the pre-#557 kit range (byte-identity): {PACKAGE_JSON}"
         );
+    }
+
+    #[test]
+    fn package_json_tanstack_variant_carries_the_form_deps() {
+        // Both bases compose with the flag (remote wins the kit floor).
+        for base in [PACKAGE_JSON, PACKAGE_JSON_REMOTE] {
+            let with = package_json_with_tanstack(base);
+            assert!(
+                with.contains(&format!(
+                    "\"@tanstack/svelte-form\": \"{}\"",
+                    crate::forms::TANSTACK_SVELTE_FORM_VERSION
+                )),
+                "{with}"
+            );
+            assert!(
+                with.contains(&format!("\"zod\": \"{}\"", crate::forms::ZOD_VERSION)),
+                "{with}"
+            );
+        }
+        // Flag off keeps both bases byte-identical.
+        assert!(package_json_with_tanstack(PACKAGE_JSON).starts_with('{'));
+        assert_ne!(package_json_with_tanstack(PACKAGE_JSON), PACKAGE_JSON);
+        assert!(!PACKAGE_JSON.contains("tanstack"));
+        assert!(!PACKAGE_JSON.contains("\"zod\""));
     }
 }

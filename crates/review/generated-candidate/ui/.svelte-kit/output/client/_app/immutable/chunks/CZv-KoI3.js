@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Birth Date`)),n=((t={},n={})=>(n.locale??e(),`Capacity`)),r=((t={},n={})=>(n.locale??e(),`Family Name`)),i=((t={},n={})=>(n.locale??e(),`Given Name`)),a=((t={},n={})=>(n.locale??e(),`Is Published`)),o=((t={},n={})=>(n.locale??e(),`Title`));export{n as a,r as i,a as n,t as o,i as r,o as t};

@@ -1,0 +1,1 @@
+export { default as component } from "../../../../../src/routes/(app)/common/formatted-date-time/[formatted_date_time_id]/edit/+page.svelte";

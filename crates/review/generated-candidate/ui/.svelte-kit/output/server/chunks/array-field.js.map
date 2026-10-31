@@ -1,0 +1,1 @@
+{"version":3,"file":"array-field.js","names":[],"sources":["../../../../src/lib/components/ui/array-field/index.js"],"sourcesContent":["// Gate-owned stub barrel (entity ui gate).\nexport function ArrayField(_props) {}\n"],"mappings":";AACA,SAAgB,WAAW,QAAQ,CAAC"}

@@ -60,6 +60,10 @@ pub struct PageSvelteContext {
     /// Whether any component carries action-event controls (issue #559):
     /// gates the shared `actionError` state + the op handlers.
     pub(super) has_action_buttons: bool,
+    /// TanStack form layer (issue #580): gates the zod/createAppForm
+    /// imports and the shared `fieldErrors` state on pages carrying at
+    /// least one TanStack-typed form.
+    pub(super) tanstack_forms: bool,
     /// Semantic slot role of the view: `modal-view` for modals, else
     /// `shell` for landmarks.
     pub(super) view_role: Option<SemanticRole>,
@@ -345,6 +349,11 @@ pub struct PageComponentContext {
     /// rule-less pages stay byte-identical.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) timeline: Option<RenderTimeline>,
+    /// TanStack form context (issue #580): `Some` exactly when the
+    /// `ifml_tanstack_forms` flag is on and the component carries a typed,
+    /// unmapped form spec. `None` renders the hand-rolled form branch —
+    /// flag-off pages stay byte-identical.
+    pub(crate) tanstack: Option<RenderFormTanstack>,
     /// Secondary navigate events (issue #301) for fallback collections
     /// carrying more than one: the first navigate event stays inline (the
     /// row/item click handler), the rest disclose into the per-row actions
@@ -758,6 +767,45 @@ pub struct RenderForm {
     pub(super) fields: Vec<RenderInputField>,
 }
 
+/// TanStack form render context for a typed form (issue #580): the zod
+/// schema lowered from the DSL validations (source prebuilt in Rust via
+/// [`crate::forms`] + `zod_glue` — never assembled in Tera), the
+/// defaultValues/payload construction lines, and the ready-to-render
+/// field-component invocations. `None` renders the hand-rolled form
+/// (byte-identical).
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderFormTanstack {
+    /// The schema const name (`editorSchema`).
+    pub schema_name: String,
+    /// The full zod schema source (`const editorSchema = z.object({…});`)
+    /// with tab indentation matching the template style.
+    pub schema_src: String,
+    /// defaultValues lines (one per field, reading the view's form state).
+    pub defaults: String,
+    /// Typed payload construction lines for the submit transport
+    /// (`const payload …` + per-field wire-key assignments), workflow
+    /// status excluded — empty falls back to passing `value` directly.
+    pub payload: String,
+    /// One slot per form field, in declaration order.
+    pub fields: Vec<RenderTanstackField>,
+    /// The submit button's testid — the SAME value the POM's
+    /// `ComponentSelectors::for_component` resolves (mapping tier first,
+    /// action-control slot, `{comp}-submit` fallback), so the TanStack
+    /// page and the page class can never drift.
+    pub submit_testid: String,
+}
+
+/// One TanStack field slot: the DSL name (the `<form.AppField name>` slot),
+/// the field-component export (for the `$lib/forms/fields/*` import), and
+/// the ready-to-render invocation (all escaping applied in Rust — the
+/// #560 rule for the flag-ON path).
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderTanstackField {
+    pub name: String,
+    pub component: String,
+    pub invocation: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RenderInputField {
     pub(super) name: String,
@@ -897,6 +945,11 @@ pub(super) async fn build_page_context(
     // Remote-functions data plane (issue #557): flag-driven — commands
     // replace the client fetch/`apiHeaders` posts when on.
     let remote = project.codegen.ifml_remote_functions;
+    // TanStack form layer (issue #580): typed forms render the TanStack
+    // variant when on. Svelte-only (the form-creator scaffold is the
+    // SvelteKit `$lib/forms` convention); other frameworks warn and keep
+    // the hand-rolled plane.
+    let tanstack = project.codegen.ifml_tanstack_forms;
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
     let container = container_context(vc, mappings);
 
@@ -914,6 +967,7 @@ pub(super) async fn build_page_context(
             modal_targets,
             ux,
             project.codegen.dto_key_casing,
+            tanstack,
         )
         .await;
         components.push(ctx);
@@ -952,6 +1006,7 @@ pub(super) async fn build_page_context(
                     modal_targets,
                     ux,
                     project.codegen.dto_key_casing,
+                    tanstack,
                 )
                 .await;
                 ctx.in_container = true;
@@ -983,6 +1038,29 @@ pub(super) async fn build_page_context(
             export_name: imp.export_name.clone(),
             import_path: imp.import_path.clone(),
         });
+    }
+    // TanStack form layer (issue #580): every used field component imports
+    // from the `$lib/forms/fields/*` scaffold through the shared import
+    // loop in the template.
+    for comp in &components {
+        let Some(ts) = &comp.tanstack else {
+            continue;
+        };
+        for field in &ts.fields {
+            let Some((export, path)) = super::forms_plane::component_import(&field.component)
+            else {
+                continue;
+            };
+            if seen_imports
+                .insert(path.to_string(), export.to_string())
+                .is_none()
+            {
+                imports.push(RenderImport {
+                    export_name: export.to_string(),
+                    import_path: path.to_string(),
+                });
+            }
+        }
     }
     if let Some(imp) = container.as_ref().and_then(|c| c.import.as_ref()) {
         let export = imp.export_name.clone();
@@ -1188,6 +1266,10 @@ pub(super) async fn build_page_context(
         has_api_surface,
         remote_api: remote,
         has_action_buttons,
+        tanstack_forms: groups
+            .iter()
+            .flat_map(|group| group.components.iter())
+            .any(|comp| comp.tanstack.is_some()),
         groups,
         view_role: semantic_view_role(vc),
         container_role: semantic_container_role(vc),
@@ -1214,6 +1296,7 @@ pub(super) async fn page_component_context(
     modal_targets: &HashSet<String>,
     ux: Option<&UxGeneration<'_>>,
     dto_casing: DtoKeyCasing,
+    tanstack: bool,
 ) -> PageComponentContext {
     let (mut table, form, chart) = match c.spec {
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
@@ -1453,6 +1536,39 @@ pub(super) async fn page_component_context(
     );
     let workflow = component_workflow(config, c);
     let form_state = is_form_component(c) && mapping.is_none();
+    // TanStack form context (issue #580): typed, unmapped forms only —
+    // mapped components replace the fallback wholesale and spec-less
+    // forms keep the hand-rolled markup (zod needs typed fields).
+    let tanstack_form = match (tanstack, form_state, c.spec.as_ref()) {
+        (true, true, Some(ComponentSpec::Form(spec))) => {
+            let props = if c.entity.as_deref().is_none_or(str::is_empty) {
+                HashMap::new()
+            } else {
+                super::ux::ux_props_for_entity(db, c.entity.as_deref().unwrap_or_default()).await
+            };
+            let js_name = sanitize_ident(&c.name);
+            Some(super::render::render_form_tanstack(
+                &c.name,
+                &format!("{js_name}_form_state"),
+                spec,
+                &props,
+                workflow.as_ref().map(|w| w.status_field.as_str()),
+                dto_casing,
+            ))
+        }
+        _ => None,
+    };
+    // The TanStack submit button must carry the SAME testid the POM's
+    // selector resolution produces (mapping tier > action-control slot >
+    // `{comp}-submit` fallback) — the specs drive the view through the
+    // page class, so the page and the class cannot drift.
+    let tanstack_form = tanstack_form.map(|mut t| {
+        t.submit_testid =
+            crate::ifml::selectors::ComponentSelectors::for_component(mappings, &vc.name, c)
+                .submit
+                .unwrap_or_else(|| format!("{}-submit", c.name));
+        t
+    });
     // The workflow status field is WORKFLOW-MANAGED: the create/update DTOs
     // exclude it and `deny_unknown_fields` (#539) rejects the key — the
     // typed submit payload must not carry it (the DDL default materializes
@@ -1507,6 +1623,7 @@ pub(super) async fn page_component_context(
         table,
         form,
         chart,
+        tanstack: tanstack_form,
         ux_list_columns,
         timeline,
         row_menu_events,

@@ -1,7 +1,7 @@
 //! Postgres provisioning for full-stack integration tests: resolves a usable
-//! base target (DATABASE_URL, falling back to a dedicated docker postgres:16
-//! container when the URL is unreachable or lacks CREATEDB), then creates,
-//! migrates and drops unique per-run databases.
+//! base target (DATABASE_URL, falling back to a dedicated docker supabase
+//! postgres container when the URL is unreachable or lacks CREATEDB), then
+//! creates, migrates and drops unique per-run databases.
 
 use std::path::Path;
 use std::process::Command;
@@ -19,6 +19,10 @@ const FALLBACK_PORT: u16 = 15432;
 const DB_PREFIX: &str = "ifml_gate";
 /// Role label used in log messages for per-run databases.
 const DB_ROLE: &str = "gate";
+/// The Supabase postgres image: the generated stack relies on the `auth`
+/// schema (BaseJump sessions, `auth.uid()` RLS) which only this image
+/// ships — plain `postgres:*` has no `auth` schema.
+const FALLBACK_IMAGE: &str = "public.ecr.aws/supabase/postgres:17.6.1.132";
 
 fn default_database_url() -> String {
     std::env::var("DATABASE_URL")
@@ -38,7 +42,7 @@ pub async fn database_reachable(target: &PgTarget) -> bool {
 /// Resolve a usable base Postgres target. The configured DATABASE_URL wins
 /// when it can host per-run databases (CI service containers, local docker
 /// defaults). When it is unreachable or lacks CREATEDB (restricted shared
-/// instances), bootstraps a dedicated `postgres:16` container on
+/// instances), bootstraps a dedicated supabase postgres container on
 /// 127.0.0.1:15432 and reuses it across warm runs.
 pub async fn resolve_base_target() -> Result<PgTarget, String> {
     if let Some(target) = base_target() {
@@ -111,7 +115,7 @@ async fn ensure_fallback_postgres() -> Result<PgTarget, String> {
                 "POSTGRES_PASSWORD=postgres",
                 "-p",
                 &format!("127.0.0.1:{FALLBACK_PORT}:5432"),
-                "postgres:16",
+                FALLBACK_IMAGE,
             ])?;
         }
     }
@@ -164,22 +168,28 @@ impl GateDb {
     }
 
     /// Plain-Postgres bootstrap the Supabase stack would otherwise provide:
-    /// pgcrypto, Supabase-ish roles the generated grants reference, the pgmq
-    /// schema the platform grants expect, and a no-op domain event emitter
-    /// (the pgmq_setup generator is not part of test profiles).
+    /// the `supabase_admin` superuser the image's extension scripts grant
+    /// to, the Supabase-ish roles the generated grants reference, pgcrypto,
+    /// the pgmq schema the platform grants expect, and a no-op domain event
+    /// emitter (the pgmq_setup generator is not part of test profiles).
     pub async fn apply_prelude(&self) -> Result<(), String> {
         let sql = r#"
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$
 DECLARE
   role_name TEXT;
 BEGIN
-  FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'authenticator'] LOOP
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+    EXECUTE 'CREATE ROLE supabase_admin LOGIN SUPERUSER NOINHERIT';
+  END IF;
+  FOREACH role_name IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'authenticator',
+                                   'supabase_auth_admin', 'supabase_storage_admin',
+                                   'supabase_realtime_admin', 'supabase_read_only_user'] LOOP
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN
       EXECUTE format('CREATE ROLE %I NOLOGIN', role_name);
     END IF;
   END LOOP;
 END $$;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS pgmq;
 CREATE OR REPLACE FUNCTION public.emit_domain_event() RETURNS trigger AS $fn$
 BEGIN

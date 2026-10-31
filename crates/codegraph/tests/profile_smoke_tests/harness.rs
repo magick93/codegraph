@@ -128,6 +128,8 @@ pub(crate) async fn run_routing_generators_with_parts(
     let hooks_tmp = tempfile::TempDir::new().unwrap();
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),

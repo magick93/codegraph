@@ -173,6 +173,8 @@ entities = ["RsvpType"]
 
 fn emdash_build_plan() -> BuildPlan {
     BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![],
         domain_generators: vec!["emdash_plugin".to_string()],
         global_generators: vec!["emdash_plugin_scaffold".to_string()],

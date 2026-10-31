@@ -11,6 +11,7 @@ pub mod querier;
 pub mod route_generator;
 pub mod selectors;
 pub mod skeleton;
+pub(crate) mod zod_glue;
 
 pub use context::*;
 pub use dependency_graph::compute_view_generation_order;

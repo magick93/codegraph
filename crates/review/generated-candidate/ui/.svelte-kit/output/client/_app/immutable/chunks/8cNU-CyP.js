@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t,n={})=>(n.locale??e(),`Failed to create ${t?.entity}`)),n=((t,n={})=>(n.locale??e(),`${t?.entity} created successfully`));export{t as n,n as t};

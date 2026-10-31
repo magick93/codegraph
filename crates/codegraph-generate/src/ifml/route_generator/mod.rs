@@ -18,6 +18,7 @@ use self::workflow::js_quote;
 use super::querier::{IfmlGraphQuerier, IfmlQuerier};
 
 mod context;
+mod forms_plane;
 mod hydration;
 mod load;
 mod remote;
@@ -193,7 +194,30 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
         let mut files = vec![];
 
-        let page_template = format!("ifml/{}/page.tera", self.framework);
+        // TanStack form layer (issue #580): svelte-only (the
+        // `createFormCreator` + `$lib/forms` scaffold is the SvelteKit
+        // convention); other frameworks with the flag on warn once and
+        // keep the hand-rolled plane.
+        let tanstack = if project.codegen.ifml_tanstack_forms {
+            if self.framework == "svelte" {
+                true
+            } else {
+                eprintln!(
+                    "warning: ifml_route: ifml_tanstack_forms is svelte-only \
+                     (framework '{}'): keeping the hand-rolled form plane",
+                    self.framework
+                );
+                false
+            }
+        } else {
+            false
+        };
+
+        let page_template = if tanstack {
+            format!("ifml/{}/page_tanstack.tera", self.framework)
+        } else {
+            format!("ifml/{}/page.tera", self.framework)
+        };
         let load_template = format!("ifml/{}/page_load.tera", self.framework);
 
         // Remote-functions data plane (issue #557): svelte-only (the
@@ -328,6 +352,14 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
         if let Some(roles_helper) = self.roles_helper(&model) {
             files.push(roles_helper);
+        }
+
+        // The form-creator scaffold (issue #580): if-absent, once per
+        // output tree — the `src/lib/server/api.ts` mechanism from the
+        // remote-functions plane. Rendered from Rust consts so the entity
+        // plane's #580 half cannot drift.
+        if tanstack {
+            files.extend(forms_plane::form_plane_files(&self.output_dir));
         }
 
         if let Some(hydration) = self.hydration(&model) {

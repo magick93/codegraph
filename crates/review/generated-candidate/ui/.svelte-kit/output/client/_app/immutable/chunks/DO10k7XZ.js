@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Pay Run Id`)),n=((t={},n={})=>(n.locale??e(),`Run Date`)),r=((t={},n={})=>(n.locale??e(),`Total Amount`)),i=((t={},n={})=>(n.locale??e(),`Total Amount Currency`));export{t as i,r as n,n as r,i as t};

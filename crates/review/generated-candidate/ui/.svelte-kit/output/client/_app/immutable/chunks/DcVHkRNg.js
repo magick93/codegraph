@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`New Grant Review Note`));export{t};

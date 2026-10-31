@@ -1,0 +1,739 @@
+<script lang="ts">
+	import type { PageData } from './$types';
+{%- if has_api_surface and not remote_api %}
+	import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
+
+	// Issue #557: browser-side posts resolve the API ORIGIN and carry the
+	// Bearer key — a relative same-origin post dies under a split gateway
+	// topology and an unauthenticated request 401s at the gateway. Empty
+	// PUBLIC_API_URL keeps the relative form (the dev/preview proxy).
+	const API_BASE = PUBLIC_API_URL ?? '';
+	const API_KEY = PUBLIC_API_KEY ?? '';
+	const apiHeaders: Record<string, string> = {
+		'Content-Type': 'application/json',
+		...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
+	};
+{%- endif %}
+{%- if remote_api %}
+{%- for comp in components %}
+{%- if comp.submit and comp.submit.remote_command %}
+	import { {{ comp.submit.remote_command.export }} } from './data.remote';
+{%- endif %}
+{%- if comp.remote_transition %}
+	import { {{ comp.remote_transition.export }} } from './data.remote';
+{%- endif %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{%- if btn.remote_command %}
+	import { {{ btn.remote_command.export }} } from './data.remote';
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- if tanstack_forms %}
+	import { z } from 'zod';
+	import { createAppForm } from '$lib/forms/form';
+{%- endif %}
+{%- if needs_goto %}
+	import { goto } from '$app/navigation';
+{%- endif %}
+{%- if needs_invalidate %}
+	import { invalidateAll } from '$app/navigation';
+{%- endif %}
+{%- if needs_on_mount %}
+	import { onMount } from 'svelte';
+{%- endif %}
+{%- for imp in control_gate.imports %}
+	import { {{ imp }} } from '$lib/roles';
+{%- endfor %}
+{%- for imp in imports %}
+	import {{ imp.export_name }} from '{{ imp.import_path }}';
+{%- endfor %}
+
+	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
+{%- if view_params %}
+	const viewParams = $derived((data.params ?? {}) as Record<string, string>);
+{%- endif %}
+{%- for comp in components %}
+{%- if comp.form_state or comp.component_type == "form" %}
+	const {{ comp.js_name }}_form_state = $derived((data.formData ?? {}) as Record<string, any>);
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.row_menu_events %}
+	let {{ comp.js_name }}_actions_open = $state(false);
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.timeline %}
+	const {{ comp.js_name }}_timeline_items = $derived(
+		((data.items ?? []) as Record<string, unknown>[]).sort(
+			(a, b) => timeOf(b['{{ comp.timeline.order_binding }}']) - timeOf(a['{{ comp.timeline.order_binding }}'])
+		)
+	);
+{%- endif %}
+{%- endfor %}
+{%- if control_gate.consts %}
+
+	{{ control_gate.consts }}
+{%- endif %}
+{%- if guard_expr %}
+
+	const view_guard = $derived(Boolean({{ guard_expr }}));
+{%- endif %}
+{%- if modal %}
+	let dialog_open = $state(true);
+
+	function close_dialog() {
+		dialog_open = false;
+		history.back();
+	}
+{% endif %}
+{%- if has_submit %}
+	let submitting = $state(false);
+	let formError = $state('');
+{%- endif %}
+{%- if tanstack_forms %}
+	let fieldErrors = $state<Record<string, string>>({});
+{%- endif %}
+{%- if has_action_buttons %}
+	let actionError = $state('');
+{%- endif %}
+{%- for evt in view_events %}
+{%- if evt.action_kind == "navigate" and evt.event_type == "load" %}
+
+	onMount(() => {
+		goto({{ evt.url_expr }});
+	});
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- for evt in comp.events %}
+{%- if evt.action_kind == "navigate" %}
+
+	function {{ evt.handler_name }}(row: Record<string, unknown>) {
+		goto({{ evt.url_expr }});
+	}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.submit and not comp.tanstack %}
+
+	async function {{ comp.submit.handler_name }}(event: SubmitEvent) {
+		event.preventDefault();
+{%- if comp.submit.client_validate %}
+		const form = event.currentTarget as HTMLFormElement;
+		if (!form.checkValidity()) {
+			const invalid = form.querySelector(':invalid');
+			formError = invalid?.getAttribute('data-validate-message') ?? 'Please review the highlighted fields';
+			return;
+		}
+		const formData = Object.fromEntries(new FormData(form));
+{%- else %}
+		const formData = Object.fromEntries(new FormData(event.currentTarget as HTMLFormElement));
+{%- endif %}
+{%- if comp.form_payload %}
+{{ comp.form_payload }}
+{%- endif %}
+		submitting = true;
+		formError = '';
+		try {
+{%- if comp.submit.remote_command %}
+			const result = await {{ comp.submit.remote_command.export }}({
+{% if comp.submit.remote_command.id_param %}				id: viewParams.{{ comp.submit.remote_command.id_param }} || null,
+{% else %}				id: null,
+{% endif %}				data: {% if comp.form_payload %}payload{% else %}formData{% endif %}
+			});
+			if (!result.ok) {
+				formError = result.message ?? 'Request failed';
+				return;
+			}
+{%- else %}
+{%- if comp.submit.create_url_expr %}
+			const isEdit = !!viewParams.{{ comp.submit.edit_param }};
+			let response;
+			if (isEdit) {
+				response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
+					method: '{{ comp.submit.method }}',
+					headers: apiHeaders,
+					body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
+				});
+			} else {
+				response = await fetch(`${API_BASE}` + {{ comp.submit.create_url_expr }}, {
+					method: 'POST',
+					headers: apiHeaders,
+					body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
+				});
+			}
+{%- else %}
+			const response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
+				method: '{{ comp.submit.method }}',
+				headers: apiHeaders,
+				body: JSON.stringify({% if comp.form_payload %}payload{% else %}formData{% endif %})
+			});
+{%- endif %}
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+				return;
+			}
+{%- endif %}
+{%- if comp.submit.navigate_url %}
+			goto({{ comp.submit.navigate_url }});
+{%- endif %}
+		} finally {
+			submitting = false;
+		}
+	}
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.tanstack %}
+
+{{ comp.tanstack.schema_src }}
+	const {{ comp.js_name }}Form = createAppForm(() => ({
+		defaultValues: {
+{{ comp.tanstack.defaults }}
+		},
+		validators: { onSubmit: {{ comp.tanstack.schema_name }} as never },
+		onSubmit: async ({ value }) => {
+			formError = '';
+			fieldErrors = {};
+{% if comp.tanstack.payload %}{{ comp.tanstack.payload }}
+{% endif %}			submitting = true;
+			try {
+{%- if comp.submit and comp.submit.remote_command %}
+				const result = await {{ comp.submit.remote_command.export }}({
+{% if comp.submit.remote_command.id_param %}					id: viewParams.{{ comp.submit.remote_command.id_param }} || null,
+{% else %}					id: null,
+{% endif %}					data: {% if comp.tanstack.payload %}payload{% else %}value{% endif %}
+				});
+				if (!result.ok) {
+					formError = result.message ?? 'Request failed';
+					return;
+				}
+{%- elif comp.submit and comp.submit.create_url_expr %}
+				const isEdit = !!viewParams.{{ comp.submit.edit_param }};
+				let response;
+				if (isEdit) {
+					response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
+						method: '{{ comp.submit.method }}',
+						headers: apiHeaders,
+						body: JSON.stringify({% if comp.tanstack.payload %}payload{% else %}value{% endif %})
+					});
+				} else {
+					response = await fetch(`${API_BASE}` + {{ comp.submit.create_url_expr }}, {
+						method: 'POST',
+						headers: apiHeaders,
+						body: JSON.stringify({% if comp.tanstack.payload %}payload{% else %}value{% endif %})
+					});
+				}
+				if (!response.ok) {
+					const body = await response.json().catch(() => null);
+					const details = body?.details;
+					if (Array.isArray(details) && details.length > 0) {
+						const map: Record<string, string> = {};
+						for (const d of details) {
+							if (d && typeof d.field === 'string') {
+								map[d.field] = String(d.message ?? '');
+							}
+						}
+						fieldErrors = map;
+					}
+					formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+					return;
+				}
+{%- elif comp.submit %}
+				const response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
+					method: '{{ comp.submit.method }}',
+					headers: apiHeaders,
+					body: JSON.stringify({% if comp.tanstack.payload %}payload{% else %}value{% endif %})
+				});
+				if (!response.ok) {
+					const body = await response.json().catch(() => null);
+					const details = body?.details;
+					if (Array.isArray(details) && details.length > 0) {
+						const map: Record<string, string> = {};
+						for (const d of details) {
+							if (d && typeof d.field === 'string') {
+								map[d.field] = String(d.message ?? '');
+							}
+						}
+						fieldErrors = map;
+					}
+					formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+					return;
+				}
+{%- endif %}
+{%- if comp.submit and comp.submit.navigate_url %}
+				goto({{ comp.submit.navigate_url }});
+{%- endif %}
+			} finally {
+				submitting = false;
+			}
+		}
+	}));
+{%- endif %}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.workflow %}
+{%- if comp.remote_transition %}
+
+	async function transition_{{ comp.js_name }}(to: string) {
+		const result = await {{ comp.remote_transition.export }}({ id: viewParams.{{ comp.remote_transition.id_param }}, to });
+		if (result.ok) {
+			await invalidateAll();
+		}
+	}
+{%- elif comp.transition_url_expr %}
+
+	async function transition_{{ comp.js_name }}(to: string) {
+		const response = await fetch(`${API_BASE}` + {{ comp.transition_url_expr }}, {
+			method: 'POST',
+			headers: apiHeaders,
+			body: JSON.stringify({ target_state: to })
+		});
+		if (response.ok) {
+			await invalidateAll();
+		}
+	}
+{%- endif %}
+{%- endif %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+
+	async function {{ btn.handler_name }}() {
+		actionError = '';
+		try {
+{%- if btn.remote_command %}
+			const result = await {{ btn.remote_command.export }}({ id: viewParams.{{ btn.remote_command.id_param }} });
+			if (!result.ok) {
+				actionError = result.message ?? 'Request failed';
+				return;
+			}
+			await invalidateAll();
+{% else %}
+			const response = await fetch(`${API_BASE}` + {{ btn.url_expr }}, {
+				method: 'POST',
+				headers: apiHeaders,
+				body: JSON.stringify({})
+			});
+			if (!response.ok) {
+				const body = await response.json().catch(() => null);
+				actionError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+				return;
+			}
+			await invalidateAll();
+{% endif %}
+		} finally {
+		}
+	}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
+{%- if ux %}
+
+	// ux-rules fallback-table cell formatting (issue #300).
+	const UX_TONES: Record<string, Record<string, string>> = {
+	{%- for comp in components %}
+	{%- if comp.table %}
+	{%- for col in comp.table.columns %}
+	{%- if col.ux %}
+	{%- if col.ux.tone %}
+		'{{ comp.name }}.{{ col.binding }}': { {% for k, v in col.ux.tone %}{{ k }}: '{{ v }}', {% endfor %}},
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
+	{%- if comp.ux_list_columns %}
+	{%- for col in comp.ux_list_columns %}
+	{%- if col.ux %}
+	{%- if col.ux.tone %}
+		'{{ comp.name }}.{{ col.binding }}': { {% for k, v in col.ux.tone %}{{ k }}: '{{ v }}', {% endfor %}},
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
+	{%- if comp.timeline %}
+	{%- for col in comp.timeline.preview %}
+	{%- if col.ux %}
+	{%- if col.ux.tone %}
+		'{{ comp.name }}.{{ col.binding }}': { {% for k, v in col.ux.tone %}{{ k }}: '{{ v }}', {% endfor %}},
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
+	{%- endfor %}
+	};
+
+	function toneFor(key: string, value: unknown): string {
+		const tones = UX_TONES[key];
+		if (!tones) return 'outline';
+		return tones[String(value).toLowerCase()] ?? 'outline';
+	}
+
+	const UX_MONEY_OPTS = {{ ux.money_options }};
+
+	const UX_NUMBER_FMT = new Intl.NumberFormat('{{ ux.locale }}');
+	const UX_DATE_FMT = new Intl.DateTimeFormat('{{ ux.locale }}', { dateStyle: 'medium' });
+
+	function formatMoney(value: unknown): string {
+		return new Intl.NumberFormat('{{ ux.locale }}', UX_MONEY_OPTS).format(Number(value));
+	}
+
+	function formatNumber(value: unknown): string {
+		return UX_NUMBER_FMT.format(Number(value));
+	}
+
+	function formatDate(value: unknown): string {
+		const date = new Date(String(value));
+		return Number.isNaN(date.getTime()) ? String(value ?? '') : UX_DATE_FMT.format(date);
+	}
+
+	function copyChip(event: Event, value: unknown): void {
+		event.stopPropagation();
+		void navigator.clipboard?.writeText(String(value ?? ''));
+	}
+
+	function timeOf(value: unknown): number {
+		const date = new Date(String(value ?? ''));
+		return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+	}
+{%- endif %}
+</script>
+
+<svelte:head>
+	<title>{{ label }}</title>
+</svelte:head>
+
+{%- if modal %}
+{{ modal.open_line }}
+{%- endif %}
+{%- if container %}
+{{ container.open_line }}
+{%- if container.label_heading %}
+{{ container.label_heading }}
+{%- endif %}
+{%- endif %}
+{%- for group in groups %}
+{%- if group.heading %}
+{{ group.heading }}
+{%- endif %}
+{%- for comp in group.components %}
+{% if comp.mapping %}
+{%- if not comp.in_container %}
+<h1>{{ label }}</h1>
+{%- endif %}
+<{{ comp.mapping.import_name }}
+{%- if comp.data_prop %}
+	{{ comp.data_prop }}
+{%- endif %}
+{%- if comp.fields_prop %}
+	{{ comp.fields_prop }}
+{%- endif %}
+{%- if comp.form or comp.component_type == "details" %}
+	params={params}
+{%- endif %}
+{%- if comp.mapping.testid %}
+	testid="{{ comp.mapping.testid }}"
+{%- endif %}
+{%- if comp.mapping.row_testid %}
+	rowTestid="{{ comp.mapping.row_testid }}"
+{%- endif %}
+{%- if comp.submit_prop %}
+	{{ comp.submit_prop }}
+{%- endif %}
+{%- if comp.data_validate %}
+	data-validate="{{ comp.data_validate }}"
+{%- endif %}
+{%- if comp.data_validate_message %}
+	data-validate-message="{{ comp.data_validate_message }}"
+{%- endif %}
+{%- for p in comp.event_props %}
+	{{ p }}
+{%- endfor %}
+/>
+{% if comp.workflow %}{%- if comp.workflow.each %}
+{%- if comp.fetch_list %}
+{% raw %}	{#each data.items as item}{% endraw %}
+	{{ comp.workflow.badge_html }}
+{% raw %}	{/each}{% endraw %}
+{%- endif %}
+{%- else %}
+{%- if comp.fetch_item %}
+	{{ comp.workflow.badge_html }}
+{%- endif %}
+{%- endif %}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
+{%- endif %}
+{% elif comp.timeline %}
+{%- if not comp.in_container %}
+<h1>{{ label }}</h1>
+{%- endif %}
+<ol class="timeline" data-testid="{{ comp.name }}-timeline">
+{% raw %}	{#each {% endraw %}{{ comp.js_name }}{% raw %}_timeline_items as item}{% endraw %}
+	<li class="timeline-item" data-testid="{{ comp.name }}-timeline-item"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
+		<time class="timeline-time" datetime={item.{{ comp.timeline.order_binding }}}>{formatDate(item.{{ comp.timeline.order_binding }})}</time>
+		<div class="timeline-rail" aria-hidden="true"></div>
+		<div class="timeline-body">
+{% if comp.timeline.title_binding %}
+{% if comp.row_handler %}
+			<button type="button" class="timeline-title" data-testid="{{ comp.name }}-timeline-title" onclick={() => {{ comp.row_handler }}(item)}>{item.{{ comp.timeline.title_binding }}}</button>
+{% else %}
+			<span class="timeline-title">{item.{{ comp.timeline.title_binding }}}</span>
+{% endif %}
+{% endif %}
+{% for col in comp.timeline.preview %}
+			<span class="timeline-meta" data-testid="{{ comp.name }}-timeline-meta">{% if col.ux %}{% if col.ux.display == "chip" %}<span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span>{% elif col.ux.display == "copy-chip" %}<button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button>{% elif col.ux.dimension == "money" %}{formatMoney(item.{{ col.binding }})}{% elif col.ux.dimension == "quantity" %}{formatNumber(item.{{ col.binding }})}{% elif col.ux.dimension == "time-point" %}{formatDate(item.{{ col.binding }})}{% else %}{item.{{ col.binding }}}{% endif %}{% else %}{item.{{ col.binding }}}{% endif %}</span>
+{% endfor %}
+{% if comp.workflow %}
+			{{ comp.workflow.badge_html }}
+{% endif %}
+{% if comp.row_menu_events %}
+			<div class="timeline-actions"><button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open}{% endraw %}<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">{% for evt in comp.row_menu_events %}<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>{% endfor %}</div>{% raw %}{/if}{% endraw %}</div>
+{% endif %}
+		</div>
+	</li>
+{% raw %}	{/each}{% endraw %}
+</ol>
+
+{% elif comp.table %}
+{%- if not comp.in_container %}
+<h1>{{ label }}</h1>
+{%- endif %}
+<table data-testid="{{ comp.name }}-table"{% if comp.table.pagination %} data-pagination="true"{% endif %}>
+	<thead>
+		<tr>
+		{% for col in comp.table.columns %}
+			{% if col.ux %}{% if col.ux.align == "right" %}<th class="text-right">{{ col.label }}</th>{% else %}<th>{{ col.label }}</th>{% endif %}{% else %}<th>{{ col.label }}</th>{% endif %}
+		{% endfor %}
+		</tr>
+	</thead>
+	<tbody>
+{% raw %}		{#each data.items as item}{% endraw %}
+			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
+			{% for col in comp.table.columns %}
+				{% if col.ux %}{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}{% else %}<td>{item.{{ col.binding }}}</td>{% endif %}
+			{% endfor %}{% if comp.workflow %}
+			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
+{%- if comp.row_menu_events %}
+			<td class="row-actions">
+			<button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>
+			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open}{% endraw %}
+			<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">
+			{% for evt in comp.row_menu_events %}
+				<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>
+			{% endfor %}
+			</div>
+			{% raw %}{/if}{% endraw %}
+			</td>
+{%- endif %}
+			</tr>
+{% raw %}		{/each}{% endraw %}
+	</tbody>
+</table>
+
+{% elif comp.form %}
+{%- if comp.tanstack %}
+<form data-testid="{{ comp.name }}-form" onsubmit={(e) => { e.preventDefault(); {{ comp.js_name }}Form.handleSubmit(); }}>
+	{% for field in comp.tanstack.fields %}
+	<{{ comp.js_name }}Form.AppField name="{{ field.name }}">
+		{% raw %}{#snippet children()}{% endraw %}
+		{{ field.invocation }}
+		{% raw %}{/snippet}{% endraw %}
+	</{{ comp.js_name }}Form.AppField>
+	{% endfor %}
+{% if comp.submit_handler %}
+	{% raw %}{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
+{% endif %}
+	{{ comp.submit_gate.open }}
+	<{{ comp.js_name }}Form.Subscribe selector={({ canSubmit, isSubmitting }) => ({ canSubmit, isSubmitting })}>
+		{% raw %}{#snippet children(sub)}{% endraw %}
+		<button type="submit" data-testid="{{ comp.tanstack.submit_testid }}" disabled={!sub.canSubmit || sub.isSubmitting}>Submit</button>
+		{% raw %}{/snippet}{% endraw %}
+	</{{ comp.js_name }}Form.Subscribe>
+	{{ comp.submit_gate.close }}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
+{% endif %}
+</form>
+{%- for btn in comp.buttons %}
+{{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
+{%- endfor %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}
+{%- endif %}
+
+{%- else %}
+<form data-testid="{{ comp.name }}-form"{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
+	{% for field in comp.form.fields %}
+	{% if field.is_select %}
+	<label>
+		{{ field.name }}
+		<select name="{{ field.name }}" value={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }}}{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}>
+			{% for value in field.values %}
+			<option value="{{ value }}">{{ value }}</option>
+			{% endfor %}
+		</select>
+	</label>
+	{% elif field.is_radio %}
+	<fieldset>
+		<legend>{{ field.name }}</legend>
+		{% for value in field.values %}
+		<label>
+			{{ value }}
+			<input type="radio" name="{{ field.name }}" value="{{ value }}" />
+		</label>
+		{% endfor %}
+	</fieldset>
+	{% elif field.is_textarea %}
+	<label>
+		{{ field.name }}
+		<textarea name="{{ field.name }}" value={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }}}{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %}></textarea>
+	</label>
+	{% else %}
+	<label>
+		{{ field.name }}
+		<input name="{{ field.name }}" type="{{ field.input_type }}"{% if field.input_type == "checkbox" %} checked={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }} === true}{% else %} value={{"{"}}{{ comp.js_name }}_form_state.{{ field.name }}}{% endif %}{% if field.required %} required{% endif %}{% if field.data_validate %} data-validate="{{ field.data_validate }}"{% endif %}{% if field.message %} data-validate-message="{{ field.message }}"{% endif %} />
+	</label>
+	{% endif %}
+	{% endfor %}
+{% if comp.submit_handler %}
+{% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
+{% endif %}
+	{{ comp.submit_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ comp.submit_gate.close }}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
+{% endif %}
+</form>
+{%- for btn in comp.buttons %}
+{{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
+{%- endfor %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}
+{%- endif %}
+
+{%- endif %}
+
+{% elif comp.chart %}
+<div class="chart" data-chart-kind="{{ comp.chart.kind }}"{% if comp.chart.label_field %} data-label-field="{{ comp.chart.label_field }}"{% endif %}{% if comp.chart.value_fields %} data-value-fields="{{ comp.chart.value_fields | join(sep=',') }}"{% endif %}></div>
+
+{% elif comp.component_type == "list" %}
+{%- if not comp.in_container %}
+<h1>{{ label }}</h1>
+{%- endif %}
+<table data-testid="{{ comp.name }}-table">
+	<thead>
+		<tr>
+		{% if comp.ux_list_columns %}{% for col in comp.ux_list_columns %}{% if col.ux.align == "right" %}<th class="text-right">{{ col.label }}</th>{% else %}<th>{{ col.label }}</th>{% endif %}{% endfor %}{% else %}{% for field in comp.fields %}
+			<th>{{ field }}</th>
+		{% endfor %}{% endif %}
+		</tr>
+	</thead>
+	<tbody>
+{% raw %}		{#each data.items as item}{% endraw %}
+			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
+			{% if comp.ux_list_columns %}{% for col in comp.ux_list_columns %}
+				{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}
+			{% endfor %}{% else %}{% for field in comp.fields %}
+				<td>{item.{{ field }}}</td>
+			{% endfor %}{% endif %}{% if comp.workflow %}
+			<td>{{ comp.workflow.badge_html }}</td>{% endif %}
+{%- if comp.row_menu_events %}
+			<td class="row-actions">
+			<button type="button" class="chip" data-testid="{{ comp.name }}-actions" aria-haspopup="menu" aria-expanded={% raw %}{{% endraw %}{{ comp.js_name }}_actions_open} onclick={(e) => { e.stopPropagation(); {{ comp.js_name }}_actions_open = !{{ comp.js_name }}_actions_open; }}>Actions</button>
+			{% raw %}{#if {% endraw %}{{ comp.js_name }}{% raw %}_actions_open}{% endraw %}
+			<div class="row-menu" data-testid="{{ comp.name }}-actions-menu">
+			{% for evt in comp.row_menu_events %}
+				<button type="button" onclick={(e) => { e.stopPropagation(); {{ evt.handler_name }}(item); }}>{{ evt.label }}</button>
+			{% endfor %}
+			</div>
+			{% raw %}{/if}{% endraw %}
+			</td>
+{%- endif %}
+			</tr>
+{% raw %}		{/each}{% endraw %}
+	</tbody>
+</table>
+
+{% elif comp.component_type == "form" %}
+<form data-testid="{{ comp.name }}-form"{% if comp.submit_prop %} {{ comp.submit_prop }}{% else %} method="POST"{% endif %}>
+	{% for field in comp.fields %}
+	<label>
+		{{ field }}
+		<input name="{{ field }}" value={{"{"}}{{ comp.js_name }}_form_state.{{ field }}} />
+	</label>
+	{% endfor %}
+{% if comp.submit_handler %}
+{% raw %}	{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
+{% endif %}
+	{{ comp.submit_gate.open }}{% if comp.submit_button %}<{{ comp.submit_button.import_name }}{% if comp.submit_button.onclick_prop %} {{ comp.submit_button.onclick_prop }}{% endif %}{% if comp.submit_button.disabled_prop %} {{ comp.submit_button.disabled_prop }}{% endif %} {{ comp.submit_button.testid_prop }}>{{ comp.submit_button.label }}</{{ comp.submit_button.import_name }}>{% else %}<button type="submit" data-testid="{{ comp.name }}-submit"{% if comp.submit_handler %} disabled={submitting}{% endif %}>Submit</button>{% endif %}{{ comp.submit_gate.close }}{% if comp.workflow %}
+	{{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+	{{ t.html }}
+{%- endfor %}
+{%- endif %}
+{% endif %}
+</form>
+{%- for btn in comp.buttons %}
+{{ btn.gate_open }}<{{ btn.import_name }}{% if btn.onclick_prop %} {{ btn.onclick_prop }}{% endif %} {{ btn.testid_prop }}>{{ btn.label }}</{{ btn.import_name }}>{{ btn.gate_close }}
+{%- endfor %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}
+{%- endif %}
+
+{% elif comp.component_type == "details" %}
+<dl data-testid="{{ comp.name }}-details">
+	{% for field in comp.fields %}
+	<dt>{{ field }}</dt>
+	<dd>{data.item.{{ field }}}</dd>
+	{% endfor %}
+</dl>
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}{%- endif %}
+{% if comp.workflow %}
+{{ comp.workflow.badge_html }}
+{%- if comp.transition_url_expr %}
+{%- for t in comp.workflow.transitions %}
+{{ t.html }}
+{%- endfor %}
+{%- endif %}
+{% endif %}
+
+{% endif %}
+{% endfor %}
+{%- endfor %}
+{% if container %}
+{{ container.close_line }}
+{% endif %}
+{%- if modal %}
+	<button type="button" data-testid="{{ modal.close_testid }}" onclick={close_dialog}>Close</button>
+{{ modal.close_line }}
+{% endif %}

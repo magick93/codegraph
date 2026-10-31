@@ -170,6 +170,8 @@ directions = ["push"]
     };
 
     let plan = BuildPlan {
+        entity_form: false,
+        ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
             "sea_orm_entity".to_string(),

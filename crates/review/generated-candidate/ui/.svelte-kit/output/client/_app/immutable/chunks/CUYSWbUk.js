@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`No`)),n=((t={},n={})=>(n.locale??e(),`Yes`));export{t as n,n as t};

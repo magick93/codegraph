@@ -1,0 +1,1 @@
+import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Back to detail`)),n=((t,n={})=>(n.locale??e(),`${t?.entity} updated successfully`)),r=((t,n={})=>(n.locale??e(),`Failed to update ${t?.entity}`));export{n,t as r,r as t};

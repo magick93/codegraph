@@ -81,6 +81,17 @@ pub struct BuildPlan {
     /// stores (`#lib/stores/*`) and the `PUBLIC_API_KEY` client plane
     /// retire. Default false = byte-identical.
     pub entity_remote_functions: bool,
+    /// TanStack Form layer on the entity plane (issue #580): `entity_form`
+    /// feature — the generated `{Entity}Form` component and its page
+    /// wrappers render through `@tanstack/svelte-form` with a zod schema
+    /// lowered from DTO required/optionality + #261 constraints. Default
+    /// false = the hand-rolled form, byte-identical.
+    pub entity_form: bool,
+    /// TanStack Form layer on the IFML plane (issue #580):
+    /// `ifml_tanstack_forms` feature — typed form components render
+    /// `AppField`s with a zod schema lowered from the DSL validations +
+    /// messages. Default false = the hand-rolled form, byte-identical.
+    pub ifml_tanstack_forms: bool,
     /// One testid vocabulary (issue #468 W3): `testid_module` feature —
     /// emits `ui/src/lib/testids.js` + `testids.d.ts` and switches the
     /// POM/spec templates to import it. Default false = byte-identical.
@@ -322,6 +333,24 @@ impl BuildPlan {
             None => false,
         };
 
+        // Parse entity_form from features (issue #580; default: false).
+        // Same non-bool-is-an-error rule: the flag gates an output plane.
+        let entity_form = match profile.features.get("entity_form") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"entity_form\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
+        // Parse ifml_tanstack_forms from features (issue #580; default:
+        // false). Same non-bool-is-an-error rule.
+        let ifml_tanstack_forms = match profile.features.get("ifml_tanstack_forms") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"ifml_tanstack_forms\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
         // Parse testid_module from features (issue #468 W3; default: false).
         let testid_module = profile
             .features
@@ -366,6 +395,8 @@ impl BuildPlan {
             ifml_e2e_auth,
             ifml_remote_functions,
             entity_remote_functions,
+            entity_form,
+            ifml_tanstack_forms,
             testid_module,
             structural_gates,
             public_operations_rls,
@@ -430,6 +461,8 @@ impl BuildPlan {
             ifml_e2e_auth: false,
             ifml_remote_functions: false,
             entity_remote_functions: false,
+            entity_form: false,
+            ifml_tanstack_forms: false,
             testid_module: false,
             structural_gates: false,
             public_operations_rls: false,

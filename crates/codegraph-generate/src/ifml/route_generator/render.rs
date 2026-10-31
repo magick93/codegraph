@@ -1,20 +1,24 @@
 use std::collections::{HashMap, HashSet};
 
 use codegraph_config::{IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
+use codegraph_core::types::PropertyNode;
 use rex_ifml::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
 
+use crate::forms::{ZodCheck, ZodField, ZodKind, ZodObject, ts_string_literal};
 use crate::ifml::api_paths::ResolvedApi;
 use crate::ifml::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
 use crate::ifml::control_core;
+use crate::project_config::DtoKeyCasing;
 
 use super::context::{
     RenderButton, RenderChart, RenderColumn, RenderContainer, RenderEvent, RenderForm,
-    RenderImport, RenderInputField, RenderModal, RenderNavItem, RenderShellNav, RenderSubmit,
-    RenderTable, TableLayout,
+    RenderFormTanstack, RenderImport, RenderInputField, RenderModal, RenderNavItem, RenderShellNav,
+    RenderSubmit, RenderTable, RenderTanstackField, TableLayout,
 };
 use super::roles::{event_role, input_field_role, is_form_component};
+use crate::ifml::zod_glue::lower_field_checks;
 
 /// Build the submit wiring for a form component: POST for create views, PUT
 /// for edit views (view carries an id param); success navigates per the
@@ -555,6 +559,213 @@ pub(super) fn render_form(spec: &FormSpec) -> RenderForm {
                 }
             })
             .collect(),
+    }
+}
+
+/// The zod kind for a DSL form field: the control kind mapped onto the
+/// shared zod IR. Closed dropdown/radio value sets lower to `z.enum`.
+/// `datetime-local` values (`2020-01-01T10:00`) are not full ISO
+/// datetimes — `z.iso.datetime()` would reject the picker's local form —
+/// so they validate as strings and the payload layer keeps the ISO
+/// coercion (the hand-rolled path's semantics).
+fn tanstack_zod_kind(field: &rex_ifml::FieldDef) -> ZodKind {
+    let html = control_core::html_input_for_dsl(&field.input);
+    if !field.values.is_empty() && (html.is_select || html.is_radio) {
+        return ZodKind::Enum(field.values.clone());
+    }
+    match html.input_type.as_str() {
+        "email" => ZodKind::Email,
+        "number" => ZodKind::Number,
+        "date" => ZodKind::Date,
+        "checkbox" => ZodKind::Boolean,
+        _ => ZodKind::String,
+    }
+}
+
+/// The field-component export a control kind renders through (the
+/// `$lib/forms/fields/*` scaffold's exports).
+fn tanstack_component(html: &control_core::HtmlInput) -> &'static str {
+    if html.is_select {
+        "SelectField"
+    } else if html.is_radio {
+        "RadioField"
+    } else if html.is_textarea {
+        "TextAreaField"
+    } else if html.input_type == "checkbox" {
+        "CheckboxField"
+    } else if html.input_type == "datetime-local" {
+        "DatetimeField"
+    } else if html.input_type == "email" {
+        "EmailField"
+    } else if html.input_type == "number" {
+        "NumberField"
+    } else {
+        "TextField"
+    }
+}
+
+/// Build the TanStack form context for a typed, unmapped form (issue
+/// #580). `props` carries the bound entity's schema properties keyed by
+/// field name (schema wins for required/bounds when resolvable; DSL
+/// `required:` otherwise) — empty when the entity is not schema-backed.
+/// `workflow_status` (the workflow-managed field, when any) is excluded
+/// from schema, defaults, payload, and slots: the create/update DTOs
+/// reject it (`deny_unknown_fields`, #539).
+pub(super) fn render_form_tanstack(
+    component_name: &str,
+    form_state_var: &str,
+    spec: &FormSpec,
+    props: &HashMap<String, PropertyNode>,
+    workflow_status: Option<&str>,
+    casing: DtoKeyCasing,
+) -> RenderFormTanstack {
+    let fields: Vec<&rex_ifml::FieldDef> = spec
+        .fields
+        .iter()
+        .filter(|f| Some(f.name.as_str()) != workflow_status)
+        .collect();
+
+    let mut schema_fields = Vec::new();
+    let mut slots = Vec::new();
+    let mut default_lines = Vec::new();
+    let mut payload_lines = Vec::new();
+
+    for field in &fields {
+        let kind = tanstack_zod_kind(field);
+        let prop_required = props
+            .get(&field.name)
+            .map(|p| p.is_required)
+            .unwrap_or(field.required);
+        let mut checks = lower_field_checks(&kind, &field.validations, &field.messages);
+        // #261 array bounds ride the schema property when the field is a
+        // junction/array (typed DSL inputs are scalar today, so the path
+        // is latent).
+        if let ZodKind::Array(_) = kind
+            && let Some(prop) = props.get(&field.name)
+        {
+            if let Some(min) = prop.min_items {
+                checks.push(ZodCheck::MinItems {
+                    value: min as usize,
+                    message: None,
+                });
+            }
+            if let Some(max) = prop.max_items {
+                checks.push(ZodCheck::MaxItems {
+                    value: max as usize,
+                    message: None,
+                });
+            }
+        }
+        schema_fields.push(ZodField {
+            name: field.name.clone(),
+            kind: kind.clone(),
+            required: prop_required,
+            checks,
+        });
+
+        let html = control_core::html_input_for_dsl(&field.input);
+        let component = tanstack_component(&html);
+        let testid = format!("{}-{}", sanitize_ident(component_name), field.name);
+        let mut invocation = format!(
+            "<{component} name={} testid={}",
+            ts_string_literal(&field.name),
+            ts_string_literal(&testid)
+        );
+        if component == "TextField" && html.input_type != "text" {
+            invocation.push_str(&format!(" type={}", ts_string_literal(&html.input_type)));
+        }
+        if prop_required {
+            invocation.push_str(" required");
+        }
+        if !field.values.is_empty() && (html.is_select || html.is_radio) {
+            let items: Vec<String> = field.values.iter().map(|v| ts_string_literal(v)).collect();
+            invocation.push_str(&format!(" values={{[{}]}}", items.join(", ")));
+        }
+        if let Some(message) = field.messages.first() {
+            invocation.push_str(&format!(" message={}", ts_string_literal(message)));
+        }
+        invocation.push_str(&format!(" serverMessage={{fieldErrors.{}}}", field.name));
+        invocation.push_str(" />");
+        slots.push(RenderTanstackField {
+            name: field.name.clone(),
+            component: component.to_string(),
+            invocation,
+        });
+
+        // Optional fields default to `undefined` — an optional email/enum
+        // zod branch REJECTS `''`, so a `?? ''` default would leave the
+        // form permanently invalid (`canSubmit` never true). `|| undefined`
+        // also folds an empty-string load value to undefined for the
+        // string family; `false`/`0` stay meaningful for bool/number.
+        default_lines.push(match (&kind, prop_required) {
+            (ZodKind::Boolean, true) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? false) as boolean,",
+                field.name
+            ),
+            (ZodKind::Boolean, false) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? undefined) as boolean | undefined,",
+                field.name
+            ),
+            (ZodKind::Number, true) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? undefined) as number | undefined,",
+                field.name
+            ),
+            (ZodKind::Number, false) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? undefined) as number | undefined,",
+                field.name
+            ),
+            (_, true) => format!(
+                "\t\t\t{0}: ({form_state_var}.{0} ?? '') as string,",
+                field.name
+            ),
+            (_, false) => format!(
+                "\t\t\t{0}: (({form_state_var}.{0} || undefined)) as string | undefined,",
+                field.name
+            ),
+        });
+
+        // Payload lines keep the hand-rolled path's coercions (#539 wire
+        // keys + temporal ISO conversion) but read the TanStack values.
+        let wire = super::load::dto_wire_key(&field.name, casing);
+        let is_temporal_input =
+            matches!(html.input_type.as_str(), "datetime-local" | "date" | "time");
+        let payload_expr = if html.input_type == "checkbox" {
+            format!("value.{} === true", field.name)
+        } else if is_temporal_input {
+            format!(
+                "value.{0} === '' || value.{0} === undefined ? null : new Date(String(value.{0})).toISOString()",
+                field.name
+            )
+        } else {
+            format!("value.{}", field.name)
+        };
+        payload_lines.push(format!("\t\t\tpayload.{wire} = {payload_expr};"));
+    }
+
+    let schema_name = format!("{}Schema", form_state_var.trim_end_matches("_form_state"));
+    let schema_src = ZodObject {
+        name: schema_name.clone(),
+        fields: schema_fields,
+    }
+    .render_schema();
+    let schema_src = schema_src
+        .strip_prefix("export ")
+        .unwrap_or(&schema_src)
+        .replace("  ", "\t");
+
+    let mut payload = String::new();
+    if !payload_lines.is_empty() {
+        payload.push_str("\t\t\tconst payload: Record<string, unknown> = {};\n");
+        payload.push_str(&payload_lines.join("\n"));
+    }
+
+    RenderFormTanstack {
+        schema_name,
+        schema_src,
+        defaults: default_lines.join("\n"),
+        payload,
+        fields: slots,
+        submit_testid: String::new(),
     }
 }
 

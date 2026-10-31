@@ -238,18 +238,19 @@ impl IfmlE2eTestGenerator {
         let form_testid = selectors.form.clone()?;
         let submit_testid = selectors.submit.clone()?;
         let form = form_spec(c)?;
-        let first_required = form
-            .fields
-            .iter()
-            .find(|f| f.required)
-            .map(|f| f.name.clone())?;
+        let first_required = form.fields.iter().find(|f| f.required)?;
+        let field = first_required.name.clone();
+        // The first required field's positional validation message drives
+        // the TanStack per-field visibility assertion (issue #580).
+        let message = first_required.messages.first().cloned();
 
         Some(ValidationTest {
             component: c.name.clone(),
             route: view_route(&vc.name),
             form_testid,
             submit_testid,
-            field: first_required,
+            field,
+            message,
         })
     }
 

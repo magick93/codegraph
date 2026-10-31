@@ -1,0 +1,1 @@
+import{S as e,c as t,it as n,rt as r}from"../chunks/DAkl6bz8.js";import"../chunks/D2HOy9G8.js";import{a as i}from"../chunks/hiY2A2dd.js";function a(a,o){n(o,!1),e(()=>{i(`/dashboard`,{replace:!0})}),t(),r()}export{a as component};

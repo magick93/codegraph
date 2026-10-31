@@ -114,6 +114,9 @@ impl EntityGenerator for CosmosEntityFormGenerator {
             has_create,
             has_update,
             has_child_sections,
+            // The cosmos variant keeps its own form shape (issue #580
+            // targets the default entity form only).
+            tanstack: None,
         };
 
         let content =

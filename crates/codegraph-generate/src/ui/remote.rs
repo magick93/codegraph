@@ -251,7 +251,15 @@ fn child_queries(ctx: &UiPageContext, api_version: &str) -> String {
 /// The commands' shared failure leg (discriminated `{ ok: false }`).
 const COMMAND_FAIL_LEG: &str = "\tif (!response.ok) {\n\t\tconst body = await response.json().catch(() => null);\n\t\treturn { ok: false as const, message: body?.error ?? body?.message ?? `Request failed (${response.status})` };\n\t}\n";
 
-fn create_command(ctx: &UiPageContext, api_version: &str) -> String {
+/// The create/update failure leg under the TanStack form layer (issue
+/// #580): the 422 `VALIDATION_ERROR` body's `details: [{field, message}]`
+/// parse into `fieldErrors` so the form can map them onto the matching
+/// fields. The union shape keeps `fieldErrors` present on EVERY `!ok`
+/// member (empty when the API sent no details) so callers can read it
+/// after narrowing on `ok`.
+const COMMAND_FAIL_LEG_FIELD_ERRORS: &str = "\tif (!response.ok) {\n\t\tconst body = await response.json().catch(() => null);\n\t\tconst fieldErrors: Record<string, string> = {};\n\t\tconst details = body?.error?.details;\n\t\tif (Array.isArray(details)) {\n\t\t\tfor (const d of details) {\n\t\t\t\tif (d && typeof d.field === 'string' && typeof d.message === 'string') {\n\t\t\t\t\tfieldErrors[d.field] = d.message;\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t\treturn { ok: false as const, message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})`, fieldErrors };\n\t}\n";
+
+fn create_command(ctx: &UiPageContext, api_version: &str, entity_form: bool) -> String {
     let mut s = String::new();
     s.push_str("export const createItem = command('unchecked', async (args: { data: Record<string, unknown>; ");
     s.push_str(&hierarchy_arg_fields(ctx));
@@ -263,14 +271,18 @@ fn create_command(ctx: &UiPageContext, api_version: &str) -> String {
     s.push_str("\t\theaders: { 'Content-Type': 'application/json' },\n");
     s.push_str("\t\tbody: JSON.stringify(args.data),\n");
     s.push_str("\t});\n");
-    s.push_str(COMMAND_FAIL_LEG);
+    if entity_form {
+        s.push_str(COMMAND_FAIL_LEG_FIELD_ERRORS);
+    } else {
+        s.push_str(COMMAND_FAIL_LEG);
+    }
     s.push_str("\tconst json = await response.json();\n");
     s.push_str("\treturn { ok: true as const, id: (json.data ?? json).id as string };\n");
     s.push_str("});\n");
     s
 }
 
-fn update_command(ctx: &UiPageContext, api_version: &str) -> String {
+fn update_command(ctx: &UiPageContext, api_version: &str, entity_form: bool) -> String {
     let mut s = String::new();
     s.push_str("export const updateItem = command('unchecked', async (args: { id: string; data: Record<string, unknown>; ");
     s.push_str(&hierarchy_arg_fields(ctx));
@@ -282,7 +294,11 @@ fn update_command(ctx: &UiPageContext, api_version: &str) -> String {
     s.push_str("\t\theaders: { 'Content-Type': 'application/json' },\n");
     s.push_str("\t\tbody: JSON.stringify(args.data),\n");
     s.push_str("\t});\n");
-    s.push_str(COMMAND_FAIL_LEG);
+    if entity_form {
+        s.push_str(COMMAND_FAIL_LEG_FIELD_ERRORS);
+    } else {
+        s.push_str(COMMAND_FAIL_LEG);
+    }
     s.push_str("\treturn { ok: true as const };\n");
     s.push_str("});\n");
     s
@@ -411,15 +427,21 @@ pub(super) fn render_detail_module(ctx: &UiPageContext, api_version: &str) -> St
     assemble(&mut header, queries, commands, &bodies)
 }
 
-/// The edit route's module: `getItem` + `updateItem`.
-pub(super) fn render_edit_module(ctx: &UiPageContext, api_version: &str) -> String {
+/// The edit route's module: `getItem` + `updateItem`. Under the TanStack
+/// form layer (`entity_form`, issue #580) the update command's fail leg
+/// parses 422 details into `fieldErrors`.
+pub(super) fn render_edit_module(
+    ctx: &UiPageContext,
+    api_version: &str,
+    entity_form: bool,
+) -> String {
     let mut bodies = Vec::new();
     let mut queries = 0usize;
     let mut commands = 0usize;
     if ctx.has_update {
         bodies.push(item_query(ctx, api_version));
         queries += 1;
-        bodies.push(update_command(ctx, api_version));
+        bodies.push(update_command(ctx, api_version, entity_form));
         commands += 1;
     }
     let mut header = String::new();
@@ -427,12 +449,18 @@ pub(super) fn render_edit_module(ctx: &UiPageContext, api_version: &str) -> Stri
     assemble(&mut header, queries, commands, &bodies)
 }
 
-/// The create route's module: `createItem`.
-pub(super) fn render_create_module(ctx: &UiPageContext, api_version: &str) -> String {
+/// The create route's module: `createItem`. Under the TanStack form layer
+/// (`entity_form`, issue #580) the create command's fail leg parses 422
+/// details into `fieldErrors`.
+pub(super) fn render_create_module(
+    ctx: &UiPageContext,
+    api_version: &str,
+    entity_form: bool,
+) -> String {
     let mut bodies = Vec::new();
     let mut commands = 0usize;
     if ctx.has_create {
-        bodies.push(create_command(ctx, api_version));
+        bodies.push(create_command(ctx, api_version, entity_form));
         commands += 1;
     }
     let mut header = String::new();
@@ -483,6 +511,37 @@ mod tests {
     }
 
     #[test]
+    fn create_module_maps_422_details_under_entity_form() {
+        let ctx = root_ctx();
+
+        // Flag off: the plain discriminated fail leg, byte-identical to
+        // the pre-#580 shape.
+        let m = render_create_module(&ctx, "v1", false);
+        assert!(
+            m.contains("export const createItem = command('unchecked'"),
+            "{m}"
+        );
+        assert!(m.contains("{ ok: false as const, message:"), "{m}");
+        assert!(!m.contains("fieldErrors"), "{m}");
+
+        // Flag on: details parse into fieldErrors, present on EVERY !ok
+        // member so callers can read it after narrowing on ok.
+        let m = render_create_module(&ctx, "v1", true);
+        assert!(
+            m.contains("const fieldErrors: Record<string, string> = {};"),
+            "{m}"
+        );
+        assert!(m.contains("body?.error?.details"), "{m}");
+        assert!(m.contains("fieldErrors[d.field] = d.message;"), "{m}");
+        let update = render_edit_module(&ctx, "v1", true);
+        assert!(
+            update.contains("export const updateItem = command('unchecked'"),
+            "{update}"
+        );
+        assert!(update.contains("fieldErrors"), "{update}");
+    }
+
+    #[test]
     fn detail_module_merges_workflow_and_children() {
         let mut ctx = root_ctx();
         ctx.has_workflow = true;
@@ -514,7 +573,7 @@ mod tests {
             param_name: "todo_list_id".into(),
             grandparent: None,
         });
-        let m = render_edit_module(&ctx, "v1");
+        let m = render_edit_module(&ctx, "v1", false);
         assert!(
             m.contains("/api/v1/common/todo-list/${parentId}/request/${id}"),
             "child item path interpolates the parent hole:\n{m}"
