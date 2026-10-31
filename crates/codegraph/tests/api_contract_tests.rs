@@ -104,6 +104,7 @@ fn domain_config(domain: &str, entities: &[&str]) -> DomainConfig {
             api_version: "v1".into(),
         },
         functions: Default::default(),
+        charts: Default::default(),
         rbac: None,
         domains,
     }

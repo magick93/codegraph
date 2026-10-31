@@ -19,6 +19,7 @@
 mod edges;
 mod gql;
 mod nodes_authz;
+mod nodes_chart;
 mod nodes_ddd;
 mod nodes_deploy;
 mod nodes_evt;
@@ -33,14 +34,14 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
-    CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionKind, ConditionNode,
-    DataBindingNode, DddModelGraph, DeployModelGraph, EdgeProperties, EdgeType, EnumValue,
-    ErrorDefinitionNode, EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats,
-    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDomainModel,
-    NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner,
-    RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    ChartDefinitionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionKind,
+    ConditionNode, DataBindingNode, DddModelGraph, DeployModelGraph, EdgeProperties, EdgeType,
+    EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode,
+    IngestStats, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
+    RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use self::gql::CountingSession;
@@ -720,6 +721,14 @@ impl GraphIngestor for GrafeoEngine {
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError> {
         crate::perf::bump_ingest_node();
         self.insert_data_binding(node).await
+    }
+
+    async fn ingest_chart_definition(
+        &self,
+        node: &ChartDefinitionNode,
+    ) -> Result<String, GraphError> {
+        crate::perf::bump_ingest_node();
+        self.insert_chart_definition(node).await
     }
 
     async fn ingest_atproto_namespace(

@@ -233,6 +233,7 @@ pub fn domain_config() -> DomainConfig {
             api_version: "v1".into(),
         },
         functions: Default::default(),
+        charts: Default::default(),
         rbac: None,
         domains,
     }

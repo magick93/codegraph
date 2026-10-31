@@ -173,7 +173,7 @@ generators = [
     # Domain
     "ui-domain-layout",
     # Global
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
     # IFML
     "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
@@ -248,7 +248,7 @@ generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
     "playwright-entity", "ui_descriptor", "ui-shell",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = []
@@ -308,7 +308,7 @@ generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
     "playwright-entity", "ui_descriptor", "ui-shell",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
 ]
 output = "review/generated-candidate/"
 scripts.post_gen = []
@@ -333,7 +333,7 @@ generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
     "playwright-entity", "ui_descriptor", "ui-shell",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
 ]
 [profiles.fullstack.variants.enterprise.features]
 audit_trail = true
@@ -419,7 +419,7 @@ generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
     "playwright-entity", "ui_descriptor", "ui-shell",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
 ]
 scripts.post_gen = []
 

@@ -149,6 +149,11 @@ pub(super) mod keys {
         format!("view_component:{name}")
     }
 
+    /// `MATCH (c:ChartDefinition {name: …})` — chart plane (issue #577).
+    pub(crate) fn chart(name: &str) -> String {
+        format!("chart:{name}")
+    }
+
     /// `MATCH (r:ApiResource {name: …})` — edges strip the `ar:` prefix.
     pub(crate) fn api_resource(name: &str) -> String {
         format!("api_resource:{name}")

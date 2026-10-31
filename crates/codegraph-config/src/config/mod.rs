@@ -5,6 +5,7 @@ use serde::Deserialize;
 
 use crate::error::DomainConfigError;
 
+mod charts;
 mod domain;
 mod entity;
 mod functions;
@@ -15,6 +16,10 @@ mod tests;
 
 use namespace::deserialize_namespaces;
 
+pub use charts::{
+    Aggregate, ChartDefinitions, ChartEntry, ChartKind, ChartPayload, MetricChartConfig,
+    OrgChartConfig, SeriesChartConfig,
+};
 pub use domain::{DomainDependency, DomainEntry};
 pub use entity::{
     ApprovalChainDef, ApprovalStepDef, DataGuard, DtoConfig, EntityConfig, ErrorDefConfig,
@@ -63,6 +68,13 @@ pub struct DomainConfig {
     /// dsl/internal behavior (byte-identical output).
     #[serde(default)]
     pub functions: FunctionBindings,
+    /// Modeled charts (issue #577): `[charts."name"]` with `kind`
+    /// (org|bar|line|pie|radar|metric), `entity`, and a per-kind payload
+    /// table. Absent ⇒ no chart nodes ⇒ byte-identical output. The
+    /// deprecated per-entity `has_orgchart` boolean synthesizes org
+    /// entries here (WARN) in the ingest bridge.
+    #[serde(default)]
+    pub charts: ChartDefinitions,
 }
 
 fn default_app_name() -> String {

@@ -7,16 +7,16 @@ use crate::error::GraphError;
 use crate::traits::GraphQuerier;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
-    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
-    DeployModelGraph, EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension,
-    FunctionNode, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    ModuleDefinitionNode, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
-    NamespaceImport, NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryNode,
-    RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode, RuleRefRecord,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode, ref_target_candidate_title,
+    AtprotoNamespaceNode, CapabilityNode, ChartDefinitionNode, ChartPropertyBinding, CodeList,
+    CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
+    DataBindingResolution, DddModelGraph, DeployModelGraph, EnumValue, ErrorDefinitionNode,
+    EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
+    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode, ref_target_candidate_title,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -95,6 +95,7 @@ pub struct CachingQuerier<'a> {
     ddd_models_cache: RwLock<Option<Vec<DddModelGraph>>>,
     evt_models_cache: RwLock<Option<Vec<EvtModelGraph>>>,
     deploy_models_cache: RwLock<Option<Vec<DeployModelGraph>>>,
+    chart_definitions_cache: RwLock<Option<Vec<ChartDefinitionNode>>>,
     codelists_cache: RwLock<Option<Vec<CodeList>>>,
     parent_candidates_cache: RwLock<Option<Vec<ParentCandidate>>>,
     /// Whole-store families cached first-read-wins (issue #350: the
@@ -149,6 +150,7 @@ impl<'a> CachingQuerier<'a> {
             ddd_models_cache: RwLock::new(None),
             evt_models_cache: RwLock::new(None),
             deploy_models_cache: RwLock::new(None),
+            chart_definitions_cache: RwLock::new(None),
             codelists_cache: RwLock::new(None),
             parent_candidates_cache: RwLock::new(None),
             entity_names_cache: RwLock::new(None),
@@ -1123,6 +1125,21 @@ impl GraphQuerier for CachingQuerier<'_> {
         let models = self.inner.get_ddd_models().await?;
         *self.ddd_models_cache.write().unwrap() = Some(models.clone());
         Ok(models)
+    }
+
+    async fn get_chart_definitions(&self) -> Result<Vec<ChartDefinitionNode>, GraphError> {
+        if let Some(charts) = self.chart_definitions_cache.read().unwrap().clone() {
+            cache_record("get_chart_definitions", true);
+            return Ok(charts);
+        }
+        cache_record("get_chart_definitions", false);
+        let charts = self.inner.get_chart_definitions().await?;
+        *self.chart_definitions_cache.write().unwrap() = Some(charts.clone());
+        Ok(charts)
+    }
+
+    async fn get_chart_property_bindings(&self) -> Result<Vec<ChartPropertyBinding>, GraphError> {
+        self.inner.get_chart_property_bindings().await
     }
 
     async fn get_evt_models(&self) -> Result<Vec<EvtModelGraph>, GraphError> {

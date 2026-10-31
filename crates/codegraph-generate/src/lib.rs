@@ -21,6 +21,7 @@ pub mod ux;
 
 pub mod api;
 pub mod atproto;
+pub mod charts;
 pub mod cli;
 pub mod db;
 pub mod ddd;

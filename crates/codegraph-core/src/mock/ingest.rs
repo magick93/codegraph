@@ -141,6 +141,20 @@ impl GraphIngestor for MockEngine {
                     .unwrap()
                     .push((strip_ifml_prefix(from_id).to_string(), property.to_string()));
             }
+            EdgeType::ChartBindsProperty => {
+                // to_id is the compound `{field}::{schema_title}` (issue #577).
+                let (property, schema_title) = to_id
+                    .split_once("::")
+                    .map(|(p, t)| (p.to_string(), t.to_string()))
+                    .unwrap_or((to_id.to_string(), String::new()));
+                let role = props.and_then(|p| p.role.clone());
+                self.chart_property_bindings.lock().unwrap().push((
+                    from_id.to_string(),
+                    property,
+                    schema_title,
+                    role,
+                ));
+            }
             EdgeType::HasInteraction => {
                 self.op_interaction
                     .lock()
@@ -283,6 +297,18 @@ impl GraphIngestor for MockEngine {
     async fn ingest_data_binding(&self, node: &DataBindingNode) -> Result<String, GraphError> {
         let id = format!("db:{}", node.name);
         self.data_bindings
+            .lock()
+            .unwrap()
+            .insert(node.name.clone(), node.clone());
+        Ok(id)
+    }
+
+    async fn ingest_chart_definition(
+        &self,
+        node: &ChartDefinitionNode,
+    ) -> Result<String, GraphError> {
+        let id = format!("chart:{}", node.name);
+        self.chart_definitions
             .lock()
             .unwrap()
             .insert(node.name.clone(), node.clone());

@@ -1,5 +1,6 @@
 mod api_model;
 mod atproto;
+mod charts;
 mod composition;
 mod ddd;
 mod deploy;
@@ -17,16 +18,16 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
-    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
-    DeployModelGraph, EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension,
-    FunctionNode, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    ModuleDefinitionNode, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
-    NamespaceImport, NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryNode,
-    RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode, RuleRefRecord,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode, descendants, topological_namespace_order,
+    AtprotoNamespaceNode, CapabilityNode, ChartDefinitionNode, ChartPropertyBinding, CodeList,
+    CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
+    DataBindingResolution, DddModelGraph, DeployModelGraph, EnumValue, ErrorDefinitionNode,
+    EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
+    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode, descendants, topological_namespace_order,
     topological_order,
 };
 
@@ -509,6 +510,16 @@ impl GraphQuerier for GrafeoEngine {
     async fn get_ifml_modules(&self) -> Result<Vec<ModuleDefinitionNode>, GraphError> {
         crate::perf::bump_method_read("get_ifml_modules");
         self.query_ifml_modules().await
+    }
+
+    async fn get_chart_definitions(&self) -> Result<Vec<ChartDefinitionNode>, GraphError> {
+        crate::perf::bump_method_read("get_chart_definitions");
+        self.query_chart_definitions().await
+    }
+
+    async fn get_chart_property_bindings(&self) -> Result<Vec<ChartPropertyBinding>, GraphError> {
+        crate::perf::bump_method_read("get_chart_property_bindings");
+        self.query_chart_property_bindings().await
     }
 
     async fn get_ifml_container_children(

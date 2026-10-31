@@ -32,6 +32,9 @@ pub struct UiScaffoldContext {
     /// TanStack form layer (issue #580): the scaffold emits the form
     /// creator scaffold (if-absent) and pins the npm deps.
     pub entity_form: bool,
+    /// Chart nav entries (issue #577) — one per modeled chart route.
+    /// Empty (no charts) keeps the layout byte-identical.
+    pub nav_charts: Vec<crate::charts::ChartNavItem>,
     /// Pinned `@tanstack/svelte-form` version (from `crate::forms`).
     pub tanstack_svelte_form_version: &'static str,
     /// Pinned `zod` version (from `crate::forms`).
@@ -128,6 +131,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         let domains = build_ui_domains(db, config, generation_order).await;
+        let nav_charts = crate::charts::chart_nav_items(db).await?;
 
         let ctx = UiScaffoldContext {
             app_name: config.defaults.app_name.clone(),
@@ -140,6 +144,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             entity_form: project.codegen.entity_form,
             tanstack_svelte_form_version: crate::forms::TANSTACK_SVELTE_FORM_VERSION,
             zod_version: crate::forms::ZOD_VERSION,
+            nav_charts,
         };
 
         let ui = self.output_dir.join("ui");

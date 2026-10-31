@@ -36,6 +36,10 @@ pub enum EdgeType {
     HasViewComponentPart,
     HasConditionalExpr,
 
+    // Chart plane edge types (issue #577)
+    ChartBindsEntity,
+    ChartBindsProperty,
+
     // AT Protocol edge types
     InNamespace,
     ProjectsToLexicon,
