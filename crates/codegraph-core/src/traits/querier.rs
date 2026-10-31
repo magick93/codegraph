@@ -1,16 +1,16 @@
 use crate::error::GraphError;
 use crate::types::{
     ActionNode, ActorNode, ActorPolicyNode, ApiOperationNode, ApiResourceNode,
-    AtprotoNamespaceNode, CapabilityNode, CodeList, CollectionNode, CompositeColumn,
-    CompositeRange, CompositionTree, ConditionNode, DataBindingResolution, DddModelGraph,
-    DeployModelGraph, EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, Extension,
-    FunctionNode, GrantEdge, HttpEndpointNode, InteractionNode, LexiconNode, MembershipNode,
-    ModuleDefinitionNode, MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode,
-    NamespaceImport, NamespaceNode, NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate,
-    PermissionNode, Permit, PipelineNode, PolicyNode, PropertyNode, RegulatoryNode,
-    RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode, RuleRefRecord,
-    SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    AtprotoNamespaceNode, CapabilityNode, ChartDefinitionNode, ChartPropertyBinding, CodeList,
+    CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
+    DataBindingResolution, DddModelGraph, DeployModelGraph, EnumValue, ErrorDefinitionNode,
+    EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
+    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDerivedFeatureNode,
+    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
+    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
+    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
+    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
+    TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -307,6 +307,18 @@ pub trait GraphQuerier: Send + Sync {
 
     /// Get resolved data bindings: component → entity title + bound fields.
     async fn get_data_bindings(&self) -> Result<Vec<DataBindingResolution>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// Get all modeled chart definitions (chart plane, issue #577).
+    /// Default: no charts (graphs without the plane degrade quietly).
+    async fn get_chart_definitions(&self) -> Result<Vec<ChartDefinitionNode>, GraphError> {
+        Ok(Vec::new())
+    }
+
+    /// All `(chart_name, field_name, schema_title, role)` property bindings
+    /// across chart definitions.
+    async fn get_chart_property_bindings(&self) -> Result<Vec<ChartPropertyBinding>, GraphError> {
         Ok(Vec::new())
     }
 

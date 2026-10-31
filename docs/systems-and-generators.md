@@ -51,7 +51,7 @@ suites, and an ops/test harness.
 | **gRPC server** | `.proto` messages + service per entity, tonic server impls, per-domain routers, shared proto + conversion helpers; `build.rs` compiles protos (server + client) | `proto/`, `src/api/grpc/` | `grpc_proto`, `grpc_service`, `grpc_router`, `grpc_scaffold` |
 | **Cloudflare Workers topology** | One worker crate per domain + gateway (wrangler configs, Hyperdrive bindings, service bindings, cron/queue handlers, wasm observability); replaces the monolith scaffold | `workers/`, `gateway/` | `worker_scaffold`, `webhook_dispatch` (worker variants) |
 | **Webhooks** | Endpoint/subscription CRUD API + HMAC-signed dispatch/delivery with retries and auto-deactivation (monolith SeaORM or worker cornucopia variants) | `src/webhook/`, `workers/{domain}/src/` | `webhook_endpoint_api`, `webhook_dispatch` |
-| **Web UI** | SvelteKit app: app shell/scaffold, per-entity list/detail/edit/create pages, stores, entity descriptors, codelist data, org charts, settings pages (API keys, integrations, webhooks, team), login/signup, workflow panels | `ui/` | `ui_scaffold`, `ui_page`, `ui_form`, `ui_store`, `ui_descriptor`, `ui_codelist`, `ui_types`, `ui_orgchart`, `ui-shell`, `ui-domain-layout` |
+| **Web UI** | SvelteKit app: app shell/scaffold, per-entity list/detail/edit/create pages, stores, entity descriptors, codelist data, modeled charts (`[charts]`), settings pages (API keys, integrations, webhooks, team), login/signup, workflow panels | `ui/` | `ui_scaffold`, `ui_page`, `ui_form`, `ui_store`, `ui_descriptor`, `ui_codelist`, `ui_types`, `ui_charts`, `ui-shell`, `ui-domain-layout` |
 | **IFML UI** | Behavior-wired pages for SvelteKit/React/Vue/Flutter/SwiftUI generated from IFML interaction models: page loads, navigation map/type helpers, app skeleton, Playwright specs; design-system packs (shadcn-svelte) | per-framework target dir | `ifml_skeleton_{fw}`, `ifml_route_{fw}`, `ifml_navigation_{fw}`, `ifml_e2e_test_{fw}` |
 | **CLI** | Clap-based client crate: global scaffold, per-entity/per-domain commands, typed HTTP client, output formatting | `cli/` (crate) | `cli_scaffold`, `cli_command`, `cli_domain` |
 | **E2E tests** | Rust Playwright crate + TypeScript Playwright suite: entity CRUD specs, fixtures, auth, data factories, docker-compose test env | `tests/`, `ui/tests/` | `playwright-global`, `playwright-entity`, `playwright_ts_global`, `playwright_ts_entity`, `ui_e2e_test` |
@@ -150,7 +150,7 @@ a profile section.
 | `ui_scaffold` | Ui | — | `ui/` | SvelteKit app scaffold: package.json/vite/svelte configs, app shell + layout, login/signup/callback, dashboard, error page, settings pages (API keys, team, integrations, webhooks), search input, i18n, Playwright config + global setup/teardown, persona fixtures, supabase client, workflow panel. |
 | `ui_types` | Ui | — | `ui/src/lib/types.ts` | Shared TypeScript types for the UI. |
 | `ui_codelist` | Ui | — | `ui/src/lib/codelist/` | Codelist value modules for UI dropdowns/validation. |
-| `ui_orgchart` | Ui | — | `ui/src/routes/(app)/org-chart/` | Org-chart page + load for entities with `has_orgchart`. |
+| `ui_charts` | Ui | — | `ui/src/routes/(app)/{route}/` | One route per modeled chart (issue #577): org hierarchies over a self-ref FK, bar/line/pie/radar series + metrics aggregated client-side over the entity's RLS-scoped list endpoint. Declared in `[charts]` (domains.toml); the deprecated `has_orgchart` sugar synthesizes org entries. |
 | `hook_registry` | Common | — | `src/hooks/` | Hook registry collecting all lifecycle hook implementations. |
 | `domain_types_scaffold` | Common | — | domain-types crate | Cargo.toml + mod scaffold for the domain-types crate. |
 | `report_views` | Common | — | migration | SQL report views (incl. HR Open ProcessHistory-compatible views over workflow transitions). |
@@ -494,7 +494,7 @@ variants.
 | `child_section.tera` | Child-collection accordion section on detail pages. |
 | `domain_layout.tera` | Per-domain layout + nav. |
 | `codelist_data.tera` | Codelist value modules for the UI. |
-| `orgchart_page.tera` / `orgchart_load.tera` | Org-chart page + load. |
+| `charts/page.tera` / `charts/load.tera` | Per-chart page + load (kind-branched: org tree, SVG bar/line/radar, conic pie, metric; mapped-component hook via `--ifml-components`). |
 | `shell_list.tera` / `shell_create.tera` / `shell_edit.tera` / `shell_detail.tera` / `shell_detail_load.tera` | Generic descriptor-driven shell CRUD pages. |
 | `scaffold/*` | App scaffold (see `ui_scaffold`): `package_json`, `vite_config`, `app_html`, `app_layout`, `app_css`, `app_d`, `app_guard_layout`, `dashboard`, `dashboard_page`, `login_page`, `signup_page`, `auth_callback`, `error_page`, `root_redirect`, `version_page`, `version_server`, `api_client`, `supabase_client`, `types`, `utils_ts`, `env_ts`, `hooks_server`, `hooks_reroute`, `entity_navigation_store`, `integrations_store`, `search_input`, `structured_wrapper_field`, `structured_wrapper_field_index`, `workflow_panel`, `messages_en`, `paraglide_settings`, `components_json`, `global_setup`, `global_teardown`, `playwright_config`, `persona_fixtures`, `test_helpers`, `settings_api_keys`, `settings_team`, `settings_integrations*` (list/detail/edit/install + servers), `settings_webhooks`, `settings_webhook_detail`, `settings_webhook_form`. |
 | `test/*` | Playwright suites: `crud`, `validation`, `isolation`, `search`, `search_isolation`, `include`, `workflow`, `auth`, `employee_view`, `manager_team`, `owner_crud`, `webhooks_crud`, `webhooks_delivery`, `webhooks_advanced`, `_dep_setup` (shared dependency setup). |
@@ -591,7 +591,7 @@ Top-level tables:
 | `max_bulk_size` | int | default | Bulk-create cap override. |
 | `hierarchy_field` | string | — | Self-FK column → recursive CTE tree endpoints + parent FK index. |
 | `tree_include` | table[] | — | `TreeIncludeConfig[]` (`via_entity`, `alias`) resolved into tree responses. |
-| `has_orgchart` | bool | `false` | Generate an org-chart SvelteKit page. |
+| `has_orgchart` | bool | `false` | DEPRECATED (#577): sugar for a synthesized org chart — only when the entity also carries `hierarchy_field`; prefer the top-level `[charts]` table. |
 | `allow_include` | string[] | auto | Allowed `?include=` paths; `[]` disables. |
 | `generation_mode` | string | default | `full` \| `handler_only` \| `ddd_only` \| `none`. |
 | `errors` | table | `{}` | Custom error codes → `{description, http_status}`. |

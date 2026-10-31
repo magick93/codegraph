@@ -13,3 +13,4 @@ codegraph-naming = { path = "../codegraph-naming" }
 
 [dev-dependencies]
 tempfile = "3"
+codegraph-core = { path = "../codegraph-core" }

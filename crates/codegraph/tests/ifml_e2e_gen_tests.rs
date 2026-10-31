@@ -252,7 +252,7 @@ generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
     "playwright-entity", "ui_descriptor", "ui-shell",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
     "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
 output = "review/generated-candidate/"
@@ -271,7 +271,7 @@ generators = [
     "ui_page", "ui_form", "ui_store", "ui_e2e_test",
     "playwright-entity", "ui_descriptor", "ui-shell",
     "ui-domain-layout",
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
     "ifml_skeleton", "ifml_route", "ifml_navigation", "ifml_e2e_test",
 ]
 output = "review/generated-candidate/"

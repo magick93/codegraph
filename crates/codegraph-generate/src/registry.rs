@@ -7,7 +7,7 @@ use crate::output::{
 };
 use crate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use crate::{
-    api, atproto, cli, db, ddd, domain_types, emdash, evt_events, fern, grpc, hooks, ifml,
+    api, atproto, charts, cli, db, ddd, domain_types, emdash, evt_events, fern, grpc, hooks, ifml,
     integration, ops, playwright, scaffold, seed, test, ui, webhook,
 };
 
@@ -372,6 +372,12 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         output_dir,
         ctx.schema_base_dir,
     )) as Box<dyn GlobalGenerator>);
+    // Modeled charts (issue #577): the `ui_charts` capability renders the
+    // graph's ChartDefinition nodes as routes. Presence-gated internally
+    // (no charts ⇒ zero files).
+    global_gens.push(Box::new(
+        charts::UiChartsGenerator::new(output_dir).with_mappings(ctx.ifml_components.cloned()),
+    ) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(hooks::registry::HookRegistryGenerator::new_with_base(
             ctx.hooks_base
@@ -668,5 +674,129 @@ fn ifml_integrated(ctx: &GeneratorContext<'_>, fw: &str) -> bool {
                 && bp.has_global_gen(&format!("ifml_route_{fw}"))
         }
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod charts_capability_audit {
+    use super::*;
+    use crate::context::build_generator_context;
+    use crate::db::dialect::DatabaseTarget;
+    use crate::profile::GeneratorKind;
+    use crate::profile::capabilities::base_capabilities;
+    use crate::profile::{BuildPlan, DependencyStrategy, DeploymentTopology, PersistenceProvider};
+    use crate::project_config::{GeneratorOpts, ProjectConfig};
+    use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
+    use codegraph_core::mock::MockEngine;
+
+    /// The #577 class-killer: every Global capability `base_capabilities()`
+    /// declares MUST have a construction site in `build_global_generators`.
+    /// A listed-but-never-built generator is silent dead wiring — the
+    /// capability list lies. (Issue #577: `ui_orgchart` shipped for months
+    /// with zero construction and zero warning.)
+    ///
+    /// The context is MAXIMAL: a plan listing every Global capability name
+    /// (so the plan filter never drops a built generator) plus every config
+    /// input a conditional constructor reads (extension points, emdash
+    /// plugins, topology union across monolith AND workers).
+    #[tokio::test]
+    async fn every_global_capability_has_a_registry_constructor() {
+        let engine = MockEngine::new();
+        let config: DomainConfig = toml::from_str(
+            "[defaults]\noperations = []\n\n[domains.common]\nlabel = \"Common\"\nschema_dir = \"common\"\npostgres_schema = \"common\"\n",
+        )
+        .expect("minimal config");
+        let tera = crate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+        let out = tempfile::tempdir().expect("tempdir");
+        let project = ProjectConfig::default();
+
+        let caps = base_capabilities();
+        let global_names: Vec<String> = caps
+            .values()
+            .filter(|c| c.kind == GeneratorKind::Global)
+            .flat_map(|c| [c.name.clone(), c.name.replace('-', "_")])
+            .collect();
+
+        let ext_points: codegraph_ext_points::ExtensionPointsConfig =
+            toml::from_str("").expect("empty ext points");
+        let emdash_plugins = crate::emdash::EmdashPluginsConfig::default();
+
+        let make_plan = |topology: DeploymentTopology| BuildPlan {
+            entity_generators: Vec::new(),
+            domain_generators: Vec::new(),
+            global_generators: global_names.clone(),
+            post_gen_scripts: Vec::new(),
+            ifml_frameworks: Vec::new(),
+            template_pack_path: None,
+            database_target: DatabaseTarget::Postgres,
+            has_atproto: true,
+            atproto_tenancy: "shared_pds".to_string(),
+            has_fern: true,
+            fern_sdk_languages: vec!["typescript".to_string()],
+            has_emdash: true,
+            persistence_provider: PersistenceProvider::SeaOrm,
+            dto_key_casing: "snake".to_string(),
+            deployment_topology: topology,
+            dependency_strategy: DependencyStrategy::Rev,
+            namespace_layout: false,
+            ux_rules: false,
+            ifml_e2e_auth: false,
+            ifml_remote_functions: false,
+            entity_remote_functions: false,
+            entity_form: false,
+            ifml_tanstack_forms: false,
+            testid_module: false,
+            structural_gates: false,
+            expr_ir: false,
+            public_operations_rls: false,
+            features: toml::Table::new(),
+        };
+
+        let mut built: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for topology in [DeploymentTopology::Monolith, DeploymentTopology::Workers] {
+            let plan = make_plan(topology);
+            let opts = GeneratorOpts {
+                db: &engine,
+                config: &config,
+                output_dir: out.path(),
+                tera: &tera,
+                ui_overrides: &UiOverrideConfig::default(),
+                ui_domains: &UiDomainConfig::default(),
+                schema_base_dir: out.path(),
+                seed_config: None,
+                domain_types_base: None,
+                hooks_base: None,
+                ext_points: Some(&ext_points),
+                integration_manifests: None,
+                build_plan: Some(&plan),
+                ifml_frameworks: Vec::new(),
+                ifml_components: None,
+                ux_rules: None,
+                project_config: None,
+                emdash_plugins: Some(emdash_plugins.clone()),
+                domain_config_dir: None,
+            };
+            let ctx = build_generator_context(opts, &project).await.expect("ctx");
+            built.extend(
+                build_global_generators(&ctx)
+                    .iter()
+                    .map(|g| g.name().replace('-', "_")),
+            );
+        }
+
+        let mut missing = Vec::new();
+        for cap in caps.values() {
+            if cap.kind != GeneratorKind::Global {
+                continue;
+            }
+            if !built.contains(&cap.name.replace('-', "_")) {
+                missing.push(cap.name.clone());
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "Global capabilities with NO registry constructor (the #577 \
+             class — the capability list lies): {missing:?}"
+        );
     }
 }

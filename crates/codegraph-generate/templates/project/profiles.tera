@@ -81,7 +81,7 @@ generators = [
     # Domain
     "ui-domain-layout",
     # Global
-    "ui_scaffold", "ui_types", "ui_codelist", "ui_orgchart", "playwright-global",
+    "ui_scaffold", "ui_types", "ui_codelist", "ui_charts", "playwright-global",
 {% if features.ifml %}
     # IFML
     "ifml_route", "ifml_navigation",

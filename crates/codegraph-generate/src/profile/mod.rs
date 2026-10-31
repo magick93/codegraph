@@ -1,4 +1,4 @@
-mod capabilities;
+pub(crate) mod capabilities;
 mod plan;
 mod resolve;
 mod types;

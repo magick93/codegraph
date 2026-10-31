@@ -331,6 +331,23 @@ impl GrafeoEngine {
                     escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
+            EdgeType::ChartBindsEntity => {
+                format!(
+                    "MATCH (a:ChartDefinition {{name: '{}'}}), (b:Schema {{title: '{}'}})",
+                    escape_gql(strip_chart_prefix(from_id)),
+                    escape_gql(to_id),
+                )
+            }
+            EdgeType::ChartBindsProperty => {
+                let (prop_name, schema_title) = split_compound_id(to_id, "ChartBindsProperty")?;
+                format!(
+                    "MATCH (a:ChartDefinition {{name: '{}'}}), \
+                     (b:Property {{name: '{}', _schema_title: '{}'}})",
+                    escape_gql(strip_chart_prefix(from_id)),
+                    escape_gql(prop_name),
+                    escape_gql(schema_title),
+                )
+            }
             EdgeType::TriggersAction => {
                 format!(
                     "MATCH (a:Event {{name: '{}'}}), (b:ActionNode {{name: '{}'}})",
@@ -686,6 +703,12 @@ impl GrafeoEngine {
 
 /// The GQL edge label for an `EdgeType` (verbatim from the former inline
 /// match in `insert_edge`).
+/// Strip the `chart:` node-id prefix (chart plane, issue #577); ids
+/// without the prefix pass through unchanged.
+fn strip_chart_prefix(id: &str) -> &str {
+    id.strip_prefix("chart:").unwrap_or(id)
+}
+
 fn edge_label(edge_type: &EdgeType) -> &'static str {
     match edge_type {
         EdgeType::HasProperty => "HasProperty",
@@ -719,6 +742,8 @@ fn edge_label(edge_type: &EdgeType) -> &'static str {
         EdgeType::HasModuleDefinition => "HasModuleDefinition",
         EdgeType::HasViewComponentPart => "HasViewComponentPart",
         EdgeType::HasConditionalExpr => "HasConditionalExpr",
+        EdgeType::ChartBindsEntity => "ChartBindsEntity",
+        EdgeType::ChartBindsProperty => "ChartBindsProperty",
         EdgeType::HasCondition => "HasCondition",
         EdgeType::InNamespace => "InNamespace",
         EdgeType::ProjectsToLexicon => "ProjectsToLexicon",
@@ -812,6 +837,16 @@ fn registry_keys(edge_type: &EdgeType, from_id: &str, to_id: &str) -> Option<(St
         EdgeType::HasViewComponentPart => (
             keys::view_component(strip_ifml_prefix(from_id)),
             keys::view_component(strip_ifml_prefix(to_id)),
+        ),
+
+        // ── Chart plane (issue #577) ──
+        EdgeType::ChartBindsEntity => (
+            keys::chart(strip_chart_prefix(from_id)),
+            keys::schema_title(to_id),
+        ),
+        EdgeType::ChartBindsProperty => (
+            keys::chart(strip_chart_prefix(from_id)),
+            keys::property(to_id),
         ),
 
         // ── API metamodel (Interaction/HttpEndpoint ids are NOT stripped;

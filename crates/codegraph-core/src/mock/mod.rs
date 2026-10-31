@@ -28,6 +28,10 @@ pub struct MockEngine {
     view_containers: Mutex<HashMap<String, ViewContainerNode>>,
     module_definitions: Mutex<HashMap<String, ModuleDefinitionNode>>,
     view_components: Mutex<HashMap<String, ViewComponentNode>>,
+    /// Chart definitions keyed by name (chart plane, issue #577).
+    chart_definitions: Mutex<HashMap<String, ChartDefinitionNode>>,
+    /// ChartBindsProperty edges: (chart_name, field_name, schema_title, role).
+    chart_property_bindings: Mutex<Vec<ChartPropertyBinding>>,
     events: Mutex<HashMap<String, EventNode>>,
     action_nodes: Mutex<HashMap<String, ActionNode>>,
     parameter_definitions: Mutex<HashMap<String, ParameterDefinitionNode>>,
@@ -120,6 +124,8 @@ impl MockEngine {
             view_containers: Mutex::new(HashMap::new()),
             module_definitions: Mutex::new(HashMap::new()),
             view_components: Mutex::new(HashMap::new()),
+            chart_definitions: Mutex::new(HashMap::new()),
+            chart_property_bindings: Mutex::new(Vec::new()),
             events: Mutex::new(HashMap::new()),
             action_nodes: Mutex::new(HashMap::new()),
             parameter_definitions: Mutex::new(HashMap::new()),

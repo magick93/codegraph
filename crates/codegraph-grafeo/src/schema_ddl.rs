@@ -259,6 +259,17 @@ fn node_type_ddl() -> Vec<&'static str> {
             name STRING NOT NULL,
             domain STRING
         )",
+        // ChartDefinition — chart plane (issue #577)
+        "CREATE NODE TYPE IF NOT EXISTS ChartDefinition (
+            name STRING NOT NULL,
+            kind STRING NOT NULL,
+            title STRING,
+            domain STRING,
+            entity STRING,
+            entity_title STRING,
+            route STRING,
+            config_json STRING
+        )",
         // ApiResource — API metamodel
         "CREATE NODE TYPE IF NOT EXISTS ApiResource (
             name STRING NOT NULL,
@@ -598,6 +609,9 @@ fn edge_type_ddl() -> Vec<&'static str> {
         "CREATE EDGE TYPE IF NOT EXISTS HasModuleDefinition",
         "CREATE EDGE TYPE IF NOT EXISTS HasViewComponentPart (role STRING)",
         "CREATE EDGE TYPE IF NOT EXISTS HasConditionalExpr",
+        // Chart plane edge types (issue #577)
+        "CREATE EDGE TYPE IF NOT EXISTS ChartBindsEntity",
+        "CREATE EDGE TYPE IF NOT EXISTS ChartBindsProperty (role STRING)",
         // API metamodel edge types
         "CREATE EDGE TYPE IF NOT EXISTS ExposesResource",
         "CREATE EDGE TYPE IF NOT EXISTS BindsToSchema",

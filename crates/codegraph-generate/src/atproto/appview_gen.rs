@@ -181,6 +181,7 @@ mod tests {
         let domains = std::collections::HashMap::new();
         codegraph_config::DomainConfig {
             functions: Default::default(),
+            charts: Default::default(),
             namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains,

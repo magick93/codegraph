@@ -911,6 +911,7 @@ dependencies = [
 name = "codegraph-config"
 version = "0.1.0"
 dependencies = [
+ "codegraph-core",
  "codegraph-naming",
  "serde",
  "serde_json",

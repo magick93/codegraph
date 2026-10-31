@@ -803,6 +803,22 @@ pub async fn run_with_graph_cache(
             println!("Pass 1c complete: {api_stats}");
         }
 
+        // Pass 1f: Ingest modeled charts from the `[charts]` config table
+        // (issue #577). Runs AFTER the schema passes so entity refs resolve
+        // against the full ingested title set; the deprecated
+        // `has_orgchart` sugar synthesizes org entries here (WARN).
+        if !domain_config.charts.is_empty()
+            || crate::ingest::chart_ingest::has_orgchart_sugar(&domain_config)
+        {
+            let chart_stats = crate::ingest::chart_ingest::ingest_chart_definitions(
+                be.ingestor(),
+                be.querier(),
+                &domain_config,
+            )
+            .await?;
+            println!("Pass 1f complete: {chart_stats}");
+        }
+
         // Pass 1d: Ingest OpenAPI spec files (if provided)
         if !openapi_files.is_empty() {
             println!("Pass 1d: {} OpenAPI files to ingest", openapi_files.len());

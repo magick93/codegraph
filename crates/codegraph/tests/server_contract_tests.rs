@@ -240,11 +240,10 @@ async fn entity_loads_fetch_through_the_shared_helper() {
         .find(|p| p.to_string_lossy().contains("edit"))
         .expect("an edit +page.server.ts must be emitted");
 
-    // NOTE: the org-chart load (ui/orgchart_load.tera) is NOT asserted —
-    // UiOrgchartGenerator has no registry construction site (the
-    // ui_orgchart capability exists but nothing builds the generator), so
-    // no current run path emits it. The template is migrated anyway so the
-    // plane carries the contract when the wiring lands.
+    // NOTE: the org-chart load (ui/charts/load.tera, issue #577) is
+    // asserted by `charts_pipeline_tests` — the chart generator is
+    // registry-wired and every chart load renders through the shared
+    // helper.
 
     for (label, load) in [
         ("detail", fs::read_to_string(detail).unwrap()),
