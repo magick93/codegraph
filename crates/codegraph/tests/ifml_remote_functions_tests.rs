@@ -307,9 +307,15 @@ async fn remote_functions_off_keeps_the_client_plane() {
     }
     let mut files = Vec::new();
     walk(&ui, &mut files);
+    // Issue #574 S2: the ENTITY plane has its own remote-functions flag —
+    // data.remote.ts under (app) belongs to it. The pin's scope is the
+    // IFML (views) surface only.
     let stray: Vec<&PathBuf> = files
         .iter()
-        .filter(|p| p.file_name().is_some_and(|n| n == "data.remote.ts"))
+        .filter(|p| {
+            p.file_name().is_some_and(|n| n == "data.remote.ts")
+                && !p.to_string_lossy().contains("(app)")
+        })
         .collect();
     assert!(
         stray.is_empty(),

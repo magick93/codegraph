@@ -234,7 +234,7 @@
 {% elif field.structured_sub_fields | length > 0 and not field.is_array %}
 						{% raw %}{#if item.{% endraw %}{{ field.name }}{% raw %}}
 							{@const obj = item.{% endraw %}{{ field.name }}{% raw %} as Record<string, unknown>}
-							{% endraw %}{% if field.nested_type_name %}{% raw %}{fmt.format{% endraw %}{{ field.nested_type_name | pascal_case }}{% raw %}(item.{% endraw %}{{ field.name }}{% raw %})}{% else %}{% raw %}{obj.value ?? obj.code ?? obj.name ?? obj.id ?? '—'}{% endraw %}{% endif %}{% raw %}
+							{% endraw %}{% if field.nested_type_name %}{% raw %}{fmt.format{% endraw %}{{ field.nested_type_name | pascal_case }}{% raw %}(item.{% endraw %}{{ field.name }}{% raw %})}{% endraw %}{% else %}{% raw %}{obj.value ?? obj.code ?? obj.name ?? obj.id ?? '—'}{% endraw %}{% endif %}{% raw %}
 							{#if obj.schemeId}
 								<span class="text-muted-foreground text-xs">({obj.schemeId})</span>
 							{/if}

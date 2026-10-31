@@ -25,6 +25,10 @@ pub struct UiScaffoldContext {
     /// Drives the emitted `ui/PRIMITIVES.md` install surface; the surface
     /// itself is gated on [`Self::has_ux_rules`].
     pub shadcn_primitives: Vec<&'static str>,
+    /// Entity remote-functions flag (issue #574 S2): the webhook settings
+    /// pages render the load/command variants and the scaffold opts into
+    /// the remote-functions toolchain.
+    pub entity_remote_functions: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +129,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             has_webhooks: self.has_webhooks,
             has_ux_rules: project.ux.ux.is_some(),
             shadcn_primitives: SHADCN_PRIMITIVES.to_vec(),
+            entity_remote_functions: project.codegen.entity_remote_functions,
         };
 
         let ui = self.output_dir.join("ui");
@@ -158,8 +163,13 @@ impl GlobalGenerator for UiScaffoldGenerator {
         // Webhook UI templates (conditional on has_webhooks)
         if self.has_webhooks {
             files.extend(
-                render_template_set(tera, &ctx, project, webhook_scaffold_templates(&ui, &src))
-                    .await?,
+                render_template_set(
+                    tera,
+                    &ctx,
+                    project,
+                    webhook_scaffold_templates(&ui, &src, ctx.entity_remote_functions),
+                )
+                .await?,
             );
         }
 
@@ -465,7 +475,11 @@ fn test_scaffold_templates(ui: &Path, src: &Path, lib: &Path) -> Vec<(&'static s
     ]
 }
 
-fn webhook_scaffold_templates(ui: &Path, src: &Path) -> Vec<(&'static str, PathBuf)> {
+fn webhook_scaffold_templates(
+    ui: &Path,
+    src: &Path,
+    entity_remote_functions: bool,
+) -> Vec<(&'static str, PathBuf)> {
     let webhooks_dir = src
         .join("routes")
         .join("(app)")
@@ -478,32 +492,87 @@ fn webhook_scaffold_templates(ui: &Path, src: &Path) -> Vec<(&'static str, PathB
     // Webhook test files
     let webhooks_test_dir = ui.join("tests").join("e2e").join("webhooks");
 
-    vec![
-        (
-            "ui/scaffold/settings_webhooks.tera",
-            webhooks_dir.join("+page.svelte"),
-        ),
-        (
-            "ui/scaffold/settings_webhook_form.tera",
-            new_dir.join("+page.svelte"),
-        ),
-        (
-            "ui/scaffold/settings_webhook_detail.tera",
-            id_dir.join("+page.svelte"),
-        ),
-        (
-            "ui/scaffold/settings_webhook_form.tera",
-            edit_dir.join("+page.svelte"),
-        ),
-        (
-            "ui/test/webhooks_crud.test.tera",
-            webhooks_test_dir.join("webhooks-crud.test.ts"),
-        ),
-        (
-            "ui/test/webhooks_delivery.test.tera",
-            webhooks_test_dir.join("webhooks-delivery.test.ts"),
-        ),
-    ]
+    // Issue #574 S2: under the entity remote-functions flag the settings
+    // pages render the load/command variants and each route gains its
+    // colocated `data.remote.ts` (+ `+page.server.ts` where a load is
+    // needed). Flag-off keeps the browser apiGet plane byte-identical.
+    let mut files: Vec<(&'static str, PathBuf)> = if entity_remote_functions {
+        vec![
+            (
+                "ui/scaffold/settings_webhooks_remote.tera",
+                webhooks_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhooks_load.tera",
+                webhooks_dir.join("+page.server.ts"),
+            ),
+            (
+                "ui/scaffold/settings_webhooks_remote_ts.tera",
+                webhooks_dir.join("data.remote.ts"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_form_remote.tera",
+                new_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_form_remote_ts.tera",
+                new_dir.join("data.remote.ts"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_detail_remote.tera",
+                id_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_detail_load.tera",
+                id_dir.join("+page.server.ts"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_detail_remote_ts.tera",
+                id_dir.join("data.remote.ts"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_form_remote.tera",
+                edit_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_edit_load.tera",
+                edit_dir.join("+page.server.ts"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_form_remote_ts.tera",
+                edit_dir.join("data.remote.ts"),
+            ),
+        ]
+    } else {
+        vec![
+            (
+                "ui/scaffold/settings_webhooks.tera",
+                webhooks_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_form.tera",
+                new_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_detail.tera",
+                id_dir.join("+page.svelte"),
+            ),
+            (
+                "ui/scaffold/settings_webhook_form.tera",
+                edit_dir.join("+page.svelte"),
+            ),
+        ]
+    };
+
+    files.push((
+        "ui/test/webhooks_crud.test.tera",
+        webhooks_test_dir.join("webhooks-crud.test.ts"),
+    ));
+    files.push((
+        "ui/test/webhooks_delivery.test.tera",
+        webhooks_test_dir.join("webhooks-delivery.test.ts"),
+    ));
+    files
 }
 
 fn integration_scaffold_templates(src: &Path, lib: &Path) -> Vec<(&'static str, PathBuf)> {

@@ -31,7 +31,11 @@ ifml_backend = {{ features.ifml }}
 # server-side (SvelteKit remote functions) — the API origin and its
 # credentials never reach the browser.
 ifml_remote_functions = true
-{% endif %}{% if features.rosetta %}rosetta_backend = true
+{% endif %}# Entity remote-functions data plane (issue #574 S2): the entity CRUD
+# surface runs server-side (colocated data.remote.ts per route) — the
+# browser stores and the public API key client plane retire.
+entity_remote_functions = true
+{% if features.rosetta %}rosetta_backend = true
 {% endif %}has_admin_cli = true
 # UX rules plane (issue #293): the built-in ux-default pack resolves into
 # ProjectConfig.ux; override per project with `--ux-rules <file>`.

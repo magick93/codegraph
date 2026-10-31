@@ -7,6 +7,7 @@ pub mod e2e_test;
 pub mod form;
 pub mod orgchart;
 pub mod page;
+pub mod remote;
 pub mod scaffold;
 pub mod shell;
 pub mod store;

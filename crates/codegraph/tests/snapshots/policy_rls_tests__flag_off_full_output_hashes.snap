@@ -636,7 +636,7 @@ tests/rsvp/rsvp_test.rs: 181db8575765bb7041f8162f164d6cb6b3d34943e14c3aad9fb84f8
 tests/tests.rs: 416c5e7874410e21faab65f7b5a17b4d4e4c41876b6f7b6e017a5c705750a98c
 ui/components.json: e22a2d7c44ecf96682b209ac18acadc35b792975219399fe32b3515f577e55a9
 ui/messages/en.json: 376d34fd7881c24a5931f943a15b8f101015e3e50a2b8c3f661cfa8972962f6f
-ui/package.json: 1efd90265f7d5c4b5f495425bc60e61317028d374708cc9d8955c5743caded70
+ui/package.json: 2a9f21d5c7e9319e563dfde4fc696ddea360f7210ab2d1ac5fe417e7da1eb5f9
 ui/playwright.config.ts: d3c17aa1a4861c6930582939ae3beda528c9348a264484d53be52c5079c55cfe
 ui/project.inlang/settings.json: c9feab3c64ac8d62f84743ca6eca9a3c68a5e6ddcda456e1ad08b284b6866a15
 ui/src/app.css: 5a1d242bb439648eddc8b5bb36876275e1acf6cc9cd9a6a89c533341846ccea2
@@ -838,14 +838,14 @@ ui/src/routes/(app)/recruiting/applications/new/+page.svelte: 478759bba1db2fda81
 ui/src/routes/(app)/recruiting/candidate/+page.server.ts: 5a499d6197810b941929d450b2ef35ef335fd78c21a88aca59d835974209cba3
 ui/src/routes/(app)/recruiting/candidate/+page.svelte: 0caa590226261e94b0b1b72ec906167248257ae448b1327306204275c59cf45d
 "ui/src/routes/(app)/recruiting/candidate/[candidate_id]/+page.server.ts": 6c992883d48f232d3673ffb9dc8d6bfc8cdd229328c14c5d18fb54a396584523
-"ui/src/routes/(app)/recruiting/candidate/[candidate_id]/+page.svelte": f6382f75bc4b31284edf3abfea56b0812d2a15a5a99d04d4e442ea590d379dcd
+"ui/src/routes/(app)/recruiting/candidate/[candidate_id]/+page.svelte": 25da614083168cfe2511905e8fc2d8ff0b5a85bfbacf6db8a89e3644713c4d45
 "ui/src/routes/(app)/recruiting/candidate/[candidate_id]/edit/+page.server.ts": 8f412d11826625a1e6e756d2fa983f49c0b7bb3e6bd0a604cb2e8ac37642eb5b
 "ui/src/routes/(app)/recruiting/candidate/[candidate_id]/edit/+page.svelte": 2e22369e62f3071f5d86d89ba54bd774a63528745ad0be8d8c7d0755221c1ffb
 ui/src/routes/(app)/recruiting/candidate/new/+page.svelte: c2ae8894f4ef4c64236f2d5ed64220f509d28872f0a71c762e101ef22b0e5cf4
 ui/src/routes/(app)/rsvp/rsvp/+page.server.ts: 691feedfc70e87df3a32e4175c2a74d6de81ff64ab8ad7e8d9a6895cfb10a835
 ui/src/routes/(app)/rsvp/rsvp/+page.svelte: 15ed9dc05628baff175036d85e2f00e9050cca460f4b885783ecff16db89dc29
 "ui/src/routes/(app)/rsvp/rsvp/[rsvp_id]/+page.server.ts": 53120978881d9d404fe492f239a4873514b12d17383b198e929cabc0923a87b5
-"ui/src/routes/(app)/rsvp/rsvp/[rsvp_id]/+page.svelte": 8b02518b6eac3a646146411eaf1a20503b194e2ec089f00f3da9aa1865deb352
+"ui/src/routes/(app)/rsvp/rsvp/[rsvp_id]/+page.svelte": 8a4f897697d015cef1b3676c0bc00870fa7c2c9494ddf59ebb046e9bf6c5cd37
 "ui/src/routes/(app)/rsvp/rsvp/[rsvp_id]/edit/+page.server.ts": 463731c36dd2a659303e51e6742051d1bebf8609f40cea0df9a2cbda4ce96cba
 "ui/src/routes/(app)/rsvp/rsvp/[rsvp_id]/edit/+page.svelte": 227bcb705d52b50c342f7e396bacdccc31609b14ed835e3b965ad576e697bc28
 ui/src/routes/(app)/rsvp/rsvp/new/+page.svelte: 7a76d154ebdb093559ee130e3976a49be8ac64ec75635d03908b53d809fdf06c

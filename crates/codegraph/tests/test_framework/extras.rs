@@ -191,6 +191,19 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
     // Gate-owned #205 sweep assertions (create round trip + details values).
     write_owned("tests/ifml/sweep-create.spec.ts", SWEEP_SPEC)?;
 
+    write_shadcn_stubs(svelte)?;
+
+    fs::write(svelte.join("SKELETON.md"), SKELETON_README).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Gate-owned stub components for the shadcn-svelte pack (+ the bits the
+/// entity tree imports beyond the IFML set: badge, alert-dialog, empty,
+/// label, textarea, select-label). Shared by the IFML gate's
+/// [`write_extras`] and the #574 S2 entity gate. They accept the props the
+/// generator passes (data, fields, testid, onclick, bind:open, children
+/// snippet) and render children + data-testids so selectors work.
+pub fn write_shadcn_stubs(svelte: &Path) -> Result<(), String> {
     // Gate-owned stub components for the shadcn-svelte pack. They accept the
     // props the generator passes to mapped components (data, fields, testid,
     // rowTestid, on:select, onclick, bind:open, params, children snippet) and
@@ -552,6 +565,5 @@ pub fn write_extras(svelte: &Path) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
-    fs::write(svelte.join("SKELETON.md"), SKELETON_README).map_err(|e| e.to_string())?;
     Ok(())
 }

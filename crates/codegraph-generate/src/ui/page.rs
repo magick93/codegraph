@@ -14,6 +14,8 @@ use crate::api::api_model::{
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
+
+use super::remote;
 use crate::ux::plan::{ActionSpec, RowAction, build_ux_plan};
 use codegraph_config::DomainConfig;
 use codegraph_config::ux::{Align, Display};
@@ -854,6 +856,10 @@ fn emit_ui_pages(
     routes_dir: &Path,
 ) -> Result<Vec<GeneratedFile>> {
     let mut files = Vec::new();
+    // The entity remote-functions data plane (issue #574 S2): colocated
+    // `data.remote.ts` per route; loads/pages branch on the same flag.
+    let remote = project.codegen.entity_remote_functions;
+    let api_version = project.identity.api_version.as_str();
 
     // List page
     if ctx.has_list {
@@ -862,34 +868,69 @@ fn emit_ui_pages(
             path: routes_dir.join("+page.svelte"),
             content,
         });
-        let load = render_template_with_project(tera, "ui/list_load.tera", ctx, project)?;
+        let load_template = if remote {
+            "ui/list_load_remote.tera"
+        } else {
+            "ui/list_load.tera"
+        };
+        let load = render_template_with_project(tera, load_template, ctx, project)?;
         files.push(GeneratedFile {
             path: routes_dir.join("+page.server.ts"),
             content: load,
         });
+        if remote {
+            let ux_delete = ctx.ux_actions.is_some();
+            files.push(GeneratedFile {
+                path: routes_dir.join("data.remote.ts"),
+                content: remote::render_list_module(ctx, api_version, ux_delete),
+            });
+        }
     }
 
     // Detail page
     if ctx.has_read {
-        let content = render_template_with_project(tera, "ui/detail_page.tera", ctx, project)?;
+        let page_template = if remote {
+            "ui/detail_page_remote.tera"
+        } else {
+            "ui/detail_page.tera"
+        };
+        let content = render_template_with_project(tera, page_template, ctx, project)?;
         files.push(GeneratedFile {
             path: routes_dir
                 .join(format!("[{}]", ctx.param_name))
                 .join("+page.svelte"),
             content,
         });
-        let load = render_template_with_project(tera, "ui/detail_load.tera", ctx, project)?;
+        let load_template = if remote {
+            "ui/detail_load_remote.tera"
+        } else {
+            "ui/detail_load.tera"
+        };
+        let load = render_template_with_project(tera, load_template, ctx, project)?;
         files.push(GeneratedFile {
             path: routes_dir
                 .join(format!("[{}]", ctx.param_name))
                 .join("+page.server.ts"),
             content: load,
         });
+        if remote {
+            files.push(GeneratedFile {
+                path: routes_dir
+                    .join(format!("[{}]", ctx.param_name))
+                    .join("data.remote.ts"),
+                content: remote::render_detail_module(ctx, api_version),
+            });
+        }
     }
 
     // Create page
     if ctx.has_create {
-        let content = render_template_with_project(tera, "ui/form_page.tera", ctx, project)?;
+        let page_template = if remote {
+            "ui/form_page_remote.tera"
+        } else {
+            "ui/form_page.tera"
+        };
+        let content = render_template_with_project(tera, page_template, ctx, project)?;
         files.push(GeneratedFile {
             path: routes_dir.join("new").join("+page.svelte"),
             content,
@@ -898,7 +939,12 @@ fn emit_ui_pages(
 
     // Edit page
     if ctx.has_update {
-        let content = render_template_with_project(tera, "ui/edit_page.tera", ctx, project)?;
+        let page_template = if remote {
+            "ui/edit_page_remote.tera"
+        } else {
+            "ui/edit_page.tera"
+        };
+        let content = render_template_with_project(tera, page_template, ctx, project)?;
         files.push(GeneratedFile {
             path: routes_dir
                 .join(format!("[{}]", ctx.param_name))
@@ -906,13 +952,35 @@ fn emit_ui_pages(
                 .join("+page.svelte"),
             content,
         });
-        let load = render_template_with_project(tera, "ui/edit_load.tera", ctx, project)?;
+        let load_template = if remote {
+            "ui/edit_load_remote.tera"
+        } else {
+            "ui/edit_load.tera"
+        };
+        let load = render_template_with_project(tera, load_template, ctx, project)?;
         files.push(GeneratedFile {
             path: routes_dir
                 .join(format!("[{}]", ctx.param_name))
                 .join("edit")
                 .join("+page.server.ts"),
             content: load,
+        });
+        if remote {
+            files.push(GeneratedFile {
+                path: routes_dir
+                    .join(format!("[{}]", ctx.param_name))
+                    .join("edit")
+                    .join("data.remote.ts"),
+                content: remote::render_edit_module(ctx, api_version),
+            });
+        }
+    }
+
+    // Create route's remote module (the create page has no load).
+    if remote && ctx.has_create {
+        files.push(GeneratedFile {
+            path: routes_dir.join("new").join("data.remote.ts"),
+            content: remote::render_create_module(ctx, api_version),
         });
     }
 
@@ -1869,5 +1937,43 @@ mod ux_child_section_template_tests {
             out.contains("onclick={() => performDelete(child.id)}"),
             "{out}"
         );
+    }
+}
+
+/// A minimal [`UiPageContext`] for the remote-module renderer's unit
+/// tests (`ui::remote`): root entity, all CRUD ops, workflow, FTS, no
+/// child sections.
+#[cfg(test)]
+pub(crate) fn test_page_context() -> UiPageContext {
+    use crate::ui::testids;
+    UiPageContext {
+        tid: testids::for_module("request"),
+        entity_name: "Request".into(),
+        module_name: "request".into(),
+        domain: "common".into(),
+        path_segment: "request".into(),
+        has_create: true,
+        has_read: true,
+        has_update: true,
+        has_delete: true,
+        has_list: true,
+        has_workflow: false,
+        workflow_states: Vec::new(),
+        initial_state: String::new(),
+        terminal_states: Vec::new(),
+        has_approval_status: false,
+        has_fts: false,
+        fields: Vec::new(),
+        list_fields: Vec::new(),
+        child_sections: Vec::new(),
+        has_child_sections: false,
+        param_name: "request_id".into(),
+        parent: None,
+        detail_extensions: Vec::new(),
+        ux_columns: Vec::new(),
+        ux_actions: None,
+        ux: None,
+        ux_sort: None,
+        shared_tid: testids::shared(),
     }
 }

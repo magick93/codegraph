@@ -9,7 +9,18 @@ export default defineConfig({
 	plugins: [
 		sveltekit({
 			adapter: adapter(),
-			preprocess: vitePreprocess(),
+			preprocess: vitePreprocess(),{% if project.entity_remote_functions %}
+			// Issue #574 S2: the entity data plane rides SvelteKit remote
+			// functions — routes' data.remote.ts modules execute server-side
+			// so the API origin and its credentials never reach the browser.
+			experimental: {
+				remoteFunctions: true
+			},
+			compilerOptions: {
+				experimental: {
+					async: true
+				}
+			},{% endif %}
 			// SvelteKit 3-next flattened the config — adapter/preprocess/alias
 			// are top-level plugin options (svelte.config.js is rejected).
 			// `$lib` was removed in favour of `#lib`; the generated routes and
