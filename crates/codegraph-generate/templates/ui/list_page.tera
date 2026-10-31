@@ -13,8 +13,9 @@
 	import SearchInput from '#lib/components/ui/SearchInput.svelte';{% if ux %}
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
-	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-	import { apiDelete } from '#lib/api/client.ts';{% endif %}
+	import * as Tooltip from '#lib/components/ui/tooltip/index.js';{% if project.entity_remote_functions %}
+	import { deleteItem } from './data.remote';{% else %}
+	import { apiDelete } from '#lib/api/client.ts';{% endif %}{% endif %}
 	import type { {{ entity_name }}Response } from '#lib/api/types.ts';
 	import * as m from '#lib/paraglide/messages.js';
 
@@ -277,7 +278,10 @@
 	async function performDelete(row: Record<string, unknown>): Promise<void> {
 		deleting = true;
 		try {
-			await apiDelete(`${basePath}/${row['id']}`);
+			{% if project.entity_remote_functions %}const result = await deleteItem({ id: row['id'] as string{% if parent and parent.grandparent %}, grandparentId, parentId{% elif parent %}, parentId{% endif %} });
+			if (!result.ok) {
+				throw new Error(result.message ?? 'Request failed');
+			}{% else %}await apiDelete(`${basePath}/${row['id']}`);{% endif %}
 			deleteTarget = null;
 			await invalidateAll();
 		} finally {

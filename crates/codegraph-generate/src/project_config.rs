@@ -150,6 +150,15 @@ pub struct CodegenConfig {
     /// plane, byte-identical.
     #[serde(default)]
     pub ifml_remote_functions: bool,
+    /// Entity remote-functions data plane (issue #574 S2): when true the
+    /// entity plane's CRUD surface runs through server-executed
+    /// `data.remote.ts` exports (`$app/server` query/command) colocated
+    /// with each route — the browser stores (`#lib/stores/*`) and the
+    /// `PUBLIC_API_KEY` client plane retire, and the SvelteKit config
+    /// opts into the `remoteFunctions`/`async` experimental options.
+    /// Default false = byte-identical (stores + client plane stay).
+    #[serde(default)]
+    pub entity_remote_functions: bool,
     /// One testid vocabulary (issue #468 W3): when true the `ui_testids`
     /// global generator emits `ui/src/lib/testids.js` + `testids.d.ts` and
     /// the generated POM/spec templates import it, binding the test surface
@@ -178,6 +187,7 @@ impl Default for CodegenConfig {
             expr_ir: false,
             ifml_e2e_auth: false,
             ifml_remote_functions: false,
+            entity_remote_functions: false,
             testid_module: false,
             structural_gates: false,
             types_import_prefix: "codegraph_type_contracts".into(),
@@ -448,6 +458,7 @@ mod tests {
             ("expr_ir", serde_json::json!(false)),
             ("ifml_e2e_auth", serde_json::json!(false)),
             ("ifml_remote_functions", serde_json::json!(false)),
+            ("entity_remote_functions", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),

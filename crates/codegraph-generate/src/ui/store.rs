@@ -170,6 +170,12 @@ impl EntityGenerator for UiStoreGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Issue #574 S2: the browser store plane retires under the entity
+        // remote-functions flag — the colocated `data.remote.ts` modules
+        // own every fetch.
+        if project.codegen.entity_remote_functions {
+            return Ok(Vec::new());
+        }
         let schema = db
             .get_schema_in_domain(schema_title, domain)
             .await?

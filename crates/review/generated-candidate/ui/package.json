@@ -17,6 +17,7 @@
   "devDependencies": {
     "@inlang/paraglide-js": "^2.0.0",
     "@sveltejs/adapter-auto": "^4.0.0",
+    "@types/node": "^22.0.0",
     "@sveltejs/kit": "3.0.0-next.24",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tailwindcss/vite": "^4.0.0",
@@ -30,9 +31,13 @@
     "typescript": "^6.0.0",
     "vite": "^8.0.12"
   },
+  
+  "overrides": {
+    "cookie": "^1.0.2"
+  },
   "dependencies": {
-    "@crewbase/ui": "workspace:*",
-    "@crewbase/entities": "workspace:*",
+    "@crewbase/ui": "file:stubs/@crewbase/ui","@community-os/ui": "file:stubs/@community-os/ui",
+    "@crewbase/entities": "file:stubs/@crewbase/entities",
     "@internationalized/date": "^3.8.0",
     "@lucide/svelte": "^1.0.0",
     "@supabase/supabase-js": "^2.49.0",

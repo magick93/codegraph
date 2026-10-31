@@ -75,6 +75,12 @@ pub struct BuildPlan {
     /// feature — view loads/posts run through server-executed SvelteKit
     /// remote functions instead of client fetches.
     pub ifml_remote_functions: bool,
+    /// Entity remote-functions data plane (issue #574 S2):
+    /// `entity_remote_functions` feature — the entity plane's CRUD surface
+    /// runs through server-executed `data.remote.ts` exports; the browser
+    /// stores (`#lib/stores/*`) and the `PUBLIC_API_KEY` client plane
+    /// retire. Default false = byte-identical.
+    pub entity_remote_functions: bool,
     /// One testid vocabulary (issue #468 W3): `testid_module` feature —
     /// emits `ui/src/lib/testids.js` + `testids.d.ts` and switches the
     /// POM/spec templates to import it. Default false = byte-identical.
@@ -307,6 +313,15 @@ impl BuildPlan {
             None => false,
         };
 
+        // Parse entity_remote_functions from features (issue #574 S2;
+        // default: false). Same non-bool-is-an-error rule as the IFML flag.
+        let entity_remote_functions = match profile.features.get("entity_remote_functions") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"entity_remote_functions\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
         // Parse testid_module from features (issue #468 W3; default: false).
         let testid_module = profile
             .features
@@ -350,6 +365,7 @@ impl BuildPlan {
             expr_ir,
             ifml_e2e_auth,
             ifml_remote_functions,
+            entity_remote_functions,
             testid_module,
             structural_gates,
             public_operations_rls,
@@ -413,6 +429,7 @@ impl BuildPlan {
             expr_ir: false,
             ifml_e2e_auth: false,
             ifml_remote_functions: false,
+            entity_remote_functions: false,
             testid_module: false,
             structural_gates: false,
             public_operations_rls: false,

@@ -409,7 +409,11 @@ async fn config_declared_child_wins_and_dedupes_with_derived_child() {
     assert_eq!(
         count_page_occurrences(&files, r#"childSectionTid="child-section-todo_item""#),
         1,
-        "config-declared and graph-derived child must dedupe to ONE section"
+        "config-declared and graph-derived child must dedupe to ONE section\ndetail: {:?}",
+        files
+            .iter()
+            .find(|(k, _)| k.contains("todo-list/[todo_list_id]/+page.svelte"))
+            .map(|(_, v)| v.chars().take(1500).collect::<String>())
     );
 
     // Config authority is visible in the output: the section navigates with

@@ -1055,6 +1055,79 @@ planes cannot drift.
   node-free) + the updated `ifml_remote_functions_tests` env pins +
   `server_api.rs` unit tests.
 
+### Entity remote-functions data plane (issue #574 S2, `entity_remote_functions`)
+
+The entity plane carried the #557 disease one plane over: browser-side
+`#lib/stores/*` doing `apiGet/Post/Put/Delete` (including workflow
+transitions) backed by `PUBLIC_API_KEY`, institutionalized in
+`env_ts.tera`'s `defineEnvVars`. The `entity_remote_functions` feature
+(default/fullstack ON, init scaffold ON; absent = byte-identical) applies
+the proven #573 IFML pattern:
+
+- **Per-route colocated `data.remote.ts`** (`ui/remote.rs`, Rust emitter
+  mirroring `ifml::route_generator::remote`): list route `getList` (+ ux
+  `deleteItem`), detail route `getItem` (+ `transitionItem`/`deleteItem` +
+  per-child `get{E}Children` queries and `delete{E}Child` commands), edit
+  route `getItem`/`updateItem`, create route `createItem`. Hierarchy-aware
+  paths interpolate `args.parentId`/`args.grandparentId` — the LOAD passes
+  route params to the server-side function. Commands return discriminated
+  `{ ok } as const` unions (`{ ok, id }` from create — the created id
+  navigates; `{ ok, state }` from transition — the panel updates).
+- **Loads stay, slimmed**: `+page.server.ts` keeps the
+  `items`/`item`/`children` contracts (POM/e2e hold) but awaits the remote
+  queries — no `apiFetch`, no per-page 401 throw (the `(app)` layout guard
+  owns the session redirect). Variant templates (`*_remote.tera`) are
+  selected in Rust — flag-off templates are byte-untouched.
+- **Pages call commands**: form/edit submit → `{ ok, message? }` error
+  UX + `goto(result.id)`; detail transition/delete through commands; list
+  ux-delete through `deleteItem`; child sections hydrate from the detail
+  load and delete through the `onDelete` callback prop
+  (`child_section_component_remote.tera` — the apiDelete plane is gone).
+- **Retirements under the flag**: the entity store generator emits
+  nothing (`ui/store.rs` early-return); `api_client.tera` loses the
+  public-key import/fallback (the shell plane's `apiClient.baseUrl` keeps
+  it alive, session-auth only); `env_ts.tera` drops the `PUBLIC_API_KEY`
+  `defineEnvVars` entry; the ui scaffold's `vite_config.tera` opts into
+  `experimental.remoteFunctions` + `compilerOptions.experimental.async`.
+- **Webhook settings pages migrate likewise** (`settings_webhook*_remote`
+  variants + per-route loads/remotes): endpoints list/delete, detail
+  (endpoint + subscriptions + deliveries via one `getEndpointData` query),
+  `toggleActive`, **`rotateSecret`**, `deleteSubscription`, form
+  create/update — all server-side.
+- **`entity_codegen_gate`** (ignored, nightly lane): regenerates the
+  review fixture in place (the regen is SHARED with `review_api_suite` by
+  path inclusion — `review_api_suite_regen.rs`; it now threads the plan's
+  codegen flags into ProjectConfig), stubs the consumer-monorepo packages
+  (`@crewbase/*` file: stubs, `@community-os/ui`, `src/lib/api/index.ts`,
+  the `#lib/components/ui/*` barrels from the actual member surface,
+  `cookie@^1` override, gate tsconfig), sweeps the retired stores, then
+  **vite build** + **svelte-check** — asserting ZERO diagnostics on
+  GENERATED paths (consumer-authored fixture files — `ui/forms/*` — are
+  reported, not asserted). Its first runs caught and fixed: a `{% raw %}`
+  balance bug in `detail_page.tera` (structured-wrapper branch — literal
+  Tera syntax shipped in every such page, never compiled anywhere),
+  `shell.rs`/`descriptor.rs` emitting pre-`(app)` routes (kit-3 conflicts)
+  and the kit-3 `cookie@0.7`-vs-`parseCookie` hoist conflict (fixed by a
+  `cookie@^1` npm override in the scaffold).
+- The e2e category (Playwright over a booted API) rides the
+  review-fixture consumer stack — tracked follow-up.
+- **Known pre-existing gap (recorded, not fixed)**: the ui-shell plane's
+  top-level route tree conflicts with the `(app)`-grouped entity routes
+  under kit 3 (`/(app)/x` vs `/x`) — consumers using `ui-shell` on the
+  kit-3 pin hit this; S2 does not touch the shell plane's location. The
+  gate removes the shell tree before sync and builds the entity plane.
+- Gates: `cargo test -p codegraph --test entity_remote_functions_tests`
+  (2, node-free) + `cargo test -p codegraph --test entity_codegen_gate --
+  --ignored` (node; the nightly lane) + the updated
+  `ifml_remote_functions_tests`/`ux_rules_tests`/`server_contract_tests`
+  pins. Byte-identity: flag-off templates byte-untouched (variant
+  selection in Rust); the ux canaries + `policy_rls` full-tree snapshot
+  re-blessed for the default-profile flag-ON diff (enumerated: every
+  `+page.server.ts`/`+page.svelte`, new `data.remote.ts` per route, stores
+  deleted, `api/client.ts`+`env.ts` key loss, vite experimental options)
+  + the review fixture regenerated (incl. the S1-era shell `descriptor.ts`
+  moves).
+
 ### IFML app skeleton (`ifml-skeleton` generator)
 
 `IfmlSkeletonGenerator` (Global, `ifml_skeleton`/`ifml_skeleton_{fw}` capabilities;

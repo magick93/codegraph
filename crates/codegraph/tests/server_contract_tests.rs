@@ -87,13 +87,20 @@ fn write_fixture() -> Fixture {
     }
 }
 
-/// The workspace profiles.toml (the default profile carries the entity ui
-/// generators).
+/// The workspace profiles.toml with the `entity_remote_functions` flag
+/// STRIPPED: this file pins the S1 contract (loads fetch through the
+/// shared helper) — the S2 flag replaces that plane (its own pins live in
+/// `entity_remote_functions_tests`).
 fn profiles_path(fixture: &Fixture) -> PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../profiles.toml");
     let content = fs::read_to_string(&workspace).expect("workspace profiles.toml");
+    let stripped = content
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("entity_remote_functions"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let path = fixture.root.path().join("profiles.toml");
-    fs::write(&path, content).unwrap();
+    fs::write(&path, stripped).unwrap();
     path
 }
 

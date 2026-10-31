@@ -39,8 +39,7 @@
 //! cargo test -p codegraph --test review_api_suite -- --ignored --nocapture
 //! ```
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -51,17 +50,10 @@ use codegraph_ops::pg::PgTarget;
 const DATABASE_URL_ENV: &str = "DATABASE_URL";
 const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/postgres";
 
-fn manifest_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
-}
+#[path = "review_api_suite_regen.rs"]
+mod review_api_suite_regen;
 
-fn fixture_dir() -> PathBuf {
-    manifest_dir()
-        .parent()
-        .unwrap()
-        .join("review")
-        .join("generated-candidate")
-}
+use review_api_suite_regen::fixture_dir;
 
 fn admin_target() -> PgTarget {
     let url = std::env::var(DATABASE_URL_ENV).unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
@@ -108,180 +100,7 @@ fn scratch_db_name() -> String {
 ///   overwrite the checked-in `codegraph-ops.toml` + `testkit/`) are stripped
 ///   from the plan.
 async fn regenerate_fixture() -> Result<(), String> {
-    use codegraph::generate::template_engine::create_tera;
-    use codegraph::generate::{
-        GeneratorOpts, ProjectConfig, compute_generation_order, run_generators_with_opts,
-    };
-    use codegraph::profile::{BuildPlan, CapabilityRegistry, load_and_resolve_profile};
-    use codegraph_classifier::config::parse_classifier_config;
-    use codegraph_config::UiOverrideConfig;
-    use codegraph_grafeo::GrafeoEngine;
-
-    let mdir = manifest_dir();
-    let workspace_root = mdir.parent().unwrap().parent().unwrap();
-    let output_dir = fixture_dir();
-
-    let config =
-        codegraph_config::config::parse_domain_config(&mdir.join("tests/fixtures/domains.toml"))
-            .map_err(|e| format!("parse domains.toml: {e}"))?;
-    let classifier = parse_classifier_config(&mdir.join("tests/fixtures/classifier.toml"))
-        .map_err(|e| format!("parse classifier.toml: {e}"))?;
-    let entity_names: HashSet<String> = config
-        .domains
-        .values()
-        .flat_map(|d| d.entities.iter().cloned())
-        .collect();
-
-    let engine = GrafeoEngine::in_memory().map_err(|e| format!("grafeo: {e}"))?;
-    codegraph::ingest::async_ingest::ingest_schemas(
-        &engine,
-        Path::new("tests/fixtures/schemas"),
-        &classifier,
-        &entity_names,
-        &UiOverrideConfig::default(),
-        &config.defaults.type_suffix,
-    )
-    .await
-    .map_err(|e| format!("ingest fixture schemas: {e}"))?;
-
-    // The generated app must compile without touching the network: path deps
-    // into this workspace, domain-types inside the app output.
-    let type_contracts_path = workspace_root.join("crates/codegraph-type-contracts");
-    let workflow_path = workspace_root.join("crates/codegraph-workflow");
-
-    let registry = CapabilityRegistry::new();
-    let mut resolved =
-        load_and_resolve_profile(&workspace_root.join("profiles.toml"), "default", None)
-            .map_err(|e| format!("resolve profile: {e}"))?;
-    for section in resolved.sections.values_mut() {
-        section
-            .generators
-            .retain(|g| !g.starts_with("grpc_") && g != "ops");
-    }
-    let plan =
-        BuildPlan::from_profile(&resolved, &registry).map_err(|e| format!("build plan: {e}"))?;
-
-    let project_config = ProjectConfig {
-        identity: codegraph::generate::IdentityConfig {
-            app_name: "app".into(),
-            domain_types_crate: "domain_types".into(),
-            generator_name: "codegraph-review-gate".into(),
-            ..Default::default()
-        },
-        paths: codegraph::generate::PathsConfig {
-            type_contracts_base: type_contracts_path.to_string_lossy().to_string(),
-            codegraph_workflow_base: workflow_path.to_string_lossy().to_string(),
-            domain_types_base: "domain-types".into(),
-            ..Default::default()
-        },
-        cargo: codegraph::generate::CargoConfig {
-            extra_dependencies: format!(
-                "codegraph-workflow = {{ path = \"{}\" }}\n\
-                 codegraph-type-contracts = {{ path = \"{}\" }}",
-                workflow_path.display(),
-                type_contracts_path.display()
-            ),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let domain_types_dir = output_dir.join("domain-types");
-    let hooks_tmp = tempfile::tempdir().map_err(|e| format!("hooks tempdir: {e}"))?;
-
-    // The generation order is needed twice: by the pipeline itself and to
-    // assert the graph actually produced entities (an empty graph would
-    // "regenerate" nothing and let a stale fixture pass).
-    let order = compute_generation_order(&engine, &config)
-        .await
-        .map_err(|e| format!("generation order: {e}"))?;
-    if order.is_empty() {
-        return Err("generation order is empty — fixture schemas failed to ingest".into());
-    }
-
-    let tera = create_tera(Path::new("unused")).map_err(|e| format!("tera: {e}"))?;
-    let report = run_generators_with_opts(GeneratorOpts {
-        integration_manifests: None,
-        db: &engine,
-        config: &config,
-        output_dir: &output_dir,
-        tera: &tera,
-        ui_overrides: &UiOverrideConfig::default(),
-        ui_domains: &codegraph_config::UiDomainConfig::default(),
-        schema_base_dir: Path::new(""),
-        seed_config: None,
-        domain_types_base: Some(&domain_types_dir),
-        hooks_base: Some(hooks_tmp.path()),
-        ext_points: None,
-        build_plan: Some(&plan),
-        ifml_frameworks: vec![],
-        ifml_components: None,
-        ux_rules: None,
-        project_config: Some(&project_config),
-        emdash_plugins: None,
-        domain_config_dir: None,
-    })
-    .await
-    .map_err(|e| format!("regenerate fixture: {e}"))?;
-
-    if report.has_errors() {
-        let detail = report
-            .errors
-            .iter()
-            .map(|e| format!("{}/{}: {}", e.entity, e.generator, e.source))
-            .take(10)
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(format!("fixture regeneration reported errors:\n{detail}"));
-    }
-
-    ensure_testkit_workspace_member(&output_dir);
-    ensure_testkit_path_dep(&output_dir);
-    Ok(())
-}
-
-/// `cargo run -p testkit` resolves `-p` against the fixture workspace, so the
-/// testkit crate must be a member. Regeneration rewrites the workspace
-/// Cargo.toml without it — re-add idempotently.
-fn ensure_testkit_workspace_member(fixture_dir: &Path) {
-    let cargo = fixture_dir.join("Cargo.toml");
-    let Ok(text) = std::fs::read_to_string(&cargo) else {
-        return;
-    };
-    if text.contains("\"testkit\"") {
-        return;
-    }
-    let patched = text.replace(
-        "members = [\".\", \"cli\", \"migration\"]",
-        "members = [\".\", \"cli\", \"migration\", \"testkit\"]",
-    );
-    if patched != text {
-        let _ = std::fs::write(&cargo, patched);
-    }
-}
-
-/// The testkit must build against THIS checkout's codegraph-ops: normalize its
-/// dependency line to the relative path dep (the committed file already uses
-/// the path form; a future regeneration could pin a git rev instead).
-fn ensure_testkit_path_dep(fixture_dir: &Path) {
-    let cargo = fixture_dir.join("testkit").join("Cargo.toml");
-    let Ok(text) = std::fs::read_to_string(&cargo) else {
-        return;
-    };
-    let patched = text
-        .lines()
-        .map(|line| {
-            if line.trim_start().starts_with("codegraph-ops") {
-                "codegraph-ops = { path = \"../../../codegraph-ops\" }".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    if patched != text {
-        let _ = std::fs::write(&cargo, patched);
-    }
+    review_api_suite_regen::regenerate_fixture().await
 }
 
 /// Rewrite the `[database.api]` block of the fixture manifest to point at the

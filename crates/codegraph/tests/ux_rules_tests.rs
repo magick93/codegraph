@@ -260,7 +260,12 @@ fn ux_rules_default_profile_renders_list_page_pins() {
         "{page}"
     );
     assert!(page.contains("requestDelete"), "{page}");
-    assert!(page.contains("apiDelete"), "{page}");
+    // Issue #574 S2: the default profile deletes through the remote
+    // command; the apiDelete client import is the flag-off plane.
+    assert!(
+        page.contains("deleteItem") || page.contains("apiDelete"),
+        "{page}"
+    );
     assert!(page.contains("invalidateAll"), "{page}");
 
     // 7. Tooltip wrapper on truncated cells.
@@ -306,7 +311,15 @@ fn ux_rules_flag_off_renders_no_ux_markup() {
 
     let profiles_path = project.join("profiles.toml");
     let profiles = fs::read_to_string(&profiles_path).unwrap();
-    let flag_off = profiles.replace("ux_rules = true", "ux_rules = false");
+    // The ux pins' contract is UX-flag identity — the entity
+    // remote-functions plane (issue #574 S2, default ON) has its own flag
+    // and its own page shapes, so it is stripped alongside ux here.
+    let flag_off = profiles
+        .replace("ux_rules = true", "ux_rules = false")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("entity_remote_functions"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert_ne!(profiles, flag_off, "scaffold must ship the ux_rules flag");
     fs::write(&profiles_path, flag_off).unwrap();
 
@@ -772,7 +785,15 @@ fn ux_rules_flag_off_child_sections_stay_flat() {
 
     let profiles_path = project.join("profiles.toml");
     let profiles = fs::read_to_string(&profiles_path).unwrap();
-    let flag_off = profiles.replace("ux_rules = true", "ux_rules = false");
+    // The ux pins' contract is UX-flag identity — the entity
+    // remote-functions plane (issue #574 S2, default ON) has its own flag
+    // and its own page shapes, so it is stripped alongside ux here.
+    let flag_off = profiles
+        .replace("ux_rules = true", "ux_rules = false")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("entity_remote_functions"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert_ne!(profiles, flag_off, "scaffold must ship the ux_rules flag");
     fs::write(&profiles_path, flag_off).unwrap();
 
@@ -970,11 +991,21 @@ fn ux_rules_sort_plane_wires_handler_query_and_list_page() {
         project.join("generated/ui/src/routes/(app)/common/task/+page.server.ts"),
     )
     .unwrap();
-    assert!(load.contains("qs.set('sort', sort);"), "{load}");
+    // Issue #574 S2: the sort query-string assembly lives in the
+    // colocated data.remote.ts; the load forwards the allow-list args.
+    let remote = fs::read_to_string(
+        project.join("generated/ui/src/routes/(app)/common/task/data.remote.ts"),
+    )
+    .unwrap();
     assert!(
-        load.contains("qs.set('order', order === 'desc' ? 'desc' : 'asc');"),
-        "{load}"
+        remote.contains("params.set('sort', args.sort);"),
+        "{remote}"
     );
+    assert!(
+        remote.contains("params.set('order', args.order === 'desc' ? 'desc' : 'asc');"),
+        "{remote}"
+    );
+    assert!(load.contains("sort: sort ?? '',"), "{load}");
     assert!(load.contains("sort: sort ?? null,"), "{load}");
 }
 
@@ -1031,7 +1062,15 @@ fn ux_rules_flag_off_emits_no_sort_plane() {
 
     let profiles_path = project.join("profiles.toml");
     let profiles = fs::read_to_string(&profiles_path).unwrap();
-    let flag_off = profiles.replace("ux_rules = true", "ux_rules = false");
+    // The ux pins' contract is UX-flag identity — the entity
+    // remote-functions plane (issue #574 S2, default ON) has its own flag
+    // and its own page shapes, so it is stripped alongside ux here.
+    let flag_off = profiles
+        .replace("ux_rules = true", "ux_rules = false")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("entity_remote_functions"))
+        .collect::<Vec<_>>()
+        .join("\n");
     fs::write(&profiles_path, flag_off).unwrap();
 
     let run = FixtureRun {
@@ -1582,7 +1621,15 @@ async fn ux_rules_flag_off_emits_no_ux_specs() {
     let (project, mox) = fixture(&dir);
     let profiles_path = project.join("profiles.toml");
     let profiles = fs::read_to_string(&profiles_path).unwrap();
-    let flag_off = profiles.replace("ux_rules = true", "ux_rules = false");
+    // The ux pins' contract is UX-flag identity — the entity
+    // remote-functions plane (issue #574 S2, default ON) has its own flag
+    // and its own page shapes, so it is stripped alongside ux here.
+    let flag_off = profiles
+        .replace("ux_rules = true", "ux_rules = false")
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("entity_remote_functions"))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert_ne!(profiles, flag_off, "scaffold must ship the ux_rules flag");
     fs::write(&profiles_path, flag_off).unwrap();
     let mox_files = vec![mox];
