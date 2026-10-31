@@ -168,10 +168,10 @@ export const CandidateDescriptor: EntityDescriptor = {
     },
 
     {
-      name: 'distribution_guidelines_id',
-      label: 'Distribution Guidelines Id',
+      name: 'distribution_guidelines',
+      label: 'Distribution Guidelines',
       type: 'text',
-      tsType: 'string',
+      tsType: 'CandidateDistributionGuidelinesResponse',
 
 
 
@@ -180,8 +180,6 @@ export const CandidateDescriptor: EntityDescriptor = {
 
 
 
-
-      ref: { entity: 'DistributionGuidelinesType', domain: 'recruiting', displayField: 'start_date' },
 
 
 

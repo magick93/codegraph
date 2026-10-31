@@ -219,7 +219,7 @@ pub async fn create(
                         .with_correlation_id(correlation_id)
                 })?
                 .ok_or_else(|| AppError::internal("Created entity not found")
-                    .with_correlation_id(correlation_id))?;{{ create_guard_block }}
+                    .with_correlation_id(correlation_id))?;{{ create_guard_block | default(value="") }}
             Ok((StatusCode::CREATED, Json(serde_json::json!({
                 "data": response,
                 "meta": { "correlation_id": correlation_id.to_string() }
@@ -328,7 +328,7 @@ pub async fn get_by_id(
                         .with_correlation_id(correlation_id)
                 })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
-            .with_correlation_id(correlation_id))?;{{ read_guard_block }}
+            .with_correlation_id(correlation_id))?;{{ read_guard_block | default(value="") }}
 {% if ancestor_path_params >= 2 %}
     let self_link = format!(
         "/api/{{ project.api_version }}/{}/{}/{}/{}/{}/{}",
@@ -370,7 +370,7 @@ pub async fn get_by_id(
                         .with_correlation_id(correlation_id)
                 })?
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found"))
-            .with_correlation_id(correlation_id))?;{{ read_guard_block }}
+            .with_correlation_id(correlation_id))?;{{ read_guard_block | default(value="") }}
     let linked = {{ entity_name }}LinkedResponse::root(response, "{{ domain }}", "{{ path_segment }}");
 {% endif %}
 {% if children | length > 0 or cross_refs | length > 0 %}
@@ -524,7 +524,7 @@ pub async fn update(
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
     // Verify ownership before update: entity must belong to the parent
-    {{ update_ownership_prefix }}state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    {{ update_ownership_prefix | default(value="") }}state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
                         .with_correlation_id(correlation_id)
@@ -532,7 +532,7 @@ pub async fn update(
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% endif %}
-{{ update_guard_block }}
+{{ update_guard_block | default(value="") }}
     // Validate request
     if let Err(report) = garde::Validate::validate(&body) {
         let details: Vec<crate::error::FieldError> = report.into_inner()
@@ -605,7 +605,7 @@ pub async fn delete(
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
     // Verify ownership before delete: entity must belong to the parent
-    {{ delete_ownership_prefix }}state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    {{ delete_ownership_prefix | default(value="") }}state.{{ domain }}_{{ module_name }}_queries.find_by_id_scoped(id, parent_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
                         .with_correlation_id(correlation_id)
@@ -613,7 +613,7 @@ pub async fn delete(
         .ok_or_else(|| AppError::not_found(format!("{{ entity_name }} {id} not found under parent {parent_id}"))
             .with_correlation_id(correlation_id))?;
 {% endif %}
-{{ delete_guard_block }}    state.{{ domain }}_{{ module_name }}_commands.delete(id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+{{ delete_guard_block | default(value="") }}    state.{{ domain }}_{{ module_name }}_commands.delete(id, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
             let msg = e.to_string();
             // Repository errors render as "NOT_FOUND: ..." while some paths

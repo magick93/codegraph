@@ -9,10 +9,10 @@ export const RsvpDescriptor: EntityDescriptor = {
   fields: [
 
     {
-      name: 'event_id',
-      label: 'Event Id',
+      name: 'event',
+      label: 'Event',
       type: 'text',
-      tsType: 'string',
+      tsType: 'RsvpEventBaseResponse',
 
       required: true,
 
@@ -25,8 +25,6 @@ export const RsvpDescriptor: EntityDescriptor = {
 
       list: { visible: true, sortable: true },
 
-
-      ref: { entity: 'EventBaseType', domain: 'rsvp', displayField: 'title' },
 
 
 

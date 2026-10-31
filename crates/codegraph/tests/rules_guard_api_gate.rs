@@ -41,13 +41,11 @@ fn fixture_dir() -> PathBuf {
 }
 
 fn logs_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/rules-guard-gate/logs")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/rules-guard-gate/logs")
 }
 
 fn gate_target_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/rules-guard-gate/target")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/rules-guard-gate/target")
 }
 
 fn skip(msg: &str) {
@@ -80,18 +78,21 @@ fn assert_guard_surface(fixture: &Path) {
         "the guard's record type must be imported from the dto_response module:\n{rules_rs}"
     );
 
-    let handler_rs = std::fs::read_to_string(
-        fixture.join("src/api/recruiting/grant_application_handler.rs"),
-    )
-    .expect("the fixture must ship the guarded grant_application handler");
+    let handler_rs =
+        std::fs::read_to_string(fixture.join("src/api/recruiting/grant_application_handler.rs"))
+            .expect("the fixture must ship the guarded grant_application handler");
     let guard = "crate::domain::recruiting::rules::positive_grant";
     assert_eq!(
-        handler_rs.matches(&format!("if !{guard}(&existing) {{")).count(),
+        handler_rs
+            .matches(&format!("if !{guard}(&existing) {{"))
+            .count(),
         2,
         "update AND delete must load-or-404 then evaluate the guard:\n{handler_rs}"
     );
     assert_eq!(
-        handler_rs.matches(&format!("if !{guard}(&response) {{")).count(),
+        handler_rs
+            .matches(&format!("if !{guard}(&response) {{"))
+            .count(),
         2,
         "get_by_id AND create must evaluate the guard over the loaded record:\n{handler_rs}"
     );
@@ -156,7 +157,9 @@ AS $shim$ SELECT 1 $shim$ LANGUAGE sql;
 
 /// The fixture's migrations, with the pgmq setup replaced by the shim when
 /// the target cluster has no pgmq extension.
-async fn resolve_migrations_dir(target: &codegraph_ops::pg::PgTarget) -> (PathBuf, Option<tempfile::TempDir>) {
+async fn resolve_migrations_dir(
+    target: &codegraph_ops::pg::PgTarget,
+) -> (PathBuf, Option<tempfile::TempDir>) {
     let migrations = fixture_dir().join("migrations");
     let has_pgmq = codegraph_ops::db::psql_query(
         target,
