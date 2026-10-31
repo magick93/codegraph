@@ -1,0 +1,23 @@
+# Add to the project justfile after `codegraph init kanban`.
+# The --template-dir flag carries the two consumer overrides:
+#   api/router.tera                 — merges handwritten_routes::routes() into the domain router
+#   ui/scaffold/package_json.tera   — adds svelte-dnd-action to ui/package.json
+
+# Replace the generated `generate` recipe with:
+generate:
+    kanban-graph run \
+        --mox-files model/board.mox \
+        --config domains.toml \
+        --profiles-config profiles.toml \
+        --template-dir templates-override \
+        --output generated
+
+# One-time bootstrap (after the FIRST generate): copy the consumer-owned
+# files into the generated tree. They survive every later regen:
+bootstrap:
+    cp handwritten/custom.sql generated/migrations/custom.sql
+    cp handwritten/handwritten_routes.rs generated/src/api/board/handwritten_routes.rs
+    mkdir -p "generated/ui/src/routes/(app)/kanban"
+    cp ui/kanban/*.ts "generated/ui/src/routes/(app)/kanban/"
+    cp ui/kanban/+page.svelte "generated/ui/src/routes/(app)/kanban/"
+    just generate   # re-run once so the mod scan declares handwritten_routes
