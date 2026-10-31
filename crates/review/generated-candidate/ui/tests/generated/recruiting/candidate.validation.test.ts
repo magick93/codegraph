@@ -91,8 +91,6 @@ test.describe('Candidate Validation', () => {
 
 
 
-    // 'distribution_guidelines' is a ValueObject — skip in validation test
-
 
 
 

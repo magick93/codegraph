@@ -285,6 +285,10 @@ pub async fn get_by_id(
     let linked = EventBaseLinkedResponse::root(response, "common", "event-base");
 
 
+    let self_href = linked.links.self_link.clone();
+
+
+    let linked = linked.with_child("rsvp", format!("{}/{}", self_href, "rsvp"));
 
 
 

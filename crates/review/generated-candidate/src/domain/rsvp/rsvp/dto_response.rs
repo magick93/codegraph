@@ -4,8 +4,6 @@
 
 pub use domain_types::rsvp::rsvp::RsvpResponse;
 
-pub use domain_types::rsvp::rsvp::RsvpEventBaseResponse;
-
 
 /// Response wrapper that includes HAL-style `_links` for HATEOAS discoverability.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]

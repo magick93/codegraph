@@ -58,7 +58,7 @@ function testData(): Partial<Record<keyof CreateCandidateRequest | 'code', unkno
 
 
 
-    // 'distribution_guidelines': ValueObject — omit, serde default
+    // 'distribution_guidelines_id': entity ref — emitted by _dep_setup.tera
 
 
 

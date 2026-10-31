@@ -225,8 +225,17 @@ export class CandidatePage extends BasePage {
 
 
 
-  // 'distribution_guidelines' ValueObject — the form renders its own structured
-  // sub-fields; the create body omits it (serde default).
+  /** Entity refs are filled from the created dependency id. */
+  async fillDistributionGuidelinesId(value: string): Promise<void> {
+    if (!value) {
+      return;
+    }
+    const el = this.formInput('distribution_guidelines_id');
+    if (await el.isVisible()) {
+      await el.clear();
+      await el.fill(value);
+    }
+  }
 
 
 

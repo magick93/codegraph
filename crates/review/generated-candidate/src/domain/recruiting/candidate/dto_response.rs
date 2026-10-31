@@ -6,8 +6,6 @@ pub use domain_types::recruiting::candidate::CandidateResponse;
 
 pub use domain_types::recruiting::candidate::CandidateProcessHistoryResponse;
 
-pub use domain_types::recruiting::candidate::CandidateDistributionGuidelinesResponse;
-
 pub use domain_types::recruiting::candidate::CandidateNameResponse;
 
 pub use domain_types::recruiting::candidate::CandidatePositionScheduleTypeCodesResponse;

@@ -114,6 +114,14 @@
 			tier: 'extended',
 			entities: [
 
+				{ path: '/recruiting/grant-application', label: 'Grant Application' },
+
+				{ path: '/recruiting/grant-audit-trail', label: 'Grant Audit Trail' },
+
+				{ path: '/recruiting/grant-panel-minute', label: 'Grant Panel Minute' },
+
+				{ path: '/recruiting/grant-review-note', label: 'Grant Review Note' },
+
 				{ path: '/recruiting/applications', label: 'Application' },
 
 				{ path: '/recruiting/candidate', label: 'Candidate' },

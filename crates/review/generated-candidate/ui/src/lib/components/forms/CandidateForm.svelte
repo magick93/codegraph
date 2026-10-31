@@ -59,11 +59,7 @@
 
 
 
-	let distribution_guidelines = $state<Record<string, unknown>>(
-		typeof initialData?.distribution_guidelines === 'object' && initialData?.distribution_guidelines !== null && !Array.isArray(initialData?.distribution_guidelines)
-			? (initialData?.distribution_guidelines as Record<string, unknown>)
-			: {}
-	);
+	let distribution_guidelines_id = $state(String(initialData?.distribution_guidelines_id ?? ''));
 
 
 
@@ -154,7 +150,7 @@
 
 
 
-			if ((distribution_guidelines as Record<string, unknown>).value) data['distribution_guidelines'] = distribution_guidelines;
+			if (distribution_guidelines_id) data['distribution_guidelines_id'] = distribution_guidelines_id;
 
 
 
@@ -228,7 +224,7 @@
 
 
 
-			if (JSON.stringify(distribution_guidelines) !== JSON.stringify(initialData?.distribution_guidelines ?? {})) data['distribution_guidelines'] = distribution_guidelines;
+			if (distribution_guidelines_id !== String(initialData?.distribution_guidelines_id ?? '')) data['distribution_guidelines_id'] = distribution_guidelines_id;
 
 
 
@@ -410,21 +406,14 @@
 
 
 		<Field.Field>
-			<StructuredWrapperField
-				label={m.recruiting_candidate_field_distribution_guidelines()}
-				required={false}
-				isArray={false}
-				fieldName="distribution_guidelines"
-				subFields={[
-					{ name: 'startDate', label: 'Start Date', required: true, showByDefault: true, description: `Distribution start date` },
-					{ name: 'description', label: 'Description', required: false, showByDefault: true, description: `Distribution description` },
-					{ name: 'doNotRedistributeIndicator', label: 'Do Not Redistribute Indicator', required: false, showByDefault: false, description: `Do not redistribute flag` },
-					{ name: 'endDate', label: 'End Date', required: false, showByDefault: false, description: `Distribution end date` },
-					{ name: 'scope', label: 'Scope', required: false, showByDefault: false, description: `Distribution scope` },
-					
-				]}
-				bind:value={distribution_guidelines}
-				disabled={submitting}
+			<Field.Label for="distribution_guidelines_id">{m.recruiting_candidate_field_distribution_guidelines_id()}</Field.Label>
+			<Input
+				id="distribution_guidelines_id"
+				type="text"
+				bind:value={distribution_guidelines_id}
+				
+				
+				disabled={mode === 'edit' && false}
 			/>
 
 			<Field.Description>Distribution guidelines (inline def with allOf)</Field.Description>

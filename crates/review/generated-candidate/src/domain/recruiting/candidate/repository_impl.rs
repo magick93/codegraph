@@ -12,7 +12,6 @@ use super::dto_create::CreateCandidateRequest;
 use super::dto_update::UpdateCandidateRequest;
 use super::dto_response::CandidateResponse;
 use super::dto_response::CandidateProcessHistoryResponse;
-use super::dto_response::CandidateDistributionGuidelinesResponse;
 use super::dto_response::CandidateNameResponse;
 use super::dto_response::CandidatePositionScheduleTypeCodesResponse;
 use super::dto_response::CandidateQualificationResponse;
@@ -38,6 +37,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             candidate_id: Set(cmd.candidate_id),
             compensation_expectation: Set(cmd.compensation_expectation),
             compensation_expectation_currency: Set(cmd.compensation_expectation_currency.map(|v| v.to_string())),
+            distribution_guidelines_id: Set(cmd.distribution_guidelines_id),
             external_identifier: Set(cmd.external_identifier.as_ref().and_then(|v| serde_json::to_value(v).ok())),
             gender: Set(cmd.gender.map(|v| v.to_string())),
             position_titles: Set(cmd.position_titles),
@@ -55,17 +55,6 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_application_process_history (id, candidate_id, action_date, descriptions) VALUES ($1, $2, $3, $4)",
                 vec![child_id_candidate_application_process_history.into(), id.into(), item.action_date.map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(v))).unwrap_or(sea_orm::Value::ChronoDateTimeUtc(None)), item.descriptions.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(s))).collect())))).unwrap_or(sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, None))],
-            );
-            tx.execute_raw(stmt).await?;
-        }
-
-        // Insert optional child row: recruiting.candidate_distribution_guidelines
-        if let Some(ref item) = cmd.distribution_guidelines {
-            let child_id_candidate_distribution_guidelines = Uuid::new_v4();
-            let stmt = Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, do_not_redistribute_indicator, scope, description, end_date, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id_candidate_distribution_guidelines.into(), id.into(), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.description.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::ChronoDate(Some(item.start_date))],
             );
             tx.execute_raw(stmt).await?;
         }
@@ -147,28 +136,6 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             items
         };
 
-        let distribution_guidelines_rows = {
-            let stmt = Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
-                vec![id.into()],
-            );
-            let rows = db.query_all_raw(stmt).await?;
-            let mut items = Vec::with_capacity(rows.len());
-            for child_row in &rows {
-                use sea_orm::TryGetable;
-                items.push(CandidateDistributionGuidelinesResponse {
-                    do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
-                    scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
-                    description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
-                    end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
-                    start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
-                ..Default::default()
-                });
-            }
-            items
-        };
-
         let person_name_rows = {
             let stmt = Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
@@ -235,6 +202,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             candidate_id: row.candidate_id,
             compensation_expectation: row.compensation_expectation,
             compensation_expectation_currency: row.compensation_expectation_currency.and_then(|v| v.parse().ok()),
+            distribution_guidelines_id: row.distribution_guidelines_id,
             external_identifier: row.external_identifier.and_then(|v| serde_json::from_value(v).ok()),
             gender: row.gender.and_then(|v| v.parse().ok()),
             position_titles: row.position_titles,
@@ -242,7 +210,6 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
             status: row.status.and_then(|v| v.parse().ok()),
             uri: row.uri,
             application_process_history: application_process_history_rows.into_iter().next(),
-            distribution_guidelines: distribution_guidelines_rows.into_iter().next(),
             person_name: person_name_rows.into_iter().next(),
             position_schedule_type_codes: position_schedule_type_codes_rows,
             qualifications: qualifications_rows,
@@ -271,6 +238,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         if let Some(v) = cmd.candidate_id { model.candidate_id = Set(v); }
         if let Some(v) = cmd.compensation_expectation { model.compensation_expectation = Set(Some(v)); }
         if let Some(v) = cmd.compensation_expectation_currency { model.compensation_expectation_currency = Set(Some(v.to_string())); }
+        if let Some(v) = cmd.distribution_guidelines_id { model.distribution_guidelines_id = Set(Some(v)); }
         if let Some(v) = cmd.external_identifier { model.external_identifier = Set(serde_json::to_value(v).ok()); }
         if let Some(v) = cmd.gender { model.gender = Set(Some(v.to_string())); }
         if let Some(v) = cmd.position_titles { model.position_titles = Set(Some(v)); }
@@ -292,19 +260,6 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 DatabaseBackend::Postgres,
                 "INSERT INTO recruiting.candidate_application_process_history (id, candidate_id, action_date, descriptions) VALUES ($1, $2, $3, $4)",
                 vec![child_id.into(), id.into(), item.action_date.map(|v| sea_orm::Value::ChronoDateTimeUtc(Some(v))).unwrap_or(sea_orm::Value::ChronoDateTimeUtc(None)), item.descriptions.clone().map(|v| sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, Some(Box::new(v.into_iter().map(|s| sea_orm::Value::String(Some(s))).collect())))).unwrap_or(sea_orm::Value::Array(sea_orm::sea_query::ArrayType::String, None))],
-            );
-            tx.execute_raw(stmt).await?;
-        }
-
-        // Replace optional child row: recruiting.candidate_distribution_guidelines
-        if let Some(ref item) = cmd.distribution_guidelines {
-            let del = Statement::from_sql_and_values(DatabaseBackend::Postgres, "DELETE FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1", vec![id.into()]);
-            tx.execute_raw(del).await?;
-            let child_id = Uuid::new_v4();
-            let stmt = Statement::from_sql_and_values(
-                DatabaseBackend::Postgres,
-                "INSERT INTO recruiting.candidate_distribution_guidelines (id, candidate_id, do_not_redistribute_indicator, scope, description, end_date, start_date) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                vec![child_id.into(), id.into(), item.do_not_redistribute_indicator.map(|v| sea_orm::Value::Bool(Some(v))).unwrap_or(sea_orm::Value::Bool(None)), item.scope.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.description.clone().map(|v| sea_orm::Value::String(Some(v))).unwrap_or(sea_orm::Value::String(None)), item.end_date.map(|v| sea_orm::Value::ChronoDate(Some(v))).unwrap_or(sea_orm::Value::ChronoDate(None)), sea_orm::Value::ChronoDate(Some(item.start_date))],
             );
             tx.execute_raw(stmt).await?;
         }
@@ -368,6 +323,10 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
         if let Some(val) = filters.get("candidate_id") {
             condition = condition.add(crate::entity::recruiting_candidate::Column::CandidateId.eq(val.clone()));
         }
+        if let Some(val) = filters.get("distribution_guidelines_id") {
+            let parsed = uuid::Uuid::parse_str(val).map_err(|e| Box::<dyn std::error::Error>::from(format!("Invalid UUID for filter 'distribution_guidelines_id': {e}")))?;
+            condition = condition.add(crate::entity::recruiting_candidate::Column::DistributionGuidelinesId.eq(parsed));
+        }
         if let Some(val) = filters.get("gender") {
             condition = condition.add(crate::entity::recruiting_candidate::Column::Gender.eq(val.clone()));
         }
@@ -411,28 +370,6 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                     items.push(CandidateProcessHistoryResponse {
                         action_date: Option::<chrono::DateTime<chrono::Utc>>::try_get_by(child_row, "action_date").ok().flatten(),
                         descriptions: Option::<Vec<String>>::try_get_by(child_row, "descriptions").ok().flatten(),
-                    ..Default::default()
-                    });
-                }
-                items
-            };
-
-            let distribution_guidelines_rows = {
-                let stmt = Statement::from_sql_and_values(
-                    DatabaseBackend::Postgres,
-                    "SELECT id, do_not_redistribute_indicator, scope, description, end_date, start_date FROM recruiting.candidate_distribution_guidelines WHERE candidate_id = $1 ORDER BY created_at",
-                    vec![row.id.into()],
-                );
-                let rows = db.query_all_raw(stmt).await?;
-                let mut items = Vec::with_capacity(rows.len());
-                for child_row in &rows {
-                    use sea_orm::TryGetable;
-                    items.push(CandidateDistributionGuidelinesResponse {
-                        do_not_redistribute_indicator: Option::<bool>::try_get_by(child_row, "do_not_redistribute_indicator").ok().flatten(),
-                        scope: Option::<String>::try_get_by(child_row, "scope").ok().flatten(),
-                        description: Option::<String>::try_get_by(child_row, "description").ok().flatten(),
-                        end_date: Option::<chrono::NaiveDate>::try_get_by(child_row, "end_date").ok().flatten(),
-                        start_date: chrono::NaiveDate::try_get_by(child_row, "start_date").map_err(|e| format!("{e:?}"))?,
                     ..Default::default()
                     });
                 }
@@ -504,6 +441,7 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 candidate_id: row.candidate_id,
                 compensation_expectation: row.compensation_expectation,
                 compensation_expectation_currency: row.compensation_expectation_currency.and_then(|v| v.parse().ok()),
+                distribution_guidelines_id: row.distribution_guidelines_id,
                 external_identifier: row.external_identifier.and_then(|v| serde_json::from_value(v).ok()),
                 gender: row.gender.and_then(|v| v.parse().ok()),
                 position_titles: row.position_titles,
@@ -511,7 +449,6 @@ impl CandidateRepository<sea_orm::DatabaseTransaction> for CandidateRepositoryIm
                 status: row.status.and_then(|v| v.parse().ok()),
                 uri: row.uri,
                 application_process_history: application_process_history_rows.into_iter().next(),
-                distribution_guidelines: distribution_guidelines_rows.into_iter().next(),
                 person_name: person_name_rows.into_iter().next(),
                 position_schedule_type_codes: position_schedule_type_codes_rows,
                 qualifications: qualifications_rows,

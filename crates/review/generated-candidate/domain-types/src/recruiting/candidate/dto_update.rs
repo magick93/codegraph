@@ -8,7 +8,6 @@ pub use crate::codelist::CurrencyCodeList;
 pub use crate::codelist::GenderCodeList;
 pub use crate::codelist::RecruitingCandidateStatus;
 use super::dto_create::CreateCandidateProcessHistoryRequest;
-use super::dto_create::CreateCandidateDistributionGuidelinesRequest;
 use super::dto_create::CreateCandidateNameRequest;
 use super::dto_create::CreateCandidatePositionScheduleTypeCodesRequest;
 use super::dto_create::CreateCandidateQualificationRequest;
@@ -38,6 +37,9 @@ pub struct UpdateCandidateRequest {
     pub compensation_expectation_currency: Option<CurrencyCodeList>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution_guidelines_id: Option<uuid::Uuid>,
+    #[garde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_identifier: Option<IdentifierType>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,9 +59,6 @@ pub struct UpdateCandidateRequest {
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub application_process_history: Option<CreateCandidateProcessHistoryRequest>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub distribution_guidelines: Option<CreateCandidateDistributionGuidelinesRequest>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person_name: Option<CreateCandidateNameRequest>,

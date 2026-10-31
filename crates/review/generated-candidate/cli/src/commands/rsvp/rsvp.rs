@@ -59,7 +59,7 @@ pub struct RsvpListArgs {
     #[arg(long, default_value_t = 20)]
     pub page_size: u64,
 
-    /// Filter results (repeatable). Allowed fields: status
+    /// Filter results (repeatable). Allowed fields: event_id, status
 
     #[arg(long = "filter", value_parser = parse_key_value)]
     pub filters: Vec<(String, String)>,

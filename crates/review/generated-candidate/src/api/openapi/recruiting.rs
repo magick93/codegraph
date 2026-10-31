@@ -40,6 +40,70 @@ use utoipa::OpenApi;
         crate::api::recruiting::application_handler::list,
 
 
+
+        crate::api::recruiting::grant_application_handler::create,
+
+
+        crate::api::recruiting::grant_application_handler::get_by_id,
+
+
+        crate::api::recruiting::grant_application_handler::update,
+
+
+        crate::api::recruiting::grant_application_handler::delete,
+
+
+        crate::api::recruiting::grant_application_handler::list,
+
+
+
+        crate::api::recruiting::grant_audit_trail_handler::create,
+
+
+        crate::api::recruiting::grant_audit_trail_handler::get_by_id,
+
+
+        crate::api::recruiting::grant_audit_trail_handler::update,
+
+
+        crate::api::recruiting::grant_audit_trail_handler::delete,
+
+
+        crate::api::recruiting::grant_audit_trail_handler::list,
+
+
+
+        crate::api::recruiting::grant_panel_minute_handler::create,
+
+
+        crate::api::recruiting::grant_panel_minute_handler::get_by_id,
+
+
+        crate::api::recruiting::grant_panel_minute_handler::update,
+
+
+        crate::api::recruiting::grant_panel_minute_handler::delete,
+
+
+        crate::api::recruiting::grant_panel_minute_handler::list,
+
+
+
+        crate::api::recruiting::grant_review_note_handler::create,
+
+
+        crate::api::recruiting::grant_review_note_handler::get_by_id,
+
+
+        crate::api::recruiting::grant_review_note_handler::update,
+
+
+        crate::api::recruiting::grant_review_note_handler::delete,
+
+
+        crate::api::recruiting::grant_review_note_handler::list,
+
+
     ),
     components(schemas(
 
@@ -65,6 +129,50 @@ use utoipa::OpenApi;
 
         crate::domain::recruiting::application::dto_response::ApplicationResponse,
 
+
+        crate::domain::recruiting::grant_application::dto_create::CreateGrantApplicationRequest,
+        crate::api::recruiting::grant_application_handler::CreateGrantApplicationBody,
+        crate::api::recruiting::grant_application_handler::BulkCreateResponse,
+        crate::error::BulkItemError,
+
+
+        crate::domain::recruiting::grant_application::dto_update::UpdateGrantApplicationRequest,
+
+        crate::domain::recruiting::grant_application::dto_response::GrantApplicationResponse,
+
+
+        crate::domain::recruiting::grant_audit_trail::dto_create::CreateGrantAuditTrailRequest,
+        crate::api::recruiting::grant_audit_trail_handler::CreateGrantAuditTrailBody,
+        crate::api::recruiting::grant_audit_trail_handler::BulkCreateResponse,
+        crate::error::BulkItemError,
+
+
+        crate::domain::recruiting::grant_audit_trail::dto_update::UpdateGrantAuditTrailRequest,
+
+        crate::domain::recruiting::grant_audit_trail::dto_response::GrantAuditTrailResponse,
+
+
+        crate::domain::recruiting::grant_panel_minute::dto_create::CreateGrantPanelMinuteRequest,
+        crate::api::recruiting::grant_panel_minute_handler::CreateGrantPanelMinuteBody,
+        crate::api::recruiting::grant_panel_minute_handler::BulkCreateResponse,
+        crate::error::BulkItemError,
+
+
+        crate::domain::recruiting::grant_panel_minute::dto_update::UpdateGrantPanelMinuteRequest,
+
+        crate::domain::recruiting::grant_panel_minute::dto_response::GrantPanelMinuteResponse,
+
+
+        crate::domain::recruiting::grant_review_note::dto_create::CreateGrantReviewNoteRequest,
+        crate::api::recruiting::grant_review_note_handler::CreateGrantReviewNoteBody,
+        crate::api::recruiting::grant_review_note_handler::BulkCreateResponse,
+        crate::error::BulkItemError,
+
+
+        crate::domain::recruiting::grant_review_note::dto_update::UpdateGrantReviewNoteRequest,
+
+        crate::domain::recruiting::grant_review_note::dto_response::GrantReviewNoteResponse,
+
     )),
     security(("ApiKeyAuth" = [])),
     tags(
@@ -72,6 +180,14 @@ use utoipa::OpenApi;
         (name = "Candidate", description = "Recruiting / Candidate operations"),
 
         (name = "Application", description = "Recruiting / Application operations"),
+
+        (name = "GrantApplication", description = "Recruiting / GrantApplication operations"),
+
+        (name = "GrantAuditTrail", description = "Recruiting / GrantAuditTrail operations"),
+
+        (name = "GrantPanelMinute", description = "Recruiting / GrantPanelMinute operations"),
+
+        (name = "GrantReviewNote", description = "Recruiting / GrantReviewNote operations"),
 
     )
 )]

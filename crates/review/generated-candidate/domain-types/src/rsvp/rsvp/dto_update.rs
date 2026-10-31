@@ -4,7 +4,6 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 pub use crate::codelist::RsvpRsvpStatus;
-use super::dto_create::CreateRsvpEventBaseRequest;
 
 /// Request body for updating an existing Rsvp.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
@@ -13,11 +12,11 @@ use super::dto_create::CreateRsvpEventBaseRequest;
 pub struct UpdateRsvpRequest {
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<uuid::Uuid>,
+    #[garde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<RsvpRsvpStatus>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event: Option<CreateRsvpEventBaseRequest>,
 }

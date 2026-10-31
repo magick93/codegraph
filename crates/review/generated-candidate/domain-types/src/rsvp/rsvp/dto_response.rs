@@ -10,22 +10,9 @@ pub use crate::codelist::RsvpRsvpStatus;
 
 pub struct RsvpResponse {
     pub id: uuid::Uuid,
+    pub event_id: uuid::Uuid,
     pub status: RsvpRsvpStatus,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event: Option<RsvpEventBaseResponse>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
-
-pub struct RsvpEventBaseResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capacity: Option<i64>,
-    pub title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub birth_date: Option<chrono::NaiveDate>,
-    pub family_name: String,
-    pub given_name: String,
 }

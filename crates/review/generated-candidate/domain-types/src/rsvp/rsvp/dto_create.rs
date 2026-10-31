@@ -11,28 +11,9 @@ pub use crate::codelist::RsvpRsvpStatus;
 #[serde(deny_unknown_fields)]
 pub struct CreateRsvpRequest {
     #[garde(skip)]
+    pub event_id: uuid::Uuid,
+    #[garde(skip)]
     pub status: RsvpRsvpStatus,
     #[garde(skip)]
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub event: Option<CreateRsvpEventBaseRequest>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
-
-#[serde(deny_unknown_fields)]
-pub struct CreateRsvpEventBaseRequest {
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capacity: Option<i64>,
-    #[garde(skip)]
-    pub title: String,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub birth_date: Option<chrono::NaiveDate>,
-    #[garde(skip)]
-    pub family_name: String,
-    #[garde(skip)]
-    pub given_name: String,
 }

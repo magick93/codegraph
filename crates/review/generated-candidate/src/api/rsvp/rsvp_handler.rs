@@ -425,6 +425,8 @@ fn default_page_size() -> u64 { 20 }
 /// Allowed filter keys for this entity (includes nested child/grandchild fields via dot notation).
 const ALLOWED_FILTER_KEYS: &[&str] = &[
 
+    "event_id",
+
     "status",
 
 

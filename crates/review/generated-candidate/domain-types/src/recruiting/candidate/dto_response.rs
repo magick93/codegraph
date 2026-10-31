@@ -24,6 +24,8 @@ pub struct CandidateResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compensation_expectation_currency: Option<CurrencyCodeList>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub distribution_guidelines_id: Option<uuid::Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub external_identifier: Option<IdentifierType>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gender: Option<GenderCodeList>,
@@ -37,8 +39,6 @@ pub struct CandidateResponse {
     pub uri: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub application_process_history: Option<CandidateProcessHistoryResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub distribution_guidelines: Option<CandidateDistributionGuidelinesResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub person_name: Option<CandidateNameResponse>,
     pub position_schedule_type_codes: Vec<CandidatePositionScheduleTypeCodesResponse>,
@@ -57,20 +57,6 @@ pub struct CandidateProcessHistoryResponse {
     pub action_date: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub descriptions: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
-
-pub struct CandidateDistributionGuidelinesResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub do_not_redistribute_indicator: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end_date: Option<chrono::NaiveDate>,
-    pub start_date: chrono::NaiveDate,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]

@@ -30,7 +30,7 @@ function testData(): Partial<Record<keyof CreateCandidateRequest | 'code', unkno
     'candidate_id': 'Test Candidate Id',
     'compensation_expectation': 42.5,
     'compensation_expectation_currency': 'USD',
-    // 'distribution_guidelines': ValueObject — omit, serde default
+    // 'distribution_guidelines_id': entity ref — emitted by _dep_setup.tera
     'external_identifier': { value: 'Test External Identifier' },
     'gender': 'Male',
     // 'person_name': ValueObject — omit, serde default
@@ -78,7 +78,7 @@ test.describe('Candidate Manager Team', () => {
     await expect(ui.field('candidate_id')).toBeVisible();
     await expect(ui.field('compensation_expectation')).toBeVisible();
     await expect(ui.field('compensation_expectation_currency')).toBeVisible();
-    await expect(ui.field('distribution_guidelines')).toBeVisible();
+    await expect(ui.field('distribution_guidelines_id')).toBeVisible();
     await expect(ui.field('external_identifier')).toBeVisible();
     await expect(ui.field('gender')).toBeVisible();
     await expect(ui.field('person_name')).toBeVisible();

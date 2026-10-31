@@ -1,0 +1,25 @@
+namespace review.gate.recruiting
+version "1.0.0"
+
+type GrantApplicationType:
+	id string (1..1) [metadata id]
+	reference string (1..1)
+	amount number (1..1)
+	title string (0..1)
+	summary string (0..1)
+	lodgedOn dateTime (0..1)
+	approved boolean (0..1)
+	category string (0..1)
+	notes string (0..1)
+
+	eligibility rule PositiveGrant from GrantApplicationType: <"grants with a positive amount may proceed">
+		amount > 0.0
+
+type GrantReviewNoteType:
+	application GrantApplicationType (1..1)
+
+type GrantPanelMinuteType:
+	application GrantApplicationType (1..1)
+
+type GrantAuditTrailType:
+	application GrantApplicationType (1..1)

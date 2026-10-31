@@ -34,7 +34,7 @@
 
 	const columns = [
 
-		{ key: 'event', label: m.rsvp_rsvp_field_event() },
+		{ key: 'event_id', label: m.rsvp_rsvp_field_event_id() },
 
 		{ key: 'status', label: m.rsvp_rsvp_field_status() },
 

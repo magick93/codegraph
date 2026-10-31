@@ -219,9 +219,59 @@ errors non-fatally — a broken binding must never half-generate.
   the in-crate `ddd::functions_sql` lowering unit tests.
 - Deferred: VO-typed exposed signatures (VO projection),
   worker-topology routing of the functions plane (incl. function-event
-  consumer placement), B2 eligibility-rule endpoint guards (#338), the
+  consumer placement), the
   `.evt`-only monolith drain-spawn gap (pre-existing — the spawn widened
   for function events only), sql auto-invocation from event consumers.
+  B2 eligibility-rule endpoint guards (#338) have LANDED: see
+  "Eligibility rules → real endpoint guards (issue #338)" below.
+
+## Eligibility rules → real endpoint guards (issue #338)
+
+Sigil `eligibility rule N from T: expr` is now a REAL guard, not
+doc-comment wiring. `ddd/rules.rs` owns the shared resolution:
+`eligibility_guards_for(db, config, domain, title) -> Vec<EligibilityGuard>`
+(eligibility rules whose body transpiles to `bool` over the entity's
+resolved ApiOperations restricted to create/read/update/delete — list and
+search row-filtering stay a documented follow-up).
+
+- **Emitted `rules.rs` functions take the real record type** —
+  `pub fn {snake}(input: &{Entity}Response) -> bool`, imported from the
+  entity's `dto_response` module (pre-#338 they referenced the bare sigil
+  title, which resolves to nothing in the generated app). Unresolvable
+  inputs keep the bare title.
+- **Handler-site insertion** (`templates/api/handler.tera` + the
+  pre-rendered guard blocks `build_guard_blocks` passes in the context —
+  whitespace-exact so flag-off stays byte-identical): update/delete
+  load-or-404 then evaluate (the root handler gains the load; the child
+  handler binds its existing ownership load via `let existing`); get_by_id
+  evaluates over the loaded record; create evaluates over the CREATED
+  record and an ineligible write is COMPENSATED (a commands.delete, the
+  auditable soft-delete shape) before the 403. Denials are
+  `AppError::forbidden` naming the rule; the four guarded utoipa responses
+  document the 403.
+- **Flag plumbing**: the handler flag rides the build plan —
+  `HandlerGenerator::with_rules_guards(plan.has_domain_gen("rules"))`,
+  registry-wired — plus monolith topology (rules.rs is not
+  worker-routed, so a worker-crate handler could not resolve the module;
+  guards stay doc-only under workers). No rules in the graph ⇒ empty
+  context ⇒ byte-identical handler (ux canaries hold).
+- **Fixture**: `tests/fixtures/rosetta/grant.rosetta` —
+  `GrantApplicationType` (auto-scores entity: in_degree 3 + 9 fields) with
+  `eligibility rule PositiveGrant: amount > 0.0`, bridged into the review
+  fixture by the shared regen (which now ingests the rosetta model and
+  runs the driver's auto-classify pass). The checked-in fixture tree is
+  regenerated (enumerated: the grant entity plane, rules.rs, the guarded
+  handler, hurl renumbering) plus the hand-authored
+  `hurl/90_eligibility_rule_403.hurl` (survives regen).
+- Gates: `cargo test -p codegraph --test template_harness ::
+  rules_guards` (8, node-free PR-CI) + the updated
+  `rosetta_rule_tests` golden (record-typed signatures + import + new
+  guard-wiring doc) + `--test rules_guard_api_gate -- --ignored` (the
+  live acceptance gate: fixture regen → migrations (pgmq shim per
+  `authz_contract`) → axum boot → hurl 403/201 + psql compensation proof).
+- Deferred: list/search row-filtering (guards evaluate per record only),
+  bulk-create guard coverage, rules over pre-load context (auth context +
+  path params), workers-topology guard routing.
 
 
 ## mox op/derived consuming generator (issue #501, quality bar #508, compile contract #517)

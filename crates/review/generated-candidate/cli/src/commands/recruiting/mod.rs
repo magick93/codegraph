@@ -6,6 +6,14 @@ use clap::Subcommand;
 use crate::client::ApiClient;
 use crate::output::OutputFormat;
 
+pub mod grant_application;
+
+pub mod grant_audit_trail;
+
+pub mod grant_panel_minute;
+
+pub mod grant_review_note;
+
 pub mod application;
 
 pub mod candidate;
@@ -13,6 +21,30 @@ pub mod candidate;
 
 #[derive(Subcommand)]
 pub enum RecruitingCommand {
+
+    /// Manage grant_applications
+    GrantApplication {
+        #[command(subcommand)]
+        command: grant_application::GrantApplicationCommand,
+    },
+
+    /// Manage grant_audit_trails
+    GrantAuditTrail {
+        #[command(subcommand)]
+        command: grant_audit_trail::GrantAuditTrailCommand,
+    },
+
+    /// Manage grant_panel_minutes
+    GrantPanelMinute {
+        #[command(subcommand)]
+        command: grant_panel_minute::GrantPanelMinuteCommand,
+    },
+
+    /// Manage grant_review_notes
+    GrantReviewNote {
+        #[command(subcommand)]
+        command: grant_review_note::GrantReviewNoteCommand,
+    },
 
     /// Manage applications
     Application {
@@ -34,6 +66,22 @@ pub async fn execute(
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     match cmd {
+
+        RecruitingCommand::GrantApplication { command } => {
+            grant_application::execute(command, client, format).await
+        }
+
+        RecruitingCommand::GrantAuditTrail { command } => {
+            grant_audit_trail::execute(command, client, format).await
+        }
+
+        RecruitingCommand::GrantPanelMinute { command } => {
+            grant_panel_minute::execute(command, client, format).await
+        }
+
+        RecruitingCommand::GrantReviewNote { command } => {
+            grant_review_note::execute(command, client, format).await
+        }
 
         RecruitingCommand::Application { command } => {
             application::execute(command, client, format).await

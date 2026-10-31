@@ -27,11 +27,7 @@
 	// Form state
 
 
-	let event = $state<Record<string, unknown>>(
-		typeof initialData?.event === 'object' && initialData?.event !== null && !Array.isArray(initialData?.event)
-			? (initialData?.event as Record<string, unknown>)
-			: {}
-	);
+	let event_id = $state(String(initialData?.event_id ?? ''));
 
 
 
@@ -50,7 +46,7 @@
 		if (mode === 'create') {
 
 
-			if ((event as Record<string, unknown>).value) data['event'] = event;
+			if (event_id) data['event_id'] = event_id;
 
 
 
@@ -65,7 +61,7 @@
 			// Edit mode: only send changed fields
 
 
-			if (JSON.stringify(event) !== JSON.stringify(initialData?.event ?? {})) data['event'] = event;
+			if (event_id !== String(initialData?.event_id ?? '')) data['event_id'] = event_id;
 
 
 
@@ -87,21 +83,14 @@
 
 
 		<Field.Field>
-			<StructuredWrapperField
-				label={m.rsvp_rsvp_field_event()}
-				required={true}
-				isArray={false}
-				fieldName="event"
-				subFields={[
-					{ name: 'familyName', label: 'Family Name', required: true, showByDefault: true, description: `Last name` },
-					{ name: 'givenName', label: 'Given Name', required: true, showByDefault: true, description: `First name` },
-					{ name: 'title', label: 'Title', required: true, showByDefault: true, description: `Event title` },
-					{ name: 'birthDate', label: 'Birth Date', required: false, showByDefault: false, description: `` },
-					{ name: 'capacity', label: 'Capacity', required: false, showByDefault: false, description: `` },
-					
-				]}
-				bind:value={event}
-				disabled={submitting}
+			<Field.Label for="event_id">{m.rsvp_rsvp_field_event_id()} <span class="text-destructive">*</span></Field.Label>
+			<Input
+				id="event_id"
+				type="text"
+				bind:value={event_id}
+				required aria-required="true"
+				
+				disabled={mode === 'edit' && false}
 			/>
 
 			<Field.Description>The event this RSVP is for (required value object that resolves to an entity)</Field.Description>

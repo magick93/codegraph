@@ -37,6 +37,9 @@ pub struct Model {
     pub compensation_expectation_currency: Option<String>,
 
 
+    pub distribution_guidelines_id: Option<Uuid>,
+
+
     #[sea_orm(column_type = "JsonBinary")]
 
     pub external_identifier: Option<serde_json::Value>,

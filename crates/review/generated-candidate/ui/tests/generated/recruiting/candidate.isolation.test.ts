@@ -31,7 +31,7 @@ function testData(): Partial<Record<keyof CreateCandidateRequest | 'code', unkno
     'candidate_id': 'ACME Isolation Candidate Id',
     'compensation_expectation': 42.5,
     'compensation_expectation_currency': 'USD',
-    // 'distribution_guidelines': ValueObject — omit, serde default
+    // 'distribution_guidelines_id': entity ref — emitted by _dep_setup.tera
     'external_identifier': { value: 'ACME Isolation External Identifier' },
     'gender': 'Male',
     // 'person_name': ValueObject — omit, serde default

@@ -16,7 +16,7 @@ pub struct Model {
     pub platform_organization_id: Uuid,
 
 
-    pub event_id: Option<Uuid>,
+    pub event_id: Uuid,
 
 
     pub status: String,

@@ -99,16 +99,10 @@
 			<dl class="divide-y divide-border">
 
 				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
-					<dt class="text-sm font-medium text-muted-foreground">{m.rsvp_rsvp_field_event()}</dt>
-					<dd class="text-sm sm:col-span-2" data-testid="rsvp-field-event">
+					<dt class="text-sm font-medium text-muted-foreground">{m.rsvp_rsvp_field_event_id()}</dt>
+					<dd class="text-sm sm:col-span-2" data-testid="rsvp-field-event_id">
 
-						{#if item.event}
-							{@const obj = item.event as Record<string, unknown>}
-							{fmt.formatEventBaseType(item.event)}
-							{#if obj.schemeId}
-								<span class="text-muted-foreground text-xs">({obj.schemeId})</span>
-							{/if}
-						{:else}—{/if}
+						{item.event_id ?? '—'}
 
 					</dd>
 				</div>

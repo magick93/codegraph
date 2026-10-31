@@ -455,6 +455,8 @@ const ALLOWED_FILTER_KEYS: &[&str] = &[
 
     "candidate_id",
 
+    "distribution_guidelines_id",
+
     "gender",
 
     "referred_by_application_id",

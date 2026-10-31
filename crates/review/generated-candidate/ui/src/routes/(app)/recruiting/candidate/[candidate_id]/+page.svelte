@@ -256,16 +256,10 @@
 				</div>
 
 				<div class="grid grid-cols-1 gap-1 px-4 py-3 sm:grid-cols-3 sm:gap-4">
-					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_distribution_guidelines()}</dt>
-					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-distribution_guidelines">
+					<dt class="text-sm font-medium text-muted-foreground">{m.recruiting_candidate_field_distribution_guidelines_id()}</dt>
+					<dd class="text-sm sm:col-span-2" data-testid="candidate-field-distribution_guidelines_id">
 
-						{#if item.distribution_guidelines}
-							{@const obj = item.distribution_guidelines as Record<string, unknown>}
-							{fmt.formatDistributionGuidelinesType(item.distribution_guidelines)}
-							{#if obj.schemeId}
-								<span class="text-muted-foreground text-xs">({obj.schemeId})</span>
-							{/if}
-						{:else}—{/if}
+						{item.distribution_guidelines_id ?? '—'}
 
 					</dd>
 				</div>

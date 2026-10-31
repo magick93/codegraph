@@ -24,10 +24,12 @@ const depIds: Record<string, string | string[]> = {};
 
 function testData(): Partial<Record<keyof CreateRsvpRequest | 'code', unknown>> {
   return {
-    // 'event': ValueObject — omit, serde default
+    // 'event_id': entity ref — emitted by _dep_setup.tera
     'status': 'Confirmed',
     'timestamp': '2026-01-15T08:00:00Z',
 
+
+    ...(depIds['event_id'] ? { 'event_id': depIds['event_id'] } : {}),
 
   };
 }
@@ -42,6 +44,9 @@ test.describe('Rsvp Cross-Org Isolation', () => {
 
 
 
+    const dep_1 = await createEntityAsAcme(orgContext, '/common/event-base', { 'capacity': 42, 'title': 'Test Title', 'birth_date': '2026-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name' });
+    depIds['event_id'] = dep_1['id'] as string;
+
     // Create entity as ACME owner
     const entity = await createEntityAsAcme(
       orgContext,
@@ -51,6 +56,26 @@ test.describe('Rsvp Cross-Org Isolation', () => {
     acmeEntityId = entity.id as string;
 });
 
+
+  test.afterAll(async ({ orgContext }) => {
+
+const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
+
+    {
+      const ids = depIds['event_id'];
+      if (ids) {
+        for (const id of (Array.isArray(ids) ? ids : [ids])) {
+          try {
+            await fetch(`${baseUrl}/api/v1/common/event-base/${id}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+            });
+          } catch { /* best effort */ }
+        }
+      }
+    }
+
+  });
 
 
 
@@ -63,7 +88,7 @@ test.describe('Rsvp Cross-Org Isolation', () => {
     // Either the table is visible (without ACME data) or empty state is shown
     const tableVisible = await table.isVisible().catch(() => false);
     if (tableVisible) {
-      await expect(table).not.toContainText(String(data['event'] ?? ''));
+      await expect(table).not.toContainText(String(data['event_id'] ?? ''));
     } else {
       await expect(empty).toBeVisible();
     }

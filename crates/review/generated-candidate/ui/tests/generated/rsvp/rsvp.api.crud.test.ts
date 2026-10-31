@@ -33,7 +33,7 @@ function testData(): Partial<Record<keyof CreateRsvpRequest | 'code', unknown>> 
   return {
 
 
-    // 'event': ValueObject — omit, serde default
+    // 'event_id': entity ref — emitted by _dep_setup.tera
 
 
 
@@ -46,6 +46,8 @@ function testData(): Partial<Record<keyof CreateRsvpRequest | 'code', unknown>> 
 
 
 
+    ...(depIds['event_id'] ? { 'event_id': depIds['event_id'] } : {}),
+
   };
 }
 
@@ -53,7 +55,7 @@ function updatedData(): Partial<Record<keyof CreateRsvpRequest | 'code', unknown
   return {
 
 
-    // 'event': ValueObject — omit, serde default
+    // 'event_id': entity ref — emitted by _dep_setup.tera
 
 
 
@@ -66,11 +68,44 @@ function updatedData(): Partial<Record<keyof CreateRsvpRequest | 'code', unknown
 
 
 
+    ...(depIds['event_id'] ? { 'event_id': depIds['event_id'] } : {}),
+
   };
 }
 
 test.describe('Rsvp CRUD', () => {
 
+
+  test.beforeAll(async ({ orgContext }) => {
+
+
+
+
+    const dep_1 = await createEntityAsAcme(orgContext, '/common/event-base', { 'capacity': 42, 'title': 'Test Title', 'birth_date': '2026-01-15', 'family_name': 'Test Family Name', 'given_name': 'Test Given Name' });
+    depIds['event_id'] = dep_1['id'] as string;
+
+  });
+
+  test.afterAll(async ({ orgContext }) => {
+
+const baseUrl = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
+
+    {
+      const ids = depIds['event_id'];
+      if (ids) {
+        for (const id of (Array.isArray(ids) ? ids : [ids])) {
+          try {
+            await fetch(`${baseUrl}/api/v1/common/event-base/${id}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${orgContext.acme.apiKey}` },
+            });
+          } catch { /* best effort */ }
+        }
+      }
+    }
+
+
+  });
 
 
   test('list page loads with table', async ({ ownerPage: page }) => {
@@ -94,7 +129,7 @@ test.describe('Rsvp CRUD', () => {
 
 
 
-    // 'event': ValueObject — provide nested structure in testData()
+    await ui.fillEventId(String(data['event_id'] ?? ''));
 
 
 
@@ -119,8 +154,8 @@ test.describe('Rsvp CRUD', () => {
     // Verify field values on detail page (only check fields present on the page)
 
 
-    if (await ui.field('event').count() > 0) {
-      await expect(ui.field('event')).toBeVisible();
+    if (await ui.field('event_id').count() > 0) {
+      await expect(ui.field('event_id')).toBeVisible();
     }
 
 
@@ -186,7 +221,7 @@ test.describe('Rsvp CRUD', () => {
     await expect(ui.detailHeading()).toBeVisible();
 
 
-    await expect(ui.field('event')).toBeVisible();
+    await expect(ui.field('event_id')).toBeVisible();
 
     await expect(ui.field('status')).toBeVisible();
 
@@ -210,7 +245,7 @@ test.describe('Rsvp CRUD', () => {
 
 
 
-    // 'event': ValueObject — form uses structured sub-fields, POM omits fill
+    await ui.fillEventId(String(data['event_id'] ?? ''));
 
 
 
@@ -231,8 +266,8 @@ test.describe('Rsvp CRUD', () => {
     // Verify updated values (only check fields present on the page)
 
 
-    if (await ui.field('event').count() > 0) {
-      await expect(ui.field('event')).toBeVisible();
+    if (await ui.field('event_id').count() > 0) {
+      await expect(ui.field('event_id')).toBeVisible();
     }
 
 

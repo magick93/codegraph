@@ -161,8 +161,17 @@ export class RsvpPage extends BasePage {
 
 
 
-  // 'event' ValueObject — the form renders its own structured
-  // sub-fields; the create body omits it (serde default).
+  /** Entity refs are filled from the created dependency id. */
+  async fillEventId(value: string): Promise<void> {
+    if (!value) {
+      return;
+    }
+    const el = this.formInput('event_id');
+    if (await el.isVisible()) {
+      await el.clear();
+      await el.fill(value);
+    }
+  }
 
 
 

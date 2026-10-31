@@ -52,7 +52,7 @@ pub async fn api_catalog() -> Json<Vec<ApiCatalogEntry>> {
             label: "Recruiting".to_string(),
             spec_url: "/api-docs/recruiting/openapi.json".to_string(),
             docs_url: "/swagger-ui/?urls.primaryName=Recruiting".to_string(),
-            entity_count: 2,
+            entity_count: 6,
         },
 
         ApiCatalogEntry {

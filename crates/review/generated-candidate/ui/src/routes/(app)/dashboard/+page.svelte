@@ -53,8 +53,12 @@
 		{
 			name: 'recruiting',
 			label: 'Recruiting',
-			entityCount: 2,
+			entityCount: 6,
 			entities: [
+				{ name: 'GrantApplication', path: '/recruiting/grant-application', label: 'Grant Application' },
+				{ name: 'GrantAuditTrail', path: '/recruiting/grant-audit-trail', label: 'Grant Audit Trail' },
+				{ name: 'GrantPanelMinute', path: '/recruiting/grant-panel-minute', label: 'Grant Panel Minute' },
+				{ name: 'GrantReviewNote', path: '/recruiting/grant-review-note', label: 'Grant Review Note' },
 				{ name: 'Application', path: '/recruiting/applications', label: 'Application' },
 				{ name: 'Candidate', path: '/recruiting/candidate', label: 'Candidate' },
 			]

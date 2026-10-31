@@ -243,7 +243,7 @@ generators. Each must ALSO be listed in an `[api]` generators list
 |-----------|-------|
 | `condition_validations` | `src/domain/<domain>/validations.rs` — one `validate_{entity}_items` per array-bounded entity, one `validate_{condition}` per transpilable `ConditionNode`, a `// TODO(#262)` marker per condition that cannot transpile yet (naming the unsupported kind), plus the bridge-derived one_of option sets |
 | `functions` | `src/domain/<domain>/functions.rs` — one Rust free function per `FunctionNode`: `set` → assignment, `add` → `push`/`+=`, aliases → `let`-bindings (declaration order), dispatch heads → `match` over extending children, `[transform]` annotations as doc-comment metadata |
-| `rules` | `src/domain/<domain>/rules.rs` — reporting rules as computed-field functions attached to their input entity; eligibility rules as boolean endpoint guards whose doc comments name the `ApiOperation`s they gate (handler-site insertion is a documented follow-up) |
+| `rules` | `src/domain/<domain>/rules.rs` — reporting rules as computed-field functions attached to their input entity; eligibility rules as boolean endpoint guards typed over the entity's real `{Entity}Response` record, whose doc comments name the `ApiOperation`s they gate. Handler-site insertion (issue #338) is DONE: the handler generator evaluates every resolved guard before the entity's create/read/update/delete operations (load-or-404 → evaluate → 403; an ineligible create is compensated with a delete) and `list`/`search` row-filtering stays a documented follow-up |
 | `regulatory_reports` | `src/domain/<domain>/regulatory_reports.rs` — one module per corpus with an API endpoint stub and a rule-dispatch table seeded from the corpus' reports (rules bound via rule-source `RuleReference` edges), plus rule-source and `[transform]` hook stubs; deliberately inert (match arms return `None`) so it compiles standalone |
 
 With all four enabled the generated crate still compiles: untranspilable
@@ -312,9 +312,12 @@ output: the single-file layout, no routes, no OpenAPI entries, no
 AppState slots.
 
 Deferred: `sql`/`external`/`event` placements (#339/#340), VO-typed
-signatures for exposed functions (VO projection), worker-topology
-function routing (the functions plane emits at the output root), and
-handler-site eligibility-rule guards (B2 #338).
+signatures for exposed functions (VO projection), and worker-topology
+function routing (the functions plane emits at the output root).
+Handler-site eligibility-rule guards (B2 #338) have LANDED: the handler
+plane gates create/read/update/delete behind the modeled rule booleans
+(monolith topology, `rules` generator in the plan; list/search
+row-filtering is the recorded follow-up).
 
 ## Mixed JSON + rosetta runs
 

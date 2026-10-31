@@ -81,7 +81,7 @@ pub struct CandidateListArgs {
     #[arg(long, default_value_t = 20)]
     pub page_size: u64,
 
-    /// Filter results (repeatable). Allowed fields: candidate_id, gender, referred_by_application_id, status, compensation_expectation.currency
+    /// Filter results (repeatable). Allowed fields: candidate_id, distribution_guidelines_id, gender, referred_by_application_id, status, compensation_expectation.currency
 
     #[arg(long = "filter", value_parser = parse_key_value)]
     pub filters: Vec<(String, String)>,

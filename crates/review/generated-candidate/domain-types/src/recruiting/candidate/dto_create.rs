@@ -31,6 +31,9 @@ pub struct CreateCandidateRequest {
     pub compensation_expectation_currency: Option<CurrencyCodeList>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution_guidelines_id: Option<uuid::Uuid>,
+    #[garde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_identifier: Option<IdentifierType>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -52,9 +55,6 @@ pub struct CreateCandidateRequest {
     pub application_process_history: Option<CreateCandidateProcessHistoryRequest>,
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub distribution_guidelines: Option<CreateCandidateDistributionGuidelinesRequest>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub person_name: Option<CreateCandidateNameRequest>,
     #[garde(skip)]
     #[serde(default)]
@@ -74,26 +74,6 @@ pub struct CreateCandidateProcessHistoryRequest {
     #[garde(skip)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub descriptions: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
-
-#[serde(deny_unknown_fields)]
-pub struct CreateCandidateDistributionGuidelinesRequest {
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub do_not_redistribute_indicator: Option<bool>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub scope: Option<String>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[garde(skip)]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_date: Option<chrono::NaiveDate>,
-    #[garde(skip)]
-    pub start_date: chrono::NaiveDate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, garde::Validate)]
