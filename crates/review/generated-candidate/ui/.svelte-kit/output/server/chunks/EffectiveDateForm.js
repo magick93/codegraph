@@ -14,8 +14,8 @@ function EffectiveDateForm($$renderer, $$props) {
 			valid_to: z.iso.date().optional()
 		});
 		const defaultValues = {
-			valid_from: String(initialData?.valid_from ?? ""),
-			valid_to: String(initialData?.valid_to ?? "")
+			valid_from: initialData?.valid_from || void 0,
+			valid_to: initialData?.valid_to || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

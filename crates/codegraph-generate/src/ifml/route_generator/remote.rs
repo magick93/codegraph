@@ -204,42 +204,52 @@ fn render_command(c: &RemoteCommand) -> String {
             s.push_str("\t\theaders: { 'Content-Type': 'application/json' },\n");
             s.push_str("\t\tbody: JSON.stringify(args.data)\n");
             s.push_str("\t});\n");
+            s.push_str("\tconst created = await response.json().catch(() => null);\n");
+            s.push_str("\tif (!response.ok) {\n");
+            s.push_str("\t\treturn { ok: false, message: created?.error ?? created?.message ?? `Request failed (${response.status})` };\n");
+            s.push_str("\t}\n");
+            // The created/updated row id rides back for post-submit
+            // navigation (issue #572: a create-mode submit navigates to
+            // `${result.id ?? viewParams.<param>}` — the view param is
+            // empty in create mode, so the row id is the only real target).
+            s.push_str("\treturn { ok: true, id: created?.data?.id ?? created?.id as string | undefined };\n");
+            s.push_str("});\n");
         }
-        RemoteCommandKind::Transition => {
+        kind => {
+            let (args_type, path, body) = match kind {
+                RemoteCommandKind::Transition => (
+                    "{ id: string; to: string }",
+                    "`{base}/${args.id}/actions/transition`".replace("{base}", &c.base_path),
+                    "JSON.stringify({ target_state: args.to })",
+                ),
+                RemoteCommandKind::Op(op) => (
+                    "{ id: string }",
+                    format!(
+                        "`{}/{}/actions/{op}`",
+                        c.base_path.replace('`', ""),
+                        "${args.id}"
+                    ),
+                    "JSON.stringify({})",
+                ),
+                RemoteCommandKind::Create | RemoteCommandKind::Update => unreachable!(),
+            };
             s.push_str(&format!(
-                "export const {export_} = command('unchecked', async (args: {{ id: string; to: string }}) => {{\n",
+                "export const {export_} = command('unchecked', async (args: {args_type}) => {{\n",
                 export_ = c.export
             ));
-            s.push_str(&format!(
-                "\tconst response = await apiFetch(`{base}/${{args.id}}/actions/transition`, {{\n",
-                base = c.base_path
-            ));
+            s.push_str(&format!("\tconst response = await apiFetch({path}, {{\n"));
             s.push_str("\t\tmethod: 'POST',\n");
             s.push_str("\t\theaders: { 'Content-Type': 'application/json' },\n");
-            s.push_str("\t\tbody: JSON.stringify({ target_state: args.to })\n");
+            s.push_str(&format!("\t\tbody: {body}\n"));
             s.push_str("\t});\n");
-        }
-        RemoteCommandKind::Op(op) => {
-            s.push_str(&format!(
-                "export const {export_} = command('unchecked', async (args: {{ id: string }}) => {{\n",
-                export_ = c.export
-            ));
-            s.push_str(&format!(
-                "\tconst response = await apiFetch(`{base}/${{args.id}}/actions/{op}`, {{\n",
-                base = c.base_path
-            ));
-            s.push_str("\t\tmethod: 'POST',\n");
-            s.push_str("\t\theaders: { 'Content-Type': 'application/json' },\n");
-            s.push_str("\t\tbody: JSON.stringify({})\n");
-            s.push_str("\t});\n");
+            s.push_str("\tif (!response.ok) {\n");
+            s.push_str("\t\tconst body = await response.json().catch(() => null);\n");
+            s.push_str("\t\treturn { ok: false, message: body?.error ?? body?.message ?? `Request failed (${response.status})` };\n");
+            s.push_str("\t}\n");
+            s.push_str("\treturn { ok: true };\n");
+            s.push_str("});\n");
         }
     }
-    s.push_str("\tif (!response.ok) {\n");
-    s.push_str("\t\tconst body = await response.json().catch(() => null);\n");
-    s.push_str("\t\treturn { ok: false, message: body?.error ?? body?.message ?? `Request failed (${response.status})` };\n");
-    s.push_str("\t}\n");
-    s.push_str("\treturn { ok: true };\n");
-    s.push_str("});\n");
     s
 }
 

@@ -1764,7 +1764,7 @@ fn load_context_renders_param_default_fallbacks() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[list, details], "/", false, false);
+    let ctx = build_load_context("v1", &vc, &[list, details], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("viewParams['slug'] = url.searchParams.get('slug') ?? 'home';"),
@@ -1798,7 +1798,7 @@ fn load_context_renders_param_default_fallbacks() {
         ..vc
     };
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
-    let ctx = build_load_context("v1", &bare_vc, &[list], "/", false, false);
+    let ctx = build_load_context("v1", &bare_vc, &[list], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("viewParams['customerId'] = url.searchParams.get('customerId') ?? '';"),
@@ -1811,7 +1811,7 @@ fn paramless_view_load_stays_free_of_param_resolution() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false, false);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(!rendered.contains("viewParams"), "{rendered}");
     assert!(!rendered.contains("result.params"), "{rendered}");
@@ -1836,7 +1836,7 @@ fn role_guard_renders_at_top_of_load_function() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[], "/", false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { redirect } from '@sveltejs/kit';"),
@@ -1891,7 +1891,7 @@ fn no_roles_load_is_byte_identical_to_pre_guard_output() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[], "/", false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert_eq!(
         rendered,
@@ -2079,7 +2079,15 @@ fn capability_guard_renders_can_checks_and_denial_target() {
     ]);
     let target = denial_target(&model);
     assert_eq!(target, "/customerlist");
-    let ctx = build_load_context("v1", &model.view_containers[0], &[], &target, false, false);
+    let ctx = build_load_context(
+        "v1",
+        &model.view_containers[0],
+        &[],
+        &target,
+        false,
+        false,
+        false,
+    );
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { redirect } from '@sveltejs/kit';"),
@@ -2116,7 +2124,7 @@ fn combined_guard_renders_capability_check_before_roles_check() {
         vec!["admin".to_string()],
         vec!["manage_refunds".to_string()],
     );
-    let ctx = build_load_context("v1", &vc, &[], "/", false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { currentRoles } from '$lib/roles';"),
@@ -2584,6 +2592,7 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         has_submit: false,
         has_api_surface: false,
         remote_api: false,
+        auth_surface: false,
         has_action_buttons: false,
         tanstack_forms: false,
         view_role: None,
@@ -2764,7 +2773,15 @@ fn load_context_wires_first_list_with_pagination() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[list, second_list, details], "/", false, false);
+    let ctx = build_load_context(
+        "v1",
+        &vc,
+        &[list, second_list, details],
+        "/",
+        false,
+        false,
+        false,
+    );
     assert!(ctx.has_fetch);
     assert_eq!(ctx.components.len(), 3);
     assert!(ctx.components[0].fetch_list);
@@ -4015,7 +4032,7 @@ fn integrated_guard_decides_server_side_via_parent_roles() {
         vec!["admin".to_string()],
         vec!["manage_refunds".to_string()],
     );
-    let ctx = build_load_context("v1", &vc, &[], "/", true, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", true, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("async ({ params, url, fetch, parent }) => {"),
@@ -4094,6 +4111,7 @@ fn load_fetches_resolve_the_api_origin_and_carry_the_auth_header() {
         guard_consts: String::new(),
         integrated: false,
         remote_api: false,
+        auth_surface: false,
         denial_target: "/".to_string(),
     };
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
@@ -4134,6 +4152,7 @@ fn paramless_untyped_load_stays_free_of_api_plumbing() {
         guard_consts: String::new(),
         integrated: false,
         remote_api: false,
+        auth_surface: false,
         denial_target: "/".to_string(),
     };
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
@@ -4255,7 +4274,7 @@ fn remote_load_awaits_the_view_query_instead_of_client_fetching() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false, true);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, true, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
 
     assert!(
@@ -4297,6 +4316,7 @@ fn remote_item_query_takes_the_view_id_param() {
         "/",
         false,
         true,
+        false,
     );
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
 
@@ -4316,7 +4336,7 @@ fn remote_off_load_keeps_the_client_fetch_plane_byte_identical() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false, false);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
 
     assert!(rendered.contains("const API_BASE"), "{rendered}");
@@ -4497,4 +4517,161 @@ fn form_payload_keys_follow_the_dto_wire_casing() {
         camel.contains("payload.submittedAt ="),
         "camel casing camelCases the rust field name:\n{camel}"
     );
+}
+
+// ── #572 riders: binding lowering, created-id navigation, denial scoping ────
+
+#[test]
+fn navigate_bindings_lower_params_to_view_params() {
+    // `params.<x>` in a DSL navigate binding names the VIEW's param block —
+    // rendering it verbatim yields SvelteKit ROUTE params (empty for
+    // query-param views), so every create-submit navigation landed on
+    // `?id=undefined` (#572 journey-arrival failure).
+    let mut binding = HashMap::new();
+    binding.insert("id".to_string(), "params.id".to_string());
+    let url = nav_url_expr("CustomerDetail", &binding);
+    assert!(
+        url.contains("${viewParams.id}"),
+        "the binding must lower to viewParams: {url}"
+    );
+    assert!(!url.contains("${params.id}"), "{url}");
+
+    // Row-click handlers render through the same expression.
+    let evt = IfmlEvent {
+        name: "comp_grid_select".to_string(),
+        event_type: "select".to_string(),
+        params: Vec::new(),
+        requires: Vec::new(),
+        action: IfmlAction::Navigate {
+            target: "CustomerDetail".to_string(),
+            binding,
+        },
+    };
+    let rendered = render_event(&evt, &HashSet::new());
+    assert!(
+        rendered.url_expr.contains("viewParams.id"),
+        "{:?}",
+        rendered.url_expr
+    );
+}
+
+#[test]
+fn submit_navigation_prefers_the_created_id() {
+    // A create-mode submit navigates with the CREATED row's id (the command
+    // returns it); edit mode keeps the view param.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(IfmlEvent {
+        name: "comp_editor_save".to_string(),
+        event_type: "save".to_string(),
+        params: Vec::new(),
+        requires: Vec::new(),
+        action: IfmlAction::Navigate {
+            target: "CustomerDetail".to_string(),
+            binding: HashMap::from([("id".to_string(), "params.customerId".to_string())]),
+        },
+    });
+    let ctx = page_context_for_project(&vc, &remote_project());
+    let submit = ctx.components[0].submit.as_ref().expect("form submit");
+    let navigate = submit.navigate_url.as_ref().expect("save navigates");
+    assert!(
+        navigate.contains("${result.id ?? viewParams.customerId}"),
+        "submit navigation must prefer the created id:\n{navigate}"
+    );
+
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("goto(`/customerdetail?id=${result.id ?? viewParams.customerId}`)"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn create_command_returns_the_created_id() {
+    // The #572 journey-arrival fix: the command's success leg surfaces the
+    // created/updated row id so the navigation target is a real row.
+    let command = RemoteCommand {
+        export: "submitEditor".to_string(),
+        base_path: "/api/v1/customer".to_string(),
+        id_param: Some("customerId".to_string()),
+        kind: RemoteCommandKind::Create,
+    };
+    let mut module = super::remote::RemoteModuleContext::from_load(&PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerEdit".to_string(),
+        components: Vec::new(),
+        has_fetch: false,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: false,
+        remote_api: true,
+        auth_surface: false,
+        denial_target: "/".to_string(),
+    });
+    module.push_command(&command);
+    let rendered = module.render();
+    assert!(
+        rendered.contains(
+            "return { ok: true, id: created?.data?.id ?? created?.id as string | undefined };"
+        ),
+        "the create/update success leg must return the row id:\n{rendered}"
+    );
+
+    // Transition/Op keep the bare leg — no id contract.
+    let transition = RemoteCommand {
+        export: "transitionGrid".to_string(),
+        base_path: "/api/v1/customer".to_string(),
+        id_param: Some("customerId".to_string()),
+        kind: RemoteCommandKind::Transition,
+    };
+    let mut module = super::remote::RemoteModuleContext::from_load(&PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerEdit".to_string(),
+        components: Vec::new(),
+        has_fetch: false,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: false,
+        remote_api: true,
+        auth_surface: false,
+        denial_target: "/".to_string(),
+    });
+    module.push_command(&transition);
+    let rendered = module.render();
+    assert!(rendered.contains("return { ok: true };"), "{rendered}");
+    assert!(
+        !rendered.contains("id: created"),
+        "transition commands carry no id contract:\n{rendered}"
+    );
+}
+
+#[test]
+fn auth_surface_pages_carry_a_view_scoped_root() {
+    // The denial-presentation assertion needs a GUARDED-view-unique scope:
+    // the denial target legitimately renders its own mapped root with the
+    // SAME testid, so an unscoped `getByTestId('card')` can never be
+    // "not visible" (#572). The `data-view` wrapper scopes the POM.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut project = remote_project();
+    project.codegen.ifml_e2e_auth = true;
+    let mut vc = form_view(false);
+    vc.components[0].events.push(save_event());
+    let ctx = page_context_for_project(&vc, &project);
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains(r#"<div data-view="customeredit">"#),
+        "the auth-surface page wraps its body in a view-scoped root:\n{rendered}"
+    );
+
+    // Flag off: no wrapper (byte-identity).
+    let ctx_off = page_context_for(&vc, None);
+    let rendered_off = render_template(&tera, "ifml/svelte/page.tera", &ctx_off).expect("render");
+    assert!(!rendered_off.contains("data-view="), "{rendered_off}");
 }

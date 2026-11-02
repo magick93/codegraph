@@ -40,11 +40,11 @@
 
 		application_id: String(initialData?.application_id ?? ''),
 
-		applied_date: String(initialData?.applied_date ?? ''),
+		applied_date: initialData?.applied_date || undefined,
 
-		candidate_id: String(initialData?.candidate_id ?? ''),
+		candidate_id: initialData?.candidate_id || undefined,
 
-		status: String(initialData?.status ?? ''),
+		status: initialData?.status || undefined,
 
 	};
 

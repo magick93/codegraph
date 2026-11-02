@@ -47,23 +47,23 @@ function CandidateForm($$renderer, $$props) {
 			uri: z.string().optional()
 		});
 		const defaultValues = {
-			birth_date: String(initialData?.birth_date ?? ""),
+			birth_date: initialData?.birth_date || void 0,
 			family_name: String(initialData?.family_name ?? ""),
 			given_name: String(initialData?.given_name ?? ""),
 			application_process_history: typeof initialData?.application_process_history === "object" && initialData?.application_process_history !== null && !Array.isArray(initialData?.application_process_history) ? initialData?.application_process_history : {},
 			candidate_id: String(initialData?.candidate_id ?? ""),
 			compensation_expectation: initialData?.compensation_expectation != null ? Number(initialData?.compensation_expectation) : void 0,
-			compensation_expectation_currency: String(initialData?.compensation_expectation_currency ?? ""),
-			distribution_guidelines_id: String(initialData?.distribution_guidelines_id ?? ""),
+			compensation_expectation_currency: initialData?.compensation_expectation_currency || void 0,
+			distribution_guidelines_id: initialData?.distribution_guidelines_id || void 0,
 			external_identifier: typeof initialData?.external_identifier === "object" && initialData?.external_identifier !== null && !Array.isArray(initialData?.external_identifier) ? initialData?.external_identifier : {},
-			gender: String(initialData?.gender ?? ""),
+			gender: initialData?.gender || void 0,
 			person_name: typeof initialData?.person_name === "object" && initialData?.person_name !== null && !Array.isArray(initialData?.person_name) ? initialData?.person_name : {},
-			position_schedule_type_codes: String(initialData?.position_schedule_type_codes ?? ""),
+			position_schedule_type_codes: initialData?.position_schedule_type_codes || void 0,
 			position_titles: Array.isArray(initialData?.position_titles) ? initialData?.position_titles.map(String) : [],
 			qualifications: Array.isArray(initialData?.qualifications) ? initialData?.qualifications : [],
-			referred_by_application_id: String(initialData?.referred_by_application_id ?? ""),
-			status: String(initialData?.status ?? ""),
-			uri: String(initialData?.uri ?? "")
+			referred_by_application_id: initialData?.referred_by_application_id || void 0,
+			status: initialData?.status || void 0,
+			uri: initialData?.uri || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

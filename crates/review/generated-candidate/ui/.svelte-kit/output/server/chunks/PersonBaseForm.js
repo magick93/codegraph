@@ -15,7 +15,7 @@ function PersonBaseForm($$renderer, $$props) {
 			given_name: z.string()
 		});
 		const defaultValues = {
-			birth_date: String(initialData?.birth_date ?? ""),
+			birth_date: initialData?.birth_date || void 0,
 			family_name: String(initialData?.family_name ?? ""),
 			given_name: String(initialData?.given_name ?? "")
 		};

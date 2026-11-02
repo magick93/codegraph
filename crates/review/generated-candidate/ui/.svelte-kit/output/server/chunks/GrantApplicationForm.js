@@ -22,13 +22,13 @@ function GrantApplicationForm($$renderer, $$props) {
 		const defaultValues = {
 			amount: initialData?.amount != null ? Number(initialData?.amount) : void 0,
 			approved: Boolean(initialData?.approved ?? false),
-			category: String(initialData?.category ?? ""),
+			category: initialData?.category || void 0,
 			id: String(initialData?.id ?? ""),
 			lodged_on: String(initialData?.lodged_on ?? "").replace(/Z$/, ""),
-			notes: String(initialData?.notes ?? ""),
+			notes: initialData?.notes || void 0,
 			reference: String(initialData?.reference ?? ""),
-			summary: String(initialData?.summary ?? ""),
-			title: String(initialData?.title ?? "")
+			summary: initialData?.summary || void 0,
+			title: initialData?.title || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

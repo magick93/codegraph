@@ -46,7 +46,7 @@
 
 		title: String(initialData?.title ?? ''),
 
-		birth_date: String(initialData?.birth_date ?? ''),
+		birth_date: initialData?.birth_date || undefined,
 
 		family_name: String(initialData?.family_name ?? ''),
 

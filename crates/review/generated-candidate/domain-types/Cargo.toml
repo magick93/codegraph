@@ -15,5 +15,5 @@ utoipa = { version = "6", features = ["chrono", "uuid", "decimal"] }
 async-trait = "0.1"
 garde = { version = "0.22", features = ["derive", "regex"] }
 thiserror = "2"
-codegraph-type-contracts = { path = "/home/anton/git/codegraph-580/crates/codegraph-type-contracts" }
+codegraph-type-contracts = { path = "/home/anton/git/codegraph-s5/crates/codegraph-type-contracts" }
 

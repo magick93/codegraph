@@ -11,6 +11,7 @@ use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
+use super::super::context::IfmlViewContainer;
 use super::super::route_generator::RenderWorkflow;
 use super::fixtures::{
     binding_value_pattern, entry_inner, escape_regex, js_literal_inner, js_value_for_type,
@@ -906,4 +907,73 @@ fn auth_spec_renders_gating_family_and_skip_comment() {
         "{skipped}"
     );
     assert!(!skipped.contains("gated from"));
+}
+
+#[test]
+fn pom_primary_root_scopes_through_the_view_wrapper() {
+    use super::pom::{ViewPom, build_view_pom};
+    use super::pom_render::render_pom_page;
+    use codegraph_config::ux::UxRules;
+
+    let vc = IfmlViewContainer {
+        name: "AdminConsole".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        conditional_expr_json: None,
+        roles: Vec::new(),
+        requires: Vec::new(),
+        params: Vec::new(),
+        components: vec![],
+        events: Vec::new(),
+        containers: Vec::new(),
+    };
+    let config: DomainConfig = toml::from_str(
+        r#"
+[defaults]
+api_version = "v1"
+
+[domains.sales]
+label = "Sales"
+schema_dir = "sales"
+postgres_schema = "sales"
+entities = ["CustomerType"]
+"#,
+    )
+    .unwrap();
+    let pom: ViewPom = build_view_pom(
+        &config,
+        None,
+        &vc,
+        None,
+        Some(&UxRules::default()),
+        &std::collections::HashMap::new(),
+        true,
+        &[],
+    );
+    // The plan carries no components — inject the primary root the way the
+    // assembler does for mapped details views.
+    let mut pom = pom;
+    pom.primary_root = Some("card".to_string());
+    pom.auth_enabled = true;
+    pom.denial_target = Some("/helpmodal".to_string());
+    let rendered = render_pom_page(&pom);
+    assert!(
+        rendered.contains(
+            "return this.page.locator('[data-view=\"adminconsole\"]').getByTestId('card');"
+        ),
+        "the primary root must scope through the view wrapper:\n{rendered}"
+    );
+
+    // Auth off: unscoped (the wrapper is not emitted).
+    let mut pom_off = pom;
+    pom_off.auth_enabled = false;
+    let rendered_off = render_pom_page(&pom_off);
+    assert!(
+        rendered_off.contains("return this.page.getByTestId('card');"),
+        "{rendered_off}"
+    );
 }

@@ -19,7 +19,7 @@ function EventBaseForm($$renderer, $$props) {
 		const defaultValues = {
 			capacity: initialData?.capacity != null ? Number(initialData?.capacity) : void 0,
 			title: String(initialData?.title ?? ""),
-			birth_date: String(initialData?.birth_date ?? ""),
+			birth_date: initialData?.birth_date || void 0,
 			family_name: String(initialData?.family_name ?? ""),
 			given_name: String(initialData?.given_name ?? "")
 		};

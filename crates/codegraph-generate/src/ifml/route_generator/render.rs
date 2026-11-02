@@ -448,7 +448,23 @@ pub(super) fn nav_url_expr(target: &str, binding: &HashMap<String, String>) -> S
     }
     let mut pairs: Vec<(&String, &String)> = binding.iter().collect();
     pairs.sort();
-    let query: Vec<String> = pairs.iter().map(|(k, v)| format!("{k}=${{{v}}}")).collect();
+    // `params.<x>` in a DSL binding names the VIEW's param block — rendered
+    // verbatim it would resolve to SvelteKit ROUTE params (always empty for
+    // query-param views), landing every navigation on `?id=undefined`
+    // (issue #572 journey-arrival failure). Page context exposes the view
+    // params as `viewParams`; the landmark layout drops such pairs before
+    // this point (they are out of scope there).
+    let query: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| {
+            let lowered = if binding_root_ident(v) == Some("params") {
+                format!("viewParams.{}", &v["params.".len()..])
+            } else {
+                v.to_string()
+            };
+            format!("{k}=${{{lowered}}}")
+        })
+        .collect();
     format!("`{path}?{}`", query.join("&"))
 }
 

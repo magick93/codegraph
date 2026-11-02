@@ -36,9 +36,9 @@
 
 	const defaultValues = {
 
-		valid_from: String(initialData?.valid_from ?? ''),
+		valid_from: initialData?.valid_from || undefined,
 
-		valid_to: String(initialData?.valid_to ?? ''),
+		valid_to: initialData?.valid_to || undefined,
 
 	};
 

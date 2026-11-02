@@ -1055,7 +1055,7 @@ entities = []
             "{rendered}"
         );
         assert!(
-            rendered.contains("waitForURL(new RegExp('/requestwizard$'))"),
+            rendered.contains("waitForURL(new RegExp('/requestwizard$'), { timeout: 2_000 })"),
             "{rendered}"
         );
 
@@ -1138,7 +1138,7 @@ entities = []
             "{form_rendered}"
         );
         assert!(
-            form_rendered.contains("waitForURL(new RegExp('/requestwizard$'))"),
+            form_rendered.contains("waitForURL(new RegExp('/requestwizard$'), { timeout: 2_000 })"),
             "{form_rendered}"
         );
     }

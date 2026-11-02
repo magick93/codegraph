@@ -24,9 +24,9 @@ function ApplicationForm($$renderer, $$props) {
 		});
 		const defaultValues = {
 			application_id: String(initialData?.application_id ?? ""),
-			applied_date: String(initialData?.applied_date ?? ""),
-			candidate_id: String(initialData?.candidate_id ?? ""),
-			status: String(initialData?.status ?? "")
+			applied_date: initialData?.applied_date || void 0,
+			candidate_id: initialData?.candidate_id || void 0,
+			status: initialData?.status || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

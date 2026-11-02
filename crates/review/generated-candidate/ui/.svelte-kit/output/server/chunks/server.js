@@ -1440,7 +1440,7 @@ function redirect_response(status, location) {
 * @param {Response} response
 */
 function with_version_header(response) {
-	response.headers.set("x-sveltekit-version", "1793443702427");
+	response.headers.set("x-sveltekit-version", "1793639784402");
 	return response;
 }
 /**
@@ -2259,8 +2259,8 @@ var options = {
 		app: ({ head, body, assets, nonce, env }) => "<!doctype html>\n<html lang=\"%lang%\" dir=\"%dir%\">\n	<head>\n		<meta charset=\"utf-8\" />\n		<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"" + assets + "/brand/favicon-32x32.png\" />\n		<link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"" + assets + "/brand/favicon-16x16.png\" />\n		<link rel=\"apple-touch-icon\" sizes=\"128x128\" href=\"" + assets + "/brand/crewbase-icon-128x128.png\" />\n		<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n		<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\" />\n		<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin />\n		<link href=\"https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&display=swap\" rel=\"stylesheet\" />\n		" + head + "\n	</head>\n	<body data-sveltekit-preload-data=\"hover\" class=\"min-h-screen antialiased\">\n		<div style=\"display: contents\">" + body + "</div>\n	</body>\n</html>\n",
 		error: error_template_default
 	},
-	version: "1793443702427",
-	version_hash: "wq6cu6"
+	version: "1793639784402",
+	version_hash: "1q3yq3c"
 };
 async function get_hooks() {
 	let handle;

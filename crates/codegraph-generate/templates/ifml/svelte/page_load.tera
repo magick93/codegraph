@@ -11,7 +11,7 @@ import { error } from '@sveltejs/kit';
 import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
 {%- endif %}
 {%- endif %}
-{%- if view_roles or view_requires %}
+{%- if view_roles or view_requires or (auth_surface and has_fetch) %}
 import { redirect } from '@sveltejs/kit';
 {%- if not integrated %}
 import { browser } from '$app/environment';
@@ -88,6 +88,12 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 {%- endfor %}
 	result.params = viewParams;
 {%- endif %}
+{%- if auth_surface and has_fetch %}
+	// Issue #572: a denied fetch (garbage/expired key → 401/403) denies the
+	// VISIT — redirect to the denial target like the guard does, instead of
+	// rendering the kit error page. Genuine server failures rethrow.
+	try {
+{%- endif %}
 {% for comp in components %}
 {%- if remote_api %}
 {%- if comp.remote_query and comp.fetch_list %}
@@ -150,6 +156,15 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 {%- endif %}
 {%- endif %}
 {%- endfor %}
+{%- if auth_surface and has_fetch %}
+	} catch (e) {
+		const status = (e as { status?: number })?.status;
+		if (status === 401 || status === 403) {
+			throw redirect(303, '{{ denial_target }}');
+		}
+		throw e;
+	}
+{%- endif %}
 
 	return result;
 };

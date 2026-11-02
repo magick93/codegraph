@@ -17,11 +17,6 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
     let denial_presentation = pom.auth_enabled
         && pom.denial_target.is_some()
         && (pom.heading.is_some() || pom.primary_root.is_some());
-    let needs_expect = pom.collections.iter().any(|c| c.workflow.is_some())
-        || pom.forms.iter().any(|f| f.workflow.is_some())
-        || pom.details.iter().any(|d| d.workflow.is_some())
-        || pom.flows.iter().any(|f| f.close_method.is_some())
-        || denial_presentation;
     let needs_ux_table = pom.collections.iter().any(|c| c.ux_table.is_some());
 
     let mut s = String::new();
@@ -32,11 +27,12 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
          // the view through this class — zero raw testids in spec bodies.\n\n",
         pom.view_name
     ));
-    if needs_expect {
-        s.push_str("import { expect, type Locator, type Page } from '@playwright/test';\n\n");
-    } else {
-        s.push_str("import { type Locator, type Page } from '@playwright/test';\n\n");
-    }
+    // The fill methods (hydration-refill) and hop retries always use expect.
+    s.push_str(
+        "import { expect, type Locator, type Page } from '@playwright/test';
+
+",
+    );
     if needs_ux_table {
         s.push_str("import { BasePage } from './support/base-page';\n");
         s.push_str("import { UxTable } from './support/ux-table';\n\n");
@@ -74,10 +70,24 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
     if let Some(primary) = &pom.primary_root {
         s.push_str("  /** Primary component root (the render assertion target). */\n");
         s.push_str("  primaryRoot(): Locator {\n");
-        s.push_str(&format!(
-            "    return this.page.getByTestId('{}');\n  }}\n\n",
-            primary
-        ));
+        if pom.auth_enabled {
+            // The denial-presentation assertion needs a GUARDED-view-unique
+            // scope: the denial target legitimately renders its own mapped
+            // root with the same testid, so an unscoped "not visible" can
+            // never pass (#572). The page body wraps in `data-view` under
+            // the same flag; the marker matches the page template's
+            // `{{ name | lower }}` (the route dir spelling).
+            let view = pom.route.trim_start_matches('/').to_lowercase();
+            s.push_str(&format!(
+                "    return this.page.locator('[data-view=\"{view}\"]').getByTestId('{}');\n  }}\n\n",
+                primary
+            ));
+        } else {
+            s.push_str(&format!(
+                "    return this.page.getByTestId('{}');\n  }}\n\n",
+                primary
+            ));
+        }
     }
     if let Some(nav) = &pom.nav_testid {
         s.push_str("  /** Landmark shell nav (mapped `shell` component). */\n");
@@ -207,31 +217,46 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
                 "  async {}(value: string): Promise<void> {{\n",
                 fill_method
             ));
+            // Hydration race (#562/#572): a fill landing before the Svelte
+            // hydration re-render is wiped by the value binding — refill
+            // until the binding holds it, then assert before returning.
+            s.push_str(&format!(
+                "    const input = this.{}Input('{}');\n",
+                form.name, field.name
+            ));
+            s.push_str("    await expect(async () => {\n");
             match field.kind {
-                PomFieldKind::Select => s.push_str(&format!(
-                    "    await this.{}Input('{}').selectOption(value);\n  }}\n\n",
-                    form.name, field.name
-                )),
-                PomFieldKind::Radio => s.push_str(&format!(
-                    "    await this.{}Form().locator(`[name=\"{}\"][value=\"${{value}}\"]`).check();\n  }}\n\n",
-                    form.name, field.name
-                )),
-                PomFieldKind::Checkbox => s.push_str(&format!(
-                    "    await this.{}Input('{}').setChecked(value === 'true');\n  }}\n\n",
-                    form.name, field.name
-                )),
-                PomFieldKind::DatetimeLocal => {
-                    s.push_str("    // Datetime inputs take the local (Z-stripped) form.\n");
+                PomFieldKind::Select => {
+                    s.push_str("      await input.selectOption(value);\n");
+                    s.push_str("      await expect(input).toHaveValue(value);\n");
+                }
+                PomFieldKind::Radio => {
                     s.push_str(&format!(
-                        "    await this.{}Input('{}').fill(value.replace(/:\\d{{2}}Z$/, ''));\n  }}\n\n",
+                        "      await this.{}Form().locator(`[name=\"{}\"][value=\"${{value}}\"]`).check();\n",
                         form.name, field.name
                     ));
+                    s.push_str("      await expect(input).toBeChecked();\n");
                 }
-                PomFieldKind::Textarea | PomFieldKind::Text => s.push_str(&format!(
-                    "    await this.{}Input('{}').fill(value);\n  }}\n\n",
-                    form.name, field.name
-                )),
+                PomFieldKind::Checkbox => {
+                    s.push_str("      await input.setChecked(value === 'true');\n");
+                    s.push_str(
+                        "      await expect(input).toBeChecked({ checked: value === 'true' });\n",
+                    );
+                }
+                PomFieldKind::DatetimeLocal => {
+                    s.push_str("      // Datetime inputs take the local (Z-stripped) form.\n");
+                    s.push_str("      await input.fill(value.replace(/:\\d{2}Z$/, ''));\n");
+                    s.push_str(
+                        "      await expect(input).toHaveValue(value.replace(/:\\d{2}Z$/, ''));\n",
+                    );
+                }
+                PomFieldKind::Textarea | PomFieldKind::Text => {
+                    s.push_str("      await input.fill(value);\n");
+                    s.push_str("      await expect(input).toHaveValue(value);\n");
+                }
             }
+            s.push_str("    }).toPass();\n");
+            s.push_str("  }\n\n");
         }
         s.push_str("  /** Click the form's submit control. */\n");
         s.push_str(&format!(
@@ -346,29 +371,33 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
 
     // Journey hop methods (issue #468 W5): the controls the
     // `{view}.journey.spec.ts` walks drive, composed from the same
-    // accessors the specs use.
+    // accessors the specs use. The click retries until the landing URL
+    // matches — a click landing before the client handlers hydrate is a
+    // no-op (issue #572, the #562 re-render-race lesson).
     for step in &pom.journey_steps {
         s.push_str("  /** Journey hop (issue #468 W5): the control the IFML event binds\n   * to, then the landing route. */\n");
         s.push_str(&format!("  async {}(): Promise<void> {{\n", step.method));
         for (fill, literal) in &step.fills {
             s.push_str(&format!("    await this.{}({});\n", fill, literal));
         }
+        s.push_str("    await expect(async () => {\n");
         if step.row {
             s.push_str(&format!(
-                "    await this.{}Row().click();\n",
+                "      await this.{}Row().click();\n",
                 step.component
             ));
         }
         if step.submit {
             s.push_str(&format!(
-                "    await this.{}Submit().click();\n",
+                "      await this.{}Submit().click();\n",
                 step.component
             ));
         }
         s.push_str(&format!(
-            "    await this.page.waitForURL(new RegExp('{}'));\n  }}\n\n",
+            "      await this.page.waitForURL(new RegExp('{}'), {{ timeout: 2_000 }});\n",
             js_string(&step.pattern)
         ));
+        s.push_str("    }).toPass({ timeout: 15_000 });\n  }\n\n");
     }
 
     while s.ends_with("\n\n") {

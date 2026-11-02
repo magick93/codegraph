@@ -37,11 +37,11 @@
 
 	const defaultValues = {
 
-		family_name: String(initialData?.family_name ?? ''),
+		family_name: initialData?.family_name || undefined,
 
-		formatted_name: String(initialData?.formatted_name ?? ''),
+		formatted_name: initialData?.formatted_name || undefined,
 
-		given_name: String(initialData?.given_name ?? ''),
+		given_name: initialData?.given_name || undefined,
 
 	};
 

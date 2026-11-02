@@ -23,9 +23,9 @@ function PayRunForm($$renderer, $$props) {
 		});
 		const defaultValues = {
 			pay_run_id: String(initialData?.pay_run_id ?? ""),
-			run_date: String(initialData?.run_date ?? ""),
+			run_date: initialData?.run_date || void 0,
 			total_amount: initialData?.total_amount != null ? Number(initialData?.total_amount) : void 0,
-			total_amount_currency: String(initialData?.total_amount_currency ?? "")
+			total_amount_currency: initialData?.total_amount_currency || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

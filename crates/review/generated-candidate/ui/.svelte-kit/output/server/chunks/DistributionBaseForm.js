@@ -15,8 +15,8 @@ function DistributionBaseForm($$renderer, $$props) {
 			start_date: z.iso.date()
 		});
 		const defaultValues = {
-			description: String(initialData?.description ?? ""),
-			end_date: String(initialData?.end_date ?? ""),
+			description: initialData?.description || void 0,
+			end_date: initialData?.end_date || void 0,
 			start_date: String(initialData?.start_date ?? "")
 		};
 		const form = createAppForm(() => ({

@@ -105,10 +105,24 @@ test.describe('IFML sweep', () => {
 	}) => {
 		await page.goto('/refundrequestform');
 		const form = page.getByTestId('editor-form');
-		await form.locator('[name="title"]').fill('Sweep create');
-		await form.locator('[name="amount"]').fill('4242');
-		await form.locator('button').first().click();
-		await page.waitForURL(/\/refundrequestdetail/, { timeout: 10_000 });
+		// Hydration race (#562 lesson): a fill that lands before the Svelte
+		// hydration re-renders the input is wiped by the value binding —
+		// refill until the binding holds it.
+		const title = form.locator('[name="title"]');
+		await expect(async () => {
+			await title.fill('Sweep create');
+			await expect(title).toHaveValue('Sweep create');
+		}).toPass({ timeout: 10_000 });
+		const amount = form.locator('[name="amount"]');
+		await expect(async () => {
+			await amount.fill('4242');
+			await expect(amount).toHaveValue('4242');
+		}).toPass({ timeout: 10_000 });
+		const submit = form.locator('button').first();
+		await expect(async () => {
+			await submit.click({ trial: false });
+			await page.waitForURL(/\/refundrequestdetail/, { timeout: 2_000 });
+		}).toPass({ timeout: 15_000 });
 		const response = await request.get(COLLECTION);
 		expect(response.ok(), `GET ${COLLECTION} must succeed`).toBeTruthy();
 		const body = await response.json();

@@ -20,7 +20,7 @@ function AmountForm($$renderer, $$props) {
 			value: z.number().optional()
 		});
 		const defaultValues = {
-			currency: String(initialData?.currency ?? ""),
+			currency: initialData?.currency || void 0,
 			value: initialData?.value != null ? Number(initialData?.value) : void 0
 		};
 		const form = createAppForm(() => ({
