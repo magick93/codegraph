@@ -12,6 +12,10 @@
 {% if has_workflow %}
 	import WorkflowPanel from '#lib/components/ui/WorkflowPanel.svelte';
 	import { transitionItem } from './data.remote';
+{% if project.ui_live_queries %}
+	import { browser } from '$app/environment';
+	import { getWorkflowLive } from './data.remote';
+{% endif %}
 {% endif %}
 {%- for ext in detail_extensions %}
 	import {{ ext.component }} from '#lib/components/extensions/{{ ext.component }}.svelte';
@@ -59,6 +63,14 @@
 {% if has_workflow %}
 	let transitioning = $state(false);
 {% endif %}
+{% if project.ui_live_queries and has_workflow %}
+	// Live workflow state (issue #574 S4c): the query.live instance polls
+	// the /workflow read every 5s on the client; the load payload is the
+	// SSR fallback (the instance is browser-only — kit does not start
+	// streams during SSR).
+	const wfLive = browser ? getWorkflowLive(item.id) : null;
+	const workflowState = $derived(wfLive?.current ?? item.workflow_state);
+{% endif %}
 {% if has_child_sections %}
 {% for section in child_sections %}
 	let {{ section.module_name }}Items = $state<{{ section.entity_name }}Response[]>((data.children?.['{{ section.module_name }}'] ?? []) as {{ section.entity_name }}Response[]);
@@ -91,7 +103,7 @@
 {% for section in child_sections %}
 
 	async function delete{{ section.entity_name }}(childId: string): Promise<{ ok: boolean; message?: string }> {
-		const result = await delete{{ section.entity_name }}Child(childId);
+		const result = await delete{{ section.entity_name }}Child(childId, item.id);
 		if (!result.ok) {
 			toast.error(m.common_delete_failed({ error: result.message ?? 'Request failed' }));
 		}
@@ -199,6 +211,17 @@
 	</div>
 
 {% if has_workflow %}
+{% if project.ui_live_queries %}
+{% raw %}
+	{#if workflowState}
+		<WorkflowPanel
+			state={workflowState}
+			onTransition={handleTransition}
+			loading={transitioning}
+		/>
+	{/if}
+{% endraw %}
+{% else %}
 {% raw %}
 	{#if item.workflow_state}
 		<WorkflowPanel
@@ -208,6 +231,7 @@
 		/>
 	{/if}
 {% endraw %}
+{% endif %}
 {% endif %}
 
 	<!-- Fields -->

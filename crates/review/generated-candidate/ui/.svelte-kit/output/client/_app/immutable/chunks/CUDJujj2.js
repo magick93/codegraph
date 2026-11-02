@@ -1,1 +1,0 @@
-import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`Currency`)),n=((t={},n={})=>(n.locale??e(),`Value`));export{t as n,n as t};

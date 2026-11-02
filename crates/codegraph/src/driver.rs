@@ -512,6 +512,7 @@ pub async fn run_with_graph_cache(
                 ifml_remote_functions: plan.ifml_remote_functions,
                 entity_remote_functions: plan.entity_remote_functions,
                 entity_form: plan.entity_form,
+                ui_live_queries: plan.ui_live_queries,
                 ifml_tanstack_forms: plan.ifml_tanstack_forms,
                 testid_module: plan.testid_module,
                 structural_gates: plan.structural_gates,
@@ -1465,6 +1466,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.codegen.ifml_remote_functions = plan.ifml_remote_functions;
         project_config.codegen.entity_remote_functions = plan.entity_remote_functions;
         project_config.codegen.entity_form = plan.entity_form;
+        project_config.codegen.ui_live_queries = plan.ui_live_queries;
         project_config.codegen.ifml_tanstack_forms = plan.ifml_tanstack_forms;
         project_config.codegen.testid_module = plan.testid_module;
         project_config.codegen.structural_gates = plan.structural_gates;

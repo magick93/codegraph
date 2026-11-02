@@ -1,1 +1,0 @@
-export { default as component } from "../../../../../src/routes/(app)/common/string-type-array/[string_type_array_id]/edit/+page.svelte";

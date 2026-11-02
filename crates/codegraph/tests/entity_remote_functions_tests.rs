@@ -244,6 +244,48 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
         "the workflow merge rides the detail query:\n{detail_remote}"
     );
 
+    // Issue #574 S4a: the mutating commands single-flight refresh the
+    // paired by-id query — the fresh row rides the command response, so
+    // the client's invalidate re-run hits the fresh instance cache with
+    // no second data fetch.
+    assert!(
+        detail_remote.contains("void getItem(args.id).refresh();"),
+        "the transition single-flight refreshes the item query:\n{detail_remote}"
+    );
+    let edit_remote_full = read(
+        &ui,
+        "src/routes/(app)/portal/request/[request_id]/edit/data.remote.ts",
+    );
+    assert!(
+        edit_remote_full.contains("void getItem(args.id).refresh();"),
+        "the update single-flight refreshes the item query:\n{edit_remote_full}"
+    );
+
+    // Issue #574 S4c (`ui_live_queries`, ON in the shipped default
+    // profile): the workflow state rides a query.live stream — a 5s poll
+    // of the /workflow read with the load payload as the SSR fallback.
+    assert!(
+        detail_remote
+            .contains("export const getWorkflowLive = query.live(async function* (id: string) {"),
+        "the live workflow stream rides the detail module:\n{detail_remote}"
+    );
+    assert!(
+        detail_remote.contains("setTimeout(resolve, 5000)"),
+        "{detail_remote}"
+    );
+    let detail_page = read(
+        &ui,
+        "src/routes/(app)/portal/request/[request_id]/+page.svelte",
+    );
+    assert!(
+        detail_page.contains("const wfLive = browser ? getWorkflowLive(item.id) : null;"),
+        "the page consumes the live instance browser-side with the load fallback:\n{detail_page}"
+    );
+    assert!(
+        detail_page.contains("state={workflowState}"),
+        "{detail_page}"
+    );
+
     // The list load awaits the remote query — no apiFetch, no per-page
     // auth throw (the (app) layout guard owns the session redirect).
     let list_load = read(&ui, "src/routes/(app)/portal/request/+page.server.ts");
@@ -369,6 +411,22 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
         wh_detail_remote.contains("export const deleteSubscription"),
         "{wh_detail_remote}"
     );
+    // Issue #574 S4a: the webhook settings commands single-flight refresh
+    // the endpoint-data query; #574 S4c: the delivery log rides a
+    // query.live stream with the load payload as the SSR fallback.
+    assert!(
+        wh_detail_remote.contains("void getEndpointData(id).refresh();"),
+        "{wh_detail_remote}"
+    );
+    assert!(
+        wh_detail_remote.contains("void getEndpointData(endpointId).refresh();"),
+        "the subscription delete keys the endpoint instance by its own id:\n{wh_detail_remote}"
+    );
+    assert!(
+        wh_detail_remote
+            .contains("export const getDeliveriesLive = query.live(async function* (id: string) {"),
+        "{wh_detail_remote}"
+    );
     let wh_form = read(&ui, "src/routes/(app)/settings/webhooks/new/+page.svelte");
     assert!(wh_form.contains("await createEndpoint("), "{wh_form}");
     assert!(!wh_form.contains("#lib/api/client.ts"), "{wh_form}");
@@ -379,6 +437,15 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
     );
     assert!(
         !wh_detail_page.contains("#lib/api/client.ts"),
+        "{wh_detail_page}"
+    );
+    assert!(
+        wh_detail_page
+            .contains("const deliveriesLive = browser ? getDeliveriesLive(endpoint.id) : null;"),
+        "the delivery log consumes the live instance browser-side:\n{wh_detail_page}"
+    );
+    assert!(
+        wh_detail_page.contains("deliveriesLive?.current ?? data.deliveries"),
         "{wh_detail_page}"
     );
 

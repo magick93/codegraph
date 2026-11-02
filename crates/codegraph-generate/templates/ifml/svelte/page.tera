@@ -53,7 +53,7 @@
 {%- endif %}
 {%- for comp in components %}
 {%- if comp.form_state or comp.component_type == "form" %}
-	const {{ comp.js_name }}_form_state = $derived((data.formData ?? {}) as Record<string, any>);
+	const {{ comp.js_name }}_form_state = $derived((data.{{ comp.form_data_key }} ?? {}) as Record<string, any>);
 {%- endif %}
 {%- endfor %}
 {%- for comp in components %}
@@ -64,7 +64,7 @@
 {%- for comp in components %}
 {%- if comp.timeline %}
 	const {{ comp.js_name }}_timeline_items = $derived(
-		((data.items ?? []) as Record<string, unknown>[]).sort(
+		((data.{{ comp.items_key }} ?? []) as Record<string, unknown>[]).sort(
 			(a, b) => timeOf(b['{{ comp.timeline.order_binding }}']) - timeOf(a['{{ comp.timeline.order_binding }}'])
 		)
 	);
@@ -369,7 +369,7 @@
 />
 {% if comp.workflow %}{%- if comp.workflow.each %}
 {%- if comp.fetch_list %}
-{% raw %}	{#each data.items as item}{% endraw %}
+{% raw %}	{#each {% endraw %}data.{{ comp.items_key }}{% raw %} as item}{% endraw %}
 	{{ comp.workflow.badge_html }}
 {% raw %}	{/each}{% endraw %}
 {%- endif %}
@@ -428,7 +428,7 @@
 		</tr>
 	</thead>
 	<tbody>
-{% raw %}		{#each data.items as item}{% endraw %}
+{% raw %}		{#each {% endraw %}data.{{ comp.items_key }}{% raw %} as item}{% endraw %}
 			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% for col in comp.table.columns %}
 				{% if col.ux %}{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}{% else %}<td>{item.{{ col.binding }}}</td>{% endif %}
@@ -523,7 +523,7 @@
 		</tr>
 	</thead>
 	<tbody>
-{% raw %}		{#each data.items as item}{% endraw %}
+{% raw %}		{#each {% endraw %}data.{{ comp.items_key }}{% raw %} as item}{% endraw %}
 			<tr data-testid="{{ comp.name }}-row"{% if comp.row_handler %} onclick={() => {{ comp.row_handler }}(item)}{% endif %}>
 			{% if comp.ux_list_columns %}{% for col in comp.ux_list_columns %}
 				{% if col.ux.display == "chip" %}<td><span class="chip" data-chip={item.{{ col.binding }}} data-chip-variant={toneFor('{{ comp.name }}.{{ col.binding }}', item.{{ col.binding }})} data-testid="{{ comp.name }}-chip">{item.{{ col.binding }}}</span></td>{% elif col.ux.display == "copy-chip" %}<td><button type="button" class="chip chip-copy" data-testid="{{ comp.name }}-copy" onclick={(e) => copyChip(e, item.{{ col.binding }})}>{item.{{ col.binding }}}</button></td>{% elif col.ux.dimension == "money" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatMoney(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "quantity" %}<td{% if col.ux.align == "right" %} class="text-right tabular-nums"{% endif %}>{formatNumber(item.{{ col.binding }})}</td>{% elif col.ux.dimension == "time-point" %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{formatDate(item.{{ col.binding }})}</td>{% else %}<td{% if col.ux.align == "right" %} class="text-right"{% endif %}>{item.{{ col.binding }}}</td>{% endif %}
@@ -582,7 +582,7 @@
 <dl data-testid="{{ comp.name }}-details">
 	{% for field in comp.fields %}
 	<dt>{{ field }}</dt>
-	<dd>{data.item.{{ field }}}</dd>
+	<dd>{data.{{ comp.item_key }}.{{ field }}}</dd>
 	{% endfor %}
 </dl>
 {%- if comp.action_buttons %}

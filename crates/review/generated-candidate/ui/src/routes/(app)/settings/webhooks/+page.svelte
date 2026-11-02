@@ -1,10 +1,10 @@
 
 <script lang="ts">
-  import { invalidateAll } from '$app/navigation';
+  import { onMount } from 'svelte';
   import * as Card from '#lib/components/ui/card/index.js';
   import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
-  import { deleteEndpoint } from './data.remote';
+  import { apiGet, apiDelete } from '#lib/api/client.ts';
 
   interface WebhookEndpoint {
     id: string;
@@ -15,29 +15,36 @@
     updated_at: string;
   }
 
-  interface Props {
-    data: { endpoints: WebhookEndpoint[] };
+  let endpoints = $state<WebhookEndpoint[]>([]);
+  let loading = $state(true);
+  let error = $state<string | null>(null);
+
+  onMount(() => {
+    fetchEndpoints();
+  });
+
+  async function fetchEndpoints() {
+    loading = true;
+    error = null;
+    try {
+      endpoints = await apiGet<WebhookEndpoint[]>('/webhooks/webhook-endpoints');
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load webhook endpoints';
+    } finally {
+      loading = false;
+    }
   }
 
-  let { data }: Props = $props();
-  let endpoints = $derived(data.endpoints);
-  let deletingId = $state<string | null>(null);
-
-  async function handleDelete(id: string) {
+  async function deleteEndpoint(id: string) {
     if (!confirm('Delete this webhook endpoint? This cannot be undone.')) return;
-    deletingId = id;
     try {
-      const result = await deleteEndpoint(id);
-      if (!result.ok) {
-        throw new Error(result.message ?? 'Request failed');
-      }
-      await invalidateAll();
-    } finally {
-      deletingId = null;
+      await apiDelete(`/webhooks/webhook-endpoints/${id}`);
+      endpoints = endpoints.filter((e) => e.id !== id);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to delete endpoint';
     }
   }
 </script>
-
 
 <div class="space-y-6 p-6">
   <div class="flex items-center justify-between">
@@ -50,7 +57,13 @@
     <Button href="/settings/webhooks/new">Add Endpoint</Button>
   </div>
 
-  {#if endpoints.length === 0}
+  {#if error}
+    <div class="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+  {/if}
+
+  {#if loading}
+    <p class="text-muted-foreground py-8 text-center">Loading...</p>
+  {:else if endpoints.length === 0}
     <div class="py-12 text-center">
       <p class="text-muted-foreground">No webhook endpoints configured yet.</p>
       <p class="text-sm text-muted-foreground mt-1">Create one to start receiving event notifications.</p>
@@ -80,7 +93,7 @@
               <Button variant="outline" size="sm" href="/settings/webhooks/{endpoint.id}/edit">
                 Edit
               </Button>
-              <Button variant="destructive" size="sm" disabled={deletingId === endpoint.id} onclick={() => handleDelete(endpoint.id)}>
+              <Button variant="destructive" size="sm" onclick={() => deleteEndpoint(endpoint.id)}>
                 Delete
               </Button>
             </div>
@@ -89,5 +102,5 @@
       {/each}
     </div>
   {/if}
-
 </div>
+

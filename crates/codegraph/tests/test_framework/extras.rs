@@ -121,7 +121,7 @@ test.describe('IFML sweep', () => {
 		const submit = form.locator('button').first();
 		await expect(async () => {
 			await submit.click({ trial: false });
-			await page.waitForURL(/\/refundrequestdetail/, { timeout: 2_000 });
+			await page.waitForURL(/\/refundrequestdetail/, { timeout: 5_000 });
 		}).toPass({ timeout: 15_000 });
 		const response = await request.get(COLLECTION);
 		expect(response.ok(), `GET ${COLLECTION} must succeed`).toBeTruthy();

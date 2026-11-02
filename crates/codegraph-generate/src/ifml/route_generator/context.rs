@@ -315,6 +315,12 @@ pub struct PageComponentContext {
     pub(crate) fetch_list: bool,
     pub(crate) fetch_item: bool,
     pub(crate) fetch_form: bool,
+    /// Load-result keys this component's markup binds (issue #574 S4b):
+    /// bare for the first claimant of a kind, js_name-prefixed for later
+    /// claimants — `data.sidebar_items` etc.
+    pub(crate) items_key: String,
+    pub(crate) item_key: String,
+    pub(crate) form_data_key: String,
     /// Fetch URL (JS template literal) for the component's transition
     /// handler: `{base}/${id}/actions/transition`; `None` when the component
     /// carries no transition buttons.
@@ -917,6 +923,12 @@ pub struct PageLoadComponentContext {
     /// `ifml_remote_functions` flag; `None` renders no import/call.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) remote_query: Option<String>,
+    /// Load-result keys this component's data lands under (issue #574
+    /// S4b): bare for the first claimant of a kind, js_name-prefixed for
+    /// later claimants of the same kind.
+    pub(super) items_key: String,
+    pub(super) item_key: String,
+    pub(super) form_data_key: String,
 }
 
 /// The lowered TypeScript guard for a view's `condition:`, or `None`.
@@ -1145,11 +1157,44 @@ pub(super) async fn build_page_context(
             let is_details = comp.component_type == "details";
             let is_form = comp.form.is_some() || comp.component_type == "form";
             let has_api = comp.api.is_some() && !comp.entity.is_empty();
+            let claim = fetch_state.next(
+                is_list,
+                is_details,
+                is_form,
+                has_api,
+                id_param.as_deref(),
+                &comp.js_name,
+            );
             let (fetch_list, fetch_item, fetch_form) =
-                fetch_state.next(is_list, is_details, is_form, has_api, id_param.as_deref());
+                (claim.fetch_list, claim.fetch_item, claim.fetch_form);
             comp.fetch_list = fetch_list;
             comp.fetch_item = fetch_item;
             comp.fetch_form = fetch_form;
+            comp.items_key = claim.items_key;
+            comp.item_key = claim.item_key;
+            comp.form_data_key = claim.form_data_key;
+            // Mapped-component props and workflow badges were rendered with
+            // the bare load keys; a prefixed claimant rebinds them.
+            if comp.items_key != "items" {
+                comp.data_prop = comp
+                    .data_prop
+                    .replace("data.items", &format!("data.{}", comp.items_key));
+            }
+            if comp.item_key != "item" {
+                comp.data_prop = comp
+                    .data_prop
+                    .replace("data.item", &format!("data.{}", comp.item_key));
+                if let Some(workflow) = &mut comp.workflow {
+                    workflow.badge_html = workflow
+                        .badge_html
+                        .replace("data.item?", &format!("data.{}?", comp.item_key));
+                }
+            }
+            if comp.form_data_key != "formData" {
+                comp.data_prop = comp
+                    .data_prop
+                    .replace("data.formData", &format!("data.{}", comp.form_data_key));
+            }
 
             if let Some(workflow) = &comp.workflow {
                 let fetch_backed = match comp.component_type.as_str() {
@@ -1639,6 +1684,9 @@ pub(super) async fn page_component_context(
         fetch_list: false,
         fetch_item: false,
         fetch_form: false,
+        items_key: "items".to_string(),
+        item_key: "item".to_string(),
+        form_data_key: "formData".to_string(),
         transition_url_expr: None,
         remote_transition: None,
         submit_gate: ControlGateContext::default(),
@@ -1655,19 +1703,50 @@ pub(super) async fn page_component_context(
     }
 }
 
+/// One component's load-fetch claim: the fetch flags plus the load-result
+/// keys the component's data lands under. The FIRST claimant of a kind
+/// keeps the bare key (`items`/`item`/`formData`) — byte-identical with
+/// every pre-#574 view; SUBSEQUENT claimants of the same kind get a
+/// js_name-prefixed key (`sidebar_items`) so a multi-component view can
+/// fetch every component without colliding (issue #574 S4b).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct FetchClaim {
+    pub fetch_list: bool,
+    pub fetch_item: bool,
+    pub fetch_form: bool,
+    pub items_key: String,
+    pub item_key: String,
+    pub form_data_key: String,
+}
+
+impl FetchClaim {
+    fn bare() -> Self {
+        Self {
+            fetch_list: false,
+            fetch_item: false,
+            fetch_form: false,
+            items_key: "items".to_string(),
+            item_key: "item".to_string(),
+            form_data_key: "formData".to_string(),
+        }
+    }
+}
+
 /// Running view-level fetch state: which component kinds have already
-/// claimed the load's single fetch per kind.
+/// claimed the load's fetch per kind (and how many times — the ordinal
+/// drives the prefixed result keys).
 #[derive(Default)]
 pub(super) struct FetchState {
-    has_list: bool,
-    has_details: bool,
-    has_form: bool,
+    list_count: usize,
+    details_count: usize,
+    form_count: usize,
 }
 
 impl FetchState {
-    /// The load fetch flags for one component: the first list/details/form
-    /// contributes a fetch; details and form fetches additionally require
-    /// an id param.
+    /// The load fetch claim for one component: EVERY api-backed component
+    /// claims its kind (the pre-#574 first-wins gate left second
+    /// components with no fetch at all — issue #574 S4b); details and
+    /// form fetches additionally require an id param.
     pub(super) fn next(
         &mut self,
         is_list: bool,
@@ -1675,22 +1754,30 @@ impl FetchState {
         is_form: bool,
         has_api: bool,
         id_param: Option<&str>,
-    ) -> (bool, bool, bool) {
-        let mut fetch_list = false;
-        let mut fetch_item = false;
-        let mut fetch_form = false;
+        js_name: &str,
+    ) -> FetchClaim {
+        let mut claim = FetchClaim::bare();
         if has_api {
-            if is_list && !self.has_list {
-                fetch_list = true;
-            } else if is_details && !self.has_details && id_param.is_some() {
-                fetch_item = true;
-            } else if is_form && !self.has_form && id_param.is_some() {
-                fetch_form = true;
+            if is_list {
+                claim.fetch_list = true;
+                self.list_count += 1;
+                if self.list_count > 1 {
+                    claim.items_key = format!("{js_name}_items");
+                }
+            } else if is_details && id_param.is_some() {
+                claim.fetch_item = true;
+                self.details_count += 1;
+                if self.details_count > 1 {
+                    claim.item_key = format!("{js_name}_item");
+                }
+            } else if is_form && id_param.is_some() {
+                claim.fetch_form = true;
+                self.form_count += 1;
+                if self.form_count > 1 {
+                    claim.form_data_key = format!("{js_name}_formData");
+                }
             }
         }
-        self.has_list |= fetch_list;
-        self.has_details |= fetch_item;
-        self.has_form |= fetch_form;
-        (fetch_list, fetch_item, fetch_form)
+        claim
     }
 }

@@ -18,6 +18,7 @@ async fn run_routing_generators(
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),

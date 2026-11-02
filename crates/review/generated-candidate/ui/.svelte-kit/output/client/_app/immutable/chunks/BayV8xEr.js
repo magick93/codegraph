@@ -1,1 +1,0 @@
-import{n as e}from"./CTeGUmiw.js";var t=((t={},n={})=>(n.locale??e(),`New Formatted Date Time`));export{t};

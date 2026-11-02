@@ -97,16 +97,16 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 {% for comp in components %}
 {%- if remote_api %}
 {%- if comp.remote_query and comp.fetch_list %}
-	result.items = await {{ comp.remote_query }}({% if comp.paginate %}{ page: url.searchParams.get('page') ?? '0', pageSize: url.searchParams.get('page_size') ?? '20' }{% endif %});
+	result.{{ comp.items_key }} = await {{ comp.remote_query }}({% if comp.paginate %}{ page: url.searchParams.get('page') ?? '0', pageSize: url.searchParams.get('page_size') ?? '20' }{% endif %});
 {%- elif comp.remote_query and comp.fetch_item %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
-		result.item = await {{ comp.remote_query }}({{ comp.id_param }});
+		result.{{ comp.item_key }} = await {{ comp.remote_query }}({{ comp.id_param }});
 	}
 {%- elif comp.remote_query and comp.fetch_form %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
-		result.formData = await {{ comp.remote_query }}({{ comp.id_param }});
+		result.{{ comp.form_data_key }} = await {{ comp.remote_query }}({{ comp.id_param }});
 	}
 {%- endif %}
 {%- else %}
@@ -116,7 +116,7 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 		error({{ comp.name }}Response.status, 'Failed to load {{ comp.entity | lower }}');
 	}
 	const {{ comp.name }}Data = await {{ comp.name }}Response.json();
-	result.items = Array.isArray({{ comp.name }}Data) ? {{ comp.name }}Data : {{ comp.name }}Data.data ?? [];
+	result.{{ comp.items_key }} = Array.isArray({{ comp.name }}Data) ? {{ comp.name }}Data : {{ comp.name }}Data.data ?? [];
 {%- elif comp.fetch_item %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
 	if ({{ comp.id_param }}) {
@@ -133,7 +133,7 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 			{{ comp.name }}Item.workflow_state = {{ comp.name }}WfJson.data ?? {{ comp.name }}WfJson;
 		}
 {%- endif %}
-		result.item = {{ comp.name }}Item;
+		result.{{ comp.item_key }} = {{ comp.name }}Item;
 	}
 {%- elif comp.fetch_form %}
 	const {{ comp.id_param }} = viewParams['{{ comp.id_param }}'];
@@ -151,7 +151,7 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 			{{ comp.name }}Data.workflow_state = {{ comp.name }}WfJson.data ?? {{ comp.name }}WfJson;
 		}
 {%- endif %}
-		result.formData = {{ comp.name }}Data;
+		result.{{ comp.form_data_key }} = {{ comp.name }}Data;
 	}
 {%- endif %}
 {%- endif %}

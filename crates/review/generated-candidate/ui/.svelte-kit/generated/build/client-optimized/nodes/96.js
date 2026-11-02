@@ -1,1 +1,0 @@
-export { default as component } from "../../../../../src/routes/(app)/recruiting/grant-audit-trail/[grant_audit_trail_id]/edit/+page.svelte";

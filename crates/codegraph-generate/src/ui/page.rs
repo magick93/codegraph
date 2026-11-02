@@ -956,7 +956,11 @@ fn emit_ui_pages(
                 path: routes_dir
                     .join(format!("[{}]", ctx.param_name))
                     .join("data.remote.ts"),
-                content: remote::render_detail_module(ctx, api_version),
+                content: remote::render_detail_module(
+                    ctx,
+                    api_version,
+                    remote && project.codegen.ui_live_queries,
+                ),
             });
         }
     }

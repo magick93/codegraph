@@ -145,13 +145,16 @@ pub(super) fn build_load_context(
         let is_details = comp.component_type == "details";
         let is_form = comp.form.is_some() || comp.component_type == "form";
 
-        let (fetch_list, fetch_item, fetch_form) = fetch_state.next(
+        let claim = fetch_state.next(
             is_list,
             is_details,
             is_form,
             comp.api.is_some() && !comp.entity.is_empty(),
             id_param.as_deref(),
+            &sanitize_ident(&comp.name),
         );
+        let (fetch_list, fetch_item, fetch_form) =
+            (claim.fetch_list, claim.fetch_item, claim.fetch_form);
         has_fetch |= fetch_list || fetch_item || fetch_form;
 
         let remote_query = if remote && (fetch_list || fetch_item || fetch_form) {
@@ -173,6 +176,9 @@ pub(super) fn build_load_context(
             fetch_item,
             fetch_form,
             remote_query,
+            items_key: claim.items_key,
+            item_key: claim.item_key,
+            form_data_key: claim.form_data_key,
         });
     }
 

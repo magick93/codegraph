@@ -4089,6 +4089,9 @@ fn fetch_component(name: &str) -> super::context::PageLoadComponentContext {
         fetch_item: false,
         fetch_form: false,
         remote_query: None,
+        items_key: "items".to_string(),
+        item_key: "item".to_string(),
+        form_data_key: "formData".to_string(),
     }
 }
 
@@ -4674,4 +4677,236 @@ fn auth_surface_pages_carry_a_view_scoped_root() {
     let ctx_off = page_context_for(&vc, None);
     let rendered_off = render_template(&tera, "ifml/svelte/page.tera", &ctx_off).expect("render");
     assert!(!rendered_off.contains("data-view="), "{rendered_off}");
+}
+
+// ── #574 S4a: single-flight refreshes + the #582 fieldErrors deferral ──────
+
+fn module_ctx(
+    components: Vec<super::context::PageLoadComponentContext>,
+) -> super::remote::RemoteModuleContext {
+    super::remote::RemoteModuleContext::from_load(&PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerDetail".to_string(),
+        components,
+        has_fetch: false,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: false,
+        remote_api: true,
+        auth_surface: false,
+        denial_target: "/".to_string(),
+    })
+}
+
+fn item_component() -> super::context::PageLoadComponentContext {
+    let mut comp = fetch_component("card");
+    comp.component_type = "details".to_string();
+    comp.fetch_list = false;
+    comp.fetch_item = true;
+    comp.remote_query = Some("getCard".to_string());
+    comp
+}
+
+fn list_component() -> super::context::PageLoadComponentContext {
+    let mut comp = fetch_component("grid");
+    comp.remote_query = Some("getGrid".to_string());
+    comp
+}
+
+#[test]
+fn command_refreshes_the_paired_query_single_flight() {
+    // The kit single-flight shape: the command's server handler refreshes
+    // the paired query so the fresh data rides the command response — the
+    // client's invalidateAll re-run hits the fresh instance cache with no
+    // second data fetch.
+    let mut module = module_ctx(vec![list_component(), item_component()]);
+
+    let transition = RemoteCommand {
+        export: "transitionCard".to_string(),
+        base_path: "/api/v1/sales/customer".to_string(),
+        id_param: Some("customerId".to_string()),
+        kind: RemoteCommandKind::Transition,
+    };
+    module.push_command(&transition);
+    let rendered = module.render();
+    assert!(
+        rendered.contains("void getCard(args.id).refresh();"),
+        "the transition must single-flight refresh the paired by-id query:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("getGrid().refresh()"),
+        "the transition must not refresh the collection:\n{rendered}"
+    );
+
+    let mut module = module_ctx(vec![list_component(), item_component()]);
+    module.push_command(&RemoteCommand {
+        export: "submitEditor".to_string(),
+        base_path: "/api/v1/sales/customer".to_string(),
+        id_param: Some("customerId".to_string()),
+        kind: RemoteCommandKind::Update,
+    });
+    let rendered = module.render();
+    assert!(
+        rendered.contains("if (args.id) {\n\t\tvoid getCard(args.id).refresh();\n\t}"),
+        "the update refreshes the row (guarded on the merged args' null id):\n{rendered}"
+    );
+    assert!(
+        rendered.contains("void getGrid().refresh();"),
+        "the update also refreshes the plain collection:\n{rendered}"
+    );
+
+    // Create refreshes the plain collection only — the row id is not
+    // known as a query instance on the form page.
+    let mut module = module_ctx(vec![list_component()]);
+    module.push_command(&RemoteCommand {
+        export: "submitEditor".to_string(),
+        base_path: "/api/v1/sales/customer".to_string(),
+        id_param: None,
+        kind: RemoteCommandKind::Create,
+    });
+    let rendered = module.render();
+    assert!(
+        rendered.contains("void getGrid().refresh();"),
+        "the create refreshes the plain collection:\n{rendered}"
+    );
+
+    // A paginated collection's args are the load's — the command cannot
+    // key the instance, so it must not guess.
+    let mut paginated = list_component();
+    paginated.paginate = true;
+    let mut module = module_ctx(vec![paginated]);
+    module.push_command(&RemoteCommand {
+        export: "submitEditor".to_string(),
+        base_path: "/api/v1/sales/customer".to_string(),
+        id_param: None,
+        kind: RemoteCommandKind::Create,
+    });
+    let rendered = module.render();
+    assert!(
+        !rendered.contains(".refresh()"),
+        "paginated collections are not refreshed blind:\n{rendered}"
+    );
+}
+
+#[test]
+fn create_command_maps_422_details_to_field_errors() {
+    // The #582 deferral: the remote create/update fail leg parses the API's
+    // 422 `error.details` into `fieldErrors` (entity-plane parity) and the
+    // message reads the error OBJECT level (`error.message`), not the
+    // object itself.
+    let mut module = module_ctx(vec![list_component()]);
+    module.push_command(&RemoteCommand {
+        export: "submitEditor".to_string(),
+        base_path: "/api/v1/sales/customer".to_string(),
+        id_param: None,
+        kind: RemoteCommandKind::Create,
+    });
+    let rendered = module.render();
+    assert!(
+        rendered.contains("const fieldErrors: Record<string, string> = {};"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("const details = created?.error?.details;"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("fieldErrors[d.field] = d.message;"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "return { ok: false, message: created?.error?.message ?? created?.message ?? `Request failed (${response.status})`, fieldErrors };"
+        ),
+        "{rendered}"
+    );
+
+    // Transition/Op messages read the same object level (the body is not
+    // a 422 shape there, but `error` may still be an object).
+    let mut module = module_ctx(vec![]);
+    module.push_command(&RemoteCommand {
+        export: "transitionCard".to_string(),
+        base_path: "/api/v1/sales/customer".to_string(),
+        id_param: Some("customerId".to_string()),
+        kind: RemoteCommandKind::Transition,
+    });
+    let rendered = module.render();
+    assert!(
+        rendered.contains("message: body?.error?.message ?? body?.message ??"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn tanstack_submit_applies_server_field_errors() {
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut project = remote_project();
+    project.codegen.ifml_tanstack_forms = true;
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let ctx = page_context_for_project(&vc, &project);
+    let rendered = render_template(&tera, "ifml/svelte/page_tanstack.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("fieldErrors = result.fieldErrors ?? {};"),
+        "the remote submit leg must map server fieldErrors onto the fields:\n{rendered}"
+    );
+}
+
+#[test]
+fn multi_component_views_fetch_every_component() {
+    // #574 S4b: the first-wins FetchState gate left every SECOND
+    // list/details/form component with no fetch at all (its table rendered
+    // empty). Every api-backed component now claims its fetch; the second
+    // claimant of a kind gets a js_name-prefixed load key so the result
+    // keys cannot collide.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut sidebar = component_with_spec(Some(table_spec()));
+    sidebar.name = "sidebar".to_string();
+    let grid_ctx = page_component_context_sync(&component_with_spec(Some(table_spec())));
+    let sidebar_ctx = page_component_context_sync(&sidebar);
+    let vc = plain_vc("Dashboard");
+    let load = build_load_context(
+        "v1",
+        &vc,
+        &[grid_ctx.clone(), sidebar_ctx],
+        "/",
+        false,
+        true,
+        false,
+    );
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &load).expect("render");
+    assert!(
+        rendered.contains("import { getGrid } from './data.remote';"),
+        "both queries import:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("import { getSidebar } from './data.remote';"),
+        "the second list gets its own query export:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("result.items = await getGrid("),
+        "the first claimant keeps the bare key:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("result.sidebar_items = await getSidebar("),
+        "the second claimant gets a js_name-prefixed key:\n{rendered}"
+    );
+
+    // The page markup binds the prefixed key for the second component.
+    let mut vc = plain_vc("Dashboard");
+    vc.components = vec![component_with_spec(Some(table_spec())), sidebar];
+    let ctx = page_context_for_project(&vc, &remote_project());
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("{#each data.sidebar_items as item}"),
+        "the second list binds its prefixed key:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("{#each data.items as item}"),
+        "the first list keeps the bare binding:\n{rendered}"
+    );
 }
