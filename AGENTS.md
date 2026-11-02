@@ -1215,6 +1215,51 @@ flags except the last:
   the query.live tree, the arbiter that caught the raw-block Tera leak
   and the `%`-into-svelte typo).
 
+### Component-level awaits (issue #571, `ifml_remote_functions`)
+
+The #571 endgame: under the remote plane the IFML components await their
+queries DIRECTLY (`const grid_data = $derived(await getGrid(…))` — Svelte
+experimental async), and the `+page.ts` data plane retires.
+
+- **Guard-only loads**: views carrying `requires`/`roles` keep a THIN
+  `+page.ts` (`guard_only` on the load context) — the integrated
+  server-decided gating resolves the session's role tokens through the
+  load `parent()` chain, which is load-only machinery; the guard-only
+  load carries the guards + `result.params` and NO data awaits.
+  Unguarded views emit no `+page.ts` at all. Flag-off keeps the client
+  plane's full load (byte-identical — the IFML canaries are untouched).
+- **viewParams from the page url**: the prebuilt `viewParams` const reads
+  `page.url.searchParams` (`$app/state`) with the DSL defaults — the
+  load's `result.params` is not on the component plane.
+- **The await must sit on the QUERY PROXY directly.** Awaiting inside an
+  async loader `function` detaches kit's reactive promise tracking (the
+  wrapper's own promise never changes) — the nightly gate caught it as
+  stale post-transition badges. The auth-surface denial (#572) rides
+  `.catch(on_denied)` (one helper per page): it reads the proxy's promise
+  synchronously so the tracking survives; a 401/403 redirects to the
+  denial target.
+- **The S4a endgame — invalidateAll retires**: the server-side
+  single-flight `set()` updates the instance's raw value WITHOUT
+  replacing its promise, so the await form does not re-fire on it alone.
+  The transition/action handlers therefore refresh the PAIRED CLIENT
+  instance (`void getInfo(viewParams.id).refresh()` — targeted, replacing
+  the whole-page `invalidateAll()`), which replaces the promise and
+  re-fires the deriveds. Pinned by
+  `remote_transition_refreshes_the_paired_instance` and the nightly
+  workflow specs.
+- **Non-claimant components** (a details without an id param): their
+  mapped props/badges still bind `data.*` — under the component plane
+  there is no load payload, so those bindings become `undefined` (the
+  runtime shape they always had).
+- Gates: the in-crate `remote_component_awaits_replace_the_load_data_plane`
+  + `remote_transition_refreshes_the_paired_instance` pins,
+  `ifml_remote_functions_tests` (+page.ts retirement/thin-load pins over
+  the full pipeline), and `ifml_codegen_gate` 5/5 with 33/33 specs (the
+  arbiter for the proxy-tracking and redirect-from-derived semantics).
+  The entity plane is a recorded non-goal (issue #571): its
+  `+page.server.ts` loads carry the session leg and its gates typecheck
+  without a live app run.
+
 ### Neutral server contract (issue #574 S1, `server_api`)
 
 

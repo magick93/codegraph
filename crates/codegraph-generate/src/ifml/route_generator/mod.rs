@@ -274,6 +274,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
                 &modal_targets,
                 ux_generation.as_ref(),
                 project,
+                &denial,
             )
             .await?;
 
@@ -291,6 +292,15 @@ impl GlobalGenerator for IfmlRouteGenerator {
             }
 
             if let Some(ref route_load_fn) = self.output_paths.route_load {
+                // Issue #571: under the remote plane the components await
+                // their queries directly — the +page.ts data plane retires.
+                // Views carrying guards (requires/roles) keep a THIN load:
+                // the integrated server-decided gating resolves the
+                // session's role tokens through the parent chain, which is
+                // load-only machinery. Unguarded views emit no +page.ts at
+                // all. Flag-off keeps the client plane's full load.
+                let guard_only = remote;
+                let load_needed = !remote || !vc.requires.is_empty() || !vc.roles.is_empty();
                 let load_ctx = build_load_context(
                     &project.identity.api_version,
                     vc,
@@ -299,16 +309,19 @@ impl GlobalGenerator for IfmlRouteGenerator {
                     self.output_paths.route_root() == Some(ROUTE_GROUP),
                     remote,
                     project.codegen.ifml_e2e_auth,
+                    guard_only,
                 );
-                match render_template(tera, &load_template, &load_ctx) {
-                    Ok(content) => files.push(GeneratedFile {
-                        path: self.output_dir.join(route_load_fn(&vc.name)),
-                        content,
-                    }),
-                    Err(e) => eprintln!(
-                        "warning: ifml_route: {} render failed for view '{}': {e}",
-                        load_template, vc.name
-                    ),
+                if load_needed {
+                    match render_template(tera, &load_template, &load_ctx) {
+                        Ok(content) => files.push(GeneratedFile {
+                            path: self.output_dir.join(route_load_fn(&vc.name)),
+                            content,
+                        }),
+                        Err(e) => eprintln!(
+                            "warning: ifml_route: {} render failed for view '{}': {e}",
+                            load_template, vc.name
+                        ),
+                    }
                 }
 
                 if remote {

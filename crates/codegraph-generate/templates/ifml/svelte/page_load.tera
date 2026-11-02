@@ -1,5 +1,22 @@
 import type { PageLoad } from './$types';
-{% if has_fetch %}
+{% if guard_only %}
+{%- if view_roles or view_requires %}
+import { redirect } from '@sveltejs/kit';
+{%- if not integrated %}
+import { browser } from '$app/environment';
+{%- endif %}
+{%- if view_roles %}
+import { currentRoles } from '$lib/roles';
+{%- endif %}
+{%- if view_requires %}
+import { can } from '$lib/roles';
+{%- endif %}
+{%- if guard_consts %}
+
+{{ guard_consts }}
+{%- endif %}
+{%- endif %}
+{% elif has_fetch %}
 {%- if remote_api -%}
 {%- for comp in components %}
 {%- if comp.remote_query %}
@@ -11,7 +28,7 @@ import { error } from '@sveltejs/kit';
 import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
 {%- endif %}
 {%- endif %}
-{%- if view_roles or view_requires or (auth_surface and has_fetch) %}
+{%- if not guard_only and (view_roles or view_requires or (auth_surface and has_fetch)) %}
 import { redirect } from '@sveltejs/kit';
 {%- if not integrated %}
 import { browser } from '$app/environment';
@@ -41,7 +58,7 @@ const apiHeaders: Record<string, string> = {
 	...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {})
 };
 {%- endif %}
-export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch{% endif %}{% if integrated and (view_roles or view_requires) %}, parent{% endif %} }) => {
+export const load: PageLoad = async ({ params, url{% if not remote_api and not guard_only %}, fetch{% endif %}{% if integrated and (view_roles or view_requires) %}, parent{% endif %} }) => {
 {%- if view_roles or view_requires %}
 {%- if integrated %}
 	// Server-decided gating (issue #468 W-a): the (views)/+layout.server.ts
@@ -88,6 +105,7 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 {%- endfor %}
 	result.params = viewParams;
 {%- endif %}
+{%- if not guard_only %}
 {%- if auth_surface and has_fetch %}
 	// Issue #572: a denied fetch (garbage/expired key → 401/403) denies the
 	// VISIT — redirect to the denial target like the guard does, instead of
@@ -164,6 +182,7 @@ export const load: PageLoad = async ({ params, url{% if not remote_api %}, fetch
 		}
 		throw e;
 	}
+{%- endif %}
 {%- endif %}
 
 	return result;

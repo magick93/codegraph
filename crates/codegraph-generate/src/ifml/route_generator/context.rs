@@ -70,6 +70,25 @@ pub struct PageSvelteContext {
     /// imports and the shared `fieldErrors` state on pages carrying at
     /// least one TanStack-typed form.
     pub(super) tanstack_forms: bool,
+    /// Component-level awaits (issue #571): under the remote plane the
+    /// components await their queries directly (Svelte experimental
+    /// async). Gates the `page`/query/redirect imports, the local
+    /// viewParams resolution, and the load-key markup branches.
+    pub(super) remote_awaits: bool,
+    /// Whether any component's loader carries the auth-surface denial
+    /// catch — gates the `redirect` import.
+    pub(super) needs_redirect: bool,
+    /// The view's query params resolved from `page.url.searchParams`
+    /// (prebuilt const source — never assembled in Tera, the #560 rule).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(super) view_params_src: String,
+    /// The denial target the loaders redirect to on a 401/403 (#572).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(super) denial_target: String,
+    /// The shared `.catch(on_denied)` handler source (issue #571) — one
+    /// per page when any loader carries the denial catch.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(super) denial_helper_src: String,
     /// Semantic slot role of the view: `modal-view` for modals, else
     /// `shell` for landmarks.
     pub(super) view_role: Option<SemanticRole>,
@@ -321,6 +340,18 @@ pub struct PageComponentContext {
     pub(crate) items_key: String,
     pub(crate) item_key: String,
     pub(crate) form_data_key: String,
+    /// The view's query export this component awaits (issue #571): minted
+    /// under the remote plane exactly when a fetch kind is claimed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) remote_query: Option<String>,
+    /// The component-await TS (loader fn + `$derived(await …)` line),
+    /// prebuilt in Rust (the #560 rule). Empty outside the remote plane.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) await_block: String,
+    /// The derived variable the component's markup binds under the
+    /// component-await plane (`grid_data`); empty outside it.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) data_var: String,
     /// Fetch URL (JS template literal) for the component's transition
     /// handler: `{base}/${id}/actions/transition`; `None` when the component
     /// carries no transition buttons.
@@ -875,6 +906,11 @@ pub struct PageLoadContext {
     /// during SSR, before any data fetch). Standalone keeps the
     /// browser-gated guard (no layout provides server roles).
     pub(super) integrated: bool,
+    /// Component-level awaits (issue #571): under the remote plane the
+    /// load is GUARD-ONLY — the data awaits live in the components, so
+    /// the load renders its guards + `result.params` and nothing else
+    /// (and only views carrying requires/roles emit one at all).
+    pub(super) guard_only: bool,
     /// Remote-functions data plane (issue #557): when true the load awaits
     /// the view's server-executed `data.remote.ts` query instead of
     /// client-fetching the API. Flag off keeps the PUBLIC_API_URL/apiHeaders
@@ -963,6 +999,7 @@ pub(super) async fn build_page_context(
     modal_targets: &HashSet<String>,
     ux: Option<&UxGeneration<'_>>,
     project: &ProjectConfig,
+    denial_target: &str,
 ) -> crate::error::Result<PageSvelteContext> {
     let id_param = id_param_from(&vc.params);
     // Remote-functions data plane (issue #557): flag-driven — commands
@@ -1149,8 +1186,10 @@ pub(super) async fn build_page_context(
     // control) and each secondary button's event requires; buttons without
     // requires reuse the view gate verbatim (byte-identical).
     let id_param = id_param_from(&vc.params);
+    let auth_surface = project.codegen.ifml_e2e_auth;
     let mut fetch_state = FetchState::default();
     let mut needs_can_import = false;
+    let mut needs_denial_helper = false;
     for group in &mut groups {
         for comp in &mut group.components {
             let is_list = comp.table.is_some() || comp.component_type == "list";
@@ -1195,6 +1234,56 @@ pub(super) async fn build_page_context(
                     .data_prop
                     .replace("data.formData", &format!("data.{}", comp.form_data_key));
             }
+
+            // Component-level awaits (issue #571): under the remote plane
+            // the component awaits its query directly — the load's data
+            // plane retires from the page. Components that don't claim a
+            // fetch (a details without an id param) still BIND `data.*` in
+            // their mapped props/badges — under the component plane there
+            // is no load payload at all, so those bindings become
+            // `undefined` (the runtime shape they always had).
+            let claimant = fetch_list || fetch_item || fetch_form;
+            if remote {
+                if claimant {
+                    let query = format!("get{}", remote_pascal(&comp.name));
+                    comp.remote_query = Some(query.clone());
+                    comp.data_var = format!("{}_data", comp.js_name);
+                    let paginate =
+                        fetch_list && comp.table.as_ref().map(|t| t.pagination).unwrap_or(true);
+                    comp.await_block = remote_await_block(
+                        &comp.js_name,
+                        &query,
+                        fetch_list,
+                        fetch_item || fetch_form,
+                        paginate,
+                        id_param.as_deref(),
+                        auth_surface,
+                    );
+                    comp.data_prop = comp
+                        .data_prop
+                        .replace("data.items", &comp.data_var)
+                        .replace("data.item", &comp.data_var)
+                        .replace("data.formData", &comp.data_var);
+                } else {
+                    comp.data_prop = comp
+                        .data_prop
+                        .replace("data.items", "undefined")
+                        .replace("data.item", "undefined")
+                        .replace("data.formData", "undefined");
+                }
+                if let Some(workflow) = &mut comp.workflow {
+                    let workflow_ref = if claimant {
+                        format!("{}?", comp.data_var)
+                    } else {
+                        "undefined?".to_string()
+                    };
+                    workflow.badge_html = workflow.badge_html.replace("data.item?", &workflow_ref);
+                    for t in &mut workflow.transitions {
+                        t.html = t.html.replace("data.item?", &workflow_ref);
+                    }
+                }
+            }
+            needs_denial_helper = auth_surface;
 
             if let Some(workflow) = &comp.workflow {
                 let fetch_backed = match comp.component_type.as_str() {
@@ -1301,9 +1390,10 @@ pub(super) async fn build_page_context(
         .iter()
         .flat_map(|group| group.components.iter().cloned())
         .collect();
-    let needs_invalidate = components
-        .iter()
-        .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
+    let needs_invalidate = !remote
+        && components
+            .iter()
+            .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
 
     let has_api_surface = has_submit
         || components
@@ -1312,6 +1402,51 @@ pub(super) async fn build_page_context(
     let has_action_buttons = components
         .iter()
         .any(|comp| !comp.action_buttons.is_empty());
+    // Component-level awaits (issue #571): the prebuilt viewParams const
+    // reads `page.url.searchParams` with the DSL defaults — the load's
+    // `result.params` is not on the component-await plane.
+    let has_awaits = remote
+        && groups.iter().any(|group| {
+            group
+                .components
+                .iter()
+                .any(|comp| !comp.await_block.is_empty())
+        });
+    let view_params_src = if has_awaits {
+        let mut seen: HashSet<String> = HashSet::new();
+        let entries: Vec<String> = vc
+            .params
+            .iter()
+            .filter(|p| seen.insert(p.name.clone()))
+            .map(|p| {
+                format!(
+                    "		{}: page.url.searchParams.get('{}'){}",
+                    p.name,
+                    p.name,
+                    match &p.default {
+                        Some(d) => format!(" ?? {}", crate::forms::ts_string_literal(d)),
+                        None => " ?? ''".to_string(),
+                    }
+                )
+            })
+            .collect();
+        if entries.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "	const viewParams = $derived({{
+{}
+	}});",
+                entries.join(
+                    ",
+"
+                )
+            )
+        }
+    } else {
+        String::new()
+    };
+
     Ok(PageSvelteContext {
         api_version: api_version.to_string(),
         name: vc.name.clone(),
@@ -1335,6 +1470,15 @@ pub(super) async fn build_page_context(
         has_api_surface,
         remote_api: remote,
         auth_surface: project.codegen.ifml_e2e_auth,
+        remote_awaits: has_awaits,
+        needs_redirect: has_awaits && project.codegen.ifml_e2e_auth,
+        denial_helper_src: if needs_denial_helper {
+            remote_denial_helper(denial_target)
+        } else {
+            String::new()
+        },
+        view_params_src,
+        denial_target: denial_target.to_string(),
         has_action_buttons,
         tanstack_forms: groups
             .iter()
@@ -1687,6 +1831,9 @@ pub(super) async fn page_component_context(
         items_key: "items".to_string(),
         item_key: "item".to_string(),
         form_data_key: "formData".to_string(),
+        remote_query: None,
+        await_block: String::new(),
+        data_var: String::new(),
         transition_url_expr: None,
         remote_transition: None,
         submit_gate: ControlGateContext::default(),
@@ -1701,6 +1848,61 @@ pub(super) async fn page_component_context(
         timeline,
         row_menu_events,
     }
+}
+
+/// The component-await TS for one fetch claim (issue #571): the
+/// `$derived(await …)` line the markup binds, awaiting the QUERY PROXY
+/// DIRECTLY. Kit's proxy tracks its reactive promise — a single-flight
+/// refresh (S4a) replaces it and the derived re-awaits. Wrapping the call
+/// in an async `function` would detach that tracking (the wrapper's own
+/// promise never changes), which the nightly gate caught as stale
+/// post-transition badges. The auth-surface denial rides a `.catch`
+/// helper — it reads the proxy's promise synchronously, so the tracking
+/// survives; a 401/403 redirects to the denial target (#572).
+#[allow(clippy::too_many_arguments)]
+fn remote_await_block(
+    js_name: &str,
+    query: &str,
+    fetch_list: bool,
+    _fetch_item: bool,
+    paginate: bool,
+    id_param: Option<&str>,
+    auth_surface: bool,
+) -> String {
+    let call = if fetch_list {
+        if paginate {
+            format!(
+                "{query}({{ page: page.url.searchParams.get('page') ?? '0', pageSize: page.url.searchParams.get('page_size') ?? '20' }})"
+            )
+        } else {
+            format!("{query}()")
+        }
+    } else {
+        let p = id_param.unwrap_or_default();
+        format!("{query}(viewParams.{p})")
+    };
+    let catch = if auth_surface {
+        ".catch(on_denied)".to_string()
+    } else {
+        String::new()
+    };
+    let conditional = if !fetch_list {
+        let p = id_param.unwrap_or_default();
+        format!("viewParams.{p} ? ")
+    } else {
+        String::new()
+    };
+    let tail = if !fetch_list { " : undefined" } else { "" };
+    format!("\tconst {js_name}_data = $derived({conditional}await {call}{catch}{tail});\n")
+}
+
+/// The shared denial handler for the component-await plane (issue #571):
+/// a 401/403 loader failure redirects to the denial target (#572);
+/// anything else rethrows.
+pub(super) fn remote_denial_helper(denial_target: &str) -> String {
+    format!(
+        "\tfunction on_denied(e: unknown): never {{\n\t\tconst status = (e as {{ status?: number }})?.status;\n\t\tif (status === 401 || status === 403) {{\n\t\t\tredirect(303, '{denial_target}');\n\t\t}}\n\t\tthrow e;\n\t}}\n"
+    )
 }
 
 /// One component's load-fetch claim: the fetch flags plus the load-result

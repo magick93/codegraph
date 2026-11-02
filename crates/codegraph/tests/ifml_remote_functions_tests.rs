@@ -69,6 +69,7 @@ view "Home" {
 view "RequestForm" {
     params { id: Uuid };
     label "Edit Request";
+    requires: [ApproveRequest];
 
     component "editor" {
         type: form;
@@ -203,6 +204,10 @@ fn read(base: &Path, rel: &str) -> String {
         .unwrap_or_else(|e| panic!("expected {rel} to be emitted: {e}"))
 }
 
+fn read_opt(base: &Path, rel: &str) -> Option<String> {
+    fs::read_to_string(base.join(rel)).ok()
+}
+
 #[tokio::test]
 async fn remote_functions_flag_emits_the_server_side_data_plane() {
     let (_fixture, ui) = generate(true).await;
@@ -245,15 +250,46 @@ async fn remote_functions_flag_emits_the_server_side_data_plane() {
         home_remote.contains("page_size=${args.pageSize}"),
         "pagination rides the query args:\n{home_remote}"
     );
-    let home_load = read(&ui, "src/routes/(views)/home/+page.ts");
-    assert!(home_load.contains("await getHomeGrid("), "{home_load}");
+    // Issue #571: under the remote plane the +page.ts data plane retires —
+    // the UNGUARDED home view emits no +page.ts at all; its page awaits
+    // the query directly (Svelte experimental async) and the S4a
+    // single-flight refresh makes the invalidate plumbing redundant.
+    let home_page = read(&ui, "src/routes/(views)/home/+page.svelte");
     assert!(
-        !home_load.contains("PUBLIC_API_KEY"),
-        "the client key must be gone:\n{home_load}"
+        home_page.contains("const home_grid_data = $derived(await getHomeGrid("),
+        "the data await lives in the component:\n{home_page}"
     );
     assert!(
-        !home_load.contains("await fetch("),
-        "no client fetch may remain:\n{home_load}"
+        home_page.contains("page.url.searchParams"),
+        "viewParams resolve from the page url:\n{home_page}"
+    );
+    assert!(
+        !home_page.contains("invalidateAll"),
+        "the refreshed query instance updates the deriveds reactively:\n{home_page}"
+    );
+    assert!(
+        !home_page.contains("data.items"),
+        "the load's data bindings are gone:\n{home_page}"
+    );
+    assert!(
+        read_opt(&ui, "src/routes/(views)/home/+page.ts").is_none(),
+        "an unguarded view emits no +page.ts under the component-await plane"
+    );
+    // The GUARDED views keep a thin guard-only load: the integrated
+    // server-decided gating resolves the session's role tokens through the
+    // parent chain — load-only machinery.
+    let form_load = read(&ui, "src/routes/(views)/requestform/+page.ts");
+    assert!(
+        form_load.contains("viewRequires"),
+        "the requires guard keeps its thin load:\n{form_load}"
+    );
+    assert!(
+        !form_load.contains("await getEditor("),
+        "the guard-only load carries no data awaits:\n{form_load}"
+    );
+    assert!(
+        !form_load.contains("PUBLIC_API_KEY"),
+        "the client key must be gone:\n{form_load}"
     );
 
     // The form view: submit + workflow transition + action op commands.
