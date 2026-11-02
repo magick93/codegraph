@@ -57,6 +57,12 @@ pub struct PageSvelteContext {
     /// reach the browser. Flag off keeps the PUBLIC_API_URL/apiHeaders
     /// client plane byte-identical.
     pub(super) remote_api: bool,
+    /// The auth-surface flag (`ifml_e2e_auth`, issue #463): when true the
+    /// page body wraps in a `data-view="{kebab}"` root so the POM's
+    /// denial-presentation assertion can scope its locators to THIS view —
+    /// the denial target legitimately renders its own mapped root with the
+    /// same testid, so an unscoped "not visible" can never pass (#572).
+    pub(super) auth_surface: bool,
     /// Whether any component carries action-event controls (issue #559):
     /// gates the shared `actionError` state + the op handlers.
     pub(super) has_action_buttons: bool,
@@ -868,6 +874,11 @@ pub struct PageLoadContext {
     /// client-fetching the API. Flag off keeps the PUBLIC_API_URL/apiHeaders
     /// client plane byte-identical.
     pub(super) remote_api: bool,
+    /// The auth-surface flag (`ifml_e2e_auth`, issue #463): when true a
+    /// denied load fetch (401/403) redirects to the denial target instead
+    /// of rendering the kit error page (issue #572 — the garbage-key denial
+    /// flow on fetching views).
+    pub(super) auth_surface: bool,
     /// Redirect target when a guard fails: the first unguarded view's
     /// route, else `/`.
     pub(super) denial_target: String,
@@ -1181,6 +1192,19 @@ pub(super) async fn build_page_context(
                         RemoteCommandKind::Create
                     },
                 });
+                // Post-submit navigation prefers the CREATED row's id over
+                // the view param — the param is empty in create mode, so
+                // `?id=undefined` was the only reachable target (issue
+                // #572 journey-arrival failure). The command returns the
+                // row id; the handler binds it as `result`.
+                if let (Some(param), Some(navigate)) =
+                    (&submit.edit_param, &mut submit.navigate_url)
+                {
+                    *navigate = navigate.replace(
+                        &format!("${{viewParams.{param}}}"),
+                        &format!("${{result.id ?? viewParams.{param}}}"),
+                    );
+                }
             }
 
             if remote {
@@ -1265,6 +1289,7 @@ pub(super) async fn build_page_context(
         has_submit,
         has_api_surface,
         remote_api: remote,
+        auth_surface: project.codegen.ifml_e2e_auth,
         has_action_buttons,
         tanstack_forms: groups
             .iter()

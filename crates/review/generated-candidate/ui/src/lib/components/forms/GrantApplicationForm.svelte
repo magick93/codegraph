@@ -46,19 +46,19 @@
 
 		approved: Boolean(initialData?.approved ?? false),
 
-		category: String(initialData?.category ?? ''),
+		category: initialData?.category || undefined,
 
 		id: String(initialData?.id ?? ''),
 
 		lodged_on: String(initialData?.lodged_on ?? '').replace(/Z$/, ''),
 
-		notes: String(initialData?.notes ?? ''),
+		notes: initialData?.notes || undefined,
 
 		reference: String(initialData?.reference ?? ''),
 
-		summary: String(initialData?.summary ?? ''),
+		summary: initialData?.summary || undefined,
 
-		title: String(initialData?.title ?? ''),
+		title: initialData?.title || undefined,
 
 	};
 

@@ -298,6 +298,7 @@ impl GlobalGenerator for IfmlRouteGenerator {
                     &denial,
                     self.output_paths.route_root() == Some(ROUTE_GROUP),
                     remote,
+                    project.codegen.ifml_e2e_auth,
                 );
                 match render_template(tera, &load_template, &load_ctx) {
                     Ok(content) => files.push(GeneratedFile {

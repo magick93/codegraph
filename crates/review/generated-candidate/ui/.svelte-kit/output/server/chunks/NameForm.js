@@ -15,9 +15,9 @@ function NameForm($$renderer, $$props) {
 			given_name: z.string().optional()
 		});
 		const defaultValues = {
-			family_name: String(initialData?.family_name ?? ""),
-			formatted_name: String(initialData?.formatted_name ?? ""),
-			given_name: String(initialData?.given_name ?? "")
+			family_name: initialData?.family_name || void 0,
+			formatted_name: initialData?.formatted_name || void 0,
+			given_name: initialData?.given_name || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

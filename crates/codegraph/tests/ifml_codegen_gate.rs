@@ -617,30 +617,17 @@ async fn specs_pass_against_real_api() {
     result.unwrap();
 }
 
-/// The spec-run acceptance both T3 and T4 assert: every failing spec must
-/// be a KNOWN pre-existing failure of the #463/#468 auth/journey surface.
-/// That surface only started executing when this gate began threading the
-/// plan's codegen flags (the remote-functions plane needed them; before
-/// that the #557 client slice had left the vite build broken, so the specs
-/// had never run). A failure OUTSIDE the set is a REAL regression.
+/// The spec-run acceptance both T3 and T4 assert: ZERO failing specs. The
+/// `EXPECTED_FAILURES` ledger from the #572 era is retired — the
+/// denial-presentation collision (view-scoped POM roots) and the journey
+/// arrival (`params.*` → `viewParams.*` binding lowering + created-id
+/// navigation) are fixed, so any failure is a REAL regression.
 fn assert_gate_specs(report: &playwright::SpecReport) {
-    const EXPECTED_FAILURES: &[&str] = &[
-        "unauthenticated visit is redirected to the denial target",
-        "a garbage API key is rejected as unauthenticated",
-        "actor Agent is redirected from Admin Console",
-        "agent is gated from Admin Console",
-        "journey: RefundRequestForm → RefundRequestDetail",
-    ];
-    let unexpected: Vec<&String> = report
-        .failures
-        .iter()
-        .filter(|f| !EXPECTED_FAILURES.contains(&f.as_str()))
-        .collect();
     assert!(
-        unexpected.is_empty(),
-        "{} unexpected failed spec(s) — see target/ifml-gate/playwright-report.json:\n{:#?}",
-        unexpected.len(),
-        unexpected
+        report.failed == 0,
+        "{} spec(s) failed — see target/ifml-gate/playwright-report.json:\n{:#?}",
+        report.failed,
+        report.failures
     );
 }
 

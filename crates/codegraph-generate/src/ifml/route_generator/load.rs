@@ -121,6 +121,7 @@ pub(super) fn build_load_context(
     denial_target: &str,
     integrated: bool,
     remote: bool,
+    auth_surface: bool,
 ) -> PageLoadContext {
     let id_param = id_param_from(&vc.params);
     // The graph may carry duplicate HasParameter edges (see
@@ -188,6 +189,7 @@ pub(super) fn build_load_context(
         guard_consts: guard_consts(vc),
         integrated,
         remote_api: remote,
+        auth_surface,
         denial_target: denial_target.to_string(),
     }
 }

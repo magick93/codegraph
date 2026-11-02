@@ -48,7 +48,7 @@
 
 	const defaultValues = {
 
-		birth_date: String(initialData?.birth_date ?? ''),
+		birth_date: initialData?.birth_date || undefined,
 
 		family_name: String(initialData?.family_name ?? ''),
 
@@ -60,27 +60,27 @@
 
 		compensation_expectation: initialData?.compensation_expectation != null ? Number(initialData?.compensation_expectation) : undefined,
 
-		compensation_expectation_currency: String(initialData?.compensation_expectation_currency ?? ''),
+		compensation_expectation_currency: initialData?.compensation_expectation_currency || undefined,
 
-		distribution_guidelines_id: String(initialData?.distribution_guidelines_id ?? ''),
+		distribution_guidelines_id: initialData?.distribution_guidelines_id || undefined,
 
 		external_identifier: (typeof initialData?.external_identifier === 'object' && initialData?.external_identifier !== null && !Array.isArray(initialData?.external_identifier) ? initialData?.external_identifier : {}) as Record<string, unknown>,
 
-		gender: String(initialData?.gender ?? ''),
+		gender: initialData?.gender || undefined,
 
 		person_name: (typeof initialData?.person_name === 'object' && initialData?.person_name !== null && !Array.isArray(initialData?.person_name) ? initialData?.person_name : {}) as Record<string, unknown>,
 
-		position_schedule_type_codes: String(initialData?.position_schedule_type_codes ?? ''),
+		position_schedule_type_codes: initialData?.position_schedule_type_codes || undefined,
 
 		position_titles: Array.isArray(initialData?.position_titles) ? initialData?.position_titles.map(String) : [],
 
 		qualifications: (Array.isArray(initialData?.qualifications) ? initialData?.qualifications : []) as Record<string, unknown>[],
 
-		referred_by_application_id: String(initialData?.referred_by_application_id ?? ''),
+		referred_by_application_id: initialData?.referred_by_application_id || undefined,
 
-		status: String(initialData?.status ?? ''),
+		status: initialData?.status || undefined,
 
-		uri: String(initialData?.uri ?? ''),
+		uri: initialData?.uri || undefined,
 
 	};
 

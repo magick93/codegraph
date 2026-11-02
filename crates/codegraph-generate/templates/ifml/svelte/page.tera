@@ -313,6 +313,13 @@
 	<title>{{ label }}</title>
 </svelte:head>
 
+{%- if auth_surface %}
+{# The view-scoped root the POM's denial-presentation locator scopes
+   through: the denial target legitimately renders its own mapped root
+   with the same testid, so an unscoped "not visible" can never pass
+   (issue #572). #}
+<div data-view="{{ name | lower }}">
+{%- endif %}
 {%- if modal %}
 {{ modal.open_line }}
 {%- endif %}
@@ -602,3 +609,6 @@
 	<button type="button" data-testid="{{ modal.close_testid }}" onclick={close_dialog}>Close</button>
 {{ modal.close_line }}
 {% endif %}
+{%- if auth_surface %}
+</div>
+{%- endif -%}

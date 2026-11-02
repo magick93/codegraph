@@ -1526,7 +1526,7 @@ async function render_response({ branch, fetched, options, manifest, page_config
 			}
 		}
 		const blocks = [];
-		const properties = [`base: ${base_expression}`, `version: ${s("1793443702427")}`];
+		const properties = [`base: ${base_expression}`, `version: ${s("1793639784402")}`];
 		if (assets) properties.push(`assets: ${s(assets)}`);
 		if (client.uses_env_dynamic_public) properties.push(`env: ${load_env_eagerly ? "null" : devalue.uneval(rendered_env)}`);
 		if (chunks) {

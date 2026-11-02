@@ -17,7 +17,7 @@ function ProcessHistoryItemForm($$renderer, $$props) {
 		const defaultValues = {
 			action_date: String(initialData?.action_date ?? "").replace(/Z$/, ""),
 			descriptions: Array.isArray(initialData?.descriptions) ? initialData?.descriptions.map(String) : [],
-			id: String(initialData?.id ?? "")
+			id: initialData?.id || void 0
 		};
 		const form = createAppForm(() => ({
 			defaultValues,

@@ -1127,9 +1127,17 @@ if-absent, so flipping the flag on an existing tree needs
 `svelte/package.json` + `svelte/vite.config.ts` removed to pick the new
 toolchain up. The gate fixture carries the flag and the gate harness now
 threads `plan.codegen` flags (`ifml_e2e_auth` was silently dropped there
-forever); `EXPECTED_FAILURES` in `assert_gate_specs` carries the 6
-pre-existing auth/journey-surface failures surfaced by that threading
-(#572). Related surfaced-and-fixed: fixture POST bodies stripped the
+forever); the #572-era `EXPECTED_FAILURES` ledger in `assert_gate_specs`
+is RETIRED — S5 fixed its root causes (POM `data-view` scoping roots for
+the denial-presentation collision; `params.*` → `viewParams.*` navigate
+binding lowering + created-id-preferring submit navigation with
+`{ ok, id }` command returns; load-level 401/403 → denial-target
+redirect) and the T3/T4 spec runs assert zero failures. The POM fill
+methods and journey hops are hydration-robust (expect-refill/toPass
+retry — the #562 re-render-race lesson applied to the pre-hydration fill
+race), which re-blessed the IFML flag-off canaries
+(`ux_rules_pre_feature_ifml_tree` + `forms_pre_feature_ifml_tree`).
+Related surfaced-and-fixed: fixture POST bodies stripped the
 workflow-managed `status` key (create DTOs `deny_unknown_fields`, #539
 voided the "inert key" premise) and follow the DTO wire-key casing
 (`Fixture.casing` / `form_payload_block(casing)`); journey fills quote

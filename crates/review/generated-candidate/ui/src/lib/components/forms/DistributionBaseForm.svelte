@@ -37,9 +37,9 @@
 
 	const defaultValues = {
 
-		description: String(initialData?.description ?? ''),
+		description: initialData?.description || undefined,
 
-		end_date: String(initialData?.end_date ?? ''),
+		end_date: initialData?.end_date || undefined,
 
 		start_date: String(initialData?.start_date ?? ''),
 

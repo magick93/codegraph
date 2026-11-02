@@ -38,11 +38,11 @@
 
 	const defaultValues = {
 
-		scheme_agency_id: String(initialData?.scheme_agency_id ?? ''),
+		scheme_agency_id: initialData?.scheme_agency_id || undefined,
 
-		scheme_id: String(initialData?.scheme_id ?? ''),
+		scheme_id: initialData?.scheme_id || undefined,
 
-		scheme_version_id: String(initialData?.scheme_version_id ?? ''),
+		scheme_version_id: initialData?.scheme_version_id || undefined,
 
 		value: String(initialData?.value ?? ''),
 

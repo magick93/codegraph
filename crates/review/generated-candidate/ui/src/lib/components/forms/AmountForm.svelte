@@ -36,7 +36,7 @@
 
 	const defaultValues = {
 
-		currency: String(initialData?.currency ?? ''),
+		currency: initialData?.currency || undefined,
 
 		value: initialData?.value != null ? Number(initialData?.value) : undefined,
 

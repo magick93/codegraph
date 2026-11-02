@@ -40,7 +40,7 @@
 
 		descriptions: Array.isArray(initialData?.descriptions) ? initialData?.descriptions.map(String) : [],
 
-		id: String(initialData?.id ?? ''),
+		id: initialData?.id || undefined,
 
 	};
 
