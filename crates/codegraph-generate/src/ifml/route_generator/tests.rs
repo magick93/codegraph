@@ -851,6 +851,7 @@ fn page_ux_rides_the_page_context_only_when_enabled() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     assert!(ctx.ux.is_none(), "flag off ⇒ no ux key on the page context");
@@ -864,6 +865,7 @@ fn page_ux_rides_the_page_context_only_when_enabled() {
         &HashSet::new(),
         Some(&ux_generation_for_tests(&pack())),
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let ux = ctx.ux.expect("ux context");
@@ -1299,6 +1301,7 @@ fn render_page_with_ux(
         &HashSet::new(),
         uxgen,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render")
@@ -1764,7 +1767,7 @@ fn load_context_renders_param_default_fallbacks() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[list, details], "/", false, false, false);
+    let ctx = build_load_context("v1", &vc, &[list, details], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("viewParams['slug'] = url.searchParams.get('slug') ?? 'home';"),
@@ -1798,7 +1801,7 @@ fn load_context_renders_param_default_fallbacks() {
         ..vc
     };
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
-    let ctx = build_load_context("v1", &bare_vc, &[list], "/", false, false, false);
+    let ctx = build_load_context("v1", &bare_vc, &[list], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("viewParams['customerId'] = url.searchParams.get('customerId') ?? '';"),
@@ -1811,7 +1814,7 @@ fn paramless_view_load_stays_free_of_param_resolution() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false, false, false);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(!rendered.contains("viewParams"), "{rendered}");
     assert!(!rendered.contains("result.params"), "{rendered}");
@@ -1836,7 +1839,7 @@ fn role_guard_renders_at_top_of_load_function() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { redirect } from '@sveltejs/kit';"),
@@ -1891,7 +1894,7 @@ fn no_roles_load_is_byte_identical_to_pre_guard_output() {
         events: Vec::new(),
         containers: Vec::new(),
     };
-    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert_eq!(
         rendered,
@@ -2087,6 +2090,7 @@ fn capability_guard_renders_can_checks_and_denial_target() {
         false,
         false,
         false,
+        false,
     );
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
@@ -2124,7 +2128,7 @@ fn combined_guard_renders_capability_check_before_roles_check() {
         vec!["admin".to_string()],
         vec!["manage_refunds".to_string()],
     );
-    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("import { currentRoles } from '$lib/roles';"),
@@ -2196,6 +2200,7 @@ fn page_context_for(
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx")
 }
@@ -2589,6 +2594,11 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         needs_goto: false,
         needs_on_mount: false,
         needs_invalidate: false,
+        remote_awaits: false,
+        needs_redirect: false,
+        view_params_src: String::new(),
+        denial_target: String::new(),
+        denial_helper_src: String::new(),
         has_submit: false,
         has_api_surface: false,
         remote_api: false,
@@ -2706,6 +2716,7 @@ testids = { root = "data-table", row = "data-row" }
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
 
@@ -2778,6 +2789,7 @@ fn load_context_wires_first_list_with_pagination() {
         &vc,
         &[list, second_list, details],
         "/",
+        false,
         false,
         false,
         false,
@@ -2904,6 +2916,7 @@ fn view_roles_mark_modal_landmark_and_xor_containers() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     assert_eq!(ctx.view_role, Some(SemanticRole::ModalView));
@@ -2918,6 +2931,7 @@ fn view_roles_mark_modal_landmark_and_xor_containers() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     assert_eq!(ctx.view_role, Some(SemanticRole::Shell));
@@ -2931,6 +2945,7 @@ fn view_roles_mark_modal_landmark_and_xor_containers() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     assert_eq!(ctx.view_role, None);
@@ -3043,6 +3058,7 @@ fn mapped_save_event_renders_button_invocation() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3085,6 +3101,7 @@ fn mapped_cancel_event_renders_secondary_button() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3110,6 +3127,7 @@ fn unmapped_form_keeps_hardcoded_submit_button() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3151,6 +3169,7 @@ export = "Button"
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3187,6 +3206,7 @@ fn modal_view_without_modal_mapping_renders_builtin_div_fallback() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3216,6 +3236,7 @@ fn modal_view_without_pack_renders_plain_page() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3311,6 +3332,7 @@ fn xor_view_with_mapping_renders_card_wrapper_around_children() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3343,6 +3365,7 @@ fn xor_view_without_container_mapping_renders_section_fallback() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3368,6 +3391,7 @@ fn xor_view_without_pack_renders_plain_page() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -3445,6 +3469,7 @@ fn sibling_xor_containers_render_inside_one_mapped_presentation_container() {
         &HashSet::new(),
         None,
         &ProjectConfig::default(),
+        "/",
     ))
     .expect("page ctx");
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
@@ -4032,7 +4057,7 @@ fn integrated_guard_decides_server_side_via_parent_roles() {
         vec!["admin".to_string()],
         vec!["manage_refunds".to_string()],
     );
-    let ctx = build_load_context("v1", &vc, &[], "/", true, false, false);
+    let ctx = build_load_context("v1", &vc, &[], "/", true, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
     assert!(
         rendered.contains("async ({ params, url, fetch, parent }) => {"),
@@ -4113,6 +4138,7 @@ fn load_fetches_resolve_the_api_origin_and_carry_the_auth_header() {
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        guard_only: false,
         remote_api: false,
         auth_surface: false,
         denial_target: "/".to_string(),
@@ -4154,6 +4180,7 @@ fn paramless_untyped_load_stays_free_of_api_plumbing() {
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        guard_only: false,
         remote_api: false,
         auth_surface: false,
         denial_target: "/".to_string(),
@@ -4268,6 +4295,7 @@ fn page_context_for_project(vc: &IfmlViewContainer, project: &ProjectConfig) -> 
         &HashSet::new(),
         None,
         project,
+        "/",
     ))
     .expect("page ctx")
 }
@@ -4277,7 +4305,7 @@ fn remote_load_awaits_the_view_query_instead_of_client_fetching() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false, true, false);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, true, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
 
     assert!(
@@ -4320,6 +4348,7 @@ fn remote_item_query_takes_the_view_id_param() {
         false,
         true,
         false,
+        false,
     );
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
 
@@ -4339,7 +4368,7 @@ fn remote_off_load_keeps_the_client_fetch_plane_byte_identical() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let list = page_component_context_sync(&component_with_spec(Some(table_spec())));
     let vc = plain_vc("CustomerList");
-    let ctx = build_load_context("v1", &vc, &[list], "/", false, false, false);
+    let ctx = build_load_context("v1", &vc, &[list], "/", false, false, false, false);
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
 
     assert!(rendered.contains("const API_BASE"), "{rendered}");
@@ -4431,6 +4460,7 @@ fn remote_transition_and_action_ops_call_commands() {
         &HashSet::new(),
         None,
         &remote_project(),
+        "/",
     ))
     .expect("page ctx");
     let comp = &ctx.components[0];
@@ -4611,6 +4641,7 @@ fn create_command_returns_the_created_id() {
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        guard_only: false,
         remote_api: true,
         auth_surface: false,
         denial_target: "/".to_string(),
@@ -4642,6 +4673,7 @@ fn create_command_returns_the_created_id() {
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        guard_only: false,
         remote_api: true,
         auth_surface: false,
         denial_target: "/".to_string(),
@@ -4695,6 +4727,7 @@ fn module_ctx(
         view_requires: Vec::new(),
         guard_consts: String::new(),
         integrated: false,
+        guard_only: false,
         remote_api: true,
         auth_surface: false,
         denial_target: "/".to_string(),
@@ -4877,6 +4910,7 @@ fn multi_component_views_fetch_every_component() {
         false,
         true,
         false,
+        false,
     );
     let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &load).expect("render");
     assert!(
@@ -4901,12 +4935,90 @@ fn multi_component_views_fetch_every_component() {
     vc.components = vec![component_with_spec(Some(table_spec())), sidebar];
     let ctx = page_context_for_project(&vc, &remote_project());
     let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    // Under the component-await plane (#571) the collision dissolves
+    // entirely: each component binds its own derived var.
     assert!(
-        rendered.contains("{#each data.sidebar_items as item}"),
-        "the second list binds its prefixed key:\n{rendered}"
+        rendered.contains("{#each sidebar_data as item}"),
+        "the second list binds its own derived:\n{rendered}"
     );
     assert!(
-        rendered.contains("{#each data.items as item}"),
-        "the first list keeps the bare binding:\n{rendered}"
+        rendered.contains("{#each grid_data as item}"),
+        "the first list binds its own derived:\n{rendered}"
     );
+}
+
+#[test]
+fn remote_component_awaits_replace_the_load_data_plane() {
+    // #571: under the remote plane the components await the queries
+    // directly (Svelte experimental async). The +page.ts data plane
+    // retires (guards keep their thin load — the integrated server-decided
+    // gating needs the parent chain), viewParams resolve from the page
+    // url, the auth-surface denial catch rides the loader, and
+    // invalidateAll leaves the handlers — the S4a single-flight refresh
+    // updates the reactive instance, so the deriveds re-render on their
+    // own.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = plain_vc("CustomerList");
+    vc.components = vec![component_with_spec(Some(table_spec()))];
+    let ctx = page_context_for_project(&vc, &remote_project());
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("const grid_data = $derived(await getGrid("),
+        "the data await lives in the component:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("page.url.searchParams"),
+        "viewParams resolve from the page url, not the load:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("data.items"),
+        "the load's data bindings are gone from the markup:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("invalidateAll"),
+        "the single-flight refresh makes the invalidate plumbing redundant:\n{rendered}"
+    );
+
+    // The auth surface adds the denial catch to the loader.
+    let mut project = remote_project();
+    project.codegen.ifml_e2e_auth = true;
+    let ctx = page_context_for_project(&vc, &project);
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("if (status === 401 || status === 403) {"),
+        "the denial catch rides the loader:\n{rendered}"
+    );
+    // The helper passes the canonical "/" denial target (mod.rs resolves
+    // the first unguarded view for real runs).
+    assert!(rendered.contains("redirect(303, '/')"), "{rendered}");
+}
+
+#[test]
+fn remote_transition_refreshes_the_paired_instance() {
+    // The #571 endgame: the S4a server-side refresh pre-warms the cache,
+    // but the AWAIT form re-fires only when the instance's promise is
+    // REPLACED — so the handler refreshes the paired client instance
+    // (targeted) instead of invalidating everything.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &workflow_transitions_config(),
+        "v1",
+        &vc,
+        None,
+        &HashSet::new(),
+        None,
+        &remote_project(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("void getEditor(viewParams.customerId).refresh();"),
+        "the transition refreshes the paired instance (targeted):\n{rendered}"
+    );
+    assert!(!rendered.contains("invalidateAll"), "{rendered}");
 }

@@ -114,6 +114,7 @@ pub(crate) fn is_numeric_rust_type(rust_type: &str) -> bool {
 /// fetch resolves through the view's server-executed `data.remote.ts`
 /// query instead of a client fetch — the API origin and credentials never
 /// reach the browser.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_load_context(
     api_version: &str,
     vc: &IfmlViewContainer,
@@ -122,6 +123,7 @@ pub(super) fn build_load_context(
     integrated: bool,
     remote: bool,
     auth_surface: bool,
+    guard_only: bool,
 ) -> PageLoadContext {
     let id_param = id_param_from(&vc.params);
     // The graph may carry duplicate HasParameter edges (see
@@ -197,6 +199,7 @@ pub(super) fn build_load_context(
         remote_api: remote,
         auth_surface,
         denial_target: denial_target.to_string(),
+        guard_only,
     }
 }
 
