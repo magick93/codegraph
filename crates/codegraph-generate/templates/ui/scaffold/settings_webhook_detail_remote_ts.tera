@@ -44,6 +44,9 @@ export const toggleActive = command(
 				message: body?.error ?? body?.message ?? `Request failed (${response.status})`
 			};
 		}
+		// Single-flight refresh (issue #574 S4a): the fresh endpoint data
+		// rides the command response to the client's query instance.
+		void getEndpointData(id).refresh();
 		return { ok: true as const };
 	}
 );
@@ -65,19 +68,39 @@ export const rotateSecret = command('unchecked', async (id: string) => {
 		};
 	}
 	const json = await response.json();
+	void getEndpointData(id).refresh();
 	return { ok: true as const, secret: (json.data ?? json).secret as string };
 });
 
-export const deleteSubscription = command('unchecked', async (id: string) => {
-	const response = await apiFetch(`/api/v1/webhooks/webhook-subscriptions/${id}`, {
-		method: 'DELETE'
-	});
-	if (!response.ok) {
-		const body = await response.json().catch(() => null);
-		return {
-			ok: false as const,
-			message: body?.error ?? body?.message ?? `Request failed (${response.status})`
-		};
+export const deleteSubscription = command(
+	'unchecked',
+	async (endpointId: string, subscriptionId: string) => {
+		const response = await apiFetch(`/api/v1/webhooks/webhook-subscriptions/${subscriptionId}`, {
+			method: 'DELETE'
+		});
+		if (!response.ok) {
+			const body = await response.json().catch(() => null);
+			return {
+				ok: false as const,
+				message: body?.error ?? body?.message ?? `Request failed (${response.status})`
+			};
+		}
+		void getEndpointData(endpointId).refresh();
+		return { ok: true as const };
 	}
-	return { ok: true as const };
+);
+{% if ui_live_queries %}
+// Live delivery log (issue #574 S4c): a query.live stream polling the
+// deliveries read every 5s. The page consumes the instance reactively on
+// the client; the load payload stays the SSR fallback.
+export const getDeliveriesLive = query.live(async function* (id: string) {
+	while (true) {
+		const res = await apiFetch(`/api/v1/webhooks/webhook-endpoints/${id}/deliveries`);
+		if (res.ok) {
+			const json = await res.json();
+			yield Array.isArray(json) ? json : json.data ?? [];
+		}
+		await new Promise((resolve) => setTimeout(resolve, 5000));
+	}
 });
+{% endif %}

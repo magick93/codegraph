@@ -92,6 +92,11 @@ pub struct BuildPlan {
     /// `AppField`s with a zod schema lowered from the DSL validations +
     /// messages. Default false = the hand-rolled form, byte-identical.
     pub ifml_tanstack_forms: bool,
+    /// Live-query plane (issue #574 S4c): `ui_live_queries` feature — the
+    /// webhook delivery log + entity detail workflow state consume kit
+    /// `query.live` streams (requires `entity_remote_functions`). Default
+    /// false = byte-identical.
+    pub ui_live_queries: bool,
     /// One testid vocabulary (issue #468 W3): `testid_module` feature —
     /// emits `ui/src/lib/testids.js` + `testids.d.ts` and switches the
     /// POM/spec templates to import it. Default false = byte-identical.
@@ -342,6 +347,17 @@ impl BuildPlan {
             None => false,
         };
 
+        // Parse ui_live_queries from features (issue #574 S4c; default:
+        // false). Same non-bool-is-an-error rule. The live-query plane
+        // also requires entity_remote_functions (the streams ride the
+        // remote modules); emission gates on BOTH.
+        let ui_live_queries = match profile.features.get("ui_live_queries") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"ui_live_queries\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
         // Parse ifml_tanstack_forms from features (issue #580; default:
         // false). Same non-bool-is-an-error rule.
         let ifml_tanstack_forms = match profile.features.get("ifml_tanstack_forms") {
@@ -396,6 +412,7 @@ impl BuildPlan {
             ifml_remote_functions,
             entity_remote_functions,
             entity_form,
+            ui_live_queries,
             ifml_tanstack_forms,
             testid_module,
             structural_gates,
@@ -462,6 +479,7 @@ impl BuildPlan {
             ifml_remote_functions: false,
             entity_remote_functions: false,
             entity_form: false,
+            ui_live_queries: false,
             ifml_tanstack_forms: false,
             testid_module: false,
             structural_gates: false,

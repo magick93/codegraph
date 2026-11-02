@@ -117,9 +117,34 @@ impl RemoteModuleContext {
             s.push('\n');
             s.push_str(&render_query(q));
         }
+        // The single-flight pairing (issue #574 S4a): a command's server
+        // handler refreshes the queries whose client instances the page is
+        // showing, so the fresh data rides the command response. Kit keys
+        // instances by serialized args — a by-id query keyed with
+        // `args.id` always matches, and a PLAIN (arg-less) collection
+        // query keys as `()` which the command knows. Paginated
+        // collections key on the load's page args, which the command
+        // cannot know, so they are never refreshed blind.
+        let item_refresh = self
+            .queries
+            .iter()
+            .find(|q| q.by_id)
+            .map(|q| q.export.clone());
+        let list_refresh = self
+            .queries
+            .iter()
+            .find(|q| !q.by_id && !q.paginate)
+            .map(|q| q.export.clone());
         for c in &self.commands {
             s.push('\n');
-            s.push_str(&render_command(&c.command));
+            let (item, list) = match &c.command.kind {
+                RemoteCommandKind::Create => (None, list_refresh.as_deref()),
+                RemoteCommandKind::Update => (item_refresh.as_deref(), list_refresh.as_deref()),
+                RemoteCommandKind::Transition | RemoteCommandKind::Op(_) => {
+                    (item_refresh.as_deref(), None)
+                }
+            };
+            s.push_str(&render_command(&c.command, item, list));
         }
         s
     }
@@ -188,8 +213,37 @@ fn render_query(q: &RemoteQuery) -> String {
     s
 }
 
-fn render_command(c: &RemoteCommand) -> String {
+fn render_command(
+    c: &RemoteCommand,
+    item_refresh: Option<&str>,
+    list_refresh: Option<&str>,
+) -> String {
     let mut s = String::new();
+    // The single-flight refresh block sits between the ok check and the
+    // success return; kit awaits it and carries the payloads on the
+    // command's response (issue #574 S4a). Create/Update share one merged
+    // args type whose `id` is `string | null` (create mode), so their
+    // refresh guards on it; Transition/Op args carry a plain `string`.
+    let null_guarded = matches!(
+        c.kind,
+        RemoteCommandKind::Create | RemoteCommandKind::Update
+    );
+    let refresh_block = {
+        let mut block = String::new();
+        if let Some(export) = item_refresh {
+            if null_guarded {
+                block.push_str(&format!(
+                    "\tif (args.id) {{\n\t\tvoid {export}(args.id).refresh();\n\t}}\n"
+                ));
+            } else {
+                block.push_str(&format!("\tvoid {export}(args.id).refresh();\n"));
+            }
+        }
+        if let Some(export) = list_refresh {
+            block.push_str(&format!("\tvoid {export}().refresh();\n"));
+        }
+        block
+    };
     match &c.kind {
         RemoteCommandKind::Create | RemoteCommandKind::Update => {
             s.push_str(&format!(
@@ -205,13 +259,27 @@ fn render_command(c: &RemoteCommand) -> String {
             s.push_str("\t\tbody: JSON.stringify(args.data)\n");
             s.push_str("\t});\n");
             s.push_str("\tconst created = await response.json().catch(() => null);\n");
+            // The 422 `VALIDATION_ERROR` body's `error.details` parses into
+            // `fieldErrors` (the #582 deferral, entity-plane parity) and the
+            // message reads the error OBJECT level — `error` is
+            // `{ code, message, details }`, never a bare string.
             s.push_str("\tif (!response.ok) {\n");
-            s.push_str("\t\treturn { ok: false, message: created?.error ?? created?.message ?? `Request failed (${response.status})` };\n");
+            s.push_str("\t\tconst fieldErrors: Record<string, string> = {};\n");
+            s.push_str("\t\tconst details = created?.error?.details;\n");
+            s.push_str("\t\tif (Array.isArray(details)) {\n");
+            s.push_str("\t\t\tfor (const d of details) {\n");
+            s.push_str("\t\t\t\tif (d && typeof d.field === 'string' && typeof d.message === 'string') {\n");
+            s.push_str("\t\t\t\t\tfieldErrors[d.field] = d.message;\n");
+            s.push_str("\t\t\t\t}\n");
+            s.push_str("\t\t\t}\n");
+            s.push_str("\t\t}\n");
+            s.push_str("\t\treturn { ok: false, message: created?.error?.message ?? created?.message ?? `Request failed (${response.status})`, fieldErrors };\n");
             s.push_str("\t}\n");
             // The created/updated row id rides back for post-submit
             // navigation (issue #572: a create-mode submit navigates to
             // `${result.id ?? viewParams.<param>}` — the view param is
             // empty in create mode, so the row id is the only real target).
+            s.push_str(&refresh_block);
             s.push_str("\treturn { ok: true, id: created?.data?.id ?? created?.id as string | undefined };\n");
             s.push_str("});\n");
         }
@@ -244,8 +312,9 @@ fn render_command(c: &RemoteCommand) -> String {
             s.push_str("\t});\n");
             s.push_str("\tif (!response.ok) {\n");
             s.push_str("\t\tconst body = await response.json().catch(() => null);\n");
-            s.push_str("\t\treturn { ok: false, message: body?.error ?? body?.message ?? `Request failed (${response.status})` };\n");
+            s.push_str("\t\treturn { ok: false, message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})` };\n");
             s.push_str("\t}\n");
+            s.push_str(&refresh_block);
             s.push_str("\treturn { ok: true };\n");
             s.push_str("});\n");
         }

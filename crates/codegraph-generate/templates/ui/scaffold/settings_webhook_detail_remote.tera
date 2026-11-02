@@ -5,6 +5,10 @@
   import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import { rotateSecret, toggleActive, deleteSubscription } from './data.remote';
+{% endraw %}{% if ui_live_queries %}
+  import { browser } from '$app/environment';
+  import { getDeliveriesLive } from './data.remote';
+{% endif %}{% raw %}
 
   interface WebhookEndpoint {
     id: string;
@@ -49,7 +53,14 @@
   let { data }: Props = $props();
   let endpoint = $derived(data.endpoint);
   let subscriptions = $derived(data.subscriptions);
+{% endraw %}{% if ui_live_queries %}
+  // Live delivery log (issue #574 S4c): the query.live instance polls on
+  // the client; the load payload is the SSR fallback.
+  const deliveriesLive = browser ? getDeliveriesLive(endpoint.id) : null;
+  let deliveries = $derived(deliveriesLive?.current ?? data.deliveries);
+{% else %}
   let deliveries = $derived(data.deliveries);
+{% endif %}{% raw %}
   let error = $state<string | null>(null);
 
   const endpointId = $derived(endpoint.id);
@@ -85,7 +96,7 @@
     if (!confirm('Remove this subscription?')) return;
     error = null;
     try {
-      const result = await deleteSubscription(id);
+      const result = await deleteSubscription(endpointId, id);
       if (!result.ok) {
         throw new Error(result.message ?? 'Request failed');
       }

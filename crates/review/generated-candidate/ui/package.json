@@ -36,13 +36,12 @@
     "cookie": "^1.0.2"
   },
   "dependencies": {
-    "@crewbase/ui": "file:stubs/@crewbase/ui","@community-os/ui": "file:stubs/@community-os/ui",
-    "@crewbase/entities": "file:stubs/@crewbase/entities",
+    "@crewbase/ui": "workspace:*",
+    "@crewbase/entities": "workspace:*",
     "@internationalized/date": "^3.8.0",
     "@lucide/svelte": "^1.0.0",
     "@supabase/supabase-js": "^2.49.0",
     "@supabase/ssr": "^0.5.0",
-    "@tanstack/svelte-form": "^1.33.5",
     "@tanstack/table-core": "^8.20.0",
     "bits-ui": "^1.0.0",
     "tw-animate-css": "^1.3.0",
@@ -50,8 +49,7 @@
     "mode-watcher": "^1.0.0",
     "svelte-sonner": "^0.3.0",
     "tailwind-merge": "^3.0.0",
-    "tailwind-variants": "^3.0.0",
-    "zod": "^4.6.7"
+    "tailwind-variants": "^3.0.0"
   },
   "type": "module"
 }

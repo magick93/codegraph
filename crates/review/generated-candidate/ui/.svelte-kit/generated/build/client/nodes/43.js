@@ -1,1 +1,0 @@
-export { default as component } from "../../../../../src/routes/(app)/common/gender-code-list/[gender_code_list_id]/edit/+page.svelte";

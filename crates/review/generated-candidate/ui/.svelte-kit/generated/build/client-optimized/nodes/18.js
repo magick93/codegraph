@@ -1,1 +1,0 @@
-export { default as component } from "../../../../../src/routes/(app)/common/currency-code-list/[currency_code_list_id]/+page.svelte";

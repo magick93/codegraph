@@ -18,8 +18,4 @@ pub mod compensation_pay_run;
 pub mod events_public_event;
 pub mod recruiting_application;
 pub mod recruiting_candidate;
-pub mod recruiting_grant_application;
-pub mod recruiting_grant_audit_trail;
-pub mod recruiting_grant_panel_minute;
-pub mod recruiting_grant_review_note;
 pub mod rsvp_rsvp;

@@ -328,6 +328,7 @@ async fn run_pipeline() -> Result<(), String> {
             ifml_remote_functions: plan.ifml_remote_functions,
             ifml_tanstack_forms: plan.ifml_tanstack_forms,
             entity_form: plan.entity_form,
+            ui_live_queries: plan.ui_live_queries,
             ..Default::default()
         },
         cargo: codegraph::generate::CargoConfig {

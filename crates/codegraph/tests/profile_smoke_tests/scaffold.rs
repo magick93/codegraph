@@ -153,6 +153,7 @@ async fn workers_topology_generates_worker_scaffold_and_gateway() {
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
@@ -656,6 +657,7 @@ directions = ["push"]
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
@@ -822,6 +824,7 @@ directions = ["push"]
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
@@ -995,6 +998,7 @@ directions = ["push"]
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
@@ -1258,6 +1262,7 @@ async fn workers_topology_without_extension_points_keeps_gateway_clean() {
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),
@@ -1445,6 +1450,7 @@ directions = ["push"]
 
     let plan = BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![
             "ddl".to_string(),

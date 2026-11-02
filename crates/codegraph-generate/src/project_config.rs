@@ -173,6 +173,13 @@ pub struct CodegenConfig {
     /// hand-rolled form, byte-identical.
     #[serde(default)]
     pub ifml_tanstack_forms: bool,
+    /// Live-query plane (issue #574 S4c, requires
+    /// `entity_remote_functions`): the webhook delivery log and the entity
+    /// detail workflow state consume kit `query.live` streams (a 5s poll
+    /// in the generator) with the load payload as the SSR fallback.
+    /// Default false = byte-identical.
+    #[serde(default)]
+    pub ui_live_queries: bool,
     /// One testid vocabulary (issue #468 W3): when true the `ui_testids`
     /// global generator emits `ui/src/lib/testids.js` + `testids.d.ts` and
     /// the generated POM/spec templates import it, binding the test surface
@@ -204,6 +211,7 @@ impl Default for CodegenConfig {
             entity_remote_functions: false,
             entity_form: false,
             ifml_tanstack_forms: false,
+            ui_live_queries: false,
             testid_module: false,
             structural_gates: false,
             types_import_prefix: "codegraph_type_contracts".into(),
@@ -477,6 +485,7 @@ mod tests {
             ("entity_remote_functions", serde_json::json!(false)),
             ("entity_form", serde_json::json!(false)),
             ("ifml_tanstack_forms", serde_json::json!(false)),
+            ("ui_live_queries", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),

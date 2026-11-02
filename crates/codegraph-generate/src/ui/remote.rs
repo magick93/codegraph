@@ -229,9 +229,11 @@ fn child_queries(ctx: &UiPageContext, api_version: &str) -> String {
         s.push_str("});\n\n");
         // The child section's delete rides a command too — the component
         // receives it as the `onDelete` callback (issue #574 S2: no
-        // browser fetch plane).
+        // browser fetch plane). The parent id rides along so the command
+        // can key the children query instance for the single-flight
+        // refresh (issue #574 S4a).
         s.push_str(&format!(
-            "export const delete{}Child = command('unchecked', async (childId: string) => {{\n",
+            "export const delete{}Child = command('unchecked', async (childId: string, parentId: string) => {{\n",
             section.entity_name
         ));
         s.push_str("\tconst response = await apiFetch(`/api/");
@@ -242,6 +244,10 @@ fn child_queries(ctx: &UiPageContext, api_version: &str) -> String {
         s.push_str(&section.path_segment);
         s.push_str("/${childId}`, {\n\t\tmethod: 'DELETE',\n\t});\n");
         s.push_str(COMMAND_FAIL_LEG);
+        s.push_str(&format!(
+            "\tvoid get{}Children(parentId).refresh();\n",
+            section.entity_name
+        ));
         s.push_str("\treturn { ok: true as const };\n");
         s.push_str("});\n\n");
     }
@@ -299,6 +305,9 @@ fn update_command(ctx: &UiPageContext, api_version: &str, entity_form: bool) -> 
     } else {
         s.push_str(COMMAND_FAIL_LEG);
     }
+    // Single-flight refresh (issue #574 S4a): the edited row rides the
+    // command response back to the client's query instance.
+    s.push_str("\tvoid getItem(args.id).refresh();\n");
     s.push_str("\treturn { ok: true as const };\n");
     s.push_str("});\n");
     s
@@ -320,6 +329,29 @@ fn delete_command(ctx: &UiPageContext, api_version: &str) -> String {
     s
 }
 
+/// The live workflow-state stream (issue #574 S4c): an async generator
+/// polling the `/workflow` read every 5s. Kit consumes it as a
+/// `query.live` — SSR takes nothing (the page guards on the instance),
+/// the client stays connected while the page shows the state.
+fn workflow_live_query(ctx: &UiPageContext, api_version: &str) -> String {
+    let mut wf = item_path_from_ids(ctx, api_version);
+    wf.push_str("/workflow");
+    let mut s = String::new();
+    s.push_str("export const getWorkflowLive = query.live(async function* (id: string) {\n");
+    s.push_str("\twhile (true) {\n");
+    s.push_str("\t\tconst res = await apiFetch(`");
+    s.push_str(&wf);
+    s.push_str("`);\n");
+    s.push_str("\t\tif (res.ok) {\n");
+    s.push_str("\t\t\tconst json = await res.json();\n");
+    s.push_str("\t\t\tyield json.data ?? json;\n");
+    s.push_str("\t\t}\n");
+    s.push_str("\t\tawait new Promise((resolve) => setTimeout(resolve, 5000));\n");
+    s.push_str("\t}\n");
+    s.push_str("});\n");
+    s
+}
+
 fn transition_command(ctx: &UiPageContext, api_version: &str) -> String {
     let mut s = String::new();
     s.push_str("export const transitionItem = command('unchecked', async (args: { id: string; to: string; ");
@@ -333,6 +365,10 @@ fn transition_command(ctx: &UiPageContext, api_version: &str) -> String {
     s.push_str("\t\tbody: JSON.stringify({ target_state: args.to }),\n");
     s.push_str("\t});\n");
     s.push_str(COMMAND_FAIL_LEG);
+    // Single-flight refresh (issue #574 S4a): the transitioned row rides
+    // the command response — the workflow panel's server truth arrives
+    // without a second data fetch.
+    s.push_str("\tvoid getItem(args.id).refresh();\n");
     s.push_str("\tconst json = await response.json();\n");
     s.push_str("\treturn { ok: true as const, state: json.data ?? json };\n");
     s.push_str("});\n");
@@ -398,8 +434,12 @@ pub(super) fn render_list_module(
 }
 
 /// The detail route's module: `getItem`, the transition/delete commands,
-/// and one child-list query per config child section.
-pub(super) fn render_detail_module(ctx: &UiPageContext, api_version: &str) -> String {
+/// and one child-list query per config child section. Under the
+/// live-query plane (`ui_live_queries`, issue #574 S4c) a workflow-bound
+/// entity also carries a `getWorkflowLive` stream: a 5s poll of the
+/// `/workflow` read whose yields update the client's reactive instance —
+/// the load payload stays the SSR fallback.
+pub(super) fn render_detail_module(ctx: &UiPageContext, api_version: &str, live: bool) -> String {
     let mut bodies = Vec::new();
     let mut queries = 0usize;
     let mut commands = 0usize;
@@ -410,6 +450,10 @@ pub(super) fn render_detail_module(ctx: &UiPageContext, api_version: &str) -> St
     if ctx.has_workflow {
         bodies.push(transition_command(ctx, api_version));
         commands += 1;
+        if live {
+            bodies.push(workflow_live_query(ctx, api_version));
+            queries += 1;
+        }
     }
     if ctx.has_delete {
         bodies.push(delete_command(ctx, api_version));
@@ -545,7 +589,7 @@ mod tests {
     fn detail_module_merges_workflow_and_children() {
         let mut ctx = root_ctx();
         ctx.has_workflow = true;
-        let m = render_detail_module(&ctx, "v1");
+        let m = render_detail_module(&ctx, "v1", false);
         assert!(
             m.contains("export const getItem = query('unchecked', async (id: string)"),
             "{m}"
@@ -560,6 +604,18 @@ mod tests {
             m.contains("item.workflow_state = wfJson.data ?? wfJson;"),
             "{m}"
         );
+        // Flag off: no live stream.
+        assert!(!m.contains("query.live"), "{m}");
+        // Flag on: the workflow live stream rides the module.
+        let live = render_detail_module(&ctx, "v1", true);
+        assert!(
+            live.contains(
+                "export const getWorkflowLive = query.live(async function* (id: string) {"
+            ),
+            "{live}"
+        );
+        assert!(live.contains("/workflow"), "{live}");
+        assert!(live.contains("setTimeout(resolve, 5000)"), "{live}");
     }
 
     #[test]
@@ -582,6 +638,55 @@ mod tests {
         assert!(
             m.contains("export const updateItem = command('unchecked'"),
             "{m}"
+        );
+    }
+
+    #[test]
+    fn transition_and_update_commands_single_flight_refresh_the_item() {
+        // Issue #574 S4a: the command's server handler refreshes the paired
+        // by-id query so the fresh row rides the command response.
+        let mut ctx = root_ctx();
+        ctx.has_workflow = true;
+        let m = render_detail_module(&ctx, "v1", false);
+        assert!(
+            m.contains("void getItem(args.id).refresh();"),
+            "the transition single-flight refreshes the item query:\n{m}"
+        );
+
+        let edit = render_edit_module(&ctx, "v1", false);
+        assert!(
+            edit.contains("void getItem(args.id).refresh();"),
+            "the update single-flight refreshes the item query:\n{edit}"
+        );
+    }
+
+    #[test]
+    fn child_delete_carries_the_parent_and_refreshes_children() {
+        // The child command needs the parent id both to delete through the
+        // hierarchy path and to key the children query instance for the
+        // single-flight refresh.
+        let mut ctx = root_ctx();
+        ctx.child_sections = vec![crate::ui::page::ChildSection {
+            entity_name: "Request".into(),
+            module_name: "request".into(),
+            label: "Requests".into(),
+            path_segment: "request".into(),
+            domain: "common".into(),
+            has_children: false,
+            display_field: None,
+            fields: Vec::new(),
+            tid: crate::ui::testids::for_module("request"),
+        }];
+        let children = child_queries(&ctx, "v1");
+        assert!(
+            children.contains(
+                "export const deleteRequestChild = command('unchecked', async (childId: string, parentId: string) => {"
+            ),
+            "{children}"
+        );
+        assert!(
+            children.contains("void getRequestChildren(parentId).refresh();"),
+            "{children}"
         );
     }
 }

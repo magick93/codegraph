@@ -447,50 +447,6 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 
 
 
-        recruiting_grant_application_commands: crate::domain::recruiting::grant_application::command::GrantApplicationCommandHandler::new(
-            Arc::new(crate::domain::recruiting::grant_application::repository_impl::GrantApplicationRepositoryImpl),
-            app_db.clone(),
-
-        ),
-        recruiting_grant_application_queries: crate::domain::recruiting::grant_application::query::GrantApplicationQueryHandler::new(
-            Arc::new(crate::domain::recruiting::grant_application::repository_impl::GrantApplicationRepositoryImpl),
-            app_db.clone(),
-
-        ),
-
-        recruiting_grant_audit_trail_commands: crate::domain::recruiting::grant_audit_trail::command::GrantAuditTrailCommandHandler::new(
-            Arc::new(crate::domain::recruiting::grant_audit_trail::repository_impl::GrantAuditTrailRepositoryImpl),
-            app_db.clone(),
-
-        ),
-        recruiting_grant_audit_trail_queries: crate::domain::recruiting::grant_audit_trail::query::GrantAuditTrailQueryHandler::new(
-            Arc::new(crate::domain::recruiting::grant_audit_trail::repository_impl::GrantAuditTrailRepositoryImpl),
-            app_db.clone(),
-
-        ),
-
-        recruiting_grant_panel_minute_commands: crate::domain::recruiting::grant_panel_minute::command::GrantPanelMinuteCommandHandler::new(
-            Arc::new(crate::domain::recruiting::grant_panel_minute::repository_impl::GrantPanelMinuteRepositoryImpl),
-            app_db.clone(),
-
-        ),
-        recruiting_grant_panel_minute_queries: crate::domain::recruiting::grant_panel_minute::query::GrantPanelMinuteQueryHandler::new(
-            Arc::new(crate::domain::recruiting::grant_panel_minute::repository_impl::GrantPanelMinuteRepositoryImpl),
-            app_db.clone(),
-
-        ),
-
-        recruiting_grant_review_note_commands: crate::domain::recruiting::grant_review_note::command::GrantReviewNoteCommandHandler::new(
-            Arc::new(crate::domain::recruiting::grant_review_note::repository_impl::GrantReviewNoteRepositoryImpl),
-            app_db.clone(),
-
-        ),
-        recruiting_grant_review_note_queries: crate::domain::recruiting::grant_review_note::query::GrantReviewNoteQueryHandler::new(
-            Arc::new(crate::domain::recruiting::grant_review_note::repository_impl::GrantReviewNoteRepositoryImpl),
-            app_db.clone(),
-
-        ),
-
         recruiting_application_commands: crate::domain::recruiting::application::command::ApplicationCommandHandler::new(
             Arc::new(crate::domain::recruiting::application::repository_impl::ApplicationRepositoryImpl),
             app_db.clone(),

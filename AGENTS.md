@@ -1145,7 +1145,78 @@ typed literals and use valid emails. Deferred: component-level awaits
 (retire `+page.ts`, #571); the #572 denial-presentation/journey-arrival
 fixes.
 
+### Plane upgrades (issue #574 S4, `ui_live_queries`)
+
+Three upgrades over the remote-functions plane, all riding the existing
+flags except the last:
+
+- **S4a — single-flight refreshes**: every mutating command's server
+  handler refreshes the PAIRED query so the fresh data rides the command
+  response (kit single-flight semantics — verified against kit's client
+  runtime: command responses apply `data.q` payloads to the matching
+  instances keyed by serialized args; loads re-run via `invalidateAll`
+  hitting the fresh instance cache, no second data fetch). IFML
+  (`route_generator/remote.rs`): Transition/Op refresh the module's
+  by-id query; Update refreshes by-id + the plain (arg-less) collection;
+  Create refreshes the plain collection only; PAGINATED collections are
+  never refreshed blind (the command cannot know the load's page args —
+  kit keys instances by args). The Create/Update merged args type carries
+  `id: string | null`, so their refresh guards `if (args.id)`. Entity
+  (`ui/remote.rs`): `transitionItem`/`updateItem` refresh `getItem`;
+  `delete{E}Child` now takes `(childId, parentId)` (the page passes
+  `item.id`) and refreshes the children query; the webhook settings
+  commands refresh `getEndpointData` (`deleteSubscription` takes
+  `(endpointId, subscriptionId)`).
+- **S4b — the FetchState lift**: `FetchState::next` (route_generator/
+  context.rs) no longer first-wins per kind — EVERY api-backed component
+  claims its fetch; the SECOND claimant of a kind gets a js_name-prefixed
+  load key (`result.sidebar_items` / `data.sidebar_items`, also
+  `_item`/`_formData`) carried on both component contexts, with the
+  mapped-component props + workflow badge html rebound when prefixed.
+  First claimants keep the bare keys — every pre-S4 view renders
+  byte-identically. `query.batch` was evaluated and REJECTED: kit dedupes
+  identical-arg invocations within a page (same-instance sharing), and
+  generated multi-component views either bind the same collection with
+  identical args (already deduped) or different collections (different
+  query ids — batch is per-query-function), so batch adds nothing; the
+  record lives in the PR.
+- **S4c — `query.live`** (new `ui_live_queries` feature, parse default
+  OFF / shipped profiles + init scaffold ON; requires
+  `entity_remote_functions` — emission gates on BOTH): the entity detail
+  module gains `getWorkflowLive` (a 5s poll of the `/workflow` read) and
+  the webhook detail module gains `getDeliveriesLive`; the pages consume
+  the instances REACTIVELY browser-side (`browser ? live(id) : null` —
+  kit does not start streams during SSR) with the load payload as the
+  SSR fallback (`wfLive?.current ?? item.workflow_state`). Flag off ⇒
+  byte-identical (entity-tree ux/forms canaries re-blessed for the
+  scaffold-seeding diff, enumerated: the live exports + the page
+  consumption blocks).
+- **The #582 deferral retired — IFML 422 per-field mapping**: the
+  Create/Update fail legs parse `error.details` into `fieldErrors` (the
+  entity-plane leg verbatim) and EVERY IFML fail leg now reads the error
+  OBJECT level (`created?.error?.message ?? created?.message` — the API
+  body is `{ error: { code, message, details } }`; the old
+  `created?.error ?? created?.message` read the object itself, a latent
+  `[object Object]` bug). The TanStack submit leg maps
+  `result.fieldErrors` onto the fields. Still deferred from #582:
+  shadcn-pack field-component variants (the prop-contract design pass —
+  DOM-event vs value-callback conventions across kits — needs its own
+  slice; shipping it blind risks svelte-check breakage in consumer
+  trees).
+- Swept en route: the gate-owned sweep spec's inner waitForURL window
+  widened 2s→5s (parallel gate runs contend for the vite dev server; the
+  toPass retry chain needs the headroom).
+- Gates: in-crate `route_generator::tests` (single-flight pairing, 422
+  fieldErrors, the multi-component lift) + `ui::remote::tests` (entity
+  refreshes, the child parent arg, the live stream) +
+  `entity_remote_functions_tests` (the live + refresh pins over the full
+  pipeline) + the two nightly gates (`ifml_codegen_gate` 5/5 with
+  33/33 specs, `entity_codegen_gate` — svelte-check + vite build over
+  the query.live tree, the arbiter that caught the raw-block Tera leak
+  and the `%`-into-svelte typo).
+
 ### Neutral server contract (issue #574 S1, `server_api`)
+
 
 One env/auth story for EVERY server-side fetch in generated SvelteKit
 trees — the IFML plane's remote functions AND the entity plane's

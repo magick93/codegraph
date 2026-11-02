@@ -744,6 +744,7 @@ mod charts_capability_audit {
             ifml_remote_functions: false,
             entity_remote_functions: false,
             entity_form: false,
+            ui_live_queries: false,
             ifml_tanstack_forms: false,
             testid_module: false,
             structural_gates: false,

@@ -39,6 +39,9 @@ entity_remote_functions = true
 # render through @tanstack/svelte-form with a zod schema lowered from the
 # model's constraints; 422 VALIDATION_ERROR details map onto fields.
 entity_form = true
+# Live-query plane (issue #574 S4c): kit query.live streams for the
+# webhook delivery log + entity detail workflow state.
+ui_live_queries = true
 {% if features.ifml %}ifml_tanstack_forms = true
 {% endif %}{% if features.rosetta %}rosetta_backend = true
 {% endif %}has_admin_cli = true

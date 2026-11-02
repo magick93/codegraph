@@ -1,1 +1,0 @@
-export { default as component } from "../../../../../src/routes/(app)/recruiting/grant-panel-minute/[grant_panel_minute_id]/edit/+page.svelte";

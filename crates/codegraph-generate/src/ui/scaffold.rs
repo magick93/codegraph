@@ -32,6 +32,10 @@ pub struct UiScaffoldContext {
     /// TanStack form layer (issue #580): the scaffold emits the form
     /// creator scaffold (if-absent) and pins the npm deps.
     pub entity_form: bool,
+    /// Live-query plane (issue #574 S4c): the webhook delivery log
+    /// consumes a `query.live` stream with the load payload as the SSR
+    /// fallback. Requires the remote-functions plane.
+    pub ui_live_queries: bool,
     /// Chart nav entries (issue #577) — one per modeled chart route.
     /// Empty (no charts) keeps the layout byte-identical.
     pub nav_charts: Vec<crate::charts::ChartNavItem>,
@@ -142,6 +146,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             shadcn_primitives: SHADCN_PRIMITIVES.to_vec(),
             entity_remote_functions: project.codegen.entity_remote_functions,
             entity_form: project.codegen.entity_form,
+            ui_live_queries: project.codegen.ui_live_queries,
             tanstack_svelte_form_version: crate::forms::TANSTACK_SVELTE_FORM_VERSION,
             zod_version: crate::forms::ZOD_VERSION,
             nav_charts,

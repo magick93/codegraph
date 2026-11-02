@@ -161,6 +161,7 @@ async fn db_with(model: Option<EvtModelGraph>) -> codegraph_core::mock::MockEngi
 fn workers_plan() -> codegraph::profile::BuildPlan {
     codegraph::profile::BuildPlan {
         entity_form: false,
+        ui_live_queries: false,
         ifml_tanstack_forms: false,
         entity_generators: vec![],
         domain_generators: vec![],

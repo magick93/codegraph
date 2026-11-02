@@ -1,1 +1,0 @@
-export { default as component } from "../../../../../src/routes/(app)/common/person-base/[person_base_id]/+page.svelte";
