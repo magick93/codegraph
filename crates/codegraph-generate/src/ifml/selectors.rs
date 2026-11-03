@@ -103,7 +103,7 @@ pub(crate) fn component_kind(c: &IfmlComponent) -> String {
     match c.spec {
         Some(ComponentSpec::Table(_)) => "table".to_string(),
         Some(ComponentSpec::Form(_)) => "form".to_string(),
-        Some(ComponentSpec::Chart(_)) => "chart".to_string(),
+        Some(ComponentSpec::Chart(_)) | Some(ComponentSpec::ChartRef(_)) => "chart".to_string(),
         None => c.component_type.clone(),
     }
 }

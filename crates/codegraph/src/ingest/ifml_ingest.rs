@@ -81,12 +81,24 @@ fn expr_json(condition: Option<&Expression>) -> Option<String> {
 }
 
 /// Ingest a parsed IFML model into the graph database.
+///
+/// Actions are declaration-backed (issue #591): `TriggersAction` edges
+/// link only to the `action "X" { ... }` declarations ingested from
+/// `model.actions`; an invocation naming an undeclared action is dropped
+/// with a warning instead of synthesizing an unbacked node. On the run
+/// path the checker (E0104) proves every invocation before this walker
+/// runs, so the drop arm is unreachable there.
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub async fn ingest_ifml_model(
     db: &dyn GraphIngestor,
     model: &IfmlModel,
 ) -> Result<IfmlIngestStats> {
     let mut stats = IfmlIngestStats::default();
+    let declared_actions: std::collections::HashSet<&str> = model
+        .actions
+        .iter()
+        .map(|action| action.name.as_str())
+        .collect();
 
     // Pass 0: ingest module declarations before any view content — the
     // `HasModuleDefinition` edges from view/module `use` statements resolve
@@ -138,6 +150,28 @@ pub async fn ingest_ifml_model(
         }
     }
 
+    // Ingest standalone actions BEFORE view contents: the TriggersAction
+    // edges created while wiring component/view events target
+    // `action:{name}` nodes, and edge INSERTs silently no-op on missing
+    // targets (Grafeo). Declaration-backed (issue #591): these are the
+    // only action nodes the graph ever holds.
+    for action in &model.actions {
+        let action_id = db
+            .ingest_action_node(&ActionNode {
+                name: action.name.clone(),
+                domain: None,
+            })
+            .await
+            .map_err(Error::Graph)?;
+        stats.actions += 1;
+
+        // Ingest action body events
+        for event in &action.events {
+            handle_event(db, event, &action_id, &declared_actions).await?;
+            stats.events += 1;
+        }
+    }
+
     // Pass 2: ingest container params, components, and events.
     for view in &model.views {
         let vc_id = format!("vc:{}", view.name);
@@ -170,7 +204,7 @@ pub async fn ingest_ifml_model(
 
         // Ingest nested container contents
         for (i, container) in view.containers.iter().enumerate() {
-            ingest_container_contents(db, container, i, &vc_id).await?;
+            ingest_container_contents(db, container, i, &vc_id, &declared_actions).await?;
         }
 
         // Ingest view components. View-level components persist under a
@@ -183,31 +217,15 @@ pub async fn ingest_ifml_model(
         // same-named nested containers deliberately pool their contents
         // (one deduped container node).
         for comp in &view.components {
-            let _comp_id = ingest_view_component(db, comp, &vc_id, Some(&view.name)).await?;
+            let _comp_id =
+                ingest_view_component(db, comp, &vc_id, Some(&view.name), &declared_actions)
+                    .await?;
             stats.components += 1;
         }
 
         // Ingest view-level events
         for event in &view.events {
-            handle_event(db, event, &vc_id).await?;
-            stats.events += 1;
-        }
-    }
-
-    // Ingest standalone actions
-    for action in &model.actions {
-        let action_id = db
-            .ingest_action_node(&ActionNode {
-                name: action.name.clone(),
-                domain: None,
-            })
-            .await
-            .map_err(Error::Graph)?;
-        stats.actions += 1;
-
-        // Ingest action body events
-        for event in &action.events {
-            handle_event(db, event, &action_id).await?;
+            handle_event(db, event, &vc_id, &declared_actions).await?;
             stats.events += 1;
         }
     }
@@ -292,6 +310,7 @@ async fn ingest_container_contents(
     container: &ContainerDeclaration,
     sort_order: usize,
     parent_id: &str,
+    declared_actions: &std::collections::HashSet<&str>,
 ) -> Result<()> {
     let container_id = format!("vc:{}", container.name);
 
@@ -312,18 +331,26 @@ async fn ingest_container_contents(
     // Ingest container's components (bare names — nested-container
     // components pool under the deduped container node by design).
     for comp in &container.components {
-        let comp_id = ingest_view_component(db, comp, &container_id, None).await?;
+        let comp_id =
+            ingest_view_component(db, comp, &container_id, None, declared_actions).await?;
         let _ = comp_id;
     }
 
     // Ingest container's events
     for event in &container.events {
-        handle_event(db, event, &container_id).await?;
+        handle_event(db, event, &container_id, declared_actions).await?;
     }
 
     // Recurse into nested containers
     for (i, nested) in container.containers.iter().enumerate() {
-        Box::pin(ingest_container_contents(db, nested, i, &container_id)).await?;
+        Box::pin(ingest_container_contents(
+            db,
+            nested,
+            i,
+            &container_id,
+            declared_actions,
+        ))
+        .await?;
     }
 
     Ok(())
@@ -334,6 +361,7 @@ async fn ingest_view_component(
     comp: &ComponentDeclaration,
     parent_id: &str,
     namespace: Option<&str>,
+    declared_actions: &std::collections::HashSet<&str>,
 ) -> Result<String> {
     let component_type = comp
         .component_type
@@ -502,13 +530,18 @@ async fn ingest_view_component(
 
     // Ingest events
     for event in &comp.events {
-        handle_event(db, event, &id).await?;
+        handle_event(db, event, &id, declared_actions).await?;
     }
 
     Ok(id)
 }
 
-async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &str) -> Result<()> {
+async fn handle_event(
+    db: &dyn GraphIngestor,
+    event: &EventHandler,
+    parent_id: &str,
+    declared_actions: &std::collections::HashSet<&str>,
+) -> Result<()> {
     let event_name = format!(
         "{}_{}",
         parent_id.replace(':', "_"),
@@ -585,69 +618,82 @@ async fn handle_event(db: &dyn GraphIngestor, event: &EventHandler, parent_id: &
             .map_err(Error::Graph)?;
         }
         EventAction::ActionInvocation { name, body } => {
+            // Issue #591: actions are declaration-backed. The manifest
+            // boundary (rexlang #118) guarantees every invocation resolved
+            // to a declared `action "X" { target: ...; }` — those nodes
+            // are ingested from `model.actions` above, so the edge links
+            // to the existing node and nothing is fabricated here. A
+            // model that bypasses the checker (direct `ingest_ifml_model`
+            // calls in tests) loses the edge with a warning instead of
+            // gaining an indistinguishable synthesized node (the #559
+            // defect class).
             let action_id = format!("action:{}", name);
-            db.ingest_action_node(&ActionNode {
-                name: name.clone(),
-                domain: None,
-            })
-            .await
-            .map_err(Error::Graph)?;
-            db.ingest_edge(&event_id, &action_id, EdgeType::TriggersAction, None)
-                .await
-                .map_err(Error::Graph)?;
-
-            // Handle nested action body events (success/error outcomes)
-            if let Some(body) = body {
-                for body_event in &body.handlers {
-                    let outcome_str = body_event.event_type.as_str().to_string();
-                    let outcome_event_id = db
-                        .ingest_event(&EventNode {
-                            name: format!("{}_{}", action_id.replace(':', "_"), outcome_str),
-                            event_type: outcome_str.clone(),
-                            params: None,
-                            conditional_expression: None,
-                            expr_json: None,
-                            requires: Vec::new(),
-                            domain: None,
-                        })
-                        .await
-                        .map_err(Error::Graph)?;
-
-                    db.ingest_edge(
-                        &action_id,
-                        &outcome_event_id,
-                        EdgeType::ActionEvent,
-                        Some(&EdgeProperties {
-                            outcome: Some(outcome_str),
-                            ..Default::default()
-                        }),
-                    )
+            if declared_actions.contains(name.as_str()) {
+                db.ingest_edge(&event_id, &action_id, EdgeType::TriggersAction, None)
                     .await
                     .map_err(Error::Graph)?;
 
-                    // Recurse: outcome events can also have navigate/refresh
-                    if let EventAction::Navigate { target, binding } = &body_event.action {
-                        let binding_str = binding.as_ref().map(|b| {
-                            let pairs: Vec<String> = b
-                                .pairs
-                                .iter()
-                                .map(|(k, v)| format!("\"{}\": \"{}\"", k, render_expression(v)))
-                                .collect();
-                            format!("{{{}}}", pairs.join(", "))
-                        });
+                // Handle nested action body events (success/error outcomes)
+                if let Some(body) = body {
+                    for body_event in &body.handlers {
+                        let outcome_str = body_event.event_type.as_str().to_string();
+                        let outcome_event_id = db
+                            .ingest_event(&EventNode {
+                                name: format!("{}_{}", action_id.replace(':', "_"), outcome_str),
+                                event_type: outcome_str.clone(),
+                                params: None,
+                                conditional_expression: None,
+                                expr_json: None,
+                                requires: Vec::new(),
+                                domain: None,
+                            })
+                            .await
+                            .map_err(Error::Graph)?;
+
                         db.ingest_edge(
+                            &action_id,
                             &outcome_event_id,
-                            &format!("vc:{}", target),
-                            EdgeType::NavigationFlow,
+                            EdgeType::ActionEvent,
                             Some(&EdgeProperties {
-                                target_param_binding: binding_str,
+                                outcome: Some(outcome_str),
                                 ..Default::default()
                             }),
                         )
                         .await
                         .map_err(Error::Graph)?;
+
+                        // Recurse: outcome events can also have navigate/refresh
+                        if let EventAction::Navigate { target, binding } = &body_event.action {
+                            let binding_str = binding.as_ref().map(|b| {
+                                let pairs: Vec<String> = b
+                                    .pairs
+                                    .iter()
+                                    .map(|(k, v)| {
+                                        format!("\"{}\": \"{}\"", k, render_expression(v))
+                                    })
+                                    .collect();
+                                format!("{{{}}}", pairs.join(", "))
+                            });
+                            db.ingest_edge(
+                                &outcome_event_id,
+                                &format!("vc:{}", target),
+                                EdgeType::NavigationFlow,
+                                Some(&EdgeProperties {
+                                    target_param_binding: binding_str,
+                                    ..Default::default()
+                                }),
+                            )
+                            .await
+                            .map_err(Error::Graph)?;
+                        }
                     }
                 }
+            } else {
+                eprintln!(
+                    "Warning: ifml — action '{name}' is invoked but never declared \
+                     (add action \"{name}\" {{ target: <Entity>; }}); the invocation \
+                     is dropped instead of synthesizing an unbacked action node"
+                );
             }
         }
         EventAction::Stay => {

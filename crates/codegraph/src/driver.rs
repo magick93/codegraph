@@ -717,24 +717,30 @@ pub async fn run_with_graph_cache(
             );
         }
 
-        // Pass 1b: Ingest IFML DSL files (if provided)
+        // Pass 1b: Ingest IFML DSL files (if provided). Each file goes
+        // through the front door (issue #591): the import closure is
+        // gathered, the compilation resolves module composition, the
+        // interaction-reference + authorization checker runs (E0104–E0108
+        // — every action/navigate/refresh target and requires:/roles:
+        // name is proven before anything lands in the graph), and the
+        // declaration-backed manifest is derived. A compile or checker
+        // diagnostic is a hard error (the EvtModel precedent): the #559
+        // defect class cannot half-ingest.
         if !ifml_files.is_empty() {
             println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
             let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
+            let mut total_manifest = rex_ir::ifml_manifest::IfmlManifest::new();
             for ifml_path in ifml_files {
-                let model = rex_ifml::parse_ifml_file(ifml_path).map_err(|e| {
-                    crate::error::Error::Config(format!(
-                        "Failed to parse IFML file '{}': {}",
-                        ifml_path.display(),
-                        e
-                    ))
-                })?;
-                let mut stats =
-                    crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+                let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
+                let mut stats = crate::ingest::ifml_ingest::ingest_ifml_model(
+                    be.ingestor(),
+                    &compiled.compilation.model,
+                )
+                .await?;
                 stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
                     be.ingestor(),
                     be.querier(),
-                    &model,
+                    &compiled.compilation.model,
                     ifml_path,
                 )
                 .await?;
@@ -747,8 +753,22 @@ pub async fn run_with_graph_cache(
                 total_stats.module_uses += stats.module_uses;
                 total_stats.actors += stats.actors;
                 total_stats.imported_policies += stats.imported_policies;
+                total_manifest.views.extend(compiled.manifest.views);
+                total_manifest.controls.extend(compiled.manifest.controls);
+                total_manifest.edges.extend(compiled.manifest.edges);
+                total_manifest.actions.extend(compiled.manifest.actions);
+                total_manifest.commands.extend(compiled.manifest.commands);
             }
             println!("Pass 1b complete: {total_stats}");
+            println!(
+                "Pass 1b manifest: {} routes, {} controls, {} edges, {} actions, {} commands \
+                 (declaration-backed — rexlang #118)",
+                total_manifest.views.len(),
+                total_manifest.controls.len(),
+                total_manifest.edges.len(),
+                total_manifest.actions.len(),
+                total_manifest.commands.len(),
+            );
         }
 
         // Pass 1c: Ingest rexlang .ddd design files (issue #449): compiled
@@ -1359,23 +1379,23 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         .await?;
     }
 
-    // Pass 1b: ingest IFML DSL files (parse failures are hard errors).
+    // Pass 1b: ingest IFML DSL files through the checker gate (issue
+    // #591 — the same front door the primary run path uses; a compile or
+    // checker diagnostic is a hard error).
     println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
     let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
+    let mut total_manifest = rex_ir::ifml_manifest::IfmlManifest::new();
     for ifml_path in ifml_files {
-        let model = rex_ifml::parse_ifml_file(ifml_path).map_err(|e| {
-            crate::error::Error::Config(format!(
-                "Failed to parse IFML file '{}': {}",
-                ifml_path.display(),
-                e
-            ))
-        })?;
-        let mut stats =
-            crate::ingest::ifml_ingest::ingest_ifml_model(be.ingestor(), &model).await?;
+        let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
+        let mut stats = crate::ingest::ifml_ingest::ingest_ifml_model(
+            be.ingestor(),
+            &compiled.compilation.model,
+        )
+        .await?;
         stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
             be.ingestor(),
             be.querier(),
-            &model,
+            &compiled.compilation.model,
             ifml_path,
         )
         .await?;
@@ -1388,8 +1408,22 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         total_stats.module_uses += stats.module_uses;
         total_stats.actors += stats.actors;
         total_stats.imported_policies += stats.imported_policies;
+        total_manifest.views.extend(compiled.manifest.views);
+        total_manifest.controls.extend(compiled.manifest.controls);
+        total_manifest.edges.extend(compiled.manifest.edges);
+        total_manifest.actions.extend(compiled.manifest.actions);
+        total_manifest.commands.extend(compiled.manifest.commands);
     }
     println!("Pass 1b complete: {total_stats}");
+    println!(
+        "Pass 1b manifest: {} routes, {} controls, {} edges, {} actions, {} commands \
+         (declaration-backed — rexlang #118)",
+        total_manifest.views.len(),
+        total_manifest.controls.len(),
+        total_manifest.edges.len(),
+        total_manifest.actions.len(),
+        total_manifest.commands.len(),
+    );
 
     // Pass 1c: ingest API model from domain configuration.
     {

@@ -2510,6 +2510,11 @@ fn chart_spec_maps_kind_and_axes() {
         kind: ChartKind::Bar,
         label_field: Some("region".to_string()),
         value_fields: vec!["revenue".to_string(), "cost".to_string()],
+        hierarchy_field: None,
+        label_fields: Vec::new(),
+        detail_fields: Vec::new(),
+        max_depth: None,
+        aggregate: None,
     });
     let ctx = page_component_context_sync(&component_with_spec(Some(spec)));
     let chart = ctx.chart.expect("chart render context");
@@ -2641,6 +2646,11 @@ fn template_renders_typed_table_and_form_markup() {
         kind: ChartKind::Pie,
         label_field: None,
         value_fields: vec!["revenue".to_string()],
+        hierarchy_field: None,
+        label_fields: Vec::new(),
+        detail_fields: Vec::new(),
+        max_depth: None,
+        aggregate: None,
     });
     let ctx = svelte_context(vec![page_component_context_sync(&component_with_spec(
         Some(chart),

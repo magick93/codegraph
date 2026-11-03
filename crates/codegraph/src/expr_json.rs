@@ -21,6 +21,7 @@
 //! | `feature_access` | `receiver`, `name`, `optional_safe`                |
 //! | `coalesce`       | `value`, `default`                                 |
 //! | `call`           | `receiver`, `name`, `args`, `optional_safe`        |
+//! | `function_call`  | `name`, `args` (bare package-function call)        |
 //! | `algebra`        | `op` (first/filter/map/any/size/sum), `receiver`,  |
 //! |                  | `lambda` (`{param, body}` or null), `optional_safe`|
 //! | `binary`         | `op` (eq/ne/lt/le/gt/ge/add/sub/mul/div/and/or),   |
@@ -82,6 +83,11 @@ fn expr_value(expr: &Expr) -> Value {
             "name": name.value,
             "args": args.iter().map(expr_value).collect::<Vec<_>>(),
             "optional_safe": optional_safe,
+        }),
+        ExprKind::FunctionCall { name, args } => json!({
+            "kind": "function_call",
+            "name": name.value,
+            "args": args.iter().map(expr_value).collect::<Vec<_>>(),
         }),
         ExprKind::Algebra {
             receiver,

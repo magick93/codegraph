@@ -179,6 +179,7 @@ fn lower_when_value(value: &Value, owner: &str) -> Result<String, ExprTsError> {
         "let" => reject("`let`"),
         "lambda" => reject("a lambda"),
         "list" => reject("list literals"),
+        "function_call" => reject("a package-function call"),
         other => reject(&format!("unknown expression node `{other}`")),
     }
 }
@@ -353,6 +354,7 @@ fn lower_ifml_value(value: &Value, owner: &str) -> Result<String, ExprTsError> {
         }
         "group" => Ok(format!("({})", lower_ifml_value(inner()?, owner)?)),
         "call" => reject("an operation call"),
+        "function_call" => reject("a package-function call"),
         other => reject(&format!("unknown expression node `{other}`")),
     }
 }

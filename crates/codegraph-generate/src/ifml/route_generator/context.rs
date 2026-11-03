@@ -1516,6 +1516,12 @@ pub(super) async fn page_component_context(
         Some(ComponentSpec::Table(ref spec)) => (Some(render_table(spec)), None, None),
         Some(ComponentSpec::Form(ref spec)) => (None, Some(render_form(spec)), None),
         Some(ComponentSpec::Chart(ref spec)) => (None, None, Some(render_chart(spec))),
+        // A modeled-chart placement (`type: chart; chart: "name";`): the
+        // payload lives on the model graph (the #577 ChartDefinition
+        // plane) — resolving it against the chart registry is the
+        // recorded ChartSpec/ChartDefinition unification deferral, so the
+        // control stays inert here.
+        Some(ComponentSpec::ChartRef(_)) => (None, None, None),
         None => (None, None, None),
     };
 

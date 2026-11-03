@@ -42,8 +42,8 @@ pub async fn ingest_actor_imports(
         if !seen.insert(dedup_key) {
             continue;
         }
-        if let Some(policy) = import_policy(raw, &resolved) {
-            policies.push(policy);
+        if let Some(model) = import_actor_model(raw, &resolved) {
+            policies.push(actor_policy_from_model(&model));
         }
     }
 
@@ -68,7 +68,25 @@ pub async fn ingest_actor_imports(
 /// unresolvable imports are skipped (with a warning on stderr). Returns
 /// `None` when no import yields a policy.
 pub fn resolve_actor_policy(import_paths: &[String], base_dir: &Path) -> Option<ActorPolicyModel> {
-    let mut policies: Vec<ActorPolicyModel> = Vec::new();
+    let models = resolve_actor_models(import_paths, base_dir);
+    (!models.is_empty()).then(|| {
+        merge_policies(
+            models
+                .iter()
+                .map(actor_policy_from_model)
+                .collect::<Vec<_>>(),
+        )
+    })
+}
+
+/// The raw rexlang actor models behind the given policy imports — the
+/// checker's input (`rex_ifml::check_ifml_with_actors`, issue #591).
+/// Deduplicates like `ingest_actor_imports`; per-import failures
+/// (missing files, compile errors, invalid artifacts) warn on stderr and
+/// skip that import — the run path's warn-and-continue contract, where an
+/// empty result simply leaves the authorization dimension unchecked.
+pub fn resolve_actor_models(import_paths: &[String], base_dir: &Path) -> Vec<ActorModel> {
+    let mut models: Vec<ActorModel> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     for raw in import_paths {
         let resolved = base_dir.join(raw);
@@ -76,14 +94,14 @@ pub fn resolve_actor_policy(import_paths: &[String], base_dir: &Path) -> Option<
         if !seen.insert(dedup_key) {
             continue;
         }
-        if let Some(policy) = import_policy(raw, &resolved) {
-            policies.push(policy);
+        if let Some(model) = import_actor_model(raw, &resolved) {
+            models.push(model);
         }
     }
-    (!policies.is_empty()).then(|| merge_policies(policies))
+    models
 }
 
-fn import_policy(raw: &str, resolved: &Path) -> Option<ActorPolicyModel> {
+fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
     let source = match std::fs::read_to_string(resolved) {
         Ok(source) => source,
         Err(e) => {
@@ -96,7 +114,15 @@ fn import_policy(raw: &str, resolved: &Path) -> Option<ActorPolicyModel> {
         .and_then(|e| e.to_str())
         .unwrap_or_default();
     match extension {
-        "json" => import_artifact(raw, &source),
+        "json" => match ActorModel::from_json(&source) {
+            Ok(model) => Some(model),
+            Err(e) => {
+                eprintln!(
+                    "Warning: policy import '{raw}' is not a valid rexlang actor artifact: {e}"
+                );
+                None
+            }
+        },
         "actor" => import_actor_source(
             raw,
             resolved.parent().unwrap_or_else(|| Path::new(".")),
@@ -111,17 +137,7 @@ fn import_policy(raw: &str, resolved: &Path) -> Option<ActorPolicyModel> {
     }
 }
 
-fn import_artifact(raw: &str, source: &str) -> Option<ActorPolicyModel> {
-    match ActorModel::from_json(source) {
-        Ok(model) => Some(actor_policy_from_model(&model)),
-        Err(e) => {
-            eprintln!("Warning: policy import '{raw}' is not a valid rexlang actor artifact: {e}");
-            None
-        }
-    }
-}
-
-fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolicyModel> {
+fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorModel> {
     let domains = collect_domains(dir, source); // Domain files may declare `import schema "<path>"` (issue #230); the
     // rex compiler errors with `imported schema '…' was not provided`
     // unless their content is provided. Policy imports stay
@@ -167,7 +183,7 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorPolic
         );
     }
     match compilation.model {
-        Some(model) => Some(actor_policy_from_model(&model)),
+        Some(model) => Some(model),
         None => {
             eprintln!("Warning: policy import '{raw}' failed to compile — no policy ingested");
             None
