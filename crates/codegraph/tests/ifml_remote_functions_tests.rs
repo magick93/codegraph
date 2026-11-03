@@ -85,6 +85,10 @@ view "RequestForm" {
         on escalate -> action("EscalateRequest");
     }
 }
+
+action "EscalateRequest" {
+    target: Request;
+}
 "#;
 
 const DOMAINS_TOML: &str = r#"[defaults]

@@ -361,6 +361,13 @@ fn lower(
             let body_code = body_code?;
             Ok(format!("{{ let {let_name} = {init_code}; {body_code} }}"))
         }
+        ExprKind::FunctionCall { name, .. } => unsupported(
+            "a package-function call",
+            format!(
+                "bare call `{}` is outside the mox-expr normative subset",
+                name.value
+            ),
+        ),
         ExprKind::Lambda { .. } => unsupported(
             "a lambda",
             "a lambda is only valid inside a collection algebra call".to_string(),

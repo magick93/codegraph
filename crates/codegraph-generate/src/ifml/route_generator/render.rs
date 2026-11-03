@@ -793,6 +793,7 @@ pub(super) fn render_chart(spec: &ChartSpec) -> RenderChart {
             ChartKind::Pie => "pie",
             ChartKind::Radar => "radar",
             ChartKind::Metric => "metric",
+            ChartKind::Org => "org",
         }
         .to_string(),
         label_field: spec.label_field.clone(),

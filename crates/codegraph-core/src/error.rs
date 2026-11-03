@@ -58,6 +58,15 @@ pub enum Error {
         /// error comes from compilation (grouped per file).
         reason: String,
     },
+    #[error("ifml model error in '{file}': {reason}")]
+    IfmlModel {
+        /// The .ifml file the error came from.
+        file: String,
+        /// Failure cause, including the checker diagnostic codes (E0104–E0108)
+        /// and spans when the error comes from the interaction-reference or
+        /// authorization pass.
+        reason: String,
+    },
     #[error("Template error: {0}")]
     Template(String),
     #[error("Validation error: {0}")]

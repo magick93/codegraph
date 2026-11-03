@@ -1638,6 +1638,17 @@ const DOCTOR_IFML: &str = concat!(
     "        on edit -> navigate(\"Editor\");\n",
     "    }\n",
     "}\n",
+    "\n",
+    "view \"Editor\" {\n",
+    "    label \"Editor\";\n",
+    "\n",
+    "    component \"form\" {\n",
+    "        type: form;\n",
+    "        data: Thing;\n",
+    "\n",
+    "        on cancel -> navigate(\"Dashboard\");\n",
+    "    }\n",
+    "}\n",
 );
 
 const DOCTOR_IFML_ACTOR: &str = concat!(

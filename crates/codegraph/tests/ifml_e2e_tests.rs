@@ -53,6 +53,10 @@ view "CustomerEdit" {
         on cancel -> navigate("CustomerDetail");
     }
 }
+
+action "UpdateCustomer" {
+    target: Customer;
+}
 "#;
 
 /// Test that the IFML DSL parser correctly parses the full example.
@@ -161,6 +165,55 @@ view "TestView" {
     assert_eq!(binding.entity_title, "ItemType");
     assert_eq!(binding.fields, vec!["name", "value"]);
     assert_eq!(binding.api_operation, None);
+}
+
+/// Issue #591: actions are declaration-backed. An `action("X")` invocation
+/// whose `action "X" { ... }` declaration is missing drops the
+/// TriggersAction edge (with a warning) instead of synthesizing an
+/// unbacked `action:X` node — the #559 defect class is impossible through
+/// this boundary. The declared sibling ingests normally.
+#[tokio::test]
+async fn test_ifml_undeclared_action_invocation_is_dropped_not_synthesized() {
+    let engine = codegraph_core::mock::MockEngine::new();
+    let ifml = r#"
+view "Editor" {
+    component "form" {
+        type: form;
+
+        on save -> action("Declared", { on success -> stay; });
+        on publish -> action("Undeclared");
+    }
+}
+
+action "Declared" {
+    target: Item;
+}
+"#;
+
+    let model = rex_ifml::parse_ifml(ifml).unwrap();
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+        .await
+        .expect("Should ingest");
+
+    let actions = engine.get_ifml_actions().await.unwrap();
+    assert!(
+        actions.iter().any(|a| a.name == "Declared"),
+        "the declared action ingests: {actions:?}"
+    );
+    assert!(
+        !actions.iter().any(|a| a.name == "Undeclared"),
+        "the undeclared invocation must not synthesize a node: {actions:?}"
+    );
+
+    let triggers = engine.get_ifml_action_triggers().await.unwrap();
+    assert!(
+        triggers.iter().any(|(_, action)| action == "Declared"),
+        "the declared invocation keeps its edge: {triggers:?}"
+    );
+    assert!(
+        !triggers.iter().any(|(_, action)| action == "Undeclared"),
+        "the undeclared invocation drops its edge: {triggers:?}"
+    );
 }
 
 /// Round-trip test: IFML DSL → Grafeo graph → GraphQuerier. Verifies that

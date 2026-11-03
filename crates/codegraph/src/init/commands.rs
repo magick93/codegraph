@@ -1146,11 +1146,15 @@ fn check_extension_points(
     (hard, soft)
 }
 
-/// Parse-verify the .ifml interaction-model plane (additive, like
-/// `check_evt_files`: never feeds model_warnings). Each file goes through
-/// the SAME `rex_ifml::parse_ifml_file` the ingest path uses, so doctor
-/// and ingest cannot drift. A parse error is a hard failure. `import
-/// "….actor"` statements resolve read-only through
+/// Compile- and check-verify the .ifml interaction-model plane (additive,
+/// like `check_evt_files`: never feeds model_warnings). Each file goes
+/// through the front door (`compile_and_check_ifml`, issue #591) — the
+/// same gather → compile → check path the run path uses, so doctor and
+/// ingest cannot drift. A parse or compile error is a hard failure, and
+/// so is every checker diagnostic (E0104–E0108: an undeclared action /
+/// navigate / refresh target, or a `requires:`/`roles:` name no
+/// resolvable policy declares — the silently-missing-control class).
+/// `import "….actor"` statements resolve read-only through
 /// `resolve_actor_policy` — the ingest path warns-and-continues on an
 /// unresolvable policy, so doctor is where a silent skip becomes a hard
 /// failure instead. Returns the (hard_failures, soft_warnings)
@@ -1159,15 +1163,21 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
     let mut hard = 0;
     let mut soft = 0;
     for path in ifml_files {
-        match rex_ifml::parse_ifml_file(path) {
-            Ok(model) => {
+        match crate::ifml_compile::compile_and_check_ifml(path) {
+            Ok(compiled) => {
+                let model = &compiled.compilation.model;
                 soft += model.actors.len();
                 println!(
-                    "PASS ifml — {} parses ({} view(s), {} action(s), {} actor(s))",
+                    "PASS ifml — {} compiles and checks ({} view(s), {} action(s), {} actor(s); \
+                     manifest: {} route(s), {} control(s), {} edge(s), {} command(s))",
                     path.display(),
                     model.views.len(),
                     model.actions.len(),
-                    model.actors.len()
+                    model.actors.len(),
+                    compiled.manifest.views.len(),
+                    compiled.manifest.controls.len(),
+                    compiled.manifest.edges.len(),
+                    compiled.manifest.commands.len(),
                 );
                 if model.imports.is_empty() {
                     continue;
@@ -1226,8 +1236,12 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
             }
             Err(e) => {
                 hard += 1;
-                println!("FAIL ifml — {} does not parse: {e}", path.display());
-                println!("     hint: fix the rexlang interaction-model errors above");
+                println!("FAIL ifml — {e}");
+                println!(
+                    "     hint: fix the rexlang interaction-model errors above \
+                     (E0104–E0108 name the exact token — declare the backing \
+                     view, action, or capability)"
+                );
             }
         }
     }

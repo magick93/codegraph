@@ -62,6 +62,7 @@ fn sample_model() -> DddModel {
                         non_persistent: false,
                         cache: true,
                     },
+                    machine: None,
                     repository: Some(Repository {
                         name: "BookRepository".to_string(),
                         operations: vec![
@@ -92,6 +93,7 @@ fn sample_model() -> DddModel {
                     stereotype: Stereotype::Value,
                     is_abstract: false,
                     flags: DesignFlags::default(),
+                    machine: None,
                     repository: None,
                 },
                 Design {
@@ -105,6 +107,7 @@ fn sample_model() -> DddModel {
                         non_persistent: true,
                         cache: false,
                     },
+                    machine: None,
                     repository: None,
                 },
             ],
@@ -120,6 +123,7 @@ fn sample_model() -> DddModel {
                         delegation: None,
                         capabilities: vec!["BorrowBooks".to_string()],
                         is_protected: false,
+                        condition: None,
                     },
                     ServiceOperation {
                         name: "renew".to_string(),
@@ -132,6 +136,7 @@ fn sample_model() -> DddModel {
                         }),
                         capabilities: Vec::new(),
                         is_protected: false,
+                        condition: None,
                     },
                 ],
                 dependencies: vec![
@@ -148,6 +153,7 @@ fn sample_model() -> DddModel {
                 stereotype: Stereotype::Entity,
                 is_abstract: false,
                 flags: DesignFlags::default(),
+                machine: None,
                 repository: None,
             }],
             services: Vec::new(),

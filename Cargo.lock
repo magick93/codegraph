@@ -1184,6 +1184,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "creusot-std"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b019630da7e585ab18eff475d7ea820474c3fc0cd05a57706facf37f67ab2705"
+dependencies = [
+ "creusot-std-proc",
+]
+
+[[package]]
+name = "creusot-std-proc"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a21564d3da8f97ce00e03125d0c3f7c9faedfa68e5d182d88beb25c82c12d25"
+dependencies = [
+ "pearlite-syn",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "uuid",
+]
+
+[[package]]
 name = "crossbeam"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3042,6 +3064,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
+name = "pearlite-syn"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0cada22bee420c97f91bd98f0e1effdd6ef5ab219df0561f35144dcb504ebfd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3569,13 +3602,15 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=40e85103e50e80861390696946a56b70a3c425c8#40e85103e50e80861390696946a56b70a3c425c8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
 dependencies = [
  "anyhow",
  "ariadne",
  "rex-expr",
+ "rex-ifml",
  "rex-ir",
  "rex-syntax",
+ "rex-verify",
  "rex-vocab",
  "salsa 0.23.0",
  "serde",
@@ -3585,12 +3620,13 @@ dependencies = [
  "sigil-resolve 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
  "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
  "thiserror",
+ "xstate-ir",
 ]
 
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=40e85103e50e80861390696946a56b70a3c425c8#40e85103e50e80861390696946a56b70a3c425c8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3601,7 +3637,7 @@ dependencies = [
 [[package]]
 name = "rex-ifml"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=40e85103e50e80861390696946a56b70a3c425c8#40e85103e50e80861390696946a56b70a3c425c8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
 dependencies = [
  "pest",
  "pest_derive",
@@ -3613,7 +3649,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=40e85103e50e80861390696946a56b70a3c425c8#40e85103e50e80861390696946a56b70a3c425c8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3623,7 +3659,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=40e85103e50e80861390696946a56b70a3c425c8#40e85103e50e80861390696946a56b70a3c425c8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3631,9 +3667,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rex-verify"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+dependencies = [
+ "creusot-std",
+]
+
+[[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=40e85103e50e80861390696946a56b70a3c425c8#40e85103e50e80861390696946a56b70a3c425c8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
 dependencies = [
  "anyhow",
  "rex-ir",
@@ -5773,6 +5817,15 @@ name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
+name = "xstate-ir"
+version = "0.2.1"
+source = "git+https://github.com/yestechgroup/restingstate.git?rev=380580b6407f6530c6fb89e1ce87621567f009c5#380580b6407f6530c6fb89e1ce87621567f009c5"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "yansi"

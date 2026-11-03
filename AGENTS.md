@@ -509,7 +509,7 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   language (search default analyzer); boosts recorded only. DTO
   create/update emission follows design ops (`dto_response` always).
   Stereotype vs `is_entity` mismatch warns (mox owns entity/VO).
-- **Sculptor semantics (rexlang #47, pin `a714070`)**: entity designs are
+- **Sculptor semantics (rexlang #47, carried through the pin moves)**: entity designs are
   `auditable` + `optimisticLocking` by DEFAULT — the artifact bools carry
   the effective decision, `!flag` opts out, negating default-off flags is
   a compile error. `protected` ops (service + repository) lower onto the
@@ -939,7 +939,7 @@ persist to the graph, and flow into generation (messages → `data-validate-mess
 defaults → load-fn fallbacks). Actor declarations are parsed/counted only — no node
 type yet; role-based route-guard codegen is deferred.
 
-Module composition (rexlang pin `a714070`): `ModuleDeclaration.module_uses`
+Module composition (rexlang grammar, carried through the pin moves): `ModuleDeclaration.module_uses`
 (`use "Other" as alias { overrides };` inside a module body) ingest as
 `ModuleDefinitionNode`s (`ingest_module_definition` — trait + Grafeo +
 Mock; internal uses ride the node prop AND module→module
@@ -1476,14 +1476,62 @@ service, gate logs artifact on failure) — PR CI stays node-free.
 ### IFML doctor gate (issue #468 phase 1)
 
 `--ifml-files` rides `codegraph doctor` (`check_ifml_files` in
-`crates/codegraph/src/init/commands.rs`): each file goes through the same
-`rex_ifml::parse_ifml_file` the ingest path uses (parse error = hard
-failure), and its `import "….actor"` statements resolve read-only through
+`crates/codegraph/src/init/commands.rs`): each file goes through the
+front door (`ifml_compile::compile_and_check_ifml` — issue #591), the
+SAME gather → compile → check path the ingest uses, so doctor and ingest
+cannot drift. Parse and compile errors are hard failures, and so is every
+checker diagnostic (E0104–E0108 — undeclared action/navigate/refresh
+targets, `requires:`/`roles:` names no resolvable policy declares); the
+PASS line reports the manifest counts (routes/controls/edges/commands).
+`import "….actor"` statements resolve read-only through
 `resolve_actor_policy`. The asymmetry is the point — the run path
 warns-and-continues past an unresolvable policy import (the view guards
 would silently lose their policy), so doctor makes that a hard failure
 instead. `.mox` imports on `.ifml` files are checked for existence but are
 not policy business.
+
+### The IFML checker gate (issue #591)
+
+The rexlang upgrade (#117 workspace-level resolution + #118 the
+declaration-backed control/route manifest) moved the reference proof
+upstream, and codegraph now ENFORCES it:
+
+- **Front door** (`crates/codegraph/src/ifml_compile.rs::
+  compile_and_check_ifml`): gather the import closure through
+  `rex_driver::project::gather_ifml_project` (`.ifml` imports feed the
+  resolver bundle; missing `.ifml` import = hard compile error),
+  `rex_ifml::compile_ifml_str`, `rex_ifml::check_ifml_with_actors`
+  (actors from the file's `.actor`/`.json` imports via
+  `ifml_actor_import::resolve_actor_models` — per-import warn-and-continue,
+  the run-path contract; an empty slice skips E0107/E0108), and
+  `rex_ifml::manifest_ifml`. `domains: None` — the E0104–E0106
+  interaction-reference pass and the E0107/E0108 authorization pass run;
+  the E0100–E0103 expression checks stay off (the domain-union slice is a
+  recorded follow-up; passing it today would fail consumer models on
+  `today()` bare calls E0102).
+- **Run path** (driver Pass 1b): a compile or checker diagnostic is a
+  HARD error (`Error::IfmlModel` — the EvtModel precedent; a broken flow
+  never half-ingests). Pass 1b prints the manifest counts after the
+  ingest stats. Crewbase-style models (invocations without declarations,
+  `requires:` naming nothing) now fail with the exact token named — the
+  fix, not a regression (codegraph#559).
+- **Declaration-backed actions** (`ingest/ifml_ingest.rs`): ActionNodes
+  are ingested ONLY from `model.actions` (moved BEFORE pass 2 so
+  TriggersAction edges resolve — Grafeo no-ops edge INSERTs on missing
+  targets), and `handle_event`'s invocation arm LINKS the edge instead of
+  synthesizing a node; an undeclared invocation reaching the walker
+  (direct test calls that bypass the gate) drops the edge with a warning.
+  Pinned by `test_ifml_undeclared_action_invocation_is_dropped_not_synthesized`
+  and `test_ifml_grafeo_round_trip_edges` (FULL_IFML now declares
+  `UpdateCustomer`).
+- **Consumed-surface**: the manifest rides `IfmlCompiled` (routes,
+  EXPANDED controls — module `use` spliced inlined, proven edges, actions
+  with resolved targets, commands) so the #559 service-op plane and any
+  route-generation consumer can trust every edge without re-deriving
+  resolution. Deferrals: generator-side consumption of
+  `manifest.controls`/`edges` (the #559 fix), CLI-from-`commands`,
+  E0100–E0103 expression checking via `compile_domain_union`, LSP
+  diagnostics through `compile_ifml_lenient`.
 
 ### #468 quality pass — integrated UI, structural gates, hydration guards
 
@@ -3420,7 +3468,7 @@ still AND on top.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `rex-*` @ a714070 (bumped for the DDD Sculptor semantics, rexlang #47, and the IFML module composition/deep-navigation grammar) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `rex-*` @ 0f8518f (issue #591: the declaration-backed control/route manifest — `rex_ifml::manifest_ifml` / `rex_ir::ifml_manifest`, the E0104–E0108 interaction-reference + authorization checker, and `rex_driver::project`'s host-side gather bridge — on top of the DDD Sculptor semantics #47, the `.deploy` surface #49, and the IFML module composition/deep-navigation grammar) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.

@@ -12,7 +12,7 @@ pub(super) fn kind_of(c: &IfmlComponent) -> String {
     match c.spec {
         Some(ComponentSpec::Table(_)) => "table".to_string(),
         Some(ComponentSpec::Form(_)) => "form".to_string(),
-        Some(ComponentSpec::Chart(_)) => "chart".to_string(),
+        Some(ComponentSpec::Chart(_)) | Some(ComponentSpec::ChartRef(_)) => "chart".to_string(),
         None => c.component_type.clone(),
     }
 }
@@ -28,7 +28,9 @@ pub(super) fn component_role(c: &IfmlComponent) -> Option<SemanticRole> {
     match c.spec {
         Some(ComponentSpec::Table(_)) => Some(SemanticRole::Collection),
         Some(ComponentSpec::Form(_)) => None,
-        Some(ComponentSpec::Chart(_)) => Some(SemanticRole::Display),
+        Some(ComponentSpec::Chart(_)) | Some(ComponentSpec::ChartRef(_)) => {
+            Some(SemanticRole::Display)
+        }
         None => match c.component_type.as_str() {
             "table" | "list" => Some(SemanticRole::Collection),
             "details" | "chart" => Some(SemanticRole::Display),

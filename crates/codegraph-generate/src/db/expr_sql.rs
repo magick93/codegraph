@@ -161,6 +161,9 @@ fn lower(
         }
         ExprKind::Coalesce { .. } => reject("`?:`"),
         ExprKind::Call { .. } => reject("an operation call"),
+        ExprKind::FunctionCall { name, .. } => {
+            reject(&format!("a package-function call (`{}`)", name.value))
+        }
         ExprKind::Algebra { kind, .. } => reject(&format!("collection algebra `{kind}`")),
         ExprKind::If { .. } => reject("`if`"),
         ExprKind::Let { .. } => reject("`let`"),
