@@ -63,6 +63,14 @@ pub struct ServiceOpRoute {
     /// `true` when the op delegates to the bound repository's `findById`
     /// builtin and the entity's op set exposes read.
     pub is_read: bool,
+    /// `true` when the bound entity's query plane carries `find_by_id`
+    /// (the #449 invariant: the design surface exposes `read`). When
+    /// `false` — a capability bound to a non-root entity — the route
+    /// renders without the record load, and the authorize fn (if any)
+    /// takes no response parameter: capability membership only. The
+    /// route body still 501s (no record ⇒ no `read`/`delete` lowering),
+    /// so nothing flows past the seam.
+    pub record_load: bool,
     /// The 501-seam reason for ops with no executable lowering.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seam_reason: Option<String>,
@@ -656,6 +664,7 @@ pub(crate) fn render_authorize_fn(
     surface: Option<&PolicySurface>,
     fields: &HashMap<String, FieldInfo>,
     entity: &str,
+    record_available: bool,
 ) -> Result<Option<String>, String> {
     let lowered_condition = condition
         .map(|source| {
@@ -671,20 +680,66 @@ pub(crate) fn render_authorize_fn(
     if capabilities.is_empty() && lowered_condition.is_none() {
         return Ok(None);
     }
+    let empty_roles = BTreeMap::new();
+    let roles = match surface {
+        Some(policy) => &policy.roles,
+        None => &empty_roles,
+    };
+    // Does the rendered gate read the loaded record? The op-level `when`
+    // always does; a per-grant `when` does whenever a held permit carries
+    // one without an unconditional (None) override. (Over-approximates
+    // only when a when-guarded permit also lands on a `never_both`
+    // conflict — the conflict arm never reads the record — failing
+    // closed there.)
+    let needs_record = lowered_condition.is_some()
+        || roles.values().any(|permits| {
+            permits.iter().any(|(capability, whens)| {
+                capabilities.contains(capability)
+                    && !whens.is_empty()
+                    && !whens.iter().any(Option::is_none)
+                    && whens.iter().any(Option::is_some)
+            })
+        });
+    if needs_record && !record_available {
+        return Err(format!(
+            "service op `{op_name}` carries `when` conditions, but its bound \
+             entity `{entity}` has no record load (its design surface exposes \
+             no `read`, so the query plane has no `find_by_id`) — generation \
+             refuses to emit an unguarded route"
+        ));
+    }
     let mut out = String::new();
+    // Without a record the gate is capability membership only: no
+    // response parameter to evaluate `when`s over (there are none —
+    // `needs_record` refused those above).
+    let response_param = if record_available {
+        format!("    response: &{response_type_path},\n")
+    } else {
+        String::new()
+    };
     out.push_str(&format!(
         "/// Authorization gate for `{op_name}` (service `{service}`, issue #590).\n\
          ///\n\
          /// Encodes the actor policy at generation time: capability\n\
-         /// membership, `never_both` separation-of-duties conflicts, and\n\
-         /// per-grant `when` conditions evaluated over the loaded record.\n\
+         /// membership{membership_note}\n\
          /// API-key sessions bypass the policy gates (RLS scopes still\n\
          /// apply) so contract suites and service callers keep working.\n\
          #[allow(clippy::result_large_err)]\n\
          fn service_op_{snake}_authorize(\n    \
-             role: &str,\n    \
-             response: &{response_type_path},\n\
-         ) -> Result<(), String> {{\n"
+             role: &str,\n{response_param}\
+         ) -> Result<(), String> {{\n",
+        membership_note = if record_available {
+            ", `never_both` separation-of-duties conflicts, and\n\
+             /// per-grant `when` conditions evaluated over the loaded record."
+        } else {
+            " and\n\
+             /// `never_both` separation-of-duties conflicts (no record load — \
+             the bound\n\
+             /// entity exposes no `read`, so `when` conditions cannot be \
+             evaluated; the\n\
+             /// op body is a 501 seam regardless)."
+        },
+        response_param = response_param,
     ));
     if let (Some((lowered, _)), Some(message)) = (&lowered_condition, &condition_message) {
         out.push_str(&format!(
@@ -700,11 +755,6 @@ pub(crate) fn render_authorize_fn(
          }\n\
          match role {\n",
     );
-    let empty_roles = BTreeMap::new();
-    let roles = match surface {
-        Some(policy) => &policy.roles,
-        None => &empty_roles,
-    };
     let conflicts = surface
         .map(|policy| policy.sod_conflicts(capabilities))
         .unwrap_or_default();
@@ -880,6 +930,15 @@ pub async fn routes_for_entity(
                     continue;
                 }
                 let snake = to_snake_case(&op.name);
+                // The route's record load rides the #449 invariant: the
+                // entity's query plane carries `find_by_id` iff its design
+                // surface exposes `read`. Capability clauses can bind
+                // non-root entities (e.g. a PaySlip/`Coverage` noun), which
+                // expose no read — those routes render without the record
+                // load and with a response-less authorize fn (crewbase#71;
+                // #595 follow-up). `when`-conditioned ops on such entities
+                // are a generation error (fail closed).
+                let record_load = surface_ops.iter().any(|o| o == "read");
                 let authorize_fn = render_authorize_fn(
                     &snake,
                     &op.name,
@@ -892,6 +951,7 @@ pub async fn routes_for_entity(
                     surface.as_ref(),
                     &fields,
                     entity_title,
+                    record_load,
                 )?;
                 let (is_delete, is_read, seam_reason) = execution_for(op, model, &surface_ops);
                 routes.push(ServiceOpRoute {
@@ -903,6 +963,7 @@ pub async fn routes_for_entity(
                     authorize_fn,
                     is_delete,
                     is_read,
+                    record_load,
                     seam_reason,
                 });
             }
@@ -1283,6 +1344,7 @@ mod tests {
             Some(&surface),
             &f,
             "PayRunType",
+            true,
         )
         .unwrap()
         .expect("policy surface exists");
@@ -1319,6 +1381,7 @@ mod tests {
             Some(&surface),
             &f,
             "PayRunType",
+            true,
         )
         .unwrap()
         .expect("policy surface exists");
@@ -1345,6 +1408,7 @@ mod tests {
             None,
             &f,
             "TimecardType",
+            true,
         )
         .unwrap()
         .expect("a condition alone is enough to gate");
@@ -1373,9 +1437,64 @@ mod tests {
             Some(&surface),
             &HashMap::new(),
             "PayRunType",
+            true,
         )
         .unwrap();
         assert!(rendered.is_none());
+    }
+
+    // ── Non-root record loads (the #595 follow-up; crewbase#71) ──────────
+
+    #[test]
+    fn no_record_load_renders_a_response_less_gate() {
+        let f = fields(&[("status", FieldKind::String, false)]);
+        let surface = policy_fixture();
+        // `manager`'s permit is unconditional (`vec![None]`), so the gate
+        // is capability membership + sod only — no record needed.
+        let rendered = render_authorize_fn(
+            "issue",
+            "issue",
+            "PaySlipService",
+            &["IssuePaySlip".to_string()],
+            None,
+            "crate::domain::payroll::pay_slip::dto_response::PaySlipResponse",
+            Some(&surface),
+            &f,
+            "PaySlipType",
+            false,
+        )
+        .unwrap()
+        .expect("membership gate renders without a record");
+        // The response-less signature: no `response` parameter.
+        assert!(!rendered.contains("response: &"), "{rendered}");
+        // Still carries the deny-all membership arm.
+        assert!(
+            rendered.contains("capability `IssuePaySlip` required"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn when_condition_without_a_record_is_a_generation_error() {
+        let f = fields(&[("status", FieldKind::String, false)]);
+        let surface = policy_fixture();
+        // owner's permit carries `when (status == ...)` — unrenderable
+        // without a record load; fail closed at generation time.
+        let err = render_authorize_fn(
+            "approve",
+            "approve",
+            "PaySlipService",
+            &["ApprovePayRun".to_string()],
+            None,
+            "crate::domain::payroll::pay_slip::dto_response::PaySlipResponse",
+            Some(&surface),
+            &f,
+            "PaySlipType",
+            false,
+        )
+        .unwrap_err();
+        assert!(err.contains("`when` conditions"), "{err}");
+        assert!(err.contains("no record load"), "{err}");
     }
 
     #[test]

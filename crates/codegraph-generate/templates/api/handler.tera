@@ -1236,6 +1236,7 @@ pub async fn {{ op.fn_name }}(
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
     let correlation_id = extract_correlation_id(&headers);
+{% if op.record_load | default(value=true) %}
     let response = state.{{ domain }}_{{ module_name }}_queries
         .find_by_id({{ param_name }}{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
         .await
@@ -1244,8 +1245,9 @@ pub async fn {{ op.fn_name }}(
                 .with_correlation_id(correlation_id)
         })?
         .ok_or_else(|| AppError::not_found("{{ entity_name }} not found").with_correlation_id(correlation_id))?;
+{% endif %}
 {% if op.authorize_fn | default(value="") | length > 0 %}
-    if let Err(reason) = {{ op.fn_name }}_authorize(api_key_info.role.as_str(), &response) {
+    if let Err(reason) = {{ op.fn_name }}_authorize(api_key_info.role.as_str(){% if op.record_load | default(value=true) %}, &response{% endif %}) {
         return Err(AppError::forbidden(reason).with_correlation_id(correlation_id));
     }
 {% endif %}
@@ -1262,9 +1264,11 @@ pub async fn {{ op.fn_name }}(
         "meta": { "correlation_id": correlation_id.to_string() }
     })).into_response())
 {% else %}
+{% if op.record_load | default(value=true) %}
     // The record load is the route's 404 contract; the body has no
     // executable lowering yet.
     let _ = &response;
+{% endif %}
     Err(service_op_not_implemented(
         "{{ op.seam_reason | default(value="no executable lowering") }}",
     ))
