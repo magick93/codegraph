@@ -2113,3 +2113,118 @@ fn doctor_validates_function_bindings() {
         "sql on sqlite must fail: {out}"
     );
 }
+
+/// The union integrity stage (rexlang #114): a granted-but-uncarried
+/// capability is a hard doctor failure, and the same union wired cleanly
+/// passes. Actors arrive through the `.ifml` policy import — the only
+/// actor path doctor has.
+#[test]
+fn doctor_union_integrity_flags_granted_but_uncarried_capability() {
+    let dir = TempDir::new().unwrap();
+    cmd_init(&init_args(dir.path(), "demo-app", Some(repo_root()), false)).unwrap();
+    let project = dir.path().join("demo-app");
+    let model = project.join("model");
+
+    // The union stage's surfaces must belong to a known domain (the mox
+    // check cross-references domains.toml).
+    cmd_add_domain(&project.join("domains.toml"), "crm", false).unwrap();
+    fs::write(
+        model.join("crm.mox"),
+        "package nz.example.crm\n\nclass Customer {\n    String name\n}\n",
+    )
+    .unwrap();
+    let ddd = r#"import "crm.mox";
+
+application Crm {
+    base nz.example.crm
+    module crm {
+        service CustomerService {
+            inject CustomerRepository;
+            activate => CustomerRepository.save capability ManageCustomer;
+        }
+        entity Customer scaffold repository CustomerRepository {
+            findById;
+            findAll;
+            save;
+        }
+    }
+}
+"#;
+    let actor = r#"import "crm.mox"
+
+actors Crm {
+    actor admin
+
+    capability ManageCustomer on Customer
+    capability ApproveCustomer on Customer
+
+    grant admin {
+        permit ManageCustomer
+        permit ApproveCustomer
+    }
+}
+"#;
+    let ifml = r#"domain "crm" {
+    schema "crm";
+}
+import "crm.actor";
+
+view "CustomerList" {
+    roles: [admin];
+    component "customers" {
+        type: list;
+        data: Customer;
+        fields: [name];
+    }
+}
+"#;
+
+    // Dirty: ApproveCustomer is granted but no operation carries it.
+    fs::write(model.join("crm.ddd"), ddd).unwrap();
+    fs::write(model.join("crm.actor"), actor).unwrap();
+    fs::write(model.join("crm.ifml"), ifml).unwrap();
+    let summary = cmd_doctor(&DoctorArgs {
+        config: project.join("domains.toml"),
+        schemas: None,
+        classifier: None,
+        profiles_config: Some(project.join("profiles.toml")),
+        mox_files: vec![model.join("common.mox"), model.join("crm.mox")],
+        rosetta_files: vec![],
+        ddd_files: vec![model.join("crm.ddd")],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![model.join("crm.ifml")],
+        extension_points: None,
+    })
+    .unwrap_err();
+    // cmd_doctor returns Err carrying the failure summary when hard
+    // checks fail — the dangling grant is the ONLY hard failure in this
+    // fixture (the per-diagnostic text renders to stdout above).
+    assert!(
+        format!("{summary}").contains("1 hard check(s) failed"),
+        "the dangling grant must hard-fail the doctor: {summary}"
+    );
+
+    // Clean: drop the dangling grant; the same union passes.
+    let actor_clean = actor.replace("    permit ApproveCustomer\n", "");
+    let actor_clean = actor_clean.replace("    capability ApproveCustomer on Customer\n", "");
+    fs::write(model.join("crm.actor"), actor_clean).unwrap();
+    let summary = cmd_doctor(&DoctorArgs {
+        config: project.join("domains.toml"),
+        schemas: None,
+        classifier: None,
+        profiles_config: Some(project.join("profiles.toml")),
+        mox_files: vec![model.join("common.mox"), model.join("crm.mox")],
+        rosetta_files: vec![],
+        ddd_files: vec![model.join("crm.ddd")],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![model.join("crm.ifml")],
+        extension_points: None,
+    })
+    .unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "the wired union must pass the integrity stage"
+    );
+}

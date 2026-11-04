@@ -3602,7 +3602,7 @@ dependencies = [
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -3626,7 +3626,7 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3637,7 +3637,7 @@ dependencies = [
 [[package]]
 name = "rex-ifml"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "pest",
  "pest_derive",
@@ -3649,7 +3649,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "serde",
  "serde_json",
@@ -3659,7 +3659,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3669,7 +3669,7 @@ dependencies = [
 [[package]]
 name = "rex-verify"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "creusot-std",
 ]
@@ -3677,7 +3677,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=0f8518ff0e51c819d70b93b507b02ee46c1627b4#0f8518ff0e51c819d70b93b507b02ee46c1627b4"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=10108d7915714f94cf2101031d1da4b2d1aa6fa5#10108d7915714f94cf2101031d1da4b2d1aa6fa5"
 dependencies = [
  "anyhow",
  "rex-ir",

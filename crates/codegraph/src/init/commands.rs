@@ -1268,6 +1268,150 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
     (hard, soft)
 }
 
+/// The union integrity pass (rexlang #114) over the gathered artifacts:
+/// the cross-layer lifecycle wiring no per-surface compiler can see.
+/// `rex_driver::check_integrity` diagnoses — across the whole provided
+/// union, one application — capability clauses naming undeclared
+/// capabilities, granted capabilities no operation or search carries,
+/// `.ifml` action declarations bound to no service operation,
+/// subscription consumers naming no deploy component, and flow
+/// `requires:`/`roles:` resolving into no actor. Every check is opt-in in
+/// the house style: it fires only when both counterpart surfaces are
+/// present (no actor artifacts silences the capability checks, no deploy
+/// artifacts the consumer check).
+///
+/// Doctor re-compiles each surface through the SAME ingest helpers the
+/// per-surface checks above use (`read_and_compile_ddd`,
+/// `read_and_compile_evt`, `compile_and_check_ifml`, and the deploy
+/// compile from the sources `read_and_resolve_deploy` gathered), so this
+/// stage cannot drift from what ingest ships. Error-severity diagnostics
+/// are hard failures; the stage renders path-tagged against the owning
+/// file's source. Actor models arrive through the `.ifml` policy imports
+/// (there are no standalone `--actor-files`), so actor-side diagnostics
+/// render against the importing flow's source.
+///
+/// Returns the (hard_failures, soft_warnings) contributed.
+fn check_union_integrity(
+    ddd_files: &[PathBuf],
+    evt_files: &[PathBuf],
+    deploy_files: &[PathBuf],
+    ifml_files: &[PathBuf],
+) -> (usize, usize) {
+    if ddd_files.is_empty()
+        && evt_files.is_empty()
+        && deploy_files.is_empty()
+        && ifml_files.is_empty()
+    {
+        return (0, 0);
+    }
+
+    let mut designs: Vec<(String, rex_ir::ddd::DddModel)> = Vec::new();
+    let mut events: Vec<(String, rex_ir::events::EventModel)> = Vec::new();
+    let mut deploys: Vec<(String, rex_ir::deploy::DeployModel)> = Vec::new();
+    let mut flows: Vec<(String, rex_ir::ifml::IfmlModel)> = Vec::new();
+    let mut actors: Vec<(String, rex_ir::ActorModel)> = Vec::new();
+    // path → source, for rendering the pass's path-tagged diagnostics.
+    let mut sources: std::collections::BTreeMap<String, String> = Default::default();
+
+    for path in ddd_files {
+        if let Some(model) = crate::ingest::ddd_ingest::read_and_compile_ddd(path)
+            .ok()
+            .and_then(|compiled| compiled.compilation.model)
+        {
+            sources.insert(
+                path.display().to_string(),
+                std::fs::read_to_string(path).unwrap_or_default(),
+            );
+            designs.push((path.display().to_string(), model));
+        }
+    }
+    for path in evt_files {
+        if let Some(model) = crate::ingest::evt_ingest::read_and_compile_evt(path)
+            .ok()
+            .and_then(|compiled| compiled.compilation.model)
+        {
+            sources.insert(
+                path.display().to_string(),
+                std::fs::read_to_string(path).unwrap_or_default(),
+            );
+            events.push((path.display().to_string(), model));
+        }
+    }
+    for path in ifml_files {
+        if let Ok(compiled) = crate::ifml_compile::compile_and_check_ifml(path) {
+            sources.insert(
+                path.display().to_string(),
+                std::fs::read_to_string(path).unwrap_or_default(),
+            );
+            flows.push((path.display().to_string(), compiled.compilation.model));
+            for actor in compiled.actor_models {
+                actors.push((path.display().to_string(), actor));
+            }
+        }
+    }
+    for path in deploy_files {
+        let compiled = match crate::ingest::deploy_ingest::read_and_resolve_deploy(path) {
+            Ok(compiled) => compiled,
+            Err(_) => continue,
+        };
+        let Some(model) = compiled.model else {
+            continue;
+        };
+        sources.insert(compiled.path.clone(), compiled.source.clone());
+        for (import_path, import_source) in compiled.design_sources.iter() {
+            sources.insert(import_path.clone(), import_source.clone());
+        }
+        for (import_path, import_source) in compiled.flow_sources.iter() {
+            sources.insert(import_path.clone(), import_source.clone());
+        }
+        deploys.push((compiled.path.clone(), model));
+    }
+
+    let diagnostics = rex_driver::check_integrity(&designs, &actors, &events, &deploys, &flows);
+    if diagnostics.is_empty() {
+        println!(
+            "PASS union integrity — {} design(s), {} actor model(s), {} event contract(s), \
+             {} deployment(s), {} flow(s) cross-checked (rexlang #114)",
+            designs.len(),
+            actors.len(),
+            events.len(),
+            deploys.len(),
+            flows.len(),
+        );
+        return (0, 0);
+    }
+
+    let mut hard = 0usize;
+    let mut soft = 0usize;
+    println!("FAIL union integrity — dangling cross-layer wiring:");
+    for (_path, diagnostic) in &diagnostics {
+        if diagnostic.is_error() {
+            hard += 1;
+        } else {
+            soft += 1;
+        }
+    }
+    // Group consecutive same-path diagnostics so each file's block renders
+    // once against its source (the rex-cli `group_by_path` shape).
+    let mut grouped: Vec<(String, Vec<rex_driver::Diagnostic>)> = Vec::new();
+    for (path, diagnostic) in &diagnostics {
+        match grouped.last_mut() {
+            Some((group_path, group)) if *group_path == *path => group.push(diagnostic.clone()),
+            _ => grouped.push((path.clone(), vec![diagnostic.clone()])),
+        }
+    }
+    for (path, group) in &grouped {
+        let source = sources.get(path).map(String::as_str).unwrap_or_default();
+        print!("{}", rex_driver::render(path, source, group));
+    }
+    println!(
+        "     hint: declare the missing capability/op binding, carry the granted \
+         capability on an operation or search, or point the subscription at a \
+         declared deploy component (rexlang #114's diagnostic text names each)"
+    );
+    (hard, soft)
+}
+
 /// Profile/target vs topology cross-check (rexlang #49): a
 /// `cloudflareWorkers` profile needs the Workers deployment topology and
 /// vice versa — a deploy file and a profiles.toml that disagree describe
@@ -1599,6 +1743,23 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             &deploy_models,
             build_plan.as_ref(),
             domain_config.as_ref().ok(),
+        );
+        hard_failures += hard;
+        soft_warnings += soft;
+    }
+
+    // The union integrity plane (rexlang #114): the cross-layer lifecycle
+    // wiring the per-surface checks above cannot see. Runs over the same
+    // compiled artifacts, so a model that passes per-surface can still
+    // fail here — that is the point (the dangling-wiring class: a
+    // capability no op carries, an action bound to no op, a subscription
+    // to no component).
+    {
+        let (hard, soft) = check_union_integrity(
+            &args.ddd_files,
+            &args.evt_files,
+            &args.deploy_files,
+            &args.ifml_files,
         );
         hard_failures += hard;
         soft_warnings += soft;
