@@ -213,6 +213,11 @@ pub struct DeployCompiled {
     /// The converted graph, present exactly when the compile produced a
     /// model (error-severity diagnostics drop it).
     pub graph: Option<DeployModelGraph>,
+    /// The rex model itself (rexlang #114's union integrity pass consumes
+    /// it — the graph conversion drops the protocol-level facts the pass
+    /// diagnoses across surfaces). Present under the same conditions as
+    /// [`Self::graph`].
+    pub model: Option<rex_ir::deploy::DeployModel>,
 }
 
 impl DeployCompiled {
@@ -325,6 +330,7 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
     }
 
     let (graph, diagnostics) = read_and_compile_deploy(&deploy_path, &source, &designs, &flows);
+    let model = rex_driver::compile_deploy_str(&deploy_path, &source, &designs, &flows).model;
     Ok(DeployCompiled {
         path: deploy_path,
         source,
@@ -332,6 +338,7 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
         flow_sources,
         diagnostics,
         graph,
+        model,
     })
 }
 
