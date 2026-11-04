@@ -1194,3 +1194,81 @@ pub async fn mox_op_{{ op.snake }}(
     Ok(axum::Json(serde_json::json!({ "data": out })).into_response())
 }
 {% endfor %}{% endif %}
+{%- if service_ops | default(value=[]) | length > 0 %}
+
+/// The 501 seam for service ops with no executable lowering yet (issue
+/// #590): the route exists and the policy gates it, but the op body has
+/// no lowering — the response names the gap.
+#[allow(clippy::result_large_err)]
+fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
+    AppError {
+        status: axum::http::StatusCode::NOT_IMPLEMENTED,
+        code: "NOT_IMPLEMENTED",
+        message: reason.into(),
+        details: None,
+        correlation_id: None,
+    }
+}
+{% for op in service_ops %}
+{{ op.authorize_fn | default(value="") }}
+/// Service operation `{{ op.op_name }}` (service `{{ op.service }}`, issue
+/// #590): `POST …/{id}/actions/{{ op.snake }}` — the IFML action button's
+/// wire shape (#559) with the actor policy enforced server-side.
+#[utoipa::path(
+    post,
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/{{ op.snake }}",
+    params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
+    responses(
+        (status = 200, description = "Accepted"),
+        (status = 403, description = "Denied by the actor policy"),
+        (status = 404, description = "Not found"),
+{% if op.seam_reason | default(value="") | length > 0 %}
+        (status = 501, description = "Operation body not lowered"),
+{% endif %}
+    )
+)]
+#[tracing::instrument(skip(state, headers), fields(domain = "{{ domain }}", entity = "{{ module_name }}", op = "{{ op.snake }}"))]
+pub async fn {{ op.fn_name }}(
+    State(state): State<AppState>,
+    Extension(api_key_info): Extension<ApiKeyInfo>,
+    headers: HeaderMap,
+    Path({{ param_name }}): Path<Uuid>,
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+    let correlation_id = extract_correlation_id(&headers);
+    let response = state.{{ domain }}_{{ module_name }}_queries
+        .find_by_id({{ param_name }}{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
+        .await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ entity_name }}")
+                .with_correlation_id(correlation_id)
+        })?
+        .ok_or_else(|| AppError::not_found("{{ entity_name }} not found").with_correlation_id(correlation_id))?;
+{% if op.authorize_fn | default(value="") | length > 0 %}
+    if let Err(reason) = {{ op.fn_name }}_authorize(api_key_info.role.as_str(), &response) {
+        return Err(AppError::forbidden(reason).with_correlation_id(correlation_id));
+    }
+{% endif %}
+{% if op.is_delete %}
+    state.{{ domain }}_{{ module_name }}_commands.delete({{ param_name }}, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to delete {{ entity_name }}")
+                .with_correlation_id(correlation_id)
+        })?;
+    Ok(axum::Json(serde_json::json!({ "data": { "ok": true } })).into_response())
+{% elif op.is_read %}
+    Ok(axum::Json(serde_json::json!({
+        "data": response,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })).into_response())
+{% else %}
+    // The record load is the route's 404 contract; the body has no
+    // executable lowering yet.
+    let _ = &response;
+    Err(service_op_not_implemented(
+        "{{ op.seam_reason | default(value="no executable lowering") }}",
+    ))
+{% endif %}
+}
+{% endfor %}
+{% endif %}

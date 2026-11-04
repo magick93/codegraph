@@ -13,6 +13,7 @@ pub mod regulatory_report;
 pub mod repository;
 pub mod repository_emitter;
 pub mod rules;
+pub mod service_ops;
 pub mod validations;
 
 #[cfg(test)]

@@ -1716,8 +1716,8 @@ fn ddd_fixture() -> DddModelGraph {
                         delegation_operation: None,
                         capabilities: vec!["BorrowBooks".to_string()],
                         ordinal: 0,
-
                         is_protected: false,
+                        condition: None,
                     },
                     DddServiceOperation {
                         name: "renew".to_string(),
@@ -1728,8 +1728,8 @@ fn ddd_fixture() -> DddModelGraph {
                         delegation_operation: Some("save".to_string()),
                         capabilities: vec![],
                         ordinal: 1,
-
                         is_protected: false,
+                        condition: Some(r#"status == "OnLoan""#.to_string()),
                     },
                 ],
                 ordinal: 0,
@@ -1751,6 +1751,7 @@ fn ddd_fixture() -> DddModelGraph {
                     ordinal: 0,
 
                     is_protected: false,
+                    condition: None,
                 }],
                 ordinal: 0,
             },

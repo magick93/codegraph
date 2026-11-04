@@ -1,0 +1,113 @@
+//! Compile pin for the service-ops plane (issue #590, the #551 policy):
+//! the generated app over a fixture with service ops must `cargo check`
+//! clean — routes, authorize fns, transition guards, delegation legs, and
+//! the 501 seams compile together with the rest of the app.
+//!
+//! Path deps (`dependency_strategy = "path"`, issue #347) keep the gate
+//! network-free. Skips gracefully when `cargo` is absent.
+//!
+//! ```text
+//! cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
+//! ```
+
+#[path = "service_ops_fixture.rs"]
+mod fixture;
+
+use std::fs;
+use std::path::Path;
+
+use fixture::{
+    DOMAINS_TOML, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, tempdir, write_fixture_in,
+};
+
+/// The fixture profiles: the workspace default with path deps (the gate
+/// must compile without network) and the gRPC generators stripped (no
+/// protoc requirement).
+fn write_profiles(dir: &Path) -> std::path::PathBuf {
+    let workspace_profiles = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("profiles.toml");
+    let mut text = fs::read_to_string(&workspace_profiles).unwrap();
+    // The init-scaffold meta shape: the domain-types crate lands at
+    // crates/domain-types inside the output (the root stays the app
+    // manifest), and path deps keep the gate network-free (#347).
+    text = text.replace(
+        "[profiles.default.meta]\n",
+        "[profiles.default.meta]\ndomain_types_base = \"crates/domain-types\"\n",
+    );
+    text = text.replace(
+        "[profiles.default.features]\n",
+        "[profiles.default.features]\ndependency_strategy = \"path\"\n",
+    );
+    // Strip grpc generator lines (protoc is not a gate prerequisite here).
+    let filtered: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("\"grpc_"))
+        .collect();
+    let path = dir.join("profiles.toml");
+    fs::write(&path, filtered.join("\n")).unwrap();
+    path
+}
+
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_service_ops_compiles() {
+    let fixture = write_fixture_in("service_ops_gate", PAYROLL_DDD);
+    let _engine = ingest(&fixture).await;
+
+    let out_dir = tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+
+    // The fixture's domains.toml + a path-dep profiles.toml beside it.
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let _ = DOMAINS_TOML;
+    let _ = (PAY_RUN_SCHEMA, PAY_RUN_MOX);
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the service-ops fixture must succeed");
+
+    // The plane must be present in the generated app before any build spend.
+    let handler = fs::read_to_string(output.join("src/api/payroll/pay_run_handler.rs")).unwrap();
+    assert!(
+        handler.contains("service_op_approve"),
+        "the op handlers must emit"
+    );
+    assert!(
+        handler.contains("service_op_approve_authorize"),
+        "the authorize fns must emit"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with service ops must pass the compile gate");
+}

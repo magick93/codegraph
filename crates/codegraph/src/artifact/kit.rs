@@ -248,7 +248,7 @@ fn run_case(case: &KitCase) -> Result<(), KitError> {
 mod tests {
     use super::*;
 
-    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v1.md");
+    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v2.md");
 
     #[test]
     fn kit_case_canonical_accepted_rejected() {
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn kit_case_rejects_unknown_fence_qualifier() {
-        let md = "## odd\n\n```yaml canonical\nformatVersion: 1\n```\n";
+        let md = "## odd\n\n```yaml canonical\nformatVersion: 2\n```\n";
         let err = run_cases(md).expect_err("non-json fences are not supported yet");
         assert!(matches!(err, KitError::InvalidFence(_)), "{err}");
     }
@@ -281,7 +281,7 @@ mod tests {
     fn kit_case_rejects_canonical_drift() {
         let md = concat!(
             "## drift\n\n```json canonical\n",
-            "{\"edges\":[],\"formatVersion\":1,\"nodes\":[]}\n",
+            "{\"edges\":[],\"formatVersion\":2,\"nodes\":[]}\n",
             "```\n"
         );
         let err = run_cases(md).expect_err("alphabetical field order must not be canonical");

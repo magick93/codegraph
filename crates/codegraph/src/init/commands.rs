@@ -784,6 +784,26 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
                         services,
                         searches
                     );
+                    // Dead service-op surface (issue #590, Ask 1 — WARN
+                    // minimum): `protected` ops stay off the API plane by
+                    // definition, so every IFML action bound to them is a
+                    // dead trigger. Entity-unbound ops are warned on the
+                    // run path (they need the graph to resolve).
+                    for module in &model.modules {
+                        for service in &module.services {
+                            for op in &service.operations {
+                                if op.is_protected {
+                                    soft += 1;
+                                    println!(
+                                        "WARN ddd — service op '{}::{}' is `protected` — \
+                                         it emits no API surface; IFML actions bound to \
+                                         it are dead triggers",
+                                        service.name, op.name
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {

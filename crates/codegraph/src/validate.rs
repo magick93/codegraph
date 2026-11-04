@@ -1,5 +1,6 @@
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_naming::to_snake_case;
 
 #[derive(Debug)]
 pub enum Severity {
@@ -20,7 +21,7 @@ pub struct ValidationPass;
 impl ValidationPass {
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -30,6 +31,8 @@ impl ValidationPass {
             Self::check_namespace_imports_declared(db, config),
             Self::check_namespace_import_dependencies(db, config),
             Self::check_namespace_domain_conflicts(db, config),
+            Self::check_service_op_surface(db, config),
+            Self::check_status_bypass(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -41,6 +44,103 @@ impl ValidationPass {
         issues.extend(r7);
         issues.extend(r8);
         issues.extend(r9);
+        issues.extend(r10);
+        issues.extend(r11);
+        issues
+    }
+
+    /// Scaffold-path transition bypass (issue #590, Ask 3): an entity with
+    /// a configured workflow whose status field is a bare `String` accepts
+    /// arbitrary status values on create/update — every state machine is
+    /// bypassable via scaffold CRUD. WARN until typed lifecycles land
+    /// (rexlang #114): bind the field to a codelist or await machine
+    /// validation on the scaffold path.
+    async fn check_status_bypass(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        for (domain_name, entry) in &config.domains {
+            for entity_name in &entry.entities {
+                let Some(workflow) = entry
+                    .get_entity_config(entity_name)
+                    .and_then(|ec| ec.workflow.as_ref())
+                else {
+                    continue;
+                };
+                let props = match db.get_properties_in_domain(entity_name, domain_name).await {
+                    Ok(props) => props,
+                    Err(_) => continue,
+                };
+                let Some(status) = props.iter().find(|p| {
+                    p.rust_field_name == workflow.status_field
+                        || to_snake_case(&p.name) == workflow.status_field
+                }) else {
+                    continue;
+                };
+                let is_codelist = matches!(
+                    status.effective_kind(),
+                    Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
+                        | Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
+                );
+                if is_codelist {
+                    continue;
+                }
+                issues.push(ValidationIssue {
+                    severity: Severity::Warning,
+                    entity: format!("{domain_name}.{entity_name}"),
+                    check: "status_bypass",
+                    message: format!(
+                        "workflow status field '{}' is a bare {} — create/update \
+                         accept arbitrary status values, so the {} state machine is \
+                         bypassable via scaffold CRUD; bind the field to a codelist \
+                         or adopt typed lifecycles (rexlang #114)",
+                        workflow.status_field,
+                        status.rust_field_type,
+                        workflow.states.len(),
+                    ),
+                });
+            }
+        }
+        issues
+    }
+
+    /// Dead service-op surface (issue #590, Ask 1 — WARN minimum while the
+    /// diagnostics are transitional): ops that emit no API surface, and
+    /// `.ifml` actions bound to them.
+    async fn check_service_op_surface(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        let warnings =
+            match codegraph_generate::ddd::service_ops::dead_surface_warnings(db, config).await {
+                Ok(w) => w,
+                Err(_) => return issues,
+            };
+        for w in warnings {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(service ops)".into(),
+                check: "service_op_dead_surface",
+                message: w,
+            });
+        }
+        let triggers =
+            match codegraph_generate::ddd::service_ops::ifml_dead_triggers(db, config).await {
+                Ok(t) => t,
+                Err(_) => return issues,
+            };
+        for (action, op, reason) in triggers {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: action.clone(),
+                check: "ifml_action_dead_surface",
+                message: format!(
+                    "action '{action}' targets op '{op}' which emits no API                      surface ({reason}); the trigger is dead"
+                ),
+            });
+        }
         issues
     }
 

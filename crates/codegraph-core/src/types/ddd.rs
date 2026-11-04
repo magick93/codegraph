@@ -184,6 +184,12 @@ pub struct DddServiceOperation {
     /// interface.
     #[serde(default)]
     pub is_protected: bool,
+    /// The `when (...)` guard condition's source text, verbatim between
+    /// the parentheses (issue #590): the route-level transition guard,
+    /// lowered over the loaded record. Serde-defaulted for read-compat
+    /// with graphs persisted before the field existed.
+    #[serde(default)]
+    pub condition: Option<String>,
     /// Declaration order within the service.
     pub ordinal: usize,
 }

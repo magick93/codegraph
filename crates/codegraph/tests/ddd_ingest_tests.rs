@@ -136,7 +136,7 @@ fn sample_model() -> DddModel {
                         }),
                         capabilities: Vec::new(),
                         is_protected: false,
-                        condition: None,
+                        condition: Some(r#"status == "OnLoan""#.to_string()),
                     },
                 ],
                 dependencies: vec![
@@ -346,6 +346,10 @@ fn conversion_maps_module_major_order_and_every_payload() {
     assert_eq!(renew.delegation_operation.as_deref(), Some("save"));
     assert!(renew.return_type.is_none());
     assert_eq!(renew.ordinal, 1);
+    // The op-level `when (...)` guard survives conversion verbatim (issue
+    // #590): it is the route-level transition guard.
+    assert_eq!(renew.condition.as_deref(), Some(r#"status == "OnLoan""#));
+    assert_eq!(borrow.condition, None);
 
     // Searches: the discovery module's search carries every knob.
     assert_eq!(graph.searches.len(), 1);

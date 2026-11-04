@@ -537,12 +537,103 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   `--test ddd_ingest_tests`. Flag-off byte-identity holds: no `.ddd`
   input ⇒ no nodes ⇒ unchanged output (repository.tera is the only
   template touched; the finder block is empty-loop-inert).
-- **Deferred**: service `=>`/`inject` → handler/query wiring;
-  `compile_ddd_str_with_actors` (capabilities recorded unvalidated, same
-  as the rexlang CLI); optimistic-locking/cache emission; nonPersistent
-  DDL suppression; search backends beyond Postgres FTS + document
-  projections; per-field analyzers/boosts in the FTS plumbing; ddd on the
-  classify/ifml-generate paths; LSP for `.ddd`.
+- **Deferred**: ~~service `=>`/`inject` → handler/query wiring~~ (RETIRED for
+  delegation ops by the #590 service-op plane — see "Service ops lower to
+  API surface"; service-to-service/search delegation and `save` payloads
+  remain seams); `compile_ddd_str_with_actors` (capabilities recorded
+  unvalidated, same as the rexlang CLI); optimistic-locking/cache
+  emission; nonPersistent DDL suppression; search backends beyond
+  Postgres FTS + document projections; per-field analyzers/boosts in the
+  FTS plumbing; ddd on the classify/ifml-generate paths; LSP for `.ddd`.
+
+## Service ops lower to API surface (issue #590)
+
+`.ddd` service operations are the application surface, not documentation:
+a public (non-`protected`) op with a resolvable entity binding emits
+`POST /api/{version}/{domain}/{entity}/{id}/actions/{op_snake}` — the
+exact wire shape the #559 IFML action buttons already POST, killing the
+dead-button class. The actor policy authored in `.actor` imports becomes
+RUNTIME enforcement at the route: the op-level `when (...)` transition
+guard, capability membership, `never_both` separation-of-duties
+conflicts, and per-grant `when` conditions all evaluate server-side in
+the handler over the loaded record (`AppError::forbidden` naming the
+capability/rule). `Owner`→first/`member`→last role mapping mirrors the
+IFML hydration convention; **API-key sessions bypass the policy gates**
+(RLS scopes still apply) so hurl contracts and persona keys keep working
+— documented v1 semantics.
+
+- **Module** (`codegraph-generate/src/ddd/service_ops.rs`): entity-binding
+  resolution (capability class → schema title exact/`+Type`; delegation
+  to a repository of the model; class-typed signature), `PolicySurface`
+  (BaseJump role → capability → grant `when` sources via
+  `resolve_effective_permits`; `get_actor_policy().never_both` — its
+  first consumer), `lower_when_to_rust` (the Rust twin of `db/expr_sql`:
+  same closed subset, codelist/date fields compare via `Display`,
+  Option-aware comparisons, refusals are hard generation errors naming
+  the capability), and the per-op `authorize` fn rendered at generation
+  time (pre-rendered, whitespace-exact — the #338 guard-block pattern).
+  Note the rex actor compiler already rejects single-file `never_both`
+  violations statically — the runtime SoD gate exists for policies
+  MERGED across multiple `.actor` imports (each file valid, union
+  violates).
+- **Emission**: `RouterEntity.service_ops` + `HandlerContext.service_ops`
+  (root entities only — child bindings are a recorded follow-up; both
+  `build_router_context` sites so the api contract cannot drift) → gated
+  loops in `templates/api/{router,handler}.tera` (provider-generic: the
+  handlers call only the queries/commands API, so the plane rides BOTH
+  topologies — pinned compiling natively AND on wasm32 by
+  `worker_wasm_compile_tests`, whose PayRun fixture now carries a
+  capability-gated op). Execution lowering v1: repository `delete`
+  delegations wire to the command plane, `findById` delegations return
+  the record; every other op (save, service-to-service, search,
+  abstract) answers **501 NOT_IMPLEMENTED naming the gap** (the
+  functions-plane seam precedent — enforcement is the deliverable).
+  OpenAPI registers the paths via `PerDomainOpenApiContext.service_ops`
+  (NO skip_serializing_if); hurl gains a per-entity
+  `{nn}_{domain}_{module}_actions.hurl` contract (fresh CREATE fixture
+  then one POST per op pinning 200/501; the 403 surface rides JWT
+  sessions).
+- **The op-level `when` condition** rides the graph now: rex-ir
+  `ServiceOperation.condition` (trunk pin 0f8518f) →
+  `DddServiceOperation.condition` (`#[serde(default)]`, inside the
+  `:DddService.operations_json` blob — **`GRAPH_FORMAT_VERSION` bumped
+  1→2** so cached graphs cold-re-ingest; the artifact-kit canonical
+  fixtures moved to v2) → lowered into the authorize fn BEFORE the
+  api_key bypass (business semantics apply to every session). Upstream
+  note: the rex compiler only admits an op-level `when` on modules with
+  exactly one machine-bearing design (typed lifecycles) — grant `when`s
+  are the unconditional-availability path.
+- **Ask 1 diagnostics (WARN, transitional)**:
+  `dead_surface_warnings` (protected / entity-unbound ops) +
+  `ifml_dead_triggers` (`.ifml` action names binding ci-case-insensitive
+  to a dead op: "action 'X' targets op 'Y' which emits no API surface;
+  the trigger is dead") ride the run-path validation pass
+  (`validate.rs::check_service_op_surface`, Warning severity) and doctor
+  (`check_ddd_files` warns on protected ops from the compiled model).
+- **Ask 3 (WARN)**: `validate.rs::check_status_bypass` — an entity with a
+  `domains.toml` workflow whose status field is not codelist-bound warns
+  that scaffold CRUD bypasses the machine (typed lifecycles = rexlang
+  #114).
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (4,
+  node-free: routes/handlers/policy gates incl. a merged-policy SoD
+  denial + hurl/OpenAPI pins + the no-services byte-identity shape +
+  both validation WARNs) + `--test service_ops_compile_gate -- --ignored`
+  (the #551 compile pin: `driver::run` over the fixture with
+  `dependency_strategy = "path"`, then the app `cargo check`s clean —
+  its first run caught `Err(<literal>)` as `&str` and the unused-load
+  seam) + the in-crate `ddd::service_ops` unit KATs (14: lowering subset,
+  refusals, SoD/capability/when rendering, the basejump role mapping) +
+  `worker_wasm_compile_tests` (workers leg). Flag-off byte-identity
+  pinned by the standing canaries (a first-cut handler.tera edit leaked
+  one blank line into flag-off output — the canary caught it; whitespace
+  trim fix applied).
+- **Deferred**: delegation breadth beyond delete/findById (save payloads,
+  service-to-service, search); child-entity op routes; api_key capability
+  enforcement (JWT-only policy gates); IFML action-op e2e spec category +
+  POM surface; ddd op-`condition` beyond machine-bearing modules (typed
+  lifecycles, rexlang #114); doctor WARN for entity-unbound ops (needs
+  the graph; the run path owns it); hurl 403 legs over JWT personas;
+  register-class properties (issue Ask 4, upstream rexlang #83).
 
 ## Events DSL as generator input (issues #454, #455)
 

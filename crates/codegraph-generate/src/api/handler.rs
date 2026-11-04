@@ -153,6 +153,11 @@ pub struct HandlerContext {
     /// no op routes and the handler stays byte-identical.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_ops: Vec<MoxOpRoute>,
+    /// Service operations routed as action endpoints (issue #590): POST
+    /// `{id}/actions/{snake}` with the actor policy enforced server-side.
+    /// Root entities only. Empty = no op routes, byte-identical handler.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub service_ops: Vec<crate::ddd::service_ops::ServiceOpRoute>,
     /// Handler-site eligibility guards (issue #338): the compiled rule
     /// booleans evaluated before the gated operations. Empty = no guard
     /// surface and the handler stays byte-identical. Populated only when
@@ -496,6 +501,18 @@ impl EntityGenerator for HandlerGenerator {
         // Mox op action routes (issue #508 R2).
         let mox_ops = routable_mox_ops(db, schema_title, &entity_name).await;
 
+        // Service-op action routes (issue #590). Root entities only —
+        // child op bindings emit no route (recorded follow-up). Lowering
+        // refusals (un-lowerable `when` conditions) are hard generation
+        // errors naming the capability.
+        let service_ops = if topo.role == "root" {
+            crate::ddd::service_ops::routes_for_entity(db, config, &domain, schema_title)
+                .await
+                .map_err(crate::error::Error::Config)?
+        } else {
+            Vec::new()
+        };
+
         // Handler-site eligibility guards (issue #338). Gated on the plan
         // carrying `rules` (the call targets must exist) and monolith
         // topology (rules.rs is not worker-routed, so a worker-crate
@@ -529,6 +546,7 @@ impl EntityGenerator for HandlerGenerator {
             tag,
             operations,
             mox_ops,
+            service_ops,
             eligibility_guards,
             parent_ref: topo.parent_ref,
             parent_entity,
