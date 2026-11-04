@@ -73,7 +73,7 @@ impl HurlContractGenerator {
 /// Fully-rendered section of a contract file (a request + its response
 /// expectations). No trailing newline; the template's tag newlines provide
 /// the separators.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ContractSection {
     body: String,
 }
@@ -110,6 +110,38 @@ struct EntityContractCtx {
     minimal_body: String,
     update_body: String,
     update_asserts: String,
+}
+
+/// One service-op action leg in the actions contract (issue #590).
+#[derive(Serialize)]
+struct OpLeg {
+    op_name: String,
+    service: String,
+    snake: String,
+    /// Expected status: 200 (wired delegation) or 501 (seam).
+    expect: u16,
+    seam: bool,
+    seam_reason: String,
+}
+
+/// Context for the per-entity `actions` hurl file (issue #590): a fresh
+/// CREATE fixture then one POST per service op, pinning route existence
+/// and the lowering.
+#[derive(Serialize)]
+struct ActionsContractCtx {
+    domain: String,
+    module: String,
+    /// Rendered required-FK preamble sections (verbatim from the entity
+    /// contract's resolution).
+    fk_sections: Vec<ContractSection>,
+    create_url: String,
+    auth_header: String,
+    create_body: String,
+    capture_name: String,
+    capture_ref: String,
+    create_asserts: &'static str,
+    item_url_base: String,
+    ops: Vec<OpLeg>,
 }
 
 /// Shared route context for the auth-suite files (all anchor-entity routes).
@@ -253,6 +285,57 @@ impl DomainGenerator for HurlContractGenerator {
                     .join(format!("{nn}_{}_{}.hurl", domain, schema.pg_table_name)),
                 content: render_template(tera, "hurl/entity.tera", &contract)?,
             });
+
+            // The per-entity actions contract (issue #590): root entities
+            // with service ops only — children's action routes are a
+            // recorded follow-up.
+            let role = config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(title))
+                .and_then(|ec| ec.role.clone())
+                .unwrap_or_else(|| "root".into());
+            if role == "root" {
+                let ops = crate::ddd::service_ops::routes_for_entity(db, config, domain, title)
+                    .await
+                    .map_err(codegraph_core::error::Error::Config)?;
+                if !ops.is_empty() {
+                    let legs = ops
+                        .iter()
+                        .map(|op| OpLeg {
+                            op_name: op.op_name.clone(),
+                            service: op.service.clone(),
+                            snake: op.snake.clone(),
+                            expect: if op.seam_reason.is_some() { 501 } else { 200 },
+                            seam: op.seam_reason.is_some(),
+                            seam_reason: op
+                                .seam_reason
+                                .clone()
+                                .unwrap_or_else(|| "wired".to_string()),
+                        })
+                        .collect();
+                    let ctx = ActionsContractCtx {
+                        domain: domain.to_string(),
+                        module: schema.pg_table_name.clone(),
+                        fk_sections: contract.fk_parent_sections.clone(),
+                        create_url: contract.create_url.clone(),
+                        auth_header: contract.auth_header.clone(),
+                        create_body: contract.create_body.clone(),
+                        capture_name: contract.capture_name.clone(),
+                        capture_ref: contract.capture_ref.clone(),
+                        create_asserts: contract.create_asserts,
+                        item_url_base: contract.item_url_base.clone(),
+                        ops: legs,
+                    };
+                    files.push(GeneratedFile {
+                        path: self.output_dir.join("hurl").join(format!(
+                            "{nn}_{}_{}_actions.hurl",
+                            domain, schema.pg_table_name
+                        )),
+                        content: render_template(tera, "hurl/actions.tera", &ctx)?,
+                    });
+                }
+            }
 
             // The authn/authz suite: exactly once per run, anchored at the
             // first entity in generation order (its domain emits it).

@@ -83,6 +83,10 @@ pub struct RouterEntity {
     /// Mox op action routes (issue #508 R2) — POST `{id}/op/{snake}`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_ops: Vec<crate::api::handler::MoxOpRoute>,
+    /// Service-op action routes (issue #590) — POST `{id}/actions/{snake}`,
+    /// policy-gated in the handler. Root entities only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub service_ops: Vec<crate::ddd::service_ops::ServiceOpRoute>,
     pub entity_name: String,
     pub module_name: String,
     pub path_segment: String,
@@ -318,8 +322,24 @@ impl DomainGenerator for RouterGenerator {
                 module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
                 title_to_entity_idx.insert(title.clone(), entity_idx);
 
+                let role = entity_cfg
+                    .and_then(|ec| ec.role.clone())
+                    .unwrap_or_else(|| "root".into());
+                let service_ops = if role == "root" {
+                    crate::ddd::service_ops::routes_for_entity(db, config, domain, title)
+                        .await
+                        .map_err(|e| {
+                            codegraph_core::error::Error::Config(format!(
+                                "service ops: entity '{title}': {e}"
+                            ))
+                        })?
+                } else {
+                    Vec::new()
+                };
+
                 entities.push(RouterEntity {
                     mox_ops: crate::api::handler::routable_mox_ops(db, title, entity_name).await,
+                    service_ops,
                     entity_name: entity_name.clone(),
                     module_name: schema.pg_table_name.clone(),
                     path_segment: resolve_path_segment(entity_cfg, &schema),
@@ -333,9 +353,7 @@ impl DomainGenerator for RouterGenerator {
                     has_embeddings,
                     has_fts,
                     fts_rest_mode,
-                    role: entity_cfg
-                        .and_then(|ec| ec.role.clone())
-                        .unwrap_or_else(|| "root".into()),
+                    role,
                     param_name: param_name_from_path_segment(&resolve_path_segment(
                         entity_cfg, &schema,
                     )),
@@ -669,8 +687,24 @@ pub async fn build_router_context(
             module_to_idx.insert(schema.pg_table_name.clone(), entity_idx);
             title_to_entity_idx.insert(title.clone(), entity_idx);
 
+            let role = entity_cfg
+                .and_then(|ec| ec.role.clone())
+                .unwrap_or_else(|| "root".into());
+            let service_ops = if role == "root" {
+                crate::ddd::service_ops::routes_for_entity(db, config, domain, title)
+                    .await
+                    .map_err(|e| {
+                        codegraph_core::error::Error::Config(format!(
+                            "service ops: entity '{title}': {e}"
+                        ))
+                    })?
+            } else {
+                Vec::new()
+            };
+
             entities.push(RouterEntity {
                 mox_ops: crate::api::handler::routable_mox_ops(db, title, entity_name).await,
+                service_ops,
                 entity_name: entity_name.clone(),
                 module_name: schema.pg_table_name.clone(),
                 path_segment: resolve_path_segment(entity_cfg, &schema),
@@ -684,9 +718,7 @@ pub async fn build_router_context(
                 has_embeddings,
                 has_fts,
                 fts_rest_mode,
-                role: entity_cfg
-                    .and_then(|ec| ec.role.clone())
-                    .unwrap_or_else(|| "root".into()),
+                role,
                 param_name: param_name_from_path_segment(&resolve_path_segment(
                     entity_cfg, &schema,
                 )),
@@ -1087,6 +1119,7 @@ mod tests {
             domain: "events".to_string(),
             entities: vec![RouterEntity {
                 mox_ops: Vec::new(),
+                service_ops: Vec::new(),
                 entity_name: "PublicEvent".to_string(),
                 module_name: "public_event".to_string(),
                 path_segment: "public-event".to_string(),

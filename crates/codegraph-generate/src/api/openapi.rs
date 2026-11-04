@@ -33,6 +33,9 @@ pub struct OpenApiDomain {
     /// `[functions]` binding sets `exposure = "http"` (byte-identity).
     /// (NO skip_serializing_if — the Tera context needs the empty vec.)
     pub functions: Vec<OpenApiFunction>,
+    /// Service-op action endpoints (issue #590). Root entities only.
+    /// (NO skip_serializing_if — the Tera context needs the empty vec.)
+    pub service_ops: Vec<OpenApiServiceOp>,
 }
 
 /// One HTTP-exposed function's OpenAPI registration context.
@@ -79,6 +82,19 @@ pub struct PerDomainOpenApiContext {
     /// `[functions]` binding opts in.
     /// (NO skip_serializing_if — the Tera context needs the empty vec.)
     pub functions: Vec<OpenApiFunction>,
+    /// Service-op action endpoints (issue #590). Root entities only.
+    /// (NO skip_serializing_if — the Tera context needs the empty vec.)
+    pub service_ops: Vec<OpenApiServiceOp>,
+}
+
+/// One service-op action endpoint registered in the per-domain OpenAPI
+/// spec (paths only — the request body is empty; identity rides the path).
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenApiServiceOp {
+    /// Handler fn name (`service_op_{snake}`).
+    pub fn_name: String,
+    /// The owning entity's module (`pg_table_name`) — the handler module.
+    pub module: String,
 }
 
 /// Context for the API catalog handler (`openapi_catalog.tera`).
@@ -143,6 +159,57 @@ impl GlobalGenerator for OpenApiGenerator {
         // `[functions]` binding opts in — the standing byte-identity default.
         let mut functions_per_domain: std::collections::BTreeMap<String, Vec<OpenApiFunction>> =
             Default::default();
+        // Service-op action endpoints per domain (issue #590). Root
+        // entities only; lowering refusals propagate as config errors.
+        let mut service_ops_per_domain: std::collections::BTreeMap<String, Vec<OpenApiServiceOp>> =
+            Default::default();
+        for (domain_name, domain_entry) in &config.domains {
+            for entity_name in &domain_entry.entities {
+                let role = domain_entry
+                    .get_entity_config(entity_name)
+                    .and_then(|ec| ec.role.clone())
+                    .unwrap_or_else(|| "root".to_string());
+                if role != "root" {
+                    continue;
+                }
+                if let Some(title) = entities_per_domain
+                    .get(domain_name.as_str())
+                    .and_then(|set| {
+                        set.iter()
+                            .find(|t| {
+                                t.chars().filter(|c| !c.is_whitespace()).collect::<String>()
+                                    == entity_name
+                                        .chars()
+                                        .filter(|c| !c.is_whitespace())
+                                        .collect::<String>()
+                            })
+                            .copied()
+                    })
+                {
+                    for op in
+                        crate::ddd::service_ops::routes_for_entity(db, config, domain_name, title)
+                            .await
+                            .map_err(codegraph_core::error::Error::Config)?
+                    {
+                        let module = db
+                            .get_schema_in_domain(title, domain_name)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|schema| schema.pg_table_name)
+                            .unwrap_or_default();
+                        service_ops_per_domain
+                            .entry(domain_name.clone())
+                            .or_default()
+                            .push(OpenApiServiceOp {
+                                fn_name: op.fn_name,
+                                module,
+                            });
+                    }
+                }
+            }
+        }
+
         for bound in crate::ddd::functions_api::bound_functions(db, config).await? {
             if bound.is_http()
                 && let Some(domain) = &bound.node.domain
@@ -269,13 +336,17 @@ impl GlobalGenerator for OpenApiGenerator {
             let functions = functions_per_domain
                 .remove(domain_name.as_str())
                 .unwrap_or_default();
-            if !entities.is_empty() || !functions.is_empty() {
+            let service_ops = service_ops_per_domain
+                .remove(domain_name.as_str())
+                .unwrap_or_default();
+            if !entities.is_empty() || !functions.is_empty() || !service_ops.is_empty() {
                 domains.push(OpenApiDomain {
                     name: domain_name.clone(),
                     label: domain_entry.label.clone(),
                     tier: domain_entry.tier.clone(),
                     entities,
                     functions,
+                    service_ops,
                 });
             }
         }
@@ -317,6 +388,7 @@ impl GlobalGenerator for OpenApiGenerator {
                 domain_label: domain.label.clone(),
                 entities: domain.entities.clone(),
                 functions: domain.functions.clone(),
+                service_ops: domain.service_ops.clone(),
             };
             let content =
                 render_template_with_project(tera, "api/openapi_domain.tera", &ctx, project)?;

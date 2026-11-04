@@ -7,7 +7,12 @@
 /// properties are nullable, old persisted graphs read them as NULL
 /// (→ `None`), and inserts of the new properties are tolerated on
 /// pre-existing node types — verified against the grafeo engine.
-pub const GRAPH_FORMAT_VERSION: u32 = 1;
+///
+/// Bumped for issue #590 (`DddServiceOperation.condition`): the field rides
+/// the `:DddService.operations_json` blob, so a cached graph persisted by a
+/// pre-#590 binary would read every op condition as `None` and silently
+/// drop the route-level transition guards — cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 2;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact

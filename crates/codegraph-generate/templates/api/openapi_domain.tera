@@ -29,6 +29,9 @@ use utoipa::OpenApi;
 {%- for function in functions %}
         crate::api::{{ domain_name }}::functions_api::{{ function.fn_name }},
 {%- endfor %}
+{%- for op in service_ops %}
+        crate::api::{{ domain_name }}::{{ op.module }}_handler::{{ op.fn_name }},
+{%- endfor %}
     ),
     components(schemas(
 {% for entity in entities %}

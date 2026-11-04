@@ -5,7 +5,7 @@
 
 use codegraph::artifact::kit;
 
-const CASES: &str = include_str!("fixtures/artifact_kit/graph_document_v1.md");
+const CASES: &str = include_str!("fixtures/artifact_kit/graph_document_v2.md");
 
 #[test]
 fn kit_cases_pass() {
@@ -14,7 +14,7 @@ fn kit_cases_pass() {
 
 #[test]
 fn kit_runner_rejects_a_failing_case() {
-    let md = "## broken\n\n```json rejected diagnostic=wrong_diagnostic_name\n{\"formatVersion\":2,\"nodes\":[],\"edges\":[]}\n```\n";
+    let md = "## broken\n\n```json rejected diagnostic=wrong_diagnostic_name\n{\"formatVersion\":3,\"nodes\":[],\"edges\":[]}\n```\n";
     let err =
         kit::run_cases(md).expect_err("a case whose diagnostic name does not match must fail");
     assert!(err.to_string().contains("wrong_diagnostic_name"));

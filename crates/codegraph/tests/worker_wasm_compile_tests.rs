@@ -458,6 +458,125 @@ async fn generated_worker_wasm_check_is_in_ci() {
         .with_schema(pay_run)
         .with_properties(ENTITY_TITLE, props)
         .build();
+
+    // The service-op plane (issue #590): one capability-gated delegation op
+    // on the fixture entity. The worker handlers + routes must compile on
+    // native AND wasm32 with the rest of the crate — the same
+    // provider-agnostic queries/commands API the mox-ops plane rides.
+    let ddd_graph = codegraph_core::types::DddModelGraph {
+        source_path: "fixture.ddd".to_string(),
+        application: codegraph_core::types::DddApplicationNode {
+            name: "Compilecheck".to_string(),
+            base: None,
+            source_path: "fixture.ddd".to_string(),
+        },
+        modules: Vec::new(),
+        designs: vec![codegraph_core::types::DddDesignNode {
+            application: "Compilecheck".to_string(),
+            module: "compensation".to_string(),
+            class: "PayRun".to_string(),
+            resolved_title: Some(ENTITY_TITLE.to_string()),
+            stereotype: "entity".to_string(),
+            is_abstract: false,
+            flags: codegraph_core::types::DddDesignFlags::default(),
+            ordinal: 0,
+        }],
+        repositories: vec![codegraph_core::types::DddRepositoryNode {
+            application: "Compilecheck".to_string(),
+            name: "PayRunRepository".to_string(),
+            design_class: "PayRun".to_string(),
+            operations: vec![
+                codegraph_core::types::DddRepositoryOperation {
+                    name: "findById".to_string(),
+                    builtin: Some("findById".to_string()),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    ordinal: 0,
+                    is_protected: false,
+                },
+                codegraph_core::types::DddRepositoryOperation {
+                    name: "findAll".to_string(),
+                    builtin: Some("findAll".to_string()),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    ordinal: 1,
+                    is_protected: false,
+                },
+                codegraph_core::types::DddRepositoryOperation {
+                    name: "save".to_string(),
+                    builtin: Some("save".to_string()),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    ordinal: 2,
+                    is_protected: false,
+                },
+                codegraph_core::types::DddRepositoryOperation {
+                    name: "delete".to_string(),
+                    builtin: Some("delete".to_string()),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    ordinal: 3,
+                    is_protected: false,
+                },
+            ],
+        }],
+        services: vec![codegraph_core::types::DddServiceNode {
+            application: "Compilecheck".to_string(),
+            module: "compensation".to_string(),
+            name: "PayRunService".to_string(),
+            description: None,
+            dependencies: vec!["PayRunRepository".to_string()],
+            operations: vec![codegraph_core::types::DddServiceOperation {
+                name: "approve".to_string(),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                delegation_target: Some("PayRunRepository".to_string()),
+                delegation_operation: Some("delete".to_string()),
+                capabilities: vec!["ApprovePayRun".to_string()],
+                is_protected: false,
+                condition: None,
+                ordinal: 0,
+            }],
+            ordinal: 0,
+        }],
+        searches: Vec::new(),
+    };
+    use codegraph_core::traits::GraphIngestor;
+    mock.ingest_ddd_model(&ddd_graph).await.unwrap();
+    mock.ingest_actor_policy(&codegraph_core::types::ActorPolicyModel {
+        actors: vec![codegraph_core::types::ActorNode {
+            name: "Owner".to_string(),
+            kind: None,
+            extends: None,
+            block: None,
+        }],
+        capabilities: vec![codegraph_core::types::CapabilityNode {
+            name: "ApprovePayRun".to_string(),
+            class: "PayRun".to_string(),
+            block: None,
+        }],
+        grants: vec![codegraph_core::types::GrantEdge {
+            actor: "Owner".to_string(),
+            capability: "ApprovePayRun".to_string(),
+            effect: "permit".to_string(),
+            when: None,
+            obligations: Vec::new(),
+            expr_json: None,
+        }],
+        policy: codegraph_core::types::ActorPolicyNode {
+            blocks: Vec::new(),
+            never_both: Vec::new(),
+            purposes: Vec::new(),
+            delegations: Vec::new(),
+        },
+    })
+    .await
+    .unwrap();
     let config = codegraph_config::config::parse_domain_config_str(
         r#"
 [defaults]
@@ -654,6 +773,25 @@ directions = ["push"]
             path.display()
         );
     }
+    // The service-op plane (issue #590): routes + policy-gated handlers
+    // emit into the worker crate.
+    let worker_router = fs::read_to_string(worker_src.join(format!("api/{DOMAIN}/router.rs")))
+        .expect("worker router emits");
+    assert!(
+        worker_router.contains("/actions/approve"),
+        "the worker router must register the action route:\n{worker_router}"
+    );
+    let worker_handler =
+        fs::read_to_string(worker_src.join(format!("api/{DOMAIN}/pay_run_handler.rs")))
+            .expect("worker handler emits");
+    assert!(
+        worker_handler.contains("service_op_approve_authorize"),
+        "the worker handler must carry the authorize fn:\n{worker_handler}"
+    );
+    assert!(
+        worker_handler.contains(r#"if role == "api_key""#),
+        "the api_key bypass must render in the worker handler:\n{worker_handler}"
+    );
     for required in [
         "workers/gateway/src/integration_catalog.rs",
         "workers/gateway/src/integration_router.rs",

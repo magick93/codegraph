@@ -460,6 +460,7 @@ pub fn ddd_model_graph_from_rex(
                     delegation_operation: op.delegation.as_ref().map(|d| d.operation.clone()),
                     capabilities: op.capabilities.clone(),
                     is_protected: op.is_protected,
+                    condition: op.condition.clone(),
                     ordinal,
                 })
                 .collect();

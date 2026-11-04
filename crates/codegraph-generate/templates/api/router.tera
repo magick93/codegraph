@@ -121,6 +121,11 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
 {%- for op in entity.mox_ops | default(value=[]) %}
         .route("/{ {{- entity.param_name -}} }/op/{{ op.snake }}", axum::routing::post({{ entity.module_name }}_handler::mox_op_{{ op.snake }}).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
 {%- endfor %}
+{%- for op in entity.service_ops | default(value=[]) %}
+        // Service op `{{ op.op_name }}` (issue #590) — the actor policy is
+        // enforced server-side in the handler (capability, `never_both`, `when`).
+        .route("/{ {{- entity.param_name -}} }/actions/{{ op.snake }}", axum::routing::post({{ entity.module_name }}_handler::{{ op.fn_name }}))
+{%- endfor %}
 {% for mf in entity.media_fields %}
         .route(
             "/{id}/{{ mf }}",
