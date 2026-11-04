@@ -5032,3 +5032,86 @@ fn remote_transition_refreshes_the_paired_instance() {
     );
     assert!(!rendered.contains("invalidateAll"), "{rendered}");
 }
+
+#[test]
+fn shadcn_field_variant_maps_the_text_slots() {
+    // The #582 deferral: a `field`-role mapping carrying `field_props`
+    // wiring replaces the built-in TEXT slots — the wiring is evaluated
+    // inside the AppField children snippet, and the generator owns
+    // name/testid/type/required around it so the POM fill/testid contract
+    // holds on the mapped input. Select/radio slots keep their built-ins
+    // (the shadcn Select root's contract is not slot-compatible).
+    use codegraph_config::built_in_pack;
+    let pack = built_in_pack("shadcn-svelte").expect("shadcn pack");
+    let spec = FormSpec {
+        fields: vec![
+            rex_ifml::FieldDef {
+                name: "title".to_string(),
+                input: InputFieldType::Text,
+                required: true,
+                validations: Vec::new(),
+                values: Vec::new(),
+                messages: Vec::new(),
+            },
+            rex_ifml::FieldDef {
+                name: "tier".to_string(),
+                input: InputFieldType::Dropdown,
+                required: false,
+                validations: Vec::new(),
+                values: vec!["gold".to_string()],
+                messages: Vec::new(),
+            },
+        ],
+    };
+    let rendered = super::render::render_form_tanstack(
+        "editor",
+        "editor_form_state",
+        &spec,
+        &HashMap::new(),
+        None,
+        DtoKeyCasing::default(),
+        Some(&pack),
+        "CustomerEdit",
+    );
+    let title = &rendered.fields[0].invocation;
+    assert!(
+        title.starts_with("<Input name=\"title\" data-testid=\"editor-title\" required"),
+        "the mapped text slot renders the pack's component with the POM contract:\\n{title}"
+    );
+    assert!(title.contains("value={field.state.value}"), "{title}");
+    assert!(
+        title.contains("oninput={(e) => field.handleChange(e.currentTarget.value)}"),
+        "{title}"
+    );
+    assert_eq!(
+        rendered.mapped_import.as_ref().map(|i| i.export.as_str()),
+        Some("Input"),
+        "the page imports the mapped component"
+    );
+    // The dropdown slot keeps the built-in (wiring excluded).
+    let tier = &rendered.fields[1].invocation;
+    assert!(
+        tier.contains("serverMessage={fieldErrors.tier}"),
+        "the non-text slot keeps the built-in component:\\n{tier}"
+    );
+
+    // No pack: the built-in slots are byte-identical.
+    let rendered = super::render::render_form_tanstack(
+        "editor",
+        "editor_form_state",
+        &spec,
+        &HashMap::new(),
+        None,
+        DtoKeyCasing::default(),
+        None,
+        "CustomerEdit",
+    );
+    assert!(rendered.mapped_import.is_none());
+    assert!(
+        rendered.fields[0]
+            .invocation
+            .contains("testid=\"editor-title\""),
+        "the built-in slot keeps its shape:\\n{}",
+        rendered.fields[0].invocation
+    );
+}
