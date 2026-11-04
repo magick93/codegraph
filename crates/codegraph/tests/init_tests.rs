@@ -2198,7 +2198,12 @@ view "CustomerList" {
     })
     .unwrap_err();
     // cmd_doctor returns Err carrying the failure summary when hard
-    // checks fail — the dangling grant must be among them.
+    // checks fail — the dangling grant is the ONLY hard failure in this
+    // fixture (the per-diagnostic text renders to stdout above).
+    assert!(
+        format!("{summary}").contains("1 hard check(s) failed"),
+        "the dangling grant must hard-fail the doctor: {summary}"
+    );
 
     // Clean: drop the dangling grant; the same union passes.
     let actor_clean = actor.replace("    permit ApproveCustomer\n", "");
