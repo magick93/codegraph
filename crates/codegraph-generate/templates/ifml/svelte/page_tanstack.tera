@@ -34,6 +34,11 @@
 {%- if tanstack_forms %}
 	import { z } from 'zod';
 	import { createAppForm } from '$lib/forms/form';
+{%- for comp in components %}
+{%- if comp.tanstack and comp.tanstack.mapped_import %}
+	import { {{ comp.tanstack.mapped_import.export }} } from '{{ comp.tanstack.mapped_import.path }}';
+{%- endif %}
+{%- endfor %}
 {%- endif %}
 {%- if needs_goto %}
 	import { goto } from '$app/navigation';
@@ -587,7 +592,7 @@
 <form data-testid="{{ comp.name }}-form" onsubmit={(e) => { e.preventDefault(); {{ comp.js_name }}Form.handleSubmit(); }}>
 	{% for field in comp.tanstack.fields %}
 	<{{ comp.js_name }}Form.AppField name="{{ field.name }}">
-		{% raw %}{#snippet children()}{% endraw %}
+		{% raw %}{#snippet children(field)}{% endraw %}
 		{{ field.invocation }}
 		{% raw %}{/snippet}{% endraw %}
 	</{{ comp.js_name }}Form.AppField>

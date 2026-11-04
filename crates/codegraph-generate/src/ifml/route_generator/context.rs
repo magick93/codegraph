@@ -831,6 +831,10 @@ pub struct RenderFormTanstack {
     pub payload: String,
     /// One slot per form field, in declaration order.
     pub fields: Vec<RenderTanstackField>,
+    /// The mapped field-component import when the `field`-role mapping
+    /// carried `field_props` wiring; `None` keeps the built-in slots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapped_import: Option<RenderTanstackImport>,
     /// The submit button's testid — the SAME value the POM's
     /// `ComponentSelectors::for_component` resolves (mapping tier first,
     /// action-control slot, `{comp}-submit` fallback), so the TanStack
@@ -842,6 +846,15 @@ pub struct RenderFormTanstack {
 /// the field-component export (for the `$lib/forms/fields/*` import), and
 /// the ready-to-render invocation (all escaping applied in Rust — the
 /// #560 rule for the flag-ON path).
+/// The mapped field-component import (issue #582 deferral): when a
+/// `field`-role mapping carries `field_props` wiring, the mapped slots
+/// render the mapped component and the page imports it.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderTanstackImport {
+    pub export: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RenderTanstackField {
     pub name: String,
@@ -1774,6 +1787,8 @@ pub(super) async fn page_component_context(
                 &props,
                 workflow.as_ref().map(|w| w.status_field.as_str()),
                 dto_casing,
+                mappings,
+                &vc.name,
             ))
         }
         _ => None,

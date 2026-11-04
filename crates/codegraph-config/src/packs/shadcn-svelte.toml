@@ -24,14 +24,23 @@ path = "$lib/components/ui/button/button.svelte"
 export = "Button"
 testids = { root = "link-button" }
 
-# Text inputs, available for per-field slot resolution.
+# Text inputs, available for per-field slot resolution. The field_props
+# wiring is evaluated inside the TanStack AppField children snippet (the
+# #582 field-component variant): shadcn's Input spreads the rest props
+# onto the native input, so the native `value`/`oninput` pair types and
+# forwards cleanly. The generator adds `name`/`data-testid`/`type`/
+# `required` around the wiring — the POM fill/testid contract holds.
 [[component]]
 role = "field"
 path = "$lib/components/ui/input/input.svelte"
 export = "Input"
 testids = { root = "input" }
+field_props = { value = "field.state.value", oninput = "(e) => field.handleChange(e.currentTarget.value)" }
 
-# Dropdown / radio / checkbox slots.
+# Dropdown / radio / checkbox slots. The selection-field slot KEEPS its
+# built-in dropdown — the shadcn Select root's props contract (items
+# rendering, typeahead) is not slot-compatible with the AppField wiring;
+# mapping it here would emit an un-renderable slot.
 [[component]]
 role = "selection-field"
 kind = "dropdown"

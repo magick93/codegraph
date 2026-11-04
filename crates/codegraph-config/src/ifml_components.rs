@@ -61,6 +61,18 @@ pub struct IfmlComponentMapping {
     /// Test-id values rendered on the mapped component / fallback markup.
     #[serde(default)]
     pub testids: Option<HashMap<String, String>>,
+    /// Per-field slot prop wiring (issue #582 deferral, field-component
+    /// variants): prop name → TS expression evaluated inside the TanStack
+    /// `AppField` children snippet, where `field` (the field state) is in
+    /// scope — `value = "field.state.value"`,
+    /// `oninput = "(e) => field.handleChange(e.currentTarget.value)"`.
+    /// The generator owns `name`/`data-testid`/`type`/`required` around
+    /// the declared wiring, so a mapped input keeps the POM's fill/testid
+    /// contract. Declared only on entries meant for the `field` role; a
+    /// `field`-role mapping WITHOUT wiring is skipped (the built-in
+    /// component renders — never an un-wired slot).
+    #[serde(default)]
+    pub field_props: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl IfmlComponentMappings {

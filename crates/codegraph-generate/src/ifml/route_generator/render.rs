@@ -15,7 +15,7 @@ use crate::project_config::DtoKeyCasing;
 use super::context::{
     RenderButton, RenderChart, RenderColumn, RenderContainer, RenderEvent, RenderForm,
     RenderFormTanstack, RenderImport, RenderInputField, RenderModal, RenderNavItem, RenderShellNav,
-    RenderSubmit, RenderTable, RenderTanstackField, TableLayout,
+    RenderSubmit, RenderTable, RenderTanstackField, RenderTanstackImport, TableLayout,
 };
 use super::roles::{event_role, input_field_role, is_form_component};
 use crate::ifml::zod_glue::lower_field_checks;
@@ -627,6 +627,7 @@ fn tanstack_component(html: &control_core::HtmlInput) -> &'static str {
 /// `workflow_status` (the workflow-managed field, when any) is excluded
 /// from schema, defaults, payload, and slots: the create/update DTOs
 /// reject it (`deny_unknown_fields`, #539).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_form_tanstack(
     component_name: &str,
     form_state_var: &str,
@@ -634,7 +635,21 @@ pub(super) fn render_form_tanstack(
     props: &HashMap<String, PropertyNode>,
     workflow_status: Option<&str>,
     casing: DtoKeyCasing,
+    mappings: Option<&IfmlComponentMappings>,
+    view: &str,
 ) -> RenderFormTanstack {
+    // The field-component variant (issue #582 deferral): a `field`-role
+    // mapping carrying `field_props` wiring replaces the built-in
+    // text-field slots. Resolved ONCE per form — every text slot shares
+    // the role. A mapping without wiring is skipped (never an un-wired
+    // slot); select/radio/checkbox slots keep their built-ins (the
+    // shadcn Select root's contract is not AppField-slot-compatible).
+    let field_mapping = mappings
+        .and_then(|m| m.resolve_slot(view, component_name, "form", "", Some(SemanticRole::Field)));
+    let field_wiring = field_mapping.and_then(|m| {
+        let wiring = m.field_props.as_ref()?;
+        Some((wiring, m.export_name().to_string(), m.path.clone()))
+    });
     let fields: Vec<&rex_ifml::FieldDef> = spec
         .fields
         .iter()
@@ -643,6 +658,7 @@ pub(super) fn render_form_tanstack(
 
     let mut schema_fields = Vec::new();
     let mut slots = Vec::new();
+    let mut mapped_import: Option<RenderTanstackImport> = None;
     let mut default_lines = Vec::new();
     let mut payload_lines = Vec::new();
 
@@ -682,26 +698,57 @@ pub(super) fn render_form_tanstack(
         let html = control_core::html_input_for_dsl(&field.input);
         let component = tanstack_component(&html);
         let testid = format!("{}-{}", sanitize_ident(component_name), field.name);
-        let mut invocation = format!(
-            "<{component} name={} testid={}",
-            ts_string_literal(&field.name),
-            ts_string_literal(&testid)
-        );
-        if component == "TextField" && html.input_type != "text" {
-            invocation.push_str(&format!(" type={}", ts_string_literal(&html.input_type)));
-        }
-        if prop_required {
-            invocation.push_str(" required");
-        }
-        if !field.values.is_empty() && (html.is_select || html.is_radio) {
-            let items: Vec<String> = field.values.iter().map(|v| ts_string_literal(v)).collect();
-            invocation.push_str(&format!(" values={{[{}]}}", items.join(", ")));
-        }
-        if let Some(message) = field.messages.first() {
-            invocation.push_str(&format!(" message={}", ts_string_literal(message)));
-        }
-        invocation.push_str(&format!(" serverMessage={{fieldErrors.{}}}", field.name));
-        invocation.push_str(" />");
+        let invocation = if component == "TextField"
+            && let Some((wiring, export, path)) = &field_wiring
+        {
+            // The mapped field variant: the pack's wiring evaluated inside
+            // the AppField children snippet. The generator owns
+            // name/testid/type/required around it — the POM's
+            // fill/testid contract holds on the mapped input.
+            let mut invocation = format!(
+                "<{export} name={} data-testid={}",
+                ts_string_literal(&field.name),
+                ts_string_literal(&testid)
+            );
+            if html.input_type != "text" {
+                invocation.push_str(&format!(" type={}", ts_string_literal(&html.input_type)));
+            }
+            if prop_required {
+                invocation.push_str(" required");
+            }
+            for (k, v) in wiring.iter() {
+                invocation.push_str(&format!(" {k}={{{v}}}"));
+            }
+            invocation.push_str(" />");
+            mapped_import = Some(RenderTanstackImport {
+                export: export.clone(),
+                path: path.clone(),
+            });
+            invocation
+        } else {
+            let mut invocation = format!(
+                "<{component} name={} testid={}",
+                ts_string_literal(&field.name),
+                ts_string_literal(&testid)
+            );
+            if component == "TextField" && html.input_type != "text" {
+                invocation.push_str(&format!(" type={}", ts_string_literal(&html.input_type)));
+            }
+            if prop_required {
+                invocation.push_str(" required");
+            }
+            if !field.values.is_empty() && (html.is_select || html.is_radio) {
+                let items: Vec<String> =
+                    field.values.iter().map(|v| ts_string_literal(v)).collect();
+                invocation.push_str(&format!(" values={{[{}]}}", items.join(", ")));
+            }
+            if let Some(message) = field.messages.first() {
+                invocation.push_str(&format!(" message={}", ts_string_literal(message)));
+            }
+            invocation.push_str(&format!(" serverMessage={{fieldErrors.{}}}", field.name));
+            invocation.push_str(" />");
+            invocation
+        };
         slots.push(RenderTanstackField {
             name: field.name.clone(),
             component: component.to_string(),
@@ -781,6 +828,7 @@ pub(super) fn render_form_tanstack(
         defaults: default_lines.join("\n"),
         payload,
         fields: slots,
+        mapped_import,
         submit_testid: String::new(),
     }
 }

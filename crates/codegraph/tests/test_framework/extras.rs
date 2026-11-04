@@ -465,15 +465,28 @@ pub fn write_shadcn_stubs(svelte: &Path) -> Result<(), String> {
     fs::write(
         ui.join("input/input.svelte"),
         r#"<script lang="ts">
-	// Gate-owned stub of the shadcn-svelte Input.
-	let { testid, value = $bindable(''), type = 'text' }: {
+	// Gate-owned stub of the shadcn-svelte Input: the real component
+	// spreads the rest props onto the native input, so the mapped field
+	// wiring (#582 variant: name + data-testid + oninput) types and
+	// forwards exactly as it does against the pack.
+	let {
+		testid,
+		value = $bindable(''),
+		type = 'text',
+		name,
+		required = false,
+		...rest
+	}: {
 		testid?: string;
 		value?: string;
 		type?: string;
+		name?: string;
+		required?: boolean;
+		[key: string]: unknown;
 	} = $props();
 </script>
 
-<input data-testid={testid} {type} bind:value />
+<input {name} data-testid={testid} {type} {required} bind:value {...rest} />
 "#,
     )
     .map_err(|e| e.to_string())?;

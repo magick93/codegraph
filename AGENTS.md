@@ -1203,6 +1203,34 @@ flags except the last:
   DOM-event vs value-callback conventions across kits — needs its own
   slice; shipping it blind risks svelte-check breakage in consumer
   trees).
+
+### Field-component variants (issue #582 deferral, mapping-gated)
+
+The shadcn pack's `field` entry now carries **`field_props`** — a
+prop-name → TS-expression table evaluated inside the TanStack
+`AppField` children snippet (`value = "field.state.value"`,
+`oninput = "(e) => field.handleChange(e.currentTarget.value)"`). The
+route generator resolves the `field` role ONCE per typed form and
+replaces the built-in TEXT slots with the mapped component; the
+generator owns `name`/`data-testid`/`type`/`required` around the
+declared wiring, so the POM fill/testid contract holds on the mapped
+input. The prop-contract problem (the S4-era design blocker) is solved
+by the wiring being DECLARED: the pack carries the exact expressions its
+component accepts (shadcn Input spreads rest onto the native input), so
+svelte-check arbitrates the real contract instead of a convention.
+Declared-once details: a `field` mapping WITHOUT `field_props` is
+skipped (never an un-wired slot); select/radio slots keep their
+built-ins; the `AppField` children snippet is always
+`{#snippet children(field)}` (the self-binding built-ins ignore the
+param). No-pack / project-ahead-of-pack rules unchanged — mapping-gated,
+so the byte-identity canaries (no-pack fixtures) are untouched. The
+gate's `Input` stub mirrors the real component's rest-spread; the
+nightly gate (shadcn fixture) compiles the wiring and the specs fill the
+mapped inputs by name. Gate: the in-crate
+`shadcn_field_variant_maps_the_text_slots` pin + `ifml_codegen_gate`
+5/5 (33/33 specs). Still deferred from #582: ResetButton;
+selection-field (dropdown) mapping variants (the shadcn Select root's
+items-rendering contract is not slot-compatible).
 - Swept en route: the gate-owned sweep spec's inner waitForURL window
   widened 2s→5s (parallel gate runs contend for the vite dev server; the
   toPass retry chain needs the headroom).
