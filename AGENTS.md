@@ -1479,13 +1479,32 @@ the proven #573 IFML pattern:
   `shell.rs`/`descriptor.rs` emitting pre-`(app)` routes (kit-3 conflicts)
   and the kit-3 `cookie@0.7`-vs-`parseCookie` hoist conflict (fixed by a
   `cookie@^1` npm override in the scaffold).
-- The e2e category (Playwright over a booted API) rides the
-  review-fixture consumer stack — tracked follow-up.
-- **Known pre-existing gap (recorded, not fixed)**: the ui-shell plane's
-  top-level route tree conflicts with the `(app)`-grouped entity routes
-  under kit 3 (`/(app)/x` vs `/x`) — consumers using `ui-shell` on the
-  kit-3 pin hit this; S2 does not touch the shell plane's location. The
-  gate removes the shell tree before sync and builds the entity plane.
+- **The entity e2e lane (issue #575)**: the emitted `playwright.config.ts`
+  carries an `auth` project matching `tests/e2e/auth.test.ts` — the file
+  sits at the `e2e/` ROOT, which the `e2e` project's negative lookahead
+  explicitly excludes, so the suite matched NO project and never ran in
+  the repo's own lane. The probe is a REAL route now (context-threaded:
+  the first entity's collection via `auth_probe_path` on
+  `UiScaffoldContext`) — axum layers run only for MATCHED requests, so
+  the old synthetic `__auth_probe__` path 404'd under the fallback
+  without the middleware ever seeing it (the premise had never been
+  tested). The gate's `entity_specs_run_green` (ignored, nightly) holds
+  two legs: the **coverage invariant** — every emitted `tests/**`
+  `.test.ts`/`.spec.ts` file matches ≥1 project, evaluated by running the
+  EMITTED config's own `testMatch` regex sources over `tests/`-relative
+  paths (NOT playwright's `--list`, which matches against the absolute
+  checkout path and is checkout-dependent — a repo cloned into a
+  directory containing an `e2e/` segment leaks into the `e2e` project's
+  lookahead and makes orphans match); and the **live sessionless slice**
+  — the `auth` project over a booted API (`GateDb` migrations + key +
+  axum) serving a `vite preview` of the built tree (the emitted config
+  has no webServer block; the gate owns the process and points
+  `PUBLIC_SVELTEKIT_URL` at it; the json reporter rides
+  `PLAYWRIGHT_JSON_OUTPUT_NAME` via `--reporter=json` since the emitted
+  config carries no reporter). The UI-driven families (`generated/**`,
+  `webhooks`, journeys) need the Supabase persona stack (GoTrue + BaseJump
+  orgs in the global-setup) and stay the consumer `testkit e2e` lane's
+  job — their file paths are still held to the coverage invariant.
 - Gates: `cargo test -p codegraph --test entity_remote_functions_tests`
   (2, node-free) + `cargo test -p codegraph --test entity_codegen_gate --
   --ignored` (node; the nightly lane) + the updated

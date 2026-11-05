@@ -34,40 +34,11 @@ pub struct SpecReport {
     pub failures: Vec<String>,
 }
 
-/// Run the project's playwright specs against a booted API. `report_path`
-/// receives the JSON report (wired through `IFML_GATE_REPORT`); the spec
-/// suite's `vite preview` webServer picks its port from `IFML_PREVIEW_PORT`.
-pub fn run_specs(
-    project: &NodeProject,
-    report_path: &Path,
-    api_port: u16,
-    preview_port: u16,
-    api_key: &str,
-) -> Result<SpecReport, String> {
-    let _ = fs::remove_file(report_path);
-    let report_env = report_path.to_string_lossy().to_string();
-    let preview_port_env = preview_port.to_string();
-    let api_origin_env = format!("http://127.0.0.1:{api_port}");
-    let ok = project.npx(
-        &["playwright", "test"],
-        &[
-            ("CI", "1"),
-            ("IFML_PREVIEW_PORT", preview_port_env.as_str()),
-            ("IFML_GATE_REPORT", report_env.as_str()),
-            // The neutral server contract (issue #574 S1): the helper and
-            // the vite proxy read API_ORIGIN/API_KEY (the deprecated
-            // IFML_* spellings are fallbacks only).
-            ("API_ORIGIN", api_origin_env.as_str()),
-            ("GATE_API_KEY", api_key),
-            // The remote-functions plane (#557): the SvelteKit server's
-            // fallback credential (distinct from the harness's GATE_API_KEY
-            // proxy injection).
-            ("API_KEY", api_key),
-        ],
-        Duration::from_secs(900),
-    )?;
+/// Parse a playwright JSON report (the `json` reporter's document) into a
+/// [`SpecReport`].
+pub fn parse_report(report_path: &Path) -> Result<SpecReport, String> {
     let raw = fs::read_to_string(report_path)
-        .map_err(|e| format!("playwright JSON report missing ({e}) — playwright ok={ok}"))?;
+        .map_err(|e| format!("playwright JSON report missing ({e})"))?;
     let value: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("parse playwright report: {e}"))?;
     let mut titles = Vec::new();
@@ -81,6 +52,65 @@ pub fn run_specs(
         passed,
         titles,
     })
+}
+
+/// Run playwright with CALLER-SPECIFIED args and env, writing the `json`
+/// reporter's document to `report_path` (`PLAYWRIGHT_JSON_OUTPUT_NAME`) and
+/// parsing it into a [`SpecReport`]. The entity gate's emitted config reads
+/// the `PUBLIC_*` contract (not the IFML gate's), so the IFML `run_specs`
+/// env block does not generalize — this is the shared runner underneath.
+pub fn run_specs_with(
+    project: &NodeProject,
+    report_path: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<SpecReport, String> {
+    let _ = fs::remove_file(report_path);
+    let report_env = report_path.to_string_lossy().to_string();
+    let mut all_envs: Vec<(&str, &str)> = vec![
+        ("CI", "1"),
+        // The `json` reporter's output-file contract (playwright reads both
+        // vars; the name alone with an absolute path suffices).
+        ("PLAYWRIGHT_JSON_OUTPUT_NAME", report_env.as_str()),
+    ];
+    all_envs.extend(envs.iter().copied());
+    let mut all_args: Vec<&str> = vec!["playwright", "test"];
+    all_args.extend(args.iter().copied());
+    let ok = project.npx(&all_args, &all_envs, Duration::from_secs(900))?;
+    parse_report(report_path).map_err(|e| format!("{e} — playwright ok={ok}"))
+}
+
+/// Run the project's playwright specs against a booted API. `report_path`
+/// receives the JSON report (wired through `IFML_GATE_REPORT`); the spec
+/// suite's `vite preview` webServer picks its port from `IFML_PREVIEW_PORT`.
+pub fn run_specs(
+    project: &NodeProject,
+    report_path: &Path,
+    api_port: u16,
+    preview_port: u16,
+    api_key: &str,
+) -> Result<SpecReport, String> {
+    let preview_port_env = preview_port.to_string();
+    let api_origin_env = format!("http://127.0.0.1:{api_port}");
+    let gate_report_env = report_path.to_string_lossy().to_string();
+    run_specs_with(
+        project,
+        report_path,
+        &[],
+        &[
+            ("IFML_PREVIEW_PORT", preview_port_env.as_str()),
+            ("IFML_GATE_REPORT", gate_report_env.as_str()),
+            // The neutral server contract (issue #574 S1): the helper and
+            // the vite proxy read API_ORIGIN/API_KEY (the deprecated
+            // IFML_* spellings are fallbacks only).
+            ("API_ORIGIN", api_origin_env.as_str()),
+            ("GATE_API_KEY", api_key),
+            // The remote-functions plane (#557): the SvelteKit server's
+            // fallback credential (distinct from the harness's GATE_API_KEY
+            // proxy injection).
+            ("API_KEY", api_key),
+        ],
+    )
 }
 
 fn collect_specs(

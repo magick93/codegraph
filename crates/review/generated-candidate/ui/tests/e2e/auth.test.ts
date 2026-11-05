@@ -4,16 +4,16 @@
 // The rejection tests assert the API's response STATUS, not page text
 // (issue #563): the generated root page renders without calling a gated
 // API surface, so "expect an error alert on /" could only ever pass when a
-// missing env key 500'd every page load. The auth middleware 401s ANY
-// request lacking a valid Bearer before routing, so probing the API origin
-// directly is deterministic on every generated app.
+// missing env key 500'd every page load. The probe targets a REAL route
+// (the first entity's collection, context-threaded) because axum layers
+// run only for MATCHED requests — a synthetic path falls through to the
+// fallback and 404s without the auth middleware ever seeing it (issue
+// #575, surfaced when the suite finally ran in the repo's own lane).
 
 import { test, expect } from '@playwright/test';
 
 const API_BASE = process.env.PUBLIC_API_URL ?? 'http://localhost:3000';
-// Synthetic probe path: the auth middleware runs before routing, so a
-// missing/garbage key is a 401 regardless of what exists behind it.
-const AUTH_PROBE = `${API_BASE}/api/v1/__auth_probe__`;
+const AUTH_PROBE = `${API_BASE}/api/v1/common/code`;
 
 
 test.describe('Authentication', () => {

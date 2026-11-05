@@ -39,6 +39,12 @@ pub struct UiScaffoldContext {
     /// Chart nav entries (issue #577) — one per modeled chart route.
     /// Empty (no charts) keeps the layout byte-identical.
     pub nav_charts: Vec<crate::charts::ChartNavItem>,
+    /// The auth suite's probe route (issue #575): the first domain's first
+    /// entity collection — a REAL route, because axum layers run only for
+    /// MATCHED requests and a synthetic path 404s under the fallback
+    /// without the auth middleware ever seeing it. Degenerate fallback:
+    /// the old synthetic probe when the model carries no entities.
+    pub auth_probe_path: String,
     /// Pinned `@tanstack/svelte-form` version (from `crate::forms`).
     pub tanstack_svelte_form_version: &'static str,
     /// Pinned `zod` version (from `crate::forms`).
@@ -137,8 +143,24 @@ impl GlobalGenerator for UiScaffoldGenerator {
         let domains = build_ui_domains(db, config, generation_order).await;
         let nav_charts = crate::charts::chart_nav_items(db).await?;
 
+        // The auth suite's probe route (issue #575): the first entity
+        // collection under the first domain — a route the auth middleware
+        // actually guards (layers run only for matched requests).
+        let auth_probe_path = domains
+            .first()
+            .and_then(|d| {
+                d.entities.first().map(|e| {
+                    format!(
+                        "/api/{}/{}/{}",
+                        project.identity.api_version, d.name, e.path_segment
+                    )
+                })
+            })
+            .unwrap_or_else(|| format!("/api/{}/__auth_probe__", project.identity.api_version));
+
         let ctx = UiScaffoldContext {
             app_name: config.defaults.app_name.clone(),
+            auth_probe_path,
             domains,
             has_integrations: self.has_integrations,
             has_webhooks: self.has_webhooks,

@@ -1937,7 +1937,12 @@ fn auth_test_rejects_via_api_status_not_the_root_page_premise() {
     .expect("auth.test.tera exists");
     tera.add_raw_template("auth_test", &template).unwrap();
     let ctx = tera::Context::from_serialize(&serde_json::json!({
-        "project": { "generator_name": "codegraph" }
+        "project": { "generator_name": "codegraph" },
+        // Issue #575: the probe route is context-threaded — the first
+        // entity's collection (a REAL route; axum layers run only for
+        // matched requests, so a synthetic path 404s under the fallback
+        // without the middleware ever seeing it).
+        "auth_probe_path": "/api/v1/common/todo-item"
     }))
     .unwrap();
     let content = tera.render("auth_test", &ctx).unwrap();
@@ -1945,6 +1950,14 @@ fn auth_test_rejects_via_api_status_not_the_root_page_premise() {
     assert!(
         content.contains("PUBLIC_API_URL"),
         "the auth probes go straight at the API origin:\n{content}"
+    );
+    assert!(
+        content.contains("const AUTH_PROBE = `${API_BASE}/api/v1/common/todo-item`;"),
+        "the probe targets the context-threaded real route:\n{content}"
+    );
+    assert!(
+        !content.contains("__auth_probe__"),
+        "the synthetic probe path is retired (issue #575):\n{content}"
     );
     assert!(
         content.contains("expect(res.status()).toBe(401)"),
