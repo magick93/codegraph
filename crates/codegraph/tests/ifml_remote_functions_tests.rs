@@ -281,11 +281,22 @@ async fn remote_functions_flag_emits_the_server_side_data_plane() {
     );
     // The GUARDED views keep a thin guard-only load: the integrated
     // server-decided gating resolves the session's role tokens through the
-    // parent chain — load-only machinery.
+    // parent chain — load-only machinery. Issue #598: the sessionless SSR
+    // pass DEFERS (rolesKnown false — persona contexts carry no session
+    // and seed the client-only surface); the client re-evaluates
+    // post-hydration.
     let form_load = read(&ui, "src/routes/(views)/requestform/+page.ts");
     assert!(
         form_load.contains("viewRequires"),
         "the requires guard keeps its thin load:\n{form_load}"
+    );
+    assert!(
+        form_load.contains("const rolesKnown = serverRoles !== null || browser;"),
+        "the #598 sessionless defer rides the thin load:\n{form_load}"
+    );
+    assert!(
+        form_load.contains("import { browser } from '$app/environment';"),
+        "the defer needs the browser gate:\n{form_load}"
     );
     assert!(
         !form_load.contains("await getEditor("),
