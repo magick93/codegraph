@@ -15,14 +15,21 @@
 //! cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture
 //! ```
 //!
-//! Needs node 22 + npx. The e2e category (Playwright over a booted API)
-//! rides the review-fixture consumer stack — tracked as the S2 follow-up.
+//! Needs node 22 + npx. The entity e2e lane (`entity_specs_run_green`,
+//! issue #575) holds the emitted-config coverage invariant over every
+//! emitted test file and runs the sessionless `auth` project live against
+//! a booted API over `vite preview`; the UI-driven families stay the
+//! consumer `testkit e2e` lane (they need the Supabase persona stack).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
+use codegraph_ops::proc::ManagedProcess;
 use test_framework::node_project::NodeProject;
+use test_framework::postgres::{GateDb, resolve_base_target};
+use test_framework::{axum_server, playwright, process};
 
 #[path = "test_framework/mod.rs"]
 mod test_framework;
@@ -569,4 +576,309 @@ async fn entity_app_builds_and_typechecks() {
             .join("\n")
     );
     let _ = check_ok;
+}
+
+// ── The entity e2e lane (issue #575) ────────────────────────────────────────
+
+/// The generated app crate (package `app`) — the review fixture root IS the
+/// app crate (Cargo.toml + src/ + migrations/ at the top).
+fn app_dir() -> PathBuf {
+    fixture_dir()
+}
+
+/// The isolated cargo target dir for the generated-app build (never the
+/// host workspace's — the fixture app pins its own dep set).
+fn gate_target_dir() -> PathBuf {
+    logs_dir().join("cargo-target")
+}
+
+/// Every emitted playwright file under `ui/tests` — the lane's coverage
+/// contract: the emitted `playwright.config.ts` project table must match
+/// each one (`npx playwright test --list` is the oracle). #575 was exactly
+/// the orphan class — `tests/e2e/auth.test.ts` matched NO project, so the
+/// entity auth suite never executed in the repo's own lane and nobody
+/// could tell.
+fn emitted_playwright_files() -> Vec<String> {
+    fn walk(dir: &Path, ui_root: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, ui_root, out);
+            } else {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.ends_with(".test.ts") || name.ends_with(".spec.ts") {
+                    let rel = path
+                        .strip_prefix(ui_root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    out.push(rel);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&ui_dir().join("tests"), &ui_dir(), &mut out);
+    out.sort();
+    out
+}
+
+/// The entity e2e lane (issue #575): the EMITTED playwright config's
+/// project table must cover every emitted test file (the `--list`
+/// coverage invariant), and the sessionless slice the repo gate can
+/// serve — the `auth` project (pure API probes + the unguarded root
+/// page, which lands on the `(auth)` login view) — runs green against a
+/// booted API over a `vite preview` of the built tree. The UI-driven
+/// families (`generated/**`, `webhooks`, journeys) need the Supabase
+/// persona stack (the global-setup provisions BaseJump orgs + per-worker
+/// sessions through GoTrue) and stay the consumer `testkit e2e` lane's
+/// job — their file paths are still held to the coverage invariant, so a
+/// future config regression names the orphan file instead of dying
+/// silently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "entity e2e lane: run with --ignored (needs node, chromium, postgres)"]
+async fn entity_specs_run_green() {
+    if !have_tool("node") || !have_tool("npx") {
+        eprintln!("skipping: node/npx not found");
+        return;
+    }
+    let Ok(base) = resolve_base_target().await else {
+        eprintln!("skipping: no usable postgres (DATABASE_URL + docker fallback failed)");
+        return;
+    };
+
+    regenerate_fixture().await.unwrap();
+    stub_crewbase_packages().unwrap();
+    stub_api_types().unwrap();
+    // The shell-plane route conflict (see entity_app_builds_and_typechecks):
+    // remove the shell tree before sync.
+    let routes = ui_dir().join("src/routes");
+    for shell_dir in ["common", "compensation", "events", "recruiting", "rsvp"] {
+        let dir = routes.join(shell_dir);
+        if dir.is_dir() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+    // The retired store plane (see entity_app_builds_and_typechecks): stale
+    // CRUD stores import the retired public key and fail the BUILD (vite
+    // resolves `$env/static/public` strictly), not just the check.
+    let stores = ui_dir().join("src/lib/stores");
+    if stores.is_dir() {
+        for entry in fs::read_dir(&stores).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name != "entity-navigation.ts" && name.ends_with(".ts") {
+                fs::remove_file(&path).unwrap();
+            }
+        }
+    }
+
+    let project = NodeProject::new(ui_dir(), logs_dir());
+    project.ensure_install().unwrap();
+    project.sync_sveltekit().unwrap();
+
+    // ── 1. The coverage invariant: every emitted file matches a project ──
+    //
+    // The oracle evaluates the EMITTED config's own testMatch regex sources
+    // against `tests/`-relative paths — deliberately NOT playwright's
+    // --list output, which matches against the ABSOLUTE checkout path and
+    // is therefore checkout-dependent: a repo cloned into a directory
+    // containing an `e2e/` segment (the `codegraph-e2e` worktree showed
+    // this) leaks into the `e2e` project's negative-lookahead and makes
+    // orphans match. The emitted config must not depend on where the repo
+    // lives, so the invariant enforces the path-independent contract.
+    let config_text = fs::read_to_string(ui_dir().join("playwright.config.ts"))
+        .map_err(|e| format!("read playwright.config.ts: {e}"))
+        .unwrap();
+    let sources: Vec<String> = config_text
+        .lines()
+        .filter(|l| l.contains("testMatch:"))
+        .filter_map(|l| {
+            let first = l.find('/')?;
+            let last = l.rfind('/')?;
+            (last > first).then(|| l[first + 1..last].to_string())
+        })
+        .collect();
+    assert!(
+        !sources.is_empty(),
+        "no testMatch regex sources found in the emitted playwright.config.ts"
+    );
+    let emitted = emitted_playwright_files();
+    let script = logs_dir().join("config-coverage.cjs");
+    // Emitted paths are ui-relative and already start with `tests/` — the
+    // exact form the config's testDir anchors produce.
+    let files_json = serde_json::to_string(&emitted).unwrap();
+    let sources_json = serde_json::to_string(&sources).unwrap();
+    fs::write(
+        &script,
+        format!(
+            "const files = {files_json};\n\
+             const sources = {sources_json};\n\
+             const missing = files.filter((f) => !sources.some((s) => new RegExp(s).test(f)));\n\
+             if (missing.length) {{\n\
+             \x20 console.error('ORPHANS ' + JSON.stringify(missing, null, 2));\n\
+             \x20 process.exit(1);\n\
+             }}\n\
+             console.log('coverage ok: ' + files.length + ' files, ' + sources.length + ' projects');\n"
+        ),
+    )
+    .unwrap();
+    let coverage = Command::new("node")
+        .arg(&script)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("run node coverage check: {e}"))
+        .unwrap();
+    let coverage_out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&coverage.stdout),
+        String::from_utf8_lossy(&coverage.stderr)
+    );
+    println!("lane: {}", coverage_out.trim());
+    assert!(
+        coverage.status.success(),
+        "the emitted playwright.config.ts matches no project for some emitted test file(s):\n{coverage_out}"
+    );
+    println!(
+        "lane: coverage invariant holds — {} emitted file(s), all matched by a project",
+        emitted.len()
+    );
+
+    // ── 2. The live sessionless slice: the `auth` project over a real API ──
+    let Ok(()) = playwright::install_chromium(&project) else {
+        eprintln!("skipping: chromium not available and install failed");
+        return;
+    };
+
+    let db = GateDb::create(base).await.unwrap();
+    db.apply_prelude().await.unwrap();
+    db.apply_migrations(&app_dir().join("migrations"))
+        .await
+        .unwrap();
+    let api_key = db.provision_api_key().await.unwrap();
+
+    let result = async {
+        let bin = axum_server::build_app(
+            &app_dir().join("Cargo.toml"),
+            &app_dir(),
+            &gate_target_dir(),
+            &logs_dir(),
+            "app",
+        )?;
+        let database_url = db.url();
+        let server = axum_server::boot_server(
+            &bin,
+            &[
+                ("DATABASE_URL", database_url.as_str()),
+                ("SUPABASE_JWT_SECRET", "entity-gate-test-secret"),
+                ("APP_NAME", "app"),
+            ],
+            "entity-gate-app",
+            &logs_dir(),
+        )
+        .await?;
+
+        // Serve the BUILT tree over `vite preview` — the emitted config has
+        // no webServer block (the ops ui suite boots the server itself), so
+        // the gate owns the process and points PUBLIC_SVELTEKIT_URL at it.
+        let built = project.run_build()?;
+        assert!(built, "vite build failed before the spec run");
+        let preview_port = process::free_port();
+        let preview_log = logs_dir().join("vite-preview.log");
+        let mut cmd = Command::new("npx");
+        cmd.args([
+            "vite",
+            "preview",
+            "--port",
+            &preview_port.to_string(),
+            "--strictPort",
+        ])
+        .current_dir(ui_dir());
+        // Alive until the closure ends — the Drop keeps the preview server
+        // up for the whole spec run, then SIGTERMs it.
+        let _preview =
+            ManagedProcess::spawn(cmd, "entity-gate-preview", &preview_log).map_err(|e| {
+                format!(
+                    "spawn vite preview: {e} — log tail:\n{}",
+                    fs::read_to_string(&preview_log).unwrap_or_default()
+                )
+            })?;
+        let preview_url = format!("http://127.0.0.1:{preview_port}/");
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let reachable = tokio::process::Command::new("curl")
+                .args(["-sf", "--max-time", "2", &preview_url])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if reachable {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let tail = fs::read_to_string(&preview_log).unwrap_or_default();
+                return Err(format!(
+                    "vite preview not ready within 60s. log tail:\n{tail}"
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // The EMITTED config's env contract (issue #574 S1 kept the entity
+        // test plane on the PUBLIC_* spellings; the apiFetch session/env
+        // fallback reads API_KEY). No Supabase env — the globalSetup prints
+        // its skip line and the persona stack stays out of the gate. The
+        // emitted config carries no reporter block (the ops suite owns the
+        // console UX), so the json reporter is selected on the CLI — its
+        // output lands in PLAYWRIGHT_JSON_OUTPUT_NAME.
+        let api_origin = format!("http://127.0.0.1:{}", server.port);
+        let ui_origin = format!("http://127.0.0.1:{preview_port}");
+        let report = playwright::run_specs_with(
+            &project,
+            &logs_dir().join("playwright-report.json"),
+            &["--project=auth", "--reporter=json"],
+            &[
+                ("PUBLIC_API_URL", api_origin.as_str()),
+                ("PUBLIC_API_KEY", api_key.as_str()),
+                ("PUBLIC_SVELTEKIT_URL", ui_origin.as_str()),
+            ],
+        )?;
+        println!(
+            "lane: auth project — passed {}, failed {}\n{}",
+            report.passed,
+            report.failed,
+            report
+                .titles
+                .iter()
+                .map(|t| format!("  - {t}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        assert!(
+            report.failed == 0,
+            "{} auth spec(s) failed — see {}/playwright-report.json:\n{:#?}",
+            report.failed,
+            logs_dir().display(),
+            report.failures
+        );
+        // The suite MUST actually have run — an empty report means the
+        // project matched nothing (the #575 shape, again).
+        assert!(
+            report.passed >= 3,
+            "the auth project ran {} spec(s) — expected the full suite (3); \
+             the config coverage regressed",
+            report.passed
+        );
+        Ok::<(), String>(())
+    }
+    .await;
+
+    db.cleanup().await;
+    result.unwrap();
 }

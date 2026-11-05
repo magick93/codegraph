@@ -465,6 +465,32 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
     let vite = read(&ui, "vite.config.ts");
     assert!(vite.contains("remoteFunctions: true"), "{vite}");
     assert!(vite.contains("async: true"), "{vite}");
+
+    // The entity e2e lane (issue #575): the emitted config's project table
+    // must match the auth suite (the file sits at the e2e/ ROOT, which the
+    // `e2e` project's negative lookahead excludes), and the auth suite's
+    // probe must be a REAL route — axum layers run only for matched
+    // requests, so the old synthetic __auth_probe__ path 404'd under the
+    // fallback without the middleware ever seeing it. The lane's
+    // `entity_specs_run_green` gate holds the full coverage invariant.
+    let pw_config = read(&ui, "playwright.config.ts");
+    assert!(
+        pw_config.contains("name: 'auth',"),
+        "the config must carry the auth project:\n{pw_config}"
+    );
+    assert!(
+        pw_config.contains("testMatch: /e2e\\/auth\\.test\\.ts/"),
+        "the auth project must match the e2e-rooted auth suite:\n{pw_config}"
+    );
+    let auth_test = read(&ui, "tests/e2e/auth.test.ts");
+    assert!(
+        !auth_test.contains("__auth_probe__"),
+        "the probe must be a real route (axum layers skip unmatched paths):\n{auth_test}"
+    );
+    assert!(
+        auth_test.contains("${API_BASE}/api/v1/"),
+        "the probe targets the first entity collection under /api/v1:\n{auth_test}"
+    );
 }
 
 #[tokio::test]
