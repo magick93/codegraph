@@ -4056,11 +4056,19 @@ fn hydration_layouts_are_integrated_only() {
 }
 
 #[test]
-fn integrated_guard_decides_server_side_via_parent_roles() {
-    // Issue #468 W-a: in the integrated (views) route group the guard must
-    // fire during SSR (the (views)/+layout.server.ts load resolves the
-    // session's role tokens) — a denied persona is redirected before any
-    // data fetch, and never sees the 404/401 boundary from a doomed fetch.
+fn integrated_guard_defers_when_roles_unknowable_server_side() {
+    // Issue #468 W-a + #598: in the integrated (views) route group the
+    // guard decides during SSR when the (views)/+layout.server.ts load
+    // resolved the session's role tokens — but a SESSIONLESS SSR pass
+    // (persona test contexts carry no session on purpose; their init
+    // scripts seed __USER_ROLES__ client-side only) must NOT redirect:
+    // roles are unknowable there, so every persona — allowed included —
+    // was denied during SSR before the client's seeded roles could ever
+    // matter. The guard distinguishes "roles known insufficient" (deny →
+    // redirect) from "roles unknowable server-side" (defer): the client
+    // re-evaluates post-hydration, where the seeded
+    // __USER_ROLES__/__USER_CAPABILITIES__ are authoritative. The #572
+    // fetch-denial catch below still denies on real 401/403s.
     let tera = create_tera(Path::new(".")).expect("tera");
     let vc = guarded_vc(
         "AdminConsole",
@@ -4080,24 +4088,122 @@ fn integrated_guard_decides_server_side_via_parent_roles() {
         "{rendered}"
     );
     assert!(
-        rendered.contains("const roles: string[] = parentData?.roles ?? currentRoles();"),
+        rendered.contains("const serverRoles = parentData?.roles ?? null;"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("if (viewRequires.length && !viewRequires.some((c) => can(c))) {"),
+        rendered.contains("const roles: string[] = serverRoles ?? currentRoles();"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"),
+        rendered.contains("const rolesKnown = serverRoles !== null || browser;"),
+        "{rendered}"
+    );
+    // Both guard legs defer with the roles: can() derives from the same
+    // client-only surface, so an unknowable role set makes the capability
+    // check unknowable too.
+    assert!(
+        rendered.contains(
+            "if (rolesKnown && viewRequires.length && !viewRequires.some((c) => can(c))) {"
+        ),
         "{rendered}"
     );
     assert!(
-        !rendered.contains("browser"),
-        "the SSR guard must not be browser-gated: {rendered}"
+        rendered.contains(
+            "if (rolesKnown && viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("import { browser } from '$app/environment';"),
+        "the defer needs the browser gate: {rendered}"
+    );
+    // The ungated pre-#598 shapes must be gone — they redirected every
+    // sessionless persona during SSR.
+    assert!(
+        !rendered.contains("if (viewRequires.length && !viewRequires.some"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("if (viewRoles.length && !roles.some"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("const roles: string[] = parentData?.roles ?? currentRoles();"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn integrated_requires_only_guard_reads_parent_and_defers() {
+    // Issue #598: a requires-only view (no roles:) reads parent() too —
+    // can() derives from the same client-only surface, so the sessionless
+    // SSR pass must defer exactly like the roles leg. Pre-#598 the
+    // parentData read was roles-gated, so capability-guarded views
+    // redirected every sessionless persona during SSR.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let vc = guarded_vc("AdminConsole", vec![], vec!["manage_refunds".to_string()]);
+    let ctx = build_load_context("v1", &vc, &[], "/", true, false, false, false);
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains(
+            "const parentData = (await parent()) as { roles?: string[] | null } | undefined;"
+        ),
+        "requires-only views read the parent roles: {rendered}"
+    );
+    assert!(
+        rendered.contains("const rolesKnown = serverRoles !== null || browser;"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "if (rolesKnown && viewRequires.length && !viewRequires.some((c) => can(c))) {"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("const roles: string[]"),
+        "no roles authored, no roles const: {rendered}"
+    );
+    assert!(!rendered.contains("currentRoles"), "{rendered}");
+}
+
+#[test]
+fn integrated_unguarded_auth_surface_does_not_import_browser() {
+    // The browser import serves ONLY the #598 defer (rolesKnown). An
+    // unguarded view with the #572 fetch-denial catch (auth_surface) must
+    // not import it — an unused import breaks svelte-check.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let ctx = super::context::PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerList".to_string(),
+        components: vec![fetch_component("grid")],
+        has_fetch: true,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: true,
+        guard_only: false,
+        remote_api: false,
+        auth_surface: true,
+        denial_target: "/".to_string(),
+    };
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("import { redirect } from '@sveltejs/kit';"),
+        "the #572 denial catch needs redirect: {rendered}"
     );
     assert!(
         !rendered.contains("import { browser } from '$app/environment';"),
-        "{rendered}"
+        "no guard, no defer, no browser import: {rendered}"
+    );
+    assert!(!rendered.contains("rolesKnown"), "{rendered}");
+    assert!(!rendered.contains("parentData"), "{rendered}");
+    assert!(
+        rendered.contains("if (status === 401 || status === 403) {"),
+        "the #572 fetch-denial catch still rides the load: {rendered}"
     );
 }
 

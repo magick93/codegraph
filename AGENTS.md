@@ -1678,11 +1678,25 @@ Residue-of-the-pass notes that postdate the sections above:
   scripts and must reach guarded pages); the universal layout publishes
   non-null roles onto `globalThis.__USER_ROLES__` before the child
   `+page.ts` guards run (SvelteKit resolves parent loads first, on
-  hydration AND client navigations — this is the server-decided-guard
-  follow-up: a denied persona is redirected during SSR, before any
-  fetch). BaseJump mapping convention: `'owner'` → the actor whose
-  snake_case name is `owner` (else FIRST actor in sorted order);
-  `'member'` → `member` (else LAST). No policy ⇒ `roles: null` ⇒ deny.
+  hydration AND client navigations). BaseJump mapping convention:
+  `'owner'` → the actor whose snake_case name is `owner` (else FIRST
+  actor in sorted order); `'member'` → `member` (else LAST). No policy ⇒
+  `roles: null`.
+  **The sessionless defer (issue #598)**: the `+page.ts` guards decide
+  during SSR only when the role set is KNOWN — `parentData.roles !== null`
+  (a session resolved it) or the client is evaluating; a sessionless SSR
+  pass (`rolesKnown` false) DEFERS — redirecting there denied every
+  persona (allowed included, 88 crewbase gating specs) because persona
+  init scripts seed the CLIENT-only surface. The client re-evaluates
+  post-hydration (universal loads re-run), where the seeded
+  `__USER_ROLES__`/`__USER_CAPABILITIES__` decide allow vs the denial
+  redirect (`expectDenied`'s `waitForURL` keeps passing); the #572
+  fetch-denial catch still denies on real 401/403s during SSR. The
+  `requires` leg defers with the roles (`can()` derives from the same
+  surface; requires-only views now read `parent()` too). Known
+  limitation (pre-existing, deferred): a REAL logged-in user on a
+  requires-ONLY view still denies during SSR — `can()` reads the
+  client-only role surface, not `parentData.roles`.
 - **`structural_gates` (W3)**: post-generation structural gate
   (`quality_gates.rs`, run from `pipeline.rs`) — scans the emitted tree
   and HARD-FAILS on retired vocabulary (`confirm-confirm` double-confirm;
