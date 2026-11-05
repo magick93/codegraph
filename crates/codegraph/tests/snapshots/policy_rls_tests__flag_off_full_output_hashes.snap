@@ -674,7 +674,7 @@ ui/src/lib/components/ui/WorkflowPanel.svelte: 0d07e6a94982a8d4f1aa9a68c9cd91be8
 ui/src/lib/components/ui/structured-wrapper-field/StructuredWrapperField.svelte: 30ad7c119129ed6f3648190e295d304bfd2f9996165fe56f39d0534a49d6cd53
 ui/src/lib/components/ui/structured-wrapper-field/index.ts: 86aae3cf6b6f1d20f3ff04a6a430292c5f2924297e13fdffca0eb94ccb207ffc
 ui/src/lib/format.ts: 4dc0463a9be94defe63b5317f64812b99d8da7309d73b521cc3679ea902ebafc
-ui/src/lib/server/api.ts: 69fd2c2c6ed5726063d55a74a9e130caa08a500ed388199aa13f61a8d04e92a7
+ui/src/lib/server/api.ts: d02cf60e2005b3bae257ec4f57d038d78e813f0e445e807b356d38f2b45210da
 ui/src/lib/stores/common_amount.ts: 52447d300c1892e5a5c8b5048bb1fac93d1ae19f129fbf6d82de779220db82e6
 ui/src/lib/stores/common_code.ts: 7aba95169323c90f87012f9ea53c1ff1160ba61c73bf84e892bdce8826b5cdd7
 ui/src/lib/stores/common_currency_code_list.ts: 92148ed2830fb3c6c7350f0c94a733cc9d7452ba551f86ff9b43154989b473f6
