@@ -32,6 +32,7 @@ function entity(m, fields) {
     deleteDialogConfirm: `${m}-delete-dialog-confirm`,
     form: `${m}-form`,
     cancelBtn: `${m}-cancel-btn`,
+    resetBtn: `${m}-reset-btn`,
     submitBtn: `${m}-submit-btn`,
     editBtn: `${m}-edit-btn`,
     deleteBtn: `${m}-delete-btn`,

@@ -211,6 +211,13 @@ pub mod ids {
         format!("{module}-submit-btn")
     }
 
+    /// `{module}-reset-btn` — the form's reset button (issue #574 ledger:
+    /// the actions row renders the registered `<form.ResetButton>`
+    /// library component).
+    pub fn entity_reset_btn(module: &str) -> String {
+        format!("{module}-reset-btn")
+    }
+
     /// `{module}-edit-btn` — the detail page's edit button.
     pub fn entity_edit_btn(module: &str) -> String {
         format!("{module}-edit-btn")

@@ -1547,12 +1547,15 @@ absent = byte-identical, variant selection in Rust):
   asserts per-field message visibility.
 - **Shared**: `codegraph-generate/src/forms/` owns the zod SHAPE
   (`ZodObject/ZodField/ZodKind/ZodCheck`), `ts_string_literal` (the #560
-  lesson — all prose reaching emitted TS), and the npm version pins
+  lesson — all prose reaching emitted TS), the npm version pins
   (`@tanstack/svelte-form ^1.33.5`, `zod ^4.6.7` — Emitted-contract majors:
-  changes ship with fixture regen + enumerated diff). The `$lib/forms`
-  creator scaffold (`createFormCreator`/`createFormCreatorContexts`, one
-  field component per control kind) is if-absent, rendered from Rust consts
-  in BOTH planes so they cannot drift. Datetime fields keep native validity +
+  changes ship with fixture regen + enumerated diff), and `forms::library`
+  — BOTH planes' `$lib/forms` scaffold sources colocated in one module
+  (the "cannot drift" contract made physical; the invariant test pins the
+  shared createFormCreator surface). The entity actions row renders the
+  REGISTERED `<form.ResetButton>` library component (`{module}-reset-btn`
+  testid, `common_reset` i18n key) inside the `AppForm` wrapper.
+  Datetime fields keep native validity +
   server 422 (zod's `z.iso.datetime()` rejects `datetime-local` values);
   untyped fallback forms stay hand-rolled under the IFML flag.
 - Gates: `cargo test -p codegraph --test entity_form_tests` (3) +
