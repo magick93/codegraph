@@ -202,6 +202,16 @@ async fn entity_form_flag_emits_the_tanstack_form_plane() {
         "{form_module}"
     );
 
+    // The reset affordance's vocabulary (issue #574 ledger): the i18n
+    // inventory carries the label the form actions row consumes (the
+    // entity testid is proven on the form below — the testids.js module
+    // is `testid_module`-gated and absent in this fixture).
+    let messages = read(&ui, "messages/en.json");
+    assert!(
+        messages.contains("\"common_reset\": \"Reset\""),
+        "the reset label rides the i18n inventory:\n{messages}"
+    );
+
     // One field component per control kind, consuming the field context.
     for component in [
         "TextField",
@@ -229,6 +239,22 @@ async fn entity_form_flag_emits_the_tanstack_form_plane() {
     assert!(
         list_form.contains("createAppForm"),
         "the form renders through the app form creator:\n{list_form}"
+    );
+    // The reset affordance (issue #574 ledger): the actions row renders
+    // the REGISTERED <form.ResetButton> library component — i18n'd label,
+    // entity testid — inside the AppForm wrapper (the component reads
+    // useFormContext, which AppForm provides).
+    assert!(
+        list_form.contains("<form.ResetButton"),
+        "the actions row renders the registered reset component:\n{list_form}"
+    );
+    assert!(
+        list_form.contains("m.common_reset()"),
+        "the reset label is i18n'd:\n{list_form}"
+    );
+    assert!(
+        list_form.contains("-reset-btn"),
+        "the reset button carries the entity testid:\n{list_form}"
     );
     assert!(list_form.contains("from '$lib/forms/form'"), "{list_form}");
     assert!(

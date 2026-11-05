@@ -17,6 +17,8 @@ pub const TANSTACK_SVELTE_FORM_VERSION: &str = "^1.33.5";
 /// Pinned `zod` version for generated `package.json`s.
 pub const ZOD_VERSION: &str = "^4.6.7";
 
+pub mod library;
+
 /// One zod object schema: a named TS `const` rendering as
 /// `z.object({ ... })`.
 #[derive(Debug, Clone, PartialEq)]
