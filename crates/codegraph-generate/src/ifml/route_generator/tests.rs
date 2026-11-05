@@ -2600,6 +2600,7 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         needs_on_mount: false,
         needs_invalidate: false,
         remote_awaits: false,
+        needs_browser: false,
         needs_redirect: false,
         view_params_src: String::new(),
         denial_target: String::new(),
@@ -5137,6 +5138,138 @@ fn remote_transition_refreshes_the_paired_instance() {
         "the transition refreshes the paired instance (targeted):\n{rendered}"
     );
     assert!(!rendered.contains("invalidateAll"), "{rendered}");
+}
+
+#[test]
+fn live_workflow_badge_streams_via_query_live() {
+    // S4c parity for the IFML plane (issue #574 ledger): a workflow-bound
+    // by-id component under `ui_live_queries` + the remote plane gains a
+    // `query.live` workflow stream; the badge and the transition buttons
+    // read the live-derived state (the fetched workflow_state is the
+    // SSR/no-stream fallback — kit does not start streams during SSR),
+    // and the page imports `browser` for the instance guard.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let mut project = remote_project();
+    project.codegen.ui_live_queries = true;
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &workflow_transitions_config(),
+        "v1",
+        &vc,
+        None,
+        &HashSet::new(),
+        None,
+        &project,
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("import { browser } from '$app/environment';"),
+        "the live instance guard needs browser:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("browser ? getEditorWorkflowLive(viewParams['customerId']) : null"),
+        "the live instance is browser-only:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "const editor_workflow_state = $derived(editor_wf_live?.current ?? editor_form_state.workflow_state?.current_state);"
+        ),
+        "the badge state derives from the live stream with the fetched fallback:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("data-workflow-state={editor_workflow_state}"),
+        "the badge reads the live-derived state:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("data-workflow-state={editor_form_state.workflow_state"),
+        "the raw form-state path is replaced on the badge:\n{rendered}"
+    );
+}
+
+#[test]
+fn live_off_keeps_the_static_workflow_badge() {
+    // Flag-off byte-identity: without `ui_live_queries` no live block, no
+    // browser import, and the badge keeps the raw form-state path.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &workflow_transitions_config(),
+        "v1",
+        &vc,
+        None,
+        &HashSet::new(),
+        None,
+        &remote_project(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(!rendered.contains("query.live"), "{rendered}");
+    assert!(!rendered.contains("$app/environment"), "{rendered}");
+    assert!(
+        rendered.contains("data-workflow-state={editor_form_state.workflow_state?.current_state}"),
+        "the badge keeps the raw form-state path:\n{rendered}"
+    );
+}
+
+#[test]
+fn live_workflow_module_exports_the_query_live_stream() {
+    // The view module gains the workflow stream when live is on: a 5s poll
+    // of the by-id /workflow read (the entity plane's getWorkflowLive
+    // pattern). Live off → no export.
+    use super::context::PageLoadContext;
+    use super::remote::RemoteModuleContext;
+
+    let module_from = |live: bool| {
+        let mut ctx = PageLoadContext {
+            api_version: "v1".to_string(),
+            name: "Editor".to_string(),
+            components: Vec::new(),
+            has_fetch: true,
+            has_workflow: true,
+            view_params: Vec::new(),
+            view_roles: Vec::new(),
+            view_requires: Vec::new(),
+            guard_consts: String::new(),
+            integrated: true,
+            guard_only: false,
+            remote_api: true,
+            auth_surface: false,
+            denial_target: "/".to_string(),
+        };
+        let mut comp = fetch_component("editor");
+        comp.workflow = true;
+        comp.fetch_item = true;
+        comp.fetch_list = false;
+        comp.remote_query = Some("getEditor".to_string());
+        comp.id_param = Some("customerId".to_string());
+        ctx.components.push(comp);
+        let mut module = RemoteModuleContext::from_load(&ctx);
+        module.live = live;
+        module.render()
+    };
+
+    let rendered = module_from(true);
+    assert!(
+        rendered.contains(
+            "export const getEditorWorkflowLive = query.live(async function* (id: string) {"
+        ),
+        "the workflow stream rides the module:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await new Promise((resolve) => setTimeout(resolve, 5000));"),
+        "the stream polls on the 5s cadence:\n{rendered}"
+    );
+    let off = module_from(false);
+    assert!(!off.contains("query.live"), "live off → no stream:\n{off}");
 }
 
 #[test]
