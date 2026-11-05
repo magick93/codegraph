@@ -48,6 +48,10 @@ pub(super) struct RemoteCommandSpec {
 pub(super) struct RemoteModuleContext {
     pub(super) queries: Vec<RemoteQuery>,
     pub(super) commands: Vec<RemoteCommandSpec>,
+    /// The live-query plane (issue #574 S4c parity): workflow-bound by-id
+    /// queries gain a `query.live` workflow stream (the 5s poll, the
+    /// entity plane's `getWorkflowLive` pattern).
+    pub(super) live: bool,
 }
 
 impl RemoteModuleContext {
@@ -78,6 +82,7 @@ impl RemoteModuleContext {
         Self {
             queries,
             commands: Vec::new(),
+            live: false,
         }
     }
 
@@ -116,6 +121,31 @@ impl RemoteModuleContext {
         for q in &self.queries {
             s.push('\n');
             s.push_str(&render_query(q));
+        }
+        // The live workflow stream (issue #574 S4c parity): a 5s poll of
+        // the by-id /workflow read, mirroring the entity plane's
+        // `getWorkflowLive`. The page guards the instance with `browser` —
+        // kit does not start streams during SSR.
+        if self.live {
+            for q in &self.queries {
+                if q.workflow && q.by_id {
+                    let pascal = q.export.strip_prefix("get").unwrap_or(&q.export);
+                    s.push('\n');
+                    s.push_str(&format!(
+                        "export const get{pascal}WorkflowLive = query.live(async function* (id: string) {{\n\
+                         \twhile (true) {{\n\
+                         \t\tconst res = await apiFetch(`{base}/${{id}}/workflow`);\n\
+                         \t\tif (res.ok) {{\n\
+                         \t\t\tconst json = await res.json();\n\
+                         \t\t\tyield json.data ?? json;\n\
+                         \t\t}}\n\
+                         \t\tawait new Promise((resolve) => setTimeout(resolve, 5000));\n\
+                         \t}}\n\
+                         }});\n",
+                        base = q.base_path
+                    ));
+                }
+            }
         }
         // The single-flight pairing (issue #574 S4a): a command's server
         // handler refreshes the queries whose client instances the page is

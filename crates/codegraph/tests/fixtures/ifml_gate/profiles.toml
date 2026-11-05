@@ -33,6 +33,11 @@ ifml_remote_functions = true
 # validations, and the validation spec asserts per-field
 # data-validate-message visibility against the real API.
 ifml_tanstack_forms = true
+# Live-query plane (issue #574 S4c): the gate proves the workflow badge
+# streams through the query.live poll — the badge reads the live-derived
+# state with the fetched workflow_state as the SSR fallback, and the
+# transition specs still drive it green (the stream only refreshes).
+ui_live_queries = true
 # ux-rules plane ON (issue #303): the gate proves the fallback ux markup
 # (chips, money alignment/formatting, overflow actions) against the real
 # API. No `ifml_design_system` here DELIBERATELY: the fixture's

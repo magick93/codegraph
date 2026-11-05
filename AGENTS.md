@@ -1278,10 +1278,16 @@ flags except the last:
   the webhook detail module gains `getDeliveriesLive`; the pages consume
   the instances REACTIVELY browser-side (`browser ? live(id) : null` —
   kit does not start streams during SSR) with the load payload as the
-  SSR fallback (`wfLive?.current ?? item.workflow_state`). Flag off ⇒
-  byte-identical (entity-tree ux/forms canaries re-blessed for the
-  scaffold-seeding diff, enumerated: the live exports + the page
-  consumption blocks).
+  SSR fallback (`wfLive?.current ?? item.workflow_state`). **IFML parity
+  (the #574 ledger)**: workflow-bound by-id components under the remote
+  plane gain `get{Pascal}WorkflowLive` in `data.remote.ts` and the badge
+  + transition buttons read the derived live state
+  (`{js_name}_workflow_state`) with the fetched path as the fallback —
+  the gate fixture carries the flag and the nightly workflow category
+  exercises it. Flag off ⇒ byte-identical (entity-tree ux/forms canaries
+  re-blessed for the scaffold-seeding diff, enumerated: the live exports
+  + the page consumption blocks; the IFML route_generator pins pin the
+  flag-off shape).
 - **The #582 deferral retired — IFML 422 per-field mapping**: the
   Create/Update fail legs parse `error.details` into `fieldErrors` (the
   entity-plane leg verbatim) and EVERY IFML fail leg now reads the error
