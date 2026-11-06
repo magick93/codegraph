@@ -246,12 +246,12 @@ async fn ready_deliveries(state: &AppState) -> Result<Vec<DeliveryJob>, String> 
 async fn drain_events_into_jobs(
     state: &AppState,
     domain: &str,
-) -> Result<Vec<(String, i64, Vec<DeliveryJob>{% if has_events %}, bool{% endif %})>, String> {
+) -> Result<Vec<(String, i64{% if has_events %}, i32{% endif %}, Vec<DeliveryJob>{% if has_events %}, bool{% endif %})>, String> {
     let client = state.client_source.client().await.map_err(|e| e.to_string())?;
     let queue_name = format!("events_{domain}");
     let rows = client
         .query(
-            "SELECT msg_id, message FROM pgmq.read($1, 30, 100)",
+            {% if has_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, 30, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, 30, 100)",{% endif %}
             &[&queue_name],
         )
         .await
@@ -260,8 +260,10 @@ async fn drain_events_into_jobs(
     let mut groups = Vec::new();
     for row in rows {
         let msg_id: i64 = row.try_get(0).map_err(|e| e.to_string())?;
-        let message: serde_json::Value = row.try_get(1).map_err(|e| e.to_string())?;
-
+{% if has_events %}        let read_ct: i32 = row.try_get(1).map_err(|e| e.to_string())?;
+        let message: serde_json::Value = row.try_get(2).map_err(|e| e.to_string())?;
+{% else %}        let message: serde_json::Value = row.try_get(1).map_err(|e| e.to_string())?;
+{% endif %}
         // Issue #609: normalize the event name across both wire shapes —
         // native envelopes key it as `event` + `event_type`, CloudEvents
         // envelopes as `type`; trigger envelopes only ever carry
@@ -317,23 +319,90 @@ async fn drain_events_into_jobs(
             });
         }
 {% if has_events %}        // Typed consumer dispatch (issue #505): the events plane's
-        // registry; failures keep the message queued. Trigger envelopes
-        // carry no `event` key and dispatch zero consumers.
-{% if project.event_idempotency %}        let typed_ok = crate::events::consumers::dispatch_registered(
+        // registry. Trigger envelopes carry no `event` key and dispatch
+        // zero consumers.
+        let outcomes = crate::events::consumers::dispatch_registered(
             &*state.client_source,
-            message.clone(),
-            msg_id,
+            message.clone(),{% if project.event_idempotency %}
+            msg_id,{% endif %}
         )
-        .await
-            == 0;{% else %}        let typed_ok =
-            crate::events::consumers::dispatch_registered(&*state.client_source, message.clone())
+        .await;
+        let all_ok = outcomes.iter().all(|outcome| outcome.ok);
+        // Issue #611: a message whose consumers keep failing past the
+        // attempt budget dead-letters to `{queue}_dlq` — moved is
+        // terminal, the source queue drains, siblings unblock.
+        let typed_ok = if !all_ok && read_ct >= MAX_RETRIES {
+            match dead_letter(&*state.client_source, &queue_name, msg_id, read_ct, &message, &outcomes)
                 .await
-                == 0;{% endif %}
-{% endif %}        groups.push((queue_name.clone(), msg_id, jobs{% if has_events %}, typed_ok{% endif %}));
+            {
+                Ok(true) => true,
+                _ => false,
+            }
+        } else {
+            all_ok
+        };
+{% endif %}        groups.push((queue_name.clone(), msg_id{% if has_events %}, read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}));
     }
 
     Ok(groups)
 }
+
+{% if has_events %}/// Issue #611: move one poisoned message to `{queue}_dlq` with the
+/// failure metadata attached under `_dlq`. The DLQ queue is created
+/// lazily on the first dead-letter; the DLQ rides the source queue's
+/// owner (the one-draining-worker placement invariant covers it).
+/// Returns true when the message was moved AND deleted.
+async fn dead_letter(
+    source: &dyn ClientSource,
+    queue: &str,
+    msg_id: i64,
+    read_ct: i32,
+    message: &serde_json::Value,
+    outcomes: &[crate::events::consumers::ConsumerOutcome],
+) -> Result<bool, String> {
+    let client = source.client().await.map_err(|e| e.to_string())?;
+    let dlq = format!("{queue}_dlq");
+    client
+        .execute(
+            "SELECT pgmq.create($1) WHERE NOT EXISTS (SELECT 1 \
+             FROM pgmq.list_queues() WHERE queue_name = $1)",
+            &[&dlq],
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut envelope = message.clone();
+    envelope["_dlq"] = serde_json::json!({
+        "consumers": outcomes
+            .iter()
+            .filter(|o| !o.ok)
+            .map(|o| o.consumer)
+            .collect::<Vec<_>>(),
+        "errors": outcomes
+            .iter()
+            .filter(|o| !o.ok)
+            .filter_map(|o| o.error.clone())
+            .collect::<Vec<_>>(),
+        "attempts": read_ct,
+        "failed_at": chrono::Utc::now().to_rfc3339(),
+    });
+    client
+        .execute("SELECT pgmq.send($1, $2)", &[&dlq, &envelope])
+        .await
+        .map_err(|e| e.to_string())?;
+    client
+        .execute("SELECT pgmq.delete($1, $2)", &[&queue, &msg_id])
+        .await
+        .map_err(|e| e.to_string())?;
+    tracing::warn!(
+        queue = %queue,
+        dlq = %dlq,
+        msg_id = msg_id,
+        attempts = read_ct,
+        "message dead-lettered after exhausting the attempt budget"
+    );
+    Ok(true)
+}
+{% endif %}
 
 /// Delete a processed pgmq message.
 async fn delete_pgmq_msg(state: &AppState, queue_name: &str, msg_id: i64) -> Result<(), String> {
@@ -400,7 +469,7 @@ pub async fn dispatch_cycle(
         count += 1;
     }
 
-    for (queue_name, msg_id, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
+    for (queue_name, msg_id{% if has_events %}, _read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
         let mut ok = true;
         for job in &jobs {
             if dispatch_one(env, queue_binding, job).await.is_err() {
@@ -425,7 +494,7 @@ pub async fn dispatch_cycle(state: &AppState, domain: &str) -> Result<usize, Str
         count += 1;
     }
 
-    for (queue_name, msg_id, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
+    for (queue_name, msg_id{% if has_events %}, _read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
         let mut ok = true;
         for job in &jobs {
             if dispatch_one(state, job).await.is_err() {

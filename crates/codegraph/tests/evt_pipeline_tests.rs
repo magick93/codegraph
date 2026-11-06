@@ -263,9 +263,16 @@ async fn evt_input_generates_the_typed_events_plane() {
     let dispatch = read_out(&files, "src/webhook_dispatch.rs");
     assert!(dispatch.contains("is_typed_envelope"), "{dispatch}");
     assert!(
-        dispatch.contains("dispatch_registered(\n                            self.db.clone(),"),
+        dispatch.contains("dispatch_registered(\n                    self.db.clone(),"),
         "the delete condition extends to consumer dispatches"
     );
+    // Issue #611: the poison-message fate — dead-letter after the attempt
+    // budget, moved is terminal.
+    assert!(
+        dispatch.contains("(typed_ok || moved_to_dlq)"),
+        "{dispatch}"
+    );
+    assert!(dispatch.contains("format!(\"{queue}_dlq\")"), "{dispatch}");
 
     // Webhook subscription API: vocabulary validation over the declared
     // events ∪ the CRUD verbs (declared names sorted).

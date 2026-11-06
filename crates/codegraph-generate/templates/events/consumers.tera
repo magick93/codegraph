@@ -37,37 +37,35 @@ pub trait {{ consumer.handler_trait }}: Send + Sync {
 {% endfor %}}
 
 /// Dispatch one typed envelope to a `{{ consumer.handler_trait }}`.
-/// Returns `false` when the event is not subscribed, the payload is
-/// missing or fails to deserialize, or the handler errors.
+/// `Ok(())` when the event is not subscribed or the handler succeeded;
+/// `Err(reason)` when the payload is missing/unparseable or the handler
+/// errors — the reason rides the DLQ metadata (#611).
 pub async fn dispatch_{{ consumer.name_snake }}(
     handler: &dyn {{ consumer.handler_trait }},
     ctx: &{{ consumer.context_struct }}<'_>,
     envelope: &serde_json::Value,
-) -> bool {
+) -> Result<(), String> {
     let Some(event) = event_name_of(envelope) else {
-        return false;
+        return Ok(());
     };
     match event {
 {% for event in consumer.events %}        "{{ event.event_name }}" => {
             let Some(payload) = payload_of(envelope) else {
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "typed envelope without a payload; skipped");
-                return false;
+                return Err("typed envelope without a payload".to_string());
             };
             let Ok(payload) = serde_json::from_value::<{{ event.payload }}>(payload.clone()) else {
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "payload failed to deserialize; skipped");
-                return false;
+                return Err("payload failed to deserialize".to_string());
             };
-            match handler.{{ event.method }}(ctx, &payload).await {
-                Ok(()) => true,
-                Err(e) => {
-                    tracing::warn!(event = %event, consumer = "{{ consumer.name }}", error = %e, "consumer handler failed");
-                    false
-                }
-            }
+            handler.{{ event.method }}(ctx, &payload).await.map_err(|e| {
+                tracing::warn!(event = %event, consumer = "{{ consumer.name }}", error = %e, "consumer handler failed");
+                e.to_string()
+            })
         }
 {% endfor %}        other => {
             tracing::debug!(event = %other, consumer = "{{ consumer.name }}", "event not subscribed; skipped");
-            false
+            Ok(())
         }
     }
 }
@@ -109,13 +107,12 @@ type DispatchFn = std::sync::Arc<
     dyn Fn(
             DbClient,
             serde_json::Value,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
         + Send
         + Sync,
 >;
 
 struct RegisteredConsumer {
-    #[allow(dead_code)]
     name: &'static str,
     events: &'static [&'static str],
     dispatch: DispatchFn,
@@ -129,23 +126,23 @@ fn registry() -> &'static std::sync::RwLock<Vec<RegisteredConsumer>> {
 }
 
 /// Drain entry point: dispatch one typed envelope to every registered
-/// consumer whose subscription covers the event. Returns the number of
-/// consumer dispatches that FAILED (0 = every covering consumer handled
-/// the event, or no consumer subscribes to it) — the drain keeps the
-/// message queued whenever this is non-zero. One client is acquired per
+/// consumer whose subscription covers the event, returning one
+/// [`ConsumerOutcome`] per dispatch (empty when nothing subscribes — the
+/// drain deletes; a failed outcome keeps the message queued unless the
+/// dead-letter fate moves it, issue #611). One client is acquired per
 /// consumer dispatch from the drain's [`ClientSource`]; with no
 /// registered consumers no client is acquired at all.
 pub(crate) async fn dispatch_registered(
     source: &dyn ClientSource,
     envelope: serde_json::Value{% if project.event_idempotency %},
     msg_id: i64{% endif %},
-) -> usize {
+) -> Vec<ConsumerOutcome> {
     let Some(event) = event_name_of(&envelope) else {
         return 0;
     };
     // Clone the matching dispatch closures and drop the guard BEFORE the
     // first await — the std RwLock guard is not Send.
-{% if project.event_idempotency %}    let dispatches: Vec<(&'static str, DispatchFn)> = {
+    let dispatches: Vec<(&'static str, DispatchFn)> = {
         let guard = match registry().read() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -156,27 +153,40 @@ pub(crate) async fn dispatch_registered(
             .map(|consumer| (consumer.name, consumer.dispatch.clone()))
             .collect()
     };
-    let mut failures = 0;
+    let mut outcomes: Vec<ConsumerOutcome> = Vec::new();
     for (consumer, dispatch) in &dispatches {
         let Ok(db) = source.client().await else {
-            failures += 1;
+            outcomes.push(ConsumerOutcome {
+                consumer,
+                ok: false,
+                error: Some("failed to acquire a database client".to_string()),
+            });
             continue;
         };
-        // Issue #612: insert-first dedupe (fail-open — see the sea_orm
-        // twin); skip when this (message, consumer) delivery already
-        // ran the handler.
+{% if project.event_idempotency %}        // Issue #612: insert-first dedupe (fail-open — the sea_orm twin
+        // carries the rationale); skip when this (message, consumer)
+        // delivery already ran the handler.
         if !mark_consumed(&db, msg_id, consumer).await {
             continue;
         }
-        if !dispatch(db, envelope.clone()).await {
-            failures += 1;
+{% endif %}        match dispatch(db, envelope.clone()).await {
+            Ok(()) => outcomes.push(ConsumerOutcome {
+                consumer,
+                ok: true,
+                error: None,
+            }),
+            Err(error) => outcomes.push(ConsumerOutcome {
+                consumer,
+                ok: false,
+                error: Some(error),
+            }),
         }
     }
-    failures
+    outcomes
 }
 
 /// Record this (message, consumer) delivery; `false` = already processed
-/// (the redelivered copy must not re-run the handler).
+/// (the redelivered copy must not re-run the handler).{% if project.event_idempotency %}
 async fn mark_consumed(db: &DbClient, msg_id: i64, consumer: &str) -> bool {
     match db
         .execute(
@@ -192,29 +202,6 @@ async fn mark_consumed(db: &DbClient, msg_id: i64, consumer: &str) -> bool {
             true
         }
     }
-}
-{% else %}    let dispatches: Vec<DispatchFn> = {
-        let guard = match registry().read() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        guard
-            .iter()
-            .filter(|consumer| consumer.events.contains(&event))
-            .map(|consumer| consumer.dispatch.clone())
-            .collect()
-    };
-    let mut failures = 0;
-    for dispatch in &dispatches {
-        let Ok(db) = source.client().await else {
-            failures += 1;
-            continue;
-        };
-        if !dispatch(db, envelope.clone()).await {
-            failures += 1;
-        }
-    }
-    failures
 }{% endif %}{% else %}use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 {% if contracts_use %}{{ contracts_use }}
@@ -241,37 +228,35 @@ pub trait {{ consumer.handler_trait }}: Send + Sync {
 {% endfor %}}
 
 /// Dispatch one typed envelope to a `{{ consumer.handler_trait }}`.
-/// Returns `false` when the event is not subscribed, the payload is
-/// missing or fails to deserialize, or the handler errors.
+/// `Ok(())` when the event is not subscribed or the handler succeeded;
+/// `Err(reason)` when the payload is missing/unparseable or the handler
+/// errors — the reason rides the DLQ metadata (#611).
 pub async fn dispatch_{{ consumer.name_snake }}(
     handler: &dyn {{ consumer.handler_trait }},
     ctx: &{{ consumer.context_struct }}<'_>,
     envelope: &serde_json::Value,
-) -> bool {
+) -> Result<(), String> {
     let Some(event) = event_name_of(envelope) else {
-        return false;
+        return Ok(());
     };
     match event {
 {% for event in consumer.events %}        "{{ event.event_name }}" => {
             let Some(payload) = payload_of(envelope) else {
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "typed envelope without a payload; skipped");
-                return false;
+                return Err("typed envelope without a payload".to_string());
             };
             let Ok(payload) = serde_json::from_value::<{{ event.payload }}>(payload.clone()) else {
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "payload failed to deserialize; skipped");
-                return false;
+                return Err("payload failed to deserialize".to_string());
             };
-            match handler.{{ event.method }}(ctx, &payload).await {
-                Ok(()) => true,
-                Err(e) => {
-                    tracing::warn!(event = %event, consumer = "{{ consumer.name }}", error = %e, "consumer handler failed");
-                    false
-                }
-            }
+            handler.{{ event.method }}(ctx, &payload).await.map_err(|e| {
+                tracing::warn!(event = %event, consumer = "{{ consumer.name }}", error = %e, "consumer handler failed");
+                e.to_string()
+            })
         }
 {% endfor %}        other => {
             tracing::debug!(event = %other, consumer = "{{ consumer.name }}", "event not subscribed; skipped");
-            false
+            Ok(())
         }
     }
 }
@@ -308,13 +293,12 @@ type DispatchFn = std::sync::Arc<
     dyn Fn(
             DatabaseConnection,
             serde_json::Value,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
         + Send
         + Sync,
 >;
 
 struct RegisteredConsumer {
-    #[allow(dead_code)]
     name: &'static str,
     events: &'static [&'static str],
     dispatch: DispatchFn,
@@ -328,21 +312,21 @@ fn registry() -> &'static std::sync::RwLock<Vec<RegisteredConsumer>> {
 }
 
 /// Drain entry point: dispatch one typed envelope to every registered
-/// consumer whose subscription covers the event. Returns the number of
-/// consumer dispatches that FAILED (0 = every covering consumer handled
-/// the event, or no consumer subscribes to it) — the drain keeps the
-/// message queued whenever this is non-zero.
+/// consumer whose subscription covers the event, returning one
+/// [`ConsumerOutcome`] per dispatch (empty when nothing subscribes — the
+/// drain deletes; a failed outcome keeps the message queued unless the
+/// dead-letter fate moves it, issue #611).
 pub(crate) async fn dispatch_registered(
     db: DatabaseConnection,
     envelope: serde_json::Value{% if project.event_idempotency %},
     msg_id: i64{% endif %},
-) -> usize {
+) -> Vec<ConsumerOutcome> {
     let Some(event) = event_name_of(&envelope) else {
         return 0;
     };
     // Clone the matching dispatch closures and drop the guard BEFORE the
     // first await — the std RwLock guard is not Send.
-{% if project.event_idempotency %}    let dispatches: Vec<(&'static str, DispatchFn)> = {
+    let dispatches: Vec<(&'static str, DispatchFn)> = {
         let guard = match registry().read() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -353,9 +337,9 @@ pub(crate) async fn dispatch_registered(
             .map(|consumer| (consumer.name, consumer.dispatch.clone()))
             .collect()
     };
-    let mut failures = 0;
+    let mut outcomes: Vec<ConsumerOutcome> = Vec::new();
     for (consumer, dispatch) in &dispatches {
-        // Issue #612: insert-first dedupe — skip when this (message,
+{% if project.event_idempotency %}        // Issue #612: insert-first dedupe — skip when this (message,
         // consumer) delivery was already processed by an earlier drain
         // pass (the redelivery path). Fail-open: a dedupe write error
         // still delivers — at-least-once is the floor, keying is
@@ -363,13 +347,22 @@ pub(crate) async fn dispatch_registered(
         if !mark_consumed(&db, msg_id, consumer).await {
             continue;
         }
-        if !dispatch(db.clone(), envelope.clone()).await {
-            failures += 1;
+{% endif %}        match dispatch(db.clone(), envelope.clone()).await {
+            Ok(()) => outcomes.push(ConsumerOutcome {
+                consumer,
+                ok: true,
+                error: None,
+            }),
+            Err(error) => outcomes.push(ConsumerOutcome {
+                consumer,
+                ok: false,
+                error: Some(error),
+            }),
         }
     }
-    failures
+    outcomes
 }
-
+{% if project.event_idempotency %}
 /// Record this (message, consumer) delivery; `false` = already processed
 /// (the redelivered copy must not re-run the handler).
 async fn mark_consumed(db: &DatabaseConnection, msg_id: i64, consumer: &str) -> bool {
@@ -388,25 +381,6 @@ async fn mark_consumed(db: &DatabaseConnection, msg_id: i64, consumer: &str) -> 
             true
         }
     }
-}
-{% else %}    let dispatches: Vec<DispatchFn> = {
-        let guard = match registry().read() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        guard
-            .iter()
-            .filter(|consumer| consumer.events.contains(&event))
-            .map(|consumer| consumer.dispatch.clone())
-            .collect()
-    };
-    let mut failures = 0;
-    for dispatch in &dispatches {
-        if !dispatch(db.clone(), envelope.clone()).await {
-            failures += 1;
-        }
-    }
-    failures
 }{% endif %}{% endif %}
 
 /// The event name of an envelope in either wire shape (issue #609): the
@@ -424,4 +398,14 @@ pub(crate) fn event_name_of(envelope: &serde_json::Value) -> Option<&str> {
 /// CloudEvents `data`.
 pub(crate) fn payload_of(envelope: &serde_json::Value) -> Option<&serde_json::Value> {
     envelope.get("payload").or_else(|| envelope.get("data"))
+}
+
+/// One consumer's handling of one envelope (issue #611): the drain's
+/// delete condition is `outcomes.iter().all(|o| o.ok)`; the dead-letter
+/// metadata carries the failed consumers and their error texts, and the
+/// #613 delivery counters label by consumer.
+pub struct ConsumerOutcome {
+    pub consumer: &'static str,
+    pub ok: bool,
+    pub error: Option<String>,
 }

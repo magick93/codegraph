@@ -231,7 +231,7 @@ async fn event_idempotency_keys_consumer_deliveries() {
 
     let dispatch = read(&files, "src/webhook_dispatch.rs");
     assert!(
-        dispatch.contains("crate::events::consumers::dispatch_registered(\n                            self.db.clone(),\n                            message.clone(),\n                            msg_id,"),
+        dispatch.contains("dispatch_registered(\n                    self.db.clone(),\n                    message.clone(),\n                    msg_id,"),
         "the drain passes the pgmq msg_id:\n{dispatch}"
     );
 }
@@ -247,7 +247,7 @@ async fn event_idempotency_flag_off_emits_nothing() {
     assert!(!platform.contains("event_consumption"), "{platform}");
     let dispatch = read(&files, "src/webhook_dispatch.rs");
     assert!(
-        dispatch.contains("dispatch_registered(\n                            self.db.clone(),\n                            message.clone(),\n                        )"),
-        "flag-off keeps the pre-#612 call shape:\n{dispatch}"
+        dispatch.contains("dispatch_registered(\n                    self.db.clone(),\n                    message.clone(),\n                )"),
+        "flag-off keeps the no-msg_id call shape:\n{dispatch}"
     );
 }

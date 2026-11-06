@@ -423,8 +423,14 @@ async fn dispatch_generator_renders_typed_branch_when_events_present() {
     let content = &files[0].content;
 
     assert!(
-        content.contains("crate::events::consumers::dispatch_registered(\n                            self.db.clone(),"),
+        content.contains(
+            "crate::events::consumers::dispatch_registered(\n                    self.db.clone(),"
+        ),
         "the delete condition extends to consumer dispatches: {content}"
+    );
+    assert!(
+        content.contains("let typed_ok = outcomes.iter().all(|outcome| outcome.ok);"),
+        "the terminal condition is all-outcomes-ok (issue #611): {content}"
     );
     assert!(
         content.contains("message.get(\"event\").is_some()"),
@@ -1006,4 +1012,69 @@ fn platform_schema_carries_the_event_consumption_table_under_the_flag() {
         !rendered_off.contains("event_consumption"),
         "{rendered_off}"
     );
+}
+
+/// #611: `dispatch_registered` reports PER-CONSUMER outcomes (not a bare
+/// failure count) — the DLQ fate needs the failed consumer names and
+/// error texts for the dead-letter metadata, and #613's counters label
+/// by consumer. Per-consumer dispatch returns Result so the error text
+/// survives.
+#[tokio::test]
+async fn consumers_report_per_consumer_outcomes() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project())
+            .unwrap();
+    for needle in [
+        "pub struct ConsumerOutcome {",
+        "pub consumer: &'static str,",
+        "pub ok: bool,",
+        "pub error: Option<String>,",
+        ") -> Vec<ConsumerOutcome> {",
+        "ConsumerOutcome {",
+        "-> Result<(), String> {",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "outcomes missing {needle}:\n{rendered}"
+        );
+    }
+}
+
+/// #611: the drain dead-letters a message whose consumers keep failing
+/// once `read_ct` reaches the delivery policy's attempt budget — lazy
+/// `pgmq.create` of `{queue}_dlq`, send with the `_dlq` failure metadata
+/// attached, delete from the source queue. "Moved to DLQ" is terminal
+/// for the delete condition, so a poison message cannot block its queue
+/// (or — by the one-draining-worker placement invariant — its sibling
+/// consumers) forever.
+#[tokio::test]
+async fn dispatch_dead_letters_permanently_failing_messages() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path());
+    // The dispatch template renders through the webhook generator; pin
+    // the emitted drain via a direct template render with the typed ctx.
+    let ctx = serde_json::json!({ "evt_events": true });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch.tera", &ctx, &project()).unwrap();
+    for needle in [
+        "SELECT msg_id, read_ct, message FROM pgmq.read(",
+        "dead_letter(
+                        &self.db,",
+        "\"_dlq\"",
+        "\"attempts\": read_ct",
+        "format!(\"{queue}_dlq\")",
+        "SELECT pgmq.create($1) WHERE NOT EXISTS",
+        "(typed_ok || moved_to_dlq)",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "DLQ fate missing {needle}:\n{rendered}"
+        );
+    }
 }

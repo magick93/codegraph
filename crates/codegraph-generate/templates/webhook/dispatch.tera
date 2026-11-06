@@ -131,7 +131,7 @@ impl WebhookDispatcher {
                 .db
                 .query_all_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT msg_id, message FROM pgmq.read($1, 30, 100)",
+                    {% if evt_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, 30, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, 30, 100)",{% endif %}
                     [queue.as_str().into()],
                 ))
                 .await?;
@@ -141,8 +141,9 @@ impl WebhookDispatcher {
             }
 
             for row in &msgs {
-                let msg_id: i64 = row.try_get_by_index(0)?;
-                let message: serde_json::Value = row.try_get_by_index(1)?;{% if evt_events %}
+                let msg_id: i64 = row.try_get_by_index(0)?;{% if evt_events %}
+                let read_ct: i32 = row.try_get_by_index(1)?;{% endif %}
+                let message: serde_json::Value = row.try_get_by_index({% if evt_events %}2{% else %}1{% endif %})?;{% if evt_events %}
 
                 // Typed event envelope (.evt contracts): the declared event
                 // name rides the `event` key and is mirrored into event_type
@@ -262,14 +263,33 @@ impl WebhookDispatcher {
                 // records were created successfully.{% endif %} If any INSERT failed, the
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
-                if all_inserts_succeeded{% if evt_events %}
-                    && crate::events::consumers::dispatch_registered(
-                            self.db.clone(),
-                            message.clone(),{% if project.event_idempotency %}
-                            msg_id,{% endif %}
-                        )
-                        .await
-                        == 0{% endif %} {
+{% if evt_events %}                let outcomes = crate::events::consumers::dispatch_registered(
+                    self.db.clone(),
+                    message.clone(),{% if project.event_idempotency %}
+                    msg_id,{% endif %}
+                )
+                .await;
+                let typed_ok = outcomes.iter().all(|outcome| outcome.ok);
+                // Issue #611: a message whose consumers keep failing past
+                // the delivery policy's attempt budget dead-letters to
+                // `{queue}_dlq` — moved is terminal, the source queue
+                // drains, and sibling consumers unblock (one poisoning
+                // message can no longer starve its queue).
+                let moved_to_dlq = if !typed_ok && read_ct as i32 >= self.max_retries {
+                    dead_letter(
+                        &self.db,
+                        queue,
+                        msg_id,
+                        read_ct,
+                        &message,
+                        &outcomes,
+                    )
+                    .await
+                } else {
+                    false
+                };
+{% endif %}                if all_inserts_succeeded{% if evt_events %}
+                    && (typed_ok || moved_to_dlq){% endif %} {
                     let _ = self
                         .db
                         .execute_raw(Statement::from_sql_and_values(
@@ -401,7 +421,84 @@ impl WebhookDispatcher {
         }
     }
 }
-
+{% if evt_events %}/// Issue #611: move one poisoned message to `{queue}_dlq` with the
+/// failure metadata attached under `_dlq`. The DLQ queue is created
+/// lazily on the first dead-letter (DLQ queues stay out of the migration
+/// band, keeping sqlite/unbound targets clean and the flag-off tree
+/// untouched). Returns true when the message was moved AND deleted from
+/// the source queue — the terminal outcome the delete condition needs.
+async fn dead_letter(
+    db: &DatabaseConnection,
+    queue: &str,
+    msg_id: i64,
+    read_ct: i32,
+    message: &serde_json::Value,
+    outcomes: &[crate::events::consumers::ConsumerOutcome],
+) -> bool {
+    let dlq = format!("{queue}_dlq");
+    let _ = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT pgmq.create($1) WHERE NOT EXISTS (SELECT 1 FROM pgmq.list_queues() WHERE queue_name = $1)",
+            [dlq.as_str().into()],
+        ))
+        .await;
+    let mut envelope = message.clone();
+    envelope["_dlq"] = serde_json::json!({
+        "consumers": outcomes
+            .iter()
+            .filter(|o| !o.ok)
+            .map(|o| o.consumer)
+            .collect::<Vec<_>>(),
+        "errors": outcomes
+            .iter()
+            .filter(|o| !o.ok)
+            .filter_map(|o| o.error.clone())
+            .collect::<Vec<_>>(),
+        "attempts": read_ct,
+        "failed_at": chrono::Utc::now().to_rfc3339(),
+    });
+    // sea_orm drops JSONB values bound via from_sql_and_values (the
+    // delivery-INSERT workaround) — inline with quote escaping.
+    let envelope_json = serde_json::to_string(&envelope)
+        .unwrap_or_default()
+        .replace('\'', "''");
+    let sent = db
+        .execute_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!("SELECT pgmq.send('{}', '{}'::jsonb)", dlq, envelope_json),
+        ))
+        .await;
+    let deleted = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT pgmq.delete($1, $2)",
+            [queue.as_str().into(), msg_id.into()],
+        ))
+        .await;
+    match (sent, deleted) {
+        (Ok(_), Ok(_)) => {
+            tracing::warn!(
+                queue = %queue,
+                dlq = %dlq,
+                msg_id = msg_id,
+                attempts = read_ct,
+                "message dead-lettered after exhausting the attempt budget"
+            );
+            true
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::error!(
+                queue = %queue,
+                msg_id = msg_id,
+                error = %e,
+                "dead-letter move failed; message stays queued for retry"
+            );
+            false
+        }
+    }
+}
+{% endif %}
 /// Compute next retry delay with exponential backoff + jitter.
 /// Attempt 1: ~10s, 2: ~20s, 3: ~40s, 4: ~80s, 5: ~160s
 fn delay_for_attempt(attempt: u32) -> chrono::DateTime<chrono::Utc> {

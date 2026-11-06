@@ -25,6 +25,7 @@ pub mod cli;
 pub mod config;
 pub mod db;
 pub mod disk;
+pub mod dlq;
 pub mod doctor;
 pub mod env;
 pub mod error;
