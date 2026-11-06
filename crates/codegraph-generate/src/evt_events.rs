@@ -534,13 +534,16 @@ impl GlobalGenerator for EvtEventsGenerator {
             return Ok(Vec::new());
         }
 
-        // Document artifacts (issue #614): tree-global projections of
-        // the architecture, emitted once regardless of topology.
+        // Document artifacts (issues #614/#610/#616): tree-global
+        // projections of the architecture, emitted once regardless of
+        // topology. The catalogue consumes the cross-plane `emits` edges
+        // from the DDD plane.
         let variant = match project.codegen.event_envelope.as_str() {
             "cloudevents" => crate::events::EnvelopeVariant::CloudEvents,
             _ => crate::events::EnvelopeVariant::Native,
         };
-        let docs = crate::events::docs::document_artifacts(&arch, variant);
+        let ddd_models = db.get_ddd_models().await.unwrap_or_default();
+        let docs = crate::events::docs::document_artifacts(&arch, variant, &ddd_models);
         let docs: Vec<GeneratedFile> = docs
             .into_iter()
             .map(|d| GeneratedFile {

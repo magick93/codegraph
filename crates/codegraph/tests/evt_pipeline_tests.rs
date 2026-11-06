@@ -441,6 +441,7 @@ async fn no_evt_input_generates_no_events_plane() {
         evt_only,
         [
             "docs/asyncapi.json",
+            "docs/events.md",
             "schemas/events/OrderCancelled.Envelope.json",
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
@@ -470,6 +471,7 @@ async fn no_evt_input_generates_no_events_plane() {
         added,
         [
             "docs/asyncapi.json",
+            "docs/events.md",
             "schemas/events/OrderCancelled.Envelope.json",
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",

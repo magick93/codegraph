@@ -1189,13 +1189,14 @@ async fn event_schemas_emit_per_declared_event() {
         .await
         .expect("architecture builds");
     let docs =
-        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native);
+        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native, &[]);
     let mut paths: Vec<&str> = docs.iter().map(|d| d.rel_path.as_str()).collect();
     paths.sort();
     assert_eq!(
         paths,
         vec![
             "docs/asyncapi.json",
+            "docs/events.md",
             "schemas/events/OrderCancelled.Envelope.json",
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
@@ -1263,7 +1264,7 @@ async fn event_schemas_emit_per_declared_event() {
 fn event_schemas_emit_nothing_without_events() {
     let arch = crate::events::EventArchitecture::default();
     let docs =
-        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native);
+        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native, &[]);
     assert!(docs.is_empty(), "{docs:?}");
 }
 
@@ -1504,4 +1505,130 @@ async fn worker_drain_archives_delivered_envelopes_under_the_flag() {
     )
     .unwrap();
     assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}
+
+// ── #616: event catalogue ───────────────────────────────────────────────
+
+/// The catalogue renders the whole event→channel→subscription→consumer
+/// graph as a deterministic markdown document: per-event sections (name,
+/// version, owning domain, payload fields with resolved types), channels
+/// with transport, subscriptions + consumers, the synthetic
+/// function-consumer entries, a mermaid dependency view (no JS — GitHub
+/// renders fenced mermaid), and governance slots that stay omitted while
+/// the artifact carries no owner/classification/retention/pii fields.
+#[tokio::test]
+async fn catalogue_renders_the_event_graph() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let doc =
+        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert_eq!(doc.rel_path, "docs/events.md");
+    for needle in [
+        "# Event catalogue",
+        "## `OrderPlaced`",
+        "| Version | 1.2.0 |",
+        "| order_id | String | — |",
+        "| status | OrderStatus | OrderStatusType |",
+        "| orders | `events_orders` | pgmq |",
+        "## `OrderCancelled`",
+        "| auditing | audit-worker |",
+        "at-least-once (5 retries, 10s backoff)",
+        "```mermaid",
+        "OrderPlaced -->",
+        "```",
+        // Governance slots: absent from the artifact today — the slot
+        // is documented, the sections stay omitted (never placeholder
+        // noise).
+        "Governance metadata",
+    ] {
+        assert!(
+            doc.content.contains(needle),
+            "catalogue missing {needle}:\n{}",
+            doc.content
+        );
+    }
+    // Deterministic.
+    let again =
+        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert_eq!(doc.content, again.content);
+}
+
+/// The synthetic function-consumer entries (event-exposed modeled
+/// functions, issue #450 slice D) render as consumers keyed by their
+/// envelope `event` (the fn snake name).
+#[tokio::test]
+async fn catalogue_lists_function_consumers() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let mut arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    arch.function_consumers
+        .push(crate::events::FunctionConsumer {
+            name: "RecalcTotals".to_string(),
+            fn_name: "recalc_totals".to_string(),
+            domain: Some("sales".to_string()),
+        });
+    let doc =
+        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert!(
+        doc.content.contains("## Function consumers") && doc.content.contains("| recalc_totals |"),
+        "function consumer missing:\n{}",
+        doc.content
+    );
+}
+
+/// The cross-plane `emits` edges: `.ddd` service operations declaring
+/// `emits` render as the event's producer surface.
+#[tokio::test]
+async fn catalogue_lists_the_emitting_service_operations() {
+    use codegraph_core::types::{DddModelGraph, DddServiceNode, DddServiceOperation};
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let model = DddModelGraph {
+        source_path: "library.ddd".to_string(),
+        application: codegraph_core::types::DddApplicationNode {
+            name: "Library".to_string(),
+            base: None,
+            source_path: "library.ddd".to_string(),
+        },
+        modules: Vec::new(),
+        designs: Vec::new(),
+        repositories: Vec::new(),
+        services: vec![DddServiceNode {
+            application: "Library".to_string(),
+            module: "lending".to_string(),
+            name: "LoanService".to_string(),
+            description: None,
+            dependencies: vec![],
+            ordinal: 0,
+            operations: vec![DddServiceOperation {
+                name: "renew".to_string(),
+                return_type: None,
+                return_multiplicity: None,
+                params: vec![],
+                delegation_target: None,
+                delegation_operation: None,
+                capabilities: vec![],
+                is_protected: false,
+                condition: None,
+                emits: vec!["OrderPlaced".to_string()],
+                ordinal: 0,
+            }],
+        }],
+        searches: Vec::new(),
+    };
+    let doc = crate::events::docs::catalogue_markdown(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[model],
+    );
+    assert!(
+        doc.content.contains("lending.LoanService.renew"),
+        "emitting op missing:\n{}",
+        doc.content
+    );
 }

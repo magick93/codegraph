@@ -15,8 +15,9 @@ pub mod placement;
 
 pub use model::{
     ChildTrigger, DeliveryGuarantee, DeliveryPolicy, EnvelopeVariant, EventArchitecture,
-    EventChannel, EventDefinition, EventFieldDef, EventSubscription, PgmqChannel, Publication,
-    PublicationSource, QueueInfo, Transport, TransportCapabilities, TriggerPublication,
+    EventChannel, EventDefinition, EventFieldDef, EventSubscription, FunctionConsumer, PgmqChannel,
+    Publication, PublicationSource, QueueInfo, Transport, TransportCapabilities,
+    TriggerPublication,
 };
 
 pub(crate) use model::trigger_publication_from_context;
