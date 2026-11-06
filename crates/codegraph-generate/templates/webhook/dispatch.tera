@@ -301,10 +301,10 @@ impl WebhookDispatcher {
                 // `{queue}_dlq` — moved is terminal, the source queue
                 // drains, and sibling consumers unblock (one poisoning
                 // message can no longer starve its queue).
-                let moved_to_dlq = if !typed_ok && read_ct as i32 >= self.max_retries {
+                let moved_to_dlq = if !typed_ok && read_ct as u32 >= self.max_retries {
                     dead_letter(
                         &self.db,
-                        queue,
+                        &queue,
                         msg_id,
                         read_ct,
                         &message,
@@ -554,7 +554,7 @@ async fn dead_letter(
         .execute_raw(Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             "SELECT pgmq.delete($1, $2)",
-            [queue.as_str().into(), msg_id.into()],
+            [queue.into(), msg_id.into()],
         ))
         .await;
     match (sent, deleted) {

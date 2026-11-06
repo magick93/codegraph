@@ -242,9 +242,9 @@ pub(crate) async fn dispatch_registered(
             Err(error) => {
                 // The delivery FAILED — release the dedupe row so the
                 // redelivery re-runs the handler. The ledger records
-                // successful deliveries, never attempts: keeping the row
-                // here would let the drain delete a message whose only
-                // consumer never handled it.
+                // successes, never attempts: keeping the row would let
+                // the drain delete a message whose only consumer never
+                // handled it.
                 let _ = release_consumption(&db, msg_id, consumer).await;
                 outcomes.push(ConsumerOutcome {
                     consumer,
@@ -258,8 +258,7 @@ pub(crate) async fn dispatch_registered(
 }
 
 /// Record this (message, consumer) delivery; `false` = already processed
-/// (the redelivered copy must not re-run the handler). Insert-first
-/// serializes concurrent deliveries of one message; failure releases.
+/// (the redelivered copy must not re-run the handler).
 async fn mark_consumed(db: &DatabaseConnection, msg_id: i64, consumer: &str) -> bool {
     let res = db
         .execute_raw(Statement::from_sql_and_values(

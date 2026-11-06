@@ -182,6 +182,7 @@ chrono = "0.4"
 anyhow = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tracing = "0.1"
+tracing-subscriber = "0.3"
 metrics = "0.24"
 hmac = "0.12"
 sha2 = "0.10"
@@ -287,6 +288,7 @@ async fn scalar(db: &sea_orm::DatabaseConnection, sql: &str) -> i64 {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
     let db_url = std::env::var("HARNESS_DATABASE_URL").expect("HARNESS_DATABASE_URL");
     let db = sea_orm::Database::connect(&db_url).await?;
 

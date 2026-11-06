@@ -138,7 +138,7 @@ pub(crate) async fn dispatch_registered(
     msg_id: i64{% endif %},
 ) -> Vec<ConsumerOutcome> {
     let Some(event) = event_name_of(&envelope) else {
-        return 0;
+        return Vec::new();
     };
     // Clone the matching dispatch closures and drop the guard BEFORE the
     // first await — the std RwLock guard is not Send.
@@ -175,11 +175,17 @@ pub(crate) async fn dispatch_registered(
                 ok: true,
                 error: None,
             }),
-            Err(error) => outcomes.push(ConsumerOutcome {
-                consumer,
-                ok: false,
-                error: Some(error),
-            }),
+            Err(error) => {
+{% if project.event_idempotency %}                // Failure releases the dedupe row (the sea_orm twin
+                // carries the rationale): the ledger records successes,
+                // never attempts.
+                let _ = release_consumption(&db, msg_id, consumer).await;
+{% endif %}                outcomes.push(ConsumerOutcome {
+                    consumer,
+                    ok: false,
+                    error: Some(error),
+                })
+            }
         }
     }
     outcomes
@@ -202,8 +208,18 @@ async fn mark_consumed(db: &DbClient, msg_id: i64, consumer: &str) -> bool {
             true
         }
     }
+}
+
+/// Release a failed delivery's ledger row (the redelivery must re-run).
+async fn release_consumption(db: &DbClient, msg_id: i64, consumer: &str) {
+    let _ = db
+        .execute(
+            "DELETE FROM platform.event_consumption WHERE msg_id = $1 AND consumer = $2",
+            &[&msg_id, &consumer],
+        )
+        .await;
 }{% endif %}{% else %}use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
 {% if contracts_use %}{{ contracts_use }}
 {% endif %}
 {% for consumer in consumers %}
@@ -322,7 +338,7 @@ pub(crate) async fn dispatch_registered(
     msg_id: i64{% endif %},
 ) -> Vec<ConsumerOutcome> {
     let Some(event) = event_name_of(&envelope) else {
-        return 0;
+        return Vec::new();
     };
     // Clone the matching dispatch closures and drop the guard BEFORE the
     // first await — the std RwLock guard is not Send.
@@ -353,11 +369,19 @@ pub(crate) async fn dispatch_registered(
                 ok: true,
                 error: None,
             }),
-            Err(error) => outcomes.push(ConsumerOutcome {
-                consumer,
-                ok: false,
-                error: Some(error),
-            }),
+            Err(error) => {
+{% if project.event_idempotency %}                // The delivery FAILED — release the dedupe row so the
+                // redelivery re-runs the handler. The ledger records
+                // successes, never attempts: keeping the row would let
+                // the drain delete a message whose only consumer never
+                // handled it.
+                let _ = release_consumption(&db, msg_id, consumer).await;
+{% endif %}                outcomes.push(ConsumerOutcome {
+                    consumer,
+                    ok: false,
+                    error: Some(error),
+                })
+            }
         }
     }
     outcomes
@@ -375,12 +399,23 @@ async fn mark_consumed(db: &DatabaseConnection, msg_id: i64, consumer: &str) -> 
         ))
         .await;
     match res {
-        Ok(r) => r.rows_affected > 0,
+        Ok(r) => r.rows_affected() > 0,
         Err(e) => {
             tracing::warn!(msg_id = msg_id, consumer = consumer, error = %e, "idempotency ledger write failed; delivering anyway");
             true
         }
     }
+}
+
+/// Release a failed delivery's ledger row (the redelivery must re-run).
+async fn release_consumption(db: &DatabaseConnection, msg_id: i64, consumer: &str) {
+    let _ = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "DELETE FROM platform.event_consumption WHERE msg_id = $1 AND consumer = $2",
+            [msg_id.into(), consumer.into()],
+        ))
+        .await;
 }{% endif %}{% endif %}
 
 /// The event name of an envelope in either wire shape (issue #609): the

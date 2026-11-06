@@ -91,6 +91,7 @@ async fn scalar(db: &sea_orm::DatabaseConnection, sql: &str) -> i64 {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
     let db_url = std::env::var("HARNESS_DATABASE_URL").expect("HARNESS_DATABASE_URL");
     let db = sea_orm::Database::connect(&db_url).await?;
 
