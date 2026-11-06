@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::db::dialect::DatabaseTarget;
 use crate::error::{Error, Result};
+use crate::events::EnvelopeVariant;
 
 use super::capabilities::{CapabilityRegistry, GeneratorKind};
 use super::resolve::{
@@ -59,6 +60,12 @@ pub struct BuildPlan {
     /// machine (or wherever that checkout lives) — that is the documented
     /// cost of the flag, which exists for local development loops.
     pub dependency_strategy: DependencyStrategy,
+    /// The wire envelope variant for the events plane (issue #609;
+    /// default `Native` = the historical 11-key envelope). `CloudEvents`
+    /// emits CloudEvents 1.0 structured JSON from the publish fns and the
+    /// domain-event triggers, with the drains + webhook POST speaking both
+    /// shapes. Unknown values are a hard configuration error.
+    pub event_envelope: EnvelopeVariant,
     /// Namespace-aware module layout (issue #268): when true, schemas that
     /// carry a namespace emit under namespace-derived module paths
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
@@ -251,6 +258,20 @@ impl BuildPlan {
             None => DependencyStrategy::default(),
         };
 
+        // Parse event_envelope from features (issue #609; default: Native
+        // = byte-identical). Same strictness as deployment_topology:
+        // unknown values are a hard error and a non-string value is a
+        // parse error naming the key.
+        let event_envelope = match profile.features.get("event_envelope") {
+            Some(v) => {
+                let s = v.as_str().ok_or_else(|| {
+                    Error::Config("feature \"event_envelope\" must be a string".to_string())
+                })?;
+                EnvelopeVariant::from_config(s)?
+            }
+            None => EnvelopeVariant::default(),
+        };
+
         // Topology × provider rule: the workers scaffold emits per-domain
         // Cloudflare Worker crates whose wasm32 slice cannot link SeaORM
         // (sqlx/mio do not compile to wasm32-unknown-unknown). Cornucopia is
@@ -405,6 +426,7 @@ impl BuildPlan {
             dto_key_casing,
             deployment_topology,
             dependency_strategy,
+            event_envelope,
             namespace_layout,
             ux_rules,
             expr_ir,
@@ -472,6 +494,7 @@ impl BuildPlan {
             dto_key_casing: "snake".to_string(),
             deployment_topology: DeploymentTopology::default(),
             dependency_strategy: DependencyStrategy::default(),
+            event_envelope: EnvelopeVariant::default(),
             namespace_layout: false,
             ux_rules: false,
             expr_ir: false,

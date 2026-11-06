@@ -45,7 +45,15 @@ impl {{ channel.enum_name }} {
         match self {
 {% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.domain_expr }},
 {% endfor %}        }
+    }{% if project.event_envelope == "cloudevents" %}
+    /// The CloudEvents `source` URI-reference (issue #609): `/{domain}`,
+    /// or `/{channel}` when no domain is derivable from the payload.
+    pub fn ce_source(&self) -> &'static str {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.source_expr }},
+{% endfor %}        }
     }
+{% endif %}
 
     /// The typed payload, serialized.
     pub fn payload(&self) -> serde_json::Value {
@@ -66,7 +74,25 @@ pub async fn publish_{{ channel.name_snake }}(
     event: {{ channel.enum_name }},
     ctx: &EventContext,
 ) -> Result<(), tokio_postgres::Error> {
+{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
+    // name is `type`, the payload rides `data`, and the native identity
+    // keys survive as CE extension attributes. `id` is a publish-time
+    // UUID — distinct from the pgmq msg_id the queue assigns.
     let envelope = serde_json::json!({
+        "specversion": "1.0",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "type": event.event_name(),
+        "source": event.ce_source(),
+        "time": chrono::Utc::now().to_rfc3339(),
+        "datacontenttype": "application/json",
+        "data": event.payload(),
+        "version": event.event_version(),
+        "channel": "{{ channel.name }}",
+        "domain": event.domain(),
+        "correlationid": ctx.correlation_id.to_string(),
+        "tenantid": ctx.tenant_id.to_string(),
+    });
+{% else %}    let envelope = serde_json::json!({
         "event": event.event_name(),
         "version": event.event_version(),
         "channel": "{{ channel.name }}",
@@ -79,7 +105,7 @@ pub async fn publish_{{ channel.name_snake }}(
         "occurred_at": chrono::Utc::now().to_rfc3339(),
         "correlation_id": ctx.correlation_id,
     });
-    // Parameterized pgmq.send: tokio-postgres binds the JSONB payload
+{% endif %}    // Parameterized pgmq.send: tokio-postgres binds the JSONB payload
     // directly (no sea_orm binding workaround, no escaping).
     let queue = "{{ channel.queue }}";
     client
@@ -125,7 +151,15 @@ impl {{ channel.enum_name }} {
         match self {
 {% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.domain_expr }},
 {% endfor %}        }
+    }{% if project.event_envelope == "cloudevents" %}
+    /// The CloudEvents `source` URI-reference (issue #609): `/{domain}`,
+    /// or `/{channel}` when no domain is derivable from the payload.
+    pub fn ce_source(&self) -> &'static str {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.source_expr }},
+{% endfor %}        }
     }
+{% endif %}
 
     /// The typed payload, serialized.
     pub fn payload(&self) -> serde_json::Value {
@@ -146,7 +180,25 @@ pub async fn publish_{{ channel.name_snake }}(
     event: {{ channel.enum_name }},
     ctx: &EventContext,
 ) -> Result<(), sea_orm::DbErr> {
+{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
+    // name is `type`, the payload rides `data`, and the native identity
+    // keys survive as CE extension attributes. `id` is a publish-time
+    // UUID — distinct from the pgmq msg_id the queue assigns.
     let envelope = serde_json::json!({
+        "specversion": "1.0",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "type": event.event_name(),
+        "source": event.ce_source(),
+        "time": chrono::Utc::now().to_rfc3339(),
+        "datacontenttype": "application/json",
+        "data": event.payload(),
+        "version": event.event_version(),
+        "channel": "{{ channel.name }}",
+        "domain": event.domain(),
+        "correlationid": ctx.correlation_id.to_string(),
+        "tenantid": ctx.tenant_id.to_string(),
+    });
+{% else %}    let envelope = serde_json::json!({
         "event": event.event_name(),
         "version": event.event_version(),
         "channel": "{{ channel.name }}",
@@ -159,7 +211,7 @@ pub async fn publish_{{ channel.name_snake }}(
         "occurred_at": chrono::Utc::now().to_rfc3339(),
         "correlation_id": ctx.correlation_id,
     });
-    // sea_orm drops JSONB values bound via from_sql_and_values (the same
+{% endif %}    // sea_orm drops JSONB values bound via from_sql_and_values (the same
     // workaround the webhook dispatcher applies) — inline the envelope with
     // single-quote escaping instead.
     let envelope_json = serde_json::to_string(&envelope)

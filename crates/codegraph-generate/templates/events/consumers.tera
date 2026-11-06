@@ -39,12 +39,12 @@ pub async fn dispatch_{{ consumer.name_snake }}(
     ctx: &{{ consumer.context_struct }}<'_>,
     envelope: &serde_json::Value,
 ) -> bool {
-    let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
+    let Some(event) = event_name_of(envelope) else {
         return false;
     };
     match event {
 {% for event in consumer.events %}        "{{ event.event_name }}" => {
-            let Some(payload) = envelope.get("payload") else {
+            let Some(payload) = payload_of(envelope) else {
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "typed envelope without a payload; skipped");
                 return false;
             };
@@ -134,7 +134,7 @@ pub(crate) async fn dispatch_registered(
     source: &dyn ClientSource,
     envelope: serde_json::Value,
 ) -> usize {
-    let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
+    let Some(event) = event_name_of(&envelope) else {
         return 0;
     };
     // Clone the matching dispatch closures and drop the guard BEFORE the
@@ -194,12 +194,12 @@ pub async fn dispatch_{{ consumer.name_snake }}(
     ctx: &{{ consumer.context_struct }}<'_>,
     envelope: &serde_json::Value,
 ) -> bool {
-    let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
+    let Some(event) = event_name_of(envelope) else {
         return false;
     };
     match event {
 {% for event in consumer.events %}        "{{ event.event_name }}" => {
-            let Some(payload) = envelope.get("payload") else {
+            let Some(payload) = payload_of(envelope) else {
                 tracing::warn!(event = %event, consumer = "{{ consumer.name }}", "typed envelope without a payload; skipped");
                 return false;
             };
@@ -282,7 +282,7 @@ pub(crate) async fn dispatch_registered(
     db: DatabaseConnection,
     envelope: serde_json::Value,
 ) -> usize {
-    let Some(event) = envelope.get("event").and_then(|v| v.as_str()) else {
+    let Some(event) = event_name_of(&envelope) else {
         return 0;
     };
     // Clone the matching dispatch closures and drop the guard BEFORE the
@@ -306,3 +306,20 @@ pub(crate) async fn dispatch_registered(
     }
     failures
 }{% endif %}
+
+/// The event name of an envelope in either wire shape (issue #609): the
+/// native envelope keys it as `event`; a CloudEvents 1.0 envelope keys it
+/// as `type`. Mixed producers (native and CloudEvents publishers on one
+/// queue) route through the same read.
+pub(crate) fn event_name_of(envelope: &serde_json::Value) -> Option<&str> {
+    envelope
+        .get("event")
+        .and_then(|v| v.as_str())
+        .or_else(|| envelope.get("type").and_then(|v| v.as_str()))
+}
+
+/// The payload of an envelope in either wire shape: native `payload`,
+/// CloudEvents `data`.
+pub(crate) fn payload_of(envelope: &serde_json::Value) -> Option<&serde_json::Value> {
+    envelope.get("payload").or_else(|| envelope.get("data"))
+}

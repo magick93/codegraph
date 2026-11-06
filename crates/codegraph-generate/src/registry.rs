@@ -738,6 +738,7 @@ mod charts_capability_audit {
             dto_key_casing: "snake".to_string(),
             deployment_topology: topology,
             dependency_strategy: DependencyStrategy::Rev,
+            event_envelope: crate::events::EnvelopeVariant::Native,
             namespace_layout: false,
             ux_rules: false,
             ifml_e2e_auth: false,

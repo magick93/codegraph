@@ -53,7 +53,7 @@ fn outbound_headers(
 ) -> Vec<(String, String)> {
     let mut headers = vec![(
         "Content-Type".to_string(),
-        "application/json".to_string(),
+        {% if project.event_envelope == "cloudevents" %}"application/cloudevents+json".to_string(){% else %}"application/json".to_string(){% endif %}
     )];
     if let Some(sig) = hmac_signature(secret, body) {
         headers.push(("X-Webhook-Signature".to_string(), format!("sha256={sig}")));
@@ -262,7 +262,17 @@ async fn drain_events_into_jobs(
         let msg_id: i64 = row.try_get(0).map_err(|e| e.to_string())?;
         let message: serde_json::Value = row.try_get(1).map_err(|e| e.to_string())?;
 
-        let event_type = message["event_type"].as_str().unwrap_or("").to_string();
+        // Issue #609: normalize the event name across both wire shapes —
+        // native envelopes key it as `event` + `event_type`, CloudEvents
+        // envelopes as `type`; trigger envelopes only ever carry
+        // `event_type` (native) or `type` (cloudevents).
+        let event_type = message
+            .get("event")
+            .and_then(|v| v.as_str())
+            .or_else(|| message.get("type").and_then(|v| v.as_str()))
+            .or_else(|| message.get("event_type").and_then(|v| v.as_str()))
+            .unwrap_or("")
+            .to_string();
         let event_domain = message["domain"].as_str().unwrap_or("").to_string();
         let event_entity = message["entity_table"].as_str().unwrap_or("").to_string();
         let tenant_id: Uuid = message["tenant_id"]

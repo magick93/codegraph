@@ -99,7 +99,36 @@ BEGIN
     END IF;
 
     -- Build event payload
+    {% if project.event_envelope == "cloudevents" %}-- CloudEvents 1.0 structured envelope (issue #609): the CRUD event
+    -- kind is `type`, the changed-field names ride `data`, and the native
+    -- identity keys survive as CE extension attributes. `subject` carries
+    -- `{entity_table}/{entity_id}` when an entity id exists (CE `subject`
+    -- is optional; it must be absent, never null).
     v_payload := jsonb_build_object(
+        'specversion', '1.0',
+        'id', gen_random_uuid()::text,
+        'type', v_event_type,
+        'source', '/' || p_domain,
+        'time', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        'datacontenttype', 'application/json',
+        'data', to_jsonb(COALESCE(v_changed_fields, ARRAY[]::TEXT[])),
+        'domain', p_domain,
+        'entity_table', p_table_name,
+        'entity_id', v_entity_id,
+        'tenantid', v_tenant_id,
+        'correlationid', COALESCE(
+            NULLIF(current_setting('app.correlation_id', true), '')::UUID,
+            gen_random_uuid()
+        )
+    );
+    IF v_entity_id IS NOT NULL THEN
+        v_payload := jsonb_set(
+            v_payload,
+            '{subject}',
+            to_jsonb(p_table_name || '/' || v_entity_id::text)
+        );
+    END IF;
+    {% else %}v_payload := jsonb_build_object(
         'event_type', v_event_type,
         'domain', p_domain,
         'entity_table', p_table_name,
@@ -112,6 +141,7 @@ BEGIN
             gen_random_uuid()
         )
     );
+    {% endif %}
 
     -- Enqueue to domain-specific queue
     v_queue_name := 'events_' || p_domain;

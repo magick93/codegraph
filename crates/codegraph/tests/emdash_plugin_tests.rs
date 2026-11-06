@@ -192,6 +192,7 @@ fn emdash_build_plan() -> BuildPlan {
         dto_key_casing: "snake".to_string(),
         deployment_topology: codegraph::profile::DeploymentTopology::Monolith,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
+        event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
         namespace_layout: false,
         ux_rules: false,
         expr_ir: false,

@@ -107,6 +107,9 @@ struct VariantContext {
     /// `Some("…")` / `None` literals rendered into the accessors.
     version_expr: String,
     domain_expr: String,
+    /// The rendered CloudEvents `source` string literal: `/{domain}`, or
+    /// `/{channel}` when the event has no derivable domain (issue #609).
+    source_expr: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -344,6 +347,14 @@ fn emit_context(arch: &EventArchitecture) -> EmitContext {
                         Some(domain) => format!("Some(\"{domain}\")"),
                         None => "None".to_string(),
                     },
+                    // CloudEvents `source` (issue #609): `/{domain}`, or
+                    // `/{channel}` when the event's domain is not
+                    // derivable (all-primitive payloads) — CE `source` is
+                    // REQUIRED, so it never renders null.
+                    source_expr: format!(
+                        "\"/{}\"",
+                        event.domain.as_deref().unwrap_or(&channel.name)
+                    ),
                 });
             }
             ChannelContext {

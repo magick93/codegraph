@@ -188,6 +188,13 @@ pub struct CodegenConfig {
     /// literals).
     #[serde(default)]
     pub testid_module: bool,
+    /// The wire envelope variant for the events plane (issue #609):
+    /// `"native"` (default = the historical 11-key envelope, byte-identical)
+    /// or `"cloudevents"` (CloudEvents 1.0 structured JSON from the publish
+    /// fns + the domain-event triggers, drains + webhook POST speaking both
+    /// shapes). Threaded from `BuildPlan.event_envelope`.
+    #[serde(default)]
+    pub event_envelope: String,
     /// Post-generation structural gates (issue #468): when true the run
     /// scans the emitted tree and hard-fails on retired vocabulary
     /// (`-confirm-confirm`, raw POM compositions under `testid_module`).
@@ -214,6 +221,7 @@ impl Default for CodegenConfig {
             ui_live_queries: false,
             testid_module: false,
             structural_gates: false,
+            event_envelope: "native".into(),
             types_import_prefix: "codegraph_type_contracts".into(),
         }
     }
@@ -488,6 +496,7 @@ mod tests {
             ("ui_live_queries", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
+            ("event_envelope", serde_json::json!("native")),
             ("public_operations_rls", serde_json::json!(false)),
             (
                 "types_import_prefix",

@@ -150,10 +150,18 @@ impl WebhookDispatcher {
                 // and `channel` ride the envelope; the entity columns are
                 // absent for declared events (deliveries store the whole
                 // envelope). A null domain matches no webhook subscription —
-                // the matcher compares event_domain exactly.
-                let is_typed_envelope = message.get("event").is_some();
+                // the matcher compares event_domain exactly. Issue #609: a
+                // CloudEvents envelope (native or cloudevents publishers on
+                // one queue) keys the name as `type` — normalize across
+                // both shapes.
+                let is_typed_envelope = message.get("event").is_some()
+                    || message.get("type").is_some();
                 let event_type = if is_typed_envelope {
-                    message["event"].as_str().unwrap_or("")
+                    message
+                        .get("event")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| message.get("type").and_then(|v| v.as_str()))
+                        .unwrap_or("")
                 } else {
                     message["event_type"].as_str().unwrap_or("")
                 };
@@ -296,7 +304,7 @@ impl WebhookDispatcher {
             Some(hex::encode(result.into_bytes()))
         });
 
-        let mut req = self.http_client.post(url).header("Content-Type", "application/json");
+        let mut req = self.http_client.post(url).header("Content-Type", {% if project.event_envelope == "cloudevents" %}"application/cloudevents+json"{% else %}"application/json"{% endif %});
 
         if let Some(ref sig) = signature {
             req = req.header("X-Webhook-Signature", format!("sha256={sig}"));

@@ -430,9 +430,15 @@ async fn dispatch_generator_renders_typed_branch_when_events_present() {
         content.contains("message.get(\"event\").is_some()"),
         "typed envelopes are detected by the `event` key"
     );
+    // Issue #609: CloudEvents envelopes key the name as `type` — the
+    // typed branch normalizes across both shapes.
     assert!(
-        content.contains("message[\"event\"].as_str().unwrap_or(\"\")"),
-        "the declared event name drives event_type"
+        content.contains("message.get(\"type\").is_some()"),
+        "CloudEvents envelopes are detected by the `type` key"
+    );
+    assert!(
+        content.contains(".or_else(|| message.get(\"type\").and_then(|v| v.as_str()))"),
+        "the event name normalizes across both envelope shapes"
     );
     assert!(
         content.contains("message[\"event_type\"].as_str().unwrap_or(\"\")"),
@@ -777,4 +783,127 @@ async fn workers_topology_unplaceable_channel_is_a_hard_error() {
     assert!(message.contains("`pings'"), "{message}");
     assert!(message.contains("events_pings"), "{message}");
     assert!(message.contains("kind = \"queue\""), "{message}");
+}
+
+// ── #609: the CloudEvents envelope variant ──────────────────────────────
+
+/// The envelope-variant mapping table is pinned: CloudEvents 1.0
+/// structured JSON with the native identity keys carried as CE extension
+/// attributes (nothing in the native envelope is lost).
+#[test]
+fn envelope_variant_parses_strictly() {
+    use crate::events::EnvelopeVariant;
+    assert_eq!(EnvelopeVariant::default(), EnvelopeVariant::Native);
+    assert_eq!(EnvelopeVariant::Native.as_str(), "native");
+    assert_eq!(EnvelopeVariant::CloudEvents.as_str(), "cloudevents");
+    assert_eq!(
+        EnvelopeVariant::from_config("native").unwrap(),
+        EnvelopeVariant::Native
+    );
+    assert_eq!(
+        EnvelopeVariant::from_config("cloudevents").unwrap(),
+        EnvelopeVariant::CloudEvents
+    );
+    let err = EnvelopeVariant::from_config("ce").unwrap_err().to_string();
+    assert!(err.contains("event_envelope"), "{err}");
+    assert!(err.contains("cloudevents"), "{err}");
+}
+
+/// Under `event_envelope = "cloudevents"` the publish fns build the CE
+/// 1.0 structured envelope: `type`/`source`/`id`/`time`/`datacontenttype`
+/// with the payload under `data`, and the native identity keys as CE
+/// extension attributes (`version`/`channel`/`domain`/`correlationid`/
+/// `tenantid`). The native mirror key `event_type` is gone — matching
+/// normalizes instead.
+#[tokio::test]
+async fn emit_template_renders_the_cloudevents_envelope() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let emit = super::emit_context(&arch);
+    let mut project = project();
+    project.codegen.event_envelope = "cloudevents".to_string();
+    let rendered =
+        render_template_with_project(&tera(), "events/emit.tera", &emit, &project).unwrap();
+    for key in [
+        "\"specversion\": \"1.0\"",
+        "\"type\": event.event_name()",
+        "\"source\": ",
+        "\"id\": uuid::Uuid::new_v4()",
+        "\"time\": chrono::Utc::now().to_rfc3339()",
+        "\"datacontenttype\": \"application/json\"",
+        "\"data\": event.payload()",
+        "\"correlationid\": ctx.correlation_id",
+        "\"tenantid\": ctx.tenant_id",
+        "\"version\": event.event_version()",
+        "\"channel\": \"{{ channel.name }}\"",
+    ] {
+        let key = key.replace("{{ channel.name }}", "orders");
+        assert!(
+            rendered.contains(&key),
+            "CE envelope missing {key}:\n{rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("\"event_type\""),
+        "CE envelope must not carry the native event_type mirror"
+    );
+}
+
+/// The native envelope is untouched by the CE branch (the canaries pin
+/// the byte-identity; this pin asserts the axis exists in the template
+/// SOURCE and that the native rendering keeps the native key set).
+#[tokio::test]
+async fn emit_template_branches_on_the_envelope_variant() {
+    let source = include_str!("../../templates/events/emit.tera");
+    assert!(
+        source.contains("project.event_envelope"),
+        "emit.tera lost the envelope-variant discriminator"
+    );
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let emit = super::emit_context(&arch);
+    let rendered =
+        render_template_with_project(&tera(), "events/emit.tera", &emit, &project()).unwrap();
+    assert!(
+        rendered.contains("\"event_type\": event.event_name()"),
+        "native envelope lost the event_type mirror:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("ce_source"),
+        "native rendering must not carry the CE accessor"
+    );
+}
+
+/// Envelope normalization: `dispatch_registered` and the per-consumer
+/// dispatchers resolve the event name and payload through the shared
+/// `event_name_of`/`payload_of` helpers, which read both the native
+/// (`event`/`payload`) and CloudEvents (`type`/`data`) key sets — a
+/// consumer receiving mixed producer shapes routes correctly.
+#[tokio::test]
+async fn consumers_template_normalizes_both_envelope_shapes() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project())
+            .unwrap();
+    for needle in [
+        "fn event_name_of(",
+        "fn payload_of(",
+        "event_name_of(envelope)",
+        "payload_of(envelope)",
+        ".get(\"type\")",
+        ".get(\"data\")",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "consumers.tera lost the normalization helper {needle}:\n{rendered}"
+        );
+    }
 }

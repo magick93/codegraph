@@ -1718,6 +1718,7 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 0,
                         is_protected: false,
                         condition: None,
+                        emits: Vec::new(),
                     },
                     DddServiceOperation {
                         name: "renew".to_string(),
@@ -1730,6 +1731,7 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 1,
                         is_protected: false,
                         condition: Some(r#"status == "OnLoan""#.to_string()),
+                        emits: Vec::new(),
                     },
                 ],
                 ordinal: 0,
@@ -1752,6 +1754,7 @@ fn ddd_fixture() -> DddModelGraph {
 
                     is_protected: false,
                     condition: None,
+                    emits: Vec::new(),
                 }],
                 ordinal: 0,
             },
