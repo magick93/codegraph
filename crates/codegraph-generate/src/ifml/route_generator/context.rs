@@ -865,6 +865,12 @@ pub struct RenderFormTanstack {
     /// carried `field_props` wiring; `None` keeps the built-in slots.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mapped_import: Option<RenderTanstackImport>,
+    /// The mapped select-slot import when the `selection-field`-role
+    /// mapping carried `field_props` wiring (issue #574 ledger) — the
+    /// generator-emitted NativeSelect wrapper. `None` keeps the built-in
+    /// SelectField slots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapped_select_import: Option<RenderTanstackImport>,
     /// The submit button's testid — the SAME value the POM's
     /// `ComponentSelectors::for_component` resolves (mapping tier first,
     /// action-control slot, `{comp}-submit` fallback), so the TanStack

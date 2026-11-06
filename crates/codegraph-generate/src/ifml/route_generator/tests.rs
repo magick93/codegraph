@@ -5273,13 +5273,43 @@ fn live_workflow_module_exports_the_query_live_stream() {
 }
 
 #[test]
+fn form_plane_emits_the_select_variant_only_when_wired() {
+    // The wrapper imports the project's NativeSelect barrel — emitted
+    // if-absent ONLY when the mappings carry a wired selection-field
+    // entry, so no-shadcn trees never carry a dangling barrel import.
+    let dir = tempfile::tempdir().unwrap();
+    super::forms_plane::form_plane_files_select_variant(dir.path(), false);
+    assert!(
+        !dir.path()
+            .join("src/lib/forms/fields/select-variant.svelte")
+            .exists(),
+        "no wired mapping → no wrapper"
+    );
+    super::forms_plane::form_plane_files_select_variant(dir.path(), true);
+    let wrapper = std::fs::read_to_string(
+        dir.path()
+            .join("src/lib/forms/fields/select-variant.svelte"),
+    )
+    .expect("the wrapper is emitted when wired");
+    assert!(
+        wrapper.contains("NativeSelect"),
+        "the wrapper composes the project's NativeSelect barrel:\n{wrapper}"
+    );
+    assert!(
+        wrapper.contains("options"),
+        "the wrapper takes the generator-owned options:\n{wrapper}"
+    );
+}
+
+#[test]
 fn shadcn_field_variant_maps_the_text_slots() {
     // The #582 deferral: a `field`-role mapping carrying `field_props`
     // wiring replaces the built-in TEXT slots — the wiring is evaluated
     // inside the AppField children snippet, and the generator owns
     // name/testid/type/required around it so the POM fill/testid contract
-    // holds on the mapped input. Select/radio slots keep their built-ins
-    // (the shadcn Select root's contract is not slot-compatible).
+    // holds on the mapped input. Select slots map through the
+    // selection-field variant (the generator-emitted NativeSelect
+    // wrapper); radio slots keep their built-ins.
     use codegraph_config::built_in_pack;
     let pack = built_in_pack("shadcn-svelte").expect("shadcn pack");
     let spec = FormSpec {
@@ -5327,11 +5357,61 @@ fn shadcn_field_variant_maps_the_text_slots() {
         Some("Input"),
         "the page imports the mapped component"
     );
-    // The dropdown slot keeps the built-in (wiring excluded).
+    // The dropdown slot maps through the selection-field variant (issue
+    // #574 ledger): the pack's entry carries field_props pointing at the
+    // generator-emitted NativeSelect wrapper — a REAL shadcn Select is not
+    // slot-compatible (its items render through snippets) AND would break
+    // the POM's selectOption fill, so the wrapper composes NativeSelect
+    // (a native <select> — the fill contract holds verbatim).
+    let tier = &rendered.fields[1].invocation;
+    assert!(
+        tier.starts_with("<SelectVariant name=\"tier\" data-testid=\"editor-tier\""),
+        "the mapped select slot renders the wrapper with the POM contract:\n{tier}"
+    );
+    assert!(
+        tier.contains(r#"options={["gold"]}"#),
+        "the generator owns options from the field's closed value set:\n{tier}"
+    );
+    assert!(tier.contains("value={field.state.value}"), "{tier}");
+    assert!(
+        tier.contains("onchange={(e) => field.handleChange(e.currentTarget.value)}"),
+        "{tier}"
+    );
+    assert_eq!(
+        rendered
+            .mapped_select_import
+            .as_ref()
+            .map(|i| i.export.as_str()),
+        Some("SelectVariant"),
+        "the page imports the wrapper alongside the mapped field component"
+    );
+
+    // A selection-field mapping WITHOUT field_props is skipped — never an
+    // un-wired slot: the built-in SelectField stays byte-identical.
+    let mut bare = pack.clone();
+    for m in &mut bare.components {
+        if m.role == Some(SemanticRole::SelectionField) {
+            m.field_props = None;
+        }
+    }
+    let rendered = super::render::render_form_tanstack(
+        "editor",
+        "editor_form_state",
+        &spec,
+        &HashMap::new(),
+        None,
+        DtoKeyCasing::default(),
+        Some(&bare),
+        "CustomerEdit",
+    );
     let tier = &rendered.fields[1].invocation;
     assert!(
         tier.contains("serverMessage={fieldErrors.tier}"),
-        "the non-text slot keeps the built-in component:\\n{tier}"
+        "the unwired selection-field entry keeps the built-in slot:\n{tier}"
+    );
+    assert!(
+        rendered.mapped_select_import.is_none(),
+        "no wiring, no wrapper import"
     );
 
     // No pack: the built-in slots are byte-identical.

@@ -371,9 +371,22 @@ impl GlobalGenerator for IfmlRouteGenerator {
         // The form-creator scaffold (issue #580): if-absent, once per
         // output tree — the `src/lib/server/api.ts` mechanism from the
         // remote-functions plane. Rendered from Rust consts so the entity
-        // plane's #580 half cannot drift.
+        // plane's #580 half cannot drift. The selection-field variant
+        // wrapper (issue #574 ledger) emits only when the mappings carry
+        // a WIRED selection-field entry — the wrapper imports the
+        // project's NativeSelect barrel, so a no-shadcn tree must never
+        // carry it.
         if tanstack {
             files.extend(forms_plane::form_plane_files(&self.output_dir));
+            let select_variant_wired = self.mappings.as_ref().is_some_and(|m| {
+                m.components.iter().any(|c| {
+                    c.role == Some(codegraph_config::SemanticRole::SelectionField)
+                        && c.field_props.is_some()
+                })
+            });
+            if select_variant_wired {
+                forms_plane::form_plane_files_select_variant(&self.output_dir, true);
+            }
         }
 
         if let Some(hydration) = self.hydration(&model) {
