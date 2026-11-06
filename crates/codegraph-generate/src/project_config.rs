@@ -195,6 +195,17 @@ pub struct CodegenConfig {
     /// shapes). Threaded from `BuildPlan.event_envelope`.
     #[serde(default)]
     pub event_envelope: String,
+    /// Generated consumer idempotency (issue #612): the drain's dispatch
+    /// path keys deliveries on (pgmq msg_id, consumer) through
+    /// `platform.event_consumption`. Default false = byte-identical.
+    #[serde(default)]
+    pub event_idempotency: bool,
+    /// Event archive + replay substrate (issue #615): the drain archives
+    /// delivered envelopes into `platform.event_archive` with a retention
+    /// sweep; the ops harness gains the replay verb. Default false —
+    /// archiving doubles write volume, it must never silently turn on.
+    #[serde(default)]
+    pub event_archive: bool,
     /// Post-generation structural gates (issue #468): when true the run
     /// scans the emitted tree and hard-fails on retired vocabulary
     /// (`-confirm-confirm`, raw POM compositions under `testid_module`).
@@ -222,6 +233,8 @@ impl Default for CodegenConfig {
             testid_module: false,
             structural_gates: false,
             event_envelope: "native".into(),
+            event_idempotency: false,
+            event_archive: false,
             types_import_prefix: "codegraph_type_contracts".into(),
         }
     }
@@ -497,6 +510,8 @@ mod tests {
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
             ("event_envelope", serde_json::json!("native")),
+            ("event_idempotency", serde_json::json!(false)),
+            ("event_archive", serde_json::json!(false)),
             ("public_operations_rls", serde_json::json!(false)),
             (
                 "types_import_prefix",

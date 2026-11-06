@@ -50,6 +50,8 @@ async fn run_routing_generators(
         deployment_topology: topology,
         dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
         event_envelope: codegraph::generate::events::EnvelopeVariant::Native,
+        event_idempotency: false,
+        event_archive: false,
         namespace_layout: false,
         ux_rules: false,
         expr_ir: false,

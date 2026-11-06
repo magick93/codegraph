@@ -991,4 +991,47 @@ generators = ["ddl"]
             "expected dependency_strategy type error, got: {msg}"
         );
     }
+
+    // ── events plane flags (issues #609-#615) ──
+
+    #[test]
+    fn build_plan_event_flags_default_off_and_native() {
+        let plan = plan_with_features("auth = true").unwrap();
+        assert_eq!(
+            plan.event_envelope,
+            crate::events::EnvelopeVariant::Native
+        );
+        assert!(!plan.event_idempotency);
+        assert!(!plan.event_archive);
+    }
+
+    #[test]
+    fn build_plan_event_idempotency_parses_bool_values() {
+        let plan = plan_with_features("event_idempotency = true").unwrap();
+        assert!(plan.event_idempotency);
+        let plan = plan_with_features("event_idempotency = false").unwrap();
+        assert!(!plan.event_idempotency);
+    }
+
+    #[test]
+    fn build_plan_event_idempotency_non_bool_errors_naming_the_key() {
+        let err = plan_with_features("event_idempotency = \"yes\"").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("event_idempotency") && msg.contains("boolean"),
+            "expected event_idempotency type error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_plan_event_archive_parses_bool_values() {
+        let plan = plan_with_features("event_archive = true").unwrap();
+        assert!(plan.event_archive);
+        let plan = plan_with_features("event_archive = \"sure\"").unwrap_err();
+        let msg = plan.to_string();
+        assert!(
+            msg.contains("event_archive") && msg.contains("boolean"),
+            "expected event_archive type error, got: {msg}"
+        );
+    }
 }

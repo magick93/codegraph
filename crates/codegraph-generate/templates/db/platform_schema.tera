@@ -214,6 +214,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_transition_idempotency
     ON platform.workflow_transition (idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+{% if project.event_idempotency %}-- ============================================================================
+-- Consumer idempotency ledger (issue #612). The events plane's delivery
+-- guarantee is at-least-once by construction (visibility timeout 30s <
+-- drain cron 60s), so a redelivered pgmq message is EXPECTED. The
+-- generated dispatch path keys every delivery on (pgmq msg_id,
+-- consumer): insert-first, skip when the row exists — the handler runs
+-- on first delivery only. Created BEFORE the blanket app_user grants
+-- below so the drain's app_user pool can insert. No tenant RLS: the
+-- ledger is system surface keyed by queue-assigned message ids, written
+-- by the drain and inspected by operators.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS platform.event_consumption (
+    msg_id BIGINT NOT NULL,
+    consumer TEXT NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (msg_id, consumer)
+);
+{% endif %}
 -- ============================================================================
 -- Row-Level Security policies
 -- ============================================================================

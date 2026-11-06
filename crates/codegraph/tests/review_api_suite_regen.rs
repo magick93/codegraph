@@ -245,6 +245,8 @@ pub async fn regenerate_fixture() -> Result<(), String> {
             testid_module: plan.testid_module,
             structural_gates: plan.structural_gates,
             event_envelope: plan.event_envelope.as_str().to_string(),
+            event_idempotency: plan.event_idempotency,
+            event_archive: plan.event_archive,
             types_import_prefix: config.defaults.types_import_prefix.clone(),
         },
         ..Default::default()

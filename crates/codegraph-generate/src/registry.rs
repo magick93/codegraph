@@ -739,6 +739,8 @@ mod charts_capability_audit {
             deployment_topology: topology,
             dependency_strategy: DependencyStrategy::Rev,
             event_envelope: crate::events::EnvelopeVariant::Native,
+            event_idempotency: false,
+            event_archive: false,
             namespace_layout: false,
             ux_rules: false,
             ifml_e2e_auth: false,

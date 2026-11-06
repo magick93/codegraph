@@ -265,7 +265,8 @@ impl WebhookDispatcher {
                 if all_inserts_succeeded{% if evt_events %}
                     && crate::events::consumers::dispatch_registered(
                             self.db.clone(),
-                            message.clone(),
+                            message.clone(),{% if project.event_idempotency %}
+                            msg_id,{% endif %}
                         )
                         .await
                         == 0{% endif %} {

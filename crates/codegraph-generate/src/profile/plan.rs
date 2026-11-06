@@ -66,6 +66,17 @@ pub struct BuildPlan {
     /// domain-event triggers, with the drains + webhook POST speaking both
     /// shapes. Unknown values are a hard configuration error.
     pub event_envelope: EnvelopeVariant,
+    /// Generated consumer idempotency (issue #612): when true, the
+    /// drain's dispatch path keys each delivery on (pgmq msg_id,
+    /// consumer) through `platform.event_consumption` — an at-least-once
+    /// redelivery runs the handler once. Default OFF = byte-identical.
+    pub event_idempotency: bool,
+    /// Event archive + replay substrate (issue #615): when true, the
+    /// drain archives delivered envelopes into `platform.event_archive`
+    /// (with a retention sweep) and the ops harness gains the replay
+    /// verb. Default OFF — archiving doubles write volume, it must never
+    /// silently turn on.
+    pub event_archive: bool,
     /// Namespace-aware module layout (issue #268): when true, schemas that
     /// carry a namespace emit under namespace-derived module paths
     /// (`cdm.base.datetime` → `cdm/base/datetime/...`) instead of the flat
@@ -272,6 +283,23 @@ impl BuildPlan {
             None => EnvelopeVariant::default(),
         };
 
+        // Parse event_idempotency (issue #612) and event_archive (issue
+        // #615) from features (default: false = byte-identical). Same
+        // strictness as ux_rules: a non-bool value is a parse error
+        // naming the key.
+        let event_idempotency = match profile.features.get("event_idempotency") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"event_idempotency\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+        let event_archive = match profile.features.get("event_archive") {
+            Some(v) => v.as_bool().ok_or_else(|| {
+                Error::Config("feature \"event_archive\" must be a boolean".to_string())
+            })?,
+            None => false,
+        };
+
         // Topology × provider rule: the workers scaffold emits per-domain
         // Cloudflare Worker crates whose wasm32 slice cannot link SeaORM
         // (sqlx/mio do not compile to wasm32-unknown-unknown). Cornucopia is
@@ -427,6 +455,8 @@ impl BuildPlan {
             deployment_topology,
             dependency_strategy,
             event_envelope,
+            event_idempotency,
+            event_archive,
             namespace_layout,
             ux_rules,
             expr_ir,
@@ -495,6 +525,8 @@ impl BuildPlan {
             deployment_topology: DeploymentTopology::default(),
             dependency_strategy: DependencyStrategy::default(),
             event_envelope: EnvelopeVariant::default(),
+            event_idempotency: false,
+            event_archive: false,
             namespace_layout: false,
             ux_rules: false,
             expr_ir: false,

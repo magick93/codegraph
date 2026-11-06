@@ -907,3 +907,103 @@ async fn consumers_template_normalizes_both_envelope_shapes() {
         );
     }
 }
+
+/// #612: with `event_idempotency` on, `dispatch_registered` keys each
+/// delivery on (pgmq msg_id, consumer) — insert-first into
+/// `platform.event_consumption`, skip when the row already exists — so
+/// an at-least-once redelivery (visibility timeout < drain cron) runs
+/// the handler once. Fail-open: a dedupe-write error still delivers.
+#[tokio::test]
+async fn consumers_template_guards_dispatches_with_idempotency_keying() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let mut project = project();
+    project.codegen.event_idempotency = true;
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project)
+            .unwrap();
+    for needle in [
+        "fn mark_consumed(",
+        "INSERT INTO platform.event_consumption",
+        "ON CONFLICT DO NOTHING",
+        "msg_id: i64",
+        "mark_consumed(&db, msg_id,",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "idempotency guard missing {needle}:\n{rendered}"
+        );
+    }
+    // The doc discipline flips under the flag: keying is GENERATED, the
+    // handler duty narrows.
+    assert!(
+        rendered.contains("Idempotency keying is generated"),
+        "{rendered}"
+    );
+}
+
+/// Flag-off: no dedupe surface at all — the msg_id parameter is absent,
+/// `mark_consumed` is not emitted, and the pre-#612 rendering (the
+/// re-blessed golden) stays byte-identical.
+#[tokio::test]
+async fn consumers_template_flag_off_has_no_idempotency_surface() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project())
+            .unwrap();
+    assert!(!rendered.contains("event_consumption"), "{rendered}");
+    assert!(!rendered.contains("mark_consumed"), "{rendered}");
+    assert!(!rendered.contains("msg_id"), "{rendered}");
+}
+
+/// #612: the dedupe table rides the platform schema migration when the
+/// flag is on (created BEFORE the blanket app_user grants so the drain's
+/// app_user pool can insert), and is absent flag-off.
+#[test]
+fn platform_schema_carries_the_event_consumption_table_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_idempotency = true;
+    let rendered = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        rendered.contains("CREATE TABLE IF NOT EXISTS platform.event_consumption"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("PRIMARY KEY (msg_id, consumer)"),
+        "{rendered}"
+    );
+    // Table creation precedes the blanket grant in the file order.
+    let table_pos = rendered.find("event_consumption").expect("table present");
+    let grant_pos = rendered
+        .find("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform")
+        .expect("blanket grant present");
+    assert!(
+        table_pos < grant_pos,
+        "table must precede the app_user grant"
+    );
+
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(
+        !rendered_off.contains("event_consumption"),
+        "{rendered_off}"
+    );
+}
