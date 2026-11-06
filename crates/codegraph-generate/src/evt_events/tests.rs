@@ -1143,3 +1143,168 @@ async fn dispatch_instruments_the_delivery_path() {
         );
     }
 }
+
+// ── #614: per-event JSON Schema emission ────────────────────────────────
+
+/// The rex-primitive → JSON Schema type mapping (2020-12).
+#[test]
+fn event_schema_primitive_type_mapping() {
+    use crate::events::docs::json_type_of;
+    assert_eq!(
+        json_type_of("String"),
+        serde_json::json!({"type": "string"})
+    );
+    assert_eq!(json_type_of("bool"), serde_json::json!({"type": "boolean"}));
+    assert_eq!(json_type_of("i64"), serde_json::json!({"type": "integer"}));
+    assert_eq!(json_type_of("f64"), serde_json::json!({"type": "number"}));
+    assert_eq!(
+        json_type_of("uuid::Uuid"),
+        serde_json::json!({"type": "string", "format": "uuid"})
+    );
+    assert_eq!(
+        json_type_of("chrono::NaiveDate"),
+        serde_json::json!({"type": "string", "format": "date"})
+    );
+    assert_eq!(
+        json_type_of("chrono::NaiveDateTime"),
+        serde_json::json!({"type": "string", "format": "date-time"})
+    );
+    assert_eq!(
+        json_type_of("rust_decimal::Decimal"),
+        serde_json::json!({"type": "number"})
+    );
+    // Unmapped (serde_json::Value) → permissive, never silently strict.
+    assert_eq!(json_type_of("serde_json::Value"), serde_json::json!({}));
+}
+
+/// One payload schema + one envelope wrapper schema per declared event,
+/// emitted under `schemas/events/`. Properties ride declaration order
+/// (the wire artifact's field order); resolved-but-undocumented schema
+/// fields stay permissive (`{"type": "object"}`) — never silently
+/// strict; the payload `$ref` targets resolve within the emitted set.
+#[tokio::test]
+async fn event_schemas_emit_per_declared_event() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let docs =
+        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native);
+    let mut paths: Vec<&str> = docs.iter().map(|d| d.rel_path.as_str()).collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "schemas/events/OrderCancelled.Envelope.json",
+            "schemas/events/OrderCancelled.json",
+            "schemas/events/OrderPlaced.Envelope.json",
+            "schemas/events/OrderPlaced.json",
+        ],
+        "{paths:?}"
+    );
+
+    let placed = docs
+        .iter()
+        .find(|d| d.rel_path == "schemas/events/OrderPlaced.json")
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&placed.content).unwrap();
+    assert_eq!(
+        doc["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert_eq!(doc["type"], "object");
+    assert_eq!(doc["properties"]["order_id"]["type"], "string");
+    // Resolved schema-typed field: permissive object (no static DTO
+    // schemas are published yet), with the resolution recorded.
+    assert_eq!(doc["properties"]["status"]["type"], "object");
+    assert!(
+        placed.content.contains("\"order_id\"")
+            && placed.content.find("\"order_id\"").unwrap()
+                < placed.content.find("\"status\"").unwrap(),
+        "declaration order preserved: {}",
+        placed.content
+    );
+
+    let envelope = docs
+        .iter()
+        .find(|d| d.rel_path == "schemas/events/OrderPlaced.Envelope.json")
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&envelope.content).unwrap();
+    assert_eq!(doc["properties"]["payload"]["$ref"], "OrderPlaced.json");
+    for key in [
+        "event",
+        "version",
+        "channel",
+        "payload",
+        "event_type",
+        "domain",
+        "tenant_id",
+        "occurred_at",
+        "correlation_id",
+        "traceparent",
+    ] {
+        assert!(
+            doc["properties"].get(key).is_some(),
+            "envelope schema missing {key}: {}",
+            envelope.content
+        );
+    }
+    assert!(
+        doc["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("event"))
+    );
+}
+
+/// Flag-off: an empty architecture emits zero document artifacts.
+#[test]
+fn event_schemas_emit_nothing_without_events() {
+    let arch = crate::events::EventArchitecture::default();
+    let docs =
+        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native);
+    assert!(docs.is_empty(), "{docs:?}");
+}
+
+/// Pipeline leg: the emitted tree carries the schema documents and every
+/// payload `$ref` resolves to a sibling file.
+#[tokio::test]
+async fn event_schemas_flow_through_the_pipeline() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path());
+    let files = generator
+        .generate(&db, &config(), &[], &tera(), &project())
+        .await
+        .expect("schemas generate");
+    let names: Vec<String> = files
+        .iter()
+        .filter_map(|f| {
+            f.path
+                .strip_prefix(dir.path())
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+        })
+        .collect();
+    for expected in [
+        "schemas/events/OrderPlaced.json",
+        "schemas/events/OrderPlaced.Envelope.json",
+    ] {
+        assert!(names.iter().any(|n| n == expected), "{names:?}");
+    }
+    // Every payload $ref resolves within the emitted set.
+    for f in files
+        .iter()
+        .filter(|f| f.path.extension().map(|e| e == "json").unwrap_or(false))
+    {
+        let doc: serde_json::Value = serde_json::from_str(&f.content).unwrap();
+        if let Some(r) = doc["properties"]["payload"]["$ref"].as_str() {
+            let sibling = f.path.parent().unwrap().join(r);
+            assert!(
+                files.iter().any(|f| f.path == sibling),
+                "$ref {r} unresolved for {:?}",
+                f.path
+            );
+        }
+    }
+}

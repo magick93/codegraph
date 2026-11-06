@@ -431,7 +431,8 @@ async fn no_evt_input_generates_no_events_plane() {
         "only the .evt run declares the gated anyhow dep\n--- evt ---\n{cargo_evt}\n--- off ---\n{cargo_off}"
     );
 
-    // The evt-only files are EXACTLY the events plane.
+    // The evt-only files are EXACTLY the events plane (code + the
+    // #614 document artifacts — all inert without `.evt` input).
     let evt_only: Vec<&String> = files_evt
         .keys()
         .filter(|k| !files_off.contains_key(*k))
@@ -439,6 +440,10 @@ async fn no_evt_input_generates_no_events_plane() {
     assert_eq!(
         evt_only,
         [
+            "schemas/events/OrderCancelled.Envelope.json",
+            "schemas/events/OrderCancelled.json",
+            "schemas/events/OrderPlaced.Envelope.json",
+            "schemas/events/OrderPlaced.json",
             "src/events/consumers.rs",
             "src/events/contracts.rs",
             "src/events/emit.rs",
@@ -449,7 +454,8 @@ async fn no_evt_input_generates_no_events_plane() {
         "the .evt run adds exactly the four src/events files"
     );
 
-    // The ownership manifest differs by exactly the same four entries.
+    // The ownership manifest differs by exactly the same entries
+    // (code + the #614 document artifacts).
     let manifest_evt: CodegraphManifest =
         serde_json::from_str(read_out(&files_evt, ".codegraph-manifest.json").as_str()).unwrap();
     let manifest_off: CodegraphManifest =
@@ -462,6 +468,10 @@ async fn no_evt_input_generates_no_events_plane() {
     assert_eq!(
         added,
         [
+            "schemas/events/OrderCancelled.Envelope.json",
+            "schemas/events/OrderCancelled.json",
+            "schemas/events/OrderPlaced.Envelope.json",
+            "schemas/events/OrderPlaced.json",
             "src/events/consumers.rs",
             "src/events/contracts.rs",
             "src/events/emit.rs",
@@ -482,7 +492,8 @@ async fn no_evt_input_generates_no_events_plane() {
         match files_off.get(name) {
             Some(content_off) if content_off == content_evt => {}
             // Evt-only files are covered by the exact evt-only assertion.
-            None if name.starts_with("src/events/") => {}
+            None if name.starts_with("src/events/")
+                || name.starts_with("schemas/events/") => {}
             _ => differing.push(name.clone()),
         }
     }

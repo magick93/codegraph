@@ -9,6 +9,7 @@
 //! models, so every consumer (and the pgmq setup migration) keeps its
 //! pre-#455 byte-identical output.
 
+pub mod docs;
 pub mod model;
 pub mod placement;
 

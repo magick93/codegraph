@@ -533,14 +533,33 @@ impl GlobalGenerator for EvtEventsGenerator {
             // The acceptance contract: no `.evt` input ⇒ zero files.
             return Ok(Vec::new());
         }
+
+        // Document artifacts (issue #614): tree-global projections of
+        // the architecture, emitted once regardless of topology.
+        let variant = match project.codegen.event_envelope.as_str() {
+            "cloudevents" => crate::events::EnvelopeVariant::CloudEvents,
+            _ => crate::events::EnvelopeVariant::Native,
+        };
+        let docs = crate::events::docs::document_artifacts(&arch, variant);
+        let docs: Vec<GeneratedFile> = docs
+            .into_iter()
+            .map(|d| GeneratedFile {
+                path: self.output_dir.join(&d.rel_path),
+                content: d.content,
+            })
+            .collect();
+
         if self.workers_topology {
-            return self
-                .generate_for_workers(db, config, generation_order, tera, project, &arch)
-                .await;
+            let mut files = docs;
+            files.extend(
+                self.generate_for_workers(db, config, generation_order, tera, project, &arch)
+                    .await?,
+            );
+            return Ok(files);
         }
+        let mut files = docs;
 
         let events_dir = self.output_dir.join("src").join("events");
-        let mut files = Vec::new();
 
         // contracts.rs — transport-free, emitted on every dialect.
         let contracts = contracts_context(db, &arch, &config.defaults.type_suffix).await?;
