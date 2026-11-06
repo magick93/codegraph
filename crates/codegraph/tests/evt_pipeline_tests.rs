@@ -205,6 +205,7 @@ async fn evt_input_generates_the_typed_events_plane() {
         "\"tenant_id\"",
         "\"occurred_at\"",
         "\"correlation_id\"",
+        "\"traceparent\": ctx.traceparent.as_deref()",
     ] {
         assert!(emit.contains(key), "envelope key {key} missing: {emit}");
     }

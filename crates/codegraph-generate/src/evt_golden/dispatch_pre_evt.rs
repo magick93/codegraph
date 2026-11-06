@@ -131,7 +131,7 @@ impl WebhookDispatcher {
                 .db
                 .query_all_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT msg_id, message FROM pgmq.read($1, 30, 100)",
+                    {% if evt_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, 30, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, 30, 100)",{% endif %}
                     [queue.as_str().into()],
                 ))
                 .await?;
@@ -141,8 +141,9 @@ impl WebhookDispatcher {
             }
 
             for row in &msgs {
-                let msg_id: i64 = row.try_get_by_index(0)?;
-                let message: serde_json::Value = row.try_get_by_index(1)?;{% if evt_events %}
+                let msg_id: i64 = row.try_get_by_index(0)?;{% if evt_events %}
+                let read_ct: i32 = row.try_get_by_index(1)?;{% endif %}
+                let message: serde_json::Value = row.try_get_by_index({% if evt_events %}2{% else %}1{% endif %})?;{% if evt_events %}
 
                 // Typed event envelope (.evt contracts): the declared event
                 // name rides the `event` key and is mirrored into event_type
@@ -150,10 +151,18 @@ impl WebhookDispatcher {
                 // and `channel` ride the envelope; the entity columns are
                 // absent for declared events (deliveries store the whole
                 // envelope). A null domain matches no webhook subscription —
-                // the matcher compares event_domain exactly.
-                let is_typed_envelope = message.get("event").is_some();
+                // the matcher compares event_domain exactly. Issue #609: a
+                // CloudEvents envelope (native or cloudevents publishers on
+                // one queue) keys the name as `type` — normalize across
+                // both shapes.
+                let is_typed_envelope = message.get("event").is_some()
+                    || message.get("type").is_some();
                 let event_type = if is_typed_envelope {
-                    message["event"].as_str().unwrap_or("")
+                    message
+                        .get("event")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| message.get("type").and_then(|v| v.as_str()))
+                        .unwrap_or("")
                 } else {
                     message["event_type"].as_str().unwrap_or("")
                 };
@@ -250,12 +259,59 @@ impl WebhookDispatcher {
                 }
 
                 // Delete processed messages from pgmq only when all delivery{% if evt_events %}
-                // records AND every in-process consumer dispatch succeeded —{% else %}
+                // records AND every in-process consumer dispatch succeeded.{% else %}
                 // records were created successfully.{% endif %} If any INSERT failed, the
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
-                if all_inserts_succeeded{% if evt_events %}
-                    && crate::events::consumers::dispatch_registered(&self.db, &message) == 0{% endif %} {
+                metrics::counter!("events_received",
+                    "queue" => queue.to_string(),
+                    "event" => event_type.to_string(),
+                )
+                .increment(1);
+{% if evt_events %}                let outcomes = crate::events::consumers::dispatch_registered(
+                    self.db.clone(),
+                    message.clone(),{% if project.event_idempotency %}
+                    msg_id,{% endif %}
+                )
+                .await;
+                let typed_ok = outcomes.iter().all(|outcome| outcome.ok);
+                for outcome in &outcomes {
+                    if !outcome.ok {
+                        // Issue #613: labels are identity names only —
+                        // never payload fields.
+                        metrics::counter!("events_failed",
+                            "queue" => queue.to_string(),
+                            "event" => event_type.to_string(),
+                            "consumer" => outcome.consumer.to_string(),
+                        )
+                        .increment(1);
+                    }
+                }
+                // Issue #611: a message whose consumers keep failing past
+                // the delivery policy's attempt budget dead-letters to
+                // `{queue}_dlq` — moved is terminal, the source queue
+                // drains, and sibling consumers unblock (one poisoning
+                // message can no longer starve its queue).
+                let moved_to_dlq = if !typed_ok && read_ct as i32 >= self.max_retries {
+                    dead_letter(
+                        &self.db,
+                        queue,
+                        msg_id,
+                        read_ct,
+                        &message,
+                        &outcomes,
+                    )
+                    .await
+                } else {
+                    false
+                };
+{% endif %}                if all_inserts_succeeded{% if evt_events %}
+                    && (typed_ok || moved_to_dlq){% endif %} {
+                    metrics::counter!("events_processed",
+                        "queue" => queue.to_string(),
+                        "event" => event_type.to_string(),
+                    )
+                    .increment(1);
                     let _ = self
                         .db
                         .execute_raw(Statement::from_sql_and_values(
@@ -264,7 +320,15 @@ impl WebhookDispatcher {
                             [queue.as_str().into(), msg_id.into()],
                         ))
                     .await;
-                }
+                }{% if evt_events %} else {
+                    // Redelivery: the visibility timeout hands the message
+                    // back (at-least-once).
+                    metrics::counter!("events_retried",
+                        "queue" => queue.to_string(),
+                        "event" => event_type.to_string(),
+                    )
+                    .increment(1);
+                }{% endif %}
             }
         }
 
@@ -291,13 +355,20 @@ impl WebhookDispatcher {
             Some(hex::encode(result.into_bytes()))
         });
 
-        let mut req = self.http_client.post(url).header("Content-Type", "application/json");
+        let mut req = self.http_client.post(url).header("Content-Type", {% if project.event_envelope == "cloudevents" %}"application/cloudevents+json"{% else %}"application/json"{% endif %});
 
         if let Some(ref sig) = signature {
             req = req.header("X-Webhook-Signature", format!("sha256={sig}"));
         }
 
         req = req.header("X-Webhook-Timestamp", chrono::Utc::now().timestamp());
+
+        // Issue #613: W3C trace context propagates — the envelope's
+        // `traceparent` rides as an UNSIGNED transport header beside the
+        // signature (the body-only HMAC covers the envelope member).
+        if let Some(tp) = payload.get("traceparent").and_then(|v| v.as_str()) {
+            req = req.header("traceparent", tp);
+        }
 
         // Add custom headers from endpoint config
         if let Some(obj) = headers.as_object() {
@@ -324,6 +395,11 @@ impl WebhookDispatcher {
         };
 
         if delivered {
+            metrics::counter!("webhook_delivered",
+                "endpoint" => endpoint_id.to_string(),
+                "status" => status.map(|s| s.to_string()).unwrap_or_default(),
+            )
+            .increment(1);
             // Mark as delivered
             let _ = self
                 .db
@@ -347,6 +423,11 @@ impl WebhookDispatcher {
         } else {
             let next_retry = delay_for_attempt(attempt as u32);
             let new_attempt = attempt + 1;
+            metrics::counter!("webhook_retry_scheduled",
+                "endpoint" => endpoint_id.to_string(),
+                "attempt" => new_attempt.to_string(),
+            )
+            .increment(1);
 
             let _ = self
                 .db
@@ -382,12 +463,100 @@ impl WebhookDispatcher {
                     ))
                     .await;
 
+                metrics::counter!("webhook_endpoint_deactivated",
+                    "endpoint" => endpoint_id.to_string(),
+                )
+                .increment(1);
                 tracing::warn!(endpoint_id = %endpoint_id, "webhook endpoint deactivated after exhausting retries");
             }
         }
     }
 }
-
+{% if evt_events %}/// Issue #611: move one poisoned message to `{queue}_dlq` with the
+/// failure metadata attached under `_dlq`. The DLQ queue is created
+/// lazily on the first dead-letter (DLQ queues stay out of the migration
+/// band, keeping sqlite/unbound targets clean and the flag-off tree
+/// untouched). Returns true when the message was moved AND deleted from
+/// the source queue — the terminal outcome the delete condition needs.
+async fn dead_letter(
+    db: &DatabaseConnection,
+    queue: &str,
+    msg_id: i64,
+    read_ct: i32,
+    message: &serde_json::Value,
+    outcomes: &[crate::events::consumers::ConsumerOutcome],
+) -> bool {
+    let dlq = format!("{queue}_dlq");
+    let _ = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT pgmq.create($1) WHERE NOT EXISTS (SELECT 1 FROM pgmq.list_queues() WHERE queue_name = $1)",
+            [dlq.as_str().into()],
+        ))
+        .await;
+    let mut envelope = message.clone();
+    envelope["_dlq"] = serde_json::json!({
+        "consumers": outcomes
+            .iter()
+            .filter(|o| !o.ok)
+            .map(|o| o.consumer)
+            .collect::<Vec<_>>(),
+        "errors": outcomes
+            .iter()
+            .filter(|o| !o.ok)
+            .filter_map(|o| o.error.clone())
+            .collect::<Vec<_>>(),
+        "attempts": read_ct,
+        "failed_at": chrono::Utc::now().to_rfc3339(),
+    });
+    // sea_orm drops JSONB values bound via from_sql_and_values (the
+    // delivery-INSERT workaround) — inline with quote escaping.
+    let envelope_json = serde_json::to_string(&envelope)
+        .unwrap_or_default()
+        .replace('\'', "''");
+    let sent = db
+        .execute_raw(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!("SELECT pgmq.send('{}', '{}'::jsonb)", dlq, envelope_json),
+        ))
+        .await;
+    let deleted = db
+        .execute_raw(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT pgmq.delete($1, $2)",
+            [queue.as_str().into(), msg_id.into()],
+        ))
+        .await;
+    match (sent, deleted) {
+        (Ok(_), Ok(_)) => {
+            tracing::warn!(
+                queue = %queue,
+                dlq = %dlq,
+                msg_id = msg_id,
+                attempts = read_ct,
+                "message dead-lettered after exhausting the attempt budget"
+            );
+            metrics::counter!("events_dead_lettered",
+                "queue" => queue.to_string(),
+                "event" => crate::events::consumers::event_name_of(message)
+                    .unwrap_or("")
+                    .to_string(),
+            )
+            .increment(1);
+            true
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::error!(
+                queue = %queue,
+                msg_id = msg_id,
+                error = %e,
+                "dead-letter move failed; message stays queued for retry"
+            );
+            false
+        }
+    }
+}
+{% endif %}
 /// Compute next retry delay with exponential backoff + jitter.
 /// Attempt 1: ~10s, 2: ~20s, 3: ~40s, 4: ~80s, 5: ~160s
 fn delay_for_attempt(attempt: u32) -> chrono::DateTime<chrono::Utc> {

@@ -5,16 +5,22 @@ r##"//! Typed publishers: one event enum + publish fn per bound channel.
 //! unbound channels (database targets without a queue substrate) have no
 //! publish surface — the application must not publish onto them.
 
-use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+{% if project.persistence_provider == "cornucopia" %}use cornucopia_queries::client::GenericClient;
 use uuid::Uuid;
+
+use crate::db_client::DbClient;
 {% if contracts_use %}{{ contracts_use }}
 {% endif %}
 
-/// Per-publish context carried into the event envelope.
-#[derive(Debug, Clone, Copy)]
+/// Per-publish context carried into the event envelope. `traceparent`
+/// (issue #613) is the calling request's W3C trace context, captured by
+/// the publisher when one exists; it rides the envelope so the drain can
+/// propagate it to webhook POSTs and downstream hops.
+#[derive(Debug, Clone)]
 pub struct EventContext {
     pub tenant_id: Uuid,
     pub correlation_id: Uuid,
+    pub traceparent: Option<String>,
 }
 {% for channel in channels %}
 /// Events published on the `{{ channel.name }}` channel.
@@ -43,7 +49,127 @@ impl {{ channel.enum_name }} {
         match self {
 {% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.domain_expr }},
 {% endfor %}        }
+    }{% if project.event_envelope == "cloudevents" %}
+    /// The CloudEvents `source` URI-reference (issue #609): `/{domain}`,
+    /// or `/{channel}` when no domain is derivable from the payload.
+    pub fn ce_source(&self) -> &'static str {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.source_expr }},
+{% endfor %}        }
     }
+{% endif %}
+
+    /// The typed payload, serialized.
+    pub fn payload(&self) -> serde_json::Value {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(payload) => {
+                serde_json::to_value(payload).unwrap_or_default()
+            }
+{% endfor %}        }
+    }
+}
+
+/// Publish an event onto the `{{ channel.name }}` channel (pgmq queue
+/// `{{ channel.queue }}`). The envelope carries the declared event name as
+/// both `event` and `event_type` so webhook subscription matching and the
+/// typed consumer routing share one message shape.
+pub async fn publish_{{ channel.name_snake }}(
+    client: &DbClient,
+    event: {{ channel.enum_name }},
+    ctx: &EventContext,
+) -> Result<(), tokio_postgres::Error> {
+{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
+    // name is `type`, the payload rides `data`, and the native identity
+    // keys survive as CE extension attributes. `id` is a publish-time
+    // UUID — distinct from the pgmq msg_id the queue assigns.
+    let envelope = serde_json::json!({
+        "specversion": "1.0",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "type": event.event_name(),
+        "source": event.ce_source(),
+        "time": chrono::Utc::now().to_rfc3339(),
+        "datacontenttype": "application/json",
+        "data": event.payload(),
+        "version": event.event_version(),
+        "channel": "{{ channel.name }}",
+        "domain": event.domain(),
+        "correlationid": ctx.correlation_id.to_string(),
+        "tenantid": ctx.tenant_id.to_string(),
+        "traceparent": ctx.traceparent.as_deref(),
+    });
+{% else %}    let envelope = serde_json::json!({
+        "event": event.event_name(),
+        "version": event.event_version(),
+        "channel": "{{ channel.name }}",
+        "payload": event.payload(),
+        "event_type": event.event_name(),
+        "domain": event.domain(),
+        "entity_table": serde_json::Value::Null,
+        "entity_id": serde_json::Value::Null,
+        "tenant_id": ctx.tenant_id,
+        "occurred_at": chrono::Utc::now().to_rfc3339(),
+        "correlation_id": ctx.correlation_id,
+        "traceparent": ctx.traceparent.as_deref(),
+    });
+{% endif %}    // Parameterized pgmq.send: tokio-postgres binds the JSONB payload
+    // directly (no sea_orm binding workaround, no escaping).
+    let queue = "{{ channel.queue }}";
+    client
+        .execute("SELECT pgmq.send($1, $2)", &[&queue, &envelope])
+        .await?;
+    Ok(())
+}
+{% endfor %}{% else %}use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseConnection, Statement};
+use uuid::Uuid;
+{% if contracts_use %}{{ contracts_use }}
+{% endif %}
+
+/// Per-publish context carried into the event envelope. `traceparent`
+/// (issue #613) is the calling request's W3C trace context, captured by
+/// the publisher when one exists; it rides the envelope so the drain can
+/// propagate it to webhook POSTs and downstream hops.
+#[derive(Debug, Clone)]
+pub struct EventContext {
+    pub tenant_id: Uuid,
+    pub correlation_id: Uuid,
+    pub traceparent: Option<String>,
+}
+{% for channel in channels %}
+/// Events published on the `{{ channel.name }}` channel.
+#[derive(Debug, Clone)]
+pub enum {{ channel.enum_name }} {
+{% for variant in channel.variants %}    {{ variant.variant }}({{ variant.payload }}),
+{% endfor %}}
+
+impl {{ channel.enum_name }} {
+    /// The declared event name.
+    pub fn event_name(&self) -> &'static str {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => "{{ variant.event_name }}",
+{% endfor %}        }
+    }
+
+    /// The pinned event version, when the declaration carried one.
+    pub fn event_version(&self) -> Option<&'static str> {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.version_expr }},
+{% endfor %}        }
+    }
+
+    /// The event's owning domain, when derivable from its payload types.
+    pub fn domain(&self) -> Option<&'static str> {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.domain_expr }},
+{% endfor %}        }
+    }{% if project.event_envelope == "cloudevents" %}
+    /// The CloudEvents `source` URI-reference (issue #609): `/{domain}`,
+    /// or `/{channel}` when no domain is derivable from the payload.
+    pub fn ce_source(&self) -> &'static str {
+        match self {
+{% for variant in channel.variants %}            Self::{{ variant.variant }}(_) => {{ variant.source_expr }},
+{% endfor %}        }
+    }
+{% endif %}
 
     /// The typed payload, serialized.
     pub fn payload(&self) -> serde_json::Value {
@@ -64,7 +190,26 @@ pub async fn publish_{{ channel.name_snake }}(
     event: {{ channel.enum_name }},
     ctx: &EventContext,
 ) -> Result<(), sea_orm::DbErr> {
+{% if project.event_envelope == "cloudevents" %}    // CloudEvents 1.0 structured envelope (issue #609): the declared event
+    // name is `type`, the payload rides `data`, and the native identity
+    // keys survive as CE extension attributes. `id` is a publish-time
+    // UUID — distinct from the pgmq msg_id the queue assigns.
     let envelope = serde_json::json!({
+        "specversion": "1.0",
+        "id": uuid::Uuid::new_v4().to_string(),
+        "type": event.event_name(),
+        "source": event.ce_source(),
+        "time": chrono::Utc::now().to_rfc3339(),
+        "datacontenttype": "application/json",
+        "data": event.payload(),
+        "version": event.event_version(),
+        "channel": "{{ channel.name }}",
+        "domain": event.domain(),
+        "correlationid": ctx.correlation_id.to_string(),
+        "tenantid": ctx.tenant_id.to_string(),
+        "traceparent": ctx.traceparent.as_deref(),
+    });
+{% else %}    let envelope = serde_json::json!({
         "event": event.event_name(),
         "version": event.event_version(),
         "channel": "{{ channel.name }}",
@@ -76,8 +221,9 @@ pub async fn publish_{{ channel.name_snake }}(
         "tenant_id": ctx.tenant_id,
         "occurred_at": chrono::Utc::now().to_rfc3339(),
         "correlation_id": ctx.correlation_id,
+        "traceparent": ctx.traceparent.as_deref(),
     });
-    // sea_orm drops JSONB values bound via from_sql_and_values (the same
+{% endif %}    // sea_orm drops JSONB values bound via from_sql_and_values (the same
     // workaround the webhook dispatcher applies) — inline the envelope with
     // single-quote escaping instead.
     let envelope_json = serde_json::to_string(&envelope)
@@ -89,4 +235,4 @@ pub async fn publish_{{ channel.name_snake }}(
     Ok(())
 }
 {% endfor %}
-"##
+{% endif %}"##

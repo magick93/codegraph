@@ -318,6 +318,11 @@ async fn drain_events_into_jobs(
                 subscription_id,
             });
         }
+        tracing::info!(
+            queue = %queue_name,
+            event = %event_type,
+            "events.received"
+        );
 {% if has_events %}        // Typed consumer dispatch (issue #505): the events plane's
         // registry. Trigger envelopes carry no `event` key and dispatch
         // zero consumers.
@@ -341,6 +346,14 @@ async fn drain_events_into_jobs(
         } else {
             all_ok
         };
+{% endif %}
+{% if has_events %}        if all_ok {
+            tracing::info!(queue = %queue_name, event = %event_type, "events.processed");
+        } else if typed_ok {
+            tracing::warn!(queue = %queue_name, event = %event_type, "events.dead_lettered");
+        } else {
+            tracing::info!(queue = %queue_name, event = %event_type, "events.retried");
+        }
 {% endif %}        groups.push((queue_name.clone(), msg_id{% if has_events %}, read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}));
     }
 

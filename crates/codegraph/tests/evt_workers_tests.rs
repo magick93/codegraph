@@ -320,7 +320,7 @@ async fn events_plane_routes_into_the_owning_worker_crate() {
     let dispatch = read(&files, "workers/sales/src/webhook_dispatch.rs");
     assert!(
         dispatch.contains(
-            "crate::events::consumers::dispatch_registered(&*state.client_source, message.clone())"
+            "crate::events::consumers::dispatch_registered(\n            &*state.client_source,\n            message.clone(),"
         ),
         "{dispatch}"
     );

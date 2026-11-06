@@ -1054,9 +1054,6 @@ async fn consumers_report_per_consumer_outcomes() {
 /// consumers) forever.
 #[tokio::test]
 async fn dispatch_dead_letters_permanently_failing_messages() {
-    let db = db_with(Some(orders_evt_model())).await;
-    let dir = TempDir::new().unwrap();
-    let generator = EvtEventsGenerator::new(dir.path());
     // The dispatch template renders through the webhook generator; pin
     // the emitted drain via a direct template render with the typed ctx.
     let ctx = serde_json::json!({ "evt_events": true });
@@ -1075,6 +1072,74 @@ async fn dispatch_dead_letters_permanently_failing_messages() {
         assert!(
             rendered.contains(needle),
             "DLQ fate missing {needle}:\n{rendered}"
+        );
+    }
+}
+
+/// #613: the publish context captures W3C trace context, and the envelope
+/// carries an additive `traceparent` key (null when the caller had none —
+/// the `event_type` precedent: consumers ignore unknown keys). Both
+/// envelope variants carry it.
+#[tokio::test]
+async fn emit_template_carries_the_traceparent_key() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let emit = super::emit_context(&arch);
+    let rendered =
+        render_template_with_project(&tera(), "events/emit.tera", &emit, &project()).unwrap();
+    assert!(
+        rendered.contains("pub traceparent: Option<String>,"),
+        "EventContext captures trace context:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("\"traceparent\": ctx.traceparent.as_deref()"),
+        "native envelope carries traceparent:\n{rendered}"
+    );
+    let mut ce = project();
+    ce.codegen.event_envelope = "cloudevents".to_string();
+    let rendered = render_template_with_project(&tera(), "events/emit.tera", &emit, &ce).unwrap();
+    assert!(
+        rendered.contains("\"traceparent\": ctx.traceparent.as_deref()"),
+        "CE envelope carries traceparent as an extension attribute:\n{rendered}"
+    );
+}
+
+/// #613: the drain instruments the delivery path — the five events
+/// counters plus the three webhook outcome counters, exposed through the
+/// existing `/metrics` Prometheus recorder (the `metrics` dep is
+/// unconditional in the generated app). Labels are NAMES only (queue,
+/// event, consumer, endpoint) — never payload fields. W3C trace context
+/// propagates: the webhook POST rides the envelope's `traceparent` as an
+/// unsigned transport header (beside the body-only HMAC signature).
+#[tokio::test]
+async fn dispatch_instruments_the_delivery_path() {
+    let ctx = serde_json::json!({ "evt_events": true });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch.tera", &ctx, &project()).unwrap();
+    for needle in [
+        "metrics::counter!(\"events_received\"",
+        "metrics::counter!(\"events_processed\"",
+        "metrics::counter!(\"events_retried\"",
+        "metrics::counter!(\"events_failed\"",
+        "metrics::counter!(\"events_dead_lettered\"",
+        "metrics::counter!(\"webhook_delivered\"",
+        "metrics::counter!(\"webhook_retry_scheduled\"",
+        "metrics::counter!(\"webhook_endpoint_deactivated\"",
+        // traceparent propagation (unsigned header beside the signature)
+        ".header(\"traceparent\",",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "delivery metrics missing {needle}:\n{rendered}"
+        );
+    }
+    // Redaction: the counters label by identity names only.
+    for banned in ["\"payload\" =>", "payload.get(\"payload\") =>"] {
+        assert!(
+            !rendered.contains(banned),
+            "counter labels must never carry payload data: {banned}"
         );
     }
 }

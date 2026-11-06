@@ -11,7 +11,6 @@
 use crate::config::OpsConfig;
 use crate::error::OpsResult;
 use crate::output;
-use std::time::Duration;
 
 /// The default requeue batch size (one drain cycle's batch at the drain's
 /// own `pgmq.read` batch).
@@ -185,7 +184,5 @@ mod tests {
         // drain's own 30s visibility timeout.
         let sql = requeue_sql("events_a_dlq", "events_a", DEFAULT_REQUEUE_LIMIT).unwrap();
         assert!(sql.contains(", 30, 100)"), "{sql}");
-        // The Duration import pins the drain-adjacent semantics.
-        let _ = Duration::from_secs(30);
     }
 }
