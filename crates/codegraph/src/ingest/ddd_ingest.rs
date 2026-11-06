@@ -461,6 +461,7 @@ pub fn ddd_model_graph_from_rex(
                     capabilities: op.capabilities.clone(),
                     is_protected: op.is_protected,
                     condition: op.condition.clone(),
+                    emits: op.emits.clone(),
                     ordinal,
                 })
                 .collect();

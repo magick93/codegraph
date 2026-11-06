@@ -39,7 +39,7 @@ class Movie extends Media {
 }
 
 class PhysicalMedia {
-    String status
+    String condition
     refers Media media
 }
 

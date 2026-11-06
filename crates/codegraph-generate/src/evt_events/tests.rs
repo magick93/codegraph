@@ -423,16 +423,28 @@ async fn dispatch_generator_renders_typed_branch_when_events_present() {
     let content = &files[0].content;
 
     assert!(
-        content.contains("crate::events::consumers::dispatch_registered(\n                            self.db.clone(),"),
+        content.contains(
+            "crate::events::consumers::dispatch_registered(\n                    self.db.clone(),"
+        ),
         "the delete condition extends to consumer dispatches: {content}"
+    );
+    assert!(
+        content.contains("let typed_ok = outcomes.iter().all(|outcome| outcome.ok);"),
+        "the terminal condition is all-outcomes-ok (issue #611): {content}"
     );
     assert!(
         content.contains("message.get(\"event\").is_some()"),
         "typed envelopes are detected by the `event` key"
     );
+    // Issue #609: CloudEvents envelopes key the name as `type` — the
+    // typed branch normalizes across both shapes.
     assert!(
-        content.contains("message[\"event\"].as_str().unwrap_or(\"\")"),
-        "the declared event name drives event_type"
+        content.contains("message.get(\"type\").is_some()"),
+        "CloudEvents envelopes are detected by the `type` key"
+    );
+    assert!(
+        content.contains(".or_else(|| message.get(\"type\").and_then(|v| v.as_str()))"),
+        "the event name normalizes across both envelope shapes"
     );
     assert!(
         content.contains("message[\"event_type\"].as_str().unwrap_or(\"\")"),
@@ -777,4 +789,846 @@ async fn workers_topology_unplaceable_channel_is_a_hard_error() {
     assert!(message.contains("`pings'"), "{message}");
     assert!(message.contains("events_pings"), "{message}");
     assert!(message.contains("kind = \"queue\""), "{message}");
+}
+
+// ── #609: the CloudEvents envelope variant ──────────────────────────────
+
+/// The envelope-variant mapping table is pinned: CloudEvents 1.0
+/// structured JSON with the native identity keys carried as CE extension
+/// attributes (nothing in the native envelope is lost).
+#[test]
+fn envelope_variant_parses_strictly() {
+    use crate::events::EnvelopeVariant;
+    assert_eq!(EnvelopeVariant::default(), EnvelopeVariant::Native);
+    assert_eq!(EnvelopeVariant::Native.as_str(), "native");
+    assert_eq!(EnvelopeVariant::CloudEvents.as_str(), "cloudevents");
+    assert_eq!(
+        EnvelopeVariant::from_config("native").unwrap(),
+        EnvelopeVariant::Native
+    );
+    assert_eq!(
+        EnvelopeVariant::from_config("cloudevents").unwrap(),
+        EnvelopeVariant::CloudEvents
+    );
+    let err = EnvelopeVariant::from_config("ce").unwrap_err().to_string();
+    assert!(err.contains("event_envelope"), "{err}");
+    assert!(err.contains("cloudevents"), "{err}");
+}
+
+/// Under `event_envelope = "cloudevents"` the publish fns build the CE
+/// 1.0 structured envelope: `type`/`source`/`id`/`time`/`datacontenttype`
+/// with the payload under `data`, and the native identity keys as CE
+/// extension attributes (`version`/`channel`/`domain`/`correlationid`/
+/// `tenantid`). The native mirror key `event_type` is gone — matching
+/// normalizes instead.
+#[tokio::test]
+async fn emit_template_renders_the_cloudevents_envelope() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let emit = super::emit_context(&arch);
+    let mut project = project();
+    project.codegen.event_envelope = "cloudevents".to_string();
+    let rendered =
+        render_template_with_project(&tera(), "events/emit.tera", &emit, &project).unwrap();
+    for key in [
+        "\"specversion\": \"1.0\"",
+        "\"type\": event.event_name()",
+        "\"source\": ",
+        "\"id\": uuid::Uuid::new_v4()",
+        "\"time\": chrono::Utc::now().to_rfc3339()",
+        "\"datacontenttype\": \"application/json\"",
+        "\"data\": event.payload()",
+        "\"correlationid\": ctx.correlation_id",
+        "\"tenantid\": ctx.tenant_id",
+        "\"version\": event.event_version()",
+        "\"channel\": \"{{ channel.name }}\"",
+    ] {
+        let key = key.replace("{{ channel.name }}", "orders");
+        assert!(
+            rendered.contains(&key),
+            "CE envelope missing {key}:\n{rendered}"
+        );
+    }
+    assert!(
+        !rendered.contains("\"event_type\""),
+        "CE envelope must not carry the native event_type mirror"
+    );
+}
+
+/// The native envelope is untouched by the CE branch (the canaries pin
+/// the byte-identity; this pin asserts the axis exists in the template
+/// SOURCE and that the native rendering keeps the native key set).
+#[tokio::test]
+async fn emit_template_branches_on_the_envelope_variant() {
+    let source = include_str!("../../templates/events/emit.tera");
+    assert!(
+        source.contains("project.event_envelope"),
+        "emit.tera lost the envelope-variant discriminator"
+    );
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let emit = super::emit_context(&arch);
+    let rendered =
+        render_template_with_project(&tera(), "events/emit.tera", &emit, &project()).unwrap();
+    assert!(
+        rendered.contains("\"event_type\": event.event_name()"),
+        "native envelope lost the event_type mirror:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("ce_source"),
+        "native rendering must not carry the CE accessor"
+    );
+}
+
+/// Envelope normalization: `dispatch_registered` and the per-consumer
+/// dispatchers resolve the event name and payload through the shared
+/// `event_name_of`/`payload_of` helpers, which read both the native
+/// (`event`/`payload`) and CloudEvents (`type`/`data`) key sets — a
+/// consumer receiving mixed producer shapes routes correctly.
+#[tokio::test]
+async fn consumers_template_normalizes_both_envelope_shapes() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project())
+            .unwrap();
+    for needle in [
+        "fn event_name_of(",
+        "fn payload_of(",
+        "event_name_of(envelope)",
+        "payload_of(envelope)",
+        ".get(\"type\")",
+        ".get(\"data\")",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "consumers.tera lost the normalization helper {needle}:\n{rendered}"
+        );
+    }
+}
+
+/// #612: with `event_idempotency` on, `dispatch_registered` keys each
+/// delivery on (pgmq msg_id, consumer) — insert-first into
+/// `platform.event_consumption`, skip when the row already exists — so
+/// an at-least-once redelivery (visibility timeout < drain cron) runs
+/// the handler once. Fail-open: a dedupe-write error still delivers.
+#[tokio::test]
+async fn consumers_template_guards_dispatches_with_idempotency_keying() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let mut project = project();
+    project.codegen.event_idempotency = true;
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project)
+            .unwrap();
+    for needle in [
+        "fn mark_consumed(",
+        "INSERT INTO platform.event_consumption",
+        "ON CONFLICT DO NOTHING",
+        "msg_id: i64",
+        "mark_consumed(&db, msg_id,",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "idempotency guard missing {needle}:\n{rendered}"
+        );
+    }
+    // The doc discipline flips under the flag: keying is GENERATED, the
+    // handler duty narrows.
+    assert!(
+        rendered.contains("Idempotency keying is generated"),
+        "{rendered}"
+    );
+}
+
+/// Flag-off: no dedupe surface at all — the msg_id parameter is absent,
+/// `mark_consumed` is not emitted, and the pre-#612 rendering (the
+/// re-blessed golden) stays byte-identical.
+#[tokio::test]
+async fn consumers_template_flag_off_has_no_idempotency_surface() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project())
+            .unwrap();
+    assert!(!rendered.contains("event_consumption"), "{rendered}");
+    assert!(!rendered.contains("mark_consumed"), "{rendered}");
+    assert!(!rendered.contains("msg_id"), "{rendered}");
+}
+
+/// #612: the dedupe table rides the platform schema migration when the
+/// flag is on (created BEFORE the blanket app_user grants so the drain's
+/// app_user pool can insert), and is absent flag-off.
+#[test]
+fn platform_schema_carries_the_event_consumption_table_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_idempotency = true;
+    let rendered = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        rendered.contains("CREATE TABLE IF NOT EXISTS platform.event_consumption"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("PRIMARY KEY (msg_id, consumer)"),
+        "{rendered}"
+    );
+    // Table creation precedes the blanket grant in the file order.
+    let table_pos = rendered.find("event_consumption").expect("table present");
+    let grant_pos = rendered
+        .find("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform")
+        .expect("blanket grant present");
+    assert!(
+        table_pos < grant_pos,
+        "table must precede the app_user grant"
+    );
+
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(
+        !rendered_off.contains("event_consumption"),
+        "{rendered_off}"
+    );
+}
+
+/// #611: `dispatch_registered` reports PER-CONSUMER outcomes (not a bare
+/// failure count) — the DLQ fate needs the failed consumer names and
+/// error texts for the dead-letter metadata, and #613's counters label
+/// by consumer. Per-consumer dispatch returns Result so the error text
+/// survives.
+#[tokio::test]
+async fn consumers_report_per_consumer_outcomes() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let consumers = super::consumers_context_for(&arch, None);
+    let rendered =
+        render_template_with_project(&tera(), "events/consumers.tera", &consumers, &project())
+            .unwrap();
+    for needle in [
+        "pub struct ConsumerOutcome {",
+        "pub consumer: &'static str,",
+        "pub ok: bool,",
+        "pub error: Option<String>,",
+        ") -> Vec<ConsumerOutcome> {",
+        "ConsumerOutcome {",
+        "-> Result<(), String> {",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "outcomes missing {needle}:\n{rendered}"
+        );
+    }
+}
+
+/// #611: the drain dead-letters a message whose consumers keep failing
+/// once `read_ct` reaches the delivery policy's attempt budget — lazy
+/// `pgmq.create` of `{queue}_dlq`, send with the `_dlq` failure metadata
+/// attached, delete from the source queue. "Moved to DLQ" is terminal
+/// for the delete condition, so a poison message cannot block its queue
+/// (or — by the one-draining-worker placement invariant — its sibling
+/// consumers) forever.
+#[tokio::test]
+async fn dispatch_dead_letters_permanently_failing_messages() {
+    // The dispatch template renders through the webhook generator; pin
+    // the emitted drain via a direct template render with the typed ctx.
+    let ctx = serde_json::json!({ "evt_events": true });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch.tera", &ctx, &project()).unwrap();
+    for needle in [
+        "SELECT msg_id, read_ct, message FROM pgmq.read(",
+        "dead_letter(
+                        &self.db,",
+        "\"_dlq\"",
+        "\"attempts\": read_ct",
+        "format!(\"{queue}_dlq\")",
+        "SELECT pgmq.create($1) WHERE NOT EXISTS",
+        "(typed_ok || moved_to_dlq)",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "DLQ fate missing {needle}:\n{rendered}"
+        );
+    }
+}
+
+/// #613: the publish context captures W3C trace context, and the envelope
+/// carries an additive `traceparent` key (null when the caller had none —
+/// the `event_type` precedent: consumers ignore unknown keys). Both
+/// envelope variants carry it.
+#[tokio::test]
+async fn emit_template_carries_the_traceparent_key() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let emit = super::emit_context(&arch);
+    let rendered =
+        render_template_with_project(&tera(), "events/emit.tera", &emit, &project()).unwrap();
+    assert!(
+        rendered.contains("pub traceparent: Option<String>,"),
+        "EventContext captures trace context:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("\"traceparent\": ctx.traceparent.as_deref()"),
+        "native envelope carries traceparent:\n{rendered}"
+    );
+    let mut ce = project();
+    ce.codegen.event_envelope = "cloudevents".to_string();
+    let rendered = render_template_with_project(&tera(), "events/emit.tera", &emit, &ce).unwrap();
+    assert!(
+        rendered.contains("\"traceparent\": ctx.traceparent.as_deref()"),
+        "CE envelope carries traceparent as an extension attribute:\n{rendered}"
+    );
+}
+
+/// #613: the drain instruments the delivery path — the five events
+/// counters plus the three webhook outcome counters, exposed through the
+/// existing `/metrics` Prometheus recorder (the `metrics` dep is
+/// unconditional in the generated app). Labels are NAMES only (queue,
+/// event, consumer, endpoint) — never payload fields. W3C trace context
+/// propagates: the webhook POST rides the envelope's `traceparent` as an
+/// unsigned transport header (beside the body-only HMAC signature).
+#[tokio::test]
+async fn dispatch_instruments_the_delivery_path() {
+    let ctx = serde_json::json!({ "evt_events": true });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch.tera", &ctx, &project()).unwrap();
+    for needle in [
+        "metrics::counter!(\"events_received\"",
+        "metrics::counter!(\"events_processed\"",
+        "metrics::counter!(\"events_retried\"",
+        "metrics::counter!(\"events_failed\"",
+        "metrics::counter!(\"events_dead_lettered\"",
+        "metrics::counter!(\"webhook_delivered\"",
+        "metrics::counter!(\"webhook_retry_scheduled\"",
+        "metrics::counter!(\"webhook_endpoint_deactivated\"",
+        // traceparent propagation (unsigned header beside the signature)
+        ".header(\"traceparent\",",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "delivery metrics missing {needle}:\n{rendered}"
+        );
+    }
+    // Redaction: the counters label by identity names only.
+    for banned in ["\"payload\" =>", "payload.get(\"payload\") =>"] {
+        assert!(
+            !rendered.contains(banned),
+            "counter labels must never carry payload data: {banned}"
+        );
+    }
+}
+
+// ── #614: per-event JSON Schema emission ────────────────────────────────
+
+/// The rex-primitive → JSON Schema type mapping (2020-12).
+#[test]
+fn event_schema_primitive_type_mapping() {
+    use crate::events::docs::json_type_of;
+    assert_eq!(
+        json_type_of("String"),
+        serde_json::json!({"type": "string"})
+    );
+    assert_eq!(json_type_of("bool"), serde_json::json!({"type": "boolean"}));
+    assert_eq!(json_type_of("i64"), serde_json::json!({"type": "integer"}));
+    assert_eq!(json_type_of("f64"), serde_json::json!({"type": "number"}));
+    assert_eq!(
+        json_type_of("uuid::Uuid"),
+        serde_json::json!({"type": "string", "format": "uuid"})
+    );
+    assert_eq!(
+        json_type_of("chrono::NaiveDate"),
+        serde_json::json!({"type": "string", "format": "date"})
+    );
+    assert_eq!(
+        json_type_of("chrono::NaiveDateTime"),
+        serde_json::json!({"type": "string", "format": "date-time"})
+    );
+    assert_eq!(
+        json_type_of("rust_decimal::Decimal"),
+        serde_json::json!({"type": "number"})
+    );
+    // Unmapped (serde_json::Value) → permissive, never silently strict.
+    assert_eq!(json_type_of("serde_json::Value"), serde_json::json!({}));
+}
+
+/// One payload schema + one envelope wrapper schema per declared event,
+/// emitted under `schemas/events/`. Properties ride declaration order
+/// (the wire artifact's field order); resolved-but-undocumented schema
+/// fields stay permissive (`{"type": "object"}`) — never silently
+/// strict; the payload `$ref` targets resolve within the emitted set.
+#[tokio::test]
+async fn event_schemas_emit_per_declared_event() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let docs =
+        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    let mut paths: Vec<&str> = docs.iter().map(|d| d.rel_path.as_str()).collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "docs/asyncapi.json",
+            "docs/events.md",
+            "schemas/events/OrderCancelled.Envelope.json",
+            "schemas/events/OrderCancelled.json",
+            "schemas/events/OrderPlaced.Envelope.json",
+            "schemas/events/OrderPlaced.json",
+        ],
+        "{paths:?}"
+    );
+
+    let placed = docs
+        .iter()
+        .find(|d| d.rel_path == "schemas/events/OrderPlaced.json")
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&placed.content).unwrap();
+    assert_eq!(
+        doc["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert_eq!(doc["type"], "object");
+    assert_eq!(doc["properties"]["order_id"]["type"], "string");
+    // Resolved schema-typed field: permissive object (no static DTO
+    // schemas are published yet), with the resolution recorded.
+    assert_eq!(doc["properties"]["status"]["type"], "object");
+    assert!(
+        placed.content.contains("\"order_id\"")
+            && placed.content.find("\"order_id\"").unwrap()
+                < placed.content.find("\"status\"").unwrap(),
+        "declaration order preserved: {}",
+        placed.content
+    );
+
+    let envelope = docs
+        .iter()
+        .find(|d| d.rel_path == "schemas/events/OrderPlaced.Envelope.json")
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&envelope.content).unwrap();
+    assert_eq!(doc["properties"]["payload"]["$ref"], "OrderPlaced.json");
+    for key in [
+        "event",
+        "version",
+        "channel",
+        "payload",
+        "event_type",
+        "domain",
+        "tenant_id",
+        "occurred_at",
+        "correlation_id",
+        "traceparent",
+    ] {
+        assert!(
+            doc["properties"].get(key).is_some(),
+            "envelope schema missing {key}: {}",
+            envelope.content
+        );
+    }
+    assert!(
+        doc["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("event"))
+    );
+}
+
+/// Flag-off: an empty architecture emits zero document artifacts.
+#[test]
+fn event_schemas_emit_nothing_without_events() {
+    let arch = crate::events::EventArchitecture::default();
+    let docs =
+        crate::events::docs::document_artifacts(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert!(docs.is_empty(), "{docs:?}");
+}
+
+/// Pipeline leg: the emitted tree carries the schema documents and every
+/// payload `$ref` resolves to a sibling file.
+#[tokio::test]
+async fn event_schemas_flow_through_the_pipeline() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path());
+    let files = generator
+        .generate(&db, &config(), &[], &tera(), &project())
+        .await
+        .expect("schemas generate");
+    let names: Vec<String> = files
+        .iter()
+        .filter_map(|f| {
+            f.path
+                .strip_prefix(dir.path())
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+        })
+        .collect();
+    for expected in [
+        "schemas/events/OrderPlaced.json",
+        "schemas/events/OrderPlaced.Envelope.json",
+    ] {
+        assert!(names.iter().any(|n| n == expected), "{names:?}");
+    }
+    // Every payload $ref resolves within the emitted set.
+    for f in files
+        .iter()
+        .filter(|f| f.path.extension().map(|e| e == "json").unwrap_or(false))
+    {
+        let doc: serde_json::Value = serde_json::from_str(&f.content).unwrap();
+        if let Some(r) = doc["properties"]["payload"]["$ref"].as_str() {
+            let sibling = f.path.parent().unwrap().join(r);
+            assert!(
+                files.iter().any(|f| f.path == sibling),
+                "$ref {r} unresolved for {:?}",
+                f.path
+            );
+        }
+    }
+}
+
+// ── #610: AsyncAPI 3.0.0 document ───────────────────────────────────────
+
+/// One AsyncAPI 3.0.0 document from the architecture: channels keyed by
+/// their pgmq queue (the collapse rule falls out naturally), messages
+/// referencing the #614 JSON Schemas externally (no duplication),
+/// publish operations per channel, subscribe operations per
+/// subscription with the envelope documented. Deterministic by
+/// construction.
+#[tokio::test]
+async fn asyncapi_document_pins_the_graph_plane() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let doc = crate::events::docs::asyncapi_document(&arch, crate::events::EnvelopeVariant::Native);
+    assert_eq!(doc.rel_path, "docs/asyncapi.json");
+    let v: serde_json::Value = serde_json::from_str(&doc.content).unwrap();
+    assert_eq!(v["asyncapi"], "3.0.0");
+    assert_eq!(v["info"]["title"], "Events");
+
+    // Channels keyed by queue: the DSL channel queue + the per-domain
+    // trigger queue (the fixture's channel name collides with the
+    // domain — one entry under the collapsed queue name).
+    assert!(
+        v["channels"].get("events_orders").is_some(),
+        "{}",
+        doc.content
+    );
+    assert!(
+        v["channels"]["events_orders"]["bindings"]["x-pgmq"]["queue"] == "events_orders",
+        "{}",
+        doc.content
+    );
+    // Messages: declared events on the channel, payload external refs.
+    assert!(
+        v["components"]["messages"]["OrderPlaced"]["payload"]["$ref"]
+            == "../schemas/events/OrderPlaced.json",
+        "{}",
+        doc.content
+    );
+    // Operations: publish per channel, subscribe per subscription with
+    // the consumer as the operationId.
+    assert!(
+        v["operations"].get("publishEventsOrders").is_some(),
+        "{}",
+        doc.content
+    );
+    assert!(
+        v["operations"].get("subscribeAuditing").is_some(),
+        "{}",
+        doc.content
+    );
+    assert!(
+        v["operations"]["subscribeAuditing"]["messages"][0]["$ref"]
+            == "#/components/messages/OrderPlaced",
+        "messages: {}",
+        v["operations"]["subscribeAuditing"],
+    );
+    // The envelope is documented (native variant).
+    assert!(
+        doc.content.contains("x-envelope") && doc.content.contains("native"),
+        "{}",
+        doc.content
+    );
+
+    // Deterministic: two builds byte-equal.
+    let again =
+        crate::events::docs::asyncapi_document(&arch, crate::events::EnvelopeVariant::Native);
+    assert_eq!(doc.content, again.content);
+
+    // The CE variant documents the CloudEvents envelope.
+    let ce =
+        crate::events::docs::asyncapi_document(&arch, crate::events::EnvelopeVariant::CloudEvents);
+    assert!(ce.content.contains("CloudEvents 1.0"), "{}", ce.content);
+}
+
+/// Pipeline leg: `docs/asyncapi.json` rides the .evt-only set.
+#[tokio::test]
+async fn asyncapi_document_flows_through_the_pipeline() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path());
+    let files = generator
+        .generate(&db, &config(), &[], &tera(), &project())
+        .await
+        .expect("docs generate");
+    assert!(
+        files.iter().any(|f| f.path.ends_with("docs/asyncapi.json")),
+        "{:?}",
+        files.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
+}
+
+/// #615: the archive substrate migrates under `event_archive` — created
+/// BEFORE the blanket grants (the drain's app_user pool writes it) — and
+/// the drain archives each DELIVERED envelope at the delete site with a
+/// retention sweep on every drain cycle. Flag-off: neither appears.
+#[test]
+fn platform_schema_carries_the_event_archive_table_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_archive = true;
+    let rendered = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        rendered.contains("CREATE TABLE IF NOT EXISTS platform.event_archive"),
+        "{rendered}"
+    );
+    let table_pos = rendered.find("platform.event_archive").unwrap();
+    let grant_pos = rendered
+        .find("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform")
+        .unwrap();
+    assert!(
+        table_pos < grant_pos,
+        "archive table must precede the grant"
+    );
+
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}
+
+/// #615: the drain archives delivered envelopes (on-dispatch — only
+/// delivered events are replayable) and sweeps past-retention rows every
+/// cycle; replayed markers are the drain-agnostic side (the ops verb).
+#[tokio::test]
+async fn dispatch_archives_delivered_envelopes_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_archive = true;
+    let ctx = serde_json::json!({ "evt_events": true });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch.tera", &ctx, &project).unwrap();
+    for needle in [
+        "INSERT INTO platform.event_archive",
+        "ON CONFLICT (msg_id) DO NOTHING",
+        "DELETE FROM platform.event_archive",
+        "'30 days'",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "archive missing {needle}:\n{rendered}"
+        );
+    }
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "webhook/dispatch.tera",
+        &ctx,
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}
+
+/// #615: the worker drain archives + sweeps on both dispatch-cycle legs
+/// (native and wasm) under the flag.
+#[tokio::test]
+async fn worker_drain_archives_delivered_envelopes_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_archive = true;
+    let ctx = serde_json::json!({
+        "has_events": true,
+        "name": "sales",
+        "queue_max_retries": 5,
+        "extra_event_queues": [],
+    });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch_worker.tera", &ctx, &project)
+            .unwrap();
+    for needle in [
+        "INSERT INTO platform.event_archive",
+        "DELETE FROM platform.event_archive",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "worker archive missing {needle}:\n{rendered}"
+        );
+    }
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "webhook/dispatch_worker.tera",
+        &ctx,
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}
+
+// ── #616: event catalogue ───────────────────────────────────────────────
+
+/// The catalogue renders the whole event→channel→subscription→consumer
+/// graph as a deterministic markdown document: per-event sections (name,
+/// version, owning domain, payload fields with resolved types), channels
+/// with transport, subscriptions + consumers, the synthetic
+/// function-consumer entries, a mermaid dependency view (no JS — GitHub
+/// renders fenced mermaid), and governance slots that stay omitted while
+/// the artifact carries no owner/classification/retention/pii fields.
+#[tokio::test]
+async fn catalogue_renders_the_event_graph() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let doc =
+        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert_eq!(doc.rel_path, "docs/events.md");
+    for needle in [
+        "# Event catalogue",
+        "## `OrderPlaced`",
+        "| Version | 1.2.0 |",
+        "| order_id | String | — |",
+        "| status | OrderStatus | OrderStatusType |",
+        "| orders | `events_orders` | pgmq |",
+        "## `OrderCancelled`",
+        "| auditing | audit-worker |",
+        "at-least-once (5 retries, 10s backoff)",
+        "```mermaid",
+        "OrderPlaced -->",
+        "```",
+        // Governance slots: absent from the artifact today — the slot
+        // is documented, the sections stay omitted (never placeholder
+        // noise).
+        "Governance metadata",
+    ] {
+        assert!(
+            doc.content.contains(needle),
+            "catalogue missing {needle}:\n{}",
+            doc.content
+        );
+    }
+    // Deterministic.
+    let again =
+        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert_eq!(doc.content, again.content);
+}
+
+/// The synthetic function-consumer entries (event-exposed modeled
+/// functions, issue #450 slice D) render as consumers keyed by their
+/// envelope `event` (the fn snake name).
+#[tokio::test]
+async fn catalogue_lists_function_consumers() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let mut arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    arch.function_consumers
+        .push(crate::events::FunctionConsumer {
+            name: "RecalcTotals".to_string(),
+            fn_name: "recalc_totals".to_string(),
+            domain: Some("sales".to_string()),
+        });
+    let doc =
+        crate::events::docs::catalogue_markdown(&arch, crate::events::EnvelopeVariant::Native, &[]);
+    assert!(
+        doc.content.contains("## Function consumers") && doc.content.contains("| recalc_totals |"),
+        "function consumer missing:\n{}",
+        doc.content
+    );
+}
+
+/// The cross-plane `emits` edges: `.ddd` service operations declaring
+/// `emits` render as the event's producer surface.
+#[tokio::test]
+async fn catalogue_lists_the_emitting_service_operations() {
+    use codegraph_core::types::{DddModelGraph, DddServiceNode, DddServiceOperation};
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let model = DddModelGraph {
+        source_path: "library.ddd".to_string(),
+        application: codegraph_core::types::DddApplicationNode {
+            name: "Library".to_string(),
+            base: None,
+            source_path: "library.ddd".to_string(),
+        },
+        modules: Vec::new(),
+        designs: Vec::new(),
+        repositories: Vec::new(),
+        services: vec![DddServiceNode {
+            application: "Library".to_string(),
+            module: "lending".to_string(),
+            name: "LoanService".to_string(),
+            description: None,
+            dependencies: vec![],
+            ordinal: 0,
+            operations: vec![DddServiceOperation {
+                name: "renew".to_string(),
+                return_type: None,
+                return_multiplicity: None,
+                params: vec![],
+                delegation_target: None,
+                delegation_operation: None,
+                capabilities: vec![],
+                is_protected: false,
+                condition: None,
+                emits: vec!["OrderPlaced".to_string()],
+                ordinal: 0,
+            }],
+        }],
+        searches: Vec::new(),
+    };
+    let doc = crate::events::docs::catalogue_markdown(
+        &arch,
+        crate::events::EnvelopeVariant::Native,
+        &[model],
+    );
+    assert!(
+        doc.content.contains("lending.LoanService.renew"),
+        "emitting op missing:\n{}",
+        doc.content
+    );
 }

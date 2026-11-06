@@ -124,6 +124,7 @@ fn sample_model() -> DddModel {
                         capabilities: vec!["BorrowBooks".to_string()],
                         is_protected: false,
                         condition: None,
+                        emits: Vec::new(),
                     },
                     ServiceOperation {
                         name: "renew".to_string(),
@@ -137,6 +138,7 @@ fn sample_model() -> DddModel {
                         capabilities: Vec::new(),
                         is_protected: false,
                         condition: Some(r#"status == "OnLoan""#.to_string()),
+                        emits: Vec::new(),
                     },
                 ],
                 dependencies: vec![

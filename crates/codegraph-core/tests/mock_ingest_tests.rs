@@ -356,6 +356,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 ordinal: 0,
                 is_protected: false,
                 condition: None,
+                emits: Vec::new(),
             }],
             ordinal: 0,
         }],

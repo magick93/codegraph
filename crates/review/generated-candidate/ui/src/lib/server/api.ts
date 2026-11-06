@@ -18,8 +18,20 @@
 import { env } from '$env/dynamic/private';
 import { getRequestEvent } from '$app/server';
 
-const API_ORIGIN = env.API_ORIGIN ?? env.IFML_API_ORIGIN ?? '';
-const API_KEY = env.API_KEY ?? env.IFML_API_KEY ?? '';
+// Read the origin lazily (inside the call) and fall through to process.env:
+// `$env/dynamic/private` only carries variables the kit's build-time env
+// analysis declared, and in `vite preview` the dynamic channel never
+// populates non-PUBLIC vars at all (set_env validates declared names only)
+// — while process.env is the real runtime surface on the Node SSR side.
+// Module-scope captures are wrong twice over: the dynamic env is empty
+// until server init, and the preview channel is empty forever.
+function apiOrigin(): string {
+	return env.API_ORIGIN ?? env.IFML_API_ORIGIN ?? process.env.API_ORIGIN ?? process.env.IFML_API_ORIGIN ?? '';
+}
+
+function deploymentApiKey(): string {
+	return env.API_KEY ?? env.IFML_API_KEY ?? process.env.API_KEY ?? process.env.IFML_API_KEY ?? '';
+}
 
 function forwardedAuth(): string | null {
 	try {
@@ -42,12 +54,12 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 		const forwarded = forwardedAuth();
 		if (forwarded) {
 			headers.set('Authorization', forwarded);
-		} else if (API_KEY) {
-			headers.set('Authorization', `Bearer ${API_KEY}`);
+		} else if (deploymentApiKey()) {
+			headers.set('Authorization', `Bearer ${deploymentApiKey()}`);
 		}
 	}
 	if (!headers.has('Accept')) {
 		headers.set('Accept', 'application/json');
 	}
-	return fetch(`${API_ORIGIN}${path}`, { ...init, headers });
+	return fetch(`${apiOrigin()}${path}`, { ...init, headers });
 }

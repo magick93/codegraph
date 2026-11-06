@@ -2183,6 +2183,10 @@ view "CustomerList" {
     fs::write(model.join("crm.ddd"), ddd).unwrap();
     fs::write(model.join("crm.actor"), actor).unwrap();
     fs::write(model.join("crm.ifml"), ifml).unwrap();
+    // rexlang #128 downgraded the granted-but-uncarried capability to a
+    // WARNING (carried-capability tracking is not reliable across every
+    // op-emitting surface) — doctor surfaces it as a soft warning, not a
+    // hard failure.
     let summary = cmd_doctor(&DoctorArgs {
         config: project.join("domains.toml"),
         schemas: None,
@@ -2196,13 +2200,14 @@ view "CustomerList" {
         ifml_files: vec![model.join("crm.ifml")],
         extension_points: None,
     })
-    .unwrap_err();
-    // cmd_doctor returns Err carrying the failure summary when hard
-    // checks fail — the dangling grant is the ONLY hard failure in this
-    // fixture (the per-diagnostic text renders to stdout above).
+    .expect("the dangling grant soft-warns (upstream #128)");
+    assert_eq!(
+        summary.hard_failures, 0,
+        "the uncarried capability is a soft warning now"
+    );
     assert!(
-        format!("{summary}").contains("1 hard check(s) failed"),
-        "the dangling grant must hard-fail the doctor: {summary}"
+        summary.soft_warnings >= 1,
+        "the dangling grant must warn: {summary:?}"
     );
 
     // Clean: drop the dangling grant; the same union passes.

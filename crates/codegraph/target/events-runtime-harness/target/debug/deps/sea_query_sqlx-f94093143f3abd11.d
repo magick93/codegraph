@@ -1,0 +1,10 @@
+/home/anton/git/codegraph-events/crates/codegraph/target/events-runtime-harness/target/debug/deps/sea_query_sqlx-f94093143f3abd11.d: /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/lib.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx_postgres.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/values.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx.rs
+
+/home/anton/git/codegraph-events/crates/codegraph/target/events-runtime-harness/target/debug/deps/libsea_query_sqlx-f94093143f3abd11.rlib: /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/lib.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx_postgres.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/values.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx.rs
+
+/home/anton/git/codegraph-events/crates/codegraph/target/events-runtime-harness/target/debug/deps/libsea_query_sqlx-f94093143f3abd11.rmeta: /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/lib.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx_postgres.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/values.rs /home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx.rs
+
+/home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/lib.rs:
+/home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx_postgres.rs:
+/home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/values.rs:
+/home/anton/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sea-query-sqlx-0.9.1/src/sqlx.rs:

@@ -214,7 +214,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_transition_idempotency
     ON platform.workflow_transition (idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+{% if project.event_idempotency %}-- ============================================================================
+-- Consumer idempotency ledger (issue #612). The events plane's delivery
+-- guarantee is at-least-once by construction (visibility timeout 30s <
+-- drain cron 60s), so a redelivered pgmq message is EXPECTED. The
+-- generated dispatch path keys every delivery on (pgmq msg_id,
+-- consumer): insert-first, skip when the row exists — the handler runs
+-- on first delivery only. Created BEFORE the blanket app_user grants
+-- below so the drain's app_user pool can insert. No tenant RLS: the
+-- ledger is system surface keyed by queue-assigned message ids, written
+-- by the drain and inspected by operators.
 -- ============================================================================
+CREATE TABLE IF NOT EXISTS platform.event_consumption (
+    msg_id BIGINT NOT NULL,
+    consumer TEXT NOT NULL,
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (msg_id, consumer)
+);
+{% endif %}{% if project.event_archive %}-- ============================================================================
+-- Event archive (issue #615): the replay substrate. The drain archives
+-- each DELIVERED envelope (on-dispatch — only delivered events are
+-- replayable; on-publish would double the write volume) and sweeps rows
+-- past retention every cycle. Re-published (replayed) messages get fresh
+-- pgmq msg_ids and a `replayed_from` marker; `correlation_id` is
+-- preserved. No tenant RLS — system surface keyed by queue-assigned ids.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS platform.event_archive (
+    msg_id BIGINT PRIMARY KEY,
+    channel TEXT NOT NULL,
+    event TEXT NOT NULL,
+    envelope JSONB NOT NULL,
+    occurred_at TIMESTAMPTZ,
+    dispatched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_archive_replay
+    ON platform.event_archive (event, dispatched_at);
+{% endif %}-- ============================================================================
 -- Row-Level Security policies
 -- ============================================================================
 

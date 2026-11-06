@@ -190,6 +190,12 @@ pub struct DddServiceOperation {
     /// with graphs persisted before the field existed.
     #[serde(default)]
     pub condition: Option<String>,
+    /// Event names this operation emits (rexlang's `emits` clause, the
+    /// [`crate::types::EvtModelGraph`] dimension; loosely coupled, not
+    /// validated upstream). Serde-defaulted for read-compat with graphs
+    /// persisted before the field existed.
+    #[serde(default)]
+    pub emits: Vec<String>,
     /// Declaration order within the service.
     pub ordinal: usize,
 }
