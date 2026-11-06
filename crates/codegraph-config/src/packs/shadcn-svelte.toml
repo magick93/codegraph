@@ -37,16 +37,21 @@ export = "Input"
 testids = { root = "input" }
 field_props = { value = "field.state.value", oninput = "(e) => field.handleChange(e.currentTarget.value)" }
 
-# Dropdown / radio / checkbox slots. The selection-field slot KEEPS its
-# built-in dropdown — the shadcn Select root's props contract (items
-# rendering, typeahead) is not slot-compatible with the AppField wiring;
-# mapping it here would emit an un-renderable slot.
+# Dropdown / radio / checkbox slots. The selection-field slot maps through
+# the GENERATOR-EMITTED NativeSelect wrapper (issue #574 ledger): a REAL
+# shadcn Select is not slot-compatible (its items render through snippets)
+# and would break the POM's selectOption fill, so the pack points at
+# `$lib/forms/fields/select-variant.svelte` — a native <select> with the
+# generator-owned name/testid/required/options around the declared
+# value/onchange wiring. The wrapper emits if-absent only when this entry
+# is wired; radio/checkbox slots keep their built-ins.
 [[component]]
 role = "selection-field"
 kind = "dropdown"
-path = "$lib/components/ui/select/select.svelte"
-export = "Select"
+path = "$lib/forms/fields/select-variant.svelte"
+export = "SelectVariant"
 testids = { root = "select" }
+field_props = { value = "field.state.value", onchange = "(e) => field.handleChange(e.currentTarget.value)" }
 
 # Data tables, typed table specs and `type: list` components.
 [[component]]

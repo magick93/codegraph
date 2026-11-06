@@ -45,3 +45,15 @@ role = "shell"
 path = "$lib/components/ui/navigation-menu/navigation-menu.svelte"
 export = "NavigationMenu"
 testids = { root = "navigation-menu" }
+
+# The selection-field variant (issue #574 ledger): mirrors the pack's
+# wired entry — the generator-emitted NativeSelect wrapper keeps the POM's
+# selectOption fill working (a native <select>), so the validation specs
+# fill the mapped dropdowns by name.
+[[component]]
+role = "selection-field"
+kind = "dropdown"
+path = "$lib/forms/fields/select-variant.svelte"
+export = "SelectVariant"
+testids = { root = "select" }
+field_props = { value = "field.state.value", onchange = "(e) => field.handleChange(e.currentTarget.value)" }

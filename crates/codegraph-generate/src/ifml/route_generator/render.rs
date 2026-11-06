@@ -642,13 +642,31 @@ pub(super) fn render_form_tanstack(
     // mapping carrying `field_props` wiring replaces the built-in
     // text-field slots. Resolved ONCE per form — every text slot shares
     // the role. A mapping without wiring is skipped (never an un-wired
-    // slot); select/radio/checkbox slots keep their built-ins (the
-    // shadcn Select root's contract is not AppField-slot-compatible).
+    // slot).
     let field_mapping = mappings
         .and_then(|m| m.resolve_slot(view, component_name, "form", "", Some(SemanticRole::Field)));
     let field_wiring = field_mapping.and_then(|m| {
         let wiring = m.field_props.as_ref()?;
         Some((wiring, m.export_name().to_string(), m.path.clone()))
+    });
+    // The selection-field variant (issue #574 ledger): the `selection
+    // -field`-role mapping's wiring replaces the built-in SELECT slots —
+    // the generator owns name/testid/required/options around the declared
+    // value/onchange wiring (options come from the field's closed value
+    // set). The pack's entry points at the generator-emitted NativeSelect
+    // wrapper (`select-variant.svelte`): a REAL shadcn Select is not
+    // slot-compatible (snippet-rendered items) AND would break the POM's
+    // `selectOption` fill — the wrapper renders a native `<select>`, so
+    // the fill contract holds verbatim. A mapping without wiring is
+    // skipped; radio/checkbox slots keep their built-ins.
+    let select_wiring = mappings.and_then(|m| {
+        let mapping = m.resolve_by_role(view, SemanticRole::SelectionField)?;
+        let wiring = mapping.field_props.as_ref()?;
+        Some((
+            wiring,
+            mapping.export_name().to_string(),
+            mapping.path.clone(),
+        ))
     });
     let fields: Vec<&rex_ifml::FieldDef> = spec
         .fields
@@ -659,6 +677,7 @@ pub(super) fn render_form_tanstack(
     let mut schema_fields = Vec::new();
     let mut slots = Vec::new();
     let mut mapped_import: Option<RenderTanstackImport> = None;
+    let mut mapped_select_import: Option<RenderTanstackImport> = None;
     let mut default_lines = Vec::new();
     let mut payload_lines = Vec::new();
 
@@ -701,10 +720,6 @@ pub(super) fn render_form_tanstack(
         let invocation = if component == "TextField"
             && let Some((wiring, export, path)) = &field_wiring
         {
-            // The mapped field variant: the pack's wiring evaluated inside
-            // the AppField children snippet. The generator owns
-            // name/testid/type/required around it — the POM's
-            // fill/testid contract holds on the mapped input.
             let mut invocation = format!(
                 "<{export} name={} data-testid={}",
                 ts_string_literal(&field.name),
@@ -721,6 +736,33 @@ pub(super) fn render_form_tanstack(
             }
             invocation.push_str(" />");
             mapped_import = Some(RenderTanstackImport {
+                export: export.clone(),
+                path: path.clone(),
+            });
+            invocation
+        } else if component == "SelectField"
+            && html.is_select
+            && let Some((wiring, export, path)) = &select_wiring
+        {
+            // The mapped select slot (issue #574 ledger): the generator
+            // owns name/testid/required and the closed option set around
+            // the declared value/onchange wiring — the POM's
+            // selectOption/toHaveValue fill holds on the native select.
+            let items: Vec<String> = field.values.iter().map(|v| ts_string_literal(v)).collect();
+            let mut invocation = format!(
+                "<{export} name={} data-testid={} options={{[{}]}}",
+                ts_string_literal(&field.name),
+                ts_string_literal(&testid),
+                items.join(", ")
+            );
+            if prop_required {
+                invocation.push_str(" required");
+            }
+            for (k, v) in wiring.iter() {
+                invocation.push_str(&format!(" {k}={{{v}}}"));
+            }
+            invocation.push_str(" />");
+            mapped_select_import = Some(RenderTanstackImport {
                 export: export.clone(),
                 path: path.clone(),
             });
@@ -829,6 +871,7 @@ pub(super) fn render_form_tanstack(
         payload,
         fields: slots,
         mapped_import,
+        mapped_select_import,
         submit_testid: String::new(),
     }
 }

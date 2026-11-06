@@ -1315,19 +1315,31 @@ input. The prop-contract problem (the S4-era design blocker) is solved
 by the wiring being DECLARED: the pack carries the exact expressions its
 component accepts (shadcn Input spreads rest onto the native input), so
 svelte-check arbitrates the real contract instead of a convention.
+**Selection-field parity (the #574 ledger)**: the pack's
+`selection-field` entry maps the dropdown slots to the generator-emitted
+NativeSelect wrapper (`$lib/forms/fields/select-variant.svelte`,
+if-absent emitted only when the entry is wired — it imports the
+project's NativeSelect barrel): a REAL shadcn Select is not
+slot-compatible (snippet-rendered items) AND would break the POM's
+`selectOption` fill, so the wrapper composes NativeSelect — a native
+`<select>` with the generator-owned name/testid/required/options (from
+the field's closed value set) around the declared value/onchange wiring.
+Radio slots keep their built-ins.
 Declared-once details: a `field` mapping WITHOUT `field_props` is
-skipped (never an un-wired slot); select/radio slots keep their
-built-ins; the `AppField` children snippet is always
+skipped (never an un-wired slot); select slots WITHOUT a wired entry
+keep their built-ins; the `AppField` children snippet is always
 `{#snippet children(field)}` (the self-binding built-ins ignore the
 param). No-pack / project-ahead-of-pack rules unchanged — mapping-gated,
 so the byte-identity canaries (no-pack fixtures) are untouched. The
 gate's `Input` stub mirrors the real component's rest-spread; the
 nightly gate (shadcn fixture) compiles the wiring and the specs fill the
 mapped inputs by name. Gate: the in-crate
-`shadcn_field_variant_maps_the_text_slots` pin + `ifml_codegen_gate`
-5/5 (33/33 specs). Still deferred from #582: ResetButton;
-selection-field (dropdown) mapping variants (the shadcn Select root's
-items-rendering contract is not slot-compatible).
+`shadcn_field_variant_maps_the_text_slots` pin +
+`form_plane_emits_the_select_variant_only_when_wired` +
+`ifml_codegen_gate`
+5/5 (33/33 specs). Still deferred from #582: ~~ResetButton~~ (landed,
+#601); bits-ui Select composition (a real shadcn Select needs POM
+selectOption surgery — the NativeSelect wrapper is the v1 contract).
 - Swept en route: the gate-owned sweep spec's inner waitForURL window
   widened 2s→5s (parallel gate runs contend for the vite dev server; the
   toPass retry chain needs the headroom).
