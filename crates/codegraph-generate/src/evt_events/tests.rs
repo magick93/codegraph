@@ -1402,3 +1402,106 @@ async fn asyncapi_document_flows_through_the_pipeline() {
         files.iter().map(|f| &f.path).collect::<Vec<_>>()
     );
 }
+
+/// #615: the archive substrate migrates under `event_archive` — created
+/// BEFORE the blanket grants (the drain's app_user pool writes it) — and
+/// the drain archives each DELIVERED envelope at the delete site with a
+/// retention sweep on every drain cycle. Flag-off: neither appears.
+#[test]
+fn platform_schema_carries_the_event_archive_table_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_archive = true;
+    let rendered = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &project,
+    )
+    .unwrap();
+    assert!(
+        rendered.contains("CREATE TABLE IF NOT EXISTS platform.event_archive"),
+        "{rendered}"
+    );
+    let table_pos = rendered.find("platform.event_archive").unwrap();
+    let grant_pos = rendered
+        .find("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform")
+        .unwrap();
+    assert!(
+        table_pos < grant_pos,
+        "archive table must precede the grant"
+    );
+
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "db/platform_schema.tera",
+        &serde_json::json!({}),
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}
+
+/// #615: the drain archives delivered envelopes (on-dispatch — only
+/// delivered events are replayable) and sweeps past-retention rows every
+/// cycle; replayed markers are the drain-agnostic side (the ops verb).
+#[tokio::test]
+async fn dispatch_archives_delivered_envelopes_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_archive = true;
+    let ctx = serde_json::json!({ "evt_events": true });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch.tera", &ctx, &project).unwrap();
+    for needle in [
+        "INSERT INTO platform.event_archive",
+        "ON CONFLICT (msg_id) DO NOTHING",
+        "DELETE FROM platform.event_archive",
+        "'30 days'",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "archive missing {needle}:\n{rendered}"
+        );
+    }
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "webhook/dispatch.tera",
+        &ctx,
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}
+
+/// #615: the worker drain archives + sweeps on both dispatch-cycle legs
+/// (native and wasm) under the flag.
+#[tokio::test]
+async fn worker_drain_archives_delivered_envelopes_under_the_flag() {
+    let mut project = project();
+    project.codegen.event_archive = true;
+    let ctx = serde_json::json!({
+        "has_events": true,
+        "name": "sales",
+        "queue_max_retries": 5,
+        "extra_event_queues": [],
+    });
+    let rendered =
+        render_template_with_project(&tera(), "webhook/dispatch_worker.tera", &ctx, &project)
+            .unwrap();
+    for needle in [
+        "INSERT INTO platform.event_archive",
+        "DELETE FROM platform.event_archive",
+    ] {
+        assert!(
+            rendered.contains(needle),
+            "worker archive missing {needle}:\n{rendered}"
+        );
+    }
+    let rendered_off = render_template_with_project(
+        &tera(),
+        "webhook/dispatch_worker.tera",
+        &ctx,
+        &ProjectConfig::default(),
+    )
+    .unwrap();
+    assert!(!rendered_off.contains("event_archive"), "{rendered_off}");
+}

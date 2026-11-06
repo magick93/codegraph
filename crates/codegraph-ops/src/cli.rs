@@ -170,6 +170,30 @@ testkit api --skip-build --retry 2")]
     #[command(after_help = "Examples:\n  \
 testkit cli")]
     Cli,
+    /// Replay archived events (issue #615): re-publish envelopes from
+    /// `platform.event_archive` matching the filters back onto their
+    /// source channels (fresh msg_ids, `replayed_from` marker,
+    /// preserved correlation ids). Requires the `event_archive` flag.
+    #[command(after_help = "Examples:\n  \
+testkit replay --event OrderPlaced --channel orders\n  \
+testkit replay --from 2026-01-01T00:00:00Z --limit 500")]
+    Replay {
+        /// Event name glob (`Order*`) matched against the archive.
+        #[arg(long)]
+        event: Option<String>,
+        /// Restrict to one channel/domain (`events_<name>`).
+        #[arg(long)]
+        channel: Option<String>,
+        /// ISO-8601 lower bound on dispatch time.
+        #[arg(long)]
+        from: Option<String>,
+        /// ISO-8601 inclusive upper bound on dispatch time.
+        #[arg(long)]
+        to: Option<String>,
+        /// Max messages to replay (default 100 = the drain batch).
+        #[arg(long)]
+        limit: Option<u32>,
+    },
     /// Dead-letter queue surface (issue #611): list DLQ depth (default)
     /// or requeue messages back onto their source queues.
     #[command(after_help = "Examples:\n  \
@@ -441,6 +465,24 @@ pub async fn main() -> i32 {
             output::bold("Dead-letter queue surface (issue #611)");
             crate::dlq::run(&config, *requeue, channel.as_deref(), limit.unwrap_or(0)).await
         }
+        Cmd::Replay {
+            event,
+            channel,
+            from,
+            to,
+            limit,
+        } => {
+            output::bold("Replay from the event archive (issue #615)");
+            crate::replay::run(
+                &config,
+                event.as_deref(),
+                channel.as_deref(),
+                from.as_deref(),
+                to.as_deref(),
+                limit.unwrap_or(0),
+            )
+            .await
+        }
         Cmd::Bundle => {
             output::bold("Assembling artifact bundle");
             let extras = bundle_extra_files(&cli);
@@ -585,6 +627,7 @@ fn subcommand_name(cmd: &Cmd) -> &'static str {
         Cmd::Clean { .. } => "clean",
         Cmd::Doctor => "doctor",
         Cmd::Dlq { .. } => "dlq",
+        Cmd::Replay { .. } => "replay",
         Cmd::Bundle => "bundle",
         Cmd::Smoke { .. } => "smoke",
         Cmd::Quality { .. } => "quality",

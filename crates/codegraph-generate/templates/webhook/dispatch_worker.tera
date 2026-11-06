@@ -349,6 +349,11 @@ async fn drain_events_into_jobs(
 {% endif %}
 {% if has_events %}        if all_ok {
             tracing::info!(queue = %queue_name, event = %event_type, "events.processed");
+{% if project.event_archive %}            // Issue #615: archive the delivered envelope (the worker leg
+            // archives at drain time — the drain IS the delivery for typed
+            // consumers; webhook job failures do not unarchive).
+            let _ = archive_envelope(&state.client_source, &queue_name, msg_id, &event_type, &message).await;
+{% endif %}
         } else if typed_ok {
             tracing::warn!(queue = %queue_name, event = %event_type, "events.dead_lettered");
         } else {
@@ -417,6 +422,41 @@ async fn dead_letter(
 }
 {% endif %}
 
+{% if project.event_archive %}/// Issue #615: archive one delivered envelope (worker-leg semantics in
+/// the doc comment at the call site).
+async fn archive_envelope(
+    source: &dyn crate::db_client::ClientSource,
+    queue: &str,
+    msg_id: i64,
+    event_type: &str,
+    message: &serde_json::Value,
+) -> Result<(), String> {
+    let client = source.client().await.map_err(|e| e.to_string())?;
+    let occurred_at = message["occurred_at"].as_str().unwrap_or("");
+    client
+        .execute(
+            "INSERT INTO platform.event_archive (msg_id, channel, event, envelope, occurred_at) \
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT (msg_id) DO NOTHING",
+            &[&msg_id, &queue, &event_type, message, &occurred_at],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Issue #615: retention sweep (default 30 days) — once per dispatch cycle.
+async fn sweep_archive(source: &dyn crate::db_client::ClientSource) -> Result<(), String> {
+    let client = source.client().await.map_err(|e| e.to_string())?;
+    client
+        .execute(
+            "DELETE FROM platform.event_archive WHERE dispatched_at < now() - interval '30 days'",
+            &[],
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+{% endif %}
 /// Delete a processed pgmq message.
 async fn delete_pgmq_msg(state: &AppState, queue_name: &str, msg_id: i64) -> Result<(), String> {
     let client = state.client_source.client().await.map_err(|e| e.to_string())?;
@@ -482,7 +522,8 @@ pub async fn dispatch_cycle(
         count += 1;
     }
 
-    for (queue_name, msg_id{% if has_events %}, _read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
+{% if project.event_archive %}        let _ = sweep_archive(&state.client_source).await;
+{% endif %}    for (queue_name, msg_id{% if has_events %}, _read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
         let mut ok = true;
         for job in &jobs {
             if dispatch_one(env, queue_binding, job).await.is_err() {
@@ -507,7 +548,8 @@ pub async fn dispatch_cycle(state: &AppState, domain: &str) -> Result<usize, Str
         count += 1;
     }
 
-    for (queue_name, msg_id{% if has_events %}, _read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
+{% if project.event_archive %}        let _ = sweep_archive(&state.client_source).await;
+{% endif %}    for (queue_name, msg_id{% if has_events %}, _read_ct{% endif %}, jobs{% if has_events %}, typed_ok{% endif %}) in drain_events_into_jobs(state, domain).await? {
         let mut ok = true;
         for job in &jobs {
             if dispatch_one(state, job).await.is_err() {

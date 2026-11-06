@@ -232,6 +232,26 @@ CREATE TABLE IF NOT EXISTS platform.event_consumption (
     PRIMARY KEY (msg_id, consumer)
 );
 {% endif %}
+{% if project.event_archive %}-- ============================================================================
+-- Event archive (issue #615): the replay substrate. The drain archives
+-- each DELIVERED envelope (on-dispatch — only delivered events are
+-- replayable; on-publish would double the write volume) and sweeps rows
+-- past retention every cycle. Re-published (replayed) messages get fresh
+-- pgmq msg_ids and a `replayed_from` marker; `correlation_id` is
+-- preserved. No tenant RLS — system surface keyed by queue-assigned ids.
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS platform.event_archive (
+    msg_id BIGINT PRIMARY KEY,
+    channel TEXT NOT NULL,
+    event TEXT NOT NULL,
+    envelope JSONB NOT NULL,
+    occurred_at TIMESTAMPTZ,
+    dispatched_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_archive_replay
+    ON platform.event_archive (event, dispatched_at);
+{% endif %}
 -- ============================================================================
 -- Row-Level Security policies
 -- ============================================================================

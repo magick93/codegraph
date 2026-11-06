@@ -114,7 +114,16 @@ impl WebhookDispatcher {
 
         // 2. Read new events from pgmq queues and create delivery records
         // Query all domain event queues
-        let queues: Vec<String> = self
+{% if project.event_archive %}            // Issue #615: retention sweep (default 30 days) — every drain
+            // cycle prunes archive rows past retention.
+            let _ = self
+                .db
+                .execute_raw(Statement::from_string(
+                    DatabaseBackend::Postgres,
+                    "DELETE FROM platform.event_archive WHERE dispatched_at < now() - interval '30 days'",
+                ))
+                .await;
+{% endif %}        let queues: Vec<String> = self
             .db
             .query_all_raw(Statement::from_string(
                 DatabaseBackend::Postgres,
@@ -312,7 +321,28 @@ impl WebhookDispatcher {
                         "event" => event_type.to_string(),
                     )
                     .increment(1);
+{% if project.event_archive %}                    // Issue #615: archive the DELIVERED envelope (on-dispatch —
+                    // only delivered events are replayable).
+                    let archive_envelope = serde_json::to_string(&message)
+                        .unwrap_or_default()
+                        .replace('\'', "''");
+                    let occurred_at = message["occurred_at"].as_str().unwrap_or("");
                     let _ = self
+                        .db
+                        .execute_raw(Statement::from_string(
+                            DatabaseBackend::Postgres,
+                            format!(
+                                "INSERT INTO platform.event_archive (msg_id, channel, event, envelope, occurred_at) \
+                                 VALUES ({msg_id}, '{}', '{}', '{}'::jsonb, '{}'::timestamptz) \
+                                 ON CONFLICT (msg_id) DO NOTHING",
+                                queue,
+                                event_type,
+                                archive_envelope,
+                                occurred_at,
+                            ),
+                        ))
+                        .await;
+{% endif %}                    let _ = self
                         .db
                         .execute_raw(Statement::from_sql_and_values(
                             DatabaseBackend::Postgres,

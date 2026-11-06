@@ -39,6 +39,7 @@ pub mod preflight;
 pub mod proc;
 pub mod pwcache;
 pub mod registry;
+pub mod replay;
 pub mod results;
 pub mod suites;
 pub mod wait;
