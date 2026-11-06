@@ -1195,6 +1195,7 @@ async fn event_schemas_emit_per_declared_event() {
     assert_eq!(
         paths,
         vec![
+            "docs/asyncapi.json",
             "schemas/events/OrderCancelled.Envelope.json",
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
@@ -1307,4 +1308,97 @@ async fn event_schemas_flow_through_the_pipeline() {
             );
         }
     }
+}
+
+// ── #610: AsyncAPI 3.0.0 document ───────────────────────────────────────
+
+/// One AsyncAPI 3.0.0 document from the architecture: channels keyed by
+/// their pgmq queue (the collapse rule falls out naturally), messages
+/// referencing the #614 JSON Schemas externally (no duplication),
+/// publish operations per channel, subscribe operations per
+/// subscription with the envelope documented. Deterministic by
+/// construction.
+#[tokio::test]
+async fn asyncapi_document_pins_the_graph_plane() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let arch = super::architecture_for(&db, &project(), &config())
+        .await
+        .expect("architecture builds");
+    let doc = crate::events::docs::asyncapi_document(&arch, crate::events::EnvelopeVariant::Native);
+    assert_eq!(doc.rel_path, "docs/asyncapi.json");
+    let v: serde_json::Value = serde_json::from_str(&doc.content).unwrap();
+    assert_eq!(v["asyncapi"], "3.0.0");
+    assert_eq!(v["info"]["title"], "Events");
+
+    // Channels keyed by queue: the DSL channel queue + the per-domain
+    // trigger queue (the fixture's channel name collides with the
+    // domain — one entry under the collapsed queue name).
+    assert!(
+        v["channels"].get("events_orders").is_some(),
+        "{}",
+        doc.content
+    );
+    assert!(
+        v["channels"]["events_orders"]["bindings"]["x-pgmq"]["queue"] == "events_orders",
+        "{}",
+        doc.content
+    );
+    // Messages: declared events on the channel, payload external refs.
+    assert!(
+        v["components"]["messages"]["OrderPlaced"]["payload"]["$ref"]
+            == "../schemas/events/OrderPlaced.json",
+        "{}",
+        doc.content
+    );
+    // Operations: publish per channel, subscribe per subscription with
+    // the consumer as the operationId.
+    assert!(
+        v["operations"].get("publishEventsOrders").is_some(),
+        "{}",
+        doc.content
+    );
+    assert!(
+        v["operations"].get("subscribeAuditing").is_some(),
+        "{}",
+        doc.content
+    );
+    assert!(
+        v["operations"]["subscribeAuditing"]["messages"][0]["$ref"]
+            == "#/components/messages/OrderPlaced",
+        "messages: {}",
+        v["operations"]["subscribeAuditing"],
+    );
+    // The envelope is documented (native variant).
+    assert!(
+        doc.content.contains("x-envelope") && doc.content.contains("native"),
+        "{}",
+        doc.content
+    );
+
+    // Deterministic: two builds byte-equal.
+    let again =
+        crate::events::docs::asyncapi_document(&arch, crate::events::EnvelopeVariant::Native);
+    assert_eq!(doc.content, again.content);
+
+    // The CE variant documents the CloudEvents envelope.
+    let ce =
+        crate::events::docs::asyncapi_document(&arch, crate::events::EnvelopeVariant::CloudEvents);
+    assert!(ce.content.contains("CloudEvents 1.0"), "{}", ce.content);
+}
+
+/// Pipeline leg: `docs/asyncapi.json` rides the .evt-only set.
+#[tokio::test]
+async fn asyncapi_document_flows_through_the_pipeline() {
+    let db = db_with(Some(orders_evt_model())).await;
+    let dir = TempDir::new().unwrap();
+    let generator = EvtEventsGenerator::new(dir.path());
+    let files = generator
+        .generate(&db, &config(), &[], &tera(), &project())
+        .await
+        .expect("docs generate");
+    assert!(
+        files.iter().any(|f| f.path.ends_with("docs/asyncapi.json")),
+        "{:?}",
+        files.iter().map(|f| &f.path).collect::<Vec<_>>()
+    );
 }

@@ -440,6 +440,7 @@ async fn no_evt_input_generates_no_events_plane() {
     assert_eq!(
         evt_only,
         [
+            "docs/asyncapi.json",
             "schemas/events/OrderCancelled.Envelope.json",
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
@@ -468,6 +469,7 @@ async fn no_evt_input_generates_no_events_plane() {
     assert_eq!(
         added,
         [
+            "docs/asyncapi.json",
             "schemas/events/OrderCancelled.Envelope.json",
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
@@ -493,7 +495,8 @@ async fn no_evt_input_generates_no_events_plane() {
             Some(content_off) if content_off == content_evt => {}
             // Evt-only files are covered by the exact evt-only assertion.
             None if name.starts_with("src/events/")
-                || name.starts_with("schemas/events/") => {}
+                || name.starts_with("schemas/events/")
+                || name.starts_with("docs/") => {}
             _ => differing.push(name.clone()),
         }
     }
