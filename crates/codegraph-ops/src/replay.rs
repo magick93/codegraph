@@ -122,7 +122,7 @@ pub async fn run(
     let sql = replay_sql(event, channel, from, to, limit).map_err(OpsError::Config)?;
     let target = &config.api_db;
     crate::db::psql_query(target, &sql).await?;
-    output::info(&format!(
+    output::info(format!(
         "replayed up to {} archived event(s) onto their source channels",
         if limit == 0 {
             DEFAULT_REPLAY_LIMIT

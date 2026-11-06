@@ -231,8 +231,7 @@ CREATE TABLE IF NOT EXISTS platform.event_consumption (
     processed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (msg_id, consumer)
 );
-{% endif %}
-{% if project.event_archive %}-- ============================================================================
+{% endif %}{% if project.event_archive %}-- ============================================================================
 -- Event archive (issue #615): the replay substrate. The drain archives
 -- each DELIVERED envelope (on-dispatch — only delivered events are
 -- replayable; on-publish would double the write volume) and sweeps rows
@@ -251,8 +250,7 @@ CREATE TABLE IF NOT EXISTS platform.event_archive (
 
 CREATE INDEX IF NOT EXISTS idx_event_archive_replay
     ON platform.event_archive (event, dispatched_at);
-{% endif %}
--- ============================================================================
+{% endif %}-- ============================================================================
 -- Row-Level Security policies
 -- ============================================================================
 

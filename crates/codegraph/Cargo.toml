@@ -68,6 +68,7 @@ hotpath = { version = "0.28", optional = true }
 tokio = { version = "1", features = ["full"] }
 codegraph-grafeo = { path = "../codegraph-grafeo" }
 tempfile = "3"
+anyhow = "1"
 insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"

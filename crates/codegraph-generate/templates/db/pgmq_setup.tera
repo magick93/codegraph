@@ -141,8 +141,7 @@ BEGIN
             gen_random_uuid()
         )
     );
-    {% endif %}
-
+{% endif %}
     -- Enqueue to domain-specific queue
     v_queue_name := 'events_' || p_domain;
     PERFORM pgmq.send(v_queue_name, v_payload);

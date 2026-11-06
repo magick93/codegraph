@@ -100,7 +100,7 @@ pub async fn run(
         None => queues.clone(),
     };
     if matched.is_empty() {
-        output::warn(&format!(
+        output::warn(format!(
             "no dead-letter queue matches channel {channel:?} (have: {queues:?})"
         ));
         return Ok(());
@@ -114,17 +114,14 @@ pub async fn run(
     for q in matched {
         let depth_sql = depth_sql(q).map_err(crate::error::OpsError::Config)?;
         match crate::db::psql_query(target, &depth_sql).await {
-            Ok(depth) => output::info(&format!("{q}: {depth} message(s)")),
-            Err(e) => output::warn(&format!("{q}: depth probe failed: {e}")),
+            Ok(depth) => output::info(format!("{q}: {depth} message(s)")),
+            Err(e) => output::warn(format!("{q}: depth probe failed: {e}")),
         }
         if requeue {
             let source = q.strip_suffix("_dlq").unwrap_or(q);
-            let sql =
-                requeue_sql(q, source, limit).map_err(|e| crate::error::OpsError::Config(e))?;
+            let sql = requeue_sql(q, source, limit).map_err(crate::error::OpsError::Config)?;
             crate::db::psql_query(target, &sql).await?;
-            output::info(&format!(
-                "  requeued up to {limit} message(s) onto {source}"
-            ));
+            output::info(format!("  requeued up to {limit} message(s) onto {source}"));
         }
     }
     Ok(())

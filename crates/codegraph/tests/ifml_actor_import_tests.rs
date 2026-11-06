@@ -303,6 +303,7 @@ actors Support {
     capability ReadTicket on Ticket
 
     purpose CustomerCare
+    obligation log
 
     grant Helper {
         permit ReadTicket
@@ -535,3 +536,4 @@ view "TodoBoard" {
     let permits = engine.effective_permits("Agent").await.expect("permits");
     assert_eq!(permits.len(), 2);
 }
+// appended probe

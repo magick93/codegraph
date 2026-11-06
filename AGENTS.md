@@ -750,13 +750,147 @@ reconciliation").
   workers leg + flag-off byte-identity over the worker tree, node-free)
   and the in-crate placement unit tests (`events::placement::tests`).
 - **Deferred**: `Transport::CloudflareQueues` (issue #543); Leg 3 hooks
-  contract retirement (issue #505); CloudEvents envelope variant;
-  delivery-policy DSL syntax (upstream rexlang #31 slice 2);
-  deployment-profile transport bindings (#455 §13); full Connector SPI
-  (#455 §14); publisher/aggregate binding + event domain attribution
-  (rexlang issue drafts, see below); webhook `DECLARED` vocabulary
-  validation parity in the cornucopia worker variant; DLQ policy for
-  permanently failing consumers; LSP for `.evt`.
+  contract retirement (issue #505); delivery-policy DSL syntax (upstream
+  rexlang #31 slice 2); deployment-profile transport bindings (#455
+  §13); full Connector SPI (#455 §14); publisher/aggregate binding +
+  event domain attribution (rexlang issue drafts, see below); webhook
+  `DECLARED` vocabulary validation parity in the cornucopia worker
+  variant; LSP for `.evt`.
+
+### The events hardening epic (issues #609–#616, one PR)
+
+Eight issues materialized the upstream rexlang #31 asks onto the
+existing #454/#455 plane. All ride ONE presence gate (`.evt` or
+function-consumer input ⇒ non-empty `EventArchitecture`) — no new
+capabilities, `evt_events` stays implied into every plan, and flag-off
+(no `.evt` input) remains byte-identical (the standing canaries +
+`forms_pre_feature_tree`/`ux_rules_pre_feature_tree`/
+`policy_rls` snapshot re-blessed for exactly the enumerated deltas).
+
+- **CloudEvents envelope variant (#609)**: `event_envelope =
+  "native" | "cloudevents"` under `[features]` (string feature, unknown
+  = hard config error, the `deployment_topology` precedent; default
+  native = today's bytes). `events/model.rs::EnvelopeVariant` owns the
+  DERIVED mapping table (type ← declared event name, source ←
+  `/{domain}` else `/{channel}`, subject ← `{entity_table}/{entity_id}`
+  when present, id ← publish-time uuid, time ← occurred_at,
+  datacontenttype, data ← payload; native identity keys survive as CE
+  extension attributes `version/channel/domain/correlationid/tenantid`).
+  emit.tera (both provider legs) + the plpgsql trigger envelope
+  (pgmq_setup.tera) emit CE under the flag; the drains + webhook POST
+  speak BOTH shapes via the shared `event_name_of`/`payload_of`
+  normalizers (mixed producers route correctly), and the POST
+  content-type switches to `application/cloudevents+json`. The #511
+  body-only HMAC covers the CE body unchanged. When upstream rexlang #31
+  adds CE attribute DECLARATIONS they override the derived defaults —
+  the mapping stays in the one table.
+- **Generated consumer idempotency (#612)**: `event_idempotency` bool
+  feature (strict, default off). The drain's dispatch path keys each
+  delivery on (pgmq msg_id BIGINT, consumer) through
+  `platform.event_consumption` (composite PK, in 0005, created before
+  the blanket grants; no tenant RLS — system surface). Insert-first
+  serializes concurrent deliveries; the row is RELEASED on handler
+  failure (the ledger records SUCCESSES — marking before the handler
+  with no release would let the drain delete a message whose only
+  consumer never handled it); ledger-write errors fail OPEN (at-least-once
+  is the floor). The generated doc flips to "idempotency keying is
+  generated; handlers may still be non-transactional".
+- **Dead-letter queue (#611)**: unconditional under events presence (a
+  defect fix). `dispatch_registered` reports per-consumer outcomes
+  (`ConsumerOutcome { consumer, ok, error }`; per-consumer dispatch
+  returns `Result<(), String>` so error texts survive); the drains
+  dead-letter a message once pgmq's `read_ct` reaches the attempt
+  budget with consumers still failing: lazy `pgmq.create` of
+  `{queue}_dlq`, send with the `_dlq` failure metadata
+  (consumers/errors/attempts/failed_at), delete from the source queue.
+  Moved is TERMINAL for the delete condition — a poison message can no
+  longer starve its queue or (by the one-draining-worker invariant) its
+  siblings. DLQ queues are created lazily on first dead-letter (never
+  in the migration band) and ride the source queue's owner. Ops verb:
+  `testkit dlq [--requeue] [--channel] [--limit]` (plpgsql loop:
+  read once, strip `_dlq`, send to source, delete; names sanitized).
+- **Delivery metrics + traceparent (#613)**: `EventContext.traceparent:
+  Option<String>` (consumers' hand-written publishers get a migration
+  note) rides the envelope as an ADDITIVE key (null when not captured —
+  the event_type precedent) on both variants; the webhook POST
+  propagates it as an UNSIGNED transport header beside the body-only
+  signature. The drain instruments the delivery path through the
+  existing Prometheus recorder: events_{received,processed,retried,
+  failed,dead_lettered} + webhook_{delivered,retry_scheduled,
+  endpoint_deactivated}; labels are identity NAMES only (queue/event/
+  consumer/endpoint/attempt) — never payload fields. Workers (no
+  metrics dep on wasm) emit structured tracing lines — the documented
+  asymmetry. Goldens re-blessed: EMIT_PRE_WORKERS (+traceparent,
+  Copy dropped), DISPATCH_PRE_EVT (counters + header on the shared
+  drain path).
+- **Per-event JSON Schemas (#614)**: `events::docs` (pure projections,
+  tree-global, emitted once by `EvtEventsGenerator` regardless of
+  topology, inert without `.evt`): `schemas/events/{Event}.json`
+  (2020-12, declaration-order properties, rex primitives → JSON types,
+  unmapped/resolved-schema-typed fields PERMISSIVE with the resolution
+  recorded + a one-time WARN — never silently strict) and
+  `{Event}.Envelope.json` (native 12-key or CE wrapper, payload `$ref`
+  resolving to the sibling file). Registry publication explicitly out
+  of scope.
+- **AsyncAPI 3.0.0 (#610)**: `docs/asyncapi.json` from the same
+  projection — channels keyed by pgmq queue (the domain-queue collapse
+  falls out of the keying; sqlite/unbound channels recorded `x-unbound`),
+  one component message per declared event with an EXTERNAL payload ref
+  to the #614 schemas, publish op per channel, subscribe op per
+  subscription (operationId = consumer), the envelope documented via
+  `x-envelope`. No `servers` entry: pgmq has no registered AsyncAPI
+  protocol — an `x-pgmq` channel binding instead of a lying transport.
+- **Archive + replay (#615)**: `event_archive` bool feature (default
+  off — archiving doubles write volume, it must never silently turn on).
+  `platform.event_archive` (msg_id PK, channel, event, envelope JSONB,
+  occurred_at, dispatched_at + replay index) in 0005; the drain
+  ARCHIVES each DELIVERED envelope at the delete site (on-dispatch —
+  only delivered events are replayable) and sweeps past-retention rows
+  (default 30d) every cycle; both legs. Ops verb: `testkit replay
+  [--event GLOB] [--channel] [--from] [--to] [--limit]` — v1 semantics:
+  re-publish to the CHANNEL (all subscribers re-receive; #612 keying
+  makes it safe), fresh pgmq msg_ids, correlation_id preserved
+  verbatim, `replayed_from` marker; history is NOT consumed.
+- **Event catalogue (#616)**: `docs/events.md` — per-event sections
+  (version, owning domain, payload fields with rust types + resolved
+  schema titles, publishing channels + transport, subscriptions +
+  consumers + delivery policies), the cross-plane `emits` edges (`.ddd`
+  service ops declaring event emission — rex-ir
+  `ServiceOperation.emits`, carried through the graph mirror as
+  `DddServiceOperation.emits`, serde-defaulted), the synthetic
+  function-consumer entries (#450 slice D), a fenced-mermaid dependency
+  view, and governance slots (owner/classification/retention/pii —
+  rexlang #31 item 14) that render when the artifact carries them and
+  stay omitted otherwise. Pure projection — no new graph edges.
+- **Runtime gate (`events_runtime_tests`, ignored, the
+  test-ops-integration lane)**: assembles the GENERATED events module +
+  drain VERBATIM into a scratch crate (sea_orm leg) over real Postgres
+  with a FUNCTIONAL pgmq stand-in (real queue tables with
+  msg_id/read_ct/vt semantics; staged over `0003_pgmq_setup.sql` — the
+  authz_contract pattern). Pins: the poison consumer dead-letters with
+  metadata after the budget while the sibling was delivered exactly
+  once across the redelivery window (idempotency), failed deliveries
+  release their ledger rows, delivered envelopes archive, and the
+  replay verb re-publishes with fresh identity + marker (consumers
+  re-run). Its first runs caught three REAL emitted-code defects string
+  pins could not see: a `return 0` in the Vec-returning
+  `dispatch_registered` (the events plane had never been compiled
+  standalone), `rows_affected` as method-not-field on sea-orm 2, and
+  the DLQ call-site's `queue` move/borrow mix.
+- **Gates**: `cargo test -p codegraph --test evt_cloudevents_tests`
+  (2), `--test evt_idempotency_tests` (2), `--test
+  events_runtime_tests -- --ignored` (the live lane), the in-crate
+  `evt_events` pins (42) + `events::docs` pins, `cargo test -p
+  codegraph-ops` (247: dlq 5 + replay 5 + the harness suites),
+  evt_pipeline/evt_workers pins extended (the evt-only file set now
+  includes `schemas/events/*` + `docs/{asyncapi,events}.md`).
+- **Deferred**: CE attribute declarations from upstream rexlang #31
+  (override the derived mapping); per-subscription idempotency/replay
+  DSL syntax (upstream slice 2); generated admin endpoints for
+  replay/DLQ (ops verbs only in v1); schema-registry publication
+  (#614's excluded half); cornucopia-leg runtime test (the wasm gate +
+  template pins cover it); DLQ retention/dead-letter policy
+  configuration (fixed convention + default policy in v1).
 
 ## Deployment models as generator input (rexlang #49)
 
