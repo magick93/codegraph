@@ -57,19 +57,19 @@ tree-sitter-language = "0.1"
 # salsa: no direct dependency anywhere — 0.22 rides in transitively via
 # auto-lsp 0.6.2 (0.23 via rex-driver). A direct salsa upgrade is gated on
 # the same auto-lsp release as tree-sitter above (issue #423).
-# rex-* @ 10108d79: bumped for the union integrity pass (rexlang #114's
-# merge — rex_driver::check_integrity, the cross-layer doctor stage below)
-# on top of 0f8518f's declaration-backed control/route manifest (rexlang
+# rex-* @ 9fa8ceed: latest rexlang main (event plane work; rides the
+# union integrity pass rexlang #114 — rex_driver::check_integrity — on top
+# of 0f8518f's declaration-backed control/route manifest (rexlang
 # #118 — rex_ifml::manifest_ifml / rex_ir::ifml_manifest) and the
 # workspace-level cross-surface resolution (#117 — E0104–E0108: action/
 # navigate/refresh references resolve against declarations; requires:/roles:
 # resolve against .actor models via check_ifml_with_actors) on top of the
 # .deploy deployment surface (#49), the DDD Sculptor semantics (#47), and
 # the IFML module composition + deep-navigation grammar (#45/#46).
-rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
-rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
-rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
-rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
+rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "9fa8ceedf263dd66663c67a2526fb4a19698c1e8" }
+rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "9fa8ceedf263dd66663c67a2526fb4a19698c1e8" }
+rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "9fa8ceedf263dd66663c67a2526fb4a19698c1e8" }
+rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "9fa8ceedf263dd66663c67a2526fb4a19698c1e8" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the rexlang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
 # into codegraph-generate / codegraph-core).
