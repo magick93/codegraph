@@ -23,6 +23,7 @@ export interface EntityTestids<F extends string = string> {
   deleteDialogConfirm: string;
   form: string;
   cancelBtn: string;
+  resetBtn: string;
   submitBtn: string;
   editBtn: string;
   deleteBtn: string;

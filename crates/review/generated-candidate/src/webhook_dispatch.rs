@@ -233,7 +233,17 @@ impl WebhookDispatcher {
                 // records were created successfully. If any INSERT failed, the
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
+                metrics::counter!("events_received",
+                    "queue" => queue.to_string(),
+                    "event" => event_type.to_string(),
+                )
+                .increment(1);
                 if all_inserts_succeeded {
+                    metrics::counter!("events_processed",
+                        "queue" => queue.to_string(),
+                        "event" => event_type.to_string(),
+                    )
+                    .increment(1);
                     let _ = self
                         .db
                         .execute_raw(Statement::from_sql_and_values(
@@ -277,6 +287,13 @@ impl WebhookDispatcher {
 
         req = req.header("X-Webhook-Timestamp", chrono::Utc::now().timestamp());
 
+        // Issue #613: W3C trace context propagates — the envelope's
+        // `traceparent` rides as an UNSIGNED transport header beside the
+        // signature (the body-only HMAC covers the envelope member).
+        if let Some(tp) = payload.get("traceparent").and_then(|v| v.as_str()) {
+            req = req.header("traceparent", tp);
+        }
+
         // Add custom headers from endpoint config
         if let Some(obj) = headers.as_object() {
             for (k, v) in obj {
@@ -302,6 +319,11 @@ impl WebhookDispatcher {
         };
 
         if delivered {
+            metrics::counter!("webhook_delivered",
+                "endpoint" => endpoint_id.to_string(),
+                "status" => status.map(|s| s.to_string()).unwrap_or_default(),
+            )
+            .increment(1);
             // Mark as delivered
             let _ = self
                 .db
@@ -325,6 +347,11 @@ impl WebhookDispatcher {
         } else {
             let next_retry = delay_for_attempt(attempt as u32);
             let new_attempt = attempt + 1;
+            metrics::counter!("webhook_retry_scheduled",
+                "endpoint" => endpoint_id.to_string(),
+                "attempt" => new_attempt.to_string(),
+            )
+            .increment(1);
 
             let _ = self
                 .db
@@ -360,6 +387,10 @@ impl WebhookDispatcher {
                     ))
                     .await;
 
+                metrics::counter!("webhook_endpoint_deactivated",
+                    "endpoint" => endpoint_id.to_string(),
+                )
+                .increment(1);
                 tracing::warn!(endpoint_id = %endpoint_id, "webhook endpoint deactivated after exhausting retries");
             }
         }

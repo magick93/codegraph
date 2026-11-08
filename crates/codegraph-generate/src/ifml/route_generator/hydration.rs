@@ -19,6 +19,21 @@
 //!   means "no roles" to `currentRoles()`. SSR never touches `globalThis` —
 //!   it is process-global on the server, and the guards are browser-gated.
 //!
+//! ## The guard's sessionless defer (issue #598)
+//!
+//! The `+page.ts` guards decide during SSR only when the role set is
+//! KNOWN — `parentData.roles !== null` (a session resolved it) or the
+//! client is evaluating (the seeded/hydrated surface is authoritative).
+//! A sessionless SSR pass (persona test contexts carry no session on
+//! purpose; their init scripts seed the CLIENT-only surface) finds
+//! `rolesKnown` false and defers: the client re-evaluates post-hydration
+//! (SvelteKit re-runs universal loads), where seeded
+//! `__USER_ROLES__`/`__USER_CAPABILITIES__` decide allow vs the denial
+//! redirect. Redirecting there instead denied EVERY persona during SSR —
+//! allowed ones included (88 crewbase gating specs). The `requires` leg
+//! defers with the roles: `can()` derives from the same surface. The
+//! #572 fetch-denial catch (real 401/403s during SSR) is untouched.
+//!
 //! ## Mapping convention (generation-time, from the ingested policy)
 //!
 //! BaseJump `account_role` is closed (`'owner' | 'member'`); the policy's

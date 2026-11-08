@@ -10,12 +10,6 @@ enum MovieGenre {
     Comedy as "C" = 1
 }
 
-enum MediaStatus {
-    Available as "A" = 0
-    Loaned as "L" = 1
-    Retired as "R" = 2
-}
-
 class Library {
     String name
     contains Book[] books opposite library
@@ -45,7 +39,7 @@ class Movie extends Media {
 }
 
 class PhysicalMedia {
-    MediaStatus status
+    String condition
     refers Media media
 }
 

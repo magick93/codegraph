@@ -10,7 +10,7 @@ application Library {
             inject PersonService;
             inject MediaSearch;
             boolean borrow(String mediaId, Person borrower) capability BorrowMedia;
-            PhysicalMedia registerMedia(MediaStatus status);
+            PhysicalMedia registerMedia(String status);
             protected save => PhysicalMediaRepository.save;
             registerBorrower => PersonService.register;
             findMedia => MediaSearch.search;
@@ -37,7 +37,7 @@ application Library {
             findAll;
             save;
             delete;
-            PhysicalMedia findByStatus(MediaStatus status);
+            PhysicalMedia findByStatus(String status);
         }
         /// Full-text search over the movie catalogue.
         search MediaSearch {

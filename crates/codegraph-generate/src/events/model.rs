@@ -227,9 +227,9 @@ impl DeliveryPolicy {
 }
 
 /// The delivery guarantee. `ExactlyOnce` is deliberately absent (issue
-/// #455 §8: at-least-once + idempotent consumers is the model); a
-/// CloudEvents envelope is a future `Envelope` variant (documented, not
-/// declared).
+/// #455 §8: at-least-once + idempotent consumers is the model). Consumer
+/// idempotency KEYING is generated when the `event_idempotency` feature
+/// is on (issue #612).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum DeliveryGuarantee {
     AtLeastOnce,
@@ -237,6 +237,58 @@ pub enum DeliveryGuarantee {
     /// may drop. The drain deletes a message whose consumer dispatches
     /// failed instead of leaving it for the next visibility window.
     AtMostOnce,
+}
+
+/// The wire envelope variant (issue #609). `Native` is the codegraph
+/// 11-key superset envelope; `CloudEvents` is CloudEvents 1.0 in
+/// structured JSON mode (`application/cloudevents+json`) with the native
+/// identity keys carried as CE extension attributes. The mapping table:
+///
+/// | CloudEvents attribute | Derived from |
+/// |-----------------------|--------------|
+/// | `type` | the declared event name (triggers: created/updated/deleted) |
+/// | `source` | `/{domain}` (app publishes with no derivable domain: `/{channel}`) |
+/// | `subject` | `{entity_table}/{entity_id}` when present (trigger publications only) |
+/// | `id` | a publish-time UUID (distinct from the pgmq `msg_id`) |
+/// | `time` | `occurred_at` |
+/// | `datacontenttype` | `application/json` |
+/// | `data` | the payload struct |
+///
+/// Extensions: `version`, `channel`, `domain`, `correlationid`, `tenantid`
+/// (+ `entity_table`/`entity_id` on triggers) — nothing in the native
+/// envelope is lost. When upstream rexlang #31 adds CloudEvents attribute
+/// *declarations* (`type "com.acme.order.placed"`, `source "/orders"`),
+/// they override these derived defaults — keep the mapping in this one
+/// table.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub enum EnvelopeVariant {
+    #[default]
+    Native,
+    CloudEvents,
+}
+
+impl EnvelopeVariant {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::CloudEvents => "cloudevents",
+        }
+    }
+
+    /// Parse from the profiles.toml `event_envelope` feature value.
+    ///
+    /// Unknown values are a configuration error (the `deployment_topology`
+    /// precedent): a typo must not silently flip the wire envelope.
+    pub fn from_config(s: &str) -> Result<Self> {
+        match s {
+            "native" => Ok(Self::Native),
+            "cloudevents" => Ok(Self::CloudEvents),
+            other => Err(crate::error::Error::Config(format!(
+                "unknown event_envelope \"{other}\" in profile features; \
+                 expected \"native\" (default) or \"cloudevents\""
+            ))),
+        }
+    }
 }
 
 /// One pgmq queue in the project's queue inventory.

@@ -54,11 +54,8 @@
                 {
                   "name": "status",
                   "type": {
-                    "type": "enum",
-                    "value": {
-                      "package": "nz.example.library",
-                      "name": "MediaStatus"
-                    }
+                    "type": "primitive",
+                    "value": "string"
                   }
                 }
               ]
@@ -255,11 +252,8 @@
                   {
                     "name": "status",
                     "type": {
-                      "type": "enum",
-                      "value": {
-                        "package": "nz.example.library",
-                        "name": "MediaStatus"
-                      }
+                      "type": "primitive",
+                      "value": "string"
                     }
                   }
                 ]

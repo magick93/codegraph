@@ -48,12 +48,18 @@
 {%- endif %}
 {%- if remote_awaits %}
 	import { page } from '$app/state';
+{%- if needs_browser %}
+	import { browser } from '$app/environment';
+{%- endif %}
 {%- if needs_redirect %}
 	import { redirect } from '@sveltejs/kit';
 {%- endif %}
 {%- for comp in components %}
 {%- if comp.remote_query %}
 	import { {{ comp.remote_query }} } from './data.remote';
+{%- endif %}
+{%- if comp.workflow_live %}
+	import { {{ comp.workflow_live.export }} } from './data.remote';
 {%- endif %}
 {%- endfor %}
 {%- endif %}
@@ -72,6 +78,16 @@
 {% if view_params_src %}{{ view_params_src }}{% endif %}
 {%- for comp in components %}
 {{ comp.await_block }}
+{%- endfor %}
+{%- for comp in components %}
+{%- if comp.workflow_live %}
+	// Live workflow state (issue #574 S4c parity): the query.live instance
+	// polls the /workflow read every 5s on the client; the fetched
+	// workflow_state is the SSR fallback (kit does not start streams
+	// during SSR). The badge and the transition buttons read the derived.
+	const {{ comp.workflow_live.live_var }} = browser ? {{ comp.workflow_live.export }}(viewParams['{{ comp.workflow_live.id_param }}']) : null;
+	const {{ comp.workflow_live.state_var }} = $derived({{ comp.workflow_live.live_var }}?.current ?? {{ comp.workflow_live.fallback_expr }});
+{%- endif %}
 {%- endfor %}
 {%- if denial_helper_src %}
 

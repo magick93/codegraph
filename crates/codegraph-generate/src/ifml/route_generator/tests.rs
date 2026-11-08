@@ -2600,6 +2600,7 @@ fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
         needs_on_mount: false,
         needs_invalidate: false,
         remote_awaits: false,
+        needs_browser: false,
         needs_redirect: false,
         view_params_src: String::new(),
         denial_target: String::new(),
@@ -4056,11 +4057,19 @@ fn hydration_layouts_are_integrated_only() {
 }
 
 #[test]
-fn integrated_guard_decides_server_side_via_parent_roles() {
-    // Issue #468 W-a: in the integrated (views) route group the guard must
-    // fire during SSR (the (views)/+layout.server.ts load resolves the
-    // session's role tokens) — a denied persona is redirected before any
-    // data fetch, and never sees the 404/401 boundary from a doomed fetch.
+fn integrated_guard_defers_when_roles_unknowable_server_side() {
+    // Issue #468 W-a + #598: in the integrated (views) route group the
+    // guard decides during SSR when the (views)/+layout.server.ts load
+    // resolved the session's role tokens — but a SESSIONLESS SSR pass
+    // (persona test contexts carry no session on purpose; their init
+    // scripts seed __USER_ROLES__ client-side only) must NOT redirect:
+    // roles are unknowable there, so every persona — allowed included —
+    // was denied during SSR before the client's seeded roles could ever
+    // matter. The guard distinguishes "roles known insufficient" (deny →
+    // redirect) from "roles unknowable server-side" (defer): the client
+    // re-evaluates post-hydration, where the seeded
+    // __USER_ROLES__/__USER_CAPABILITIES__ are authoritative. The #572
+    // fetch-denial catch below still denies on real 401/403s.
     let tera = create_tera(Path::new(".")).expect("tera");
     let vc = guarded_vc(
         "AdminConsole",
@@ -4080,24 +4089,122 @@ fn integrated_guard_decides_server_side_via_parent_roles() {
         "{rendered}"
     );
     assert!(
-        rendered.contains("const roles: string[] = parentData?.roles ?? currentRoles();"),
+        rendered.contains("const serverRoles = parentData?.roles ?? null;"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("if (viewRequires.length && !viewRequires.some((c) => can(c))) {"),
+        rendered.contains("const roles: string[] = serverRoles ?? currentRoles();"),
         "{rendered}"
     );
     assert!(
-        rendered.contains("if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"),
+        rendered.contains("const rolesKnown = serverRoles !== null || browser;"),
+        "{rendered}"
+    );
+    // Both guard legs defer with the roles: can() derives from the same
+    // client-only surface, so an unknowable role set makes the capability
+    // check unknowable too.
+    assert!(
+        rendered.contains(
+            "if (rolesKnown && viewRequires.length && !viewRequires.some((c) => can(c))) {"
+        ),
         "{rendered}"
     );
     assert!(
-        !rendered.contains("browser"),
-        "the SSR guard must not be browser-gated: {rendered}"
+        rendered.contains(
+            "if (rolesKnown && viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("import { browser } from '$app/environment';"),
+        "the defer needs the browser gate: {rendered}"
+    );
+    // The ungated pre-#598 shapes must be gone — they redirected every
+    // sessionless persona during SSR.
+    assert!(
+        !rendered.contains("if (viewRequires.length && !viewRequires.some"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("if (viewRoles.length && !roles.some"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("const roles: string[] = parentData?.roles ?? currentRoles();"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn integrated_requires_only_guard_reads_parent_and_defers() {
+    // Issue #598: a requires-only view (no roles:) reads parent() too —
+    // can() derives from the same client-only surface, so the sessionless
+    // SSR pass must defer exactly like the roles leg. Pre-#598 the
+    // parentData read was roles-gated, so capability-guarded views
+    // redirected every sessionless persona during SSR.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let vc = guarded_vc("AdminConsole", vec![], vec!["manage_refunds".to_string()]);
+    let ctx = build_load_context("v1", &vc, &[], "/", true, false, false, false);
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains(
+            "const parentData = (await parent()) as { roles?: string[] | null } | undefined;"
+        ),
+        "requires-only views read the parent roles: {rendered}"
+    );
+    assert!(
+        rendered.contains("const rolesKnown = serverRoles !== null || browser;"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "if (rolesKnown && viewRequires.length && !viewRequires.some((c) => can(c))) {"
+        ),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains("const roles: string[]"),
+        "no roles authored, no roles const: {rendered}"
+    );
+    assert!(!rendered.contains("currentRoles"), "{rendered}");
+}
+
+#[test]
+fn integrated_unguarded_auth_surface_does_not_import_browser() {
+    // The browser import serves ONLY the #598 defer (rolesKnown). An
+    // unguarded view with the #572 fetch-denial catch (auth_surface) must
+    // not import it — an unused import breaks svelte-check.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let ctx = super::context::PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerList".to_string(),
+        components: vec![fetch_component("grid")],
+        has_fetch: true,
+        has_workflow: false,
+        view_params: Vec::new(),
+        view_roles: Vec::new(),
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: true,
+        guard_only: false,
+        remote_api: false,
+        auth_surface: true,
+        denial_target: "/".to_string(),
+    };
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("import { redirect } from '@sveltejs/kit';"),
+        "the #572 denial catch needs redirect: {rendered}"
     );
     assert!(
         !rendered.contains("import { browser } from '$app/environment';"),
-        "{rendered}"
+        "no guard, no defer, no browser import: {rendered}"
+    );
+    assert!(!rendered.contains("rolesKnown"), "{rendered}");
+    assert!(!rendered.contains("parentData"), "{rendered}");
+    assert!(
+        rendered.contains("if (status === 401 || status === 403) {"),
+        "the #572 fetch-denial catch still rides the load: {rendered}"
     );
 }
 
@@ -5034,13 +5141,175 @@ fn remote_transition_refreshes_the_paired_instance() {
 }
 
 #[test]
+fn live_workflow_badge_streams_via_query_live() {
+    // S4c parity for the IFML plane (issue #574 ledger): a workflow-bound
+    // by-id component under `ui_live_queries` + the remote plane gains a
+    // `query.live` workflow stream; the badge and the transition buttons
+    // read the live-derived state (the fetched workflow_state is the
+    // SSR/no-stream fallback — kit does not start streams during SSR),
+    // and the page imports `browser` for the instance guard.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let mut project = remote_project();
+    project.codegen.ui_live_queries = true;
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &workflow_transitions_config(),
+        "v1",
+        &vc,
+        None,
+        &HashSet::new(),
+        None,
+        &project,
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("import { browser } from '$app/environment';"),
+        "the live instance guard needs browser:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("browser ? getEditorWorkflowLive(viewParams['customerId']) : null"),
+        "the live instance is browser-only:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "const editor_workflow_state = $derived(editor_wf_live?.current ?? editor_form_state.workflow_state?.current_state);"
+        ),
+        "the badge state derives from the live stream with the fetched fallback:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("data-workflow-state={editor_workflow_state}"),
+        "the badge reads the live-derived state:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("data-workflow-state={editor_form_state.workflow_state"),
+        "the raw form-state path is replaced on the badge:\n{rendered}"
+    );
+}
+
+#[test]
+fn live_off_keeps_the_static_workflow_badge() {
+    // Flag-off byte-identity: without `ui_live_queries` no live block, no
+    // browser import, and the badge keeps the raw form-state path.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.params = vec![id_param()];
+    vc.components[0].events.push(save_event());
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &workflow_transitions_config(),
+        "v1",
+        &vc,
+        None,
+        &HashSet::new(),
+        None,
+        &remote_project(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(!rendered.contains("query.live"), "{rendered}");
+    assert!(!rendered.contains("$app/environment"), "{rendered}");
+    assert!(
+        rendered.contains("data-workflow-state={editor_form_state.workflow_state?.current_state}"),
+        "the badge keeps the raw form-state path:\n{rendered}"
+    );
+}
+
+#[test]
+fn live_workflow_module_exports_the_query_live_stream() {
+    // The view module gains the workflow stream when live is on: a 5s poll
+    // of the by-id /workflow read (the entity plane's getWorkflowLive
+    // pattern). Live off → no export.
+    use super::context::PageLoadContext;
+    use super::remote::RemoteModuleContext;
+
+    let module_from = |live: bool| {
+        let mut ctx = PageLoadContext {
+            api_version: "v1".to_string(),
+            name: "Editor".to_string(),
+            components: Vec::new(),
+            has_fetch: true,
+            has_workflow: true,
+            view_params: Vec::new(),
+            view_roles: Vec::new(),
+            view_requires: Vec::new(),
+            guard_consts: String::new(),
+            integrated: true,
+            guard_only: false,
+            remote_api: true,
+            auth_surface: false,
+            denial_target: "/".to_string(),
+        };
+        let mut comp = fetch_component("editor");
+        comp.workflow = true;
+        comp.fetch_item = true;
+        comp.fetch_list = false;
+        comp.remote_query = Some("getEditor".to_string());
+        comp.id_param = Some("customerId".to_string());
+        ctx.components.push(comp);
+        let mut module = RemoteModuleContext::from_load(&ctx);
+        module.live = live;
+        module.render()
+    };
+
+    let rendered = module_from(true);
+    assert!(
+        rendered.contains(
+            "export const getEditorWorkflowLive = query.live(async function* (id: string) {"
+        ),
+        "the workflow stream rides the module:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await new Promise((resolve) => setTimeout(resolve, 5000));"),
+        "the stream polls on the 5s cadence:\n{rendered}"
+    );
+    let off = module_from(false);
+    assert!(!off.contains("query.live"), "live off → no stream:\n{off}");
+}
+
+#[test]
+fn form_plane_emits_the_select_variant_only_when_wired() {
+    // The wrapper imports the project's NativeSelect barrel — emitted
+    // if-absent ONLY when the mappings carry a wired selection-field
+    // entry, so no-shadcn trees never carry a dangling barrel import.
+    let dir = tempfile::tempdir().unwrap();
+    super::forms_plane::form_plane_files_select_variant(dir.path(), false);
+    assert!(
+        !dir.path()
+            .join("src/lib/forms/fields/select-variant.svelte")
+            .exists(),
+        "no wired mapping → no wrapper"
+    );
+    super::forms_plane::form_plane_files_select_variant(dir.path(), true);
+    let wrapper = std::fs::read_to_string(
+        dir.path()
+            .join("src/lib/forms/fields/select-variant.svelte"),
+    )
+    .expect("the wrapper is emitted when wired");
+    assert!(
+        wrapper.contains("NativeSelect"),
+        "the wrapper composes the project's NativeSelect barrel:\n{wrapper}"
+    );
+    assert!(
+        wrapper.contains("options"),
+        "the wrapper takes the generator-owned options:\n{wrapper}"
+    );
+}
+
+#[test]
 fn shadcn_field_variant_maps_the_text_slots() {
     // The #582 deferral: a `field`-role mapping carrying `field_props`
     // wiring replaces the built-in TEXT slots — the wiring is evaluated
     // inside the AppField children snippet, and the generator owns
     // name/testid/type/required around it so the POM fill/testid contract
-    // holds on the mapped input. Select/radio slots keep their built-ins
-    // (the shadcn Select root's contract is not slot-compatible).
+    // holds on the mapped input. Select slots map through the
+    // selection-field variant (the generator-emitted NativeSelect
+    // wrapper); radio slots keep their built-ins.
     use codegraph_config::built_in_pack;
     let pack = built_in_pack("shadcn-svelte").expect("shadcn pack");
     let spec = FormSpec {
@@ -5088,11 +5357,61 @@ fn shadcn_field_variant_maps_the_text_slots() {
         Some("Input"),
         "the page imports the mapped component"
     );
-    // The dropdown slot keeps the built-in (wiring excluded).
+    // The dropdown slot maps through the selection-field variant (issue
+    // #574 ledger): the pack's entry carries field_props pointing at the
+    // generator-emitted NativeSelect wrapper — a REAL shadcn Select is not
+    // slot-compatible (its items render through snippets) AND would break
+    // the POM's selectOption fill, so the wrapper composes NativeSelect
+    // (a native <select> — the fill contract holds verbatim).
+    let tier = &rendered.fields[1].invocation;
+    assert!(
+        tier.starts_with("<SelectVariant name=\"tier\" data-testid=\"editor-tier\""),
+        "the mapped select slot renders the wrapper with the POM contract:\n{tier}"
+    );
+    assert!(
+        tier.contains(r#"options={["gold"]}"#),
+        "the generator owns options from the field's closed value set:\n{tier}"
+    );
+    assert!(tier.contains("value={field.state.value}"), "{tier}");
+    assert!(
+        tier.contains("onchange={(e) => field.handleChange(e.currentTarget.value)}"),
+        "{tier}"
+    );
+    assert_eq!(
+        rendered
+            .mapped_select_import
+            .as_ref()
+            .map(|i| i.export.as_str()),
+        Some("SelectVariant"),
+        "the page imports the wrapper alongside the mapped field component"
+    );
+
+    // A selection-field mapping WITHOUT field_props is skipped — never an
+    // un-wired slot: the built-in SelectField stays byte-identical.
+    let mut bare = pack.clone();
+    for m in &mut bare.components {
+        if m.role == Some(SemanticRole::SelectionField) {
+            m.field_props = None;
+        }
+    }
+    let rendered = super::render::render_form_tanstack(
+        "editor",
+        "editor_form_state",
+        &spec,
+        &HashMap::new(),
+        None,
+        DtoKeyCasing::default(),
+        Some(&bare),
+        "CustomerEdit",
+    );
     let tier = &rendered.fields[1].invocation;
     assert!(
         tier.contains("serverMessage={fieldErrors.tier}"),
-        "the non-text slot keeps the built-in component:\\n{tier}"
+        "the unwired selection-field entry keeps the built-in slot:\n{tier}"
+    );
+    assert!(
+        rendered.mapped_select_import.is_none(),
+        "no wiring, no wrapper import"
     );
 
     // No pack: the built-in slots are byte-identical.

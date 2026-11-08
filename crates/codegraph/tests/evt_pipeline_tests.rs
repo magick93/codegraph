@@ -205,6 +205,7 @@ async fn evt_input_generates_the_typed_events_plane() {
         "\"tenant_id\"",
         "\"occurred_at\"",
         "\"correlation_id\"",
+        "\"traceparent\": ctx.traceparent.as_deref()",
     ] {
         assert!(emit.contains(key), "envelope key {key} missing: {emit}");
     }
@@ -263,9 +264,16 @@ async fn evt_input_generates_the_typed_events_plane() {
     let dispatch = read_out(&files, "src/webhook_dispatch.rs");
     assert!(dispatch.contains("is_typed_envelope"), "{dispatch}");
     assert!(
-        dispatch.contains("dispatch_registered(\n                            self.db.clone(),"),
+        dispatch.contains("dispatch_registered(\n                    self.db.clone(),"),
         "the delete condition extends to consumer dispatches"
     );
+    // Issue #611: the poison-message fate — dead-letter after the attempt
+    // budget, moved is terminal.
+    assert!(
+        dispatch.contains("(typed_ok || moved_to_dlq)"),
+        "{dispatch}"
+    );
+    assert!(dispatch.contains("format!(\"{queue}_dlq\")"), "{dispatch}");
 
     // Webhook subscription API: vocabulary validation over the declared
     // events ∪ the CRUD verbs (declared names sorted).
@@ -423,7 +431,8 @@ async fn no_evt_input_generates_no_events_plane() {
         "only the .evt run declares the gated anyhow dep\n--- evt ---\n{cargo_evt}\n--- off ---\n{cargo_off}"
     );
 
-    // The evt-only files are EXACTLY the events plane.
+    // The evt-only files are EXACTLY the events plane (code + the
+    // #614 document artifacts — all inert without `.evt` input).
     let evt_only: Vec<&String> = files_evt
         .keys()
         .filter(|k| !files_off.contains_key(*k))
@@ -431,6 +440,12 @@ async fn no_evt_input_generates_no_events_plane() {
     assert_eq!(
         evt_only,
         [
+            "docs/asyncapi.json",
+            "docs/events.md",
+            "schemas/events/OrderCancelled.Envelope.json",
+            "schemas/events/OrderCancelled.json",
+            "schemas/events/OrderPlaced.Envelope.json",
+            "schemas/events/OrderPlaced.json",
             "src/events/consumers.rs",
             "src/events/contracts.rs",
             "src/events/emit.rs",
@@ -441,7 +456,8 @@ async fn no_evt_input_generates_no_events_plane() {
         "the .evt run adds exactly the four src/events files"
     );
 
-    // The ownership manifest differs by exactly the same four entries.
+    // The ownership manifest differs by exactly the same entries
+    // (code + the #614 document artifacts).
     let manifest_evt: CodegraphManifest =
         serde_json::from_str(read_out(&files_evt, ".codegraph-manifest.json").as_str()).unwrap();
     let manifest_off: CodegraphManifest =
@@ -454,6 +470,12 @@ async fn no_evt_input_generates_no_events_plane() {
     assert_eq!(
         added,
         [
+            "docs/asyncapi.json",
+            "docs/events.md",
+            "schemas/events/OrderCancelled.Envelope.json",
+            "schemas/events/OrderCancelled.json",
+            "schemas/events/OrderPlaced.Envelope.json",
+            "schemas/events/OrderPlaced.json",
             "src/events/consumers.rs",
             "src/events/contracts.rs",
             "src/events/emit.rs",
@@ -474,7 +496,9 @@ async fn no_evt_input_generates_no_events_plane() {
         match files_off.get(name) {
             Some(content_off) if content_off == content_evt => {}
             // Evt-only files are covered by the exact evt-only assertion.
-            None if name.starts_with("src/events/") => {}
+            None if name.starts_with("src/events/")
+                || name.starts_with("schemas/events/")
+                || name.starts_with("docs/") => {}
             _ => differing.push(name.clone()),
         }
     }

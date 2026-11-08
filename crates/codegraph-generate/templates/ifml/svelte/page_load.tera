@@ -2,9 +2,7 @@ import type { PageLoad } from './$types';
 {% if guard_only %}
 {%- if view_roles or view_requires %}
 import { redirect } from '@sveltejs/kit';
-{%- if not integrated %}
 import { browser } from '$app/environment';
-{%- endif %}
 {%- if view_roles %}
 import { currentRoles } from '$lib/roles';
 {%- endif %}
@@ -30,7 +28,7 @@ import { PUBLIC_API_URL, PUBLIC_API_KEY } from '$app/env/public';
 {%- endif %}
 {%- if not guard_only and (view_roles or view_requires or (auth_surface and has_fetch)) %}
 import { redirect } from '@sveltejs/kit';
-{%- if not integrated %}
+{%- if not integrated or view_roles or view_requires %}
 import { browser } from '$app/environment';
 {%- endif %}
 {%- if view_roles %}
@@ -61,23 +59,32 @@ const apiHeaders: Record<string, string> = {
 export const load: PageLoad = async ({ params, url{% if not remote_api and not guard_only %}, fetch{% endif %}{% if integrated and (view_roles or view_requires) %}, parent{% endif %} }) => {
 {%- if view_roles or view_requires %}
 {%- if integrated %}
-	// Server-decided gating (issue #468 W-a): the (views)/+layout.server.ts
-	// load resolves the session's role tokens — null when sessionless — so
-	// the redirect fires DURING SSR, before any data fetch. A denied
-	// persona never sees the guarded page; an allowed one hydrates with
-	// the data already loaded. currentRoles() (the hydrated global, seeded
-	// by persona init scripts) is the client-side fallback.
-{%- if view_roles %}
+	// Server-decided gating (issue #468 W-a), deferred when the roles are
+	// unknowable server-side (issue #598): the (views)/+layout.server.ts
+	// load resolves the session's role tokens — null when sessionless. A
+	// KNOWN role set decides the guard DURING SSR (real sessions; a denied
+	// persona never sees the guarded page or a doomed fetch). An
+	// UNKNOWABLE one — a sessionless SSR pass: persona test contexts carry
+	// no session on purpose and seed __USER_ROLES__/__USER_CAPABILITIES__
+	// via CLIENT-only init scripts — must not redirect here, or every
+	// persona would be denied before the client's seeded roles could ever
+	// matter: rolesKnown stays false and the client re-evaluates
+	// post-hydration (SvelteKit re-runs universal loads during hydration),
+	// where the seeded surface is authoritative. The #572 fetch-denial
+	// catch below still denies on real 401/403s during SSR.
 	const parentData = (await parent()) as { roles?: string[] | null } | undefined;
-	const roles: string[] = parentData?.roles ?? currentRoles();
+	const serverRoles = parentData?.roles ?? null;
+	const rolesKnown = serverRoles !== null || browser;
+{%- if view_roles %}
+	const roles: string[] = serverRoles ?? currentRoles();
 {%- endif %}
 {%- if view_requires %}
-	if (viewRequires.length && !viewRequires.some((c) => can(c))) {
+	if (rolesKnown && viewRequires.length && !viewRequires.some((c) => can(c))) {
 		throw redirect(303, '{{ denial_target }}');
 	}
 {%- endif %}
 {%- if view_roles %}
-	if (viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {
+	if (rolesKnown && viewRoles.length && !roles.some((r) => viewRoles.includes(r))) {
 		throw redirect(303, '{{ denial_target }}');
 	}
 {%- endif %}

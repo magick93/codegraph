@@ -78,7 +78,7 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     );
     // Manager arm on `inspect`: conditional permit → when guard.
     assert!(
-        handler.contains(r#"if !((response.run_status == "Draft"))"#),
+        handler.contains(r#"if !((response.pay_run_status == "Draft"))"#),
         "the per-grant conditional `when` must render:\n{handler}"
     );
     // Capability-gated route answers 403 naming the reason.
@@ -173,7 +173,7 @@ async fn validation_pass_warns_on_dead_surface_and_status_bypass() {
     let mut text = fs::read_to_string(&workflow_config).unwrap();
     text.push_str(
         "\n[domains.payroll.entity_config.PayRunType.workflow]\n\
-         status_field = \"run_status\"\n\
+         status_field = \"pay_run_status\"\n\
          states = [\"Draft\", \"AwaitingApproval\", \"Posted\"]\n\
          initial_state = \"Draft\"\n\
          terminal_states = [\"Posted\"]\n",

@@ -764,21 +764,154 @@ reconciliation").
   disposition (`evt_delivery` in the drain contexts — present ONLY on a
   non-default fold, so flag-off output is byte-identical); any mix falls
   back to today's 30s/at-least-once (warned once). Unlowered knobs
-  (`max_attempts`, `backoff_seconds`, `dead_letter`) and
-  `effectively_once` (dedup keys unmodeled — lowers to at-least-once)
-  warn once as recorded deferrals.
+  (`max_attempts`, `backoff_seconds`, a declared `dead_letter` channel
+  name) and `effectively_once` (dedup keys unmodeled — lowers to
+  at-least-once) warn once as recorded deferrals.
 - **Deferred**: `Transport::CloudflareQueues` (issue #543); Leg 3 hooks
   contract retirement (issue #505); CloudEvents envelope variant (the
   declarative `cloud_events` attribute input landed — the envelope
   emission is the remaining slice); per-queue delivery folds (the v1
-  fold is architecture-wide);
-  deployment-profile transport bindings (#455 §13); full Connector SPI
-  (#455 §14); publisher/aggregate binding + event domain attribution
-  (rexlang issue drafts, see below); webhook `DECLARED` vocabulary
-  validation parity in the cornucopia worker variant; DLQ policy for
-  permanently failing consumers (a declared `dead_letter` warns);
-  subscription `when` filters + channel `scope` topic templates
-  (mirrored, unconsumed); LSP for `.evt`.
+  fold is architecture-wide); subscription `when` filters + channel
+  `scope` topic templates (mirrored, unconsumed); deployment-profile
+  transport bindings (#455 §13); full Connector SPI (#455 §14);
+  publisher/aggregate binding + event domain attribution (rexlang issue
+  drafts, see below); webhook `DECLARED` vocabulary validation parity in
+  the cornucopia worker variant; LSP for `.evt`.
+
+### The events hardening epic (issues #609–#616, one PR)
+
+Eight issues materialized the upstream rexlang #31 asks onto the
+existing #454/#455 plane. All ride ONE presence gate (`.evt` or
+function-consumer input ⇒ non-empty `EventArchitecture`) — no new
+capabilities, `evt_events` stays implied into every plan, and flag-off
+(no `.evt` input) remains byte-identical (the standing canaries +
+`forms_pre_feature_tree`/`ux_rules_pre_feature_tree`/
+`policy_rls` snapshot re-blessed for exactly the enumerated deltas).
+
+- **CloudEvents envelope variant (#609)**: `event_envelope =
+  "native" | "cloudevents"` under `[features]` (string feature, unknown
+  = hard config error, the `deployment_topology` precedent; default
+  native = today's bytes). `events/model.rs::EnvelopeVariant` owns the
+  DERIVED mapping table (type ← declared event name, source ←
+  `/{domain}` else `/{channel}`, subject ← `{entity_table}/{entity_id}`
+  when present, id ← publish-time uuid, time ← occurred_at,
+  datacontenttype, data ← payload; native identity keys survive as CE
+  extension attributes `version/channel/domain/correlationid/tenantid`).
+  emit.tera (both provider legs) + the plpgsql trigger envelope
+  (pgmq_setup.tera) emit CE under the flag; the drains + webhook POST
+  speak BOTH shapes via the shared `event_name_of`/`payload_of`
+  normalizers (mixed producers route correctly), and the POST
+  content-type switches to `application/cloudevents+json`. The #511
+  body-only HMAC covers the CE body unchanged. When upstream rexlang #31
+  adds CE attribute DECLARATIONS they override the derived defaults —
+  the mapping stays in the one table.
+- **Generated consumer idempotency (#612)**: `event_idempotency` bool
+  feature (strict, default off). The drain's dispatch path keys each
+  delivery on (pgmq msg_id BIGINT, consumer) through
+  `platform.event_consumption` (composite PK, in 0005, created before
+  the blanket grants; no tenant RLS — system surface). Insert-first
+  serializes concurrent deliveries; the row is RELEASED on handler
+  failure (the ledger records SUCCESSES — marking before the handler
+  with no release would let the drain delete a message whose only
+  consumer never handled it); ledger-write errors fail OPEN (at-least-once
+  is the floor). The generated doc flips to "idempotency keying is
+  generated; handlers may still be non-transactional".
+- **Dead-letter queue (#611)**: unconditional under events presence (a
+  defect fix). `dispatch_registered` reports per-consumer outcomes
+  (`ConsumerOutcome { consumer, ok, error }`; per-consumer dispatch
+  returns `Result<(), String>` so error texts survive); the drains
+  dead-letter a message once pgmq's `read_ct` reaches the attempt
+  budget with consumers still failing: lazy `pgmq.create` of
+  `{queue}_dlq`, send with the `_dlq` failure metadata
+  (consumers/errors/attempts/failed_at), delete from the source queue.
+  Moved is TERMINAL for the delete condition — a poison message can no
+  longer starve its queue or (by the one-draining-worker invariant) its
+  siblings. DLQ queues are created lazily on first dead-letter (never
+  in the migration band) and ride the source queue's owner. Ops verb:
+  `testkit dlq [--requeue] [--channel] [--limit]` (plpgsql loop:
+  read once, strip `_dlq`, send to source, delete; names sanitized).
+- **Delivery metrics + traceparent (#613)**: `EventContext.traceparent:
+  Option<String>` (consumers' hand-written publishers get a migration
+  note) rides the envelope as an ADDITIVE key (null when not captured —
+  the event_type precedent) on both variants; the webhook POST
+  propagates it as an UNSIGNED transport header beside the body-only
+  signature. The drain instruments the delivery path through the
+  existing Prometheus recorder: events_{received,processed,retried,
+  failed,dead_lettered} + webhook_{delivered,retry_scheduled,
+  endpoint_deactivated}; labels are identity NAMES only (queue/event/
+  consumer/endpoint/attempt) — never payload fields. Workers (no
+  metrics dep on wasm) emit structured tracing lines — the documented
+  asymmetry. Goldens re-blessed: EMIT_PRE_WORKERS (+traceparent,
+  Copy dropped), DISPATCH_PRE_EVT (counters + header on the shared
+  drain path).
+- **Per-event JSON Schemas (#614)**: `events::docs` (pure projections,
+  tree-global, emitted once by `EvtEventsGenerator` regardless of
+  topology, inert without `.evt`): `schemas/events/{Event}.json`
+  (2020-12, declaration-order properties, rex primitives → JSON types,
+  unmapped/resolved-schema-typed fields PERMISSIVE with the resolution
+  recorded + a one-time WARN — never silently strict) and
+  `{Event}.Envelope.json` (native 12-key or CE wrapper, payload `$ref`
+  resolving to the sibling file). Registry publication explicitly out
+  of scope.
+- **AsyncAPI 3.0.0 (#610)**: `docs/asyncapi.json` from the same
+  projection — channels keyed by pgmq queue (the domain-queue collapse
+  falls out of the keying; sqlite/unbound channels recorded `x-unbound`),
+  one component message per declared event with an EXTERNAL payload ref
+  to the #614 schemas, publish op per channel, subscribe op per
+  subscription (operationId = consumer), the envelope documented via
+  `x-envelope`. No `servers` entry: pgmq has no registered AsyncAPI
+  protocol — an `x-pgmq` channel binding instead of a lying transport.
+- **Archive + replay (#615)**: `event_archive` bool feature (default
+  off — archiving doubles write volume, it must never silently turn on).
+  `platform.event_archive` (msg_id PK, channel, event, envelope JSONB,
+  occurred_at, dispatched_at + replay index) in 0005; the drain
+  ARCHIVES each DELIVERED envelope at the delete site (on-dispatch —
+  only delivered events are replayable) and sweeps past-retention rows
+  (default 30d) every cycle; both legs. Ops verb: `testkit replay
+  [--event GLOB] [--channel] [--from] [--to] [--limit]` — v1 semantics:
+  re-publish to the CHANNEL (all subscribers re-receive; #612 keying
+  makes it safe), fresh pgmq msg_ids, correlation_id preserved
+  verbatim, `replayed_from` marker; history is NOT consumed.
+- **Event catalogue (#616)**: `docs/events.md` — per-event sections
+  (version, owning domain, payload fields with rust types + resolved
+  schema titles, publishing channels + transport, subscriptions +
+  consumers + delivery policies), the cross-plane `emits` edges (`.ddd`
+  service ops declaring event emission — rex-ir
+  `ServiceOperation.emits`, carried through the graph mirror as
+  `DddServiceOperation.emits`, serde-defaulted), the synthetic
+  function-consumer entries (#450 slice D), a fenced-mermaid dependency
+  view, and governance slots (owner/classification/retention/pii —
+  rexlang #31 item 14) that render when the artifact carries them and
+  stay omitted otherwise. Pure projection — no new graph edges.
+- **Runtime gate (`events_runtime_tests`, ignored, the
+  test-ops-integration lane)**: assembles the GENERATED events module +
+  drain VERBATIM into a scratch crate (sea_orm leg) over real Postgres
+  with a FUNCTIONAL pgmq stand-in (real queue tables with
+  msg_id/read_ct/vt semantics; staged over `0003_pgmq_setup.sql` — the
+  authz_contract pattern). Pins: the poison consumer dead-letters with
+  metadata after the budget while the sibling was delivered exactly
+  once across the redelivery window (idempotency), failed deliveries
+  release their ledger rows, delivered envelopes archive, and the
+  replay verb re-publishes with fresh identity + marker (consumers
+  re-run). Its first runs caught three REAL emitted-code defects string
+  pins could not see: a `return 0` in the Vec-returning
+  `dispatch_registered` (the events plane had never been compiled
+  standalone), `rows_affected` as method-not-field on sea-orm 2, and
+  the DLQ call-site's `queue` move/borrow mix.
+- **Gates**: `cargo test -p codegraph --test evt_cloudevents_tests`
+  (2), `--test evt_idempotency_tests` (2), `--test
+  events_runtime_tests -- --ignored` (the live lane), the in-crate
+  `evt_events` pins (42) + `events::docs` pins, `cargo test -p
+  codegraph-ops` (247: dlq 5 + replay 5 + the harness suites),
+  evt_pipeline/evt_workers pins extended (the evt-only file set now
+  includes `schemas/events/*` + `docs/{asyncapi,events}.md`).
+- **Deferred**: CE attribute declarations from upstream rexlang #31
+  (override the derived mapping); per-subscription idempotency/replay
+  DSL syntax (upstream slice 2); generated admin endpoints for
+  replay/DLQ (ops verbs only in v1); schema-registry publication
+  (#614's excluded half); cornucopia-leg runtime test (the wasm gate +
+  template pins cover it); DLQ retention/dead-letter policy
+  configuration (fixed convention + default policy in v1).
 
 ## Deployment models as generator input (rexlang #49)
 
@@ -841,11 +974,8 @@ component coverage — the second warns, the first is hard).
   with `?` (nullability is header-driven, and bare `:p IS NULL` references
   are indeterminate at prepare time).
 - **Deferred**: crons/observability/webhook queues/hyperdrive names as
-  `.deploy` component settings (port/health/cors + `env` blocks LANDED
-  upstream at 194056b — rexlang #135's operational vocabulary — and ride
-  the `DeployComponentNode` settings/env mirrors unconsumed; the four
-  worker knobs still need rex-driver vocabulary extensions);
-  `queue`/`objectStore` components driving worker queues;
+  `.deploy` component settings (needs rex-driver setting-vocabulary
+  extensions); `queue`/`objectStore` components driving worker queues;
   `remote_include_mode = "http"` over service bindings; non-workers
   targets (standalone/dockerCompose/kubernetes backends do not exist yet
   — rexlang #49 slice 2).
@@ -1303,10 +1433,16 @@ flags except the last:
   the webhook detail module gains `getDeliveriesLive`; the pages consume
   the instances REACTIVELY browser-side (`browser ? live(id) : null` —
   kit does not start streams during SSR) with the load payload as the
-  SSR fallback (`wfLive?.current ?? item.workflow_state`). Flag off ⇒
-  byte-identical (entity-tree ux/forms canaries re-blessed for the
-  scaffold-seeding diff, enumerated: the live exports + the page
-  consumption blocks).
+  SSR fallback (`wfLive?.current ?? item.workflow_state`). **IFML parity
+  (the #574 ledger)**: workflow-bound by-id components under the remote
+  plane gain `get{Pascal}WorkflowLive` in `data.remote.ts` and the badge
+  + transition buttons read the derived live state
+  (`{js_name}_workflow_state`) with the fetched path as the fallback —
+  the gate fixture carries the flag and the nightly workflow category
+  exercises it. Flag off ⇒ byte-identical (entity-tree ux/forms canaries
+  re-blessed for the scaffold-seeding diff, enumerated: the live exports
+  + the page consumption blocks; the IFML route_generator pins pin the
+  flag-off shape).
 - **The #582 deferral retired — IFML 422 per-field mapping**: the
   Create/Update fail legs parse `error.details` into `fieldErrors` (the
   entity-plane leg verbatim) and EVERY IFML fail leg now reads the error
@@ -1334,19 +1470,31 @@ input. The prop-contract problem (the S4-era design blocker) is solved
 by the wiring being DECLARED: the pack carries the exact expressions its
 component accepts (shadcn Input spreads rest onto the native input), so
 svelte-check arbitrates the real contract instead of a convention.
+**Selection-field parity (the #574 ledger)**: the pack's
+`selection-field` entry maps the dropdown slots to the generator-emitted
+NativeSelect wrapper (`$lib/forms/fields/select-variant.svelte`,
+if-absent emitted only when the entry is wired — it imports the
+project's NativeSelect barrel): a REAL shadcn Select is not
+slot-compatible (snippet-rendered items) AND would break the POM's
+`selectOption` fill, so the wrapper composes NativeSelect — a native
+`<select>` with the generator-owned name/testid/required/options (from
+the field's closed value set) around the declared value/onchange wiring.
+Radio slots keep their built-ins.
 Declared-once details: a `field` mapping WITHOUT `field_props` is
-skipped (never an un-wired slot); select/radio slots keep their
-built-ins; the `AppField` children snippet is always
+skipped (never an un-wired slot); select slots WITHOUT a wired entry
+keep their built-ins; the `AppField` children snippet is always
 `{#snippet children(field)}` (the self-binding built-ins ignore the
 param). No-pack / project-ahead-of-pack rules unchanged — mapping-gated,
 so the byte-identity canaries (no-pack fixtures) are untouched. The
 gate's `Input` stub mirrors the real component's rest-spread; the
 nightly gate (shadcn fixture) compiles the wiring and the specs fill the
 mapped inputs by name. Gate: the in-crate
-`shadcn_field_variant_maps_the_text_slots` pin + `ifml_codegen_gate`
-5/5 (33/33 specs). Still deferred from #582: ResetButton;
-selection-field (dropdown) mapping variants (the shadcn Select root's
-items-rendering contract is not slot-compatible).
+`shadcn_field_variant_maps_the_text_slots` pin +
+`form_plane_emits_the_select_variant_only_when_wired` +
+`ifml_codegen_gate`
+5/5 (33/33 specs). Still deferred from #582: ~~ResetButton~~ (landed,
+#601); bits-ui Select composition (a real shadcn Select needs POM
+selectOption surgery — the NativeSelect wrapper is the v1 contract).
 - Swept en route: the gate-owned sweep spec's inner waitForURL window
   widened 2s→5s (parallel gate runs contend for the vite dev server; the
   toPass retry chain needs the headroom).
@@ -1504,13 +1652,32 @@ the proven #573 IFML pattern:
   `shell.rs`/`descriptor.rs` emitting pre-`(app)` routes (kit-3 conflicts)
   and the kit-3 `cookie@0.7`-vs-`parseCookie` hoist conflict (fixed by a
   `cookie@^1` npm override in the scaffold).
-- The e2e category (Playwright over a booted API) rides the
-  review-fixture consumer stack — tracked follow-up.
-- **Known pre-existing gap (recorded, not fixed)**: the ui-shell plane's
-  top-level route tree conflicts with the `(app)`-grouped entity routes
-  under kit 3 (`/(app)/x` vs `/x`) — consumers using `ui-shell` on the
-  kit-3 pin hit this; S2 does not touch the shell plane's location. The
-  gate removes the shell tree before sync and builds the entity plane.
+- **The entity e2e lane (issue #575)**: the emitted `playwright.config.ts`
+  carries an `auth` project matching `tests/e2e/auth.test.ts` — the file
+  sits at the `e2e/` ROOT, which the `e2e` project's negative lookahead
+  explicitly excludes, so the suite matched NO project and never ran in
+  the repo's own lane. The probe is a REAL route now (context-threaded:
+  the first entity's collection via `auth_probe_path` on
+  `UiScaffoldContext`) — axum layers run only for MATCHED requests, so
+  the old synthetic `__auth_probe__` path 404'd under the fallback
+  without the middleware ever seeing it (the premise had never been
+  tested). The gate's `entity_specs_run_green` (ignored, nightly) holds
+  two legs: the **coverage invariant** — every emitted `tests/**`
+  `.test.ts`/`.spec.ts` file matches ≥1 project, evaluated by running the
+  EMITTED config's own `testMatch` regex sources over `tests/`-relative
+  paths (NOT playwright's `--list`, which matches against the absolute
+  checkout path and is checkout-dependent — a repo cloned into a
+  directory containing an `e2e/` segment leaks into the `e2e` project's
+  lookahead and makes orphans match); and the **live sessionless slice**
+  — the `auth` project over a booted API (`GateDb` migrations + key +
+  axum) serving a `vite preview` of the built tree (the emitted config
+  has no webServer block; the gate owns the process and points
+  `PUBLIC_SVELTEKIT_URL` at it; the json reporter rides
+  `PLAYWRIGHT_JSON_OUTPUT_NAME` via `--reporter=json` since the emitted
+  config carries no reporter). The UI-driven families (`generated/**`,
+  `webhooks`, journeys) need the Supabase persona stack (GoTrue + BaseJump
+  orgs in the global-setup) and stay the consumer `testkit e2e` lane's
+  job — their file paths are still held to the coverage invariant.
 - Gates: `cargo test -p codegraph --test entity_remote_functions_tests`
   (2, node-free) + `cargo test -p codegraph --test entity_codegen_gate --
   --ignored` (node; the nightly lane) + the updated
@@ -1553,12 +1720,15 @@ absent = byte-identical, variant selection in Rust):
   asserts per-field message visibility.
 - **Shared**: `codegraph-generate/src/forms/` owns the zod SHAPE
   (`ZodObject/ZodField/ZodKind/ZodCheck`), `ts_string_literal` (the #560
-  lesson — all prose reaching emitted TS), and the npm version pins
+  lesson — all prose reaching emitted TS), the npm version pins
   (`@tanstack/svelte-form ^1.33.5`, `zod ^4.6.7` — Emitted-contract majors:
-  changes ship with fixture regen + enumerated diff). The `$lib/forms`
-  creator scaffold (`createFormCreator`/`createFormCreatorContexts`, one
-  field component per control kind) is if-absent, rendered from Rust consts
-  in BOTH planes so they cannot drift. Datetime fields keep native validity +
+  changes ship with fixture regen + enumerated diff), and `forms::library`
+  — BOTH planes' `$lib/forms` scaffold sources colocated in one module
+  (the "cannot drift" contract made physical; the invariant test pins the
+  shared createFormCreator surface). The entity actions row renders the
+  REGISTERED `<form.ResetButton>` library component (`{module}-reset-btn`
+  testid, `common_reset` i18n key) inside the `AppForm` wrapper.
+  Datetime fields keep native validity +
   server 422 (zod's `z.iso.datetime()` rejects `datetime-local` values);
   untyped fallback forms stay hand-rolled under the IFML flag.
 - Gates: `cargo test -p codegraph --test entity_form_tests` (3) +
@@ -1624,14 +1794,9 @@ service, gate logs artifact on failure) — PR CI stays node-free.
 front door (`ifml_compile::compile_and_check_ifml` — issue #591), the
 SAME gather → compile → check path the ingest uses, so doctor and ingest
 cannot drift. Parse and compile errors are hard failures, and so is every
-ERROR-severity checker diagnostic (E0104–E0109 — undeclared action/
-navigate/refresh targets, action targets that resolve to nothing,
-`requires:`/`roles:` names no resolvable policy declares); the lint
-channel (W0150–W0154 — dead actions, unreachable views, shadowed
-modules, components without data, views without domain binding) is
-advisory: printed as `warning: ifml: …` and counted toward the
-soft-warning total, never fatal. The PASS line reports the manifest
-counts (routes/controls/edges/commands).
+checker diagnostic (E0104–E0108 — undeclared action/navigate/refresh
+targets, `requires:`/`roles:` names no resolvable policy declares); the
+PASS line reports the manifest counts (routes/controls/edges/commands).
 `import "….actor"` statements resolve read-only through
 `resolve_actor_policy`. The asymmetry is the point — the run path
 warns-and-continues past an unresolvable policy import (the view guards
@@ -1708,11 +1873,25 @@ Residue-of-the-pass notes that postdate the sections above:
   scripts and must reach guarded pages); the universal layout publishes
   non-null roles onto `globalThis.__USER_ROLES__` before the child
   `+page.ts` guards run (SvelteKit resolves parent loads first, on
-  hydration AND client navigations — this is the server-decided-guard
-  follow-up: a denied persona is redirected during SSR, before any
-  fetch). BaseJump mapping convention: `'owner'` → the actor whose
-  snake_case name is `owner` (else FIRST actor in sorted order);
-  `'member'` → `member` (else LAST). No policy ⇒ `roles: null` ⇒ deny.
+  hydration AND client navigations). BaseJump mapping convention:
+  `'owner'` → the actor whose snake_case name is `owner` (else FIRST
+  actor in sorted order); `'member'` → `member` (else LAST). No policy ⇒
+  `roles: null`.
+  **The sessionless defer (issue #598)**: the `+page.ts` guards decide
+  during SSR only when the role set is KNOWN — `parentData.roles !== null`
+  (a session resolved it) or the client is evaluating; a sessionless SSR
+  pass (`rolesKnown` false) DEFERS — redirecting there denied every
+  persona (allowed included, 88 crewbase gating specs) because persona
+  init scripts seed the CLIENT-only surface. The client re-evaluates
+  post-hydration (universal loads re-run), where the seeded
+  `__USER_ROLES__`/`__USER_CAPABILITIES__` decide allow vs the denial
+  redirect (`expectDenied`'s `waitForURL` keeps passing); the #572
+  fetch-denial catch still denies on real 401/403s during SSR. The
+  `requires` leg defers with the roles (`can()` derives from the same
+  surface; requires-only views now read `parent()` too). Known
+  limitation (pre-existing, deferred): a REAL logged-in user on a
+  requires-ONLY view still denies during SSR — `can()` reads the
+  client-only role surface, not `parentData.roles`.
 - **`structural_gates` (W3)**: post-generation structural gate
   (`quality_gates.rs`, run from `pipeline.rs`) — scans the emitted tree
   and HARD-FAILS on retired vocabulary (`confirm-confirm` double-confirm;
@@ -3617,7 +3796,7 @@ still AND on top.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `rex-*` @ 194056b (everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar — PLUS this bump's surfaces: typed lifecycles (rexlang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — rexlang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (rexlang #135), the `.dmn` decision-model surface (rexlang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (rexlang #128), and the Rune statement IR (rex-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `rex-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev rexlang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with rexlang's pin; purely additive delta: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `rex-*` @ 194056b (everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar, and #139's ifml-quality pass — PLUS this bump's surfaces: typed lifecycles (rexlang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — rexlang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (rexlang #135), the `.dmn` decision-model surface (rexlang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (rexlang #128), and the Rune statement IR (rex-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `rex-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev rexlang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with rexlang's pin; purely additive delta over 49a6a27: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.

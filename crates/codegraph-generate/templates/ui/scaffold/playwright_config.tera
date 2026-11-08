@@ -18,6 +18,13 @@ export default defineConfig({
   globalTeardown: './tests/e2e/auth/global-teardown.ts',
   projects: [
     {
+      // The auth suite (issue #575): the file sits at the e2e/ ROOT, which
+      // the `e2e` project's negative lookahead explicitly excludes — without
+      // this project it matched nothing and never ran.
+      name: 'auth',
+      testMatch: /e2e\/auth\.test\.ts/,
+    },
+    {
       name: 'journey',
       testMatch: /e2e\/journey\/.+\.test\.ts/,
     },

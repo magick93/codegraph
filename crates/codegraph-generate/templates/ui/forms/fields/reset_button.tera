@@ -6,9 +6,10 @@
 
 	interface Props {
 		label: string;
+		testid?: string;
 	}
 
-	let { label = 'Reset' }: Props = $props();
+	let { label = 'Reset', testid }: Props = $props();
 
 	const form = useFormContext();
 </script>
@@ -17,6 +18,7 @@
 	type="button"
 	class="inline-flex h-9 items-center justify-center rounded-md border border-input bg-transparent px-4 text-sm font-medium shadow-sm"
 	onclick={() => form.reset()}
+	data-testid={testid}
 >
 	{label}
 </button>

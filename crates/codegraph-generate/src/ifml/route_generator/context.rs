@@ -75,6 +75,9 @@ pub struct PageSvelteContext {
     /// async). Gates the `page`/query/redirect imports, the local
     /// viewParams resolution, and the load-key markup branches.
     pub(super) remote_awaits: bool,
+    /// The live workflow stream needs the `browser` instance guard
+    /// (issue #574 S4c parity) — gates the `$app/environment` import.
+    pub(super) needs_browser: bool,
     /// Whether any component's loader carries the auth-surface denial
     /// catch — gates the `redirect` import.
     pub(super) needs_redirect: bool,
@@ -352,6 +355,12 @@ pub struct PageComponentContext {
     /// component-await plane (`grid_data`); empty outside it.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) data_var: String,
+    /// The live workflow stream (issue #574 S4c parity): `Some` for a
+    /// workflow-bound by-id claimant under `ui_live_queries` + the remote
+    /// plane — the badge and the transition buttons read the derived live
+    /// state; `None` keeps the raw fetched-state paths (byte-identical).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) workflow_live: Option<RenderWorkflowLive>,
     /// Fetch URL (JS template literal) for the component's transition
     /// handler: `{base}/${id}/actions/transition`; `None` when the component
     /// carries no transition buttons.
@@ -434,6 +443,27 @@ pub struct RenderWorkflow {
     /// Whether the badge reads a per-row `item` binding (collections): the
     /// mapped-component sibling renders inside `{#each data.items as item}`.
     pub each: bool,
+}
+
+/// The live workflow stream for one component (issue #574 S4c parity):
+/// everything the page template needs to declare the browser-only
+/// `query.live` instance and the derived state the badge and transitions
+/// read. `fallback_expr` is the raw fetched-state path — the SSR/no-stream
+/// fallback (kit does not start streams during SSR).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderWorkflowLive {
+    /// `get{Pascal}WorkflowLive` — the module's `query.live` export.
+    pub export: String,
+    /// The view param whose value is the record id.
+    pub id_param: String,
+    /// The browser-only instance (`{js_name}_wf_live`).
+    pub live_var: String,
+    /// The derived state (`{js_name}_workflow_state`) the badge and the
+    /// transition buttons read instead of the raw fetched path.
+    pub state_var: String,
+    /// The fetched-state path (`{data_var}?.workflow_state?.current_state`
+    /// / `{js_name}_form_state.workflow_state?.current_state`).
+    pub fallback_expr: String,
 }
 
 /// One workflow transition button: humanized target label, e2e testid
@@ -835,6 +865,12 @@ pub struct RenderFormTanstack {
     /// carried `field_props` wiring; `None` keeps the built-in slots.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mapped_import: Option<RenderTanstackImport>,
+    /// The mapped select-slot import when the `selection-field`-role
+    /// mapping carried `field_props` wiring (issue #574 ledger) — the
+    /// generator-emitted NativeSelect wrapper. `None` keeps the built-in
+    /// SelectField slots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapped_select_import: Option<RenderTanstackImport>,
     /// The submit button's testid — the SAME value the POM's
     /// `ComponentSelectors::for_component` resolves (mapping tier first,
     /// action-control slot, `{comp}-submit` fallback), so the TanStack
@@ -1018,6 +1054,9 @@ pub(super) async fn build_page_context(
     // Remote-functions data plane (issue #557): flag-driven — commands
     // replace the client fetch/`apiHeaders` posts when on.
     let remote = project.codegen.ifml_remote_functions;
+    // The live-query plane (issue #574 S4c parity): workflow badges stream
+    // when the entity plane's live flag rides the remote one.
+    let live = remote && project.codegen.ui_live_queries;
     // TanStack form layer (issue #580): typed forms render the TanStack
     // variant when on. Svelte-only (the form-creator scaffold is the
     // SvelteKit `$lib/forms` convention); other frameworks warn and keep
@@ -1203,6 +1242,7 @@ pub(super) async fn build_page_context(
     let mut fetch_state = FetchState::default();
     let mut needs_can_import = false;
     let mut needs_denial_helper = false;
+    let mut needs_browser = false;
     for group in &mut groups {
         for comp in &mut group.components {
             let is_list = comp.table.is_some() || comp.component_type == "list";
@@ -1293,6 +1333,31 @@ pub(super) async fn build_page_context(
                     workflow.badge_html = workflow.badge_html.replace("data.item?", &workflow_ref);
                     for t in &mut workflow.transitions {
                         t.html = t.html.replace("data.item?", &workflow_ref);
+                    }
+                    // The live workflow stream (issue #574 S4c parity): a
+                    // workflow-bound by-id claimant under `ui_live_queries`
+                    // reads the derived live state; everything else keeps
+                    // the raw fetched paths (byte-identical).
+                    if live && (fetch_item || fetch_form) {
+                        let fallback_expr = if is_form {
+                            format!("{}_form_state.workflow_state?.current_state", comp.js_name)
+                        } else {
+                            format!("{}?.workflow_state?.current_state", comp.data_var)
+                        };
+                        let state_var = format!("{}_workflow_state", comp.js_name);
+                        workflow.badge_html =
+                            workflow.badge_html.replace(&fallback_expr, &state_var);
+                        for t in &mut workflow.transitions {
+                            t.html = t.html.replace(&fallback_expr, &state_var);
+                        }
+                        comp.workflow_live = Some(RenderWorkflowLive {
+                            export: format!("get{}WorkflowLive", remote_pascal(&comp.name)),
+                            id_param: id_param.clone().unwrap_or_default(),
+                            live_var: format!("{}_wf_live", comp.js_name),
+                            state_var,
+                            fallback_expr,
+                        });
+                        needs_browser = true;
                     }
                 }
             }
@@ -1484,6 +1549,9 @@ pub(super) async fn build_page_context(
         remote_api: remote,
         auth_surface: project.codegen.ifml_e2e_auth,
         remote_awaits: has_awaits,
+        // needs_browser gates the `browser` instance guard the live
+        // workflow stream requires (issue #574 S4c parity).
+        needs_browser,
         needs_redirect: has_awaits && project.codegen.ifml_e2e_auth,
         denial_helper_src: if needs_denial_helper {
             remote_denial_helper(denial_target)
@@ -1855,6 +1923,7 @@ pub(super) async fn page_component_context(
         remote_query: None,
         await_block: String::new(),
         data_var: String::new(),
+        workflow_live: None,
         transition_url_expr: None,
         remote_transition: None,
         submit_gate: ControlGateContext::default(),
