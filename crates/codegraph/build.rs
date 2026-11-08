@@ -40,6 +40,7 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");
     println!("cargo:rerun-if-changed=.git/packed-refs");
+    println!("cargo:rerun-if-changed=../../Cargo.lock");
 
     let rev = Command::new("git")
         .args(["rev-parse", "HEAD"])
