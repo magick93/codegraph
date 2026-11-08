@@ -1,0 +1,195 @@
+//! Router for {{ domain }} domain.
+//! Consumer template override (lexorank recipe) — based on the built-in
+//! `api/router.tera`, with ONE change: the domain router starts from the
+//! hand-written `handwritten_routes.rs` module (a sibling file that
+//! survives regeneration and is auto-declared by the mod-file scan), so
+//! `POST /cards/{card_id}/move` and `POST /lists/{list_id}/rebalance`
+//! mount at the domain root alongside the generated entity routes.
+//! See docs/lexorank-kanban.md §3 gap 1.
+
+use axum::Router;
+
+use crate::app_state::AppState;
+use crate::middleware::permission::PermissionGuard as _;
+
+{% if has_custom_routes -%}
+// Hand-written custom routes live in `handwritten_routes.rs` (a sibling module
+// declared by mod.rs). Create that file to add custom routes — it survives
+// regen and the real handlers are implemented there, not here.
+{% else -%}
+// The lexorank recipe ships `handwritten_routes.rs` in this directory —
+// it is mounted below and survives regeneration (only `*_handler.rs`
+// files are swept).
+{%- endif %}
+
+pub fn router() -> Router<AppState> {
+{% if has_custom_routes %}    super::handwritten_routes::router(){% else %}    Router::new().merge(super::handwritten_routes::routes()){% endif %}
+{% for entity in entities %}
+{% if entity.role == "root" %}
+        .nest("/{{ entity.path_segment }}", {{ entity.module_name }}_routes())
+{% endif %}
+{% endfor %}
+{%- if has_functions_http %}
+        // Modeled-function endpoints (issue #337 B1) — auth is inherited
+        // from the shared /api middleware layer that nests this router.
+        .merge(crate::api::{{ domain }}::functions_api::functions_routes())
+{%- endif %}
+}
+{% for entity in entities %}
+
+fn {{ entity.module_name }}_routes() -> Router<AppState> {
+    use super::{{ entity.module_name }}_handler;
+{% if entity.has_workflow %}
+    use super::{{ entity.module_name }}_workflow;
+{% endif %}
+{% for mf in entity.media_fields %}
+    use super::media_{{ entity.module_name }}_{{ mf }};
+{% endfor %}
+
+    Router::new()
+{% if entity.has_list and entity.has_create %}
+        .route(
+            "/",
+            axum::routing::get({{ entity.module_name }}_handler::list).guard("{{ domain }}:{{ entity.path_segment }}", "list")
+                .merge(axum::routing::post({{ entity.module_name }}_handler::create).guard("{{ domain }}:{{ entity.path_segment }}", "create")),
+        )
+{% elif entity.has_list %}
+        .route(
+            "/",
+            axum::routing::get({{ entity.module_name }}_handler::list).guard("{{ domain }}:{{ entity.path_segment }}", "list"),
+        )
+{% elif entity.has_create %}
+        .route(
+            "/",
+            axum::routing::post({{ entity.module_name }}_handler::create).guard("{{ domain }}:{{ entity.path_segment }}", "create"),
+        )
+{% endif %}
+{% if entity.has_read and entity.has_update and entity.has_delete %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read")
+                .merge(axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
+                .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+        )
+{% elif entity.has_read and entity.has_update %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read")
+                .merge(axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update")),
+        )
+{% elif entity.has_read and entity.has_delete %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read")
+                .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+        )
+{% elif entity.has_read %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::get({{ entity.module_name }}_handler::get_by_id).guard("{{ domain }}:{{ entity.path_segment }}", "read"),
+        )
+{% elif entity.has_update and entity.has_delete %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update")
+                .merge(axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+        )
+{% elif entity.has_update %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::put({{ entity.module_name }}_handler::update).guard("{{ domain }}:{{ entity.path_segment }}", "update"),
+        )
+{% elif entity.has_delete %}
+        .route(
+            "/{ {{- entity.param_name -}} }",
+            axum::routing::delete({{ entity.module_name }}_handler::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete"),
+        )
+{% endif %}
+{% if entity.hierarchy_field %}
+        .route("/{ {{- entity.param_name -}} }/tree", axum::routing::get({{ entity.module_name }}_handler::tree).guard("{{ domain }}:{{ entity.path_segment }}", "list"))
+{% endif %}
+{% if entity.has_embeddings %}
+        .route("/semantic-search", axum::routing::post({{ entity.module_name }}_handler::semantic_search).guard("{{ domain }}:{{ entity.path_segment }}", "list"))
+{% endif %}
+{%- if entity.has_fts and entity.fts_rest_mode != "query_param" %}
+        .route("/search", axum::routing::get({{ entity.module_name }}_handler::search).guard("{{ domain }}:{{ entity.path_segment }}", "list"))
+{% endif %}
+{% if entity.has_workflow %}
+        .route("/{ {{- entity.param_name -}} }/actions/transition", axum::routing::post({{ entity.module_name }}_workflow::transition).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
+{% if entity.has_approval_status %}
+        .route("/{ {{- entity.param_name -}} }/actions/approve", axum::routing::post({{ entity.module_name }}_workflow::approve).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
+        .route("/{ {{- entity.param_name -}} }/actions/reject", axum::routing::post({{ entity.module_name }}_workflow::reject).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
+{% endif %}
+        .route("/{ {{- entity.param_name -}} }/actions/delegate", axum::routing::post({{ entity.module_name }}_workflow::delegate).guard("{{ domain }}:{{ entity.path_segment }}", "update"))
+        .route("/{ {{- entity.param_name -}} }/workflow", axum::routing::get({{ entity.module_name }}_workflow::get_workflow_state).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
+        .route("/{ {{- entity.param_name -}} }/workflow/history", axum::routing::get({{ entity.module_name }}_workflow::get_process_history).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
+{% endif %}
+{%- for op in entity.mox_ops | default(value=[]) %}
+        .route("/{ {{- entity.param_name -}} }/op/{{ op.snake }}", axum::routing::post({{ entity.module_name }}_handler::mox_op_{{ op.snake }}).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
+{%- endfor %}
+{% for mf in entity.media_fields %}
+        .route(
+            "/{id}/{{ mf }}",
+            axum::routing::put(media_{{ entity.module_name }}_{{ mf }}::upload).guard("{{ domain }}:{{ entity.path_segment }}", "update")
+                .merge(axum::routing::get(media_{{ entity.module_name }}_{{ mf }}::download).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
+                .merge(axum::routing::delete(media_{{ entity.module_name }}_{{ mf }}::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+        )
+{% endfor %}
+{% for child in entity.children %}
+        .nest("/{ {{- entity.param_name -}} }/{{ child.path_segment }}", {{ child.module_name }}_routes())
+{% endfor %}
+{% if entity.has_pipeline_layer %}
+        // Pipeline: {{ entity.pipeline_middleware | join(sep=", ") }}
+        // NOTE: auth is applied once at the server/worker boundary via
+        // from_fn_with_state (route-level layers cannot access router state
+        // in axum 0.8 — S collapses to ()); the per-router auth entry is
+        // therefore emitted as a no-op here.
+{% for mw in entity.pipeline_middleware %}
+{% if mw == "auth" %}
+        // auth: applied by the server's global from_fn_with_state layer
+{% elif mw == "permission" %}
+        .route_layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
+{% elif mw == "metrics" %}
+        .route_layer(axum::middleware::from_fn(crate::metrics_middleware::track_metrics))
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if entity.has_permissions %}
+        // Permission gating ({{ entity.permission_scope }}): the outer
+        // {{ entity.module_name }}_permission layer sets the RequiredPermission
+        // extension; the inner require_permission layer consumes it.
+        .layer(axum::middleware::from_fn(crate::middleware::permission::require_permission))
+        .layer(axum::middleware::from_fn({{ entity.module_name }}_permission))
+{% endif %}
+        // API-key scope enforcement is DB-level (#169): RESTRICTIVE
+        // scope_enforced_* RLS policies raise P0403 INSUFFICIENT_SCOPE for
+        // out-of-scope keys, mapped to HTTP 403 by the generated error
+        // mapper. No per-router scope middleware.
+}
+{% if entity.has_permissions %}
+async fn {{ entity.module_name }}_permission(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use crate::middleware::permission::RequiredPermission;
+    let scope = "{{ entity.permission_scope }}";
+    let op = match request.method().as_str() {
+        "POST" => Some("create"),
+        "PUT" => Some("update"),
+        "DELETE" => Some("delete"),
+        "GET" => {
+            let last = request.uri().path().rsplit('/').next().unwrap_or("");
+            if last.len() == 36 && last.matches('-').count() >= 4 { Some("read") } else { Some("list") }
+        }
+        _ => None,
+    };
+    if let Some(op) = op {
+        request.extensions_mut().insert(RequiredPermission {
+            resource: scope.to_string(),
+            action: op.to_string(),
+        });
+    }
+    next.run(request).await
+}
+{% endif %}
+{% endfor %}
