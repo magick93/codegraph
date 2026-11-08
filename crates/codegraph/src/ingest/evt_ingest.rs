@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    EvtChannelNode, EvtEventField, EvtEventNode, EvtModelGraph, EvtSubscriptionNode,
+    EvtChannelNode, EvtCloudEventsNode, EvtDeliveryModeNode, EvtDeliveryPolicyNode, EvtEventField,
+    EvtEventNode, EvtModelGraph, EvtSubscriptionNode,
 };
 use rex_driver::{DomainImports, SchemaImports, SigilImports, compile_evt_str};
 
@@ -376,6 +377,11 @@ pub fn evt_model_graph_from_rex(
                     resolved_title: title_resolver(&field.ty),
                 })
                 .collect(),
+            cloud_events: event.cloud_events.as_ref().map(|ce| EvtCloudEventsNode {
+                event_type: ce.r#type.clone(),
+                source: ce.source.clone(),
+                subject: ce.subject.clone(),
+            }),
             ordinal,
         })
         .collect();
@@ -391,6 +397,7 @@ pub fn evt_model_graph_from_rex(
                 .iter()
                 .map(|publication| publication.event.clone())
                 .collect(),
+            scope: channel.scope.clone(),
             ordinal,
         })
         .collect();
@@ -403,6 +410,25 @@ pub fn evt_model_graph_from_rex(
             name: subscription.name.clone(),
             events: subscription.events.clone(),
             consumer: subscription.consumer.clone(),
+            when: subscription.when.clone(),
+            delivery: subscription
+                .delivery
+                .as_ref()
+                .map(|policy| EvtDeliveryPolicyNode {
+                    mode: match policy.mode {
+                        rex_ir::events::DeliveryMode::AtMostOnce => EvtDeliveryModeNode::AtMostOnce,
+                        rex_ir::events::DeliveryMode::AtLeastOnce => {
+                            EvtDeliveryModeNode::AtLeastOnce
+                        }
+                        rex_ir::events::DeliveryMode::EffectivelyOnce => {
+                            EvtDeliveryModeNode::EffectivelyOnce
+                        }
+                    },
+                    max_attempts: policy.max_attempts,
+                    backoff_seconds: policy.backoff_seconds,
+                    timeout_seconds: policy.timeout_seconds,
+                    dead_letter: policy.dead_letter.clone(),
+                }),
             ordinal,
         })
         .collect();

@@ -723,15 +723,19 @@ pub async fn run_with_graph_cache(
         // interaction-reference + authorization checker runs (E0104–E0108
         // — every action/navigate/refresh target and requires:/roles:
         // name is proven before anything lands in the graph), and the
-        // declaration-backed manifest is derived. A compile or checker
-        // diagnostic is a hard error (the EvtModel precedent): the #559
-        // defect class cannot half-ingest.
+        // declaration-backed manifest is derived. A compile or
+        // ERROR-severity checker diagnostic is a hard error (the
+        // EvtModel precedent): the #559 defect class cannot half-ingest.
+        // The lint channel (W0150+) renders as warnings.
         if !ifml_files.is_empty() {
             println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
             let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
             let mut total_manifest = rex_ir::ifml_manifest::IfmlManifest::new();
             for ifml_path in ifml_files {
                 let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
+                for lint in &compiled.lints {
+                    eprintln!("warning: ifml: {lint}");
+                }
                 let mut stats = crate::ingest::ifml_ingest::ingest_ifml_model(
                     be.ingestor(),
                     &compiled.compilation.model,
@@ -1381,12 +1385,16 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
 
     // Pass 1b: ingest IFML DSL files through the checker gate (issue
     // #591 — the same front door the primary run path uses; a compile or
-    // checker diagnostic is a hard error).
+    // ERROR-severity checker diagnostic is a hard error, the lint channel
+    // renders as warnings).
     println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
     let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
     let mut total_manifest = rex_ir::ifml_manifest::IfmlManifest::new();
     for ifml_path in ifml_files {
         let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
+        for lint in &compiled.lints {
+            eprintln!("warning: ifml: {lint}");
+        }
         let mut stats = crate::ingest::ifml_ingest::ingest_ifml_model(
             be.ingestor(),
             &compiled.compilation.model,

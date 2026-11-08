@@ -121,6 +121,7 @@ fn orders_evt_model() -> EvtModelGraph {
                         Some("OrderStatusType"),
                     ),
                 ],
+                cloud_events: None,
                 ordinal: 0,
             },
             EvtEventNode {
@@ -128,6 +129,7 @@ fn orders_evt_model() -> EvtModelGraph {
                 name: "OrderCancelled".to_string(),
                 version: None,
                 fields: vec![field("reason", primitive_string_json(), None)],
+                cloud_events: None,
                 ordinal: 1,
             },
         ],
@@ -135,6 +137,7 @@ fn orders_evt_model() -> EvtModelGraph {
             source_path: "orders.evt".to_string(),
             name: "orders".to_string(),
             publishes: vec!["OrderPlaced".to_string(), "OrderCancelled".to_string()],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![EvtSubscriptionNode {
@@ -142,6 +145,8 @@ fn orders_evt_model() -> EvtModelGraph {
             name: "auditing".to_string(),
             events: vec!["OrderPlaced".to_string()],
             consumer: "audit-worker".to_string(),
+            when: None,
+            delivery: None,
             ordinal: 0,
         }],
     }

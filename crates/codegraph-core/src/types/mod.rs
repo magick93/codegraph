@@ -56,12 +56,15 @@ pub use ddd::{
 };
 pub use deploy::{
     DeployApplicationNode, DeployBindingNode, DeployComponentNode, DeployConnectionNode,
-    DeployDeploymentNode, DeployMappingNode, DeployModelGraph, DeployPolicyNode, DeployProfileNode,
-    DeploySettingNode, DeployValueNode,
+    DeployDeploymentNode, DeployEnvNode, DeployMappingNode, DeployModelGraph, DeployPolicyNode,
+    DeployProfileNode, DeploySettingNode, DeployValueNode,
 };
 pub use discovery::{DetectionSource, Extension, ParentCandidate};
 pub use edge::{EdgeProperties, EdgeType};
-pub use events::{EvtChannelNode, EvtEventField, EvtEventNode, EvtModelGraph, EvtSubscriptionNode};
+pub use events::{
+    EvtChannelNode, EvtCloudEventsNode, EvtDeliveryModeNode, EvtDeliveryPolicyNode, EvtEventField,
+    EvtEventNode, EvtModelGraph, EvtSubscriptionNode,
+};
 pub use field_def::{
     FieldDefinition, codelist_enum_name_from_ref, ensure_id_suffix, resolve_field,
     resolve_fk_column_name,

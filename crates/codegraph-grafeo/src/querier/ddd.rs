@@ -99,6 +99,7 @@ impl GrafeoEngine {
             "MATCH (a:DddApplication)-[:DddHasModule]->(m:DddModule)-[:DddHasService]->(s:DddService) \
              RETURN a.name AS app, s.module AS module, s.name AS name, \
              s.description AS description, s.dependencies_json AS dependencies_json, \
+             s.decision_dependencies_json AS decision_dependencies_json, \
              s.operations_json AS operations_json, s.ordinal AS ordinal",
         )?;
         let reader = RowReader::from_columns(&result.columns);
@@ -114,6 +115,9 @@ impl GrafeoEngine {
                     name: reader.get_string(row, "name")?,
                     description: reader.get_opt_string(row, "description")?,
                     dependencies: parse_json(reader.get_opt_string(row, "dependencies_json")?),
+                    decision_dependencies: parse_json(
+                        reader.get_opt_string(row, "decision_dependencies_json")?,
+                    ),
                     operations: parse_json(reader.get_opt_string(row, "operations_json")?),
                     ordinal: reader.get_usize(row, "ordinal")?,
                 });

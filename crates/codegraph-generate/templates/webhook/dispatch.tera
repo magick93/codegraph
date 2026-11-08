@@ -131,7 +131,7 @@ impl WebhookDispatcher {
                 .db
                 .query_all_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    "SELECT msg_id, message FROM pgmq.read($1, 30, 100)",
+                    "SELECT msg_id, message FROM pgmq.read($1, {% if evt_delivery %}{{ evt_delivery.vt_secs }}{% else %}30{% endif %}, 100)",
                     [queue.as_str().into()],
                 ))
                 .await?;
@@ -254,7 +254,14 @@ impl WebhookDispatcher {
                 // records were created successfully.{% endif %} If any INSERT failed, the
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
-                if all_inserts_succeeded{% if evt_events %}
+                if all_inserts_succeeded{% if evt_events and evt_delivery and evt_delivery.drop_on_failure %}
+                    // At-most-once: consumers run, but a failed dispatch drops
+                    // the message — the delete is unconditional.
+                    let _ = crate::events::consumers::dispatch_registered(
+                            self.db.clone(),
+                            message.clone(),
+                        )
+                        .await;{% elif evt_events %}
                     && crate::events::consumers::dispatch_registered(
                             self.db.clone(),
                             message.clone(),

@@ -12,6 +12,14 @@
 /// the `:DddService.operations_json` blob, so a cached graph persisted by a
 /// pre-#590 binary would read every op condition as `None` and silently
 /// drop the route-level transition guards — cold re-ingest instead.
+///
+/// NOT bumped for the rexlang 194056b mirror fields: `emits`/`invokes` ride
+/// the same `operations_json` blob (old payloads deserialize to `[]` via
+/// serde defaults), `DddService.decision_dependencies` rides a new nullable
+/// `decision_dependencies_json` prop (old graphs read NULL → `[]`, and
+/// inserts of new properties on pre-existing node types are tolerated —
+/// the #279 precedent), and old binaries could never author the new
+/// clauses anyway, so no information can be silently lost.
 pub const GRAPH_FORMAT_VERSION: u32 = 2;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
@@ -516,6 +524,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             name STRING NOT NULL,
             description STRING,
             dependencies_json STRING NOT NULL,
+            decision_dependencies_json STRING,
             operations_json STRING NOT NULL,
             ordinal INTEGER NOT NULL
         )",
@@ -547,12 +556,14 @@ fn node_type_ddl() -> Vec<&'static str> {
             name STRING NOT NULL,
             version STRING,
             fields_json STRING NOT NULL,
+            cloud_events_json STRING,
             ordinal INTEGER NOT NULL
         )",
         "CREATE NODE TYPE IF NOT EXISTS EvtChannel (
             source_path STRING NOT NULL,
             name STRING NOT NULL,
             publishes_json STRING NOT NULL,
+            scope STRING,
             ordinal INTEGER NOT NULL
         )",
         "CREATE NODE TYPE IF NOT EXISTS EvtSubscription (
@@ -560,6 +571,8 @@ fn node_type_ddl() -> Vec<&'static str> {
             name STRING NOT NULL,
             events_json STRING NOT NULL,
             consumer STRING NOT NULL,
+            when_expr STRING,
+            delivery_json STRING,
             ordinal INTEGER NOT NULL
         )",
         // Deployment plane (rexlang #49). ONE node per `.deploy` model (the

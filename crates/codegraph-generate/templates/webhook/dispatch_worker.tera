@@ -249,13 +249,13 @@ async fn drain_events_into_jobs(
 ) -> Result<Vec<(String, i64, Vec<DeliveryJob>{% if has_events %}, bool{% endif %})>, String> {
     let client = state.client_source.client().await.map_err(|e| e.to_string())?;
     let queue_name = format!("events_{domain}");
-    let rows = client
-        .query(
-            "SELECT msg_id, message FROM pgmq.read($1, 30, 100)",
-            &[&queue_name],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let rows = client
+            .query(
+                "SELECT msg_id, message FROM pgmq.read($1, {% if evt_delivery %}{{ evt_delivery.vt_secs }}{% else %}30{% endif %}, 100)",
+                &[&queue_name],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
     let mut groups = Vec::new();
     for row in rows {
@@ -309,10 +309,19 @@ async fn drain_events_into_jobs(
 {% if has_events %}        // Typed consumer dispatch (issue #505): the events plane's
         // registry; failures keep the message queued. Trigger envelopes
         // carry no `event` key and dispatch zero consumers.
-        let typed_ok =
+        let typed_ok ={% if evt_delivery and evt_delivery.drop_on_failure %} {
+            // At-most-once: consumers run, but a failed dispatch drops the
+            // message — the delete is unconditional.
+            let _ = crate::events::consumers::dispatch_registered(
+                &*state.client_source,
+                message.clone(),
+            )
+            .await;
+            true
+        }{% else %}
             crate::events::consumers::dispatch_registered(&*state.client_source, message.clone())
                 .await
-                == 0;
+                == 0;{% endif %}
 {% endif %}        groups.push((queue_name.clone(), msg_id, jobs{% if has_events %}, typed_ok{% endif %}));
     }
 

@@ -530,6 +530,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
             name: "PayRunService".to_string(),
             description: None,
             dependencies: vec!["PayRunRepository".to_string()],
+            decision_dependencies: Vec::new(),
             operations: vec![codegraph_core::types::DddServiceOperation {
                 name: "approve".to_string(),
                 return_type: None,
@@ -540,6 +541,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                 capabilities: vec!["ApprovePayRun".to_string()],
                 is_protected: false,
                 condition: None,
+                emits: Vec::new(),
+                invokes: Vec::new(),
                 ordinal: 0,
             }],
             ordinal: 0,

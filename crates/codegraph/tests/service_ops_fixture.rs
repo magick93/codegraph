@@ -15,10 +15,10 @@ use tempfile::TempDir;
 pub const PAY_RUN_SCHEMA: &str = r#"{
   "title": "PayRunType",
   "type": "object",
-  "required": ["payRunId", "status"],
+  "required": ["payRunId", "runStatus"],
   "properties": {
     "payRunId": { "type": "string" },
-    "status": { "type": "string" }
+    "runStatus": { "type": "string" }
   }
 }"#;
 
@@ -27,7 +27,7 @@ package payroll
 
 class PayRunType {
     String payRunId
-    String status
+    String runStatus
 }
 "#;
 
@@ -62,7 +62,7 @@ application Payroll {
 "#;
 
 /// Owner holds ApprovePayRun + SubmitPayRun unconditionally; Manager holds
-/// InspectPayRun `when (status == "Draft")`. The `never_both` pair is
+/// InspectPayRun `when (runStatus == "Draft")`. The `never_both` pair is
 /// split across TWO policy files — each compiles clean, but the MERGED
 /// policy has Owner holding both sides, which is exactly the runtime
 /// separation-of-duties gate's reason to exist (single-file violations
@@ -85,7 +85,7 @@ actors Payroll {
     }
 
     grant Manager {
-        permit InspectPayRun when (status == "Draft")
+        permit InspectPayRun when (runStatus == "Draft")
     }
 
     never_both { PreparePayRun, ApprovePayRun }

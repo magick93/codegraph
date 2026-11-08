@@ -39,12 +39,24 @@ impl GlobalGenerator for WebhookDispatchGenerator {
         // Typed-envelope drain branch (.evt, issues #454/#455): only when
         // the architecture is non-empty does the context carry `evt_events`
         // — an empty architecture keeps the EXACT pre-#455 empty context,
-        // so the rendering is byte-identical.
+        // so the rendering is byte-identical. Rexlang #31's delivery model
+        // rides alongside: `evt_delivery` is present ONLY when the folded
+        // queue policy differs from today's constants (30s vt,
+        // at-least-once) — a model without declared policies (or with
+        // default ones) renders byte-identically.
         let architecture = crate::evt_events::architecture_for(db, project, config).await?;
         let ctx = if architecture.is_empty() {
             serde_json::json!({})
-        } else {
+        } else if architecture.drain.is_default() {
             serde_json::json!({ "evt_events": true })
+        } else {
+            serde_json::json!({
+                "evt_events": true,
+                "evt_delivery": {
+                    "vt_secs": architecture.drain.vt_secs,
+                    "drop_on_failure": architecture.drain.drop_on_failure,
+                },
+            })
         };
         let content = render_template_with_project(tera, "webhook/dispatch.tera", &ctx, project)?;
 

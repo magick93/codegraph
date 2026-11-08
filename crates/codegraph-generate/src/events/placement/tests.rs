@@ -10,8 +10,8 @@ use codegraph_core::types::{
 
 use crate::events::placement::{EventPlacement, compute_placement};
 use crate::events::{
-    EventArchitecture, EventChannel, EventDefinition, EventSubscription, PgmqChannel, Publication,
-    PublicationSource, Transport,
+    DrainDelivery, EventArchitecture, EventChannel, EventDefinition, EventSubscription,
+    PgmqChannel, Publication, PublicationSource, Transport,
 };
 use crate::scaffold::worker::DeployShape;
 
@@ -92,6 +92,7 @@ fn arch(
         domain_channels,
         subscriptions,
         function_consumers: Vec::new(),
+        drain: DrainDelivery::default(),
     }
 }
 
@@ -102,6 +103,7 @@ fn queue_component(application: &str, name: &str) -> DeployComponentNode {
         kind: "queue".to_string(),
         requires: Vec::new(),
         settings: Vec::new(),
+        env: Vec::new(),
         designs: Vec::new(),
         flows: Vec::new(),
         ordinal: 0,
@@ -115,6 +117,7 @@ fn worker_component(application: &str, name: &str) -> DeployComponentNode {
         kind: "worker".to_string(),
         requires: Vec::new(),
         settings: Vec::new(),
+        env: Vec::new(),
         designs: Vec::new(),
         flows: Vec::new(),
         ordinal: 0,

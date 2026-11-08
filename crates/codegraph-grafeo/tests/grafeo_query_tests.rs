@@ -1699,6 +1699,7 @@ fn ddd_fixture() -> DddModelGraph {
                     "LoanRepository".to_string(),
                     "NotificationService".to_string(),
                 ],
+                decision_dependencies: Vec::new(),
                 operations: vec![
                     DddServiceOperation {
                         name: "borrow".to_string(),
@@ -1718,6 +1719,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 0,
                         is_protected: false,
                         condition: None,
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
                     },
                     DddServiceOperation {
                         name: "renew".to_string(),
@@ -1730,6 +1733,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 1,
                         is_protected: false,
                         condition: Some(r#"status == "OnLoan""#.to_string()),
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
                     },
                 ],
                 ordinal: 0,
@@ -1740,6 +1745,7 @@ fn ddd_fixture() -> DddModelGraph {
                 name: "ReturnService".to_string(),
                 description: None,
                 dependencies: vec!["LoanRepository".to_string()],
+                decision_dependencies: Vec::new(),
                 operations: vec![DddServiceOperation {
                     name: "returnLoan".to_string(),
                     return_type: None,
@@ -1752,6 +1758,8 @@ fn ddd_fixture() -> DddModelGraph {
 
                     is_protected: false,
                     condition: None,
+                    emits: Vec::new(),
+                    invokes: Vec::new(),
                 }],
                 ordinal: 0,
             },
@@ -1888,6 +1896,7 @@ fn evt_fixtures() -> Vec<EvtModelGraph> {
                         resolved_title: Some("OrderType".to_string()),
                     },
                 ],
+                cloud_events: None,
                 ordinal: 0,
             },
             EvtEventNode {
@@ -1902,6 +1911,7 @@ fn evt_fixtures() -> Vec<EvtModelGraph> {
                     }),
                     resolved_title: None,
                 }],
+                cloud_events: None,
                 ordinal: 1,
             },
         ],
@@ -1912,6 +1922,7 @@ fn evt_fixtures() -> Vec<EvtModelGraph> {
                 "PaymentRequested".to_string(),
                 "PaymentCompleted".to_string(),
             ],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![EvtSubscriptionNode {
@@ -1919,6 +1930,8 @@ fn evt_fixtures() -> Vec<EvtModelGraph> {
             name: "ledger-sync".to_string(),
             events: vec!["PaymentCompleted".to_string()],
             consumer: "ledger-service".to_string(),
+            when: None,
+            delivery: None,
             ordinal: 0,
         }],
     };
@@ -1929,12 +1942,14 @@ fn evt_fixtures() -> Vec<EvtModelGraph> {
             name: "AuditTrailWritten".to_string(),
             version: None,
             fields: vec![],
+            cloud_events: None,
             ordinal: 0,
         }],
         channels: vec![EvtChannelNode {
             source_path: "events/audit.evt".to_string(),
             name: "audit".to_string(),
             publishes: vec!["AuditTrailWritten".to_string()],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![EvtSubscriptionNode {
@@ -1942,6 +1957,8 @@ fn evt_fixtures() -> Vec<EvtModelGraph> {
             name: "compliance".to_string(),
             events: vec!["AuditTrailWritten".to_string()],
             consumer: "compliance-exporter".to_string(),
+            when: None,
+            delivery: None,
             ordinal: 0,
         }],
     };

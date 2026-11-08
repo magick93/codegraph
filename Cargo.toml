@@ -57,26 +57,41 @@ tree-sitter-language = "0.1"
 # salsa: no direct dependency anywhere — 0.22 rides in transitively via
 # auto-lsp 0.6.2 (0.23 via rex-driver). A direct salsa upgrade is gated on
 # the same auto-lsp release as tree-sitter above (issue #423).
-# rex-* @ 10108d79: bumped for the union integrity pass (rexlang #114's
+# rex-* @ 194056b: bumped past the union integrity pass (rexlang #114's
 # merge — rex_driver::check_integrity, the cross-layer doctor stage below)
-# on top of 0f8518f's declaration-backed control/route manifest (rexlang
-# #118 — rex_ifml::manifest_ifml / rex_ir::ifml_manifest) and the
-# workspace-level cross-surface resolution (#117 — E0104–E0108: action/
-# navigate/refresh references resolve against declarations; requires:/roles:
-# resolve against .actor models via check_ifml_with_actors) on top of the
-# .deploy deployment surface (#49), the DDD Sculptor semantics (#47), and
-# the IFML module composition + deep-navigation grammar (#45/#46).
-rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
-rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
-rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
-rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "10108d7915714f94cf2101031d1da4b2d1aa6fa5" }
+# for the declaration-backed control/route manifest (rexlang #118 —
+# rex_ifml::manifest_ifml / rex_ir::ifml_manifest), the workspace-level
+# cross-surface resolution (#117 — E0104–E0108: action/navigate/refresh
+# references resolve against declarations; requires:/roles: resolve
+# against .actor models via check_ifml_with_actors), the .deploy
+# deployment surface (#49), the DDD Sculptor semantics (#47), and the
+# IFML module composition + deep-navigation grammar (#45/#46) — plus the
+# new-in-this-bump surfaces: typed lifecycles (Rule 16, bare-String
+# status fields are design errors), service-op emits/invokes +
+# decision_dependencies, the .evt delivery model (CloudEvents attrs,
+# DeliveryPolicy, channel scope, subscription when), .deploy port/health/
+# cors settings + env blocks, the .dmn decision-model surface (rexlang
+# #78, dsntk-backed), the IFML lint channel (W0150–W0199 — WARNING
+# severity; codegraph's front door hard-fails on Error only), the
+# central diagnostics registry + capability joins (rexlang #128), and
+# the Rune-body statement IR (rex_expr::ExprKind::RuneBody — refused by
+# codegraph's closed-subset lowerers). NOTE the bump also drags in new
+# transitive git deps (rex-diagnostics in-repo; xstate-ir from
+# restingstate.git; dsntk-recognizer/feel from the yestechgroup dsntk-rs
+# fork — all anonymously fetchable).
+rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
+rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
+rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
+rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the rexlang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
-# into codegraph-generate / codegraph-core).
-sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
-sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
-sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
-sigil-diag = { git = "https://github.com/yestechgroup/sigil.git", rev = "49a6a27f589fa89cbb20641504923c911700ee67" }
+# into codegraph-generate / codegraph-core). Pinned to the SAME rev rexlang
+# itself pins (69115a7) so exactly ONE sigil version exists in the tree —
+# move only in lockstep with rexlang's pin.
+sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
+sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
+sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
+sigil-diag = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
 
 # Performance profiling profile (issues #469/#471): release optimizations with
 # symbols intact so samply / hotpath-cpu can attribute samples. Build with

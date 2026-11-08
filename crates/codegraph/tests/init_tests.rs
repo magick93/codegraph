@@ -2183,6 +2183,10 @@ view "CustomerList" {
     fs::write(model.join("crm.ddd"), ddd).unwrap();
     fs::write(model.join("crm.actor"), actor).unwrap();
     fs::write(model.join("crm.ifml"), ifml).unwrap();
+    // rexlang #128 demoted the union capability checks to the lint
+    // channel: the dangling grant is now a WARNING-severity integrity
+    // diagnostic, not a hard failure. cmd_doctor still returns Err when
+    // HARD checks fail; soft-only runs return Ok carrying the summary.
     let summary = cmd_doctor(&DoctorArgs {
         config: project.join("domains.toml"),
         schemas: None,
@@ -2196,13 +2200,14 @@ view "CustomerList" {
         ifml_files: vec![model.join("crm.ifml")],
         extension_points: None,
     })
-    .unwrap_err();
-    // cmd_doctor returns Err carrying the failure summary when hard
-    // checks fail — the dangling grant is the ONLY hard failure in this
-    // fixture (the per-diagnostic text renders to stdout above).
+    .expect("the dangling grant is advisory under the lint channel");
+    assert_eq!(
+        summary.hard_failures, 0,
+        "the dangling grant must not hard-fail (rexlang #128 demoted it to the lint channel)"
+    );
     assert!(
-        format!("{summary}").contains("1 hard check(s) failed"),
-        "the dangling grant must hard-fail the doctor: {summary}"
+        summary.soft_warnings >= 2,
+        "the dangling grant must surface as soft warnings: {summary:?}"
     );
 
     // Clean: drop the dangling grant; the same union passes.

@@ -1571,6 +1571,8 @@ mod tests {
                 capabilities: Vec::new(),
                 is_protected: false,
                 condition: None,
+                emits: Vec::new(),
+                invokes: Vec::new(),
                 ordinal: 0,
             }
         };

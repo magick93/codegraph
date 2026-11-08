@@ -61,11 +61,18 @@ fn library_ddd_compiles_clean_and_byte_matches_the_committed_artifact() {
         .as_ref()
         .expect("a clean compile produces the design artifact");
 
-    let committed = std::fs::read_to_string(fixture("library.ddd.json")).unwrap();
+    let committed = std::fs::read_to_string(fixture("library.ddd.json")).unwrap_or_default();
+    if std::env::var("DDD_GOLDEN_BLESS").is_ok() {
+        std::fs::write(fixture("library.ddd.json"), model.to_json_pretty().unwrap())
+            .expect("re-bless the committed library.ddd.json");
+        eprintln!("BLESS: library.ddd.json re-written; re-run without DDD_GOLDEN_BLESS");
+        return;
+    }
     assert_eq!(
         model.to_json_pretty().unwrap(),
         committed,
-        "serialized artifact must byte-equal the committed library.ddd.json"
+        "serialized artifact must byte-equal the committed library.ddd.json \
+         (re-bless with DDD_GOLDEN_BLESS=1 after a deliberate fixture repair)"
     );
 
     let round_tripped = DddModel::from_json(&committed).expect("artifact deserializes");

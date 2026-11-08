@@ -15,13 +15,15 @@ impl GrafeoEngine {
 
         for event in &model.events {
             let fields_json = json_string(&event.fields)?;
+            let cloud_events_json = event.cloud_events.as_ref().map(json_string).transpose()?;
             let gql = format!(
                 "INSERT (:EvtEvent {{ source_path: '{}', name: '{}', version: {}, \
-                 fields_json: '{}', ordinal: {} }})",
+                 fields_json: '{}', cloud_events_json: {}, ordinal: {} }})",
                 escape_gql(&event.source_path),
                 escape_gql(&event.name),
                 opt_str(&event.version),
                 escape_gql(&fields_json),
+                opt_str(&cloud_events_json),
                 event.ordinal,
             );
             session
@@ -33,10 +35,11 @@ impl GrafeoEngine {
             let publishes_json = json_string(&channel.publishes)?;
             let gql = format!(
                 "INSERT (:EvtChannel {{ source_path: '{}', name: '{}', \
-                 publishes_json: '{}', ordinal: {} }})",
+                 publishes_json: '{}', scope: {}, ordinal: {} }})",
                 escape_gql(&channel.source_path),
                 escape_gql(&channel.name),
                 escape_gql(&publishes_json),
+                opt_str(&channel.scope),
                 channel.ordinal,
             );
             session
@@ -46,13 +49,20 @@ impl GrafeoEngine {
 
         for subscription in &model.subscriptions {
             let events_json = json_string(&subscription.events)?;
+            let delivery_json = subscription
+                .delivery
+                .as_ref()
+                .map(json_string)
+                .transpose()?;
             let gql = format!(
                 "INSERT (:EvtSubscription {{ source_path: '{}', name: '{}', \
-                 events_json: '{}', consumer: '{}', ordinal: {} }})",
+                 events_json: '{}', consumer: '{}', when_expr: {}, delivery_json: {}, ordinal: {} }})",
                 escape_gql(&subscription.source_path),
                 escape_gql(&subscription.name),
                 escape_gql(&events_json),
                 escape_gql(&subscription.consumer),
+                opt_str(&subscription.when),
+                opt_str(&delivery_json),
                 subscription.ordinal,
             );
             session.execute(&gql).map_err(|e| {

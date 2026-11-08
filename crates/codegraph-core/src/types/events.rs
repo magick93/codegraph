@@ -38,8 +38,30 @@ pub struct EvtEventNode {
     pub version: Option<String>,
     /// Payload fields, in declaration order.
     pub fields: Vec<EvtEventField>,
+    /// The CloudEvents attribute passthrough (`type`/`source`/`subject`),
+    /// when the declaration carried one (rexlang #31's delivery model
+    /// slice): stored verbatim and AUTHORITATIVE — a downstream generator
+    /// maps these onto its CloudEvents envelope instead of deriving
+    /// `type`/`source` from the event name. Serde-defaulted for read-compat
+    /// with graphs persisted before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_events: Option<EvtCloudEventsNode>,
     /// Declaration order within the contract file.
     pub ordinal: usize,
+}
+
+/// The CloudEvents attribute passthrough of an [`EvtEventNode`] (rex-ir
+/// `CloudEventsAttributes`): the attributes exactly as authored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvtCloudEventsNode {
+    /// The CloudEvents `type` attribute.
+    #[serde(rename = "type")]
+    pub event_type: String,
+    /// The CloudEvents `source` attribute.
+    pub source: String,
+    /// The optional CloudEvents `subject` attribute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 /// One typed payload field of an [`EvtEventNode`] (rex-ir `EventField`).
@@ -65,6 +87,11 @@ pub struct EvtChannelNode {
     pub name: String,
     /// The published event names, as authored, in declaration order.
     pub publishes: Vec<String>,
+    /// The parameterized-channel scope (`of`/`scope` clause, rexlang #31's
+    /// slice 2: topic templates), verbatim when declared; `None` for a
+    /// plain channel. Serde-defaulted for read-compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     /// Declaration order within the contract file.
     pub ordinal: usize,
 }
@@ -81,6 +108,51 @@ pub struct EvtSubscriptionNode {
     pub events: Vec<String>,
     /// The consumer receiving the events; an opaque name, verbatim.
     pub consumer: String,
+    /// The `when (...)` filter's source text, verbatim between the
+    /// parentheses (rexlang #31's delivery model slice): an envelope-level
+    /// delivery filter, as authored. Serde-defaulted for read-compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+    /// The declared `delivery` policy block, when the declaration carried
+    /// one (rexlang #31's slice 2): the consumer-side knobs the events
+    /// plane lowers (mode, attempt ceiling, backoff, timeout, dead-letter
+    /// channel). Serde-defaulted for read-compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<EvtDeliveryPolicyNode>,
     /// Declaration order within the contract file.
     pub ordinal: usize,
+}
+
+/// The delivery policy of an [`EvtSubscriptionNode`] (rex-ir
+/// `DeliveryPolicy`): mode plus the tuning knobs, each omitted when the
+/// declaration didn't pin them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvtDeliveryPolicyNode {
+    /// The delivery mode.
+    pub mode: EvtDeliveryModeNode,
+    /// The `maxAttempts` ceiling, when declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+    /// The `backoffSeconds` interval, when declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_seconds: Option<u32>,
+    /// The `timeoutSeconds` budget, when declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
+    /// The dead-letter channel name, when declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dead_letter: Option<String>,
+}
+
+/// The delivery mode of an [`EvtDeliveryPolicyNode`] (rex-ir
+/// `DeliveryMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvtDeliveryModeNode {
+    /// Delivery may drop: fire-and-forget.
+    AtMostOnce,
+    /// Delivery may duplicate: acknowledge-then-process.
+    AtLeastOnce,
+    /// Delivery neither drops nor duplicates: deduplication keys.
+    EffectivelyOnce,
 }

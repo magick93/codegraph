@@ -161,6 +161,19 @@ fn domain_has_workflow_timers(entry: &codegraph_config::DomainEntry) -> bool {
         .any(|ec| ec.workflow.as_ref().is_some_and(|wf| !wf.timers.is_empty()))
 }
 
+/// The folded queue-level delivery facts a worker's drain lowers (rexlang
+/// #31's delivery model): present on the `WorkerDomain` context ONLY when
+/// the model declared a non-default policy — absent (`null` in the Tera
+/// context) keeps the template's hardcoded today-constants, byte-identical.
+#[derive(Debug, Serialize)]
+pub struct WorkerEvtDelivery {
+    /// The `pgmq.read` visibility timeout seconds.
+    pub vt_secs: u64,
+    /// At-most-once disposition: the drain deletes messages whose
+    /// consumer dispatches failed.
+    pub drop_on_failure: bool,
+}
+
 /// A Cloudflare service binding declared by a domain worker.
 #[derive(Debug, Serialize)]
 pub struct WorkerServiceBinding {
@@ -240,6 +253,10 @@ pub struct WorkerDomain {
     /// per-domain half of the project-level `has_extension_points` flag
     /// (mirrors `has_webhooks`).
     pub has_integration_dispatch: bool,
+    /// The folded queue-level delivery facts (rexlang #31's delivery
+    /// model), when the model declared a non-default policy; `None` keeps
+    /// the drain template's hardcoded constants (byte-identical).
+    pub evt_delivery: Option<WorkerEvtDelivery>,
 }
 
 /// Context for the workers scaffold templates.
@@ -280,6 +297,7 @@ pub fn build_worker_domains(
     deploy: Option<&DeployShape>,
     placement: Option<&crate::events::placement::EventPlacement>,
     push_covered_domains: &HashSet<String>,
+    drain: crate::events::DrainDelivery,
 ) -> Vec<WorkerDomain> {
     let domain_names: HashSet<String> = scaffold_domains.iter().map(|d| d.name.clone()).collect();
     // A component represents a domain's worker when its name equals a
@@ -411,6 +429,14 @@ pub fn build_worker_domains(
                 has_events,
                 extra_event_queues,
                 has_integration_dispatch: push_covered_domains.contains(&d.name),
+                evt_delivery: if drain.is_default() {
+                    None
+                } else {
+                    Some(WorkerEvtDelivery {
+                        vt_secs: drain.vt_secs,
+                        drop_on_failure: drain.drop_on_failure,
+                    })
+                },
             }
         })
         .collect()
@@ -534,6 +560,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
             deploy_shape.as_ref(),
             event_placement.as_ref(),
             &self.push_covered_domains,
+            arch.drain,
         );
         for domain in &mut domains {
             // The domain-types crate is scaffolded INSIDE the output
@@ -978,6 +1005,7 @@ service_bindings = ["timecard"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0].worker_name, "hr-common");
@@ -994,6 +1022,7 @@ service_bindings = ["timecard"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert_eq!(domains[0].worker_name, "hr-payroll-worker");
         assert_eq!(domains[0].worker_lib_name, "hr_payroll_worker");
@@ -1009,6 +1038,7 @@ service_bindings = ["timecard"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert_eq!(domains.len(), 1);
         let bindings = &domains[0].service_bindings;
@@ -1030,6 +1060,7 @@ service_bindings = ["timecard"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         let common = domains.iter().find(|d| d.name == "common").unwrap();
         assert_eq!(common.service_bindings.len(), 1);
@@ -1048,6 +1079,7 @@ service_bindings = ["timecard"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         let payroll = domains.iter().find(|d| d.name == "payroll").unwrap();
         assert_eq!(payroll.hyperdrive_binding, "PAYROLL_DB");
@@ -1106,6 +1138,7 @@ target_state = "escalated"
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert_eq!(domains.len(), 1);
         assert!(domains[0].has_workflow_timers);
@@ -1132,6 +1165,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert!(!common[0].has_workflow_timers);
         assert!(common[0].cron_triggers.is_empty());
@@ -1164,6 +1198,7 @@ queue_max_concurrency = 10
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert_eq!(domains.len(), 1);
         let d = &domains[0];
@@ -1200,6 +1235,7 @@ webhooks = true
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         let d = &domains[0];
         assert!(d.has_webhooks);
@@ -1230,6 +1266,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert!(!common[0].has_webhooks);
     }
@@ -1265,6 +1302,7 @@ entities = ["CodeType"]
             None,
             None,
             &covered,
+            Default::default(),
         );
         let compensation = domains.iter().find(|d| d.name == "compensation").unwrap();
         let common = domains.iter().find(|d| d.name == "common").unwrap();
@@ -1280,6 +1318,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert!(domains.iter().all(|d| !d.has_integration_dispatch));
     }
@@ -1299,6 +1338,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
 
@@ -1367,6 +1407,7 @@ queue_max_concurrency = 10
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         domains[0].domain_types_path = "../../crates/hr-domain-types".to_string();
 
@@ -1425,6 +1466,7 @@ observability = true
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert!(domains[0].observability);
         let rendered = render_template_with_project(
@@ -1463,6 +1505,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         assert!(!domains[0].observability);
         let rendered = render_template_with_project(
@@ -1491,6 +1534,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         for domain in &mut domains {
             domain.domain_types_path = "../../crates/hr-domain-types".to_string();
@@ -1585,6 +1629,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         for d in &mut domains {
             d.domain_types_path = "crates/hr-domain-types".to_string();
@@ -1655,6 +1700,7 @@ entities = ["CodeType"]
             None,
             None,
             &HashSet::new(),
+            Default::default(),
         );
         let rendered =
             render_template_with_project(&tera, "scaffold/worker_lib.tera", &domains[0], &project)
@@ -1709,6 +1755,7 @@ entities = ["CodeType"]
             kind: kind.to_string(),
             requires: vec![],
             settings: vec![],
+            env: vec![],
             designs: vec![],
             flows: vec![],
             ordinal,
@@ -1774,6 +1821,7 @@ depends_on = ["core"]
             Some(&shape),
             None,
             &HashSet::new(),
+            Default::default(),
         );
 
         let core = domains.iter().find(|d| d.name == "core").unwrap();
@@ -1827,6 +1875,7 @@ entities = ["PayRunType"]
             Some(&shape),
             None,
             &HashSet::new(),
+            Default::default(),
         );
 
         let core = domains.iter().find(|d| d.name == "core").unwrap();
@@ -1875,6 +1924,7 @@ depends_on = ["audit"]
             Some(&shape),
             None,
             &HashSet::new(),
+            Default::default(),
         );
 
         // Every outgoing edge of `core` targets a non-domain component, so
@@ -1945,6 +1995,7 @@ entities = ["TimeEntryType"]
             Some(&shape),
             None,
             &HashSet::new(),
+            Default::default(),
         );
         for domain in &mut domains {
             domain.domain_types_path = "../../crates/hr-domain-types".to_string();

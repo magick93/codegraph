@@ -304,6 +304,8 @@ actors Support {
 
     purpose CustomerCare
 
+    obligation log
+
     grant Helper {
         permit ReadTicket
     }
