@@ -272,6 +272,11 @@ impl WebhookDispatcher {
                 // records were created successfully.{% endif %} If any INSERT failed, the
                 // message stays in the queue for retry. Unmatched events (no
                 // matching subscriptions) are also deleted to prevent backlog.
+                metrics::counter!("events_received",
+                    "queue" => queue.to_string(),
+                    "event" => event_type.to_string(),
+                )
+                .increment(1);
 {% if evt_events %}                let outcomes = crate::events::consumers::dispatch_registered(
                     self.db.clone(),
                     message.clone(),{% if project.event_idempotency %}
