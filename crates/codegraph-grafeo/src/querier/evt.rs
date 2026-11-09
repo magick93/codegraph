@@ -19,7 +19,8 @@ impl GrafeoEngine {
             self,
             "MATCH (e:EvtEvent) \
              RETURN e.source_path AS source_path, e.name AS name, e.version AS version, \
-             e.fields_json AS fields_json, e.ordinal AS ordinal",
+             e.fields_json AS fields_json, e.cloud_events_json AS cloud_events_json, \
+             e.ordinal AS ordinal",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut events: HashMap<String, Vec<EvtEventNode>> = HashMap::new();
@@ -33,6 +34,9 @@ impl GrafeoEngine {
                     name: reader.get_string(row, "name")?,
                     version: reader.get_opt_string(row, "version")?,
                     fields: parse_json(reader.get_opt_string(row, "fields_json")?),
+                    cloud_events: reader
+                        .get_opt_string(row, "cloud_events_json")?
+                        .and_then(|raw| serde_json::from_str(&raw).ok()),
                     ordinal: reader.get_usize(row, "ordinal")?,
                 });
         }
@@ -42,7 +46,7 @@ impl GrafeoEngine {
             self,
             "MATCH (c:EvtChannel) \
              RETURN c.source_path AS source_path, c.name AS name, \
-             c.publishes_json AS publishes_json, c.ordinal AS ordinal",
+             c.publishes_json AS publishes_json, c.scope AS scope, c.ordinal AS ordinal",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut channels: HashMap<String, Vec<EvtChannelNode>> = HashMap::new();
@@ -55,6 +59,7 @@ impl GrafeoEngine {
                     source_path,
                     name: reader.get_string(row, "name")?,
                     publishes: parse_json(reader.get_opt_string(row, "publishes_json")?),
+                    scope: reader.get_opt_string(row, "scope")?,
                     ordinal: reader.get_usize(row, "ordinal")?,
                 });
         }
@@ -64,7 +69,8 @@ impl GrafeoEngine {
             self,
             "MATCH (s:EvtSubscription) \
              RETURN s.source_path AS source_path, s.name AS name, \
-             s.events_json AS events_json, s.consumer AS consumer, s.ordinal AS ordinal",
+             s.events_json AS events_json, s.consumer AS consumer, s.when AS when_expr, \
+             s.delivery_json AS delivery_json, s.ordinal AS ordinal",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut subscriptions: HashMap<String, Vec<EvtSubscriptionNode>> = HashMap::new();
@@ -78,6 +84,10 @@ impl GrafeoEngine {
                     name: reader.get_string(row, "name")?,
                     events: parse_json(reader.get_opt_string(row, "events_json")?),
                     consumer: reader.get_string(row, "consumer")?,
+                    when: reader.get_opt_string(row, "when_expr")?,
+                    delivery: reader
+                        .get_opt_string(row, "delivery_json")?
+                        .and_then(|raw| serde_json::from_str(&raw).ok()),
                     ordinal: reader.get_usize(row, "ordinal")?,
                 });
         }
@@ -136,6 +146,7 @@ mod reassembly_tests {
                     name: format!("{name}Event{ordinal}"),
                     version: None,
                     fields: Vec::new(),
+                    cloud_events: None,
                     ordinal,
                 })
                 .collect(),
@@ -145,6 +156,7 @@ mod reassembly_tests {
                     source_path: source_path.to_string(),
                     name: format!("{name}Channel{ordinal}"),
                     publishes: Vec::new(),
+                    scope: None,
                     ordinal,
                 })
                 .collect(),
@@ -155,6 +167,8 @@ mod reassembly_tests {
                     name: format!("{name}Subscription{ordinal}"),
                     events: Vec::new(),
                     consumer: format!("{name}Consumer{ordinal}"),
+                    when: None,
+                    delivery: None,
                     ordinal,
                 })
                 .collect(),

@@ -303,6 +303,7 @@ actors Support {
     capability ReadTicket on Ticket
 
     purpose CustomerCare
+
     obligation log
 
     grant Helper {

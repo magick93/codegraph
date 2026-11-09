@@ -21,8 +21,8 @@ use std::path::{Path, PathBuf};
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     DeployApplicationNode, DeployBindingNode, DeployComponentNode, DeployConnectionNode,
-    DeployDeploymentNode, DeployMappingNode, DeployModelGraph, DeployPolicyNode, DeployProfileNode,
-    DeploySettingNode, DeployValueNode,
+    DeployDeploymentNode, DeployEnvNode, DeployMappingNode, DeployModelGraph, DeployPolicyNode,
+    DeployProfileNode, DeploySettingNode, DeployValueNode,
 };
 
 use crate::error::{Error, Result};
@@ -85,6 +85,14 @@ pub fn deploy_model_to_graph(
                         .map(|setting| DeploySettingNode {
                             path: setting.path.clone(),
                             value: setting_value(&setting.value),
+                        })
+                        .collect(),
+                    env: component
+                        .env
+                        .iter()
+                        .map(|entry| DeployEnvNode {
+                            name: entry.name.clone(),
+                            value: entry.value.clone(),
                         })
                         .collect(),
                     designs: component

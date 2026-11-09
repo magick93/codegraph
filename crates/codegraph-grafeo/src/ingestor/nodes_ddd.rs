@@ -167,15 +167,18 @@ impl GrafeoEngine {
 
         for service in &model.services {
             let dependencies_json = json_string(&service.dependencies)?;
+            let decision_dependencies_json = json_string(&service.decision_dependencies)?;
             let operations_json = json_string(&service.operations)?;
             let gql = format!(
                 "INSERT (:DddService {{ application: '{}', module: '{}', name: '{}', \
-                 description: {}, dependencies_json: '{}', operations_json: '{}', ordinal: {} }})",
+                 description: {}, dependencies_json: '{}', decision_dependencies_json: '{}', \
+                 operations_json: '{}', ordinal: {} }})",
                 escape_gql(&service.application),
                 escape_gql(&service.module),
                 escape_gql(&service.name),
                 opt_str(&service.description),
                 escape_gql(&dependencies_json),
+                escape_gql(&decision_dependencies_json),
                 escape_gql(&operations_json),
                 service.ordinal,
             );

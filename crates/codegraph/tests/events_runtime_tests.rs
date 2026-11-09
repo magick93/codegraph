@@ -85,12 +85,14 @@ fn orders_evt_model() -> codegraph_core::types::EvtModelGraph {
             name: "OrderPlaced".to_string(),
             version: Some("1.0.0".to_string()),
             fields: vec![field("order_id")],
+            cloud_events: None,
             ordinal: 0,
         }],
         channels: vec![EvtChannelNode {
             source_path: "orders.evt".to_string(),
             name: "orders".to_string(),
             publishes: vec!["OrderPlaced".to_string()],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![
@@ -99,6 +101,8 @@ fn orders_evt_model() -> codegraph_core::types::EvtModelGraph {
                 name: "auditing".to_string(),
                 events: vec!["OrderPlaced".to_string()],
                 consumer: "audit-worker".to_string(),
+                when: None,
+                delivery: None,
                 ordinal: 0,
             },
             EvtSubscriptionNode {
@@ -106,6 +110,8 @@ fn orders_evt_model() -> codegraph_core::types::EvtModelGraph {
                 name: "fulfillment".to_string(),
                 events: vec!["OrderPlaced".to_string()],
                 consumer: "ship-worker".to_string(),
+                when: None,
+                delivery: None,
                 ordinal: 1,
             },
         ],

@@ -462,6 +462,7 @@ pub fn ddd_model_graph_from_rex(
                     is_protected: op.is_protected,
                     condition: op.condition.clone(),
                     emits: op.emits.clone(),
+                    invokes: op.invokes.clone(),
                     ordinal,
                 })
                 .collect();
@@ -471,6 +472,7 @@ pub fn ddd_model_graph_from_rex(
                 name: service.name.clone(),
                 description: service.description.clone(),
                 dependencies: service.dependencies.clone(),
+                decision_dependencies: service.decision_dependencies.clone(),
                 operations,
                 ordinal,
             });

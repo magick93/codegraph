@@ -154,6 +154,13 @@ pub struct DddServiceNode {
     /// Declared `inject` dependencies: names of repositories and other
     /// services this service delegates to, as authored.
     pub dependencies: Vec<String>,
+    /// Declared `inject decision` dependencies: decision-service names
+    /// (`rex_ir::ddd::Service::decision_dependencies`, rexlang #78's
+    /// `.dmn` surface) this service pools as decision dependencies, as
+    /// authored. Serde-defaulted for read-compat with graphs persisted
+    /// before the field existed.
+    #[serde(default)]
+    pub decision_dependencies: Vec<String>,
     /// Service operations in declaration order.
     pub operations: Vec<DddServiceOperation>,
     /// Declaration order within the module.
@@ -190,12 +197,17 @@ pub struct DddServiceOperation {
     /// with graphs persisted before the field existed.
     #[serde(default)]
     pub condition: Option<String>,
-    /// Event names this operation emits (rexlang's `emits` clause, the
-    /// [`crate::types::EvtModelGraph`] dimension; loosely coupled, not
-    /// validated upstream). Serde-defaulted for read-compat with graphs
-    /// persisted before the field existed.
+    /// Event names the `emits` clause declares (rexlang #114's emission
+    /// bindings): loosely-coupled references into the events plane, not
+    /// validated at the wire layer. Serde-defaulted for read-compat.
     #[serde(default)]
     pub emits: Vec<String>,
+    /// Decision-service names the `invokes` clause declares (rexlang #78's
+    /// `.dmn` surface): loosely-coupled references into the decision
+    /// plane, not validated at the wire layer. Serde-defaulted for
+    /// read-compat.
+    #[serde(default)]
+    pub invokes: Vec<String>,
     /// Declaration order within the service.
     pub ordinal: usize,
 }

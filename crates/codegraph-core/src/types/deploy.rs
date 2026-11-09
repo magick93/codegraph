@@ -58,6 +58,13 @@ pub struct DeployComponentNode {
     pub requires: Vec<String>,
     /// Baseline settings in declaration order.
     pub settings: Vec<DeploySettingNode>,
+    /// `env { NAME = "value" }` entries in declaration order (rexlang
+    /// #135's operational vocabulary): opaque verbatim string variables,
+    /// deliberately NOT settings — never policy-addressable, never
+    /// validated against a kind's vocabulary. Serde-defaulted for
+    /// read-compat with graphs persisted before the field existed.
+    #[serde(default)]
+    pub env: Vec<DeployEnvNode>,
     /// `design "<path>[#<Module>]"` bindings in declaration order; the
     /// source is the import path exactly as written.
     pub designs: Vec<DeployBindingNode>,
@@ -102,6 +109,16 @@ pub enum DeployValueNode {
     Text(String),
     /// A bare word literal.
     Word(String),
+}
+
+/// One `NAME = "value"` entry of a component's `env` block (rex-ir
+/// `DeployEnv`): the authored pair verbatim, in declaration order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeployEnvNode {
+    /// The environment variable's name, as written.
+    pub name: String,
+    /// The environment variable's string value, verbatim.
+    pub value: String,
 }
 
 /// A `design`/`flow` binding (rex-ir `DesignBinding`/`FlowBinding`).

@@ -140,7 +140,7 @@ impl WebhookDispatcher {
                 .db
                 .query_all_raw(Statement::from_sql_and_values(
                     DatabaseBackend::Postgres,
-                    {% if evt_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, 30, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, 30, 100)",{% endif %}
+                    {% if evt_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, {% if evt_delivery %}{{ evt_delivery.vt_secs }}{% else %}30{% endif %}, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, {% if evt_delivery %}{{ evt_delivery.vt_secs }}{% else %}30{% endif %}, 100)",{% endif %}
                     [queue.as_str().into()],
                 ))
                 .await?;
@@ -314,8 +314,11 @@ impl WebhookDispatcher {
                 } else {
                     false
                 };
-{% endif %}                if all_inserts_succeeded{% if evt_events %}
-                    && (typed_ok || moved_to_dlq){% endif %} {
+{% endif %}                if all_inserts_succeeded{% if evt_events %}{% if evt_delivery and evt_delivery.drop_on_failure %}
+                    // At-most-once: consumers run, but a failed dispatch drops
+                    // the message — the delete is unconditional.
+                    && true{% else %}
+                    && (typed_ok || moved_to_dlq){% endif %}{% endif %} {
                     metrics::counter!("events_processed",
                         "queue" => queue.to_string(),
                         "event" => event_type.to_string(),

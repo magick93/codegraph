@@ -15,8 +15,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
+use std::collections::BTreeSet;
+
 use codegraph_config::{DomainConfig, FunctionExposure};
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::EvtDeliveryModeNode;
 use codegraph_core::types::EvtEventField;
 use codegraph_naming::{escape_rust_keyword, to_snake_case};
 use serde::Serialize;
@@ -227,9 +230,13 @@ impl DeliveryPolicy {
 /// #455 §8: at-least-once + idempotent consumers is the model). Consumer
 /// idempotency KEYING is generated when the `event_idempotency` feature
 /// is on (issue #612).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum DeliveryGuarantee {
     AtLeastOnce,
+    /// rexlang #31's `at_most_once` (`DeliveryMode::AtMostOnce`): delivery
+    /// may drop. The drain deletes a message whose consumer dispatches
+    /// failed instead of leaving it for the next visibility window.
+    AtMostOnce,
 }
 
 /// The wire envelope variant (issue #609). `Native` is the codegraph
@@ -339,6 +346,36 @@ pub struct EventArchitecture {
     /// consumers — the workers placement skips them (warned once): the
     /// functions plane is monolith-only this slice.
     pub function_consumers: Vec<FunctionConsumer>,
+    /// The queue-level delivery facts the drains lower (rexlang #31's
+    /// delivery model, folded across every declared subscription's
+    /// `delivery` block). Defaults are today's dispatch constants — a
+    /// model without declared policies folds to the default and NOTHING
+    /// changes (byte-identical). Mixed declared policies warn once and
+    /// fall back to the defaults (the per-queue fold is a recorded
+    /// follow-up).
+    pub drain: DrainDelivery,
+}
+
+/// The queue-level delivery facts a drain consumes: the `pgmq.read`
+/// visibility timeout and the failure disposition (at-most-once deletes a
+/// message whose consumers failed — delivery may drop — while
+/// at-least-once, today's behavior, leaves it for redelivery).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+pub struct DrainDelivery {
+    /// The visibility timeout seconds for `pgmq.read` (today: 30).
+    pub vt_secs: u64,
+    /// `true` for an at-most-once fold: the drain deletes messages whose
+    /// consumer dispatches failed, instead of leaving them for the next
+    /// visibility window.
+    pub drop_on_failure: bool,
+}
+
+impl DrainDelivery {
+    /// Today's dispatch constants (`templates/webhook/dispatch.tera` /
+    /// `dispatch_worker.tera`): 30s visibility timeout, at-least-once.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// One trigger-bearing table from the shared enumeration: the domain it
@@ -382,6 +419,7 @@ impl EventArchitecture {
                 domain_channels: Vec::new(),
                 subscriptions: Vec::new(),
                 function_consumers,
+                drain: DrainDelivery::default(),
             });
         }
 
@@ -395,9 +433,127 @@ impl EventArchitecture {
                 name: s.name.clone(),
                 events: s.events.clone(),
                 consumer: s.consumer.clone(),
-                delivery: DeliveryPolicy::at_least_once_default(),
+                delivery: s
+                    .delivery
+                    .as_ref()
+                    .map(|policy| DeliveryPolicy {
+                        guarantee: match policy.mode {
+                            EvtDeliveryModeNode::AtMostOnce => DeliveryGuarantee::AtMostOnce,
+                            EvtDeliveryModeNode::EffectivelyOnce => {
+                                // Issue #455 §8: at-least-once + idempotent
+                                // consumers is the model — dedup keys are not
+                                // modeled, so effectively-once lowers to
+                                // at-least-once (warned once below).
+                                DeliveryGuarantee::AtLeastOnce
+                            }
+                            EvtDeliveryModeNode::AtLeastOnce => DeliveryGuarantee::AtLeastOnce,
+                        },
+                        max_retries: policy.max_attempts.unwrap_or(5),
+                        initial_backoff_secs: policy
+                            .backoff_seconds
+                            .map(|s| s as u64)
+                            .unwrap_or(10),
+                        timeout_secs: policy.timeout_seconds.map(|s| s as u64).unwrap_or(30),
+                    })
+                    .unwrap_or_else(DeliveryPolicy::at_least_once_default),
             })
             .collect();
+
+        // Queue-level fold (rexlang #31's delivery model, slice 2): the
+        // drain's visibility timeout + failure disposition come from the
+        // declared `delivery` blocks. Every subscription's EFFECTIVE
+        // policy (declared, or today's default when undeclared) must
+        // agree — a declared-vs-default or declared-vs-declared mix falls
+        // back to today's constants (warned once; per-queue folds are a
+        // recorded follow-up). Knobs the drain cannot lower (attempt
+        // ceilings, backoff intervals, dead-letter channels — the queue
+        // drain retries by visibility window, and no DLQ machinery
+        // exists) warn once as recorded deferrals.
+        for policy in models
+            .iter()
+            .flat_map(|m| m.subscriptions.iter())
+            .filter_map(|s| s.delivery.as_ref())
+        {
+            if policy.mode == EvtDeliveryModeNode::EffectivelyOnce {
+                warn_once(
+                    "delivery-effectively-once",
+                    "subscription declares `effectively_once`; dedup keys are not modeled — \
+                     lowering to at_least_once (idempotent consumers remain the contract)",
+                );
+            }
+            for (knob_declared, seam) in [
+                (
+                    policy.max_attempts.is_some(),
+                    "attempt ceilings are not modeled — the queue drain retries by \
+                     visibility window",
+                ),
+                (
+                    policy.backoff_seconds.is_some(),
+                    "backoff intervals are not modeled — redelivery timing is the \
+                     visibility timeout",
+                ),
+                (
+                    policy.dead_letter.is_some(),
+                    "dead-letter channels are not modeled — the DLQ plane is a recorded \
+                     deferral (issue #455)",
+                ),
+            ] {
+                if knob_declared {
+                    warn_once("delivery-unlowered-knob", seam);
+                }
+            }
+        }
+        let mut drain = DrainDelivery::default();
+        // Effective policies: declared where present, today's default
+        // where not — the drain is shared, so an undeclared sibling's
+        // default semantics vote in the fold.
+        let effective: Vec<DeliveryPolicy> = models
+            .iter()
+            .flat_map(|m| m.subscriptions.iter())
+            .map(|s| {
+                s.delivery
+                    .as_ref()
+                    .map(|policy| DeliveryPolicy {
+                        guarantee: match policy.mode {
+                            EvtDeliveryModeNode::AtMostOnce => DeliveryGuarantee::AtMostOnce,
+                            // EffectivelyOnce was warned above — it lowers
+                            // to at-least-once (never drops).
+                            EvtDeliveryModeNode::EffectivelyOnce
+                            | EvtDeliveryModeNode::AtLeastOnce => DeliveryGuarantee::AtLeastOnce,
+                        },
+                        max_retries: policy.max_attempts.unwrap_or(5),
+                        initial_backoff_secs: policy
+                            .backoff_seconds
+                            .map(|s| s as u64)
+                            .unwrap_or(10),
+                        timeout_secs: policy.timeout_seconds.map(|s| s as u64).unwrap_or(30),
+                    })
+                    .unwrap_or_else(DeliveryPolicy::at_least_once_default)
+            })
+            .collect();
+        let vts: BTreeSet<u64> = effective.iter().map(|p| p.timeout_secs).collect();
+        if vts.len() > 1 {
+            warn_once(
+                "delivery-mixed-vt",
+                &format!(
+                    "subscriptions declare mixed effective visibility timeouts ({vts:?}); the \
+                     drain keeps today's 30s (per-queue policies are a recorded follow-up)"
+                ),
+            );
+        } else if let Some(vt) = vts.into_iter().next() {
+            drain.vt_secs = vt;
+        }
+        let modes: BTreeSet<DeliveryGuarantee> = effective.iter().map(|p| p.guarantee).collect();
+        if modes.len() > 1 {
+            warn_once(
+                "delivery-mixed-mode",
+                "subscriptions declare mixed effective delivery modes; the drain keeps \
+                 today's at-least-once disposition (per-queue policies are a recorded \
+                 follow-up)",
+            );
+        } else if modes.into_iter().next() == Some(DeliveryGuarantee::AtMostOnce) {
+            drain.drop_on_failure = true;
+        }
 
         Ok(Self {
             events,
@@ -405,6 +561,7 @@ impl EventArchitecture {
             domain_channels,
             subscriptions,
             function_consumers,
+            drain,
         })
     }
 
@@ -925,6 +1082,7 @@ mod tests {
             name: name.to_string(),
             version: version.map(|v| v.to_string()),
             fields,
+            cloud_events: None,
             ordinal,
         }
     }
@@ -955,6 +1113,7 @@ mod tests {
             source_path: source.to_string(),
             name: name.to_string(),
             publishes: publishes.into_iter().map(|s| s.to_string()).collect(),
+            scope: None,
             ordinal,
         }
     }
@@ -971,6 +1130,8 @@ mod tests {
             name: name.to_string(),
             events: events.into_iter().map(|s| s.to_string()).collect(),
             consumer: consumer.to_string(),
+            when: None,
+            delivery: None,
             ordinal,
         }
     }

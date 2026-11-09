@@ -103,6 +103,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "antex"
+version = "0.0.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57faad97edd36653b69c9cdab776883a3dd9051720572dc9f7cf6de550008d37"
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -753,6 +759,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrono-tz"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
+dependencies = [
+ "chrono",
+ "phf 0.12.1",
+]
+
+[[package]]
 name = "chumsky"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -865,10 +881,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
- "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
- "sigil-resolve 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
- "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-diag",
+ "sigil-model",
+ "sigil-resolve",
+ "sigil-syntax",
  "syn 2.0.119",
  "tempfile",
  "tera",
@@ -1108,6 +1124,15 @@ dependencies = [
  "getrandom 0.2.17",
  "once_cell",
  "tiny-keccak",
+]
+
+[[package]]
+name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -1387,6 +1412,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfp-number-sys"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56728dc0d3c0fc7b4ae2ebf545743158441b8e6f04998f2418391c5d482b54b8"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1430,6 +1465,98 @@ name = "downcast-rs"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
+
+[[package]]
+name = "dsntk-common"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "dsntk-macros",
+ "serde",
+ "uriparse",
+ "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "dsntk-feel"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "dsntk-common",
+ "dsntk-feel-number",
+ "dsntk-feel-temporal",
+ "dsntk-macros",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dsntk-feel-grammar"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "convert_case",
+ "regex",
+]
+
+[[package]]
+name = "dsntk-feel-number"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "dfp-number-sys",
+ "dsntk-common",
+ "dsntk-macros",
+]
+
+[[package]]
+name = "dsntk-feel-parser"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "antex",
+ "dsntk-common",
+ "dsntk-feel",
+ "dsntk-feel-grammar",
+ "dsntk-macros",
+]
+
+[[package]]
+name = "dsntk-feel-temporal"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "dsntk-common",
+ "dsntk-feel-number",
+ "dsntk-macros",
+ "regex",
+]
+
+[[package]]
+name = "dsntk-macros"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "dsntk-recognizer"
+version = "0.3.0-dev"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+dependencies = [
+ "dsntk-common",
+ "dsntk-macros",
+]
 
 [[package]]
 name = "either"
@@ -3144,6 +3271,15 @@ dependencies = [
 
 [[package]]
 name = "phf"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
+dependencies = [
+ "phf_shared 0.12.1",
+]
+
+[[package]]
+name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
@@ -3180,6 +3316,15 @@ name = "phf_shared"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
+dependencies = [
+ "siphasher",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
 dependencies = [
  "siphasher",
 ]
@@ -3601,12 +3746,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "rex-diagnostics"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+
+[[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "anyhow",
  "ariadne",
+ "dsntk-feel",
+ "dsntk-feel-parser",
+ "dsntk-recognizer",
+ "rex-diagnostics",
  "rex-expr",
  "rex-ifml",
  "rex-ir",
@@ -3616,10 +3770,10 @@ dependencies = [
  "salsa 0.23.0",
  "serde",
  "serde_json",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
- "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
- "sigil-resolve 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
- "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-diag",
+ "sigil-model",
+ "sigil-resolve",
+ "sigil-syntax",
  "thiserror",
  "xstate-ir",
 ]
@@ -3627,21 +3781,23 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
  "rex-ir",
+ "serde",
  "thiserror",
 ]
 
 [[package]]
 name = "rex-ifml"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "pest",
  "pest_derive",
+ "rex-diagnostics",
  "rex-expr",
  "rex-ir",
  "thiserror",
@@ -3650,7 +3806,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3660,7 +3816,7 @@ dependencies = [
 [[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3670,7 +3826,7 @@ dependencies = [
 [[package]]
 name = "rex-verify"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "creusot-std",
 ]
@@ -3678,7 +3834,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=9fa8ceedf263dd66663c67a2526fb4a19698c1e8#9fa8ceedf263dd66663c67a2526fb4a19698c1e8"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
 dependencies = [
  "anyhow",
  "rex-ir",
@@ -4249,27 +4405,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "sigil-diag"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "sigil-diag"
-version = "0.1.0"
 source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468#69115a79999e6ff2ce04c039a71edac6d8ba2468"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "sigil-model"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
-dependencies = [
- "serde",
- "serde_json",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
 ]
 
 [[package]]
@@ -4279,19 +4417,7 @@ source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04
 dependencies = [
  "serde",
  "serde_json",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
-]
-
-[[package]]
-name = "sigil-resolve"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
-dependencies = [
- "serde",
- "serde_json",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
- "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
- "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-diag",
 ]
 
 [[package]]
@@ -4301,19 +4427,9 @@ source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04
 dependencies = [
  "serde",
  "serde_json",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
- "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
- "sigil-syntax 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
-]
-
-[[package]]
-name = "sigil-syntax"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67#49a6a27f589fa89cbb20641504923c911700ee67"
-dependencies = [
- "chumsky 0.13.0",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
- "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=49a6a27f589fa89cbb20641504923c911700ee67)",
+ "sigil-diag",
+ "sigil-model",
+ "sigil-syntax",
 ]
 
 [[package]]
@@ -4322,8 +4438,8 @@ version = "0.1.0"
 source = "git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468#69115a79999e6ff2ce04c039a71edac6d8ba2468"
 dependencies = [
  "chumsky 0.13.0",
- "sigil-diag 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
- "sigil-model 0.1.0 (git+https://github.com/yestechgroup/sigil.git?rev=69115a79999e6ff2ce04c039a71edac6d8ba2468)",
+ "sigil-diag",
+ "sigil-model",
 ]
 
 [[package]]
@@ -4740,7 +4856,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5299,6 +5415,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "uriparse"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0200d0fc04d809396c2ad43f3c95da3582a2556eba8d453c1087f4120ee352ff"
+dependencies = [
+ "fnv",
+ "lazy_static",
+]
+
+[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5310,6 +5436,12 @@ dependencies = [
  "serde",
  "serde_derive",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "utf8-zero"

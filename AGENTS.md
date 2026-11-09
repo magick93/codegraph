@@ -594,7 +594,7 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   then one POST per op pinning 200/501; the 403 surface rides JWT
   sessions).
 - **The op-level `when` condition** rides the graph now: rex-ir
-  `ServiceOperation.condition` (trunk pin 0f8518f) →
+  `ServiceOperation.condition` (trunk pin 194056b) →
   `DddServiceOperation.condition` (`#[serde(default)]`, inside the
   `:DddService.operations_json` blob — **`GRAPH_FORMAT_VERSION` bumped
   1→2** so cached graphs cold-re-ingest; the artifact-kit canonical
@@ -613,7 +613,11 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
 - **Ask 3 (WARN)**: `validate.rs::check_status_bypass` — an entity with a
   `domains.toml` workflow whose status field is not codelist-bound warns
   that scaffold CRUD bypasses the machine (typed lifecycles = rexlang
-  #114).
+  #114 — LANDED at 194056b as Rule 16: a `.ddd` entity design whose
+  resolved class carries a bare-String `status`/`state` feature is a
+  COMPILE error upstream; codegraph's WARN still covers the
+  domains.toml-only/no-`.ddd` path, and the library golden fixture was
+  repaired with `enum MediaStatus` to satisfy Rule 16).
 - **Gates**: `cargo test -p codegraph --test service_ops_tests` (4,
   node-free: routes/handlers/policy gates incl. a merged-policy SoD
   denial + hurl/OpenAPI pins + the no-services byte-identity shape +
@@ -749,13 +753,30 @@ reconciliation").
 - **Gates**: `cargo test -p codegraph --test evt_workers_tests` (the
   workers leg + flag-off byte-identity over the worker tree, node-free)
   and the in-crate placement unit tests (`events::placement::tests`).
+- **Delivery model consumed (rexlang #31 slice 2, landed at 194056b)**:
+  a subscription's declared `delivery` block now rides the graph
+  (`EvtSubscriptionNode.delivery`/`.when`, `EvtChannelNode.scope`,
+  `EvtEventNode.cloud_events` — serde-defaulted mirrors) and FOLDS into
+  queue-level drain facts (`EventArchitecture.drain`): when every
+  subscription's EFFECTIVE policy (declared, or today's default) agrees,
+  the drains lower the declared `timeout_seconds` as the `pgmq.read`
+  visibility timeout and `at_most_once` as an unconditional-delete
+  disposition (`evt_delivery` in the drain contexts — present ONLY on a
+  non-default fold, so flag-off output is byte-identical); any mix falls
+  back to today's 30s/at-least-once (warned once). Unlowered knobs
+  (`max_attempts`, `backoff_seconds`, a declared `dead_letter` channel
+  name) and `effectively_once` (dedup keys unmodeled — lowers to
+  at-least-once) warn once as recorded deferrals.
 - **Deferred**: `Transport::CloudflareQueues` (issue #543); Leg 3 hooks
-  contract retirement (issue #505); delivery-policy DSL syntax (upstream
-  rexlang #31 slice 2); deployment-profile transport bindings (#455
-  §13); full Connector SPI (#455 §14); publisher/aggregate binding +
-  event domain attribution (rexlang issue drafts, see below); webhook
-  `DECLARED` vocabulary validation parity in the cornucopia worker
-  variant; LSP for `.evt`.
+  contract retirement (issue #505); CloudEvents envelope variant (the
+  declarative `cloud_events` attribute input landed — the envelope
+  emission is the remaining slice); per-queue delivery folds (the v1
+  fold is architecture-wide); subscription `when` filters + channel
+  `scope` topic templates (mirrored, unconsumed); deployment-profile
+  transport bindings (#455 §13); full Connector SPI (#455 §14);
+  publisher/aggregate binding + event domain attribution (rexlang issue
+  drafts, see below); webhook `DECLARED` vocabulary validation parity in
+  the cornucopia worker variant; LSP for `.evt`.
 
 ### The events hardening epic (issues #609–#616, one PR)
 
@@ -3775,11 +3796,11 @@ still AND on top.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `rex-*` @ 0f8518f (issue #591: the declaration-backed control/route manifest — `rex_ifml::manifest_ifml` / `rex_ir::ifml_manifest`, the E0104–E0108 interaction-reference + authorization checker, and `rex_driver::project`'s host-side gather bridge — on top of the DDD Sculptor semantics #47, the `.deploy` surface #49, and the IFML module composition/deep-navigation grammar) and `sigil-*` @ 49a6a27 — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `rex-*` @ 194056b (everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar, and #139's ifml-quality pass — PLUS this bump's surfaces: typed lifecycles (rexlang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — rexlang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (rexlang #135), the `.dmn` decision-model surface (rexlang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (rexlang #128), and the Rune statement IR (rex-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `rex-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev rexlang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with rexlang's pin; purely additive delta over 49a6a27: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
-- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0308` (salsa 0.23 unsound — via rex-driver; fixed upstream in salsa 0.28.5; moves with the rexlang rev pin, #535), and `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533).
+- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0308` (salsa 0.23 unsound — via rex-driver; fixed upstream in salsa 0.28.5; moves with the rexlang rev pin, #535), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the rexlang 194056b bump, rides the monthly lockfile refresh).
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
 
 ## Include Path System (`?include=`)

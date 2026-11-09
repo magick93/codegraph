@@ -345,6 +345,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
             name: "LoanService".to_string(),
             description: Some("Manages loans".to_string()),
             dependencies: vec!["LoanRepository".to_string()],
+            decision_dependencies: Vec::new(),
             operations: vec![DddServiceOperation {
                 name: "renew".to_string(),
                 return_type: None,
@@ -357,6 +358,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 is_protected: false,
                 condition: None,
                 emits: Vec::new(),
+                invokes: Vec::new(),
             }],
             ordinal: 0,
         }],
@@ -428,6 +430,7 @@ async fn ingest_evt_model_round_trips_through_the_mock() {
                     resolved_title: Some("OrderType".to_string()),
                 },
             ],
+            cloud_events: None,
             ordinal: 0,
         }],
         channels: vec![EvtChannelNode {
@@ -437,6 +440,7 @@ async fn ingest_evt_model_round_trips_through_the_mock() {
                 "PaymentRequested".to_string(),
                 "PaymentCompleted".to_string(),
             ],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![EvtSubscriptionNode {
@@ -444,6 +448,8 @@ async fn ingest_evt_model_round_trips_through_the_mock() {
             name: "ledger-sync".to_string(),
             events: vec!["PaymentCompleted".to_string()],
             consumer: "ledger-service".to_string(),
+            when: None,
+            delivery: None,
             ordinal: 0,
         }],
     };
@@ -458,12 +464,14 @@ async fn ingest_evt_model_round_trips_through_the_mock() {
             name: "AuditTrailWritten".to_string(),
             version: None,
             fields: vec![],
+            cloud_events: None,
             ordinal: 0,
         }],
         channels: vec![EvtChannelNode {
             source_path: "model/audit.evt".to_string(),
             name: "audit".to_string(),
             publishes: vec!["AuditTrailWritten".to_string()],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![EvtSubscriptionNode {
@@ -471,6 +479,8 @@ async fn ingest_evt_model_round_trips_through_the_mock() {
             name: "compliance".to_string(),
             events: vec!["AuditTrailWritten".to_string()],
             consumer: "compliance-exporter".to_string(),
+            when: None,
+            delivery: None,
             ordinal: 0,
         }],
     };

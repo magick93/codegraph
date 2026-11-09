@@ -111,6 +111,7 @@ fn event(
                 resolved_title: resolved.map(str::to_string),
             })
             .collect(),
+        cloud_events: None,
         ordinal,
     }
 }
@@ -167,6 +168,7 @@ fn conversion_maps_declaration_order_and_every_payload() {
             source_path: "orders.evt".to_string(),
             name: "orders".to_string(),
             publishes: vec!["OrderPlaced".to_string(), "OrderCancelled".to_string()],
+            scope: None,
             ordinal: 0,
         }]
     );
@@ -180,6 +182,8 @@ fn conversion_maps_declaration_order_and_every_payload() {
                 name: "billing".to_string(),
                 events: vec!["OrderPlaced".to_string(), "OrderCancelled".to_string()],
                 consumer: "billing_service".to_string(),
+                when: None,
+                delivery: None,
                 ordinal: 0,
             },
             EvtSubscriptionNode {
@@ -187,6 +191,8 @@ fn conversion_maps_declaration_order_and_every_payload() {
                 name: "analytics".to_string(),
                 events: vec!["OrderPlaced".to_string()],
                 consumer: "analytics_service".to_string(),
+                when: None,
+                delivery: None,
                 ordinal: 1,
             },
         ]

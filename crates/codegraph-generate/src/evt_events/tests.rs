@@ -7,7 +7,8 @@ use std::path::Path;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    EvtChannelNode, EvtEventField, EvtEventNode, EvtModelGraph, EvtSubscriptionNode, SchemaNode,
+    EvtChannelNode, EvtDeliveryModeNode, EvtDeliveryPolicyNode, EvtEventField, EvtEventNode,
+    EvtModelGraph, EvtSubscriptionNode, SchemaNode,
 };
 use tempfile::TempDir;
 
@@ -103,6 +104,7 @@ fn orders_evt_model() -> EvtModelGraph {
                         Some("OrderStatusType"),
                     ),
                 ],
+                cloud_events: None,
                 ordinal: 0,
             },
             EvtEventNode {
@@ -113,6 +115,7 @@ fn orders_evt_model() -> EvtModelGraph {
                     field("reason", primitive_string_json(), None),
                     field("note", primitive_string_json(), None),
                 ],
+                cloud_events: None,
                 ordinal: 1,
             },
         ],
@@ -120,6 +123,7 @@ fn orders_evt_model() -> EvtModelGraph {
             source_path: "orders.evt".to_string(),
             name: "orders".to_string(),
             publishes: vec!["OrderPlaced".to_string(), "OrderCancelled".to_string()],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![
@@ -128,6 +132,8 @@ fn orders_evt_model() -> EvtModelGraph {
                 name: "auditing".to_string(),
                 events: vec!["OrderPlaced".to_string()],
                 consumer: "audit-worker".to_string(),
+                when: None,
+                delivery: None,
                 ordinal: 0,
             },
             EvtSubscriptionNode {
@@ -135,6 +141,8 @@ fn orders_evt_model() -> EvtModelGraph {
                 name: "shipping".to_string(),
                 events: vec!["OrderCancelled".to_string()],
                 consumer: "shipping-fanout".to_string(),
+                when: None,
+                delivery: None,
                 ordinal: 1,
             },
         ],
@@ -319,12 +327,14 @@ async fn sqlite_unbound_channel_emits_no_publish_fns() {
             name: "OrderPlaced".to_string(),
             version: None,
             fields: vec![field("note", primitive_string_json(), None)],
+            cloud_events: None,
             ordinal: 0,
         }],
         channels: vec![EvtChannelNode {
             source_path: "orders.evt".to_string(),
             name: "orders".to_string(),
             publishes: vec!["OrderPlaced".to_string()],
+            scope: None,
             ordinal: 0,
         }],
         subscriptions: vec![EvtSubscriptionNode {
@@ -332,6 +342,8 @@ async fn sqlite_unbound_channel_emits_no_publish_fns() {
             name: "auditing".to_string(),
             events: vec!["OrderPlaced".to_string()],
             consumer: "audit-worker".to_string(),
+            when: None,
+            delivery: None,
             ordinal: 0,
         }],
     })
@@ -375,6 +387,8 @@ async fn subscription_with_unknown_events_skips_its_consumer() {
         name: "ghosting".to_string(),
         events: vec!["GhostEvent".to_string()],
         consumer: "ghost-worker".to_string(),
+        when: None,
+        delivery: None,
         ordinal: 2,
     });
     let db = db_with(Some(model)).await;
@@ -398,6 +412,8 @@ async fn duplicate_consumer_subscriptions_emit_one_handler_trait() {
         name: "auditing-2".to_string(),
         events: vec!["OrderCancelled".to_string()],
         consumer: "audit-worker".to_string(),
+        when: None,
+        delivery: None,
         ordinal: 2,
     });
     let db = db_with(Some(model)).await;
@@ -464,6 +480,186 @@ async fn dispatch_template_without_evt_ctx_renders_untyped_only() {
     assert!(out.contains("let event_type = message[\"event_type\"].as_str().unwrap_or(\"\");"));
     assert!(!out.contains("dispatch_registered"));
     assert!(!out.contains("is_typed_envelope"));
+}
+
+// ── rexlang #31 delivery model: queue-level fold + drain lowering ──────
+
+#[tokio::test]
+async fn declared_delivery_policy_folds_into_the_drain() {
+    let policy = || EvtDeliveryPolicyNode {
+        mode: EvtDeliveryModeNode::AtMostOnce,
+        max_attempts: Some(3),
+        backoff_seconds: None,
+        timeout_seconds: Some(45),
+        dead_letter: None,
+    };
+    let mut model = orders_evt_model();
+    // The drain is shared: BOTH subscriptions must declare the policy for
+    // the fold to move off today's defaults (an undeclared sibling's
+    // default semantics vote in the fold).
+    model.subscriptions[0].delivery = Some(policy());
+    model.subscriptions[1].delivery = Some(policy());
+    let db = db_with(Some(model)).await;
+    let arch = crate::events::EventArchitecture::from_graph(&db, &*postgres_dialect(), &config())
+        .await
+        .expect("architecture builds");
+    assert_eq!(
+        arch.drain,
+        crate::events::DrainDelivery {
+            vt_secs: 45,
+            drop_on_failure: true,
+        },
+        "all-agree fold: the declared policy rides the drain"
+    );
+    // The declared (unlowered) knobs stay on the per-subscription policy.
+    assert_eq!(arch.subscriptions[0].delivery.max_retries, 3);
+}
+
+#[tokio::test]
+async fn partially_declared_delivery_falls_back_to_defaults() {
+    let mut model = orders_evt_model();
+    // One declared subscription against one undeclared (default) sibling:
+    // the effective policies disagree — the drain keeps today's constants.
+    model.subscriptions[0].delivery = Some(EvtDeliveryPolicyNode {
+        mode: EvtDeliveryModeNode::AtMostOnce,
+        max_attempts: None,
+        backoff_seconds: None,
+        timeout_seconds: Some(45),
+        dead_letter: None,
+    });
+    let db = db_with(Some(model)).await;
+    let arch = crate::events::EventArchitecture::from_graph(&db, &*postgres_dialect(), &config())
+        .await
+        .expect("architecture builds");
+    assert!(
+        arch.drain.is_default(),
+        "a partially-declared fold falls back to today's constants: {:?}",
+        arch.drain
+    );
+}
+
+#[tokio::test]
+async fn mixed_declared_delivery_policies_fall_back_to_defaults() {
+    let mut model = orders_evt_model();
+    model.subscriptions[0].delivery = Some(EvtDeliveryPolicyNode {
+        mode: EvtDeliveryModeNode::AtMostOnce,
+        max_attempts: None,
+        backoff_seconds: None,
+        timeout_seconds: Some(45),
+        dead_letter: None,
+    });
+    model.subscriptions[1].delivery = Some(EvtDeliveryPolicyNode {
+        mode: EvtDeliveryModeNode::AtLeastOnce,
+        max_attempts: None,
+        backoff_seconds: None,
+        timeout_seconds: None,
+        dead_letter: None,
+    });
+    let db = db_with(Some(model)).await;
+    let arch = crate::events::EventArchitecture::from_graph(&db, &*postgres_dialect(), &config())
+        .await
+        .expect("architecture builds");
+    assert!(
+        arch.drain.is_default(),
+        "a mixed fold falls back to today's constants: {:?}",
+        arch.drain
+    );
+}
+
+fn postgres_dialect() -> Box<dyn crate::db::dialect::SqlDialect> {
+    crate::db::dialect::dialect_for_target(crate::db::dialect::DatabaseTarget::Postgres)
+}
+
+#[tokio::test]
+async fn dispatch_template_renders_declared_delivery_facts() {
+    let out = render_template_with_project(
+        &tera(),
+        "webhook/dispatch.tera",
+        &serde_json::json!({
+            "evt_events": true,
+            "evt_delivery": { "vt_secs": 45, "drop_on_failure": true },
+        }),
+        &project(),
+    )
+    .unwrap();
+    assert!(
+        out.contains("pgmq.read($1, 45, 100)"),
+        "the declared visibility timeout lowers: {out}"
+    );
+    assert!(
+        out.contains("At-most-once: consumers run, but a failed dispatch drops"),
+        "the at-most-once disposition lowers"
+    );
+    assert!(
+        !out.contains("== 0{%"), // template artifact leak guard
+        "{out}"
+    );
+    // The at-least-once comparison is gone with drop_on_failure.
+    assert!(
+        !out.contains(".await\n                        == 0"),
+        "the unconditional delete replaces the zero-dispatch condition"
+    );
+}
+
+#[test]
+fn worker_drain_template_renders_declared_delivery_facts() {
+    let out = render_template_with_project(
+        &tera(),
+        "webhook/dispatch_worker.tera",
+        &serde_json::json!({
+            "name": "orders",
+            "has_events": true,
+            "queue_max_retries": 5,
+            "queue_binding": "WEBHOOK_QUEUE",
+            "queue_name": "hr-orders-webhooks",
+            "extra_event_queues": [],
+            "cron_triggers": [],
+            "service_bindings": [],
+            "entities": [],
+            "has_webhooks": false,
+            "evt_delivery": { "vt_secs": 45, "drop_on_failure": true },
+        }),
+        &project(),
+    )
+    .unwrap();
+    assert!(
+        out.contains("pgmq.read($1, 45, 100)"),
+        "the declared visibility timeout lowers: {out}"
+    );
+    assert!(
+        out.contains("let all_ok = {"),
+        "the at-most-once disposition lowers"
+    );
+}
+
+#[test]
+fn worker_drain_template_keeps_defaults_without_evt_delivery() {
+    let out = render_template_with_project(
+        &tera(),
+        "webhook/dispatch_worker.tera",
+        &serde_json::json!({
+            "name": "orders",
+            "has_events": true,
+            "queue_max_retries": 5,
+            "queue_binding": "WEBHOOK_QUEUE",
+            "queue_name": "hr-orders-webhooks",
+            "extra_event_queues": [],
+            "cron_triggers": [],
+            "service_bindings": [],
+            "entities": [],
+            "has_webhooks": false,
+        }),
+        &project(),
+    )
+    .unwrap();
+    assert!(
+        out.contains("pgmq.read($1, 30, 100)"),
+        "today's constants hold: {out}"
+    );
+    assert!(
+        out.contains("outcomes.iter().all(|outcome| outcome.ok)"),
+        "{out}"
+    );
 }
 
 // ── webhook subscription vocabulary gating ─────────────────────────────
@@ -770,6 +966,7 @@ async fn workers_topology_unplaceable_channel_is_a_hard_error() {
         source_path: "orders.evt".to_string(),
         name: "pings".to_string(),
         publishes: vec!["OrderCancelled".to_string()],
+        scope: None,
         ordinal: 1,
     });
     let db = db_with(Some(model)).await;
@@ -1604,6 +1801,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
             name: "LoanService".to_string(),
             description: None,
             dependencies: vec![],
+            decision_dependencies: Vec::new(),
             ordinal: 0,
             operations: vec![DddServiceOperation {
                 name: "renew".to_string(),
@@ -1616,6 +1814,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
                 is_protected: false,
                 condition: None,
                 emits: vec!["OrderPlaced".to_string()],
+                invokes: Vec::new(),
                 ordinal: 0,
             }],
         }],

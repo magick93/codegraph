@@ -7,7 +7,7 @@
 //! `action("X")` invocations without a declaration synthesized
 //! indistinguishable `action:X` nodes (the #559 defect class), and
 //! `requires:`/`roles:` gates were never validated against the policy
-//! layer. rexlang #117/#118 moved the proof upstream — E0104–E0108 are
+//! layer. rexlang #117/#118 moved the proof upstream — E0104–E0109 are
 //! checker errors, and [`rex_ifml::manifest_ifml`] exports the positive
 //! artifact for what the model lowers to. This module is the host-side
 //! seam: everything downstream (graph ingest, generators, doctor) works
@@ -56,17 +56,26 @@ pub struct IfmlCompiled {
     /// The policy import paths as written (the graph policy ingest's
     /// input, unchanged).
     pub policy_imports: Vec<String>,
+    /// Warning-severity checker findings (the rexlang lint channel,
+    /// W0150–W0154 — dead actions, unreachable views, shadowed modules,
+    /// components without data, views without domain binding), rendered
+    /// one `file:code message` line per finding. Warnings never fail the
+    /// compilation; hosts render them and decide (rexlang
+    /// `check --deny-warnings` is the strict knob). Codegraph renders
+    /// them on the run path and counts them in doctor's soft warnings.
+    pub lints: Vec<String>,
 }
 
 /// Read one `.ifml` file, gather its import closure
 /// ([`rex_driver::project::gather_ifml_project`]), compile it, run the
-/// E0104–E0108 checker, and derive the manifest.
+/// E0104–E0109 checker, and derive the manifest.
 ///
 /// Hard errors (`Error::IfmlModel`): unreadable file, compile/resolution
-/// diagnostics, checker diagnostics. Unresolvable `.actor`/`.mox`/
-/// `.json` imports warn and continue (the run-path contract — the
-/// compile hard-errors only for `.ifml` imports, which module composition
-/// cannot proceed without).
+/// diagnostics, ERROR-severity checker diagnostics. WARNING-severity
+/// findings (the lint channel, W0150–W0154) ride [`IfmlCompiled::lints`]
+/// and never fail. Unresolvable `.actor`/`.mox`/`.json` imports warn and
+/// continue (the run-path contract — the compile hard-errors only for
+/// `.ifml` imports, which module composition cannot proceed without).
 pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
     let source = std::fs::read_to_string(path).map_err(|e| Error::IfmlModel {
         file: path.display().to_string(),
@@ -112,14 +121,19 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
     let actor_models = crate::ifml_actor_import::resolve_actor_models(&policy_imports, base_dir);
     let actor_models = with_snake_role_aliases(actor_models);
 
-    // `domains: None`: the interaction-reference pass (E0104–E0106) and
-    // the authorization pass (E0107/E0108 when actors resolve) run; the
-    // expression checks stay off (recorded follow-up).
+    // `domains: None`: the interaction-reference pass (E0104–E0106), the
+    // action-target check (E0109), and the authorization pass (E0107/E0108
+    // when actors resolve) run; the expression checks stay off (recorded
+    // follow-up). Error-severity diagnostics hard-fail; the lint channel
+    // (W0150–W0154) rides the compiled artifact as warnings — a linty
+    // model still ingests.
     let diags = rex_ifml::check_ifml_with_actors(&compilation, None, &actor_models);
-    if !diags.is_empty() {
+    let (errors, lints): (Vec<_>, Vec<_>) =
+        diags.into_iter().partition(|diag| diag.severity.is_error());
+    if !errors.is_empty() {
         return Err(Error::IfmlModel {
             file: key.clone(),
-            reason: render_diags(&diags),
+            reason: render_diags(&errors),
         });
     }
 
@@ -129,6 +143,7 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
         manifest,
         actor_models,
         policy_imports,
+        lints: render_diags(&lints).lines().map(str::to_string).collect(),
     })
 }
 
@@ -175,8 +190,11 @@ fn with_snake_role_aliases(mut models: Vec<ActorModel>) -> Vec<ActorModel> {
     models
 }
 
-/// One `file: code message` line per diagnostic (checker codes E0104–E0108
+/// One `file: code message` line per diagnostic (checker codes E0104–E0109
 /// name the exact token; spans are byte offsets into the keyed file).
+/// Warning-severity findings (the lint channel) render identically — the
+/// severity lives in the code's W-band, and the caller decides fatal vs
+/// advisory.
 pub fn render_diags(diags: &[rex_ifml::IfmlDiagnostic]) -> String {
     diags
         .iter()
@@ -206,7 +224,11 @@ view "List" {
 
 view "Detail" {
     params { id: Uuid };
-    component "info" { type: details; data: Item; }
+    component "info" {
+        type: details;
+        data: Item;
+        on save -> action("RefreshList");
+    }
 }
 
 action "RefreshList" {
@@ -235,6 +257,49 @@ action "RefreshList" {
         // No policy imports — the authorization pass was skipped.
         assert!(compiled.actor_models.is_empty());
         assert!(compiled.policy_imports.is_empty());
+        // The fixture invokes every action it declares — the lint channel
+        // (W0150 dead action et al) stays empty on a clean model.
+        assert!(compiled.lints.is_empty(), "{:?}", compiled.lints);
+    }
+
+    #[test]
+    fn lint_severity_never_fails_the_compilation() {
+        // W0150 (dead action): the declaration is never invoked. The lint
+        // channel is warning-severity — the model still compiles, checks,
+        // and derives its manifest; the finding rides `lints`.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = write(
+            dir.path(),
+            "app.ifml",
+            r#"
+view "List" {
+    component "grid" {
+        type: list;
+        data: Item;
+        on select(row) -> navigate("Detail", { id: row.id });
+    }
+}
+
+view "Detail" {
+    params { id: Uuid };
+    component "info" { type: details; data: Item; }
+}
+
+action "Orphaned" {
+    target: Item;
+}
+"#,
+        );
+        let compiled = compile_and_check_ifml(&path).expect("warnings never fail");
+        assert_eq!(compiled.lints.len(), 1, "{:?}", compiled.lints);
+        assert!(compiled.lints[0].contains("W0150"), "{:?}", compiled.lints);
+        assert!(
+            compiled.lints[0].contains("Orphaned"),
+            "{:?}",
+            compiled.lints
+        );
+        // The dead action still lands in the declaration-backed manifest.
+        assert_eq!(compiled.manifest.actions.len(), 1);
     }
 
     #[test]

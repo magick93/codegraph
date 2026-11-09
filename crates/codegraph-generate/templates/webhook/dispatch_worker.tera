@@ -251,7 +251,7 @@ async fn drain_events_into_jobs(
     let queue_name = format!("events_{domain}");
     let rows = client
         .query(
-            {% if has_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, 30, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, 30, 100)",{% endif %}
+            {% if has_events %}"SELECT msg_id, read_ct, message FROM pgmq.read($1, {% if evt_delivery %}{{ evt_delivery.vt_secs }}{% else %}30{% endif %}, 100)",{% else %}"SELECT msg_id, message FROM pgmq.read($1, {% if evt_delivery %}{{ evt_delivery.vt_secs }}{% else %}30{% endif %}, 100)",{% endif %}
             &[&queue_name],
         )
         .await
@@ -332,7 +332,11 @@ async fn drain_events_into_jobs(
             msg_id,{% endif %}
         )
         .await;
-        let all_ok = outcomes.iter().all(|outcome| outcome.ok);
+        let all_ok ={% if evt_delivery and evt_delivery.drop_on_failure %} {
+            // At-most-once: consumers run, but a failed dispatch drops the
+            // message — the delete is unconditional.
+            true
+        }{% else %} outcomes.iter().all(|outcome| outcome.ok);{% endif %}
         // Issue #611: a message whose consumers keep failing past the
         // attempt budget dead-letters to `{queue}_dlq` — moved is
         // terminal, the source queue drains, siblings unblock.

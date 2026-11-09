@@ -1171,9 +1171,11 @@ fn check_extension_points(
 /// through the front door (`compile_and_check_ifml`, issue #591) — the
 /// same gather → compile → check path the run path uses, so doctor and
 /// ingest cannot drift. A parse or compile error is a hard failure, and
-/// so is every checker diagnostic (E0104–E0108: an undeclared action /
-/// navigate / refresh target, or a `requires:`/`roles:` name no
-/// resolvable policy declares — the silently-missing-control class).
+/// so is every ERROR-severity checker diagnostic (E0104–E0109: an
+/// undeclared action / navigate / refresh target, or a
+/// `requires:`/`roles:` name no resolvable policy declares — the
+/// silently-missing-control class). The lint channel (W0150–W0154) is
+/// advisory — printed and counted as soft warnings, never fatal.
 /// `import "….actor"` statements resolve read-only through
 /// `resolve_actor_policy` — the ingest path warns-and-continues on an
 /// unresolvable policy, so doctor is where a silent skip becomes a hard
@@ -1199,6 +1201,15 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
                     compiled.manifest.edges.len(),
                     compiled.manifest.commands.len(),
                 );
+                // The lint channel (W0150–W0154 — dead actions,
+                // unreachable views, shadowed modules, components without
+                // data, views without domain binding) is advisory: each
+                // finding prints and counts toward the soft-warning total,
+                // never a hard failure.
+                for lint in &compiled.lints {
+                    soft += 1;
+                    println!("warning: ifml: {lint}");
+                }
                 if model.imports.is_empty() {
                     continue;
                 }
