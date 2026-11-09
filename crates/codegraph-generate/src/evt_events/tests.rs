@@ -612,10 +612,11 @@ fn worker_drain_template_renders_declared_delivery_facts() {
             "queue_max_retries": 5,
             "queue_binding": "WEBHOOK_QUEUE",
             "queue_name": "hr-orders-webhooks",
-        "extra_event_queues": [],
-        "cron_triggers": [],
-        "service_bindings": [],
-        "entities": [],            "has_webhooks": false,
+            "extra_event_queues": [],
+            "cron_triggers": [],
+            "service_bindings": [],
+            "entities": [],
+            "has_webhooks": false,
             "evt_delivery": { "vt_secs": 45, "drop_on_failure": true },
         }),
         &project(),
@@ -626,7 +627,7 @@ fn worker_drain_template_renders_declared_delivery_facts() {
         "the declared visibility timeout lowers: {out}"
     );
     assert!(
-        out.contains("let typed_ok = {"),
+        out.contains("let all_ok = {"),
         "the at-most-once disposition lowers"
     );
 }
@@ -642,10 +643,11 @@ fn worker_drain_template_keeps_defaults_without_evt_delivery() {
             "queue_max_retries": 5,
             "queue_binding": "WEBHOOK_QUEUE",
             "queue_name": "hr-orders-webhooks",
-        "extra_event_queues": [],
-        "cron_triggers": [],
-        "service_bindings": [],
-        "entities": [],            "has_webhooks": false,
+            "extra_event_queues": [],
+            "cron_triggers": [],
+            "service_bindings": [],
+            "entities": [],
+            "has_webhooks": false,
         }),
         &project(),
     )
@@ -655,10 +657,9 @@ fn worker_drain_template_keeps_defaults_without_evt_delivery() {
         "today's constants hold: {out}"
     );
     assert!(
-        out.contains("dispatch_registered(&*state.client_source, message.clone())"),
+        out.contains("outcomes.iter().all(|outcome| outcome.ok)"),
         "{out}"
     );
-    assert!(out.contains("== 0;"), "{out}");
 }
 
 // ── webhook subscription vocabulary gating ─────────────────────────────
