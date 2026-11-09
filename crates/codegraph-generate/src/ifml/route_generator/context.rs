@@ -658,8 +658,9 @@ pub struct RenderButton {
 
 /// An IFML action-event control (issue #559): the fallback-markup button
 /// plus its generated POST handler for the conventional
-/// `{base}/{id}/actions/{op}` route (the worker-side mounting of that
-/// route is a separate slice).
+/// `{base}/{id}/actions/{op}` route — the same wire shape the service-op
+/// plane mounts in every topology (issue #590), pinned end to end by
+/// `ifml_559_regression_tests`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RenderActionButton {
     /// Humanized op name ("RequestFiling" → "Request filing").
