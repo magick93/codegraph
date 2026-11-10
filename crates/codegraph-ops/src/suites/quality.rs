@@ -294,6 +294,7 @@ mod tests {
             extensions: vec![],
             doctor: Default::default(),
             bundle: Default::default(),
+            workers: None,
         }
     }
 

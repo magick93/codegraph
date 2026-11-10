@@ -270,6 +270,7 @@ mod tests {
             extensions: vec![],
             doctor: Default::default(),
             bundle: Default::default(),
+            workers: None,
         };
         manifest.output_dir = "generated-candidate".into();
         let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
@@ -408,6 +409,7 @@ mod tests {
             extensions: vec![],
             doctor: Default::default(),
             bundle: Default::default(),
+            workers: None,
         };
         let cfg = OpsConfig::from_manifest(manifest, PathBuf::from("/tmp/repo")).unwrap();
         assert_eq!(cfg.api_db.password, "pw-from-env");

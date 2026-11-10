@@ -44,9 +44,6 @@ pub const GATEWAY_PORT: u16 = 8787;
 /// First per-domain worker port; worker *i* binds `3001 + i`.
 pub const WORKER_BASE_PORT: u16 = 3001;
 
-/// Generated binary prefix: `hr-app-{domain}` per worker, `hr-app-gateway`.
-const BINARY_PREFIX: &str = "hr-app";
-
 /// Domain worker crates in generation (port) order.
 pub const WORKER_DOMAINS: &[&str] = &[
     "assessments",
@@ -134,6 +131,42 @@ const GATEWAY_WAIT_SECS: u64 = 30;
 const DEFAULT_ORG_A: &str = "00000000-0000-0000-0000-000000000001";
 const DEFAULT_ORG_B: &str = "00000000-0000-0000-0000-000000000002";
 
+/// The resolved workers plan: manifest `[workers]` overrides with the
+/// harness's historical hr-specs defaults as fallbacks.
+#[derive(Debug, Clone)]
+struct WorkerPlan {
+    profile: String,
+    output_dir: PathBuf,
+    domains: Vec<String>,
+    binary_prefix: String,
+    gateway_port: u16,
+    worker_base_port: u16,
+}
+
+fn worker_plan(config: &OpsConfig) -> WorkerPlan {
+    let workers = config.manifest.workers.as_ref();
+    let domains = workers
+        .filter(|w| !w.domains.is_empty())
+        .map(|w| w.domains.clone())
+        .unwrap_or_else(|| WORKER_DOMAINS.iter().map(|d| d.to_string()).collect());
+    WorkerPlan {
+        profile: workers
+            .and_then(|w| w.profile.clone())
+            .unwrap_or_else(|| PROFILE.to_string()),
+        output_dir: workers
+            .and_then(|w| w.output_dir.clone())
+            .unwrap_or_else(|| PathBuf::from(OUTPUT_DIR)),
+        domains,
+        binary_prefix: workers
+            .and_then(|w| w.binary_prefix.clone())
+            .unwrap_or_else(|| config.manifest.app_name.clone()),
+        gateway_port: workers.and_then(|w| w.gateway_port).unwrap_or(GATEWAY_PORT),
+        worker_base_port: workers
+            .and_then(|w| w.worker_base_port)
+            .unwrap_or(WORKER_BASE_PORT),
+    }
+}
+
 /// Arguments for the workers suite.
 #[derive(Debug, Clone)]
 pub struct WorkersArgs {
@@ -185,7 +218,13 @@ pub async fn run_workers(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<()
 
 async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<()> {
     let mut counters = TestCounters::new();
-    let workers_out = config.root_dir.join(OUTPUT_DIR);
+    let plan = worker_plan(config);
+    let output_dir = &plan.output_dir;
+    let gateway_port = plan.gateway_port;
+    let worker_base_port = plan.worker_base_port;
+    let worker_domains = &plan.domains;
+    let binary_prefix = &plan.binary_prefix;
+    let workers_out = config.root_dir.join(output_dir);
 
     // ---- 0. Supabase stack ----
     // The workers topology targets the same Supabase-provisioned database as
@@ -238,7 +277,9 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
     // Registry-aware preflight: a leaked `--keep` worker/gateway is taken
     // over by default (killed via its registry pid) or reused with --reuse.
     let mut reused_ports: HashSet<u16> = HashSet::new();
-    for port in std::iter::once(GATEWAY_PORT).chain(worker_ports()) {
+    for port in std::iter::once(gateway_port)
+        .chain((0..worker_domains.len() as u16).map(|i| worker_base_port + i))
+    {
         match crate::preflight::ensure_port_available(&config.root_dir, port, args.reuse) {
             Ok(outcome) => {
                 if outcome.reused() {
@@ -253,8 +294,8 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
     }
     if reused_ports.is_empty() {
         counters.pass(format!(
-            "Ports free (gateway {GATEWAY_PORT}, workers {WORKER_BASE_PORT}..{})",
-            worker_port(WORKER_DOMAINS.len() as u16 - 1)
+            "Ports free (gateway {gateway_port}, workers {worker_base_port}..{})",
+            worker_base_port + (worker_domains.len() as u16 - 1)
         ));
     } else {
         counters.pass(format!(
@@ -292,7 +333,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
             "Wiped stale workers output under {}",
             workers_out.display()
         ));
-        let (ok, output_text) = regenerate(config, graph, &workers_out);
+        let (ok, output_text) = regenerate(config, graph, &workers_out, &plan.profile);
         if !ok {
             counters.fail_test("Regeneration failed");
             for line in output_text.lines().filter(|l| l.contains("error")).take(10) {
@@ -330,17 +371,18 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         counters.pass(format!("Reset applied ({})", reset.display()));
     }
 
-    let schemas_sql = WORKER_DOMAINS
+    let schemas_sql = worker_domains
         .iter()
-        .chain(INFRA_SCHEMAS.iter())
+        .map(|s| s.as_str())
+        .chain(INFRA_SCHEMAS.iter().copied())
         .map(|s| format!("CREATE SCHEMA IF NOT EXISTS {s};"))
         .collect::<Vec<_>>()
         .join(" ");
     match psql_exec(&config.api_db, &schemas_sql).await {
         Ok(()) => counters.pass(format!(
             "{} schemas ensured ({} domains + {} infra)",
-            WORKER_DOMAINS.len() + INFRA_SCHEMAS.len(),
-            WORKER_DOMAINS.len(),
+            worker_domains.len() + INFRA_SCHEMAS.len(),
+            worker_domains.len(),
             INFRA_SCHEMAS.len()
         )),
         Err(e) => output::warn(format!("schema creation failed (continuing): {e}")),
@@ -392,7 +434,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
     let bin_dir = build_dir
         .join("target")
         .join(if args.release { "release" } else { "debug" });
-    let gateway_bin = bin_dir.join(format!("{BINARY_PREFIX}-gateway"));
+    let gateway_bin = bin_dir.join(format!("{binary_prefix}-gateway"));
     if !gateway_bin.is_file() {
         counters.fail_test("gateway binary missing");
         return Err(OpsError::TestFailure(format!(
@@ -411,6 +453,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         &bin_dir,
         &reused_ports,
         &mut supervisor,
+        &plan,
     )
     .await;
     supervisor.shutdown_all().await;
@@ -453,14 +496,19 @@ async fn run_boot_and_tests(
     bin_dir: &Path,
     reused_ports: &HashSet<u16>,
     supervisor: &mut Supervisor,
+    plan: &WorkerPlan,
 ) -> OpsResult<()> {
+    let gateway_port = plan.gateway_port;
+    let worker_base_port = plan.worker_base_port;
+    let worker_domains = &plan.domains;
+    let binary_prefix = &plan.binary_prefix;
     // ---- 5. Boot workers + gateway ----
     output::section("5. Boot workers + gateway");
     config.metrics.begin("Boot workers + gateway");
 
-    let mut upstreams: Vec<(String, u16)> = Vec::with_capacity(WORKER_DOMAINS.len());
-    for (i, domain) in WORKER_DOMAINS.iter().enumerate() {
-        let port = worker_port(i as u16);
+    let mut upstreams: Vec<(String, u16)> = Vec::with_capacity(worker_domains.len());
+    for (i, domain) in worker_domains.iter().enumerate() {
+        let port = worker_base_port + i as u16;
         if reused_ports.contains(&port) {
             output::warn(format!(
                 "--reuse: worker {domain} already running on port {port} — not booting a new one"
@@ -468,14 +516,14 @@ async fn run_boot_and_tests(
             upstreams.push(((*domain).to_string(), port));
             continue;
         }
-        let binary = bin_dir.join(format!("{BINARY_PREFIX}-{domain}"));
+        let binary = bin_dir.join(format!("{binary_prefix}-{domain}"));
         if !binary.is_file() {
             // Unlike dual-test.sh, which skipped missing binaries silently
             // (and left the gateway routing to a dead upstream), fail fast.
             return Err(OpsError::TestFailure(format!(
                 "missing worker binary {} — all {} domain workers are required",
                 binary.display(),
-                WORKER_DOMAINS.len()
+                worker_domains.len()
             )));
         }
         let mut cmd = Command::new(&binary);
@@ -488,18 +536,18 @@ async fn run_boot_and_tests(
         supervisor.add(proc);
         upstreams.push(((*domain).to_string(), port));
         output::info(format!(
-            "worker {BINARY_PREFIX}-{domain} -> 127.0.0.1:{port}"
+            "worker {binary_prefix}-{domain} -> 127.0.0.1:{port}"
         ));
     }
 
-    if reused_ports.contains(&GATEWAY_PORT) {
+    if reused_ports.contains(&gateway_port) {
         output::warn(format!(
-            "--reuse: gateway already running on port {GATEWAY_PORT} — not booting a new one"
+            "--reuse: gateway already running on port {gateway_port} — not booting a new one"
         ));
     } else {
-        let gateway_bin = bin_dir.join(format!("{BINARY_PREFIX}-gateway"));
+        let gateway_bin = bin_dir.join(format!("{binary_prefix}-gateway"));
         let mut gw_cmd = Command::new(&gateway_bin);
-        gw_cmd.env("BIND_ADDR", format!("127.0.0.1:{GATEWAY_PORT}"));
+        gw_cmd.env("BIND_ADDR", format!("127.0.0.1:{gateway_port}"));
         for (domain, port) in &upstreams {
             gw_cmd.env(gateway_env_name(domain), format!("http://127.0.0.1:{port}"));
         }
@@ -517,7 +565,7 @@ async fn run_boot_and_tests(
     }
 
     if let Err(e) = wait_for_url(
-        &format!("http://127.0.0.1:{GATEWAY_PORT}/health"),
+        &format!("http://127.0.0.1:{gateway_port}/health"),
         GATEWAY_WAIT_SECS,
         "gateway",
     )
@@ -530,7 +578,7 @@ async fn run_boot_and_tests(
         "Gateway healthy ({} workers upstream)",
         upstreams.len()
     ));
-    match http_get_body(&format!("http://127.0.0.1:{GATEWAY_PORT}/health/all"), &[]).await {
+    match http_get_body(&format!("http://127.0.0.1:{gateway_port}/health/all"), &[]).await {
         Ok((status, body)) if status == "200" => {
             counters.pass("/health/all -> 200");
             output::info(format!("/health/all: {body}"));
@@ -561,7 +609,7 @@ async fn run_boot_and_tests(
         }
     };
 
-    match http_status(&format!("http://127.0.0.1:{GATEWAY_PORT}/version"), &[]).await {
+    match http_status(&format!("http://127.0.0.1:{gateway_port}/version"), &[]).await {
         Ok(200) => counters.pass("gateway /version -> 200"),
         Ok(status) => counters.fail_test(format!("gateway /version -> {status} (want 200)")),
         Err(e) => counters.fail_test(format!("gateway /version: {e}")),
@@ -573,7 +621,7 @@ async fn run_boot_and_tests(
             .clone()
             .unwrap_or_else(|| pluralize_entity_route(&smoke.entity));
         let base = format!(
-            "http://127.0.0.1:{GATEWAY_PORT}/api/{}",
+            "http://127.0.0.1:{gateway_port}/api/{}",
             config.manifest.api_version
         );
         // Unauthenticated list must be rejected.
@@ -634,7 +682,7 @@ async fn run_boot_and_tests(
                 let mut cmd = Command::new("hurl");
                 cmd.arg("--test")
                     .arg("--variable")
-                    .arg(format!("base_url=http://127.0.0.1:{GATEWAY_PORT}"))
+                    .arg(format!("base_url=http://127.0.0.1:{gateway_port}"))
                     .arg("--variable")
                     .arg(format!("api_key={api_key}"))
                     .arg(&f);
@@ -707,11 +755,16 @@ pub fn worker_ports() -> impl Iterator<Item = u16> {
 /// against the process CWD, so generating from a deeper directory emits
 /// one-level-short path deps. Manifest-relative inputs are absolutized
 /// against `root_dir` to compensate.
-fn regenerate(config: &OpsConfig, graph: &str, workers_out: &Path) -> (bool, String) {
+fn regenerate(
+    config: &OpsConfig,
+    graph: &str,
+    workers_out: &Path,
+    profile: &str,
+) -> (bool, String) {
     if let Some(hint) = missing_model_source_hint(config) {
         output::warn(hint);
     }
-    let cargo_args = regenerate_args(config, graph, workers_out);
+    let cargo_args = regenerate_args_with_profile(config, graph, workers_out, profile);
     let mut cmd = Command::new("cargo");
     cmd.args(&cargo_args).current_dir(&config.workspace_root);
     match crate::proc::run_streaming(&mut cmd, "generate") {
@@ -740,7 +793,17 @@ fn missing_model_source_hint(config: &OpsConfig) -> Option<&'static str> {
 /// Legacy schemas mode (`mox_files` empty) is unchanged: `--schemas` +
 /// optional `--classifier` only when `schemas_dir` is set. `--profile` is
 /// always forced to the workers profile and `--output` to `workers_out`.
+#[cfg(test)]
 fn regenerate_args(config: &OpsConfig, graph: &str, workers_out: &Path) -> Vec<String> {
+    regenerate_args_with_profile(config, graph, workers_out, PROFILE)
+}
+
+fn regenerate_args_with_profile(
+    config: &OpsConfig,
+    graph: &str,
+    workers_out: &Path,
+    profile: &str,
+) -> Vec<String> {
     let mut cargo_args = vec![
         "run".to_string(),
         "--release".to_string(),
@@ -767,7 +830,7 @@ fn regenerate_args(config: &OpsConfig, graph: &str, workers_out: &Path) -> Vec<S
         cargo_args.push(absolutize(&config.root_dir, domain_config));
     }
     cargo_args.push("--profile".to_string());
-    cargo_args.push(PROFILE.to_string());
+    cargo_args.push(profile.to_string());
     cargo_args.push("--output".to_string());
     cargo_args.push(workers_out.to_string_lossy().into_owned());
     cargo_args
@@ -884,7 +947,7 @@ fn print_log_tail(log_path: &Path, n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codegraph_config::{OpsDatabase, OpsDbTarget, OpsManifest};
+    use codegraph_config::{OpsDatabase, OpsDbTarget, OpsManifest, OpsWorkers};
 
     #[test]
     fn worker_ports_are_sequential_from_base() {
@@ -976,6 +1039,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn worker_plan_reads_the_manifest_section() {
+        let mut manifest = workers_manifest();
+        manifest.workers = Some(OpsWorkers {
+            profile: Some("workers-custom".into()),
+            output_dir: Some("out-workers".into()),
+            domains: vec!["payroll".into(), "benefits".into()],
+            binary_prefix: Some("crewbase".into()),
+            gateway_port: Some(9100),
+            worker_base_port: Some(4100),
+        });
+        let plan = worker_plan(&workers_config(manifest));
+        assert_eq!(plan.profile, "workers-custom");
+        assert_eq!(plan.output_dir, PathBuf::from("out-workers"));
+        assert_eq!(plan.domains, vec!["payroll", "benefits"]);
+        assert_eq!(plan.binary_prefix, "crewbase");
+        assert_eq!(plan.gateway_port, 9100);
+        assert_eq!(plan.worker_base_port, 4100);
+    }
+
     fn workers_manifest() -> OpsManifest {
         OpsManifest {
             app_name: "demo-app".into(),
@@ -1013,6 +1096,7 @@ mod tests {
             extensions: vec![],
             doctor: Default::default(),
             bundle: Default::default(),
+            workers: None,
         }
     }
 

@@ -165,6 +165,9 @@ testkit api --skip-build --retry 2")]
         /// Regenerate from templates and verify compilation.
         #[arg(long)]
         regen: bool,
+        /// Run the Workers-topology api path (gateway + workers + hurl).
+        #[arg(long)]
+        workers: bool,
     },
     /// CLI e2e tests (starts the API first if not running).
     #[command(after_help = "Examples:\n  \
@@ -355,6 +358,7 @@ pub async fn main() -> i32 {
             no_migrate,
             rebuild,
             regen,
+            workers,
         } => {
             let args = ApiArgs {
                 keep: cli.keep,
@@ -369,6 +373,7 @@ pub async fn main() -> i32 {
                 allow_gen_errors: cli.allow_gen_errors,
                 allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                 reuse: cli.reuse,
+                workers: *workers,
             };
             output::bold("Running API integration tests");
             run_api(&config, &args).await
@@ -390,6 +395,7 @@ pub async fn main() -> i32 {
                     allow_gen_errors: cli.allow_gen_errors,
                     allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
                     reuse: cli.reuse,
+                    workers: false,
                 };
                 if let Err(e) = run_api(&config, &args).await {
                     return fail_suite(&cli, &config, "api", e);
@@ -557,6 +563,7 @@ async fn run_full(cli: &Cli, config: &OpsConfig) -> i32 {
         allow_gen_errors: cli.allow_gen_errors,
         allow_gen_rev_mismatch: cli.allow_gen_rev_mismatch,
         reuse: cli.reuse,
+        workers: false,
     };
     let api_code = match run_api(config, &api_args).await {
         Ok(()) => None,

@@ -58,6 +58,9 @@ pub struct ApiArgs {
     /// Reuse a registry-known server already running on the api port instead
     /// of taking it over (the old server keeps serving — possibly stale).
     pub reuse: bool,
+    /// Run the Workers-topology api path (gateway + per-domain workers +
+    /// the hurl contracts) instead of the monolith binary suite.
+    pub workers: bool,
 }
 
 /// True when a failed hurl file may be retried: the number of attempts used
@@ -144,6 +147,21 @@ impl TestCounters {
 /// its result was silently dropped (`let _ =`); a non-fatal failure warns
 /// and is recorded in the results JSON, a fatal failure aborts the suite.
 pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
+    if args.workers {
+        output::bold("Running API integration tests (workers topology)");
+        return crate::suites::workers::run_workers(
+            config,
+            &crate::suites::workers::WorkersArgs {
+                keep: args.keep,
+                skip_generate: args.skip_generate,
+                release: args.release,
+                results_file: args.results_file.clone(),
+                allow_gen_rev_mismatch: args.allow_gen_rev_mismatch,
+                reuse: args.reuse,
+            },
+        )
+        .await;
+    }
     let mut hook_failures: Vec<String> = Vec::new();
     hook_failures.extend(run_hooks(config, "pre_api", HookPolicy::PerHook).await?);
     // The api suite targets the same Supabase-provisioned database as e2e

@@ -505,7 +505,9 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         )
         // The [hurl] manifest section rides the hurl_contract generator
         // (issue #463): emit it exactly when that generator is in the plan.
-        .with_hurl_contracts(ctx.plan_has_domain("hurl_contract")),
+        .with_hurl_contracts(ctx.plan_has_domain("hurl_contract"))
+        // Workers topology: seed the manifest's `[workers]` plan.
+        .with_workers(ctx.workers_topology),
     ) as Box<dyn GlobalGenerator>);
 
     // .evt inputs imply the events module: the graph-driven scaffold gate

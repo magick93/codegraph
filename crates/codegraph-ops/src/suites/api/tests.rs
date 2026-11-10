@@ -41,6 +41,7 @@ fn manifest_with(profile: Option<&str>, provider: &str) -> OpsManifest {
         extensions: vec![],
         doctor: Default::default(),
         bundle: Default::default(),
+        workers: None,
     }
 }
 

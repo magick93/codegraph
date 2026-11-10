@@ -87,6 +87,31 @@ pub struct OpsManifest {
     /// Failure artifact bundle settings (`[bundle]`, #358). Additive.
     #[serde(default)]
     pub bundle: OpsBundle,
+    /// Workers-topology test plan (`[workers]`). Absent keeps the harness's
+    /// historical hr-specs defaults (profile `workers-cornucopia`, output
+    /// `generated-workers`, the known domain list); generated manifests seed
+    /// it from the run's topology + domains so consumers need no edits.
+    #[serde(default)]
+    pub workers: Option<OpsWorkers>,
+}
+
+/// `[workers]` — the workers-topology suite plan (issue #75 follow-up).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct OpsWorkers {
+    /// Regeneration profile (default `workers-cornucopia`).
+    pub profile: Option<String>,
+    /// Generated workers output directory (default `generated-workers`).
+    pub output_dir: Option<PathBuf>,
+    /// Domain worker names (port order). Empty = the harness's historical
+    /// hr-specs list.
+    pub domains: Vec<String>,
+    /// Generated binary prefix (default: the manifest `app_name`).
+    pub binary_prefix: Option<String>,
+    /// Gateway listen port (default 8787).
+    pub gateway_port: Option<u16>,
+    /// First per-domain worker port (default 3001).
+    pub worker_base_port: Option<u16>,
 }
 
 /// `[doctor]` — disk-space thresholds for the expanded doctor (#358).
@@ -414,6 +439,7 @@ mod tests {
                 args: vec![],
             }],
             doctor: OpsDoctor::default(),
+            workers: None,
             bundle: OpsBundle::default(),
         };
         let toml_str = toml::to_string(&m).unwrap();
@@ -777,6 +803,7 @@ keep = 10
                 max_mb: 64,
                 keep: 5,
             },
+            workers: None,
         };
         let serialized = toml::to_string(&m).unwrap();
         let back: OpsManifest = toml::from_str(&serialized).unwrap();

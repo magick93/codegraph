@@ -21,7 +21,7 @@ pub use ifml_components::{
 };
 pub use ops_manifest::{
     OpsCapabilities, OpsDatabase, OpsDbTarget, OpsExtension, OpsHook, OpsHurl, OpsManifest,
-    OpsServers, OpsSmoke, OpsSupabase,
+    OpsServers, OpsSmoke, OpsSupabase, OpsWorkers,
 };
 pub use registry::{DomainContext, DomainRegistry};
 pub use ux::{
