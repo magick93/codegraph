@@ -288,7 +288,11 @@ async fn orders_fixture_emits_handler_traits_and_the_consumer_registry() {
 async fn events_mod_names_sources_and_payloads() {
     let db = db_with(Some(orders_evt_model())).await;
     let files = generate_events(&db, &project()).await;
-    let events_mod = content_of(&files, "mod.rs");
+    let events_mod = files
+        .iter()
+        .find(|(n, c)| n == "mod.rs" && c.contains("pub mod contracts;"))
+        .map(|(_, c)| c.as_str())
+        .expect("events/mod.rs");
 
     assert!(events_mod.contains("pub mod contracts;"), "{events_mod}");
     assert!(events_mod.contains("pub mod emit;"));

@@ -388,7 +388,10 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
         std::time::Duration::from_secs(30),
     );
     let timer_token = shutdown_token.child_token();
-    tokio::spawn(async move { timer_service.run(timer_token).await });
+    tokio::spawn(async move { timer_service.run(timer_token).await });{% if has_events %}
+    // Register the generated consumer handlers (write-once
+    // `src/event_handlers/handlers.rs`) before the drain starts.
+    crate::event_handlers::register_all();{% endif %}
 
 {% if has_webhooks or has_function_events %}
     // Webhook dispatch worker

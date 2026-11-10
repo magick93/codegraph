@@ -1,0 +1,14 @@
+//! Write-once consumer handlers (issue #76).
+//!
+//! Hand edits survive regeneration. Implement the trait methods your
+//! first-party consumers need; the generated defaults are no-ops.
+use crate::events::consumers::{
+{% for consumer in consumers %}    {{ consumer.handler_trait }},
+{% endfor %}};
+
+{% for consumer in consumers %}
+/// Handler for the `{{ consumer.name }}` consumer.
+pub struct {{ consumer.handler_struct }};
+
+impl {{ consumer.handler_trait }} for {{ consumer.handler_struct }} {}
+{% endfor %}
