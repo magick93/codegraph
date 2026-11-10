@@ -292,6 +292,8 @@
 					formError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
 					return;
 				}
+{%- elif comp.submit and comp.submit.validation_only %}
+				// Declared form with no action binding: validation-only submit.
 {%- elif comp.submit %}
 				const response = await fetch(`${API_BASE}` + {{ comp.submit.url_expr }}, {
 					method: '{{ comp.submit.method }}',
@@ -487,7 +489,7 @@
 {%- endif %}
 {%- for comp in group.components %}
 {% if comp.mapping %}
-{%- if not comp.in_container %}
+{%- if not comp.in_container and comp.show_heading %}
 <h1>{{ label }}</h1>
 {%- endif %}
 <{{ comp.mapping.import_name }}
@@ -537,7 +539,7 @@
 {%- endif %}
 {%- endif %}
 {% elif comp.timeline %}
-{%- if not comp.in_container %}
+{%- if not comp.in_container and comp.show_heading %}
 <h1>{{ label }}</h1>
 {%- endif %}
 <ol class="timeline" data-testid="{{ comp.name }}-timeline">
@@ -568,7 +570,7 @@
 </ol>
 
 {% elif comp.table %}
-{%- if not comp.in_container %}
+{%- if not comp.in_container and comp.show_heading %}
 <h1>{{ label }}</h1>
 {%- endif %}
 <table data-testid="{{ comp.name }}-table"{% if comp.table.pagination %} data-pagination="true"{% endif %}>
@@ -703,7 +705,7 @@
 <div class="chart" data-chart-kind="{{ comp.chart.kind }}"{% if comp.chart.label_field %} data-label-field="{{ comp.chart.label_field }}"{% endif %}{% if comp.chart.value_fields %} data-value-fields="{{ comp.chart.value_fields | join(sep=',') }}"{% endif %}></div>
 
 {% elif comp.component_type == "list" %}
-{%- if not comp.in_container %}
+{%- if not comp.in_container and comp.show_heading %}
 <h1>{{ label }}</h1>
 {%- endif %}
 <table data-testid="{{ comp.name }}-table">

@@ -32,8 +32,29 @@ pub(super) fn build_submit(
     if !is_form_component(c) {
         return None;
     }
-    let api = api?;
     let handler_name = format!("submit_{}", sanitize_ident(&c.name));
+    let navigate_url = events
+        .iter()
+        .find(|e| {
+            e.action_kind == "navigate" && (e.event_type == "save" || e.event_type == "submit")
+        })
+        .map(|e| e.url_expr.clone());
+    // A declared form with no schema-backed API still gets a submit control:
+    // a validation-only submit is a legitimate contract (P2), and the POM
+    // targets `{component}-submit` for every form.
+    let Some(api) = api else {
+        return Some(RenderSubmit {
+            handler_name,
+            url_expr: String::new(),
+            method: "POST".to_string(),
+            create_url_expr: None,
+            edit_param: None,
+            remote_command: None,
+            navigate_url,
+            client_validate: form_has_messages(c),
+            validation_only: true,
+        });
+    };
     let (url_expr, method, create_url_expr, edit_param) = match id_param {
         Some(param) if api.has_update => (
             format!("`{}/${{viewParams.{param}}}`", api.base_path),
@@ -48,12 +69,6 @@ pub(super) fn build_submit(
             None,
         ),
     };
-    let navigate_url = events
-        .iter()
-        .find(|e| {
-            e.action_kind == "navigate" && (e.event_type == "save" || e.event_type == "submit")
-        })
-        .map(|e| e.url_expr.clone());
     Some(RenderSubmit {
         handler_name,
         url_expr,
@@ -63,6 +78,7 @@ pub(super) fn build_submit(
         remote_command: None,
         navigate_url,
         client_validate: form_has_messages(c),
+        validation_only: false,
     })
 }
 

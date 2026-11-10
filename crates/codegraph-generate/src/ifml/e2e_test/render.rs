@@ -623,6 +623,7 @@ use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent};
 use super::super::route_generator::RenderWorkflow;
 use super::fixtures::{codelist_fixture_value, entry_inner, fixture_entries, js_literal_inner};
 use super::spec_payload::{UxChipCheck, UxColumnCheck};
+use codegraph_config::DomainConfig;
 use codegraph_config::ux::{Align, Dimension, Display, UxRules};
 use codegraph_core::traits::GraphQuerier;
 
@@ -759,6 +760,7 @@ pub(crate) async fn ux_chip_checks(
 /// outside the codelist table).
 pub(crate) async fn ux_fixture_entries(
     db: &dyn GraphQuerier,
+    config: &DomainConfig,
     c: &IfmlComponent,
     workflow_status: Option<&str>,
 ) -> Vec<(String, String)> {
@@ -769,7 +771,7 @@ pub(crate) async fn ux_fixture_entries(
             *value = format!("'{}'", js_string(&code));
         }
     }
-    entries
+    super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
 }
 
 /// All values of the codelist backing `field` on `entity`'s schema, when

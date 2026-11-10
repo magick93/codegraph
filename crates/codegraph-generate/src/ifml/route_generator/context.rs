@@ -386,6 +386,11 @@ pub struct PageComponentContext {
     /// Whether the component belongs to a nested view container: suppresses
     /// the page-level `<h1>` heading inside the group.
     pub(crate) in_container: bool,
+    /// Whether this component renders the view's `<h1>` (P2): a
+    /// multi-component view emits ONE view-level heading — the first
+    /// top-level component carries it; single-component views keep the
+    /// historical per-component heading.
+    pub(crate) show_heading: bool,
     /// ux-resolved columns for a spec-less list component (issue #300):
     /// the same [`RenderColumn`] shape as typed tables, keyed aligned with
     /// `fields`. Empty (and skipped from the context) when the ux plane is
@@ -505,6 +510,8 @@ pub struct RenderSubmit {
     /// Emit the conservative client-side check that surfaces the first
     /// failing validation message before the network request.
     pub(super) client_validate: bool,
+    /// No schema-backed API: the submit runs validation only (no fetch).
+    pub(super) validation_only: bool,
 }
 
 /// Remote-functions command wiring (issue #557): one server-executed
@@ -1128,6 +1135,25 @@ pub(super) async fn build_page_context(
                 heading,
                 components: group_components,
             });
+        }
+    }
+    // P2: one view-level heading for multi-component views. The first
+    // top-level component renders it; later components drop their duplicate
+    // `<h1>` (which made `getByRole('heading')` strict-mode ambiguous).
+    let top_level_components = groups
+        .iter()
+        .flat_map(|group| group.components.iter())
+        .filter(|comp| !comp.in_container)
+        .count();
+    if top_level_components > 1 {
+        let mut heading_emitted = false;
+        for group in &mut groups {
+            for comp in &mut group.components {
+                comp.show_heading = !comp.in_container && !heading_emitted;
+                if comp.show_heading {
+                    heading_emitted = true;
+                }
+            }
         }
     }
     let components: Vec<PageComponentContext> = groups
@@ -1930,6 +1956,7 @@ pub(super) async fn page_component_context(
         form_state,
         form_payload,
         in_container: false,
+        show_heading: true,
         table,
         form,
         chart,
