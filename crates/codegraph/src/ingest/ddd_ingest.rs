@@ -404,6 +404,7 @@ pub fn ddd_model_graph_from_rex(
                     non_persistent: design.flags.non_persistent,
                     cache: design.flags.cache,
                 },
+                machine_json: opt_json(design.machine.as_ref()),
                 ordinal,
             });
             if let Some(repo) = &design.repository {

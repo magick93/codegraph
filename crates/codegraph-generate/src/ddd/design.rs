@@ -163,6 +163,25 @@ impl DddDesignSurface {
         self.designs.get(schema_title)
     }
 
+    /// The lifecycle state machine designed for the entity, when the graph
+    /// carries one (`.ddd` `machine <field>: <Enum>`). The stored form is
+    /// opaque rex-ir JSON; codegraph-generate (which may depend on rex-ir)
+    /// rehydrates it here.
+    pub fn machine_for(&self, schema_title: &str) -> Option<rex_ir::ddd::StateMachine> {
+        let design = self.designs.get(schema_title)?;
+        let value = design.machine_json.as_ref()?;
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    /// Every declared machine state for the entity, in canonical order
+    /// (initial, terminals, then transition endpoints). Empty when the
+    /// entity carries no machine.
+    pub fn machine_states_for(&self, schema_title: &str) -> Vec<String> {
+        self.machine_for(schema_title)
+            .map(|machine| machine.states().into_iter().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+
     /// The repository designed for the entity with this schema title.
     pub fn repository_for(&self, schema_title: &str) -> Option<&DddRepositoryNode> {
         self.repositories.get(schema_title)
@@ -497,15 +516,24 @@ fn lower_finder(
         // columns the DTOs expose.
         let rust_type = match rex_type_to_rust(&type_ref) {
             Some(rt) => rt,
-            None => features.resolve_type(&snake).ok_or_else(|| {
-                format!(
-                    "unresolvable parameter type `{}` for `{}`",
-                    type_ref
-                        .qualified_name()
-                        .unwrap_or_else(|| "primitive".to_string()),
-                    param.name
-                )
-            })?,
+            None => match &type_ref {
+                // A codelist enum/vocabulary filter binds the stored TEXT
+                // code: the DTO exposes the enum, but the column is text and
+                // the equality finder compares codes (P2.5).
+                rex_ir::TypeRef::Enum { .. } | rex_ir::TypeRef::Vocabulary { .. } => {
+                    "String".to_string()
+                }
+                _ => features.resolve_type(&snake).ok_or_else(|| {
+                    format!(
+                        "unresolvable parameter type `{}` for `{}`; use `String` for \
+                         a codelist filter (the stored code)",
+                        type_ref
+                            .qualified_name()
+                            .unwrap_or_else(|| "primitive".to_string()),
+                        param.name
+                    )
+                })?,
+            },
         };
         params.push(FinderParam {
             name: snake,
@@ -781,6 +809,13 @@ mod tests {
         serde_json::json!({"type": "primitive", "value": "string"})
     }
 
+    fn enum_json(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "enum",
+            "value": {"package": "nz.example.library", "name": name}
+        })
+    }
+
     fn many_json() -> serde_json::Value {
         serde_json::json!({"lower": 0, "upper": "unbounded"})
     }
@@ -802,6 +837,7 @@ mod tests {
             stereotype: stereotype.to_string(),
             is_abstract: false,
             flags: DddDesignFlags::default(),
+            machine_json: None,
             ordinal: 0,
         }
     }
@@ -944,6 +980,33 @@ mod tests {
             surface.operations_for("MovieType"),
             Some(vec!["list".to_string()])
         );
+    }
+
+    #[test]
+    fn finder_parsed_enum_param_binds_the_text_code() {
+        // P2.5: `findByStatus(BookStatus status)` must resolve to the text
+        // column, not be skipped as an unresolvable parameter type.
+        let op = DddRepositoryOperation {
+            name: "findByStatus".to_string(),
+            builtin: None,
+            return_type: Some(class_json("Book")),
+            return_multiplicity: None,
+            params: vec![param("status", enum_json("BookStatus"))],
+            ordinal: 4,
+            is_protected: false,
+        };
+        let surface = DddDesignSurface::from_models(&[model(
+            vec![design("Book", Some("BookType"), "entity")],
+            vec![repository(
+                "BookRepository",
+                "Book",
+                vec![builtin("findById", "findById", 0), op],
+            )],
+            vec![],
+        )]);
+        let finders = surface.finders_for("BookType", "Book", &features("Book"));
+        assert_eq!(finders.len(), 1);
+        assert_eq!(finders[0].params[0].rust_type, "String");
     }
 
     #[test]

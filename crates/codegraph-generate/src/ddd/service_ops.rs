@@ -20,11 +20,15 @@
 //! Ops that bind no entity (or are `protected`) emit no route; they are
 //! reported by [`dead_surface_warnings`] (the Ask 1 diagnostic).
 //!
-//! Execution lowering for v1: repository `delete` delegations wire to the
+//! Execution lowering: repository `delete` delegations wire to the
 //! entity's command delete, `findById` delegations return the loaded
-//! record; every other op answers 501 naming the gap (the functions-plane
-//! seam precedent) — the enforcement is the deliverable; delegation
-//! breadth is a recorded follow-up.
+//! record, and `save`/`update` delegations patch the loaded row through the
+//! update command (P0). Where the entity carries a `.ddd` machine, the op
+//! binds a transition (by trigger name, op-level state guard, or the
+//! protected internal op sharing its capability) and the target state is
+//! resolved from the record's current state — a no-transition state change
+//! fails closed with 409. Ops with no executable lowering (abstract bodies,
+//! service-to-service/search/finder delegation) answer 501 naming the gap.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -33,11 +37,38 @@ use codegraph_core::error::GraphError;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_naming::to_snake_case;
+use heck::ToLowerCamelCase;
 use rex_expr::{BinOp, Expr, ExprKind, UnOp};
 
 use crate::ddd::design::DddDesignSurface;
+use crate::project_config::DtoKeyCasing;
 
 // ── Route model ────────────────────────────────────────────────────────
+
+/// One machine transition reduced to the wire-relevant `(from, to)` pair.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ServiceOpTransition {
+    pub from: String,
+    pub to: String,
+}
+
+/// The machine-field binding an executable save/update delegation carries
+/// (P0.5/P0): the state field on the response, its DTO wire key, and the
+/// transitions this operation may apply.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ServiceOpState {
+    /// Rust expression producing the record's current state as a `String`
+    /// (codelist/string aware, optional-aware).
+    pub current_expr: String,
+    /// The Update-DTO key carrying the state field (DTO casing applied).
+    pub wire_key: String,
+    /// Every machine transition — the body-driven target whitelist when the
+    /// op has no name/guard/capability binding.
+    pub all: Vec<ServiceOpTransition>,
+    /// The transitions this op applies, selected at runtime by the current
+    /// state. Empty = the op performs no state transition of its own.
+    pub op: Vec<ServiceOpTransition>,
+}
 
 /// One service operation lowered to a route on one entity.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -63,6 +94,14 @@ pub struct ServiceOpRoute {
     /// `true` when the op delegates to the bound repository's `findById`
     /// builtin and the entity's op set exposes read.
     pub is_read: bool,
+    /// `true` when the op delegates to the bound repository's `save` (or
+    /// declared `update`) and updates the loaded row through the command
+    /// plane (P0 executable delegation).
+    pub is_update: bool,
+    /// The machine-field binding for an update delegation (`None` when the
+    /// entity carries no machine or the op performs no transition).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<ServiceOpState>,
     /// `true` when the bound entity's query plane carries `find_by_id`
     /// (the #449 invariant: the design surface exposes `read`). When
     /// `false` — a capability bound to a non-root entity — the route
@@ -178,15 +217,32 @@ fn fields_for(props: &[PropertyNode]) -> HashMap<String, FieldInfo> {
 /// compare via their ISO `Display`. EVERYTHING else is refused — what
 /// cannot be lowered faithfully is a hard generation error naming the
 /// capability (the rexlang Cedar-backend philosophy).
+#[cfg(test)]
 pub(crate) fn lower_when_to_rust(
     source: &str,
     capability: &str,
     entity: &str,
     fields: &HashMap<String, FieldInfo>,
 ) -> Result<String, String> {
+    lower_when_to_rust_with_states(source, capability, entity, fields, &[])
+}
+
+/// [`lower_when_to_rust`] with the entity's designed machine states bound as
+/// enum-valued bare names (the rexlang `check_condition` convention): a
+/// `when (runStatus == AwaitingApproval)` lowers the bare `AwaitingApproval`
+/// to the string literal the codelist/string comparison path consumes.
+/// Unknown names fail closed with a diagnostic naming both the fields and
+/// the declared states.
+pub(crate) fn lower_when_to_rust_with_states(
+    source: &str,
+    capability: &str,
+    entity: &str,
+    fields: &HashMap<String, FieldInfo>,
+    states: &[String],
+) -> Result<String, String> {
     let parsed = rex_expr::parse(source);
     match parsed.ast {
-        Some(ast) if parsed.errors.is_empty() => lower(&ast, capability, entity, fields),
+        Some(ast) if parsed.errors.is_empty() => lower(&ast, capability, entity, fields, states),
         _ => Err(format!(
             "capability `{capability}`: `when` condition is not valid \
              rexlang expression syntax: {source:?}"
@@ -199,6 +255,7 @@ fn lower(
     capability: &str,
     entity: &str,
     fields: &HashMap<String, FieldInfo>,
+    states: &[String],
 ) -> Result<String, String> {
     let reject = |construct: &str| {
         Err(format!(
@@ -230,11 +287,30 @@ fn lower(
             }
         }
         ExprKind::Name(name) => {
-            let field = field_for(name, capability, entity, fields)?;
-            Ok(field_ref(&field))
+            if let Some(field) = fields.get(name) {
+                return Ok(field_ref(field));
+            }
+            // A bare name that is a declared machine state lowers to the
+            // enum value's wire spelling: the codelist/string comparison
+            // path then renders `response.<field>.to_string() == "<state>"`.
+            if states.iter().any(|state| state == name) {
+                return Ok(rust_string_literal(name));
+            }
+            let states_note = if states.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " nor a declared state of its machine ({})",
+                    states.join(", ")
+                )
+            };
+            Err(format!(
+                "capability `{capability}`: `when` condition references \
+                 `{name}`, which is not a field of `{entity}`{states_note}"
+            ))
         }
         ExprKind::Unary { op, expr } => {
-            let inner = lower(expr, capability, entity, fields)?;
+            let inner = lower(expr, capability, entity, fields, states)?;
             match op {
                 UnOp::Not => Ok(format!("(!({inner}))")),
                 UnOp::Neg => match &expr.kind {
@@ -293,8 +369,8 @@ fn lower(
             };
             comparison(
                 op,
-                &lower(lhs, capability, entity, fields)?,
-                &lower(rhs, capability, entity, fields)?,
+                &lower(lhs, capability, entity, fields, states)?,
+                &lower(rhs, capability, entity, fields, states)?,
                 rust_op,
                 capability,
                 entity,
@@ -653,6 +729,7 @@ fn basejump_role_actors(role: &str, actor_names: &[String]) -> Vec<String> {
 /// op declares no capabilities; a capability no grant mentions emits a
 /// deny-all gate (the policy says nobody holds it), so this returns the
 /// fn whenever the policy surface exists.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_authorize_fn(
     snake: &str,
@@ -666,9 +743,42 @@ pub(crate) fn render_authorize_fn(
     entity: &str,
     record_available: bool,
 ) -> Result<Option<String>, String> {
+    render_authorize_fn_with_states(
+        snake,
+        op_name,
+        service,
+        capabilities,
+        condition,
+        response_type_path,
+        surface,
+        fields,
+        entity,
+        record_available,
+        &[],
+    )
+}
+
+/// [`render_authorize_fn`] with the entity's designed machine states bound
+/// in `when` lowering (P0.5): `when (runStatus == AwaitingApproval)` treats
+/// the bare state name as the enum value, not a record field.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_authorize_fn_with_states(
+    snake: &str,
+    op_name: &str,
+    service: &str,
+    capabilities: &[String],
+    condition: Option<&str>,
+    response_type_path: &str,
+    surface: Option<&PolicySurface>,
+    fields: &HashMap<String, FieldInfo>,
+    entity: &str,
+    record_available: bool,
+    machine_states: &[String],
+) -> Result<Option<String>, String> {
     let lowered_condition = condition
         .map(|source| {
-            let lowered = lower_when_to_rust(source, op_name, entity, fields)?;
+            let lowered =
+                lower_when_to_rust_with_states(source, op_name, entity, fields, machine_states)?;
             Ok::<_, String>((lowered, source.to_string()))
         })
         .transpose()?;
@@ -746,7 +856,7 @@ pub(crate) fn render_authorize_fn(
             "    // op-level `when` transition guard — business semantics apply \
              to every session\n\
              if !({lowered}) {{\n                \
-                 return Err({message});\n            }}\n"
+                 return Err({message}.to_string());\n            }}\n"
         ));
     }
     out.push_str(
@@ -808,7 +918,13 @@ pub(crate) fn render_authorize_fn(
                     break;
                 }
                 for when in whens.iter().flatten() {
-                    let lowered = lower_when_to_rust(when, capability, entity, fields)?;
+                    let lowered = lower_when_to_rust_with_states(
+                        when,
+                        capability,
+                        entity,
+                        fields,
+                        machine_states,
+                    )?;
                     conditions.push(lowered);
                 }
             }
@@ -882,6 +998,7 @@ pub async fn routes_for_entity(
     config: &DomainConfig,
     domain: &str,
     entity_title: &str,
+    dto_casing: DtoKeyCasing,
 ) -> Result<Vec<ServiceOpRoute>, String> {
     let models = db.get_ddd_models().await.map_err(|e| e.to_string())?;
     if models.iter().all(|m| m.services.is_empty()) {
@@ -908,11 +1025,20 @@ pub async fn routes_for_entity(
 
     // The design surface gates the execution legs: delegation targets must
     // survive the #449 op-set mapping (delete → commands.delete, findById
-    // → queries.find_by_id) to lower.
-    let surface_ops = DddDesignSurface::from_graph(db)
-        .await
-        .ok()
+    // → queries.find_by_id) to lower. The same surface carries the machine
+    // (P0.5): `save`/`update` delegations bind a transition when the op
+    // matches one, and the op-level `when` lowering binds declared states.
+    let design_surface = DddDesignSurface::from_graph(db).await.ok();
+    let surface_ops = design_surface
+        .as_ref()
         .and_then(|s| s.operations_for(entity_title))
+        .unwrap_or_default();
+    let machine = design_surface
+        .as_ref()
+        .and_then(|s| s.machine_for(entity_title));
+    let machine_states: Vec<String> = machine
+        .as_ref()
+        .map(|m| m.states().into_iter().map(str::to_string).collect())
         .unwrap_or_default();
 
     let mut routes: Vec<ServiceOpRoute> = Vec::new();
@@ -939,7 +1065,7 @@ pub async fn routes_for_entity(
                 // #595 follow-up). `when`-conditioned ops on such entities
                 // are a generation error (fail closed).
                 let record_load = surface_ops.iter().any(|o| o == "read");
-                let authorize_fn = render_authorize_fn(
+                let authorize_fn = render_authorize_fn_with_states(
                     &snake,
                     &op.name,
                     &service.name,
@@ -952,8 +1078,21 @@ pub async fn routes_for_entity(
                     &fields,
                     entity_title,
                     record_load,
+                    &machine_states,
                 )?;
-                let (is_delete, is_read, seam_reason) = execution_for(op, model, &surface_ops);
+                let execution = execution_for(
+                    op,
+                    model,
+                    &surface_ops,
+                    record_load,
+                    config,
+                    domain,
+                    entity_title,
+                    &module_name,
+                    machine.as_ref(),
+                    &fields,
+                    dto_casing,
+                );
                 routes.push(ServiceOpRoute {
                     service: service.name.clone(),
                     op_name: op.name.clone(),
@@ -961,10 +1100,12 @@ pub async fn routes_for_entity(
                     snake,
                     capabilities: op.capabilities.clone(),
                     authorize_fn,
-                    is_delete,
-                    is_read,
+                    is_delete: execution.is_delete,
+                    is_read: execution.is_read,
+                    is_update: execution.is_update,
+                    state: execution.state,
                     record_load,
-                    seam_reason,
+                    seam_reason: execution.seam_reason,
                 });
             }
         }
@@ -1020,37 +1161,290 @@ async fn bind_entity(
     None
 }
 
-/// `(is_delete, is_read, seam_reason)` — the execution lowering. Repository
-/// delegations to builtins wire only when the design op set exposes the
-/// counterpart (the #449 gating invariant); everything else seams.
+/// The execution lowering result for one service op.
+struct ExecutionLowering {
+    is_delete: bool,
+    is_read: bool,
+    is_update: bool,
+    state: Option<ServiceOpState>,
+    seam_reason: Option<String>,
+}
+
+impl ExecutionLowering {
+    fn seam(reason: impl Into<String>) -> Self {
+        Self {
+            is_delete: false,
+            is_read: false,
+            is_update: false,
+            state: None,
+            seam_reason: Some(reason.into()),
+        }
+    }
+}
+
+/// The machine's transitions as wire `(from, to)` pairs, declaration order.
+fn machine_transition_pairs(machine: &rex_ir::ddd::StateMachine) -> Vec<ServiceOpTransition> {
+    machine
+        .transitions
+        .iter()
+        .map(|t| ServiceOpTransition {
+            from: t.from.clone(),
+            to: t.to.clone(),
+        })
+        .collect()
+}
+
+/// The transition's trigger normalized for matching: the authored `via`, or
+/// the bare-arrow derivation (the target state's lowerCamel, normalized to
+/// snake_case here).
+fn transition_trigger(t: &rex_ir::ddd::Transition) -> String {
+    to_snake_case(t.trigger.as_deref().unwrap_or(&t.to))
+}
+
+/// Name candidates an operation can match a trigger by: the exact op, the op
+/// with the designing class's snake suffix stripped (`submit_pay_run` →
+/// `submit`), and the op with the entity table suffix stripped.
+fn trigger_candidates(op_name: &str, entity_class: &str, entity_table: &str) -> Vec<String> {
+    let snake = to_snake_case(op_name);
+    let mut candidates = vec![snake.clone()];
+    for suffix in [
+        to_snake_case(&short_class_name(entity_class)),
+        to_snake_case(entity_table),
+    ] {
+        if !suffix.is_empty()
+            && let Some(stripped) = snake.strip_suffix(&format!("_{suffix}"))
+        {
+            candidates.push(stripped.to_string());
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn short_class_name(class: &str) -> String {
+    class.rsplit("::").next().unwrap_or(class).to_string()
+}
+
+/// The state names an op-level `when` condition pins as its source: equality
+/// comparisons between the machine field and a declared state (`runStatus ==
+/// Draft`), OR-combined. Used when the op name does not match a trigger (the
+/// `preparePayRun`/`Calculate` shape).
+fn condition_source_states(
+    source: &str,
+    state_field_snake: &str,
+    states: &[String],
+) -> Vec<String> {
+    let parsed = rex_expr::parse(source);
+    let Some(ast) = parsed.ast.filter(|_| parsed.errors.is_empty()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    collect_condition_states(&ast, state_field_snake, states, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn collect_condition_states(
+    expr: &Expr,
+    state_field_snake: &str,
+    states: &[String],
+    out: &mut Vec<String>,
+) {
+    match &expr.kind {
+        ExprKind::Binary { op, lhs, rhs } => match op {
+            BinOp::Eq => {
+                let field_state = |a: &Expr, b: &Expr| -> Option<String> {
+                    let ExprKind::Name(field) = &a.kind else {
+                        return None;
+                    };
+                    if to_snake_case(field) != state_field_snake {
+                        return None;
+                    }
+                    let ExprKind::Name(state) = &b.kind else {
+                        return None;
+                    };
+                    states.iter().find(|s| *s == state).cloned()
+                };
+                if let Some(state) = field_state(lhs, rhs).or_else(|| field_state(rhs, lhs)) {
+                    out.push(state);
+                }
+            }
+            // Both `&&` and `||` union the source states: the runtime
+            // current-state match is the authoritative selector.
+            BinOp::And | BinOp::Or => {
+                collect_condition_states(lhs, state_field_snake, states, out);
+                collect_condition_states(rhs, state_field_snake, states, out);
+            }
+            _ => {}
+        },
+        ExprKind::Unary {
+            op: UnOp::Not,
+            expr,
+        } => collect_condition_states(expr, state_field_snake, states, out),
+        _ => {}
+    }
+}
+
+/// The transitions a service op applies, in resolution order:
+/// 1. op-name → trigger (exact, then entity-suffix-stripped);
+/// 2. op-level `when` state equality → the unique outgoing transition(s);
+/// 3. capability fallback: a `protected` internal op (the machine's real
+///    trigger carrier) sharing a capability with the public op
+///    (`preparePayRun` → `calculate`).
+fn op_transitions(
+    op: &codegraph_core::types::DddServiceOperation,
+    model: &codegraph_core::types::DddModelGraph,
+    machine: &rex_ir::ddd::StateMachine,
+    entity_class: &str,
+    entity_table: &str,
+) -> Vec<ServiceOpTransition> {
+    let states: Vec<String> = machine.states().into_iter().map(str::to_string).collect();
+    let state_field_snake = to_snake_case(&machine.field);
+
+    let by_trigger = |op_name: &str| -> Vec<ServiceOpTransition> {
+        let op_candidates = trigger_candidates(op_name, entity_class, entity_table);
+        machine
+            .transitions
+            .iter()
+            .filter(|t| op_candidates.contains(&transition_trigger(t)))
+            .map(|t| ServiceOpTransition {
+                from: t.from.clone(),
+                to: t.to.clone(),
+            })
+            .collect()
+    };
+
+    let mut chosen = by_trigger(&op.name);
+    if chosen.is_empty()
+        && let Some(condition) = op.condition.as_deref()
+    {
+        let source_states = condition_source_states(condition, &state_field_snake, &states);
+        chosen = machine
+            .transitions
+            .iter()
+            .filter(|t| source_states.iter().any(|s| s == &t.from))
+            .map(|t| ServiceOpTransition {
+                from: t.from.clone(),
+                to: t.to.clone(),
+            })
+            .collect();
+    }
+    if chosen.is_empty() {
+        for other in model.services.iter().flat_map(|s| &s.operations) {
+            if !other.is_protected {
+                continue;
+            }
+            let shares_capability = other
+                .capabilities
+                .iter()
+                .any(|c| op.capabilities.iter().any(|own| own == c));
+            if !shares_capability {
+                continue;
+            }
+            let matched = by_trigger(&other.name);
+            if !matched.is_empty() {
+                chosen = matched;
+                break;
+            }
+        }
+    }
+    // `dedup_by` only removes adjacent duplicates; sort then dedup keeps
+    // the runtime match arms stable and unique.
+    chosen.sort_by(|a, b| a.from.cmp(&b.from).then(a.to.cmp(&b.to)));
+    chosen.dedup_by(|a, b| a.from == b.from && a.to == b.to);
+    chosen
+}
+
+/// The Rust expression producing the record's current machine state as a
+/// `String` (the codelist/string comparison path).
+fn current_state_expr(field: &FieldInfo) -> String {
+    match (field.kind, field.optional) {
+        (FieldKind::Codelist, false) => format!("response.{}.to_string()", field.rust_name),
+        (FieldKind::Codelist, true) => format!(
+            "response.{}.as_ref().map(|v| v.to_string()).unwrap_or_default()",
+            field.rust_name
+        ),
+        (_, false) => format!("response.{}.clone()", field.rust_name),
+        (_, true) => format!("response.{}.clone().unwrap_or_default()", field.rust_name),
+    }
+}
+
+fn wire_key(rust_field: &str, casing: DtoKeyCasing) -> String {
+    match casing {
+        DtoKeyCasing::Snake => rust_field.to_string(),
+        DtoKeyCasing::Camel => rust_field.to_lower_camel_case(),
+    }
+}
+
+/// Whether the machine state field survives into the Update DTO. Workflow
+/// status/approval fields and configured `immutable_fields` are excluded;
+/// patching them through the update DTO would either 422 (`deny_unknown_
+/// fields`) or be ignored, so those ops keep a seam until a dedicated
+/// transition command lands.
+fn state_field_is_dto_updatable(
+    config: &DomainConfig,
+    domain: &str,
+    entity_title: &str,
+    state_field_rust: &str,
+) -> bool {
+    let Some(ec) = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(entity_title))
+    else {
+        return true;
+    };
+    if ec
+        .dto
+        .immutable_fields
+        .iter()
+        .any(|f| f == state_field_rust)
+    {
+        return false;
+    }
+    if let Some(wf) = &ec.workflow
+        && (wf.status_field == state_field_rust
+            || wf.approval_status_field.as_deref() == Some(state_field_rust))
+    {
+        return false;
+    }
+    true
+}
+
+/// The execution lowering. Repository `delete`/`findById` builtins wire to
+/// the command/query planes; `save`/`update` wire to the update command with
+/// an optional machine transition applied; everything else seams.
+#[allow(clippy::too_many_arguments)]
 fn execution_for(
     op: &codegraph_core::types::DddServiceOperation,
     model: &codegraph_core::types::DddModelGraph,
     surface_ops: &[String],
-) -> (bool, bool, Option<String>) {
+    record_load: bool,
+    config: &DomainConfig,
+    domain: &str,
+    entity_title: &str,
+    entity_table: &str,
+    machine: Option<&rex_ir::ddd::StateMachine>,
+    fields: &HashMap<String, FieldInfo>,
+    dto_casing: DtoKeyCasing,
+) -> ExecutionLowering {
     let Some(target) = &op.delegation_target else {
-        return (
-            false,
-            false,
-            Some(format!(
-                "service op `{}` has no delegation target — abstract service \
-                 bodies have no executable lowering yet (recorded follow-up)",
-                op.name
-            )),
-        );
+        return ExecutionLowering::seam(format!(
+            "service op `{}` has no delegation target — abstract service \
+             bodies have no executable lowering yet (recorded follow-up)",
+            op.name
+        ));
     };
     let is_repository = model.repositories.iter().any(|r| &r.name == target);
     if !is_repository {
-        return (
-            false,
-            false,
-            Some(format!(
-                "service op `{}` delegates to `{target}`, which is not a \
-                 repository — service-to-service and search delegation have \
-                 no executable lowering yet (recorded follow-up)",
-                op.name
-            )),
-        );
+        return ExecutionLowering::seam(format!(
+            "service op `{}` delegates to `{target}`, which is not a \
+             repository — service-to-service and search delegation have \
+             no executable lowering yet (recorded follow-up)",
+            op.name
+        ));
     }
     let operation = op
         .delegation_operation
@@ -1058,17 +1452,102 @@ fn execution_for(
         .map(|o| o.to_ascii_lowercase())
         .unwrap_or_default();
     match operation.as_str() {
-        "delete" if surface_ops.iter().any(|o| o == "delete") => (true, false, None),
-        "findbyid" if surface_ops.iter().any(|o| o == "read") => (false, true, None),
-        other => (
-            false,
-            false,
-            Some(format!(
-                "service op `{}` delegates to repository `{other}`, which has \
-                 no executable lowering yet (recorded follow-up)",
-                op.name
-            )),
-        ),
+        "delete" if surface_ops.iter().any(|o| o == "delete") => ExecutionLowering {
+            is_delete: true,
+            is_read: false,
+            is_update: false,
+            state: None,
+            seam_reason: None,
+        },
+        "findbyid" if surface_ops.iter().any(|o| o == "read") => ExecutionLowering {
+            is_delete: false,
+            is_read: true,
+            is_update: false,
+            state: None,
+            seam_reason: None,
+        },
+        "save" | "update" if surface_ops.iter().any(|o| o == "update") => {
+            if !record_load {
+                return ExecutionLowering::seam(format!(
+                    "service op `{}` delegates to repository `update`, which \
+                     needs the loaded row, but `{entity_title}` exposes no \
+                     read operation (no record load)",
+                    op.name
+                ));
+            }
+            let state = match machine {
+                Some(machine) => {
+                    let field_snake = to_snake_case(&machine.field);
+                    let entity_class = model
+                        .designs
+                        .iter()
+                        .find(|d| d.resolved_title.as_deref() == Some(entity_title))
+                        .map(|d| d.class.clone())
+                        .unwrap_or_else(|| entity_title.to_string());
+                    let Some(field) = fields
+                        .get(&machine.field)
+                        .or_else(|| fields.get(&field_snake))
+                    else {
+                        // The machine binds a field the graph exposes no
+                        // property for — a transition cannot be rendered.
+                        let transitions =
+                            op_transitions(op, model, machine, &entity_class, entity_table);
+                        if transitions.is_empty() {
+                            return ExecutionLowering {
+                                is_delete: false,
+                                is_read: false,
+                                is_update: true,
+                                state: None,
+                                seam_reason: None,
+                            };
+                        }
+                        return ExecutionLowering::seam(format!(
+                            "service op `{}` applies a machine transition, but the \
+                             machine field `{}` is not a property of `{entity_title}`",
+                            op.name, machine.field
+                        ));
+                    };
+                    let transitions =
+                        op_transitions(op, model, machine, &entity_class, entity_table);
+                    if !state_field_is_dto_updatable(config, domain, entity_title, &field.rust_name)
+                    {
+                        // A state-only transition cannot ride the update DTO
+                        // (workflow-managed/immutable field). Fail closed
+                        // rather than silently no-op the action.
+                        if !transitions.is_empty() {
+                            return ExecutionLowering::seam(format!(
+                                "service op `{}` applies a machine transition on \
+                                 `{}`, but the field is workflow-managed/immutable \
+                                 and excluded from the update DTO (dedicated \
+                                 transition lowering pending)",
+                                op.name, field.rust_name
+                            ));
+                        }
+                        None
+                    } else {
+                        Some(ServiceOpState {
+                            current_expr: current_state_expr(field),
+                            wire_key: wire_key(&field.rust_name, dto_casing),
+                            all: machine_transition_pairs(machine),
+                            op: transitions,
+                        })
+                    }
+                }
+                None => None,
+            };
+            ExecutionLowering {
+                is_delete: false,
+                is_read: false,
+                is_update: true,
+                state,
+                seam_reason: None,
+            }
+        }
+        other => ExecutionLowering::seam(format!(
+            "service op `{}` delegates to repository `{other}`, which has \
+             no executable lowering yet (recorded follow-up)",
+            op.name
+        )),
     }
 }
 
@@ -1539,8 +2018,20 @@ mod tests {
         );
     }
 
+    fn empty_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[domains.payroll]
+label = "Payroll"
+schema_dir = "schemas/payroll"
+postgres_schema = "payroll"
+"#,
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn execution_maps_repository_builtins_only() {
+    fn execution_maps_repository_builtins_and_save() {
         let model = codegraph_core::types::DddModelGraph {
             source_path: "test.ddd".to_string(),
             application: codegraph_core::types::DddApplicationNode {
@@ -1559,7 +2050,12 @@ mod tests {
             services: Vec::new(),
             searches: Vec::new(),
         };
-        let ops = ["delete".to_string(), "read".to_string()];
+        let ops = [
+            "delete".to_string(),
+            "read".to_string(),
+            "update".to_string(),
+        ];
+        let config = empty_config();
         let op = |target: Option<&str>, operation: Option<&str>| {
             codegraph_core::types::DddServiceOperation {
                 name: "op".to_string(),
@@ -1576,27 +2072,316 @@ mod tests {
                 ordinal: 0,
             }
         };
-        let (del, read, seam) =
-            execution_for(&op(Some("PayRunRepository"), Some("delete")), &model, &ops);
-        assert!(del && !read && seam.is_none());
-        let (del, read, seam) = execution_for(
-            &op(Some("PayRunRepository"), Some("findById")),
-            &model,
-            &ops,
-        );
-        assert!(!del && read && seam.is_none());
-        // save delegation seams (no payload lowering yet)
-        let (_, _, seam) = execution_for(&op(Some("PayRunRepository"), Some("save")), &model, &ops);
-        assert!(seam.is_some_and(|s| s.contains("no executable lowering")));
+        let lower = |op: &codegraph_core::types::DddServiceOperation, machine| {
+            execution_for(
+                op,
+                &model,
+                &ops,
+                true,
+                &config,
+                "payroll",
+                "PayRunType",
+                "pay_run",
+                machine,
+                &HashMap::new(),
+                crate::project_config::DtoKeyCasing::Snake,
+            )
+        };
+        let delete = lower(&op(Some("PayRunRepository"), Some("delete")), None);
+        assert!(delete.is_delete && !delete.is_read && delete.seam_reason.is_none());
+        let read = lower(&op(Some("PayRunRepository"), Some("findById")), None);
+        assert!(!read.is_delete && read.is_read && read.seam_reason.is_none());
+        // save delegates through the update command (P0)
+        let save = lower(&op(Some("PayRunRepository"), Some("save")), None);
+        assert!(save.is_update && save.seam_reason.is_none());
+        assert!(save.state.is_none(), "no machine ⇒ no transition binding");
         // non-repository delegation seams
-        let (_, _, seam) = execution_for(
-            &op(Some("NotificationService"), Some("notify")),
+        let non_repo = lower(&op(Some("NotificationService"), Some("notify")), None);
+        assert!(
+            non_repo
+                .seam_reason
+                .is_some_and(|s| s.contains("not a repository"))
+        );
+        // abstract op seams
+        let abstract_op = lower(&op(None, None), None);
+        assert!(
+            abstract_op
+                .seam_reason
+                .is_some_and(|s| s.contains("no delegation target"))
+        );
+    }
+
+    fn pay_run_machine() -> rex_ir::ddd::StateMachine {
+        let transition = |from: &str, to: &str, trigger: &str| rex_ir::ddd::Transition {
+            from: from.to_string(),
+            to: to.to_string(),
+            trigger: Some(trigger.to_string()),
+            guard: None,
+        };
+        rex_ir::ddd::StateMachine {
+            field: "runStatus".to_string(),
+            enum_type: rex_ir::TypeRef::Enum {
+                package: "payroll".to_string(),
+                name: "PayRunStatus".to_string(),
+            },
+            initial: "Draft".to_string(),
+            terminals: vec!["Reversed".to_string()],
+            transitions: vec![
+                transition("Draft", "Calculating", "Calculate"),
+                transition("Calculating", "AwaitingApproval", "Submit"),
+                transition("AwaitingApproval", "Approved", "Approve"),
+                transition("Approved", "Posted", "Post"),
+                transition("Posted", "Reversed", "Reverse"),
+            ],
+        }
+    }
+
+    fn pay_run_fields() -> HashMap<String, FieldInfo> {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "runStatus".to_string(),
+            FieldInfo {
+                rust_name: "run_status".to_string(),
+                kind: FieldKind::Codelist,
+                optional: false,
+            },
+        );
+        fields.insert(
+            "run_status".to_string(),
+            FieldInfo {
+                rust_name: "run_status".to_string(),
+                kind: FieldKind::Codelist,
+                optional: false,
+            },
+        );
+        fields
+    }
+
+    fn service_op(
+        name: &str,
+        capabilities: &[&str],
+        is_protected: bool,
+        condition: Option<&str>,
+    ) -> codegraph_core::types::DddServiceOperation {
+        codegraph_core::types::DddServiceOperation {
+            name: name.to_string(),
+            return_type: None,
+            return_multiplicity: None,
+            params: Vec::new(),
+            delegation_target: Some("PayRunRepository".to_string()),
+            delegation_operation: Some("save".to_string()),
+            capabilities: capabilities.iter().map(|c| c.to_string()).collect(),
+            is_protected,
+            condition: condition.map(str::to_string),
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            ordinal: 0,
+        }
+    }
+
+    fn pay_run_model(
+        ops: Vec<codegraph_core::types::DddServiceOperation>,
+    ) -> codegraph_core::types::DddModelGraph {
+        codegraph_core::types::DddModelGraph {
+            source_path: "test.ddd".to_string(),
+            application: codegraph_core::types::DddApplicationNode {
+                name: "App".to_string(),
+                base: None,
+                source_path: "test.ddd".to_string(),
+            },
+            modules: Vec::new(),
+            designs: vec![codegraph_core::types::DddDesignNode {
+                application: "App".to_string(),
+                module: "payroll".to_string(),
+                class: "PayRun".to_string(),
+                resolved_title: Some("PayRunType".to_string()),
+                stereotype: "entity".to_string(),
+                is_abstract: false,
+                flags: codegraph_core::types::DddDesignFlags::default(),
+                machine_json: None,
+                ordinal: 0,
+            }],
+            repositories: vec![codegraph_core::types::DddRepositoryNode {
+                application: "App".to_string(),
+                name: "PayRunRepository".to_string(),
+                design_class: "PayRun".to_string(),
+                operations: Vec::new(),
+            }],
+            services: vec![codegraph_core::types::DddServiceNode {
+                application: "App".to_string(),
+                module: "payroll".to_string(),
+                name: "PayRunService".to_string(),
+                description: None,
+                dependencies: Vec::new(),
+                decision_dependencies: Vec::new(),
+                operations: ops,
+                ordinal: 0,
+            }],
+            searches: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn save_delegation_binds_the_op_trigger_transition() {
+        let machine = pay_run_machine();
+        let model = pay_run_model(vec![service_op(
+            "submitPayRun",
+            &["SubmitPayRun"],
+            false,
+            None,
+        )]);
+        let config = empty_config();
+        let ops = ["delete", "read", "update"].map(str::to_string);
+        let lowering = execution_for(
+            &model.services[0].operations[0],
             &model,
             &ops,
+            true,
+            &config,
+            "payroll",
+            "PayRunType",
+            "pay_run",
+            Some(&machine),
+            &pay_run_fields(),
+            crate::project_config::DtoKeyCasing::Snake,
         );
-        assert!(seam.is_some_and(|s| s.contains("not a repository")));
-        // abstract op seams
-        let (_, _, seam) = execution_for(&op(None, None), &model, &ops);
-        assert!(seam.is_some_and(|s| s.contains("no delegation target")));
+        assert!(lowering.is_update && lowering.seam_reason.is_none());
+        let state = lowering.state.expect("machine binding");
+        assert_eq!(state.wire_key, "run_status");
+        assert_eq!(state.current_expr, "response.run_status.to_string()");
+        assert_eq!(
+            state.op,
+            vec![ServiceOpTransition {
+                from: "Calculating".to_string(),
+                to: "AwaitingApproval".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn prepare_pay_run_binds_the_protected_internal_trigger() {
+        // `preparePayRun` has no matching trigger; the protected `calculate`
+        // shares its capability and matches `Calculate` (the crewbase shape).
+        let machine = pay_run_machine();
+        let model = pay_run_model(vec![
+            service_op("preparePayRun", &["PreparePayRun"], false, None),
+            service_op("calculate", &["PreparePayRun"], true, None),
+        ]);
+        let config = empty_config();
+        let ops = ["delete", "read", "update"].map(str::to_string);
+        let lowering = execution_for(
+            &model.services[0].operations[0],
+            &model,
+            &ops,
+            true,
+            &config,
+            "payroll",
+            "PayRunType",
+            "pay_run",
+            Some(&machine),
+            &pay_run_fields(),
+            crate::project_config::DtoKeyCasing::Snake,
+        );
+        let state = lowering.state.expect("machine binding");
+        assert_eq!(
+            state.op,
+            vec![ServiceOpTransition {
+                from: "Draft".to_string(),
+                to: "Calculating".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn machine_states_lower_in_when_conditions() {
+        let fields = pay_run_fields();
+        let states = vec![
+            "Draft".to_string(),
+            "AwaitingApproval".to_string(),
+            "Approved".to_string(),
+        ];
+        assert_eq!(
+            lower_when_to_rust_with_states(
+                "runStatus == AwaitingApproval",
+                "ApprovePayRun",
+                "PayRunType",
+                &fields,
+                &states,
+            )
+            .unwrap(),
+            r#"(response.run_status.to_string() == "AwaitingApproval")"#
+        );
+        let err = lower_when_to_rust_with_states(
+            "runStatus == Shelved",
+            "ApprovePayRun",
+            "PayRunType",
+            &fields,
+            &states,
+        )
+        .unwrap_err();
+        assert!(err.contains("nor a declared state"), "{err}");
+        assert!(err.contains("Draft"), "{err}");
+    }
+
+    #[test]
+    fn workflow_managed_state_field_keeps_the_update_but_seams_transitions() {
+        let machine = pay_run_machine();
+        let config = empty_config();
+        let mut config = config;
+        let entry = config.domains.get_mut("payroll").unwrap();
+        entry.entity_config.insert(
+            "PayRunType".to_string(),
+            toml::from_str(
+                r#"
+workflow = { status_field = "run_status", initial_state = "Draft" }
+"#,
+            )
+            .unwrap(),
+        );
+        let ops = ["read", "update"].map(str::to_string);
+        // A non-transition delegation still updates the other body fields.
+        let model = pay_run_model(vec![service_op("update", &[], false, None)]);
+        let lowering = execution_for(
+            &model.services[0].operations[0],
+            &model,
+            &ops,
+            true,
+            &config,
+            "payroll",
+            "PayRunType",
+            "pay_run",
+            Some(&machine),
+            &pay_run_fields(),
+            crate::project_config::DtoKeyCasing::Snake,
+        );
+        assert!(
+            lowering.state.is_none(),
+            "workflow-managed state is not DTO-patchable"
+        );
+        assert!(lowering.is_update, "the non-state body fields still update");
+
+        // A state transition cannot ride the update DTO — fail closed.
+        let model = pay_run_model(vec![service_op("submitPayRun", &[], false, None)]);
+        let lowering = execution_for(
+            &model.services[0].operations[0],
+            &model,
+            &ops,
+            true,
+            &config,
+            "payroll",
+            "PayRunType",
+            "pay_run",
+            Some(&machine),
+            &pay_run_fields(),
+            crate::project_config::DtoKeyCasing::Snake,
+        );
+        assert!(
+            lowering
+                .seam_reason
+                .as_deref()
+                .is_some_and(|s| s.contains("workflow-managed")),
+            "{:?}",
+            lowering.seam_reason
+        );
     }
 }

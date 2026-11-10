@@ -20,7 +20,11 @@
 /// inserts of new properties on pre-existing node types are tolerated —
 /// the #279 precedent), and old binaries could never author the new
 /// clauses anyway, so no information can be silently lost.
-pub const GRAPH_FORMAT_VERSION: u32 = 2;
+///
+/// Bumped to 3 for the `.ddd` machine mirror (`DddDesign.machine_json`): a
+/// cached graph persisted by a pre-machine binary reads the new nullable
+/// prop as NULL, silently losing the lifecycle — cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 3;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -501,6 +505,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             stereotype STRING NOT NULL,
             is_abstract BOOLEAN NOT NULL,
             flags_json STRING NOT NULL,
+            machine_json STRING,
             ordinal INTEGER NOT NULL
         )",
         "CREATE NODE TYPE IF NOT EXISTS DddRepository (

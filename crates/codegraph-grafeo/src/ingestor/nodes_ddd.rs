@@ -49,10 +49,11 @@ impl GrafeoEngine {
 
         for design in &model.designs {
             let flags_json = json_string(&design.flags)?;
+            let machine_json = design.machine_json.as_ref().map(json_string).transpose()?;
             let gql = format!(
                 "INSERT (:DddDesign {{ application: '{}', module: '{}', class: '{}', \
                  resolved_title: {}, stereotype: '{}', is_abstract: {}, \
-                 flags_json: '{}', ordinal: {} }})",
+                 flags_json: '{}', machine_json: {}, ordinal: {} }})",
                 escape_gql(&design.application),
                 escape_gql(&design.module),
                 escape_gql(&design.class),
@@ -60,6 +61,7 @@ impl GrafeoEngine {
                 escape_gql(&design.stereotype),
                 design.is_abstract,
                 escape_gql(&flags_json),
+                opt_str(&machine_json),
                 design.ordinal,
             );
             session

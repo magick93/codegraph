@@ -186,10 +186,15 @@ impl GlobalGenerator for OpenApiGenerator {
                             .copied()
                     })
                 {
-                    for op in
-                        crate::ddd::service_ops::routes_for_entity(db, config, domain_name, title)
-                            .await
-                            .map_err(codegraph_core::error::Error::Config)?
+                    for op in crate::ddd::service_ops::routes_for_entity(
+                        db,
+                        config,
+                        domain_name,
+                        title,
+                        project.codegen.dto_key_casing,
+                    )
+                    .await
+                    .map_err(codegraph_core::error::Error::Config)?
                     {
                         let module = db
                             .get_schema_in_domain(title, domain_name)

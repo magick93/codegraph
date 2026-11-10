@@ -302,6 +302,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 cache: true,
                 ..Default::default()
             },
+            machine_json: None,
             ordinal: 0,
         }],
         repositories: vec![DddRepositoryNode {

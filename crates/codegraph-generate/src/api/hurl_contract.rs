@@ -233,7 +233,7 @@ impl DomainGenerator for HurlContractGenerator {
         entity_titles: &[String],
         config: &DomainConfig,
         tera: &tera::Tera,
-        _project: &ProjectConfig,
+        project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
         if entity_titles.is_empty() {
             return Ok(vec![]);
@@ -296,9 +296,15 @@ impl DomainGenerator for HurlContractGenerator {
                 .and_then(|ec| ec.role.clone())
                 .unwrap_or_else(|| "root".into());
             if role == "root" {
-                let ops = crate::ddd::service_ops::routes_for_entity(db, config, domain, title)
-                    .await
-                    .map_err(codegraph_core::error::Error::Config)?;
+                let ops = crate::ddd::service_ops::routes_for_entity(
+                    db,
+                    config,
+                    domain,
+                    title,
+                    project.codegen.dto_key_casing,
+                )
+                .await
+                .map_err(codegraph_core::error::Error::Config)?;
                 if !ops.is_empty() {
                     let legs = ops
                         .iter()

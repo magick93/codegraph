@@ -70,6 +70,13 @@ pub struct DddDesignNode {
     pub is_abstract: bool,
     /// The design flags.
     pub flags: DddDesignFlags,
+    /// The class's lifecycle state machine (`machine <field>: <Enum>`), as
+    /// rex-ir `StateMachine` JSON. Opaque to codegraph-core (which must not
+    /// depend on rex-ir); consumers that need the structured form
+    /// deserialize it. Serde-defaulted for read-compat with graphs
+    /// persisted before the field existed.
+    #[serde(default)]
+    pub machine_json: Option<serde_json::Value>,
     /// Declaration order within the module.
     pub ordinal: usize,
 }

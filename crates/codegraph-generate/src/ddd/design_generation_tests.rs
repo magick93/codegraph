@@ -137,6 +137,7 @@ fn design(class: &str, title: Option<&str>, flags: DddDesignFlags) -> DddDesignN
         stereotype: "entity".to_string(),
         is_abstract: false,
         flags,
+        machine_json: None,
         ordinal: 0,
     }
 }

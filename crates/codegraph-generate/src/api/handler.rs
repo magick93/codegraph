@@ -506,9 +506,15 @@ impl EntityGenerator for HandlerGenerator {
         // refusals (un-lowerable `when` conditions) are hard generation
         // errors naming the capability.
         let service_ops = if topo.role == "root" {
-            crate::ddd::service_ops::routes_for_entity(db, config, &domain, schema_title)
-                .await
-                .map_err(crate::error::Error::Config)?
+            crate::ddd::service_ops::routes_for_entity(
+                db,
+                config,
+                &domain,
+                schema_title,
+                project.codegen.dto_key_casing,
+            )
+            .await
+            .map_err(crate::error::Error::Config)?
         } else {
             Vec::new()
         };
