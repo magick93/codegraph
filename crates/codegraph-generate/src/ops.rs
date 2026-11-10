@@ -21,6 +21,7 @@ use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use codegraph_config::DomainConfig;
 use codegraph_config::ops_manifest::{
     OpsCapabilities, OpsDatabase, OpsDbTarget, OpsHurl, OpsManifest, OpsServers, OpsSmoke,
+    OpsWorkers,
 };
 
 /// Derive the API path segment for an entity schema title
@@ -91,6 +92,9 @@ pub struct OpsManifestGenerator {
     /// provisions exactly the keys the generated contract files reference
     /// (issue #463). Off = `hurl: None` (consumers may hand-write it).
     has_hurl_contracts: bool,
+    /// Workers topology: seed the `[workers]` plan from the run's domains so
+    /// the harness's workers suite is portable (issue #75 follow-up).
+    has_workers: bool,
 }
 
 impl OpsManifestGenerator {
@@ -108,6 +112,7 @@ impl OpsManifestGenerator {
             has_admin_cli,
             has_grpc,
             has_hurl_contracts: false,
+            has_workers: false,
         }
     }
 
@@ -115,6 +120,12 @@ impl OpsManifestGenerator {
     /// `hurl_contract` domain generator).
     pub fn with_hurl_contracts(mut self, has_hurl_contracts: bool) -> Self {
         self.has_hurl_contracts = has_hurl_contracts;
+        self
+    }
+
+    /// Seed the `[workers]` plan when the run targets the workers topology.
+    pub fn with_workers(mut self, has_workers: bool) -> Self {
+        self.has_workers = has_workers;
         self
     }
 
@@ -222,6 +233,14 @@ impl GlobalGenerator for OpsManifestGenerator {
             extensions: Vec::new(),
             doctor: Default::default(),
             bundle: Default::default(),
+            workers: self.has_workers.then(|| {
+                let mut domains: Vec<String> = config.domains.keys().cloned().collect();
+                domains.sort();
+                OpsWorkers {
+                    domains,
+                    ..Default::default()
+                }
+            }),
         };
 
         let manifest_toml = toml::to_string_pretty(&manifest)

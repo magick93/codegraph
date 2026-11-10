@@ -8,7 +8,10 @@ use super::super::api_paths::{ResolvedApi, resolve_entity_api};
 use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::{PropertyNode, resolve_field};
+use codegraph_type_contracts::RefClassificationKind;
 
+use crate::ddd::design::DddDesignSurface;
 use crate::project_config::DtoKeyCasing;
 
 #[derive(Debug, Clone)]
@@ -237,31 +240,321 @@ pub(crate) async fn required_refs_satisfiable(db: &dyn GraphQuerier, entity: Opt
 
 /// The first enum value of the codelist backing `field` on `entity`'s
 /// schema, when the property references one. `None` keeps the generic
-/// fixture value.
+/// fixture value. Handles both JSON codelist `$ref` paths (`.../X.json`)
+/// and mox enum targets (`PayRunStatus`, no path suffix).
 pub(crate) async fn codelist_fixture_value(
     db: &dyn GraphQuerier,
     entity: Option<&str>,
     field: &str,
 ) -> Option<String> {
     let entity = entity?;
-    let schema = match db.get_schema(entity).await {
-        Ok(Some(schema)) => Some(schema),
-        Ok(None) => db.get_schema(&format!("{entity}Type")).await.ok()?,
-        Err(_) => None,
-    }?;
+    let schema = schema_for_entity(db, entity).await?;
     let props = db.get_properties(&schema.title).await.ok()?;
-    let target = props
-        .iter()
-        .find(|p| p.name == field)?
-        .ref_target
-        .as_deref()?;
-    let stem = target.rsplit('/').next()?.strip_suffix(".json")?;
-    let codelist = db.get_schema(stem).await.ok()??;
-    if !codelist.is_codelist {
+    let prop = props.iter().find(|p| {
+        p.name == field
+            || p.rust_field_name == field
+            || codegraph_naming::to_snake_case(&p.name) == codegraph_naming::to_snake_case(field)
+    })?;
+    let classified = matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference) | Some(RefClassificationKind::CodelistCheck)
+    );
+    if !classified && !ref_target_is_codelist(db, prop).await {
         return None;
     }
-    let values = db.get_enum_values(stem).await.ok()?;
-    values.into_iter().next().map(|v| v.value)
+    codelist_first_value(db, prop).await
+}
+
+/// Whether a property's `$ref` target resolves to a codelist SchemaNode.
+/// Graph fixtures (and some import paths) carry the ref without the
+/// classification kind, so the target schema is the authoritative signal.
+async fn ref_target_is_codelist(db: &dyn GraphQuerier, prop: &PropertyNode) -> bool {
+    let Some(target) = prop.ref_target.as_deref() else {
+        return false;
+    };
+    let leaf = target.rsplit('/').next().unwrap_or(target);
+    let stem = leaf.trim_end_matches(".json");
+    matches!(db.get_schema(stem).await, Ok(Some(schema)) if schema.is_codelist)
+}
+
+/// The first enum value of a codelist-backed property, trying the
+/// `$ref`/alias target first and the property name second (mox enums key
+/// their `CodeList` by the enum name).
+async fn codelist_first_value(db: &dyn GraphQuerier, prop: &PropertyNode) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Some(target) = prop.ref_target.as_deref() {
+        let leaf = target.rsplit('/').next().unwrap_or(target);
+        names.push(leaf.trim_end_matches(".json").to_string());
+    }
+    names.push(prop.name.clone());
+    names.push(prop.rust_field_name.clone());
+    names.dedup();
+    for name in names {
+        if let Ok(values) = db.get_enum_values(&name).await
+            && let Some(first) = values.into_iter().next()
+        {
+            return Some(first.value);
+        }
+    }
+    None
+}
+
+/// Merge the entity's **required** schema properties into a fixture entry
+/// list (P1). Component fields keep their existing values; required fields
+/// the component does not surface are appended with a type-valid literal so
+/// a typed create body does not 422 on a missing NOT NULL column.
+///
+/// Skipped:
+/// - `id` and entity references (a required FK needs a real parent row —
+///   the caller's `required_refs_satisfiable` gate drops those seeds);
+/// - workflow-managed status fields (the create DTO excludes them);
+/// - structured/value-object fields (their child DTOs are not synthesized
+///   here; optional ones default, required ones keep the caller's gate).
+pub(crate) async fn with_required_entries(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    entity: Option<&str>,
+    entries: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let Some(entity) = entity else {
+        return entries;
+    };
+    let Some(schema) = schema_for_entity(db, entity).await else {
+        return entries;
+    };
+    let MachineInfo {
+        field: machine_field,
+        initial: machine_initial,
+    } = machine_info(db, &schema.title).await;
+    let entity_cfg = config
+        .domains
+        .values()
+        .find_map(|d| d.get_entity_config(&schema.title));
+    let mut excluded: Vec<String> = entity_cfg
+        .and_then(|ec| ec.workflow.as_ref())
+        .map(|wf| {
+            let mut fields = vec![wf.status_field.clone()];
+            if let Some(approval) = &wf.approval_status_field {
+                fields.push(approval.clone());
+            }
+            fields
+        })
+        .unwrap_or_default();
+    if let Some(ec) = entity_cfg {
+        excluded.extend(ec.dto.immutable_fields.iter().cloned());
+    }
+    let mut present: std::collections::HashSet<String> = entries
+        .iter()
+        .map(|(field, _)| codegraph_naming::to_snake_case(field))
+        .collect();
+    let props = db.get_properties(&schema.title).await.unwrap_or_default();
+    let mut out = entries;
+    for prop in &props {
+        if !prop.is_required || prop.is_id {
+            continue;
+        }
+        let field_def = resolve_field(prop);
+        let key = &field_def.rust_field_name;
+        if present.contains(key)
+            || excluded
+                .iter()
+                .any(|f| codegraph_naming::to_snake_case(f) == codegraph_naming::to_snake_case(key))
+        {
+            continue;
+        }
+        // A required FK needs a dependency seed; leave it to the caller's
+        // `required_refs_satisfiable` gate (which drops the seed).
+        if matches!(
+            prop.effective_kind(),
+            Some(RefClassificationKind::EntityReference)
+        ) {
+            continue;
+        }
+        let value = property_fixture_value(
+            db,
+            prop,
+            machine_field.as_deref(),
+            machine_initial.as_deref(),
+        )
+        .await;
+        if let Some(value) = value {
+            present.insert(key.clone());
+            out.push((key.clone(), value));
+        }
+    }
+    out
+}
+
+struct MachineInfo {
+    field: Option<String>,
+    initial: Option<String>,
+}
+
+async fn machine_info(db: &dyn GraphQuerier, schema_title: &str) -> MachineInfo {
+    let Some(surface) = DddDesignSurface::from_graph(db).await.ok() else {
+        return MachineInfo {
+            field: None,
+            initial: None,
+        };
+    };
+    let Some(machine) = surface.machine_for(schema_title) else {
+        return MachineInfo {
+            field: None,
+            initial: None,
+        };
+    };
+    MachineInfo {
+        field: Some(codegraph_naming::to_snake_case(&machine.field)),
+        initial: Some(machine.initial.clone()),
+    }
+}
+
+/// A type-valid JS literal for one schema property (P1): codelist first
+/// enum value (or the machine's initial state), wrapped-datatype format
+/// samples, name heuristics for the crewbase wrappers, pattern samples,
+/// then the pg/rust type sentinel.
+async fn property_fixture_value(
+    db: &dyn GraphQuerier,
+    prop: &PropertyNode,
+    machine_field: Option<&str>,
+    machine_initial: Option<&str>,
+) -> Option<String> {
+    let codelist = matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference) | Some(RefClassificationKind::CodelistCheck)
+    ) || ref_target_is_codelist(db, prop).await;
+    if codelist {
+        // Array codelists project as child DTOs, not scalar values.
+        if prop.is_array {
+            return None;
+        }
+        if machine_field.is_some_and(|field| field == prop.rust_field_name)
+            && let Some(initial) = machine_initial
+        {
+            return Some(format!("'{}'", js_string(initial)));
+        }
+        return codelist_first_value(db, prop)
+            .await
+            .map(|value| format!("'{}'", js_string(&value)));
+    }
+    match prop.effective_kind() {
+        Some(RefClassificationKind::EntityReference)
+        | Some(RefClassificationKind::ValueObject)
+        | Some(RefClassificationKind::StructuredWrapper)
+        | Some(RefClassificationKind::CompositeWrapper)
+        | Some(RefClassificationKind::MediaWrapper) => None,
+        _ => {
+            if prop.is_array {
+                // Required primitive arrays accept an empty Vec.
+                return Some("[]".to_string());
+            }
+            Some(primitive_fixture_value(prop))
+        }
+    }
+}
+
+fn primitive_fixture_value(prop: &PropertyNode) -> String {
+    if let Some(sample) = format_sample(prop.format.as_deref()) {
+        return sample.to_string();
+    }
+    if let Some(sample) = name_sample(&prop.rust_field_name, &prop.rust_field_type) {
+        return sample;
+    }
+    if let Some(sample) = pattern_sample(prop.pattern.as_deref()) {
+        return sample.to_string();
+    }
+    match prop.rust_field_type.as_str() {
+        "bool" => "true".to_string(),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+        | "isize" => "42".to_string(),
+        "f32" | "f64" => "42.5".to_string(),
+        "rust_decimal::Decimal" | "Decimal" => "'4200'".to_string(),
+        "chrono::NaiveDate" | "NaiveDate" => "'2024-01-15'".to_string(),
+        "chrono::DateTime<chrono::Utc>" | "DateTime<Utc>" => "'2024-01-15T10:30:00Z'".to_string(),
+        "Uuid" | "uuid::Uuid" => uuid_literal(),
+        "serde_json::Value" => "{}".to_string(),
+        _ => {
+            if prop.pg_column_type.to_uppercase().starts_with("NUMERIC") {
+                "'4200'".to_string()
+            } else {
+                format!("'Test {}'", prop.rust_field_name)
+            }
+        }
+    }
+}
+
+fn format_sample(format: Option<&str>) -> Option<&'static str> {
+    Some(match format? {
+        "email" => "'test@example.com'",
+        "uri" | "url" => "'https://example.com'",
+        "uuid" => {
+            "`00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`"
+        }
+        "date" => "'2024-01-15'",
+        "date-time" | "datetime" | "timestamp" => "'2024-01-15T10:30:00Z'",
+        "country" | "country-code" | "iso-3166" | "country_code" => "'NZ'",
+        "language" | "language-code" | "iso-639" | "language_code" => "'en'",
+        "jurisdiction" | "jurisdiction-code" | "jurisdiction_code" => "'NZ'",
+        "currency" | "currency-code" | "currency_code" => "'NZD'",
+        "phone" | "phone-number" => "'+64211234567'",
+        "nzbn" => "'9429000000000'",
+        "ird-number" | "ird_number" => "'123456789'",
+        _ => return None,
+    })
+}
+
+/// Name heuristics for wrapped datatypes the crews model declares without a
+/// recognized `format` (country/language/jurisdiction/currency codes,
+/// money-in-cents and basis points are the documented 422 class).
+fn name_sample(field: &str, rust_type: &str) -> Option<String> {
+    let numeric = matches!(
+        rust_type,
+        "rust_decimal::Decimal" | "Decimal" | "f32" | "f64"
+    ) || rust_type.starts_with('i')
+        || rust_type.starts_with('u');
+    if field.contains("country") {
+        return Some("'NZ'".to_string());
+    }
+    if field.contains("language") {
+        return Some("'en'".to_string());
+    }
+    if field.contains("jurisdiction") {
+        return Some("'NZ'".to_string());
+    }
+    if field.contains("currency") {
+        return Some("'NZD'".to_string());
+    }
+    if field.contains("email") {
+        return Some("'test@example.com'".to_string());
+    }
+    if field.ends_with("_cents")
+        || field.contains("amount")
+        || field.contains("basis_point")
+        || field.ends_with("_rate")
+        || field.contains("full_time_equivalent")
+    {
+        return Some(if numeric { "4200" } else { "'4200'" }.to_string());
+    }
+    None
+}
+
+fn pattern_sample(pattern: Option<&str>) -> Option<&'static str> {
+    let pattern = pattern?;
+    if pattern.contains("[A-Z]{2}") {
+        return Some("'NZ'");
+    }
+    if pattern.contains("[a-z]{2}") {
+        return Some("'en'");
+    }
+    if pattern.contains("\\d") || pattern.contains("[0-9]") {
+        return Some("'123456'");
+    }
+    None
+}
+
+fn uuid_literal() -> String {
+    "`00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padStart(12, '0')}`"
+        .to_string()
 }
 
 /// The view-level or component-level `on save`/`on submit` navigation target:
@@ -367,4 +660,63 @@ pub(crate) fn entry_inner(entries: &[(String, String)], field: &str) -> Option<S
         .find(|(name, _)| name == field)
         .map(|(_, value)| js_literal_inner(value))
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod typed_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn wrapped_datatype_formats_seed_valid_samples() {
+        assert_eq!(format_sample(Some("country-code")), Some("'NZ'"));
+        assert_eq!(format_sample(Some("language-code")), Some("'en'"));
+        assert_eq!(format_sample(Some("jurisdiction-code")), Some("'NZ'"));
+        assert_eq!(format_sample(Some("currency-code")), Some("'NZD'"));
+        assert_eq!(format_sample(Some("email")), Some("'test@example.com'"));
+        assert_eq!(format_sample(Some("date")), Some("'2024-01-15'"));
+        assert_eq!(
+            format_sample(Some("date-time")),
+            Some("'2024-01-15T10:30:00Z'")
+        );
+        assert_eq!(format_sample(None), None);
+        assert_eq!(format_sample(Some("unrecognized")), None);
+    }
+
+    #[test]
+    fn name_heuristics_cover_the_crewbase_wrappers() {
+        assert_eq!(
+            name_sample("country_of_residence", "String").as_deref(),
+            Some("'NZ'")
+        );
+        assert_eq!(
+            name_sample("preferred_language", "String").as_deref(),
+            Some("'en'")
+        );
+        assert_eq!(
+            name_sample("jurisdiction", "String").as_deref(),
+            Some("'NZ'")
+        );
+        assert_eq!(
+            name_sample("employer_superannuation_cents", "String").as_deref(),
+            Some("'4200'")
+        );
+        assert_eq!(
+            name_sample("basis_points", "rust_decimal::Decimal").as_deref(),
+            Some("4200")
+        );
+        assert_eq!(
+            name_sample("full_time_equivalent", "String").as_deref(),
+            Some("'4200'")
+        );
+        assert_eq!(name_sample("status", "String"), None);
+    }
+
+    #[test]
+    fn pattern_samples_are_valid_shapes() {
+        assert_eq!(pattern_sample(Some("^[A-Z]{2}$")), Some("'NZ'"));
+        assert_eq!(pattern_sample(Some("^[a-z]{2}$")), Some("'en'"));
+        assert_eq!(pattern_sample(Some(r"^\d{9}$")), Some("'123456'"));
+        assert_eq!(pattern_sample(Some("^[0-9]{3}$")), Some("'123456'"));
+        assert_eq!(pattern_sample(None), None);
+    }
 }

@@ -1548,6 +1548,7 @@ fn ddd_fixture() -> DddModelGraph {
                     cache: true,
                     ..Default::default()
                 },
+                machine_json: None,
                 ordinal: 0,
             },
             DddDesignNode {
@@ -1558,6 +1559,7 @@ fn ddd_fixture() -> DddModelGraph {
                 stereotype: "value".to_string(),
                 is_abstract: false,
                 flags: DddDesignFlags::default(),
+                machine_json: None,
                 ordinal: 1,
             },
             DddDesignNode {
@@ -1573,6 +1575,7 @@ fn ddd_fixture() -> DddModelGraph {
                     non_persistent: true,
                     ..Default::default()
                 },
+                machine_json: None,
                 ordinal: 2,
             },
             DddDesignNode {
@@ -1586,6 +1589,7 @@ fn ddd_fixture() -> DddModelGraph {
                     scaffold: true,
                     ..Default::default()
                 },
+                machine_json: None,
                 ordinal: 0,
             },
         ],

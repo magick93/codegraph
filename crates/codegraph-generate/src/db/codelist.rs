@@ -65,8 +65,20 @@ impl EntityGenerator for CodelistGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
+        // Codelists are GLOBAL: FK resolution always routes a codelist
+        // reference to the `common` schema (`resolve_fk_target`), and the
+        // pipeline generates every codelist into `common`. The schema lookup
+        // must therefore not be scoped to `common` — a mox enum (or a JSON
+        // codelist) ingested under its own package domain (e.g. `wellness`)
+        // otherwise finds no schema here and emits no migration, leaving the
+        // FK target `common.<table>` missing at apply time. Prefer the
+        // requested domain, then fall back to a domain-agnostic lookup.
         let schema = match db.get_schema_in_domain(schema_title, domain).await {
             Ok(Some(s)) => s,
+            _ if domain == "common" => match db.get_schema(schema_title).await {
+                Ok(Some(s)) => s,
+                _ => return Ok(Vec::new()),
+            },
             _ => return Ok(Vec::new()),
         };
 

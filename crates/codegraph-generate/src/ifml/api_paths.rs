@@ -41,10 +41,20 @@ pub async fn resolve_entity_api(
             .and_then(|de| de.get_entity_config(&schema.title));
         let segment = resolve_path_segment(ec, &schema);
         let ops = resolve_entity_operations(db, config, &domain, &schema.title).await;
-        return Some(from_ops(
-            &format!("/api/{api_version}/{domain}/{segment}"),
-            &ops,
-        ));
+        let mut api = from_ops(&format!("/api/{api_version}/{domain}/{segment}"), &ops);
+        // Non-root read models (contained entities, value objects) have no
+        // top-level list/read route — the API plane only nests child CRUD
+        // under the owning aggregate. Leaving `has_list`/`has_read` set made
+        // generated list views fetch a 404 before the persona guard could
+        // act; zero the surface so the view renders an EMPTY shape instead.
+        if entity_is_non_root(db, config, &domain, &schema.title).await {
+            api.has_list = false;
+            api.has_read = false;
+            api.has_create = false;
+            api.has_update = false;
+            api.has_delete = false;
+        }
+        return Some(api);
     }
 
     if let Ok(resources) = db.get_api_resources().await
@@ -85,6 +95,38 @@ pub async fn resolve_entity_api(
         has_update: true,
         has_delete: true,
     })
+}
+
+/// Whether the entity is a non-root read model: a contained entity/value
+/// object with no top-level API surface. Resolution mirrors the router's
+/// role rules (config `role = "child"`, non-entity schemas, and graph parent
+/// candidates).
+async fn entity_is_non_root(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+) -> bool {
+    if let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await
+        && !schema.is_entity
+    {
+        return true;
+    }
+    if config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title))
+        .and_then(|ec| ec.role.as_deref())
+        == Some("child")
+    {
+        return true;
+    }
+    // Graph parent candidates do NOT make a root entity nested: the
+    // router/handler only nest a config `role = "child"` entity, and this
+    // function's schema/role checks above cover those. Treating a scalar
+    // `refers` candidate as a child zeroed the top-level surface of root
+    // entities (the WorkOrder regression).
+    false
 }
 
 fn from_ops(base_path: &str, ops: &[String]) -> ResolvedApi {
@@ -162,5 +204,105 @@ mod tests {
     fn normalized_names_match_api_resources() {
         assert_eq!(normalized_resource_name("Customer"), "Customer");
         assert_eq!(normalized_resource_name("CustomerType"), "Customer");
+    }
+
+    fn schema(title: &str, domain: &str, is_entity: bool) -> SchemaNode {
+        SchemaNode {
+            namespace: None,
+            schema_id: format!("id:{title}"),
+            title: title.to_string(),
+            access: None,
+            annotations: None,
+            description: None,
+            schema_type: "object".to_string(),
+            classification: if is_entity { "entity" } else { "value_object" }.to_string(),
+            domain: Some(domain.to_string()),
+            rel_path: format!("{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: codegraph_naming::to_snake_case(title),
+            api_path_segment: codegraph_naming::to_kebab_case(title),
+            parent_schema: None,
+            is_entity,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+
+    fn config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[domains.benefits]
+label = "Benefits"
+schema_dir = "benefits"
+postgres_schema = "benefits"
+entities = ["DependentType"]
+"#,
+        )
+        .unwrap()
+    }
+
+    fn config_with_child_role() -> DomainConfig {
+        toml::from_str(
+            r#"
+[domains.benefits]
+label = "Benefits"
+schema_dir = "benefits"
+postgres_schema = "benefits"
+entities = ["DependentType"]
+
+[domains.benefits.entity_config.DependentType]
+role = "child"
+parent = "CoverageType"
+"#,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn non_root_child_has_no_top_level_list_or_read() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(schema("DependentType", "benefits", true))
+            .build();
+        let api = resolve_entity_api(&engine, &config_with_child_role(), "Dependent", "v1")
+            .await
+            .expect("api");
+        assert!(
+            !api.has_list,
+            "non-root list must not fetch a top-level route"
+        );
+        assert!(!api.has_read);
+        assert!(!api.has_create);
+    }
+
+    #[tokio::test]
+    async fn non_entity_value_object_has_no_top_level_list_or_read() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(schema("DependentType", "benefits", false))
+            .build();
+        let api = resolve_entity_api(&engine, &config(), "Dependent", "v1")
+            .await
+            .expect("api");
+        assert!(!api.has_list);
+        assert!(!api.has_read);
+    }
+
+    #[tokio::test]
+    async fn root_entity_keeps_its_full_surface() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(schema("CoverageType", "benefits", true))
+            .build();
+        let api = resolve_entity_api(&engine, &config(), "Coverage", "v1")
+            .await
+            .expect("api");
+        assert!(api.has_list);
+        assert!(api.has_read);
     }
 }

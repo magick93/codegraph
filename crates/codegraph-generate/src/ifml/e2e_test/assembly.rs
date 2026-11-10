@@ -214,7 +214,8 @@ impl IfmlE2eTestGenerator {
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
             .map(|w| w.status_field);
-        super::fixtures::strip_workflow_status(entries, status.as_deref())
+        let entries = super::fixtures::strip_workflow_status(entries, status.as_deref());
+        super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
     }
 
     /// Whether a flat create body can satisfy the entity's required fields:
@@ -403,7 +404,7 @@ impl IfmlE2eTestGenerator {
             fixture: Fixture {
                 casing: self.dto_casing,
                 base_path: api.base_path,
-                entries: self.valid_fixture_entries(db, c, &workflow).await,
+                entries: self.valid_fixture_entries(db, config, c, &workflow).await,
             },
         })
     }
@@ -418,6 +419,7 @@ impl IfmlE2eTestGenerator {
     pub(super) async fn valid_fixture_entries(
         &self,
         db: &dyn GraphQuerier,
+        config: &DomainConfig,
         c: &IfmlComponent,
         workflow: &RenderWorkflow,
     ) -> Vec<(String, String)> {
@@ -429,7 +431,7 @@ impl IfmlE2eTestGenerator {
                 *value = format!("'{}'", js_string(&code));
             }
         }
-        entries
+        super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
     }
 
     /// Actor-persona guard tests for a view: one per human actor, asserting
@@ -554,7 +556,7 @@ impl IfmlE2eTestGenerator {
             }
             let plan = plans.get(entity)?;
             let status_field = workflow_for_entity(config, entity).map(|w| w.status_field);
-            let entries = ux_fixture_entries(db, c, status_field.as_deref()).await;
+            let entries = ux_fixture_entries(db, config, c, status_field.as_deref()).await;
             let route = view_route(&vc.name);
             let columns = ux_column_checks(c, plan, &entries);
             // The workflow status column pins a chip to the initial state
@@ -958,7 +960,8 @@ impl IfmlE2eTestGenerator {
             .as_deref()
             .and_then(|entity| workflow_for_entity(config, entity))
             .map(|w| w.status_field);
-        super::fixtures::strip_workflow_status(entries, status.as_deref())
+        let entries = super::fixtures::strip_workflow_status(entries, status.as_deref());
+        super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
     }
 }
 

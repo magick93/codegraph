@@ -228,6 +228,32 @@ async fn evt_input_generates_the_typed_events_plane() {
         "the drain's entry point"
     );
 
+    // Consumer handler extension point (issue #76): a write-once handler
+    // file + a generated registration module the app startup calls.
+    let handlers = read_out(&files, "src/event_handlers/handlers.rs");
+    assert!(
+        handlers.contains("pub struct BillingServiceHandlerImpl;"),
+        "{handlers}"
+    );
+    assert!(
+        handlers.contains("impl BillingServiceHandler for BillingServiceHandlerImpl {}"),
+        "{handlers}"
+    );
+    let handlers_mod = read_out(&files, "src/event_handlers/mod.rs");
+    assert!(
+        handlers_mod.contains("pub fn register_all()"),
+        "{handlers_mod}"
+    );
+    assert!(
+        handlers_mod.contains("register_billing_service("),
+        "{handlers_mod}"
+    );
+    let server = read_out(&files, "src/server.rs");
+    assert!(
+        server.contains("crate::event_handlers::register_all();"),
+        "the app startup must register consumers before the drain: {server}"
+    );
+
     // Scaffold wiring (`has_events` → `pub mod events;` in lib.rs and the
     // gated `anyhow` in Cargo.toml) is pinned at TEMPLATE level by the
     // in-crate golden (`scaffold_templates_render_events_module_when_has_
@@ -316,6 +342,26 @@ async fn evt_generation_is_deterministic() {
     }
 }
 
+#[tokio::test]
+async fn consumer_handler_scaffold_is_write_once() {
+    let (root, config) = fixture_root();
+    let out = root.path().join("generated");
+    let evt = vec![fixture("orders.evt")];
+    run_pipeline(&config, &out, &evt).await;
+
+    let handlers = out.join("src/event_handlers/handlers.rs");
+    let mut edited = fs::read_to_string(&handlers).expect("handlers.rs");
+    edited.push_str("\n// hand edit — must survive regeneration\n");
+    fs::write(&handlers, &edited).unwrap();
+
+    run_pipeline(&config, &out, &evt).await;
+    assert_eq!(
+        fs::read_to_string(&handlers).unwrap(),
+        edited,
+        "the consumer handler scaffold is write-once"
+    );
+}
+
 // ── flag-off contract ───────────────────────────────────────────────────
 
 /// The same fixture WITHOUT `.evt` input: no events plane anywhere — the
@@ -389,7 +435,7 @@ async fn no_evt_input_generates_no_events_plane() {
     // The gated files exist in BOTH trees and differ exactly by their
     // events-plane content (the evt side's markers are pinned by the
     // typed-events-plane test above; here only the delta shape).
-    const GATED: [&str; 6] = [
+    const GATED: [&str; 7] = [
         "src/webhook_dispatch.rs",
         "src/webhook_api.rs",
         // The post-generation module index: gains `pub mod events;` with
@@ -403,6 +449,8 @@ async fn no_evt_input_generates_no_events_plane() {
         // the app lib and the gated `anyhow` dependency — pinned in shape
         // below.
         "src/lib.rs",
+        // The consumer registration call (issue #76) is events-gated.
+        "src/server.rs",
         "Cargo.toml",
     ];
     for rel in GATED {
@@ -446,6 +494,8 @@ async fn no_evt_input_generates_no_events_plane() {
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
             "schemas/events/OrderPlaced.json",
+            "src/event_handlers/handlers.rs",
+            "src/event_handlers/mod.rs",
             "src/events/consumers.rs",
             "src/events/contracts.rs",
             "src/events/emit.rs",
@@ -476,6 +526,8 @@ async fn no_evt_input_generates_no_events_plane() {
             "schemas/events/OrderCancelled.json",
             "schemas/events/OrderPlaced.Envelope.json",
             "schemas/events/OrderPlaced.json",
+            "src/event_handlers/handlers.rs",
+            "src/event_handlers/mod.rs",
             "src/events/consumers.rs",
             "src/events/contracts.rs",
             "src/events/emit.rs",
@@ -497,6 +549,7 @@ async fn no_evt_input_generates_no_events_plane() {
             Some(content_off) if content_off == content_evt => {}
             // Evt-only files are covered by the exact evt-only assertion.
             None if name.starts_with("src/events/")
+                || name.starts_with("src/event_handlers/")
                 || name.starts_with("schemas/events/")
                 || name.starts_with("docs/") => {}
             _ => differing.push(name.clone()),

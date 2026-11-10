@@ -11,7 +11,7 @@ use codegraph_core::mock::MockEngine;
 use codegraph_core::types::{EnumValue, PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 
-use super::super::context::IfmlViewContainer;
+use super::super::context::{IfmlViewContainer, ParameterDef};
 use super::super::route_generator::RenderWorkflow;
 use super::fixtures::{
     binding_value_pattern, entry_inner, escape_regex, js_literal_inner, js_value_for_type,
@@ -976,4 +976,59 @@ entities = ["CustomerType"]
         rendered_off.contains("return this.page.getByTestId('card');"),
         "{rendered_off}"
     );
+}
+
+#[test]
+fn detail_auth_specs_are_omitted_without_a_record() {
+    let list_vc = auth_vc("RequestList", vec!["Admin".to_string()], Vec::new());
+    let detail_vc = auth_vc(
+        "RequestForm",
+        vec!["Admin".to_string()],
+        vec![ParameterDef {
+            name: "id".to_string(),
+            type_ref: "Uuid".to_string(),
+            default: None,
+        }],
+    );
+    let spec = ViewTestSpec {
+        view_name: "RequestList".to_string(),
+        label: "Requests".to_string(),
+        route: "/requestlist".to_string(),
+        render: None,
+        click_throughs: Vec::new(),
+        validations: Vec::new(),
+        round_trips: Vec::new(),
+        personas: Vec::new(),
+    };
+    let pom = super::pom::ViewPom {
+        denial_target: Some("/".to_string()),
+        ..Default::default()
+    };
+    assert!(
+        super::auth::build_auth_spec(&list_vc, &spec, &pom).is_some(),
+        "an unparam'd guarded view keeps its auth spec"
+    );
+    assert!(
+        super::auth::build_auth_spec(&detail_vc, &spec, &pom).is_none(),
+        "a detail/edit route cannot render without a record — omit the auth spec"
+    );
+}
+
+fn auth_vc(name: &str, roles: Vec<String>, params: Vec<ParameterDef>) -> IfmlViewContainer {
+    IfmlViewContainer {
+        name: name.to_string(),
+        label: Some(name.to_string()),
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        conditional_expr_json: None,
+        roles,
+        requires: Vec::new(),
+        params,
+        components: Vec::new(),
+        events: Vec::new(),
+        containers: Vec::new(),
+    }
 }

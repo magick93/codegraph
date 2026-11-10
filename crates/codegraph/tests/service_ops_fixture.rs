@@ -25,19 +25,25 @@ pub const PAY_RUN_SCHEMA: &str = r#"{
 pub const PAY_RUN_MOX: &str = r#"
 package payroll
 
+enum PayRunStatus {
+    Draft = 0
+    Calculating = 1
+    Approved = 2
+}
+
 class PayRunType {
     String payRunId
-    String payRunStatus
+    PayRunStatus payRunStatus
 }
 "#;
 
-/// One entity design with a full repository, and a service carrying every
-/// lowering shape: capability-gated delete delegation, conditional-grant
-/// read delegation, an ungated seam (`save` delegation), an abstract seam
-/// (declared signature), and a protected op. Transition guards ride the
-/// GRANT `when`s (the `.actor` policy); the ddd op-level `when (...)`
-/// condition requires an upstream machine-bearing design (typed
-/// lifecycles) and is pinned at the unit level.
+/// One entity design with a full repository, a lifecycle machine, and a
+/// service carrying every lowering shape: capability-gated delete
+/// delegation, conditional-grant read delegation, an ungated update (`save`)
+/// delegation with no transition, a machine-bound transition (`submit`), an
+/// abstract seam (declared signature), and a protected op. Transition guards
+/// ride the GRANT `when`s (the `.actor` policy) and the machine state in the
+/// op-level `when`.
 pub const PAYROLL_DDD: &str = r#"
 import "pay_run.mox";
 
@@ -49,12 +55,19 @@ application Payroll {
             save;
             delete;
         }
+        machine payRunStatus: PayRunStatus {
+            initial Draft;
+            Draft -> Calculating via Submit;
+            Calculating -> Approved via Approve;
+            terminal Approved;
+        }
         service PayRunService {
             inject PayRunRepository;
             approve => PayRunRepository.delete capability ApprovePayRun;
             inspect => PayRunRepository.findById capability InspectPayRun;
             archive => PayRunRepository.save;
-            boolean submit(String note) capability SubmitPayRun;
+            submit => PayRunRepository.save capability SubmitPayRun when (payRunStatus == Draft);
+            boolean notify(String note) capability SubmitPayRun;
             protected String internalAdjust();
         }
     }
@@ -62,7 +75,9 @@ application Payroll {
 "#;
 
 /// Owner holds ApprovePayRun + SubmitPayRun unconditionally; Manager holds
-/// InspectPayRun `when (payRunStatus == "Draft")`. The `never_both` pair is
+/// InspectPayRun unconditionally (lifecycle preconditions live in the
+/// `.ddd` op-level `when`, which binds the machine state). The `never_both`
+/// pair is
 /// split across TWO policy files — each compiles clean, but the MERGED
 /// policy has Owner holding both sides, which is exactly the runtime
 /// separation-of-duties gate's reason to exist (single-file violations
@@ -85,7 +100,7 @@ actors Payroll {
     }
 
     grant Manager {
-        permit InspectPayRun when (payRunStatus == "Draft")
+        permit InspectPayRun
     }
 
     never_both { PreparePayRun, ApprovePayRun }

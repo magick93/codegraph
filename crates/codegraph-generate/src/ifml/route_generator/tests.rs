@@ -3152,6 +3152,73 @@ fn unmapped_form_keeps_hardcoded_submit_button() {
 }
 
 #[test]
+fn form_without_api_renders_a_validation_only_submit() {
+    // P2: a declared form with no data binding still renders a submit
+    // control — a validation-only submit is a legitimate contract, and the
+    // POM targets `{component}-submit` for every form.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut vc = form_view(false);
+    vc.components[0].entity = None;
+    vc.components[0].events.push(save_event());
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &test_config(),
+        "v1",
+        &vc,
+        Some(&IfmlComponentMappings::default()),
+        &HashSet::new(),
+        None,
+        &ProjectConfig::default(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains(r#"data-testid="editor-submit""#),
+        "the declared form must render a submit control:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Declared form with no action binding"),
+        "the handler must be validation-only:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("fetch(`${API_BASE}` + "),
+        "a validation-only submit must not fetch:\n{rendered}"
+    );
+}
+
+#[test]
+fn multi_component_views_emit_one_view_level_heading() {
+    // P2: two components each rendered `<h1>` with the same view label,
+    // making `getByRole('heading')` strict-mode ambiguous.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let mut first = component_with_spec(Some(table_spec()));
+    first.name = "grid".to_string();
+    let mut second = component_with_spec(Some(table_spec()));
+    second.name = "sidebar".to_string();
+    let mut vc = plain_vc("Dashboard");
+    vc.components = vec![first, second];
+    let ctx = futures::executor::block_on(build_page_context(
+        &MockEngine::new(),
+        &test_config(),
+        "v1",
+        &vc,
+        Some(&IfmlComponentMappings::default()),
+        &HashSet::new(),
+        None,
+        &ProjectConfig::default(),
+        "/",
+    ))
+    .expect("page ctx");
+    let rendered = render_template(&tera, "ifml/svelte/page.tera", &ctx).expect("render");
+    assert_eq!(
+        rendered.matches("<h1>Dashboard</h1>").count(),
+        1,
+        "exactly one view-level heading:\n{rendered}"
+    );
+}
+
+#[test]
 fn modal_view_with_mapping_renders_dialog_wrapper() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let mut vc = form_view(true);
@@ -4132,6 +4199,60 @@ fn integrated_guard_defers_when_roles_unknowable_server_side() {
     assert!(
         !rendered.contains("const roles: string[] = parentData?.roles ?? currentRoles();"),
         "{rendered}"
+    );
+}
+
+#[test]
+fn sessionless_ssr_seeds_empty_shapes_and_skips_fetches() {
+    // P1.5: the #598 defer skips the REDIRECT, but the load used to fetch
+    // first — a non-root list route 404'd and a detail route without an id
+    // crashed before the client guard could deny. When the roles are
+    // unknowable server-side, seed empty renderable shapes and let the
+    // client re-run the load with the seeded roles.
+    let tera = create_tera(Path::new(".")).expect("tera");
+    let list = fetch_component("grid");
+    let mut item = fetch_component("card");
+    item.component_type = "details".to_string();
+    item.fetch_list = false;
+    item.fetch_item = true;
+    item.id_param = Some("customerId".to_string());
+    let ctx = super::context::PageLoadContext {
+        api_version: "v1".to_string(),
+        name: "CustomerDetail".to_string(),
+        components: vec![list, item],
+        has_fetch: true,
+        has_workflow: false,
+        view_params: vec![super::context::RenderViewParam {
+            name: "customerId".to_string(),
+            default: None,
+        }],
+        view_roles: vec!["admin".to_string()],
+        view_requires: Vec::new(),
+        guard_consts: String::new(),
+        integrated: true,
+        guard_only: false,
+        remote_api: false,
+        auth_surface: true,
+        denial_target: "/".to_string(),
+    };
+    let rendered = render_template(&tera, "ifml/svelte/page_load.tera", &ctx).expect("render");
+    assert!(
+        rendered.contains("result.items = [];"),
+        "the list seed must be an empty array:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("result.item = {};"),
+        "the detail seed must be an empty object:\n{rendered}"
+    );
+    let guard = rendered
+        .find("if (rolesKnown) {")
+        .expect("rolesKnown wrapper");
+    let fetch = rendered
+        .find("await fetch(`${API_BASE}/api/v1/sales/customer")
+        .expect("fetch");
+    assert!(
+        guard < fetch,
+        "the fetch must sit inside rolesKnown:\n{rendered}"
     );
 }
 

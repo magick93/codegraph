@@ -20,6 +20,7 @@ mod fixture;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use codegraph_core::traits::GraphQuerier;
 use tempfile::TempDir;
 
 use fixture::{
@@ -45,6 +46,39 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     )
     .await;
     assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // The `.ddd` machine survives ingest → graph → readback (P0.5a) and
+    // rehydrates for condition/transition lowering.
+    let models = engine.get_ddd_models().await.unwrap();
+    let design = models
+        .iter()
+        .flat_map(|m| &m.designs)
+        .find(|d| d.resolved_title.as_deref() == Some("PayRunType"))
+        .expect("PayRunType design");
+    assert!(design.machine_json.is_some(), "machine must be mirrored");
+    let surface = codegraph_generate::ddd::design::DddDesignSurface::from_graph(&engine)
+        .await
+        .unwrap();
+    assert_eq!(
+        surface.machine_states_for("PayRunType"),
+        vec!["Draft", "Approved", "Calculating"]
+    );
+
+    // A mox enum in a non-`common` package still emits its GLOBAL codelist
+    // table into `common` (FK resolution routes every codelist there) — the
+    // `relation "common.<table>" does not exist` regression.
+    let codelist_migration = out
+        .path()
+        .join("migrations/000010_common_pay_run_status_codelist.sql");
+    let codelist = read(&codelist_migration);
+    assert!(
+        codelist.contains("CREATE TABLE IF NOT EXISTS common.pay_run_status"),
+        "the codelist table must land in common:\n{codelist}"
+    );
+    assert!(
+        codelist.contains("'Draft'"),
+        "the enum values must seed:\n{codelist}"
+    );
 
     // ── router: the four action routes on the root entity ──
     let router = read(&out.path().join("src/api/payroll/router.rs"));
@@ -76,10 +110,26 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
         handler.contains("capability `ApprovePayRun` required"),
         "{handler}"
     );
-    // Manager arm on `inspect`: conditional permit → when guard.
+    // The op-level machine-state `when` binds the declared state (P0.5) and
+    // applies to every session — before the api_key bypass. Scope to the
+    // submit authorize fn (earlier routes carry their own bypass).
+    let submit_start = handler
+        .find("fn service_op_submit_authorize")
+        .expect("submit authorize fn");
+    let submit_fn = &handler[submit_start..];
+    let condition_pos = submit_fn
+        .find(r#"// op-level `when` transition guard"#)
+        .expect("op-level guard");
+    let api_key_pos = submit_fn
+        .find(r#"if role == "api_key""#)
+        .expect("api_key bypass");
     assert!(
-        handler.contains(r#"if !((response.pay_run_status == "Draft"))"#),
-        "the per-grant conditional `when` must render:\n{handler}"
+        condition_pos < api_key_pos,
+        "the transition guard must precede the API-key bypass:\n{submit_fn}"
+    );
+    assert!(
+        submit_fn.contains(r#"if !((response.pay_run_status == "Draft"))"#),
+        "the machine state must lower as the enum value:\n{submit_fn}"
     );
     // Capability-gated route answers 403 naming the reason.
     assert!(handler.contains("AppError::forbidden(reason)"), "{handler}");
@@ -91,12 +141,27 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     );
     // Wired read leg.
     assert!(handler.contains(r#""data": response"#), "{handler}");
-    // Seam legs name the gap.
-    assert!(handler.contains("NOT_IMPLEMENTED"), "{handler}");
+    // Executable save/update delegation (P0): `archive` and `submit` patch
+    // the loaded row through the update command and return the reloaded row.
     assert!(
-        handler.contains("delegates to repository `save`, which has"),
-        "the save-delegation seam must name the gap:\n{handler}"
+        handler.contains("_commands.update("),
+        "the save delegation must lower to the update command:\n{handler}"
     );
+    assert!(
+        handler.contains(r#""data": updated"#),
+        "the update leg must return the reloaded record:\n{handler}"
+    );
+    // `submit` binds the machine transition and patches the state field.
+    assert!(
+        handler.contains(r#""Draft" => Some("Calculating")"#),
+        "the machine transition must resolve from the current state:\n{handler}"
+    );
+    assert!(
+        handler.contains(r#"value["pay_run_status"] = serde_json::Value::String"#),
+        "the transition must patch the DTO state key:\n{handler}"
+    );
+    // The abstract op still seams.
+    assert!(handler.contains("NOT_IMPLEMENTED"), "{handler}");
     assert!(
         handler.contains("has no delegation target"),
         "the abstract-op seam must name the gap:\n{handler}"
@@ -120,11 +185,16 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     // A fresh fixture is created and captured before the action legs.
     assert!(actions.contains("HTTP 201"), "{actions}");
     assert!(actions.contains("/actions/approve"), "{actions}");
-    // Wired delegation legs pin 200; seams pin 501 naming the gap.
+    // Wired delegation legs pin 200; the abstract op still pins 501.
+    assert!(actions.contains("HTTP 200"), "{actions}");
     assert!(actions.contains("HTTP 501"), "{actions}");
     assert!(
-        actions.contains("delegates to repository `save`, which has"),
-        "{actions}"
+        !actions.contains("delegates to repository `save`, which has"),
+        "the save delegation must no longer seam:\n{actions}"
+    );
+    assert!(
+        actions.contains("has no delegation target"),
+        "the abstract-op seam must name the gap:\n{actions}"
     );
     // Policy note: the 403 surface rides JWT sessions; api keys bypass.
     assert!(actions.contains("bypass the policy gates"), "{actions}");

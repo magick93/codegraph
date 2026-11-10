@@ -15,6 +15,10 @@ fn parse_json<T: serde::de::DeserializeOwned + Default>(raw: Option<String>) -> 
         .unwrap_or_default()
 }
 
+fn parse_opt_json(raw: Option<String>) -> Option<serde_json::Value> {
+    raw.and_then(|s| serde_json::from_str(&s).ok())
+}
+
 impl GrafeoEngine {
     pub(super) async fn query_ddd_models(&self) -> Result<Vec<DddModelGraph>, GraphError> {
         // Applications: one DddModelGraph each, sorted by name.
@@ -75,7 +79,8 @@ impl GrafeoEngine {
             "MATCH (a:DddApplication)-[:DddHasModule]->(m:DddModule)-[:DddHasDesign]->(d:DddDesign) \
              RETURN a.name AS app, d.module AS module, d.class AS class, \
              d.resolved_title AS resolved_title, d.stereotype AS stereotype, \
-             d.is_abstract AS is_abstract, d.flags_json AS flags_json, d.ordinal AS ordinal",
+             d.is_abstract AS is_abstract, d.flags_json AS flags_json, \
+             d.machine_json AS machine_json, d.ordinal AS ordinal",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut designs: HashMap<String, Vec<DddDesignNode>> = HashMap::new();
@@ -89,6 +94,7 @@ impl GrafeoEngine {
                 stereotype: reader.get_string(row, "stereotype")?,
                 is_abstract: reader.get_bool(row, "is_abstract")?,
                 flags: parse_json(reader.get_opt_string(row, "flags_json")?),
+                machine_json: parse_opt_json(reader.get_opt_string(row, "machine_json")?),
                 ordinal: reader.get_usize(row, "ordinal")?,
             });
         }

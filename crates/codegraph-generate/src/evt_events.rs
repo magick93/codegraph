@@ -127,6 +127,8 @@ struct ConsumerContext {
     name_snake: String,
     context_struct: String,
     handler_trait: String,
+    /// The write-once handler struct in `src/event_handlers/handlers.rs`.
+    handler_struct: String,
     events: Vec<HandlerEventContext>,
 }
 
@@ -443,6 +445,7 @@ fn consumers_context_for(
             name_snake: to_snake_case(&subscription.consumer),
             context_struct: format!("{type_name}Context"),
             handler_trait: format!("{type_name}Handler"),
+            handler_struct: format!("{type_name}HandlerImpl"),
             events,
         });
     }
@@ -467,6 +470,7 @@ fn consumers_context_for(
             name_snake: "function_events".to_string(),
             context_struct: "FunctionEventsContext".to_string(),
             handler_trait: "FunctionEventHandler".to_string(),
+            handler_struct: "FunctionEventsHandlerImpl".to_string(),
             events,
         });
     } else if placed.is_some() && !arch.function_consumers.is_empty() {
@@ -597,6 +601,33 @@ impl GlobalGenerator for EvtEventsGenerator {
                 project,
             )?,
         });
+
+        // Consumer handler extension point (issue #76). `handlers.rs` is
+        // write-once (hand edits survive regen); `mod.rs` is regenerated and
+        // registers every current consumer, so a new subscription breaks the
+        // hand file's compile until the matching impl lands.
+        let handlers_dir = self.output_dir.join("src").join("event_handlers");
+        files.push(GeneratedFile {
+            path: handlers_dir.join("mod.rs"),
+            content: render_template_with_project(
+                tera,
+                "events/handlers_mod.tera",
+                &consumers,
+                project,
+            )?,
+        });
+        let handlers_path = handlers_dir.join("handlers.rs");
+        if !handlers_path.exists() {
+            files.push(GeneratedFile {
+                path: handlers_path,
+                content: render_template_with_project(
+                    tera,
+                    "events/handlers.tera",
+                    &consumers,
+                    project,
+                )?,
+            });
+        }
 
         // mod.rs — module declarations + the source `.evt` files.
         let events_mod = self.events_mod_context(db, &arch).await?;

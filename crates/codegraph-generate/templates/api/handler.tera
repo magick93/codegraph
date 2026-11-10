@@ -1222,20 +1222,25 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
         (status = 200, description = "Accepted"),
         (status = 403, description = "Denied by the actor policy"),
         (status = 404, description = "Not found"),
+{% if op.is_update and (op.state | default(value=false)) %}
+        (status = 409, description = "The transition is not allowed from the current state"),
+{% endif %}
 {% if op.seam_reason | default(value="") | length > 0 %}
         (status = 501, description = "Operation body not lowered"),
 {% endif %}
     )
 )]
-#[tracing::instrument(skip(state, headers), fields(domain = "{{ domain }}", entity = "{{ module_name }}", op = "{{ op.snake }}"))]
+#[tracing::instrument(skip(state, headers, body), fields(domain = "{{ domain }}", entity = "{{ module_name }}", op = "{{ op.snake }}"))]
 pub async fn {{ op.fn_name }}(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
     Path({{ param_name }}): Path<Uuid>,
+    body: Option<Json<serde_json::Value>>,
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
     let correlation_id = extract_correlation_id(&headers);
+    let _ = &body;
 {% if op.record_load | default(value=true) %}
     let response = state.{{ domain }}_{{ module_name }}_queries
         .find_by_id({{ param_name }}{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
@@ -1261,6 +1266,77 @@ pub async fn {{ op.fn_name }}(
 {% elif op.is_read %}
     Ok(axum::Json(serde_json::json!({
         "data": response,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })).into_response())
+{% elif op.is_update %}
+    // Executable `save`/`update` delegation (P0): patch the loaded row
+    // through the command plane. A machine-bound op resolves its target
+    // state from the record's current state; an unbound op may change the
+    // machine field only along a declared transition.
+    let mut value = body.map(|Json(v)| v).unwrap_or_else(|| serde_json::json!({}));
+{% if op.state | default(value=false) %}
+    let current_state = {{ op.state.current_expr }};
+{% if op.state.op | length > 0 %}
+    let target_state: Option<&'static str> = match current_state.as_str() {
+{% for t in op.state.op %}        "{{ t.from }}" => Some("{{ t.to }}"),
+{% endfor %}        _ => None,
+    };
+    let Some(target_state) = target_state else {
+        return Err(AppError::conflict(format!(
+            "operation `{{ op.op_name }}` has no transition from the current state `{}`",
+            current_state
+        )).with_correlation_id(correlation_id));
+    };
+    value["{{ op.state.wire_key }}"] = serde_json::Value::String(target_state.to_string());
+{% else %}
+    if let Some(target) = value.get("{{ op.state.wire_key }}").and_then(|v| v.as_str()) {
+        let allowed = target == current_state{% for t in op.state.all %}
+            || (current_state == "{{ t.from }}" && target == "{{ t.to }}"){% endfor %};
+        if !allowed {
+            return Err(AppError::conflict(format!(
+                "operation `{{ op.op_name }}` cannot move `{{ op.state.wire_key }}` from `{}` to `{}`",
+                current_state, target
+            )).with_correlation_id(correlation_id));
+        }
+    }
+{% endif %}
+{% endif %}
+    // A save with no fields to change (no body, no transition) is an
+    // idempotent read — do not issue a no-op UPDATE.
+    if value.as_object().is_some_and(|o| o.is_empty()) {
+        return Ok(axum::Json(serde_json::json!({
+            "data": response,
+            "meta": { "correlation_id": correlation_id.to_string() }
+        })).into_response());
+    }
+    let cmd: crate::domain::{{ domain }}::{{ module_name }}::dto_update::Update{{ entity_name }}Request =
+        serde_json::from_value(value).map_err(|e| {
+            AppError::bad_request(format!("invalid {{ entity_name }} update body: {e}"))
+                .with_correlation_id(correlation_id)
+        })?;
+    state.{{ domain }}_{{ module_name }}_commands.update(
+        {{ param_name }},
+        cmd,
+        {{ project.domain_types_crate }}::SourceContext::api(),
+        correlation_id,
+        api_key_info.api_key_id,
+        api_key_info.organization_id,
+        api_key_info.user_id,
+        api_key_info.role.clone(),
+    ).await.map_err(|e: {{ domain | pascal_case }}Error| {
+        AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to update {{ entity_name }}")
+            .with_correlation_id(correlation_id)
+    })?;
+    let updated = state.{{ domain }}_{{ module_name }}_queries
+        .find_by_id({{ param_name }}{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
+        .await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to reload {{ entity_name }}")
+                .with_correlation_id(correlation_id)
+        })?
+        .ok_or_else(|| AppError::not_found("{{ entity_name }} not found").with_correlation_id(correlation_id))?;
+    Ok(axum::Json(serde_json::json!({
+        "data": updated,
         "meta": { "correlation_id": correlation_id.to_string() }
     })).into_response())
 {% else %}

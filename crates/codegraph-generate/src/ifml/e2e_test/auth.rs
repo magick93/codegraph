@@ -353,6 +353,13 @@ pub(crate) fn build_auth_spec(
     if vc.roles.is_empty() && vc.requires.is_empty() {
         return None;
     }
+    // A detail/edit route cannot render without a record, and the auth spec
+    // opens the base route with no params — it would assert against an empty
+    // or errored page. Record seeding is a follow-up; list/form views carry
+    // the persona allow/deny coverage in this wave.
+    if id_param_from(&vc.params).is_some() {
+        return None;
+    }
     pom.denial_target.as_ref()?;
     // Gating coverage only when access actually differs across personas
     // (issue #468 W5): with no permitted/denied split a deny assertion
@@ -689,6 +696,8 @@ pub(crate) async fn build_workflow_journeys(
                 entries,
                 Some(workflow.status_field.as_str()),
             );
+            let entries =
+                super::fixtures::with_required_entries(db, config, Some(entity), entries).await;
             out.push(WorkflowJourney {
                 entity: entity.to_string(),
                 view_name: vc.name.clone(),

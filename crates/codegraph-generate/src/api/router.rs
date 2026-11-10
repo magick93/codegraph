@@ -326,13 +326,19 @@ impl DomainGenerator for RouterGenerator {
                     .and_then(|ec| ec.role.clone())
                     .unwrap_or_else(|| "root".into());
                 let service_ops = if role == "root" {
-                    crate::ddd::service_ops::routes_for_entity(db, config, domain, title)
-                        .await
-                        .map_err(|e| {
-                            codegraph_core::error::Error::Config(format!(
-                                "service ops: entity '{title}': {e}"
-                            ))
-                        })?
+                    crate::ddd::service_ops::routes_for_entity(
+                        db,
+                        config,
+                        domain,
+                        title,
+                        project.codegen.dto_key_casing,
+                    )
+                    .await
+                    .map_err(|e| {
+                        codegraph_core::error::Error::Config(format!(
+                            "service ops: entity '{title}': {e}"
+                        ))
+                    })?
                 } else {
                     Vec::new()
                 };
@@ -691,13 +697,19 @@ pub async fn build_router_context(
                 .and_then(|ec| ec.role.clone())
                 .unwrap_or_else(|| "root".into());
             let service_ops = if role == "root" {
-                crate::ddd::service_ops::routes_for_entity(db, config, domain, title)
-                    .await
-                    .map_err(|e| {
-                        codegraph_core::error::Error::Config(format!(
-                            "service ops: entity '{title}': {e}"
-                        ))
-                    })?
+                crate::ddd::service_ops::routes_for_entity(
+                    db,
+                    config,
+                    domain,
+                    title,
+                    project.codegen.dto_key_casing,
+                )
+                .await
+                .map_err(|e| {
+                    codegraph_core::error::Error::Config(format!(
+                        "service ops: entity '{title}': {e}"
+                    ))
+                })?
             } else {
                 Vec::new()
             };

@@ -1,4 +1,5 @@
 import type { PageLoad } from './$types';
+{%- set guarded_integrated = (integrated | default(value=false)) and (((view_roles | default(value=[])) | length) > 0 or ((view_requires | default(value=[])) | length) > 0) %}
 {% if guard_only %}
 {%- if view_roles or view_requires %}
 import { redirect } from '@sveltejs/kit';
@@ -112,6 +113,22 @@ export const load: PageLoad = async ({ params, url{% if not remote_api and not g
 {%- endfor %}
 	result.params = viewParams;
 {%- endif %}
+{%- if guarded_integrated and not guard_only %}
+	// Sessionless SSR: the role set is unknowable, so seed empty renderable
+	// shapes and let the client re-run the load with the seeded roles. A
+	// fetch here would 404/401 (non-root read models, missing detail ids)
+	// before the client-side guard can deny.
+{%- for comp in components %}
+{%- if comp.fetch_list %}
+	result.{{ comp.items_key }} = [];
+{%- elif comp.fetch_item %}
+	result.{{ comp.item_key }} = {};
+{%- elif comp.fetch_form %}
+	result.{{ comp.form_data_key }} = {};
+{%- endif %}
+{%- endfor %}
+	if (rolesKnown) {
+{%- endif %}
 {%- if not guard_only %}
 {%- if auth_surface and has_fetch %}
 	// Issue #572: a denied fetch (garbage/expired key → 401/403) denies the
@@ -190,6 +207,9 @@ export const load: PageLoad = async ({ params, url{% if not remote_api and not g
 		throw e;
 	}
 {%- endif %}
+{%- endif %}
+{%- if guarded_integrated and not guard_only %}
+	}
 {%- endif %}
 
 	return result;

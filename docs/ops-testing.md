@@ -27,7 +27,7 @@ output inline.
 ### api
 
 ```
-testkit api [--no-migrate] [--rebuild] [--regen]
+testkit api [--no-migrate] [--rebuild] [--regen] [--workers]
 ```
 
 | Stage | What it does |
@@ -131,6 +131,12 @@ with the workers profile (wipes the workers output dir first) → Database
 (plain Postgres reset + migrate + seed) → Build workers workspace → Boot
 workers + gateway → Gateway smoke → Hurl contract tests through the
 gateway.
+
+`testkit api --workers` is the same path (the api-suite entry point for
+Workers-topology consumers). The generated manifest carries a `[workers]`
+section seeded from the run (`domains`, and optional `profile`/`output_dir`/
+`binary_prefix`/`gateway_port`/`worker_base_port`); absent, the suite keeps
+the historical hr-specs defaults.
 
 ### smoke
 

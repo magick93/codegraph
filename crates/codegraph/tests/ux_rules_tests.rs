@@ -1560,9 +1560,9 @@ entities = ["CustomerType"]
         spec.contains("test('ux chips render with tone variants'"),
         "{spec}"
     );
-    assert!(spec.contains("ui.grid.chipFor('Test status')"), "{spec}");
+    assert!(spec.contains("ui.grid.chipFor('draft')"), "{spec}");
     assert!(
-        spec.contains("toHaveAttribute('data-chip-variant', 'outline')"),
+        spec.contains("toHaveAttribute('data-chip-variant', 'secondary')"),
         "{spec}"
     );
     let page = fs::read_to_string(output.join("svelte/tests/pages/customer-list-page.ts"))

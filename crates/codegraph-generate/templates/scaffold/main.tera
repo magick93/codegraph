@@ -28,7 +28,8 @@ mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
 mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 mod webhook_router;
 {% endif %}{% if has_events %}
-mod events;{% endif %}
+mod events;
+mod event_handlers;{% endif %}
 {% if project.hooks_api_crate %}
 mod hooks;
 mod hook_adapters;
@@ -404,7 +405,8 @@ mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
 mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 mod webhook_router;
 {% endif %}{% if has_events %}
-mod events;{% endif %}
+mod events;
+mod event_handlers;{% endif %}
 {% if project.hooks_api_crate %}
 mod hooks;
 mod hook_adapters;

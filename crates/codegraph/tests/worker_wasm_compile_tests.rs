@@ -479,6 +479,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
             stereotype: "entity".to_string(),
             is_abstract: false,
             flags: codegraph_core::types::DddDesignFlags::default(),
+            machine_json: None,
             ordinal: 0,
         }],
         repositories: vec![codegraph_core::types::DddRepositoryNode {
