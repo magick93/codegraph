@@ -7,7 +7,7 @@
 //! generation-time ERROR: refusing to emit divergent output beats a missing
 //! table at runtime.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
@@ -32,13 +32,47 @@ pub async fn check_child_table_consistency(
     let ddl = DdlGenerator::new(std::path::Path::new(""))
         .with_parent_candidates(parent_candidates.to_vec());
     let mut ddl_tables: HashSet<(String, String)> = HashSet::new();
+    // One FK constraint name may exist on exactly ONE table in the emitted
+    // migration set. A second emission is the duplicate-constraint class
+    // (`fk_deployment_job_id`): apply-time `ADD CONSTRAINT` aborts.
+    let mut fk_owners: BTreeMap<(String, String, String), String> = BTreeMap::new();
+    let mut duplicate_fks: BTreeSet<String> = BTreeSet::new();
     for entry in generation_entries(config, order) {
         let ctx = ddl
             .query_ddl_context(db, &entry.schema_title, &entry.domain, config)
             .await?;
+        let owner = format!("{}/{}", entry.domain, entry.schema_title);
         ddl_tables.insert((ctx.schema_name.clone(), ctx.table_name.clone()));
+        for fk in &ctx.foreign_keys {
+            record_fk(
+                &mut fk_owners,
+                &mut duplicate_fks,
+                &ctx.schema_name,
+                &ctx.table_name,
+                &format!("fk_{}_{}", ctx.table_name, fk.column_name),
+                &owner,
+            );
+        }
         for child in flatten_ddl_children(&ctx.child_tables) {
             ddl_tables.insert((child.schema_name.clone(), child.table_name.clone()));
+            record_fk(
+                &mut fk_owners,
+                &mut duplicate_fks,
+                &child.schema_name,
+                &child.table_name,
+                &format!("fk_{}_parent", child.table_name),
+                &owner,
+            );
+            for fk in &child.foreign_keys {
+                record_fk(
+                    &mut fk_owners,
+                    &mut duplicate_fks,
+                    &child.schema_name,
+                    &child.table_name,
+                    &format!("fk_{}_{}", child.table_name, fk.column_name),
+                    &owner,
+                );
+            }
         }
     }
 
@@ -149,7 +183,27 @@ pub async fn check_child_table_consistency(
         }
     }
 
+    for duplicate in duplicate_fks {
+        divergences.insert(duplicate);
+    }
     Ok(divergences.into_iter().collect())
+}
+
+fn record_fk(
+    owners: &mut BTreeMap<(String, String, String), String>,
+    duplicates: &mut BTreeSet<String>,
+    schema: &str,
+    table: &str,
+    name: &str,
+    owner: &str,
+) {
+    let name = codegraph_naming::truncate_pg_identifier(name);
+    let key = (schema.to_string(), table.to_string(), name.clone());
+    if let Some(previous) = owners.insert(key, owner.to_string()) {
+        duplicates.insert(format!(
+            "`{schema}.{table}` constraint `{name}` is emitted twice (by {previous} and {owner}) — a duplicate ADD CONSTRAINT aborts at apply time"
+        ));
+    }
 }
 
 fn generation_entries<'a>(
@@ -187,4 +241,45 @@ fn flatten_tree_children(
         out.extend(flatten_tree_children(&child.child_tables));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_fk_names_are_reported() {
+        let mut owners = BTreeMap::new();
+        let mut duplicates = BTreeSet::new();
+        record_fk(
+            &mut owners,
+            &mut duplicates,
+            "common",
+            "deployment",
+            "fk_deployment_job_id",
+            "payroll/PayRun",
+        );
+        assert!(duplicates.is_empty());
+        record_fk(
+            &mut owners,
+            &mut duplicates,
+            "common",
+            "deployment",
+            "fk_deployment_job_id",
+            "core/Deployment",
+        );
+        assert_eq!(duplicates.len(), 1);
+        let message = duplicates.iter().next().unwrap();
+        assert!(message.contains("fk_deployment_job_id"), "{message}");
+        assert!(message.contains("payroll/PayRun"), "{message}");
+    }
+
+    #[test]
+    fn same_fk_name_on_a_different_table_is_not_a_duplicate() {
+        let mut owners = BTreeMap::new();
+        let mut duplicates = BTreeSet::new();
+        record_fk(&mut owners, &mut duplicates, "common", "a", "fk_a_id", "x");
+        record_fk(&mut owners, &mut duplicates, "common", "b", "fk_a_id", "y");
+        assert!(duplicates.is_empty());
+    }
 }
