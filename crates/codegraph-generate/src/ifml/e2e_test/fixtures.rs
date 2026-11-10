@@ -255,13 +255,26 @@ pub(crate) async fn codelist_fixture_value(
             || p.rust_field_name == field
             || codegraph_naming::to_snake_case(&p.name) == codegraph_naming::to_snake_case(field)
     })?;
-    if !matches!(
+    let classified = matches!(
         prop.effective_kind(),
         Some(RefClassificationKind::CodelistReference) | Some(RefClassificationKind::CodelistCheck)
-    ) {
+    );
+    if !classified && !ref_target_is_codelist(db, prop).await {
         return None;
     }
     codelist_first_value(db, prop).await
+}
+
+/// Whether a property's `$ref` target resolves to a codelist SchemaNode.
+/// Graph fixtures (and some import paths) carry the ref without the
+/// classification kind, so the target schema is the authoritative signal.
+async fn ref_target_is_codelist(db: &dyn GraphQuerier, prop: &PropertyNode) -> bool {
+    let Some(target) = prop.ref_target.as_deref() else {
+        return false;
+    };
+    let leaf = target.rsplit('/').next().unwrap_or(target);
+    let stem = leaf.trim_end_matches(".json");
+    matches!(db.get_schema(stem).await, Ok(Some(schema)) if schema.is_codelist)
 }
 
 /// The first enum value of a codelist-backed property, trying the
@@ -406,22 +419,25 @@ async fn property_fixture_value(
     machine_field: Option<&str>,
     machine_initial: Option<&str>,
 ) -> Option<String> {
-    match prop.effective_kind() {
-        Some(RefClassificationKind::CodelistReference)
-        | Some(RefClassificationKind::CodelistCheck) => {
-            // Array codelists project as child DTOs, not scalar values.
-            if prop.is_array {
-                return None;
-            }
-            if machine_field.is_some_and(|field| field == prop.rust_field_name)
-                && let Some(initial) = machine_initial
-            {
-                return Some(format!("'{}'", js_string(initial)));
-            }
-            codelist_first_value(db, prop)
-                .await
-                .map(|value| format!("'{}'", js_string(&value)))
+    let codelist = matches!(
+        prop.effective_kind(),
+        Some(RefClassificationKind::CodelistReference) | Some(RefClassificationKind::CodelistCheck)
+    ) || ref_target_is_codelist(db, prop).await;
+    if codelist {
+        // Array codelists project as child DTOs, not scalar values.
+        if prop.is_array {
+            return None;
         }
+        if machine_field.is_some_and(|field| field == prop.rust_field_name)
+            && let Some(initial) = machine_initial
+        {
+            return Some(format!("'{}'", js_string(initial)));
+        }
+        return codelist_first_value(db, prop)
+            .await
+            .map(|value| format!("'{}'", js_string(&value)));
+    }
+    match prop.effective_kind() {
         Some(RefClassificationKind::EntityReference)
         | Some(RefClassificationKind::ValueObject)
         | Some(RefClassificationKind::StructuredWrapper)
