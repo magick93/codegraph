@@ -631,9 +631,33 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   pinned by the standing canaries (a first-cut handler.tera edit leaked
   one blank line into flag-off output — the canary caught it; whitespace
   trim fix applied).
+- **State-aware action contracts (P0 hardening)**: the generated
+  `_actions.hurl` file simulates the machine from its declared initial
+  state in declaration order. A machine-bound op pins 200 and advances
+  only when its transition is valid from the CURRENT state; an
+  out-of-order op pins 409 (the handler refuses it), and one exercised
+  transition is replayed after the sequence to GUARANTEE a wrong-state
+  409 leg. Seams pin 501. The route model is an exhaustive
+  `ExecutionKind::{Delete, Read, Update{state}, Seam{reason}}` (no
+  boolean pack) with `StateName`/`TriggerName`/`WireKey` newtypes.
+  Transition-selection semantics are explicit and tested: op-name →
+  trigger (exact, then entity-suffix stripped), op-level `when` state
+  equality, then the capability-sharing heuristic (a protected internal
+  op carrying the trigger — `preparePayRun` → `calculate`/`Calculate`
+  advances Draft → Calculating; a protected op with no trigger match is
+  a plain update). Self transitions are legal no-ops; body-driven ops
+  (`changeStatus`) select a target from the DTO body against the
+  machine's full transition whitelist and an empty body is an idempotent
+  read; workflow-managed/immutable state fields fail closed instead of
+  silently no-oping. Cross-entity (child/aggregate) delegation
+  (`addTimecardItem`, `punch`, `ingestHours`, assignment/deployment) is
+  a 501 seam naming the target repository/class — never a silent parent
+  patch.
 - **Deferred**: delegation breadth beyond delete/findById (save payloads,
   service-to-service, search); child-entity op routes; api_key capability
-  enforcement (JWT-only policy gates); IFML action-op e2e spec category +
+  enforcement (JWT-only policy gates); a live `service_ops_hurl_gate`
+  (the compile pin + byte pins cover the emitted contract; the live boot
+  is the documented follow-up); IFML action-op e2e spec category +
   POM surface; ddd op-`condition` beyond machine-bearing modules (typed
   lifecycles, rexlang #114); doctor WARN for entity-unbound ops (needs
   the graph; the run path owns it); hurl 403 legs over JWT personas;
@@ -692,6 +716,17 @@ generators become model-driven; `--evt-files` also rides `codegraph doctor`
   `webhook_api.rs` gains vocabulary validation (declared events ∪
   created/updated/deleted), and the scaffold's graph-driven `has_events`
   gates `pub mod events;` + the gated `anyhow` in lib.rs/Cargo.toml.
+- **Consumer-owned handlers survive regeneration (P1)**: a top-level
+  `[events] handlers = "consumer_handlers.rs"` in domains.toml (path
+  relative to the config file) points the generator at a COMMITTED
+  consumer source. The generator copies it verbatim to
+  `src/event_handlers/handlers.rs` on every run, so a clean
+  clone/regenerate keeps the implementation. The regenerated
+  `src/event_handlers/mod.rs` still references every current consumer
+  (`register_all`), so a new subscription fails to compile until the
+  committed file implements it — the trait-list check. Absent the
+  config ⇒ the historical write-once scaffold (byte-identical).
+  Gate: `evt_pipeline_tests::committed_event_handlers_source_is_copied_verbatim`.
 - **Gates**: `cargo test -p codegraph --test evt_golden_tests` (the
   committed rexlang `orders.{mox,evt,evt.json}` conformance fixture
   byte-compared in-process — the CLI-gates treatment, node-free),
@@ -1965,7 +2000,20 @@ control-gating), and `tests/journeys/*.journey.spec.ts` (workflow handoff
 across personas via the POM transition map + shell-nav link clicks).
 POM extensions: `{comp}DeleteViaMenu()`/`{comp}Cancel()` page-class
 methods; the emitted `playwright.config.ts` carries `globalSetup` when
-auth exists. Driver note: profile-driven `run` injects CLI
+auth exists. **Fixture correctness (P1)**: journey/select/create/
+round-trip/workflow fixtures now seed the required-FK closure — each
+required entity-ref's parent is POSTed first (leaf-first, depth 4, cycle
+broken at the repeated title) and its created id is wired into the child
+body (`Fixture.deps`, `add_required_refs`); required structured-wrapper
+fields synthesize a nested object from their required members. Detail/
+edit auth specs are no longer omitted: the view's first schema-backed
+component seeds a record and every auth test opens with that id. A
+guarded id view with no seedable component is listed explicitly in the
+generated `tests/ifml/omitted-specs.md` instead of silently disappearing.
+Gate: `ifml_auth_setup_tests` + the in-crate
+`required_refs_seed_the_parent_and_wire_the_fk` /
+`detail_auth_specs_are_seeded_or_explicitly_omitted`. Driver note:
+profile-driven `run` injects CLI
 `--ifml-framework` targets when the profile declares none (the
 `ifml_generate` fallback) — without it no IFML artifacts are emitted at
 all. Nightly gate: `auth` + `journeys` T3 categories in
@@ -2674,6 +2722,18 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Generator-only changes don't invalidate the hash** (inputs are the
   model/config files): when iterating on generators against a consumer
   model, a warm cache makes each edit→generate→check cycle ~1 min.
+- **Format bump discipline + doctor signal (P2)**: `GRAPH_FORMAT_VERSION`
+  (codegraph-grafeo `schema_ddl.rs`) versions codegraph's graph
+  artifact schema; bump it whenever the node/edge/property shape changes
+  (v3 carries `DddDesignNode.machine_json`). `GRAFEO_STORAGE_GENERATION`
+  versions the engine's on-disk format; bump it on every grafeo minor
+  that changes the file format. Both terms ride the inputs hash, so a
+  bump forces a cold re-ingest instead of migrating `.graph-cache/`
+  in place. `codegraph doctor` now prints the cache state explicitly:
+  `PASS graph-cache — warm (inputs hash …, N nodes; graph format v3 /
+  storage gen 2)` when the marker matches the current inputs, or
+  `INFO graph-cache — cold: inputs changed …` / `absent …` when the next
+  run will re-ingest.
 
 ## Template Overrides
 
@@ -2983,7 +3043,18 @@ override (for monorepo sync setups), `[doctor]` (`min_free_gb`, default 2 /
 `warn_free_gb`, default 10 — disk headroom gates), `[bundle]` (`max_mb`,
 default 200 / `keep`, default 3 — failure-bundle cap and pruning), hooks
 (each `[[hooks]]` entry takes `fatal` — missing means fatal, see below),
-extensions.
+extensions. The `ops` generator also seeds an optional `[workers]` plan
+(`profile`, `output_dir`, sorted `domains`, `binary_prefix`,
+`gateway_port`, `worker_base_port`) from the run's profile + topology, so
+`testkit api --workers` is portable: a consumer with a profile named
+`default`, output `.` (manifest-relative, i.e. the generated root),
+gateway 8787 and worker base 8791 needs no manifest edits. Absent
+`[workers]` keeps the historical hr-specs fallbacks
+(`workers-cornucopia`, `generated-workers`, the known domain list). Gate:
+`ops_generator_tests::workers_plan_seeds_the_run_profile_and_manifest_relative_output`
++ `codegraph-ops` `worker_plan_supports_a_ten_domain_default_profile_consumer`.
+The live 10-domain boot gate is a recorded follow-up (it needs a full
+workers fixture + Postgres).
 
 ### Consumer integration guide
 
@@ -3916,6 +3987,22 @@ visited/depth semantics are untouched. The query-count pin test
 `query_gql_params` choke point) asserts 47 GQL executions on its
 representative fixture (was 58 pre-memo) — if you change the recursion,
 re-measure and update the pin; the count must only go down.
+
+### Duplicate-FK class (`fk_deployment_job_id`) — root cause P2
+
+The generation-time duplicate-constraint gate in `consistency.rs` refuses
+to emit one FK name twice on the same `(schema, table)`. The observed
+consumer shape is a MODEL COLLISION, not a DDL template bug: two titles in
+one domain strip to the same module/table (`compute_generation_order`'s
+module-collision warning), so both DDL contexts emit the table and its
+FKs. `dedup_ddl_artifacts` already dedupes within one context by
+`column_name` and comments by column; it cannot see across contexts, and
+silently dropping one of two entities would hide a real modeling
+conflict. The fix is the model rename the warning names (all but one
+title); the gate is defense-in-depth and names both owners. Codelist/FK
+application order is deterministic: codelists are sorted by name at the
+migration-number allocation boundary and always use the `common` schema
+(a non-`common` mox enum is resolved by title and emitted into `common`).
 
 ## SeaORM JSONB INSERT Workaround
 
