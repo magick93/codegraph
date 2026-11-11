@@ -594,6 +594,10 @@ pub struct GeneratorOpts<'a> {
     pub integration_manifests: Option<&'a codegraph_ext_points::IntegrationManifestSet>,
     /// Build profile plan controlling which generators to run.
     pub build_plan: Option<&'a crate::profile::BuildPlan>,
+    /// The resolved profile name ("default" unless `--profile` overrides).
+    /// Consumed by the ops manifest's `[workers]` plan so the harness
+    /// regenerates the SAME profile that produced the tree.
+    pub profile_name: &'a str,
     /// IFML framework targets (e.g. "svelte", "react").
     /// If empty, defaults to `["svelte"]` at dispatch.
     pub ifml_frameworks: Vec<String>,

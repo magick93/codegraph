@@ -210,6 +210,7 @@ async fn run_fixture_generation(output_dir: &Path) -> BTreeMap<String, Vec<u8>> 
         hooks_base: Some(hooks_tmp.path()),
         ext_points: None,
         build_plan: Some(&plan),
+        profile_name: "default",
         ifml_frameworks: vec![],
         ifml_components: None,
         ux_rules: None,

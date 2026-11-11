@@ -445,6 +445,7 @@ async fn run_json_schema_generation(output_dir: &Path) {
             hooks_base: Some(hooks_tmp.path()),
             ext_points: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,
