@@ -249,6 +249,42 @@ async fn ops_generator_direct_call_manifest_roundtrips() {
 /// depend on codegraph crates via git, so the relative path fallback would
 /// not exist in their repo).
 #[tokio::test]
+async fn workers_plan_seeds_the_run_profile_and_manifest_relative_output() {
+    let (engine, config, tera, output_dir) = mock_test_setup();
+    let generator = codegraph::generate::ops::OpsManifestGenerator::new(
+        output_dir.path(),
+        false,
+        false,
+        false,
+        false,
+    )
+    .with_workers(true)
+    .with_workers_plan("default");
+    let files = generator
+        .generate(
+            &engine,
+            &config,
+            &[],
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .expect("ops generator failed");
+    let manifest = files
+        .iter()
+        .find(|f| f.path.ends_with("codegraph-ops.toml"))
+        .expect("codegraph-ops.toml");
+    let parsed: codegraph_config::ops_manifest::OpsManifest =
+        toml::from_str(&manifest.content).expect("manifest should parse as OpsManifest");
+    let workers = parsed.workers.expect("[workers] section");
+    assert_eq!(workers.profile.as_deref(), Some("default"));
+    assert_eq!(workers.output_dir.as_deref(), Some(Path::new(".")));
+    assert_eq!(workers.domains, vec!["recruiting".to_string()]);
+    assert_eq!(workers.gateway_port, None);
+    assert_eq!(workers.worker_base_port, None);
+}
+
+#[tokio::test]
 async fn testkit_cargo_uses_git_rev_when_pinned() {
     let (engine, config, tera, output_dir) = mock_test_setup();
 

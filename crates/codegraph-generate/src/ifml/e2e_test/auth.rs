@@ -334,6 +334,10 @@ pub(crate) struct AuthTestSpec {
     /// provides ≥2 personas with DIFFERING access (at least one permitted,
     /// one denied) — the denied side then gets its explicit gating tests.
     pub gate: Option<GatePlan>,
+    /// The id route param for a detail/edit view; `None` for list/form views.
+    pub open_param: Option<String>,
+    /// The fixture seeded before the spec opens the param'd route.
+    pub open_seed: Option<Fixture>,
 }
 
 /// The denied personas of one guarded view.
@@ -349,17 +353,22 @@ pub(crate) fn build_auth_spec(
     vc: &IfmlViewContainer,
     spec: &super::spec_payload::ViewTestSpec,
     pom: &ViewPom,
+    open: Option<(Option<String>, Option<Fixture>)>,
 ) -> Option<AuthTestSpec> {
     if vc.roles.is_empty() && vc.requires.is_empty() {
         return None;
     }
-    // A detail/edit route cannot render without a record, and the auth spec
-    // opens the base route with no params — it would assert against an empty
-    // or errored page. Record seeding is a follow-up; list/form views carry
-    // the persona allow/deny coverage in this wave.
-    if id_param_from(&vc.params).is_some() {
-        return None;
-    }
+    // A detail/edit route cannot render without a record: the caller passes
+    // the seeded fixture (built from the view's first schema-backed
+    // component). An unseedable detail view skips the auth spec — the
+    // caller records that omission in the generated manifest.
+    let (open_param, open_seed) = match id_param_from(&vc.params) {
+        Some(_) => {
+            let (param, seed) = open?;
+            (Some(param?), Some(seed?))
+        }
+        None => (None, None),
+    };
     pom.denial_target.as_ref()?;
     // Gating coverage only when access actually differs across personas
     // (issue #468 W5): with no permitted/denied split a deny assertion
@@ -379,6 +388,8 @@ pub(crate) fn build_auth_spec(
         personas: spec.personas.clone(),
         required_capabilities: vc.requires.clone(),
         gate,
+        open_param,
+        open_seed,
     })
 }
 
@@ -424,6 +435,17 @@ pub(crate) fn render_auth_spec(spec: &AuthTestSpec, personas_import: &str) -> St
     s.push_str(&format!(
         "import {{ {class} }} from '../pages/{kebab}-page';\n\n"
     ));
+
+    // Detail/edit views need a real record: seed it once (through the API,
+    // using the env API_KEY header the emitted playwright config attaches)
+    // and open every auth test against that id.
+    if let (Some(_param), Some(seed)) = (&spec.open_param, &spec.open_seed) {
+        s.push_str("let seededId: string;\n\n");
+        s.push_str("test.beforeAll(async ({ request }) => {\n");
+        s.push_str(&seed.setup_js_json("seeded", "\t"));
+        s.push_str("\tseededId = String(seeded.data?.id ?? seeded.id);\n");
+        s.push_str("});\n\n");
+    }
 
     s.push_str(&format!(
         "test.describe('{} auth', () => {{\n",
@@ -579,6 +601,13 @@ pub(crate) fn render_auth_spec(spec: &AuthTestSpec, personas_import: &str) -> St
         }
     }
 
+    if let Some(param) = &spec.open_param {
+        s = s.replace(
+            "await ui.open();",
+            &format!("await ui.open({{ {param}: seededId }});"),
+        );
+    }
+
     while s.ends_with("\n\n") {
         s.pop();
     }
@@ -678,11 +707,6 @@ pub(crate) async fn build_workflow_journeys(
             let Some((_, to)) = pick_transition(&workflow) else {
                 continue;
             };
-            if !super::fixtures::required_refs_satisfiable(db, Some(entity)).await {
-                // Issue #558: a required entity-ref defeats the flat seed
-                // body — the handoff journey can never create its row.
-                continue;
-            }
             let creator = journey_persona(personas, vc, None).unwrap_or_default();
             let driver =
                 journey_persona(personas, vc, Some(&creator)).unwrap_or_else(|| creator.clone());
@@ -696,19 +720,33 @@ pub(crate) async fn build_workflow_journeys(
                 entries,
                 Some(workflow.status_field.as_str()),
             );
-            let entries =
-                super::fixtures::with_required_entries(db, config, Some(entity), entries).await;
+            let entries = super::fixtures::with_required_entries(
+                db,
+                config,
+                Some(entity),
+                entries,
+                dto_casing,
+            )
+            .await;
+            let fixture = super::fixtures::add_required_refs(
+                db,
+                config,
+                api_version,
+                Some(entity),
+                Fixture {
+                    base_path: String::new(),
+                    entries,
+                    casing: dto_casing,
+                    deps: Vec::new(),
+                },
+            )
+            .await;
             out.push(WorkflowJourney {
                 entity: entity.to_string(),
                 view_name: vc.name.clone(),
                 component: c.name.clone(),
                 base_path: api.base_path,
-                data_literal: Fixture {
-                    base_path: String::new(),
-                    entries,
-                    casing: dto_casing,
-                }
-                .data_literal(),
+                data_literal: fixture.data_literal(),
                 id_param: view_id_param.clone(),
                 transition_to: to,
                 creator,
@@ -992,10 +1030,11 @@ pub(crate) fn render_view_journey(journey: &ViewJourney, personas_import: &str) 
         s.push_str(&format!("\t\tconst seedKey = apiKeyFor({persona});\n"));
         s.push_str("\t\tconst seedHeaders = seedKey ? { Authorization: `Bearer ${seedKey}` } : undefined;\n");
         for (index, seed) in journey.seeds.iter().enumerate() {
-            s.push_str(&format!(
-                "\t\tconst rowSeed{index} = await request.post(apiUrl('{}'), {{ headers: seedHeaders, data: {} }});\n",
-                seed.base_path,
-                seed.data_literal()
+            s.push_str(&seed.setup_js_with_headers(
+                &format!("rowSeed{index}"),
+                "\t\t",
+                "seedHeaders",
+                false,
             ));
             s.push_str(
                 &format!("\t\t\texpect(rowSeed{index}.ok(), 'journey fixture entity should be created').toBeTruthy();\n"),
@@ -1004,11 +1043,7 @@ pub(crate) fn render_view_journey(journey: &ViewJourney, personas_import: &str) 
 
         // The open seed (param'd source views) captures its id for open().
         if let (Some(param), Some(seed)) = (&journey.open_param, &journey.open_seed) {
-            s.push_str(&format!(
-                "\t\tconst seeded = await (await request.post(apiUrl('{}'), {{ headers: seedHeaders, data: {} }})).json();\n",
-                seed.base_path,
-                seed.data_literal()
-            ));
+            s.push_str(&seed.setup_js_with_headers("seeded", "\t\t", "seedHeaders", true));
             s.push_str("\t\t\tconst seededId = String(seeded.data?.id ?? seeded.id);\n");
             s.push_str(&format!("\t\t\tlet ui = new {source_class}(page);\n"));
             s.push_str(&format!("\t\t\tawait ui.open({{ {param}: seededId }});\n"));

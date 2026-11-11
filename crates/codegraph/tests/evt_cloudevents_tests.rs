@@ -205,6 +205,7 @@ async fn run_monolith(
             integration_manifests: None,
             seed_config: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

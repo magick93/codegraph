@@ -148,6 +148,7 @@ async fn run_generation_and_read_dtos(
             hooks_base: Some(hooks_tmp),
             ext_points: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

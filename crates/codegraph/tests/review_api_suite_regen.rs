@@ -280,6 +280,7 @@ pub async fn regenerate_fixture() -> Result<(), String> {
         hooks_base: Some(hooks_tmp.path()),
         ext_points: None,
         build_plan: Some(&plan),
+        profile_name: "default",
         ifml_frameworks: vec![],
         ifml_components: None,
         ux_rules: None,

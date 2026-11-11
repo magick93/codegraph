@@ -743,6 +743,7 @@ directions = ["push"]
             ext_points: Some(&ext),
             seed_config: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

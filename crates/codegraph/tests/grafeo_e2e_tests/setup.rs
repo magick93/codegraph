@@ -143,6 +143,7 @@ pub(crate) async fn generate_full_app_from(output_dir: &std::path::Path, fixture
             hooks_base: Some(hooks_tmp.path()),
             ext_points: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

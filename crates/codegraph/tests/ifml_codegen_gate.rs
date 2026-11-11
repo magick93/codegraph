@@ -376,6 +376,7 @@ async fn run_pipeline() -> Result<(), String> {
             ext_points: None,
             integration_manifests: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec!["svelte".to_string()],
             ifml_components: Some(&pack),
             ux_rules: ux_rules.clone(),

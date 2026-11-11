@@ -174,6 +174,7 @@ fn domain_config() -> DomainConfig {
         },
     );
     DomainConfig {
+        events: Default::default(),
         namespaces: HashMap::new(),
         defaults: DefaultsConfig {
             operations: vec!["create".into(), "read".into()],

@@ -28,6 +28,22 @@ use fixture::{
     tempdir, write_fixture_in,
 };
 
+/// The first `HTTP <status>` after `needle` in a hurl file.
+fn status_after(hay: &str, needle: &str) -> Option<u16> {
+    let pos = hay.find(needle)?;
+    let rest = &hay[pos..];
+    let http = rest.find("HTTP ")?;
+    rest[http + 5..].split_whitespace().next()?.parse().ok()
+}
+
+/// The last `HTTP <status>` after `needle` (the replay leg).
+fn status_after_last(hay: &str, needle: &str) -> Option<u16> {
+    let pos = hay.rfind(needle)?;
+    let rest = &hay[pos..];
+    let http = rest.find("HTTP ")?;
+    rest[http + 5..].split_whitespace().next()?.parse().ok()
+}
+
 // ── Pins ───────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -59,10 +75,9 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     let surface = codegraph_generate::ddd::design::DddDesignSurface::from_graph(&engine)
         .await
         .unwrap();
-    assert_eq!(
-        surface.machine_states_for("PayRunType"),
-        vec!["Draft", "Approved", "Calculating"]
-    );
+    let mut states = surface.machine_states_for("PayRunType");
+    states.sort();
+    assert_eq!(states, vec!["Approved", "Calculating", "Draft", "Reversed"]);
 
     // A mox enum in a non-`common` package still emits its GLOBAL codelist
     // table into `common` (FK resolution routes every codelist there) — the
@@ -185,9 +200,44 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     // A fresh fixture is created and captured before the action legs.
     assert!(actions.contains("HTTP 201"), "{actions}");
     assert!(actions.contains("/actions/approve"), "{actions}");
-    // Wired delegation legs pin 200; the abstract op still pins 501.
+    // Wired delegation legs pin 200; wrong-state transitions pin 409 (the
+    // machine is simulated from its initial state); the abstract op still
+    // pins 501.
     assert!(actions.contains("HTTP 200"), "{actions}");
+    assert!(actions.contains("HTTP 409"), "{actions}");
     assert!(actions.contains("HTTP 501"), "{actions}");
+    assert!(
+        actions.contains("wrong-state guard (409)") || actions.contains("wrong-state replay"),
+        "the contract must document the wrong-state leg:\n{actions}"
+    );
+    // The machine is simulated from Draft: `reverse` (Approved → Reversed)
+    // is out of order and pins 409; the linear lifecycle pins 200; the
+    // abstract op pins 501; the final replay proves the wrong-state edge.
+    assert_eq!(
+        status_after(&actions, "/actions/reverse"),
+        Some(409),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/submit"),
+        Some(200),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/approve"),
+        Some(200),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/notify"),
+        Some(501),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after_last(&actions, "/actions/approve"),
+        Some(409),
+        "the wrong-state replay must pin 409:\n{actions}"
+    );
     assert!(
         !actions.contains("delegates to repository `save`, which has"),
         "the save delegation must no longer seam:\n{actions}"
@@ -198,6 +248,43 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     );
     // Policy note: the 403 surface rides JWT sessions; api keys bypass.
     assert!(actions.contains("bypass the policy gates"), "{actions}");
+}
+
+/// P2 determinism: a mox enum outside `common` emits its GLOBAL codelist
+/// table into `common`, and two runs produce the same migration number and
+/// bytes (the codelist order is sorted at the allocation boundary).
+#[tokio::test]
+async fn non_common_mox_codelists_are_common_and_deterministic() {
+    let fixture = write_fixture_in("service_ops_codelist_determinism", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let mut rendered = Vec::new();
+    for _ in 0..2 {
+        let out = tempdir();
+        let domain_types = tempdir();
+        let hooks = tempdir();
+        let report = run_generation(
+            &engine,
+            &fixture,
+            out.path(),
+            domain_types.path(),
+            hooks.path(),
+        )
+        .await;
+        assert!(!report.has_errors(), "generation errors: {report:?}");
+        rendered.push(read(
+            &out.path()
+                .join("migrations/000010_common_pay_run_status_codelist.sql"),
+        ));
+    }
+    assert_eq!(
+        rendered[0], rendered[1],
+        "codelist output must be deterministic"
+    );
+    assert!(
+        rendered[0].contains("common.pay_run_status"),
+        "{}",
+        rendered[0]
+    );
 }
 
 // The refusal discipline (un-lowerable `when` conditions hard-fail

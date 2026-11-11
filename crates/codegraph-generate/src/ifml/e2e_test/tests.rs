@@ -71,6 +71,7 @@ fn modal_click_through_renders_wrapper_and_close_assertions() {
                 casing: DtoKeyCasing::default(),
                 base_path: "/api/v1/sales/customer".to_string(),
                 entries: vec![],
+                deps: Vec::new(),
             },
             target_pattern: "/customerdialog\\?dialog=open".to_string(),
             modal: Some(ModalCloseAssertions {
@@ -148,6 +149,7 @@ fn spec_render_includes_all_test_kinds() {
                 casing: DtoKeyCasing::default(),
                 base_path: "/api/v1/sales/customer".to_string(),
                 entries: vec![("name".to_string(), "'Test name'".to_string())],
+                deps: Vec::new(),
             },
             target_pattern: "/customerdetail\\?customerId=[^&]+".to_string(),
             modal: None,
@@ -211,6 +213,7 @@ fn ux_test_fixture() -> UxViewTest {
                     "'2024-01-15T10:30:00Z'".to_string(),
                 ),
             ],
+            deps: Vec::new(),
         },
         table_testid: "grid-table".to_string(),
         row_testid: "grid-row".to_string(),
@@ -787,6 +790,7 @@ fn view_journey_spec_walks_hops_and_arrivals() {
             casing: DtoKeyCasing::default(),
             base_path: "/api/v1/sales/customer".to_string(),
             entries: vec![("name".to_string(), "'Test name'".to_string())],
+            deps: Vec::new(),
         }),
         fills: Vec::new(),
     };
@@ -800,6 +804,7 @@ fn view_journey_spec_walks_hops_and_arrivals() {
             casing: DtoKeyCasing::default(),
             base_path: "/api/v1/sales/customer".to_string(),
             entries: vec![("name".to_string(), "'Test name'".to_string())],
+            deps: Vec::new(),
         }],
         paths: vec![JourneyPath {
             views: vec![
@@ -882,6 +887,8 @@ fn auth_spec_renders_gating_family_and_skip_comment() {
                 .collect(),
         }),
         personas,
+        open_param: None,
+        open_seed: None,
     };
 
     // Differing access: the gating describe drives the denied persona.
@@ -979,7 +986,7 @@ entities = ["CustomerType"]
 }
 
 #[test]
-fn detail_auth_specs_are_omitted_without_a_record() {
+fn detail_auth_specs_are_seeded_or_explicitly_omitted() {
     let list_vc = auth_vc("RequestList", vec!["Admin".to_string()], Vec::new());
     let detail_vc = auth_vc(
         "RequestForm",
@@ -1005,13 +1012,28 @@ fn detail_auth_specs_are_omitted_without_a_record() {
         ..Default::default()
     };
     assert!(
-        super::auth::build_auth_spec(&list_vc, &spec, &pom).is_some(),
+        super::auth::build_auth_spec(&list_vc, &spec, &pom, None).is_some(),
         "an unparam'd guarded view keeps its auth spec"
     );
     assert!(
-        super::auth::build_auth_spec(&detail_vc, &spec, &pom).is_none(),
-        "a detail/edit route cannot render without a record — omit the auth spec"
+        super::auth::build_auth_spec(&detail_vc, &spec, &pom, None).is_none(),
+        "an unseeded detail/edit route is omitted (and recorded in the manifest)"
     );
+    let seed = Fixture {
+        base_path: "/api/v1/sales/request".to_string(),
+        entries: vec![("title".to_string(), "'Test title'".to_string())],
+        casing: DtoKeyCasing::default(),
+        deps: Vec::new(),
+    };
+    let seeded = super::auth::build_auth_spec(
+        &detail_vc,
+        &spec,
+        &pom,
+        Some((Some("id".to_string()), Some(seed))),
+    )
+    .expect("a seeded detail route keeps its auth spec");
+    assert_eq!(seeded.open_param.as_deref(), Some("id"));
+    assert!(seeded.open_seed.is_some());
 }
 
 fn auth_vc(name: &str, roles: Vec<String>, params: Vec<ParameterDef>) -> IfmlViewContainer {

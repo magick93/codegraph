@@ -168,6 +168,7 @@ async fn generate_tree(label: &str) -> GeneratedTree {
             hooks_base: Some(&hooks_dir),
             ext_points: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

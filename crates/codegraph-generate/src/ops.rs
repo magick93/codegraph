@@ -95,6 +95,13 @@ pub struct OpsManifestGenerator {
     /// Workers topology: seed the `[workers]` plan from the run's domains so
     /// the harness's workers suite is portable (issue #75 follow-up).
     has_workers: bool,
+    /// The profile the workers suite regenerates (the run's profile).
+    workers_profile: String,
+    /// The output directory relative to the manifest root. The manifest is
+    /// emitted inside the generated tree, so "." is correct for every
+    /// codegraph-generated project (the harness resolves app_dir from the
+    /// manifest's own directory).
+    workers_output_dir: PathBuf,
 }
 
 impl OpsManifestGenerator {
@@ -113,7 +120,15 @@ impl OpsManifestGenerator {
             has_grpc,
             has_hurl_contracts: false,
             has_workers: false,
+            workers_profile: "default".to_string(),
+            workers_output_dir: PathBuf::from("."),
         }
+    }
+
+    /// Seed the workers profile + output directory the harness regenerates.
+    pub fn with_workers_plan(mut self, profile: impl Into<String>) -> Self {
+        self.workers_profile = profile.into();
+        self
     }
 
     /// Emit the `[hurl]` manifest section (call when the plan carries the
@@ -237,6 +252,8 @@ impl GlobalGenerator for OpsManifestGenerator {
                 let mut domains: Vec<String> = config.domains.keys().cloned().collect();
                 domains.sort();
                 OpsWorkers {
+                    profile: Some(self.workers_profile.clone()),
+                    output_dir: Some(self.workers_output_dir.clone()),
                     domains,
                     ..Default::default()
                 }

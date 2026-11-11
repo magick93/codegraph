@@ -498,6 +498,11 @@ fn consumers_context_for(
 pub struct EvtEventsGenerator {
     output_dir: PathBuf,
     workers_topology: bool,
+    /// Committed consumer-handler source (`[events] handlers = "..."`). When
+    /// set, its contents are emitted verbatim to
+    /// `src/event_handlers/handlers.rs` on every run, so the implementation
+    /// survives a clean clone/regenerate.
+    event_handlers_source: Option<PathBuf>,
 }
 
 impl EvtEventsGenerator {
@@ -505,7 +510,14 @@ impl EvtEventsGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             workers_topology: false,
+            event_handlers_source: None,
         }
+    }
+
+    /// Point the consumer-handler seam at a committed source file.
+    pub fn with_event_handlers(mut self, source: Option<PathBuf>) -> Self {
+        self.event_handlers_source = source;
+        self
     }
 
     /// Workers-topology emission (issue #505): `src/events/` routes into
@@ -617,16 +629,36 @@ impl GlobalGenerator for EvtEventsGenerator {
             )?,
         });
         let handlers_path = handlers_dir.join("handlers.rs");
-        if !handlers_path.exists() {
-            files.push(GeneratedFile {
-                path: handlers_path,
-                content: render_template_with_project(
-                    tera,
-                    "events/handlers.tera",
-                    &consumers,
-                    project,
-                )?,
-            });
+        match &self.event_handlers_source {
+            Some(source) => {
+                // Committed consumer source wins: copy verbatim on every
+                // run. `mod.rs` is still regenerated and references every
+                // current consumer, so a new subscription fails to compile
+                // until the committed file implements it (the trait-list
+                // check).
+                let content = std::fs::read_to_string(source).map_err(|e| {
+                    crate::error::Error::Config(format!(
+                        "cannot read [events] handlers source `{}`: {e}",
+                        source.display()
+                    ))
+                })?;
+                files.push(GeneratedFile {
+                    path: handlers_path,
+                    content,
+                });
+            }
+            None if !handlers_path.exists() => {
+                files.push(GeneratedFile {
+                    path: handlers_path,
+                    content: render_template_with_project(
+                        tera,
+                        "events/handlers.tera",
+                        &consumers,
+                        project,
+                    )?,
+                });
+            }
+            None => {}
         }
 
         // mod.rs — module declarations + the source `.evt` files.

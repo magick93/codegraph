@@ -353,6 +353,71 @@ fn extract_codegraph_revs(text: &str) -> Vec<String> {
 
 /// Compare the Cargo.toml codegraph rev pins against this binary's embedded
 /// rev. Returns the number of warnings raised.
+/// Explain the persisted-graph cache state (issue #275 follow-up). A missing
+/// marker or a changed inputs hash means the next `run` cold-ingests; a
+/// matching hash means generation alone runs. This is diagnostic only — the
+/// cache is an optimization, never a correctness gate.
+fn check_graph_cache(args: &DoctorArgs) -> usize {
+    let cache_dir = args
+        .config
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".graph-cache");
+    let marker = cache_dir.join(crate::artifact::CACHE_INPUTS_MARKER);
+    if !cache_dir.exists() || !marker.exists() {
+        println!(
+            "INFO graph-cache — absent at {} (the next run cold-ingests; create it by running through the cached wrapper)",
+            cache_dir.display()
+        );
+        return 0;
+    }
+    let stored = match fs::read_to_string(&marker) {
+        Ok(text) => text,
+        Err(e) => {
+            println!(
+                "INFO graph-cache — unreadable marker {}: {e} (the next run cold-ingests)",
+                marker.display()
+            );
+            return 0;
+        }
+    };
+    let mut parts = stored.split_whitespace();
+    let stored_hash = parts.next().unwrap_or_default();
+    let node_count = parts.next().unwrap_or("?");
+    let inputs = crate::artifact::collect_run_inputs(
+        args.schemas.as_deref(),
+        args.classifier.as_deref(),
+        &args.config,
+        &args.mox_files,
+        &args.rosetta_files,
+        &args.ddd_files,
+        &args.evt_files,
+        &args.deploy_files,
+        &args.ifml_files,
+        &[],
+    );
+    let Ok(files) = inputs else {
+        println!(
+            "INFO graph-cache — cannot hash the current inputs (the next run recomputes; cache state unknown)"
+        );
+        return 0;
+    };
+    let current = crate::artifact::inputs_hash(&files);
+    if current == stored_hash {
+        let short = &current[..12.min(current.len())];
+        println!(
+            "PASS graph-cache — warm (inputs hash {short}…, {node_count} nodes; graph format v{} / storage gen {})",
+            crate::artifact::FORMAT_VERSION,
+            codegraph_grafeo::schema_ddl::GRAFEO_STORAGE_GENERATION
+        );
+    } else {
+        println!(
+            "INFO graph-cache — cold: inputs changed since the cache was written (next run re-ingests — expected after model/config edits)"
+        );
+    }
+    0
+}
+
 fn check_codegraph_rev() -> usize {
     let cargo_toml = match std::env::current_dir() {
         Ok(cwd) => cwd.join("Cargo.toml"),
@@ -1872,6 +1937,7 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     }
 
     soft_warnings += check_codegraph_rev();
+    soft_warnings += check_graph_cache(args);
 
     match codegraph_ops::env::resolve_psql() {
         Some(psql) => println!("PASS psql — {}", psql.display()),

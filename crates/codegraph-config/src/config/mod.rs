@@ -75,6 +75,23 @@ pub struct DomainConfig {
     /// entries here (WARN) in the ingest bridge.
     #[serde(default)]
     pub charts: ChartDefinitions,
+    /// Events-plane configuration (P1 follow-up): an optional committed
+    /// consumer-handler source copied into the generated tree.
+    #[serde(default)]
+    pub events: EventsConfig,
+}
+
+/// `[events]` — consumer-owned extension points for the events plane.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct EventsConfig {
+    /// Path to a committed consumer handler source, relative to the
+    /// `domains.toml` directory. The events generator copies it verbatim to
+    /// `src/event_handlers/handlers.rs`, so a clean clone/regenerate keeps
+    /// the implementation. Generated `mod.rs` still references every
+    /// current consumer, so a new subscription fails to compile until the
+    /// committed file implements it.
+    pub handlers: Option<std::path::PathBuf>,
 }
 
 fn default_app_name() -> String {

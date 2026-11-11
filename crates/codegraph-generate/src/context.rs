@@ -47,6 +47,8 @@ pub(crate) struct GeneratorContext<'a> {
     pub(crate) integration_manifests: Option<&'a codegraph_ext_points::IntegrationManifestSet>,
     /// Build profile plan controlling which generators to run.
     pub(crate) build_plan: Option<&'a crate::profile::BuildPlan>,
+    /// The resolved profile name (the ops `[workers]` plan seeds it).
+    pub(crate) profile_name: &'a str,
     /// Directory of the `domains.toml` config used for this run; sibling
     /// configs (`reports.toml`) are discovered relative to it.
     pub(crate) domain_config_dir: Option<&'a Path>,
@@ -139,6 +141,7 @@ pub(crate) async fn build_generator_context<'a>(
         ext_points,
         integration_manifests,
         build_plan, // used for has_webhooks / profile-based filter
+        profile_name,
         ifml_frameworks,
         ifml_components,
         ux_rules: _, // consumed by generators in later #293 phases
@@ -204,6 +207,7 @@ pub(crate) async fn build_generator_context<'a>(
         ext_points,
         integration_manifests,
         build_plan,
+        profile_name,
         domain_config_dir,
         ifml_frameworks,
         ifml_components,

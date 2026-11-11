@@ -55,6 +55,7 @@ impl<'a> GeneratorTest<'a> {
                 ext_points: None,
                 integration_manifests: None,
                 build_plan: None,
+                profile_name: "default",
                 ifml_frameworks: Vec::new(),
                 ifml_components: None,
                 ux_rules: None,

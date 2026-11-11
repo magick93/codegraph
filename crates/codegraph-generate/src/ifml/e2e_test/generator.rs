@@ -501,19 +501,35 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         // The auth family (issue #463): one `{view}.auth.spec.ts` per
         // guarded view, built from the same payloads + POM plan.
-        let auth_specs = if auth_enabled {
-            model
-                .view_containers
-                .iter()
-                .filter_map(|vc| {
-                    let spec = spec_by_view.get(vc.name.as_str())?;
-                    let pom = pom_by_view.get(to_kebab_case(&vc.name).as_str())?;
-                    super::auth::build_auth_spec(vc, spec, pom)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let mut auth_specs = Vec::new();
+        let mut omitted_auth_specs: Vec<(String, String)> = Vec::new();
+        if auth_enabled {
+            for vc in &model.view_containers {
+                let Some(spec) = spec_by_view.get(vc.name.as_str()) else {
+                    continue;
+                };
+                let Some(pom) = pom_by_view.get(to_kebab_case(&vc.name).as_str()) else {
+                    continue;
+                };
+                let open = self
+                    .journey_open_seed(db, config, &project.identity.api_version, vc)
+                    .await;
+                match super::auth::build_auth_spec(vc, spec, pom, open) {
+                    Some(auth) => auth_specs.push(auth),
+                    None if (!vc.roles.is_empty() || !vc.requires.is_empty())
+                        && crate::ifml::api_paths::id_param_from(&vc.params).is_some() =>
+                    {
+                        omitted_auth_specs.push((
+                            vc.name.clone(),
+                            "detail/edit auth spec omitted: no schema-backed component \
+                             could seed a record for the id route"
+                                .to_string(),
+                        ));
+                    }
+                    None => {}
+                }
+            }
+        }
 
         let mut files: Vec<GeneratedFile> = specs
             .iter()
@@ -576,6 +592,26 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     to_kebab_case(&auth_spec.view_name)
                 )),
                 content: super::auth::render_auth_spec(auth_spec, self.support().personas_import),
+            });
+        }
+
+        if !omitted_auth_specs.is_empty() {
+            let mut manifest = String::from(
+                "# Omitted IFML auth specs\n\n\
+                 The following guarded detail/edit views emit no auth spec because\n\
+                 no schema-backed component could seed the record the id route\n\
+                 requires. They are listed here rather than silently dropped.\n\n",
+            );
+            for (view, reason) in &omitted_auth_specs {
+                manifest.push_str(&format!("- `{view}` — {reason}\n"));
+            }
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("tests")
+                    .join("ifml")
+                    .join("omitted-specs.md"),
+                content: manifest,
             });
         }
 
