@@ -15,6 +15,8 @@
 
 use codegraph_naming::{to_kebab_case, to_pascal_case};
 
+use crate::project_config::DtoKeyCasing;
+
 use super::super::context::IfmlViewContainer;
 use super::fixtures::js_string;
 use super::spec_payload::{UxCellFormat, UxViewTest, ViewTestSpec, WorkflowTest};
@@ -191,11 +193,7 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool, tanstack:
             js_string(&flow.title)
         ));
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
-        s.push_str(&format!(
-            "\t\tconst fixture = await request.post(apiUrl('{}'), {{ data: {} }});\n",
-            flow.fixture.base_path,
-            flow.fixture.data_literal()
-        ));
+        s.push_str(&flow.fixture.setup_js("fixture", "\t\t"));
         s.push_str("\t\texpect(fixture.ok(), 'fixture entity should be created').toBeTruthy();\n");
         s.push_str("\t\tawait ui.open();\n");
         s.push_str(&format!(
@@ -247,11 +245,7 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool, tanstack:
         );
         s.push_str("\ttest('form round trip persists changes', async ({ page, request }) => {\n");
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
-        s.push_str(&format!(
-            "\t\tconst created = await (await request.post(apiUrl('{}'), {{ data: {} }})).json();\n",
-            round_trip.fixture.base_path,
-            round_trip.fixture.data_literal()
-        ));
+        s.push_str(&round_trip.fixture.setup_js_json("created", "\t\t"));
         s.push_str("\t\tconst createdId = created.data?.id ?? created.id;\n");
         s.push_str(&format!(
             "\t\tawait ui.open({{ {param}: createdId }});\n",
@@ -320,11 +314,7 @@ pub(crate) fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest
             js_string(component)
         ));
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
-        s.push_str(&format!(
-            "\t\tconst created = await (await request.post(apiUrl('{}'), {{ data: {} }})).json();\n",
-            workflow.fixture.base_path,
-            workflow.fixture.data_literal()
-        ));
+        s.push_str(&workflow.fixture.setup_js_json("created", "\t\t"));
         open_with_fixture_id(&mut s, &workflow.id_param);
         s.push_str(&format!(
             "\t\tawait ui.expect{}State('{}');\n",
@@ -341,11 +331,7 @@ pub(crate) fn render_workflow_spec(vc: &IfmlViewContainer, tests: &[WorkflowTest
                 js_string(&transition.to)
             ));
             s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
-            s.push_str(&format!(
-                "\t\tconst created = await (await request.post(apiUrl('{}'), {{ data: {} }})).json();\n",
-                workflow.fixture.base_path,
-                workflow.fixture.data_literal()
-            ));
+            s.push_str(&workflow.fixture.setup_js_json("created", "\t\t"));
             s.push_str("\t\tconst createdId = created.data?.id ?? created.id;\n");
             open_with_created_id(&mut s, &workflow.id_param);
             s.push_str(&format!(
@@ -763,6 +749,7 @@ pub(crate) async fn ux_fixture_entries(
     config: &DomainConfig,
     c: &IfmlComponent,
     workflow_status: Option<&str>,
+    casing: DtoKeyCasing,
 ) -> Vec<(String, String)> {
     let entries = fixture_entries(c);
     let mut entries = super::fixtures::strip_workflow_status(entries, workflow_status);
@@ -771,7 +758,7 @@ pub(crate) async fn ux_fixture_entries(
             *value = format!("'{}'", js_string(&code));
         }
     }
-    super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
+    super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries, casing).await
 }
 
 /// All values of the codelist backing `field` on `entity`'s schema, when
