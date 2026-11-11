@@ -1,0 +1,14 @@
+/// Security domain model for the workers gate.
+package security
+
+/// A site access badge.
+class SecurityBadgeType {
+    /// Badge identifier printed on the card.
+    String badgeNumber
+
+    /// Access level label.
+    String [0..1] accessLevel
+
+    /// Issuing site.
+    String [0..1] site
+}

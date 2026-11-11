@@ -1,0 +1,42 @@
+// DDD design for the leave domain (workers gate fixture).
+//
+// The design turns the modeled LeaveRequestType into a repository-backed
+// surface: the four repository builtins lower onto the CRUD op set
+// (findById→read, findAll→list, save→create+update, delete→delete), and the
+// service carries one op OUTSIDE the delegation set — `notify` — so the
+// generated actions hurl contract pins the 501 seam (the service-op plane's
+// "no executable lowering" contract, issue #590).
+//
+// The branching state machine is NOT declared here: it lives in domains.toml
+// (`leave.leave_request` workflow), because a bare-String status would be an
+// upstream compile error (rexlang Rule 16) and the fixture's status is
+// codelist-bound. No op-level `when` either — the rex compiler only admits
+// it on modules whose design carries one of those state machines.
+
+import "../model/leave.mox";
+import "../model/common.mox";
+
+application LeaveGate {
+    base leave
+
+    module leave {
+        entity LeaveRequestType scaffold repository LeaveRequestRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        service LeaveRequestService {
+            inject LeaveRequestRepository;
+            // Seam binding: delegation to the declared `findAll` builtin —
+            // binding resolves through the repository of the model, but
+            // `findAll` has no executable lowering, so the op lowers to a
+            // 501 seam (the actions contract pins it). (A capability-class
+            // binding needs an ingested `.actor` policy, and class-typed
+            // signatures don't bind: bind_entity reads a top-level `name`
+            // the rex type JSON carries nested under `value`.)
+            notify => LeaveRequestRepository.findAll;
+        }
+    }
+}

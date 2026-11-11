@@ -1,0 +1,14 @@
+/// Dispatch domain model for the workers gate.
+package dispatch
+
+/// A job dispatched to a field crew.
+class DispatchJobType {
+    /// Job title.
+    String title
+
+    /// Where the job takes place.
+    String [0..1] siteAddress
+
+    /// Free-form dispatch notes.
+    String [0..1] notes
+}

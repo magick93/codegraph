@@ -1,0 +1,7 @@
+# WS2 workers live gate fixture — consumer-style workspace (no generated
+# output is checked in; the suite wipes + regenerates every run).
+/generated-workers
+/target
+/test-results
+.graph-cache
+/.tmp*

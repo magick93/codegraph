@@ -1,0 +1,73 @@
+# WS2 workers live gate — the Supabase-ONLY workers-topology acceptance lane.
+#
+# Regenerates the 10-domain fixture (crates/codegraph/tests/fixtures/
+# workers_gate/), migrates a scratch database inside the fixture's local
+# Supabase stack, builds the 11-crate workers workspace (gateway + one
+# worker per domain, cornucopia), boots everything, and runs the generated
+# hurl contracts through the gateway — asserting the genuine 200/201 +
+# 409 + 501 status mix.
+#
+# NOTE: the FIRST run pulls multiple GB of Supabase docker images and cold-
+# builds the driver + worker crates; expect the better part of an hour.
+# Warm runs are dramatically shorter.
+#
+# No secrets needed: the fixture manifest uses the standard local demo
+# keys (codegraph-ops falls back to the same constants).
+#
+# PR CI stays node-free/DB-free — this runs on workflow_dispatch and the
+# nightly cron only (the ifml-gate.yml precedent).
+
+name: Workers Gate
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 3 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workers-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # psql for the scratch-database lifecycle (the suite's own stages).
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      # GitHub release binary — far faster than cargo install.
+      - name: Install hurl
+        run: |
+          curl -sL https://github.com/Orange-OpenSource/hurl/releases/download/7.1.0/hurl-7.1.0-x86_64-unknown-linux-gnu.tar.gz \
+            | sudo tar -xz -C /usr/local/bin --strip-components=1
+          hurl --version
+      # Pre-pull the CLI (and warm the npm cache) before the gate runs.
+      - name: Prefetch Supabase CLI
+        run: npx --yes supabase@2.105.0 --version
+      - name: Run workers live gate
+        run: cargo test -p codegraph --test workers_live_gate -- --ignored --nocapture
+      - name: Upload gate logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: workers-gate-logs
+          if-no-files-found: ignore
+          path: |
+            /tmp/codegraph-ops-worker-*.log
+            /tmp/codegraph-ops-gateway.log
+            /tmp/codegraph-ops-workers-build.log
+            /tmp/workers-gate-suite.log
+            /tmp/workers-gate-results.json
+            crates/codegraph/tests/fixtures/workers_gate/test-results/

@@ -1,0 +1,77 @@
+# Domain configuration for the WS2 workers live gate fixture.
+#
+# mox-first: the model lives in model/*.mox (one package per domain); the
+# `entities` key stays unset (mox is author-declarative — entity vs value
+# object is decided by refers/contains targeting).
+#
+# The branching machine lives HERE, not in the .ddd design: a bare-String
+# status would be an upstream compile error (rexlang Rule 16). Binding the
+# status field to the mox `LeaveStatus` enum keeps check_status_bypass quiet
+# and the workflow plane typed.
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+api_version = "v1"
+
+[domains.common]
+label = "Common"
+schema_dir = "common"
+postgres_schema = "common"
+
+[domains.leave]
+label = "Leave"
+schema_dir = "leave"
+postgres_schema = "leave"
+
+[domains.leave.entity_config.LeaveRequestType]
+role = "root"
+
+[domains.leave.entity_config.LeaveRequestType.workflow]
+status_field = "status"
+states = ["draft", "submitted", "approved", "rejected"]
+initial_state = "draft"
+terminal_states = ["approved", "rejected"]
+generate_action_endpoints = true
+
+[domains.leave.entity_config.LeaveRequestType.workflow.transitions]
+draft = ["submitted"]
+submitted = ["approved", "rejected"]
+
+[domains.billing]
+label = "Billing"
+schema_dir = "billing"
+postgres_schema = "billing"
+
+[domains.dispatch]
+label = "Dispatch"
+schema_dir = "dispatch"
+postgres_schema = "dispatch"
+
+[domains.fleet]
+label = "Fleet"
+schema_dir = "fleet"
+postgres_schema = "fleet"
+
+[domains.inventory]
+label = "Inventory"
+schema_dir = "inventory"
+postgres_schema = "inventory"
+
+[domains.payroll2]
+label = "Payroll 2"
+schema_dir = "payroll2"
+postgres_schema = "payroll2"
+
+[domains.scheduling]
+label = "Scheduling"
+schema_dir = "scheduling"
+postgres_schema = "scheduling"
+
+[domains.security]
+label = "Security"
+schema_dir = "security"
+postgres_schema = "security"
+
+[domains.vendor]
+label = "Vendor"
+schema_dir = "vendor"
+postgres_schema = "vendor"

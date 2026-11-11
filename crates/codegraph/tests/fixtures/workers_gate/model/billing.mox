@@ -1,0 +1,14 @@
+/// Billing domain model for the workers gate.
+package billing
+
+/// An invoice issued to a customer.
+class BillingInvoiceType {
+    /// Human-readable invoice reference.
+    String reference
+
+    /// Total amount as a decimal string (v1 fixture keeps money as text).
+    String [0..1] totalAmount
+
+    /// Optional customer note.
+    String [0..1] note
+}

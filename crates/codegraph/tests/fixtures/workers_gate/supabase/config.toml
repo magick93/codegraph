@@ -1,0 +1,59 @@
+# Minimal local Supabase stack for the WS2 workers live gate.
+#
+# Ports 54340+ are deliberately disjoint from every other local Supabase
+# stack (crewbase at 54321-54324/54327, trader-rex at 54331-54334/54337) —
+# the gate must never touch those. The triple that must stay coherent:
+# db port 54340 <-> [database.api].port in codegraph-ops.toml <-> the
+# health_url in the same manifest (Kong auth endpoint on the api port).
+# Everything not needed by the workers suite (studio, email testing,
+# storage, realtime, edge runtime, analytics) is disabled so the stack
+# boots fewer containers.
+project_id = "workers-gate"
+
+[api]
+enabled = true
+port = 54341
+
+[db]
+port = 54340
+shadow_port = 54349
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 54348
+
+# The workers suite applies the generated migrations itself (psql per
+# file, into the [database.api] target) — never `supabase db reset` —
+# so the CLI's own migration/seed passes stay off.
+[db.migrations]
+enabled = false
+
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+port = 54342
+
+[inbucket]
+enabled = false
+port = 54343
+
+[storage]
+enabled = false
+
+# GoTrue stays up: the harness health probe is Kong's /auth/v1/health.
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+port = 54347

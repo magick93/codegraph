@@ -1,0 +1,16 @@
+/// Shared common-domain model for the workers gate: the employee every
+/// other domain can refer to (cross-package refers exercise — the union
+/// namespace of all ten packages must resolve it).
+package common
+
+/// A person employed by the organisation.
+class CommonEmployeeType {
+    /// Full display name.
+    String name
+
+    /// Work email address.
+    String [0..1] email
+
+    /// The date the employee started.
+    String [0..1] startDate
+}

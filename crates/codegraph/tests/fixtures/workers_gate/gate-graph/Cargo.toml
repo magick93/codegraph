@@ -1,0 +1,18 @@
+# Codegen wrapper binary for the workers gate fixture — the init-scaffold
+# shape: a thin clap CLI over the `codegraph` driver library.
+
+[package]
+name = "gate-graph"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codegraph = { workspace = true }
+codegraph-backend = { workspace = true }
+codegraph-config = { workspace = true }
+codegraph-classifier = { workspace = true }
+codegraph-grafeo = { workspace = true }
+codegraph-core = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }

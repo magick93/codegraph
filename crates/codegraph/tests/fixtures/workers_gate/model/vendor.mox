@@ -1,0 +1,14 @@
+/// Vendor domain model for the workers gate.
+package vendor
+
+/// A contract with a supplier.
+class VendorContractType {
+    /// Contract name.
+    String name
+
+    /// Supplier legal name.
+    String [0..1] supplierName
+
+    /// Optional renewal note.
+    String [0..1] renewalNote
+}
