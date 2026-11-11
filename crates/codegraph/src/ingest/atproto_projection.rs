@@ -333,6 +333,7 @@ mod tests {
             defaults: DefaultsConfig::default(),
             functions: Default::default(),
             charts: Default::default(),
+            events: Default::default(),
             rbac: None,
             domains,
         }

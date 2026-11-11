@@ -85,6 +85,7 @@ fn domain_config(domain: &str, entities: &[&str]) -> DomainConfig {
         },
     );
     DomainConfig {
+        events: Default::default(),
         namespaces: HashMap::new(),
         defaults: DefaultsConfig {
             operations: vec![

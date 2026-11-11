@@ -424,7 +424,13 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     // topology the plane routes into the owning worker crates (issue
     // #505) instead of the output root.
     global_gens.push(Box::new(
-        evt_events::EvtEventsGenerator::new(output_dir).with_workers_topology(ctx.workers_topology),
+        evt_events::EvtEventsGenerator::new(output_dir)
+            .with_workers_topology(ctx.workers_topology)
+            .with_event_handlers(ctx.config.events.handlers.as_ref().map(|p| {
+                ctx.domain_config_dir
+                    .map(|dir| dir.join(p))
+                    .unwrap_or_else(|| p.clone())
+            })),
     ) as Box<dyn GlobalGenerator>);
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {

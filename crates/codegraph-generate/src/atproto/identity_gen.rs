@@ -150,6 +150,7 @@ mod tests {
         codegraph_config::DomainConfig {
             functions: Default::default(),
             charts: Default::default(),
+            events: Default::default(),
             namespaces: std::collections::HashMap::new(),
             defaults: Default::default(),
             domains,
