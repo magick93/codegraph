@@ -118,10 +118,128 @@ struct OpLeg {
     op_name: String,
     service: String,
     snake: String,
-    /// Expected status: 200 (wired delegation) or 501 (seam).
+    /// Expected status: 200 (wired delegation), 409 (wrong state for a
+    /// machine transition), or 501 (seam).
     expect: u16,
     seam: bool,
     seam_reason: String,
+    /// A replay leg proving the wrong-state 409 contract.
+    wrong_state: bool,
+}
+
+/// Build the state-aware action legs: walk the machine from its initial
+/// state in declaration order. A transition valid from the current state
+/// pins 200 and advances; an out-of-order transition pins 409 (the handler
+/// refuses it); seams pin 501. Finally, replay one exercised non-self
+/// transition from the post-sequence state to GUARANTEE a 409 leg even when
+/// declaration order happens to be valid end to end.
+fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLeg> {
+    use crate::ddd::service_ops::{ExecutionKind, ServiceOpTransition};
+
+    let mut current: Option<String> = ops.iter().find_map(|op| match &op.execution {
+        ExecutionKind::Update { state: Some(state) } => Some(state.initial.as_str().to_string()),
+        _ => None,
+    });
+
+    let mut legs = Vec::with_capacity(ops.len() + 1);
+    // Delete legs run LAST: a delete removes the captured row, so any
+    // read/transition after it would 404. The contract still exercises the
+    // route; only the order is moved.
+    let mut delete_legs = Vec::new();
+    let mut exercised: Vec<(String, String, ServiceOpTransition)> = Vec::new();
+    for op in ops {
+        if matches!(op.execution, ExecutionKind::Delete) {
+            delete_legs.push(OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 200,
+                seam: false,
+                seam_reason: "wired".to_string(),
+                wrong_state: false,
+            });
+            continue;
+        }
+        let leg = match &op.execution {
+            ExecutionKind::Seam { reason } => OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 501,
+                seam: true,
+                seam_reason: reason.clone(),
+                wrong_state: false,
+            },
+            ExecutionKind::Update { state: Some(state) } if !state.op.is_empty() => {
+                let from = current
+                    .clone()
+                    .unwrap_or_else(|| state.initial.as_str().to_string());
+                match state.op.iter().find(|t| t.from.as_str() == from) {
+                    Some(transition) => {
+                        exercised.push((
+                            op.op_name.clone(),
+                            op.service.clone(),
+                            transition.clone(),
+                        ));
+                        current = Some(transition.to.as_str().to_string());
+                        OpLeg {
+                            op_name: op.op_name.clone(),
+                            service: op.service.clone(),
+                            snake: op.snake.clone(),
+                            expect: 200,
+                            seam: false,
+                            seam_reason: "wired".to_string(),
+                            wrong_state: false,
+                        }
+                    }
+                    None => OpLeg {
+                        op_name: op.op_name.clone(),
+                        service: op.service.clone(),
+                        snake: op.snake.clone(),
+                        expect: 409,
+                        seam: false,
+                        seam_reason: format!("no transition from the current state `{from}`"),
+                        wrong_state: true,
+                    },
+                }
+            }
+            _ => OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 200,
+                seam: false,
+                seam_reason: "wired".to_string(),
+                wrong_state: false,
+            },
+        };
+        legs.push(leg);
+    }
+
+    // Guarantee the wrong-state edge is exercised. Replaying an already
+    // exercised transition from the final state is a 409 unless the
+    // transition is a self-edge (which leaves the state addressable again).
+    if let Some(current) = current.as_deref()
+        && let Some((op_name, service, transition)) = exercised
+            .iter()
+            .rev()
+            .find(|(_, _, t)| t.to.as_str() == current && t.from != t.to)
+    {
+        legs.push(OpLeg {
+            op_name: op_name.clone(),
+            service: service.clone(),
+            snake: codegraph_naming::to_snake_case(op_name),
+            expect: 409,
+            seam: false,
+            seam_reason: format!(
+                "wrong-state replay: `{}` has no transition from `{current}`",
+                transition.from
+            ),
+            wrong_state: true,
+        });
+    }
+    legs.extend(delete_legs);
+    legs
 }
 
 /// Context for the per-entity `actions` hurl file (issue #590): a fresh
@@ -306,20 +424,7 @@ impl DomainGenerator for HurlContractGenerator {
                 .await
                 .map_err(codegraph_core::error::Error::Config)?;
                 if !ops.is_empty() {
-                    let legs = ops
-                        .iter()
-                        .map(|op| OpLeg {
-                            op_name: op.op_name.clone(),
-                            service: op.service.clone(),
-                            snake: op.snake.clone(),
-                            expect: if op.seam_reason.is_some() { 501 } else { 200 },
-                            seam: op.seam_reason.is_some(),
-                            seam_reason: op
-                                .seam_reason
-                                .clone()
-                                .unwrap_or_else(|| "wired".to_string()),
-                        })
-                        .collect();
+                    let legs = state_aware_legs(&ops);
                     let ctx = ActionsContractCtx {
                         domain: domain.to_string(),
                         module: schema.pg_table_name.clone(),

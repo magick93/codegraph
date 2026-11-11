@@ -4,7 +4,13 @@
 # The actor policy (capability, `never_both`, per-grant and op-level `when`)
 # answers 403 to JWT sessions; API-key sessions bypass the policy gates
 # (RLS scopes still apply), so these contracts pin route existence — the
-# dead-button class — and the execution lowering (200 wired / 501 seam).
+# dead-button class — and the execution lowering.
+#
+# State awareness: a machine-bound op pins 200 only when its transition is
+# valid from the record's CURRENT state (the CREATE above starts at the
+# machine's initial state); an out-of-order op pins 409, and one transition
+# is replayed after the sequence to prove the wrong-state contract. Ops with
+# no executable lowering pin 501.
 {% for parent in fk_sections %}
 {{ parent.body }}
 {% endfor %}
@@ -19,7 +25,7 @@ HTTP 201
 [Asserts]
 {{ create_asserts }}
 {% for op in ops %}
-# service op `{{ op.op_name }}` (service `{{ op.service }}`){% if op.seam %} — 501 seam: {{ op.seam_reason }}{% endif %}
+# service op `{{ op.op_name }}` (service `{{ op.service }}`){% if op.seam %} — 501 seam: {{ op.seam_reason }}{% elif op.wrong_state %} — wrong-state guard (409): {{ op.seam_reason }}{% endif %}
 POST {{ item_url_base }}/{{ capture_ref }}/actions/{{ op.snake }}
 {{ auth_header }}
 
