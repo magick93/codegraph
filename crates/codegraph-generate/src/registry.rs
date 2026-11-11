@@ -424,7 +424,13 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     // topology the plane routes into the owning worker crates (issue
     // #505) instead of the output root.
     global_gens.push(Box::new(
-        evt_events::EvtEventsGenerator::new(output_dir).with_workers_topology(ctx.workers_topology),
+        evt_events::EvtEventsGenerator::new(output_dir)
+            .with_workers_topology(ctx.workers_topology)
+            .with_event_handlers(ctx.config.events.handlers.as_ref().map(|p| {
+                ctx.domain_config_dir
+                    .map(|dir| dir.join(p))
+                    .unwrap_or_else(|| p.clone())
+            })),
     ) as Box<dyn GlobalGenerator>);
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {
@@ -507,7 +513,8 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
         // (issue #463): emit it exactly when that generator is in the plan.
         .with_hurl_contracts(ctx.plan_has_domain("hurl_contract"))
         // Workers topology: seed the manifest's `[workers]` plan.
-        .with_workers(ctx.workers_topology),
+        .with_workers(ctx.workers_topology)
+        .with_workers_plan(ctx.profile_name),
     ) as Box<dyn GlobalGenerator>);
 
     // .evt inputs imply the events module: the graph-driven scaffold gate
@@ -775,6 +782,7 @@ mod charts_capability_audit {
                 ext_points: Some(&ext_points),
                 integration_manifests: None,
                 build_plan: Some(&plan),
+                profile_name: "default",
                 ifml_frameworks: Vec::new(),
                 ifml_components: None,
                 ux_rules: None,

@@ -1222,10 +1222,10 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
         (status = 200, description = "Accepted"),
         (status = 403, description = "Denied by the actor policy"),
         (status = 404, description = "Not found"),
-{% if op.is_update and (op.state | default(value=false)) %}
+{% if op.execution.kind == "update" and (op.execution.state | default(value=false)) %}
         (status = 409, description = "The transition is not allowed from the current state"),
 {% endif %}
-{% if op.seam_reason | default(value="") | length > 0 %}
+{% if op.execution.kind == "seam" %}
         (status = 501, description = "Operation body not lowered"),
 {% endif %}
     )
@@ -1256,29 +1256,29 @@ pub async fn {{ op.fn_name }}(
         return Err(AppError::forbidden(reason).with_correlation_id(correlation_id));
     }
 {% endif %}
-{% if op.is_delete %}
+{% if op.execution.kind == "delete" %}
     state.{{ domain }}_{{ module_name }}_commands.delete({{ param_name }}, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
             AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to delete {{ entity_name }}")
                 .with_correlation_id(correlation_id)
         })?;
     Ok(axum::Json(serde_json::json!({ "data": { "ok": true } })).into_response())
-{% elif op.is_read %}
+{% elif op.execution.kind == "read" %}
     Ok(axum::Json(serde_json::json!({
         "data": response,
         "meta": { "correlation_id": correlation_id.to_string() }
     })).into_response())
-{% elif op.is_update %}
+{% elif op.execution.kind == "update" %}
     // Executable `save`/`update` delegation (P0): patch the loaded row
     // through the command plane. A machine-bound op resolves its target
     // state from the record's current state; an unbound op may change the
     // machine field only along a declared transition.
     let mut value = body.map(|Json(v)| v).unwrap_or_else(|| serde_json::json!({}));
-{% if op.state | default(value=false) %}
-    let current_state = {{ op.state.current_expr }};
-{% if op.state.op | length > 0 %}
+{% if op.execution.state | default(value=false) %}
+    let current_state = {{ op.execution.state.current_expr }};
+{% if op.execution.state.op | length > 0 %}
     let target_state: Option<&'static str> = match current_state.as_str() {
-{% for t in op.state.op %}        "{{ t.from }}" => Some("{{ t.to }}"),
+{% for t in op.execution.state.op %}        "{{ t.from }}" => Some("{{ t.to }}"),
 {% endfor %}        _ => None,
     };
     let Some(target_state) = target_state else {
@@ -1287,14 +1287,14 @@ pub async fn {{ op.fn_name }}(
             current_state
         )).with_correlation_id(correlation_id));
     };
-    value["{{ op.state.wire_key }}"] = serde_json::Value::String(target_state.to_string());
+    value["{{ op.execution.state.wire_key }}"] = serde_json::Value::String(target_state.to_string());
 {% else %}
-    if let Some(target) = value.get("{{ op.state.wire_key }}").and_then(|v| v.as_str()) {
-        let allowed = target == current_state{% for t in op.state.all %}
+    if let Some(target) = value.get("{{ op.execution.state.wire_key }}").and_then(|v| v.as_str()) {
+        let allowed = target == current_state{% for t in op.execution.state.all %}
             || (current_state == "{{ t.from }}" && target == "{{ t.to }}"){% endfor %};
         if !allowed {
             return Err(AppError::conflict(format!(
-                "operation `{{ op.op_name }}` cannot move `{{ op.state.wire_key }}` from `{}` to `{}`",
+                "operation `{{ op.op_name }}` cannot move `{{ op.execution.state.wire_key }}` from `{}` to `{}`",
                 current_state, target
             )).with_correlation_id(correlation_id));
         }
@@ -1346,7 +1346,7 @@ pub async fn {{ op.fn_name }}(
     let _ = &response;
 {% endif %}
     Err(service_op_not_implemented(
-        "{{ op.seam_reason | default(value="no executable lowering") }}",
+        "{{ op.execution.reason | default(value="no executable lowering") }}",
     ))
 {% endif %}
 }

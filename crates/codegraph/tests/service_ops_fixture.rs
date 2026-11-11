@@ -29,6 +29,7 @@ enum PayRunStatus {
     Draft = 0
     Calculating = 1
     Approved = 2
+    Reversed = 3
 }
 
 class PayRunType {
@@ -59,14 +60,17 @@ application Payroll {
             initial Draft;
             Draft -> Calculating via Submit;
             Calculating -> Approved via Approve;
-            terminal Approved;
+            Approved -> Reversed via Reverse;
+            terminal Reversed;
         }
         service PayRunService {
             inject PayRunRepository;
-            approve => PayRunRepository.delete capability ApprovePayRun;
+            purge => PayRunRepository.delete capability ApprovePayRun;
             inspect => PayRunRepository.findById capability InspectPayRun;
             archive => PayRunRepository.save;
+            reverse => PayRunRepository.save capability ApprovePayRun;
             submit => PayRunRepository.save capability SubmitPayRun when (payRunStatus == Draft);
+            approve => PayRunRepository.save capability ApprovePayRun;
             boolean notify(String note) capability SubmitPayRun;
             protected String internalAdjust();
         }
@@ -303,6 +307,7 @@ pub async fn run_generation(
         ext_points: None,
         integration_manifests: None,
         build_plan: Some(&plan),
+        profile_name: "default",
         ifml_frameworks: vec![],
         ifml_components: None,
         ux_rules: None,

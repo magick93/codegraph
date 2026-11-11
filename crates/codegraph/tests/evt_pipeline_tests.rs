@@ -343,6 +343,41 @@ async fn evt_generation_is_deterministic() {
 }
 
 #[tokio::test]
+async fn committed_event_handlers_source_is_copied_verbatim() {
+    // A committed consumer file (outside the generated tree) is the source
+    // of truth: the generator emits it verbatim on every run, so a clean
+    // clone/regenerate cannot lose the implementation. `mod.rs` still
+    // regenerates and references every current consumer trait.
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("domains.toml");
+    fs::write(
+        &config,
+        format!("{ORDERS_DOMAINS_TOML}\n[events]\nhandlers = \"consumer_handlers.rs\"\n"),
+    )
+    .unwrap();
+    let source = dir.path().join("consumer_handlers.rs");
+    let committed = "// committed by the consumer\npub struct Committed;\n";
+    fs::write(&source, committed).unwrap();
+    let out = dir.path().join("out");
+    run_pipeline(&config, &out, &[fixture("orders.evt")]).await;
+
+    let handlers = fs::read_to_string(out.join("src/event_handlers/handlers.rs")).unwrap();
+    assert_eq!(
+        handlers, committed,
+        "the committed source must be copied verbatim"
+    );
+    let mod_rs = fs::read_to_string(out.join("src/event_handlers/mod.rs")).unwrap();
+    assert!(
+        mod_rs.contains("pub fn register_all"),
+        "the regenerated registry must stay the trait-list check:\n{mod_rs}"
+    );
+    assert!(
+        mod_rs.contains("register_"),
+        "every current consumer must still be registered:\n{mod_rs}"
+    );
+}
+
+#[tokio::test]
 async fn consumer_handler_scaffold_is_write_once() {
     let (root, config) = fixture_root();
     let out = root.path().join("generated");

@@ -525,6 +525,7 @@ async fn flywheel_corpus_generated_crate_checks_clean() {
             ext_points: None,
             integration_manifests: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: ux_resolved,

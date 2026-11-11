@@ -35,6 +35,13 @@ pub async fn check_child_table_consistency(
     // One FK constraint name may exist on exactly ONE table in the emitted
     // migration set. A second emission is the duplicate-constraint class
     // (`fk_deployment_job_id`): apply-time `ADD CONSTRAINT` aborts.
+    //
+    // Root cause (observed consumer shape): two titles in one domain strip
+    // to the same module/table (the `compute_generation_order` module
+    // collision warning), so both DDL contexts emit the table and its FKs.
+    // The fix is a model rename (the warning names both titles); this gate
+    // is defense-in-depth — silently dropping one of two entities would
+    // hide a real modeling conflict, so we refuse to emit instead.
     let mut fk_owners: BTreeMap<(String, String, String), String> = BTreeMap::new();
     let mut duplicate_fks: BTreeSet<String> = BTreeSet::new();
     for entry in generation_entries(config, order) {

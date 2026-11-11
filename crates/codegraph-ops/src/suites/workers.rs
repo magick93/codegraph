@@ -1040,6 +1040,28 @@ mod tests {
     }
 
     #[test]
+    fn worker_plan_supports_a_ten_domain_default_profile_consumer() {
+        // The crewbase shape: profile `default` (not the historical
+        // `workers-cornucopia`), output `generated` (not
+        // `generated-workers`), ten domains, gateway 8787, worker base 8791.
+        let mut manifest = workers_manifest();
+        manifest.workers = Some(OpsWorkers {
+            profile: Some("default".into()),
+            output_dir: Some("generated".into()),
+            domains: (0..10).map(|i| format!("domain{i}")).collect(),
+            binary_prefix: Some("crewbase".into()),
+            gateway_port: Some(8787),
+            worker_base_port: Some(8791),
+        });
+        let plan = worker_plan(&workers_config(manifest));
+        assert_eq!(plan.profile, "default");
+        assert_eq!(plan.output_dir, PathBuf::from("generated"));
+        assert_eq!(plan.domains.len(), 10);
+        assert_eq!(plan.gateway_port, 8787);
+        assert_eq!(plan.worker_base_port, 8791);
+    }
+
+    #[test]
     fn worker_plan_reads_the_manifest_section() {
         let mut manifest = workers_manifest();
         manifest.workers = Some(OpsWorkers {

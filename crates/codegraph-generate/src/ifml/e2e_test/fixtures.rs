@@ -14,6 +14,17 @@ use codegraph_type_contracts::RefClassificationKind;
 use crate::ddd::design::DddDesignSurface;
 use crate::project_config::DtoKeyCasing;
 
+/// One required-FK dependency seed. Dependencies are ordered leaf-first
+/// (a parent's own parents are created before it).
+#[derive(Debug, Clone)]
+pub struct FixtureDep {
+    pub base_path: String,
+    pub entries: Vec<(String, String)>,
+    pub casing: DtoKeyCasing,
+    /// The JS variable holding the created parent id (e.g. `dep_0_id`).
+    pub id_var: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Fixture {
     pub base_path: String,
@@ -23,28 +34,142 @@ pub struct Fixture {
     /// contract — the schema property name (`submittedAt`) is NOT the key
     /// under the default snake casing (`submitted_at`).
     pub casing: DtoKeyCasing,
+    /// Required-FK parent seeds, created before this fixture and wired into
+    /// `entries` by `id_var`.
+    pub deps: Vec<FixtureDep>,
 }
 
 impl Fixture {
     pub(crate) fn data_literal(&self) -> String {
+        self.data_literal_with(None)
+    }
+
+    /// The fixture body, rewriting `dep_*_id` placeholders to the
+    /// per-fixture JS variable prefix so two seeded fixtures in one test
+    /// never redeclare the same dependency variable.
+    fn data_literal_with(&self, prefix: Option<&str>) -> String {
         let inner = self
             .entries
             .iter()
-            .map(|(k, v)| format!("'{}': {v}", self.wire_key(k)))
+            .map(|(k, v)| {
+                let value = match prefix {
+                    Some(prefix) if v.starts_with("dep_") && v.ends_with("_id") => {
+                        format!("{prefix}_{v}")
+                    }
+                    _ => v.clone(),
+                };
+                format!("'{}': {value}", self.wire_key(k))
+            })
             .collect::<Vec<_>>()
             .join(", ");
         format!("{{ {inner} }}")
+    }
+
+    /// Render the dependency POSTs + this fixture's create as JS statements.
+    /// Returns the variable name holding the created record response.
+    pub(crate) fn setup_js(&self, var: &str, indent: &str) -> String {
+        let mut out = String::new();
+        for dep in &self.deps {
+            let entries = Fixture {
+                base_path: dep.base_path.clone(),
+                entries: dep.entries.clone(),
+                casing: dep.casing,
+                deps: Vec::new(),
+            };
+            let dep_id = format!("{var}_{}", dep.id_var);
+            out.push_str(&format!(
+                "{indent}const {dep_id}_resp = await request.post(apiUrl('{}'), {{ data: {} }});\n",
+                js_string(&dep.base_path),
+                entries.data_literal_with(Some(var))
+            ));
+            out.push_str(&format!(
+                "{indent}expect({dep_id}_resp.ok(), 'fixture dependency should be created').toBeTruthy();\n"
+            ));
+            out.push_str(&format!(
+                "{indent}const {dep_id}_json = await {dep_id}_resp.json();\n"
+            ));
+            out.push_str(&format!(
+                "{indent}const {dep_id} = {dep_id}_json.data?.id ?? {dep_id}_json.id;\n"
+            ));
+        }
+        out.push_str(&format!(
+            "{indent}const {var} = await request.post(apiUrl('{}'), {{ data: {} }});\n",
+            js_string(&self.base_path),
+            self.data_literal_with(Some(var))
+        ));
+        out
+    }
+
+    /// Dependency-aware create with an explicit headers expression (the
+    /// journey specs carry persona keys). `json` binds the parsed body.
+    pub(crate) fn setup_js_with_headers(
+        &self,
+        var: &str,
+        indent: &str,
+        headers: &str,
+        json: bool,
+    ) -> String {
+        let mut out = String::new();
+        for dep in &self.deps {
+            let dep_fixture = Fixture {
+                base_path: dep.base_path.clone(),
+                entries: dep.entries.clone(),
+                casing: dep.casing,
+                deps: Vec::new(),
+            };
+            let dep_id = format!("{var}_{}", dep.id_var);
+            out.push_str(&format!(
+                "{indent}const {dep_id}_resp = await request.post(apiUrl('{}'), {{ headers: {headers}, data: {} }});\n",
+                js_string(&dep.base_path),
+                dep_fixture.data_literal_with(Some(var))
+            ));
+            out.push_str(&format!(
+                "{indent}const {dep_id}_json = await {dep_id}_resp.json();\n"
+            ));
+            out.push_str(&format!(
+                "{indent}const {dep_id} = {dep_id}_json.data?.id ?? {dep_id}_json.id;\n"
+            ));
+        }
+        if json {
+            out.push_str(&format!(
+                "{indent}const {var}_resp = await request.post(apiUrl('{}'), {{ headers: {headers}, data: {} }});\n",
+                js_string(&self.base_path),
+                self.data_literal_with(Some(var))
+            ));
+            out.push_str(&format!("{indent}const {var} = await {var}_resp.json();\n"));
+        } else {
+            out.push_str(&format!(
+                "{indent}const {var} = await request.post(apiUrl('{}'), {{ headers: {headers}, data: {} }});\n",
+                js_string(&self.base_path),
+                self.data_literal_with(Some(var))
+            ));
+        }
+        out
+    }
+
+    /// Like [`Fixture::setup_js`], but binds the PARSED JSON body to `var`
+    /// (the round-trip/workflow specs read `created.data?.id`).
+    pub(crate) fn setup_js_json(&self, var: &str, indent: &str) -> String {
+        let mut out = self.setup_js(&format!("{var}_resp"), indent);
+        out.push_str(&format!("{indent}const {var} = await {var}_resp.json();\n"));
+        out
     }
 
     /// The DTO serde key for a schema property name: the Rust field name
     /// (`to_snake_case`) verbatim under the snake casing, camelCased under
     /// the camel casing (the `rename_all = "camelCase"` contract).
     fn wire_key(&self, schema_field: &str) -> String {
-        let rust_field = codegraph_naming::to_snake_case(schema_field);
-        match self.casing {
-            DtoKeyCasing::Snake => rust_field,
-            DtoKeyCasing::Camel => rust_field.to_lower_camel_case(),
-        }
+        wire_key_for(schema_field, self.casing)
+    }
+}
+
+/// The DTO serde key for a schema property name under the given casing.
+#[must_use]
+pub(crate) fn wire_key_for(schema_field: &str, casing: DtoKeyCasing) -> String {
+    let rust_field = codegraph_naming::to_snake_case(schema_field);
+    match casing {
+        DtoKeyCasing::Snake => rust_field,
+        DtoKeyCasing::Camel => rust_field.to_lower_camel_case(),
     }
 }
 
@@ -201,6 +326,35 @@ pub(crate) fn js_value_for_type(field: &str, rust_type: &str) -> String {
     format!("'Test {field}'")
 }
 
+/// Resolve the schema title a required entity-ref points at (`$ref` leaf
+/// stem, then `+Type`).
+async fn ref_target_title(db: &dyn GraphQuerier, prop: &PropertyNode) -> Option<String> {
+    let target = prop.ref_target.as_deref()?;
+    let leaf = target.rsplit('/').next().unwrap_or(target);
+    let leaf = leaf.rsplit("::").next().unwrap_or(leaf);
+    let stem = leaf.trim_end_matches(".json").trim_end_matches(".schema");
+    if let Some(schema) = schema_for_entity(db, stem).await {
+        return Some(schema.title);
+    }
+    // `$ref` paths carry the file stem (`group` / `group.schema`), while the
+    // schema title is the PascalCase type (`GroupType`). Try that spelling,
+    // then fall back to a table/rel-path scan.
+    let pascal = codegraph_naming::to_pascal_case(stem);
+    if let Some(schema) = schema_for_entity(db, &pascal).await {
+        return Some(schema.title);
+    }
+    db.list_schemas(None)
+        .await
+        .ok()?
+        .into_iter()
+        .find(|schema| {
+            schema.pg_table_name == stem
+                || schema.rel_path.ends_with(target)
+                || schema.rel_path.ends_with(&format!("{stem}.json"))
+        })
+        .map(|schema| schema.title)
+}
+
 /// Resolve the schema node for an entity title (exact, then `+Type`).
 pub(crate) async fn schema_for_entity(
     db: &dyn GraphQuerier,
@@ -211,31 +365,6 @@ pub(crate) async fn schema_for_entity(
         Ok(None) => db.get_schema(&format!("{entity}Type")).await.ok()?,
         Err(_) => None,
     }
-}
-
-/// Whether a flat create body can satisfy the entity's required fields
-/// (issue #558): a required entity-ref needs a real parent row, which a
-/// flat body can never carry — seeds for such entities are DROPPED (never
-/// a guaranteed-422 POST). Unknown entities (runs without schemas) are
-/// conservatively creatable.
-pub(crate) async fn required_refs_satisfiable(db: &dyn GraphQuerier, entity: Option<&str>) -> bool {
-    let Some(entity) = entity else {
-        return true;
-    };
-    let Some(schema) = schema_for_entity(db, entity).await else {
-        return true;
-    };
-    let Ok(props) = db.get_properties(&schema.title).await else {
-        return true;
-    };
-    !props.iter().any(|p| {
-        p.is_required
-            && p.name != "id"
-            && matches!(
-                p.effective_kind(),
-                Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
-            )
-    })
 }
 
 /// The first enum value of the codelist backing `field` on `entity`'s
@@ -305,8 +434,8 @@ async fn codelist_first_value(db: &dyn GraphQuerier, prop: &PropertyNode) -> Opt
 /// a typed create body does not 422 on a missing NOT NULL column.
 ///
 /// Skipped:
-/// - `id` and entity references (a required FK needs a real parent row —
-///   the caller's `required_refs_satisfiable` gate drops those seeds);
+/// - `id` and entity references (a required FK is appended later, with its
+///   parent seed, by [`add_required_refs`]);
 /// - workflow-managed status fields (the create DTO excludes them);
 /// - structured/value-object fields (their child DTOs are not synthesized
 ///   here; optional ones default, required ones keep the caller's gate).
@@ -315,6 +444,7 @@ pub(crate) async fn with_required_entries(
     config: &DomainConfig,
     entity: Option<&str>,
     entries: Vec<(String, String)>,
+    casing: DtoKeyCasing,
 ) -> Vec<(String, String)> {
     let Some(entity) = entity else {
         return entries;
@@ -362,12 +492,25 @@ pub(crate) async fn with_required_entries(
         {
             continue;
         }
-        // A required FK needs a dependency seed; leave it to the caller's
-        // `required_refs_satisfiable` gate (which drops the seed).
+        // A required FK needs a dependency seed; `add_required_refs` appends
+        // the FK entry and the parent seed after this pass.
         if matches!(
             prop.effective_kind(),
             Some(RefClassificationKind::EntityReference)
         ) {
+            continue;
+        }
+        // A required structured wrapper is a nested object on the create
+        // body, not a scalar literal. Synthesize its required members so the
+        // typed DTO does not 422 on a missing JSONB value.
+        if matches!(
+            prop.effective_kind(),
+            Some(RefClassificationKind::StructuredWrapper)
+        ) {
+            if let Some(value) = structured_wrapper_value(db, prop, casing).await {
+                present.insert(key.clone());
+                out.push((key.clone(), value));
+            }
             continue;
         }
         let value = property_fixture_value(
@@ -383,6 +526,187 @@ pub(crate) async fn with_required_entries(
         }
     }
     out
+}
+
+/// A required structured wrapper's nested object literal, seeded with its
+/// required members (codelists use their first enum value).
+async fn structured_wrapper_value(
+    db: &dyn GraphQuerier,
+    prop: &PropertyNode,
+    casing: DtoKeyCasing,
+) -> Option<String> {
+    let title = ref_target_title(db, prop).await?;
+    let schema = schema_for_entity(db, &title).await?;
+    let props = db.get_properties(&schema.title).await.ok()?;
+    let mut members = Vec::new();
+    for member in props.iter().filter(|p| p.is_required && !p.is_id) {
+        if matches!(
+            member.effective_kind(),
+            Some(RefClassificationKind::EntityReference)
+        ) {
+            continue;
+        }
+        let key = wire_key_for(&resolve_field(member).rust_field_name, casing);
+        let value = match codelist_first_value(db, member).await {
+            Some(code) => format!("'{}'", js_string(&code)),
+            None => js_value_for_type(&member.name, &member.rust_field_type),
+        };
+        members.push(format!("'{key}': {value}"));
+    }
+    Some(format!("{{ {} }}", members.join(", ")))
+}
+
+/// Required-FK additions: child FK `(field, js id variable)` entries plus the
+/// parent seeds (leaf-first).
+#[derive(Debug, Default)]
+pub(crate) struct RefPlan {
+    pub entries: Vec<(String, String)>,
+    pub deps: Vec<FixtureDep>,
+}
+
+/// Plan the required-FK closure for a fixture. Parents are seeded through
+/// their own create endpoint and their created id is wired into the child
+/// body. Cycles are broken at the repeated title (the FK stays omitted, the
+/// same fail-closed shape as an uncreatable parent) and the closure is
+/// depth-limited to 4.
+///
+/// `allow(too_many_arguments)`: the recursive planner threads the graph,
+/// config, API version, casing, name counter, and cycle stack explicitly —
+/// bundling them in a context struct would only move the same fields.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn plan_required_refs(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    api_version: &str,
+    entity: Option<&str>,
+    existing: &[(String, String)],
+    casing: DtoKeyCasing,
+    counter: &mut usize,
+    stack: &mut Vec<String>,
+) -> RefPlan {
+    Box::pin(plan_required_refs_inner(
+        db,
+        config,
+        api_version,
+        entity,
+        existing,
+        casing,
+        counter,
+        stack,
+    ))
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn plan_required_refs_inner(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    api_version: &str,
+    entity: Option<&str>,
+    existing: &[(String, String)],
+    casing: DtoKeyCasing,
+    counter: &mut usize,
+    stack: &mut Vec<String>,
+) -> RefPlan {
+    let mut plan = RefPlan::default();
+    let Some(entity) = entity else {
+        return plan;
+    };
+    if stack.len() >= 4 {
+        return plan;
+    }
+    let Some(schema) = schema_for_entity(db, entity).await else {
+        return plan;
+    };
+    let Ok(props) = db.get_properties(&schema.title).await else {
+        return plan;
+    };
+    let present: std::collections::HashSet<String> = existing
+        .iter()
+        .map(|(field, _)| codegraph_naming::to_snake_case(field))
+        .collect();
+    for prop in &props {
+        if !prop.is_required || prop.is_id {
+            continue;
+        }
+        if !matches!(
+            prop.effective_kind(),
+            Some(RefClassificationKind::EntityReference)
+        ) {
+            continue;
+        }
+        let fk_field = resolve_field(prop).rust_field_name;
+        if present.contains(&fk_field) {
+            continue;
+        }
+        let Some(target_title) = ref_target_title(db, prop).await else {
+            continue;
+        };
+        if stack.iter().any(|s| s == &target_title) {
+            continue;
+        }
+        let Some(api) = resolve_entity_api(db, config, &target_title, api_version).await else {
+            continue;
+        };
+        if !api.has_create {
+            continue;
+        }
+        let parent_entries =
+            with_required_entries(db, config, Some(&target_title), Vec::new(), casing).await;
+        stack.push(target_title.clone());
+        let parent_plan = plan_required_refs(
+            db,
+            config,
+            api_version,
+            Some(&target_title),
+            &parent_entries,
+            casing,
+            counter,
+            stack,
+        )
+        .await;
+        stack.pop();
+
+        let mut entries = parent_entries;
+        entries.extend(parent_plan.entries);
+        let id_var = format!("dep_{}_id", *counter);
+        *counter += 1;
+        plan.deps.extend(parent_plan.deps);
+        plan.deps.push(FixtureDep {
+            base_path: api.base_path,
+            entries,
+            casing,
+            id_var: id_var.clone(),
+        });
+        plan.entries.push((fk_field, id_var));
+    }
+    plan
+}
+
+/// Append the required-FK closure to an already-built fixture.
+pub(crate) async fn add_required_refs(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    api_version: &str,
+    entity: Option<&str>,
+    mut fixture: Fixture,
+) -> Fixture {
+    let mut counter = 0usize;
+    let mut stack: Vec<String> = entity.map(str::to_string).into_iter().collect();
+    let plan = plan_required_refs(
+        db,
+        config,
+        api_version,
+        entity,
+        &fixture.entries,
+        fixture.casing,
+        &mut counter,
+        &mut stack,
+    )
+    .await;
+    fixture.entries.extend(plan.entries);
+    fixture.deps = plan.deps;
+    fixture
 }
 
 struct MachineInfo {
@@ -718,5 +1042,188 @@ mod typed_fixture_tests {
         assert_eq!(pattern_sample(Some(r"^\d{9}$")), Some("'123456'"));
         assert_eq!(pattern_sample(Some("^[0-9]{3}$")), Some("'123456'"));
         assert_eq!(pattern_sample(None), None);
+    }
+
+    fn test_schema(title: &str, table: &str) -> codegraph_core::types::SchemaNode {
+        codegraph_core::types::SchemaNode {
+            namespace: None,
+            schema_id: format!("id:{title}"),
+            title: title.to_string(),
+            access: None,
+            annotations: None,
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity".to_string(),
+            domain: Some("hr".to_string()),
+            rel_path: format!("{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: table.to_string(),
+            api_path_segment: table.to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+
+    fn test_prop(name: &str, required: bool) -> codegraph_core::types::PropertyNode {
+        codegraph_core::types::PropertyNode {
+            name: name.to_string(),
+            prop_type: "string".into(),
+            description: None,
+            format: None,
+            is_required: required,
+            is_nullable: !required,
+            is_id: false,
+            type_expr: None,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: codegraph_naming::to_snake_case(name),
+            pg_column_type: "TEXT".into(),
+            rust_field_name: codegraph_naming::to_snake_case(name),
+            rust_field_type: "String".into(),
+            sea_orm_type: "String".into(),
+            render_strategy: "scalar".into(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    fn entity_ref_prop(name: &str) -> codegraph_core::types::PropertyNode {
+        let mut prop = test_prop(name, true);
+        prop.pg_column_name = format!("{}_id", codegraph_naming::to_snake_case(name));
+        prop.rust_field_name = format!("{}_id", codegraph_naming::to_snake_case(name));
+        prop.ref_target = Some("hr/json/group.schema.json".to_string());
+        prop.classification_kind = Some(RefClassificationKind::EntityReference);
+        prop
+    }
+
+    #[tokio::test]
+    async fn required_structured_wrappers_synthesize_a_nested_object() {
+        let mut wrapper = test_schema("AddressType", "address");
+        wrapper.classification = "value_object".to_string();
+        wrapper.is_entity = false;
+        let mut address = test_prop("address", true);
+        address.ref_target = Some("hr/json/address.schema.json".to_string());
+        address.classification_kind = Some(RefClassificationKind::StructuredWrapper);
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(test_schema("PersonType", "person"))
+            .with_properties("PersonType", vec![test_prop("name", true), address])
+            .with_schema(wrapper)
+            .with_properties(
+                "AddressType",
+                vec![test_prop("street", true), test_prop("city", true)],
+            )
+            .build();
+        let config: DomainConfig = toml::from_str(
+            r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["PersonType"]
+"#,
+        )
+        .unwrap();
+        let entries = with_required_entries(
+            &engine,
+            &config,
+            Some("PersonType"),
+            Vec::new(),
+            DtoKeyCasing::Snake,
+        )
+        .await;
+        let address = entries
+            .iter()
+            .find(|(field, _)| field == "address")
+            .map(|(_, value)| value.clone())
+            .expect("structured wrapper entry");
+        assert!(address.contains("'street'"), "{address}");
+        assert!(address.contains("'city'"), "{address}");
+    }
+
+    #[tokio::test]
+    async fn required_refs_seed_the_parent_and_wire_the_fk() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(test_schema("GroupType", "group"))
+            .with_properties("GroupType", vec![test_prop("name", true)])
+            .with_schema(test_schema("ChildType", "child"))
+            .with_properties(
+                "ChildType",
+                vec![test_prop("title", true), entity_ref_prop("group")],
+            )
+            .build();
+        let config: DomainConfig = toml::from_str(
+            r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["GroupType", "ChildType"]
+"#,
+        )
+        .unwrap();
+        let fixture = add_required_refs(
+            &engine,
+            &config,
+            "v1",
+            Some("ChildType"),
+            Fixture {
+                base_path: "/api/v1/hr/child".to_string(),
+                entries: vec![("title".to_string(), "'Test title'".to_string())],
+                casing: DtoKeyCasing::Snake,
+                deps: Vec::new(),
+            },
+        )
+        .await;
+        assert_eq!(
+            fixture.deps.len(),
+            1,
+            "the required FK must produce one parent seed"
+        );
+        assert_eq!(fixture.deps[0].base_path, "/api/v1/hr/group");
+        assert!(
+            fixture.deps[0]
+                .entries
+                .iter()
+                .any(|(field, _)| field == "name"),
+            "the parent seed must carry its required fields: {:?}",
+            fixture.deps[0].entries
+        );
+        assert!(
+            fixture
+                .entries
+                .iter()
+                .any(|(field, value)| field == "group_id" && value == "dep_0_id"),
+            "the child body must reference the created parent id: {:?}",
+            fixture.entries
+        );
+        let js = fixture.setup_js("fixture", "");
+        assert!(js.contains("apiUrl('/api/v1/hr/group')"), "{js}");
+        assert!(js.contains("const fixture_dep_0_id"), "{js}");
+        assert!(
+            js.contains("'group_id': fixture_dep_0_id"),
+            "the child body must reference the namespaced id:\n{js}"
+        );
     }
 }

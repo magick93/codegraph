@@ -143,6 +143,7 @@ async fn run_generation(
             hooks_base: Some(hooks_tmp),
             ext_points,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

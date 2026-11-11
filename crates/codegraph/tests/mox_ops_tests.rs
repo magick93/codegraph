@@ -209,6 +209,7 @@ async fn run_generation(
             ext_points: None,
             integration_manifests: None,
             build_plan: Some(&plan),
+            profile_name: "default",
             ifml_frameworks: vec![],
             ifml_components: None,
             ux_rules: None,

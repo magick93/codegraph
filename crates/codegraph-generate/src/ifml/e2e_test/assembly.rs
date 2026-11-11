@@ -169,12 +169,6 @@ impl IfmlE2eTestGenerator {
             }
         });
 
-        // Issue #558: an entity with a required entity-ref can never be
-        // created by a flat seed body — no fixture, no click-through.
-        if !self.seed_is_creatable(db, component).await {
-            return None;
-        }
-
         Some(ClickThroughTest {
             title: format!(
                 "{} navigates to {}",
@@ -184,11 +178,20 @@ impl IfmlE2eTestGenerator {
             source_component: component_name.to_string(),
             target_view: edge.target_container.clone(),
             row_testid,
-            fixture: Fixture {
-                casing: self.dto_casing,
-                base_path: api.base_path.clone(),
-                entries: self.typed_fixture_entries(db, config, component).await,
-            },
+            fixture: self
+                .attach_required_refs(
+                    db,
+                    config,
+                    api_version,
+                    component.entity.as_deref(),
+                    Fixture {
+                        casing: self.dto_casing,
+                        base_path: api.base_path.clone(),
+                        entries: self.typed_fixture_entries(db, config, component).await,
+                        deps: Vec::new(),
+                    },
+                )
+                .await,
             target_pattern,
             modal,
         })
@@ -215,15 +218,28 @@ impl IfmlE2eTestGenerator {
             .and_then(|entity| workflow_for_entity(config, entity))
             .map(|w| w.status_field);
         let entries = super::fixtures::strip_workflow_status(entries, status.as_deref());
-        super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
+        super::fixtures::with_required_entries(
+            db,
+            config,
+            c.entity.as_deref(),
+            entries,
+            self.dto_casing,
+        )
+        .await
     }
 
-    /// Whether a flat create body can satisfy the entity's required fields:
-    /// a required entity-ref needs a real parent row, which a flat body can
-    /// never carry (issue #558) — seeds for such entities are dropped
-    /// instead of guaranteed-422.
-    pub(super) async fn seed_is_creatable(&self, db: &dyn GraphQuerier, c: &IfmlComponent) -> bool {
-        super::fixtures::required_refs_satisfiable(db, c.entity.as_deref()).await
+    /// Attach the required-FK parent seeds to a fixture (P1): parents are
+    /// created through their own API before the child and their id is wired
+    /// into the child body.
+    async fn attach_required_refs(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        entity: Option<&str>,
+        fixture: Fixture,
+    ) -> Fixture {
+        super::fixtures::add_required_refs(db, config, api_version, entity, fixture).await
     }
 
     pub(super) async fn build_validation_test(
@@ -278,12 +294,6 @@ impl IfmlE2eTestGenerator {
 
         let (field, original, updated) = modifiable_field(c, form)?;
         let save = save_navigation_target(vc, c)?;
-        // Issue #558: a required entity-ref can never be satisfied by the
-        // seed body — no fixture, no round trip.
-        if !self.seed_is_creatable(db, c).await {
-            return None;
-        }
-
         Some(RoundTripTest {
             component: c.name.clone(),
             route: view_route(&vc.name),
@@ -293,11 +303,20 @@ impl IfmlE2eTestGenerator {
             field,
             original,
             updated,
-            fixture: Fixture {
-                casing: self.dto_casing,
-                base_path: api.base_path,
-                entries: self.typed_fixture_entries(db, config, c).await,
-            },
+            fixture: self
+                .attach_required_refs(
+                    db,
+                    config,
+                    api_version,
+                    c.entity.as_deref(),
+                    Fixture {
+                        casing: self.dto_casing,
+                        base_path: api.base_path,
+                        entries: self.typed_fixture_entries(db, config, c).await,
+                        deps: Vec::new(),
+                    },
+                )
+                .await,
             target_pattern: url_pattern(&view_route(&save.0), &save.1),
         })
     }
@@ -369,12 +388,6 @@ impl IfmlE2eTestGenerator {
         if (is_details(c) || is_form(c)) && !api.has_read {
             return None;
         }
-        // Issue #558: a required entity-ref can never be satisfied by the
-        // seed body — no fixture, no workflow test.
-        if !self.seed_is_creatable(db, c).await {
-            return None;
-        }
-
         // Transition round trip: details/form components carry transition
         // buttons (mapped components render them as siblings), lists stay
         // badge-only. The buttons POST to the generated transition
@@ -401,11 +414,20 @@ impl IfmlE2eTestGenerator {
             initial_state: workflow.initial_state.clone(),
             is_collection: is_collection(c),
             transition,
-            fixture: Fixture {
-                casing: self.dto_casing,
-                base_path: api.base_path,
-                entries: self.valid_fixture_entries(db, config, c, &workflow).await,
-            },
+            fixture: self
+                .attach_required_refs(
+                    db,
+                    config,
+                    api_version,
+                    c.entity.as_deref(),
+                    Fixture {
+                        casing: self.dto_casing,
+                        base_path: api.base_path,
+                        entries: self.valid_fixture_entries(db, config, c, &workflow).await,
+                        deps: Vec::new(),
+                    },
+                )
+                .await,
         })
     }
 
@@ -431,7 +453,14 @@ impl IfmlE2eTestGenerator {
                 *value = format!("'{}'", js_string(&code));
             }
         }
-        super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
+        super::fixtures::with_required_entries(
+            db,
+            config,
+            c.entity.as_deref(),
+            entries,
+            self.dto_casing,
+        )
+        .await
     }
 
     /// Actor-persona guard tests for a view: one per human actor, asserting
@@ -556,7 +585,8 @@ impl IfmlE2eTestGenerator {
             }
             let plan = plans.get(entity)?;
             let status_field = workflow_for_entity(config, entity).map(|w| w.status_field);
-            let entries = ux_fixture_entries(db, config, c, status_field.as_deref()).await;
+            let entries =
+                ux_fixture_entries(db, config, c, status_field.as_deref(), self.dto_casing).await;
             let route = view_route(&vc.name);
             let columns = ux_column_checks(c, plan, &entries);
             // The workflow status column pins a chip to the initial state
@@ -607,6 +637,7 @@ impl IfmlE2eTestGenerator {
                     casing: self.dto_casing,
                     base_path: api.base_path,
                     entries,
+                    deps: Vec::new(),
                 },
                 table_testid: format!("{}-table", c.name),
                 row_testid: format!("{}-row", c.name),
@@ -816,21 +847,26 @@ impl IfmlE2eTestGenerator {
                     if !api.has_create {
                         continue;
                     }
-                    if !self.seed_is_creatable(db, c).await {
-                        // Issue #558: a required entity-ref can never be
-                        // satisfied by a flat seed body — no row, no hop.
-                        continue;
-                    }
                     JourneyHop {
                         source_component: c.name.clone(),
                         kind: JourneyHopKind::Row,
                         target_view: target.clone(),
                         target_pattern: pattern,
-                        seed: Some(Fixture {
-                            casing: self.dto_casing,
-                            base_path: api.base_path,
-                            entries: self.valid_journey_entries(db, config, c).await,
-                        }),
+                        seed: Some(
+                            self.attach_required_refs(
+                                db,
+                                config,
+                                api_version,
+                                c.entity.as_deref(),
+                                Fixture {
+                                    casing: self.dto_casing,
+                                    base_path: api.base_path,
+                                    entries: self.valid_journey_entries(db, config, c).await,
+                                    deps: Vec::new(),
+                                },
+                            )
+                            .await,
+                        ),
                         fills: Vec::new(),
                     }
                 } else if is_form(c) && save_or_submit {
@@ -902,7 +938,7 @@ impl IfmlE2eTestGenerator {
     /// fixture from its first schema-backed component (the param'd view
     /// fetches by id before anything is drivable). `None` for param-less
     /// views (opened plain) and unseedable param'd views.
-    async fn journey_open_seed(
+    pub(super) async fn journey_open_seed(
         &self,
         db: &dyn GraphQuerier,
         config: &DomainConfig,
@@ -922,18 +958,23 @@ impl IfmlE2eTestGenerator {
             if !api.has_create {
                 continue;
             }
-            if !self.seed_is_creatable(db, c).await {
-                // Issue #558: the open seed needs a real row; a required
-                // entity-ref defeats the flat body — no seed, no journey.
-                continue;
-            }
             return Some((
                 Some(param.to_string()),
-                Some(Fixture {
-                    casing: self.dto_casing,
-                    base_path: api.base_path,
-                    entries: self.valid_journey_entries(db, config, c).await,
-                }),
+                Some(
+                    self.attach_required_refs(
+                        db,
+                        config,
+                        api_version,
+                        c.entity.as_deref(),
+                        Fixture {
+                            casing: self.dto_casing,
+                            base_path: api.base_path,
+                            entries: self.valid_journey_entries(db, config, c).await,
+                            deps: Vec::new(),
+                        },
+                    )
+                    .await,
+                ),
             ));
         }
         None
@@ -961,7 +1002,14 @@ impl IfmlE2eTestGenerator {
             .and_then(|entity| workflow_for_entity(config, entity))
             .map(|w| w.status_field);
         let entries = super::fixtures::strip_workflow_status(entries, status.as_deref());
-        super::fixtures::with_required_entries(db, config, c.entity.as_deref(), entries).await
+        super::fixtures::with_required_entries(
+            db,
+            config,
+            c.entity.as_deref(),
+            entries,
+            self.dto_casing,
+        )
+        .await
     }
 }
 
