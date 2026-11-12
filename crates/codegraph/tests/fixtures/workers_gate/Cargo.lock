@@ -2501,14 +2501,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "rex-dates"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
+
+[[package]]
 name = "rex-diagnostics"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 
 [[package]]
 name = "rex-driver"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2536,11 +2541,14 @@ dependencies = [
 [[package]]
 name = "rex-expr"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
+ "rex-dates",
+ "rex-diagnostics",
  "rex-ir",
+ "rex-strings",
  "serde",
  "thiserror",
 ]
@@ -2548,7 +2556,7 @@ dependencies = [
 [[package]]
 name = "rex-ifml"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "pest",
  "pest_derive",
@@ -2561,7 +2569,7 @@ dependencies = [
 [[package]]
 name = "rex-ir"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "serde",
  "serde_json",
@@ -2569,19 +2577,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rex-strings"
+version = "0.1.0"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
+
+[[package]]
 name = "rex-syntax"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
+ "rex-strings",
  "thiserror",
 ]
 
 [[package]]
 name = "rex-verify"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "creusot-std",
 ]
@@ -2589,7 +2603,7 @@ dependencies = [
 [[package]]
 name = "rex-vocab"
 version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=194056b933de57e9bbc746c30eaa796035f99bd1#194056b933de57e9bbc746c30eaa796035f99bd1"
+source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
 dependencies = [
  "anyhow",
  "rex-ir",
