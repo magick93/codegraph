@@ -5,7 +5,7 @@
 use codegraph_naming::to_pascal_case;
 
 use super::fixtures::js_string;
-use super::pom::{PomFieldKind, PomWorkflowMethods, ViewPom};
+use super::pom::{PomAction, PomFieldKind, PomWorkflowMethods, ViewPom};
 
 // Fail fast: a server-side deny redirect is near-instant; five seconds is generous.
 const DENIAL_REDIRECT_TIMEOUT_MS: u32 = 5_000;
@@ -400,6 +400,27 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
         s.push_str("    }).toPass({ timeout: 15_000 });\n  }\n\n");
     }
 
+    // Actions (WS6): the manifest-proven, route-resolvable action ops —
+    // grouped per component so the shared error span renders once. Empty
+    // (no manifest / no resolvable op) ⇒ nothing, byte-identical.
+    let mut action_components: Vec<(&str, Vec<&PomAction>)> = Vec::new();
+    for action in &pom.actions {
+        match action_components
+            .iter_mut()
+            .find(|(component, _)| *component == action.component.as_str())
+        {
+            Some((_, group)) => group.push(action),
+            None => action_components.push((action.component.as_str(), vec![action])),
+        }
+    }
+    for (component, group) in &action_components {
+        let pascal = group
+            .first()
+            .map(|action| action.pascal.clone())
+            .unwrap_or_else(|| to_pascal_case(component));
+        s.push_str(&render_actions_section(component, &pascal, group));
+    }
+
     while s.ends_with("\n\n") {
         s.pop();
     }
@@ -433,7 +454,7 @@ pub(super) fn render_workflow_section(
         "  async expect{pascal}State(state: string): Promise<void> {{\n"
     ));
     s.push_str(&format!(
-        "    await expect(this.{component}StateBadge(){first}).toContainText(state);\n  }}\n\n"
+        "    await expect(this.{component}StateBadge(){first}).toContainText(state, {{ timeout: 12_000 }});\n  }}\n\n"
     ));
     if !workflow.transitions.is_empty() {
         s.push_str("  /** Click the transition button for `to` (rendered when the\n   * workflow generates action endpoints). */\n");
@@ -452,5 +473,58 @@ pub(super) fn render_workflow_section(
         s.push_str("    await this.page.getByTestId(testid).click();\n");
         s.push_str("  }\n\n");
     }
+    s
+}
+
+/// The action surface for one component (WS6): per-op button accessor +
+/// click method, then the shared error-span accessor and expect helper.
+/// The click mirrors the transition buttons (single click — Playwright's
+/// auto-retrying expect calls in the action specs observe the settled
+/// outcome; the mutating POST must never re-fire, so no toPass retry
+/// wraps it).
+pub(super) fn render_actions_section(
+    component: &str,
+    pascal: &str,
+    actions: &[&PomAction],
+) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("  // ── Actions: {component} ──\n\n"));
+    for action in actions {
+        s.push_str(&format!(
+            "  /** The `{}` action control (issue #559 markup). */\n",
+            action.op_snake
+        ));
+        s.push_str(&format!(
+            "  {component}Action{op_pascal}(): Locator {{\n",
+            op_pascal = to_pascal_case(&action.op_snake),
+        ));
+        s.push_str(&format!(
+            "    return this.page.getByTestId('{}-action-{}');\n  }}\n\n",
+            component, action.op_kebab
+        ));
+        s.push_str(&format!(
+            "  /** Click the `{}` action control; the POST settles before the\n   * spec's auto-retrying assertions observe the outcome. */\n",
+            action.op_snake
+        ));
+        s.push_str(&format!(
+            "  async action{pascal}{op_pascal}(): Promise<void> {{\n",
+            op_pascal = to_pascal_case(&action.op_snake),
+        ));
+        s.push_str(&format!(
+            "    await this.{component}Action{op_pascal}().click();\n  }}\n\n",
+            op_pascal = to_pascal_case(&action.op_snake),
+        ));
+    }
+    s.push_str("  /** The shared action error span (server-rendered message after a\n   * failed action POST). */\n");
+    s.push_str(&format!("  {component}ActionError(): Locator {{\n"));
+    s.push_str(&format!(
+        "    return this.page.getByTestId('{component}-action-error');\n  }}\n\n"
+    ));
+    s.push_str(&format!(
+        "  async expect{pascal}ActionError(text: string): Promise<void> {{\n"
+    ));
+    s.push_str(&format!(
+        "    await expect(this.{component}ActionError()).toContainText(text);\n  }}\n\n"
+    ));
     s
 }

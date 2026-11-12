@@ -172,6 +172,98 @@ pub struct TransitionStep {
     pub to_testid: String,
 }
 
+// ── Action specs (WS6) ───────────────────────────────────────────────────────
+
+/// One view's `{view}.action.spec.ts` (WS6): the manifest-proven,
+/// route-resolvable action ops driven through the POM, each asserting the
+/// status class the server differentiates — 200 (record mutated, error
+/// absent), 409 (machine conflict), 403 (op-level `when` denial), 501
+/// (seam op naming the gap). Empty when no action edge resolves — the
+/// file is not emitted at all (payload gating, byte-identical flag-off).
+#[derive(Debug)]
+pub struct ActionSpec {
+    pub view_name: String,
+    pub label: String,
+    pub route: String,
+    /// The view's id param binding `ui.open({ id })` (`None` renders a
+    /// param-less open — though an action view without one emits no spec).
+    pub id_param: Option<String>,
+    pub tests: Vec<ActionTest>,
+}
+
+/// One action op's spec: seed a record through the fixture plane (the
+/// click-through pattern), open the view, and drive each leg in order
+/// through the POM's `action{Comp}{Op}()` click method.
+#[derive(Debug)]
+pub struct ActionTest {
+    /// Deterministic test title carrying the leg statuses, e.g.
+    /// `action escalate on info: 200 then 409` — the gate's `action`
+    /// category predicate keys on these.
+    pub title: String,
+    /// The component carrying the action button — names the POM surface.
+    pub component: String,
+    /// The op snake name (the route segment).
+    pub op_snake: String,
+    /// The record seed (base_path + typed entries + required-FK deps).
+    pub fixture: Fixture,
+    /// The legs in drive order (deterministic; see the planner).
+    pub acts: Vec<ActionAct>,
+}
+
+/// One click + its assertion. Every leg asserts through the POM (the
+/// error span accessor / helper), never a raw testid.
+#[derive(Debug)]
+pub struct ActionAct {
+    pub kind: ActionActKind,
+    /// The 200 leg's DB round-trip: `(field, expected value)` read back
+    /// through the seeded record's GET (`persisted.data ?? persisted`).
+    pub round_trip: Option<(String, String)>,
+}
+
+/// The status class one action leg asserts, keyed to what the server
+/// actually differentiates on the `{id}/actions/{op}` route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionActKind {
+    /// The route answered 200: error span absent, optional DB round-trip.
+    Ok,
+    /// 409 CONFLICT: the machine-bound op has no transition from the
+    /// record's current state (the re-act after a completed transition).
+    Conflict,
+    /// 403 FORBIDDEN: the op-level `when` guard denies (authorize runs
+    /// before execution, so API-key sessions still hit it).
+    Forbidden,
+    /// 501 NOT_IMPLEMENTED: the seam op names the gap.
+    NotImplemented,
+}
+
+impl ActionActKind {
+    /// The leg's token in the test title (`200`, `409`, …).
+    #[must_use]
+    pub fn status(self) -> &'static str {
+        match self {
+            Self::Ok => "200",
+            Self::Conflict => "409",
+            Self::Forbidden => "403",
+            Self::NotImplemented => "501",
+        }
+    }
+
+    /// The stable error-text fragment the leg asserts (all planes surface
+    /// the server's message verbatim in the action error span).
+    #[must_use]
+    pub fn error_fragment(self) -> Option<&'static str> {
+        match self {
+            Self::Ok => None,
+            Self::Conflict => Some("has no transition from the current state"),
+            // The server's message backtick-quotes the `when` keyword
+            // ("operation `approve`: `when` condition not met (...)") — a
+            // fragment on either side of the quotes only.
+            Self::Forbidden => Some("condition not met"),
+            Self::NotImplemented => Some("no executable lowering"),
+        }
+    }
+}
+
 /// The ux-rules rendering tests for one view (issue #303), rendered into
 /// `{view}.ux.spec.ts`. Every check is generated only for markup the
 /// fallback template actually renders (chips, numeric alignment, Intl

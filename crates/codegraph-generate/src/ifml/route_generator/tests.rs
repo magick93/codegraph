@@ -5298,7 +5298,7 @@ fn live_workflow_badge_streams_via_query_live() {
     );
     assert!(
         rendered.contains(
-            "const editor_workflow_state = $derived(editor_wf_live?.current ?? editor_form_state.workflow_state?.current_state);"
+            "const editor_workflow_state = $derived(editor_wf_live?.current?.current_state ?? editor_data?.workflow_state?.current_state);"
         ),
         "the badge state derives from the live stream with the fetched fallback:\n{rendered}"
     );
@@ -5381,7 +5381,7 @@ fn live_workflow_module_exports_the_query_live_stream() {
     let rendered = module_from(true);
     assert!(
         rendered.contains(
-            "export const getEditorWorkflowLive = query.live(async function* (id: string) {"
+            "export const getEditorWorkflowLive = query.live('unchecked', async function* (id: string) {"
         ),
         "the workflow stream rides the module:\n{rendered}"
     );

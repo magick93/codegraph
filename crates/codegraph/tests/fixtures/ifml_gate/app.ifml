@@ -52,12 +52,33 @@ view "RefundRequestDetail" {
     component "info" {
         type: details;
         data: RefundRequest;
-        fields: [title, requesterEmail, amount, urgent, submittedAt, status, reason];
+        fields: [title, requesterEmail, amount, urgent, submittedAt, status, reason, escalation];
 
         on edit -> navigate("RefundRequestForm", {
             id: params.id
         });
+
+        on inspect -> action("Inspect");
+        on summarize -> action("Summarize");
+        on escalate -> action("Escalate");
+        on approve -> action("Approve");
     }
+}
+
+action "Inspect" {
+    target: RefundRequest;
+}
+
+action "Summarize" {
+    target: RefundRequest;
+}
+
+action "Escalate" {
+    target: RefundRequest;
+}
+
+action "Approve" {
+    target: RefundRequest;
 }
 
 view "RefundRequestForm" {

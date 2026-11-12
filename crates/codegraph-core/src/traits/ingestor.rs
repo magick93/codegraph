@@ -3,12 +3,12 @@ use crate::types::{
     ActionNode, ActorPolicyModel, ApiOperationNode, ApiResourceNode, AtprotoNamespaceNode,
     ChartDefinitionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionNode,
     DataBindingNode, DddModelGraph, DeployModelGraph, EdgeProperties, EdgeType, EnumValue,
-    ErrorDefinitionNode, EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode, IngestStats,
-    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDomainModel,
-    NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode, PipelineNode,
-    PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode, RegulatoryOwner,
-    RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode, TenantNode,
-    ViewComponentNode, ViewContainerNode,
+    ErrorDefinitionNode, EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode,
+    IfmlManifestNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    ModuleDefinitionNode, MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
+    RegulatoryNode, RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 
@@ -229,6 +229,14 @@ pub trait GraphIngestor: Send + Sync {
     /// names kept verbatim; resolution against the declaring file is a
     /// consumer concern, never a graph-plane one.
     async fn ingest_deploy_model(&self, model: &DeployModelGraph) -> Result<(), GraphError>;
+
+    // ── IFML manifest plane (rexlang #118, WS6) ─────────────────────
+
+    /// Ingest the folded declaration-backed control/route manifest: ONE
+    /// singleton node per run (`IfmlManifestNode`) carrying the whole
+    /// `IfmlManifest` serialized. A re-ingest REPLACES the prior node
+    /// (the run's manifest is the manifest).
+    async fn ingest_ifml_manifest(&self, node: &IfmlManifestNode) -> Result<(), GraphError>;
 
     // ── Constraint plane (issue #261) ─────────────────────────────────
 

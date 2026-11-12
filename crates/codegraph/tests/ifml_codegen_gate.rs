@@ -137,7 +137,10 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 /// Remove one top-level `view "Name" { ... }` block from an .ifml file,
-/// tracking brace depth so nested blocks stay intact.
+/// tracking brace depth so nested blocks stay intact. Every top-level
+/// `navigate("Name")` outcome referencing the removed view goes too — the
+/// #591 front door proves every navigate target (E0105), so a removal that
+/// leaves a dangling reference is a compile error, exactly as authored.
 fn remove_view_from_ifml(path: &Path, view: &str) -> Result<usize, String> {
     let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
     let marker = format!("view \"{view}\" {{");
@@ -165,7 +168,13 @@ fn remove_view_from_ifml(path: &Path, view: &str) -> Result<usize, String> {
     out.push_str(&content[..start]);
     out.push_str(&content[end..]);
     let removed = content.len() - out.len();
-    fs::write(path, out).map_err(|e| e.to_string())?;
+    // Strip the event handlers that navigate to the removed view (one
+    // `on <evt> -> navigate("Name"...);` declaration per line).
+    let mut lines: Vec<String> = out.lines().map(str::to_string).collect();
+    let navigate_marker = format!("navigate(\"{view}\")");
+    lines.retain(|line| !line.contains(&navigate_marker));
+    let removed = removed + (out.len() - lines.join("\n").len());
+    fs::write(path, lines.join("\n") + "\n").map_err(|e| e.to_string())?;
     Ok(removed)
 }
 
@@ -206,14 +215,45 @@ async fn run_pipeline() -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     let ifml_path = home.join("app.ifml");
-    let model = rex_ifml::parse_ifml_file(&ifml_path)
-        .map_err(|e| format!("parse {}: {e}", ifml_path.display()))?;
-    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
+    // WS6: the gate goes through the SAME front door the driver uses
+    // (issue #591) — compile + checker + the declaration-backed manifest —
+    // instead of a bare parse, so the manifest node persists exactly as a
+    // real run's does and the action spec family exercises the same graph.
+    let compiled = codegraph::ifml_compile::compile_and_check_ifml(&ifml_path)
+        .map_err(|e| format!("front door {}: {e}", ifml_path.display()))?;
+    for lint in &compiled.lints {
+        eprintln!("warning: ifml: {lint}");
+    }
+    codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &compiled.compilation.model)
         .await
         .map_err(|e| e.to_string())?;
-    codegraph::ifml_actor_import::ingest_actor_imports(&engine, &engine, &model, &ifml_path)
-        .await
-        .map_err(|e| e.to_string())?;
+    codegraph::ingest::ifml_ingest::ingest_ifml_manifest(
+        &engine,
+        &compiled.manifest,
+        &[ifml_path.display().to_string()],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    codegraph::ifml_actor_import::ingest_actor_imports(
+        &engine,
+        &engine,
+        &compiled.compilation.model,
+        &ifml_path,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // WS6: the `.ddd` design (service ops + the escalation machine) — the
+    // same compile path `ingest_ddd_files` always uses, imported mox
+    // resolved relative to the file.
+    codegraph::ingest::ddd_ingest::ingest_ddd_files(
+        &engine,
+        &engine,
+        &[home.join("refunds.ddd")],
+        &config,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     codegraph::ingest::api_ingest::ingest_api_model(&engine, &config)
         .await
@@ -654,6 +694,13 @@ fn assert_categories(titles: &[String]) {
     let auth = has(&|t| t.contains("unauthenticated visit is redirected"))
         && has(&|t| t.contains("garbage API key"));
     let journeys = has(&|t| t.starts_with("journey: "));
+    // WS6 action family: the action specs assert each status class the
+    // server differentiates — 200 (ok leg), 409 (machine conflict),
+    // 403 (op-level `when` denial), 501 (seam op) — through the POM.
+    let action_ok = has(&|t| t.starts_with("action ") && t.contains("200"));
+    let action_conflict = has(&|t| t.starts_with("action ") && t.contains("409"));
+    let action_forbidden = has(&|t| t.starts_with("action ") && t.contains("403"));
+    let action_seam = has(&|t| t.starts_with("action ") && t.contains("501"));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -669,6 +716,10 @@ fn assert_categories(titles: &[String]) {
         ("ux", ux),
         ("auth", auth),
         ("journeys", journeys),
+        ("action ok", action_ok),
+        ("action conflict", action_conflict),
+        ("action forbidden", action_forbidden),
+        ("action seam", action_seam),
     ]
     .iter()
     .filter(|(_, present)| !present)

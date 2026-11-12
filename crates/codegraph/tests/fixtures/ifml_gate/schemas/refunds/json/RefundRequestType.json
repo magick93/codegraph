@@ -34,6 +34,10 @@
     "reason": {
       "$ref": "../../common/json/codelist/RefundReasonCodeList.json",
       "description": "Reason code for the refund"
+    },
+    "escalation": {
+      "$ref": "../../common/json/codelist/RefundEscalationCodeList.json",
+      "description": "Escalation state driven by the action plane (WS6)"
     }
   },
   "required": [

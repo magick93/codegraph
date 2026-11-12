@@ -902,6 +902,7 @@ entities = []
             &HashMap::new(),
             false,
             &[],
+            Vec::new(),
         );
         let files = pom_file_set(&[("customer-list", &pom)]);
         let paths: Vec<String> = files
@@ -1133,6 +1134,7 @@ entities = ["CustomerType"]
         &std::collections::HashMap::new(),
         true,
         &[],
+        Vec::new(),
     );
     // The plan carries no components — inject the primary root the way the
     // assembler does for mapped details views.
@@ -1226,4 +1228,129 @@ fn auth_vc(name: &str, roles: Vec<String>, params: Vec<ParameterDef>) -> IfmlVie
         events: Vec::new(),
         containers: Vec::new(),
     }
+}
+
+// ── WS6: action POM surface + action spec family ────────────────────────────
+
+#[test]
+fn action_plan_renders_pom_action_methods() {
+    use super::pom::{PomAction, ViewPom};
+    use super::pom_render::render_pom_page;
+
+    let mut pom = ViewPom {
+        view_name: "RefundRequestDetail".to_string(),
+        class_name: "RefundRequestDetailPage".to_string(),
+        route: "/refundrequestdetail".to_string(),
+        ..Default::default()
+    };
+    pom.actions.push(PomAction {
+        component: "info".to_string(),
+        pascal: "Info".to_string(),
+        op_snake: "escalate".to_string(),
+        op_kebab: "escalate".to_string(),
+    });
+
+    let rendered = render_pom_page(&pom);
+    // The button accessor names the #559 testid, the click method drives it,
+    // and the shared error span carries accessor + expect helper.
+    assert!(
+        rendered.contains("infoActionEscalate(): Locator"),
+        "button accessor missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("return this.page.getByTestId('info-action-escalate');"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("async actionInfoEscalate(): Promise<void>"),
+        "click method missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("infoActionError(): Locator"),
+        "error-span accessor missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("async expectInfoActionError(text: string): Promise<void>"),
+        "error expect helper missing:\n{rendered}"
+    );
+
+    // No actions ⇒ no action surface (payload gating, byte-identical
+    // flag-off): the same page class renders nothing action-shaped.
+    let mut bare = pom;
+    bare.actions.clear();
+    let rendered_bare = render_pom_page(&bare);
+    assert!(
+        !rendered_bare.contains("Action"),
+        "action surface must be payload-gated:\n{rendered_bare}"
+    );
+}
+
+#[test]
+fn action_spec_renders_legs_through_the_pom() {
+    use super::spec_payload::{ActionAct, ActionActKind, ActionSpec, ActionTest};
+
+    let spec = ActionSpec {
+        view_name: "RefundRequestDetail".to_string(),
+        label: "Refund Request".to_string(),
+        route: "/refundrequestdetail".to_string(),
+        id_param: Some("id".to_string()),
+        tests: vec![ActionTest {
+            title: "action escalate on info: 200 then 409".to_string(),
+            component: "info".to_string(),
+            op_snake: "escalate".to_string(),
+            fixture: Fixture {
+                casing: DtoKeyCasing::default(),
+                base_path: "/api/v1/refunds/refund_request".to_string(),
+                entries: vec![
+                    ("title".to_string(), "'Seed title'".to_string()),
+                    ("escalation".to_string(), "'none'".to_string()),
+                ],
+                deps: Vec::new(),
+            },
+            acts: vec![
+                ActionAct {
+                    kind: ActionActKind::Ok,
+                    round_trip: Some(("escalation".to_string(), "escalated".to_string())),
+                },
+                ActionAct {
+                    kind: ActionActKind::Conflict,
+                    round_trip: None,
+                },
+            ],
+        }],
+    };
+
+    let rendered = render_spec_action(&spec);
+    assert!(
+        rendered.contains("test('action escalate on info: 200 then 409'"),
+        "leg statuses must ride the title:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await ui.actionInfoEscalate();"),
+        "legs drive the POM click method:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "await ui.expectInfoActionError('has no transition from the current state');"
+        ),
+        "the conflict leg asserts the server's message through the POM:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await expect(ui.infoActionError()).toHaveCount(0);"),
+        "the ok leg asserts the error span absent:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("(persisted.data ?? persisted).escalation")
+            && rendered.contains("}).toBe('escalated');"),
+        "the ok leg round-trips the mutated field:\n{rendered}"
+    );
+    // Zero raw testid construction in the spec body (the POM contract).
+    assert!(
+        !rendered.contains("getByTestId("),
+        "spec bodies must not carry raw testids:\n{rendered}"
+    );
+}
+
+fn render_spec_action(spec: &super::spec_payload::ActionSpec) -> String {
+    super::render::render_action_spec(spec)
 }

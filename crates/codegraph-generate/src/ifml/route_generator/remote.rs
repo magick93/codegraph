@@ -132,7 +132,7 @@ impl RemoteModuleContext {
                     let pascal = q.export.strip_prefix("get").unwrap_or(&q.export);
                     s.push('\n');
                     s.push_str(&format!(
-                        "export const get{pascal}WorkflowLive = query.live(async function* (id: string) {{\n\
+                        "export const get{pascal}WorkflowLive = query.live('unchecked', async function* (id: string) {{\n\
                          \twhile (true) {{\n\
                          \t\tconst res = await apiFetch(`{base}/${{id}}/workflow`);\n\
                          \t\tif (res.ok) {{\n\

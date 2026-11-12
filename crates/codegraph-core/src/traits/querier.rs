@@ -5,12 +5,12 @@ use crate::types::{
     CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
     DataBindingResolution, DddModelGraph, DeployModelGraph, EnumValue, ErrorDefinitionNode,
     EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    IfmlManifestNode, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -536,6 +536,16 @@ pub trait GraphQuerier: Send + Sync {
     /// model by their declaration order.
     async fn get_deploy_models(&self) -> Result<Vec<DeployModelGraph>, GraphError> {
         Ok(Vec::new())
+    }
+
+    // ── IFML manifest query method (rexlang #118, WS6) ───────────────
+
+    /// The folded IFML control/route manifest of the run, whole.
+    /// `None` when the graph carries no manifest node — every pre-WS6
+    /// graph (and every run without `--ifml-files`) — which degrades
+    /// every consumer to its pre-WS6 behavior (presence-gated).
+    async fn get_ifml_manifest(&self) -> Result<Option<IfmlManifestNode>, GraphError> {
+        Ok(None)
     }
 
     /// When a composition parent projects a `{parent}_{feature}` child

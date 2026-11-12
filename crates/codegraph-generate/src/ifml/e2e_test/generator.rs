@@ -20,7 +20,8 @@ use super::super::route_generator::denial_target;
 use super::super::selectors::ComponentSelectors;
 use super::pom::{ViewPom, pom_file_set};
 use super::render::{
-    package_json, playwright_config, render_spec, render_ux_spec, render_workflow_spec,
+    package_json, playwright_config, render_action_spec, render_spec, render_ux_spec,
+    render_workflow_spec,
 };
 use super::spec_payload::{UxViewTest, ViewTestSpec, WorkflowTest};
 use super::ux_plans::build_ux_plans;
@@ -201,6 +202,18 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
+        // WS6: the folded IFML manifest (rexlang #118) — the action-op
+        // plane's input. `None` degrades every consumer (pre-WS6 graphs,
+        // no `--ifml-files`): no action POM surface, no action specs,
+        // byte-identical output.
+        let ifml_manifest = db
+            .get_ifml_manifest()
+            .await
+            .map_err(crate::error::Error::Graph)?;
+        // WS6: the manifest-proven action ops per view + the action spec
+        // payloads (empty ⇒ no action POM surface, no action specs).
+        let mut actions_by_view: HashMap<String, Vec<super::pom::PomAction>> = HashMap::new();
+        let mut action_specs: Vec<super::spec_payload::ActionSpec> = Vec::new();
         // ux-rules plane (issue #303): one plan per bound entity plus one
         // ux spec per view with an eligible fallback list. Flag off → no
         // plans, no ux specs (byte-identical output).
@@ -266,6 +279,20 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             if !workflow_tests.is_empty() {
                 workflow_specs.push((vc.name.clone(), workflow_tests));
             }
+            // WS6: the manifest-proven action specs + POM surface per view.
+            if let Some((pom_actions, action_spec)) = self
+                .build_action_spec(
+                    db,
+                    config,
+                    &project.identity.api_version,
+                    vc,
+                    ifml_manifest.as_ref(),
+                )
+                .await
+            {
+                actions_by_view.insert(vc.name.clone(), pom_actions);
+                action_specs.push(action_spec);
+            }
         }
         let spec_by_view: HashMap<&str, &ViewTestSpec> = specs
             .iter()
@@ -290,6 +317,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         if !specs.iter().any(base_spec_content)
             && workflow_specs.is_empty()
             && ux_specs.is_empty()
+            && action_specs.is_empty()
             && !has_auth_surface
         {
             eprintln!(
@@ -335,6 +363,10 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             .iter()
             .map(|(view_name, _)| format!("{}.ux.spec.ts", to_kebab_case(view_name)))
             .collect();
+        let active_action_specs: HashSet<String> = action_specs
+            .iter()
+            .map(|spec| format!("{}.action.spec.ts", to_kebab_case(&spec.view_name)))
+            .collect();
         let active_auth_specs: HashSet<String> = if auth_enabled {
             model
                 .view_containers
@@ -370,6 +402,12 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
                 if name.strip_suffix(".ux.spec.ts").is_some() {
                     if !active_ux_specs.contains(name) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                    continue;
+                }
+                if name.strip_suffix(".action.spec.ts").is_some() {
+                    if !active_action_specs.contains(name) {
                         let _ = std::fs::remove_file(&path);
                     }
                     continue;
@@ -472,6 +510,11 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 let kebab = to_kebab_case(&vc.name);
                 let empty_steps = Vec::new();
                 let journey_steps = journey_steps_by_view.get(&vc.name).unwrap_or(&empty_steps);
+                let empty_actions = Vec::new();
+                let actions = actions_by_view
+                    .get(&vc.name)
+                    .unwrap_or(&empty_actions)
+                    .clone();
                 let pom = super::pom::build_view_pom(
                     config,
                     self.mappings.as_ref(),
@@ -481,6 +524,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     &ux_plans,
                     auth_enabled,
                     journey_steps,
+                    actions,
                 );
                 (kebab, pom)
             })
@@ -582,6 +626,18 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     .join("ifml")
                     .join(format!("{}.ux.spec.ts", to_kebab_case(view_name))),
                 content: render_ux_spec(view_name, ux_test),
+            });
+        }
+
+        // WS6: the action specs — one `{view}.action.spec.ts` per view
+        // with manifest-proven, route-resolvable action ops.
+        for action_spec in &action_specs {
+            files.push(GeneratedFile {
+                path: self.output_dir.join("tests").join("ifml").join(format!(
+                    "{}.action.spec.ts",
+                    to_kebab_case(&action_spec.view_name)
+                )),
+                content: render_action_spec(action_spec),
             });
         }
 

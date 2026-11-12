@@ -1,7 +1,8 @@
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
-    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, ModuleDefinitionNode,
-    ModuleUseRecord, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingNode, EdgeProperties, EdgeType, EventNode, IfmlManifestNode,
+    ModuleDefinitionNode, ModuleUseRecord, ParameterDefinitionNode, ViewComponentNode,
+    ViewContainerNode,
 };
 use rex_ifml::*;
 
@@ -733,4 +734,28 @@ impl std::fmt::Display for IfmlIngestStats {
             self.imported_policies,
         )
     }
+}
+
+/// Persist the folded IFML control/route manifest (rexlang #118, WS6) as
+/// the run's singleton `IfmlManifestNode` — the driver Pass-1b fold lands
+/// in the graph here instead of being dropped after the counts print. The
+/// e2e generator reads it back through `get_ifml_manifest` to plan the POM
+/// action surface and the click-through action specs.
+pub async fn ingest_ifml_manifest(
+    ingestor: &dyn GraphIngestor,
+    manifest: &rex_ir::ifml_manifest::IfmlManifest,
+    source_paths: &[String],
+) -> Result<()> {
+    let model_json = serde_json::to_string(manifest).map_err(|e| Error::IfmlModel {
+        file: source_paths.join(", "),
+        reason: format!("manifest serialization failed: {e}"),
+    })?;
+    let node = IfmlManifestNode {
+        source_paths: source_paths.to_vec(),
+        model_json,
+    };
+    ingestor
+        .ingest_ifml_manifest(&node)
+        .await
+        .map_err(Error::Graph)
 }

@@ -1366,16 +1366,26 @@ pub(super) async fn build_page_context(
                     // reads the derived live state; everything else keeps
                     // the raw fetched paths (byte-identical).
                     if live && (fetch_item || fetch_form) {
-                        let fallback_expr = if is_form {
+                        // Two distinct strings: the NEEDLE the badge/transition
+                        // markup carries (workflow_value_path's output — forms
+                        // read the form-state derived; details already had
+                        // `data.item?` substituted to `data_var` above), and
+                        // the DERIVED's SSR fallback — which must reference a
+                        // variable declared BEFORE this block (data_var; the
+                        // TanStack form-state derived lives in the markup
+                        // region and would be used-before-declared).
+                        let badge_needle = if is_form {
                             format!("{}_form_state.workflow_state?.current_state", comp.js_name)
                         } else {
                             format!("{}?.workflow_state?.current_state", comp.data_var)
                         };
+                        let fallback_expr =
+                            format!("{}?.workflow_state?.current_state", comp.data_var);
                         let state_var = format!("{}_workflow_state", comp.js_name);
                         workflow.badge_html =
-                            workflow.badge_html.replace(&fallback_expr, &state_var);
+                            workflow.badge_html.replace(&badge_needle, &state_var);
                         for t in &mut workflow.transitions {
-                            t.html = t.html.replace(&fallback_expr, &state_var);
+                            t.html = t.html.replace(&badge_needle, &state_var);
                         }
                         comp.workflow_live = Some(RenderWorkflowLive {
                             export: format!("get{}WorkflowLive", remote_pascal(&comp.name)),

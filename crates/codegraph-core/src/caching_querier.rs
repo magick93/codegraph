@@ -11,12 +11,13 @@ use crate::types::{
     CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
     DataBindingResolution, DddModelGraph, DeployModelGraph, EnumValue, ErrorDefinitionNode,
     EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode, ref_target_candidate_title,
+    IfmlManifestNode, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    ref_target_candidate_title,
 };
 
 /// Cached codelist-for-property value: `Option<(CodeList, render_as)>`.
@@ -95,6 +96,10 @@ pub struct CachingQuerier<'a> {
     ddd_models_cache: RwLock<Option<Vec<DddModelGraph>>>,
     evt_models_cache: RwLock<Option<Vec<EvtModelGraph>>>,
     deploy_models_cache: RwLock<Option<Vec<DeployModelGraph>>>,
+    /// The IFML manifest, cached INCLUDING its absence (`None` inside =
+    /// not yet read; a graph without a manifest node caches `Some(None)` —
+    /// the read-compat answer must not re-query per consumer).
+    ifml_manifest_cache: RwLock<Option<Option<IfmlManifestNode>>>,
     chart_definitions_cache: RwLock<Option<Vec<ChartDefinitionNode>>>,
     codelists_cache: RwLock<Option<Vec<CodeList>>>,
     parent_candidates_cache: RwLock<Option<Vec<ParentCandidate>>>,
@@ -150,6 +155,7 @@ impl<'a> CachingQuerier<'a> {
             ddd_models_cache: RwLock::new(None),
             evt_models_cache: RwLock::new(None),
             deploy_models_cache: RwLock::new(None),
+            ifml_manifest_cache: RwLock::new(None),
             chart_definitions_cache: RwLock::new(None),
             codelists_cache: RwLock::new(None),
             parent_candidates_cache: RwLock::new(None),
@@ -1162,6 +1168,17 @@ impl GraphQuerier for CachingQuerier<'_> {
         Ok(models)
     }
 
+    async fn get_ifml_manifest(&self) -> Result<Option<IfmlManifestNode>, GraphError> {
+        if let Some(cached) = self.ifml_manifest_cache.read().unwrap().clone() {
+            cache_record("get_ifml_manifest", true);
+            return Ok(cached);
+        }
+        cache_record("get_ifml_manifest", false);
+        let node = self.inner.get_ifml_manifest().await?;
+        *self.ifml_manifest_cache.write().unwrap() = Some(node.clone());
+        Ok(node)
+    }
+
     async fn composition_table_conflict(
         &self,
         schema_title: &str,
@@ -1664,6 +1681,93 @@ mod batch_tests {
                         .as_ref()
                 );
             }
+        });
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    //! WS6: the folded IFML control/route manifest persists and reads back
+    //! whole (Mock + CachingQuerier first-read-wins).
+
+    use super::*;
+    use crate::mock::MockEngine;
+    use crate::traits::GraphIngestor;
+    use crate::types::IfmlManifestNode;
+
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    fn manifest_node() -> IfmlManifestNode {
+        IfmlManifestNode {
+            source_paths: vec!["app.ifml".to_string()],
+            model_json: r#"{"formatVersion":1,"edges":[{"source":{"type":"view","value":{"view":"Detail","component":"info"}},"trigger":"escalate","kind":"action","target":"Escalate"}],"actions":[{"name":"Escalate","target":"RefundRequest"}]}"#
+                .to_string(),
+        }
+    }
+
+    #[test]
+    fn ifml_manifest_round_trips_through_mock() {
+        block_on(async {
+            let engine = MockEngine::new();
+            engine.ingest_ifml_manifest(&manifest_node()).await.unwrap();
+
+            let loaded = engine.get_ifml_manifest().await.unwrap();
+            assert_eq!(loaded.as_ref(), Some(&manifest_node()));
+        });
+    }
+
+    #[test]
+    fn mock_reingest_replaces_the_manifest_singleton() {
+        block_on(async {
+            let engine = MockEngine::new();
+            engine.ingest_ifml_manifest(&manifest_node()).await.unwrap();
+            let mut replaced = manifest_node();
+            replaced.source_paths = vec!["other.ifml".to_string()];
+            engine.ingest_ifml_manifest(&replaced).await.unwrap();
+
+            let loaded = engine.get_ifml_manifest().await.unwrap();
+            assert_eq!(loaded.as_ref(), Some(&replaced));
+        });
+    }
+
+    #[test]
+    fn caching_querier_reads_the_manifest_first_read_wins() {
+        block_on(async {
+            let engine = MockEngine::new();
+            engine.ingest_ifml_manifest(&manifest_node()).await.unwrap();
+            let querier = CachingQuerier::new(&engine);
+
+            let first = querier.get_ifml_manifest().await.unwrap();
+            assert_eq!(first.as_ref(), Some(&manifest_node()));
+
+            // A post-first-read re-ingest does NOT change the cached view
+            // (the wrapper is created only in the generation phase — the
+            // graph is immutable there).
+            let mut moved = manifest_node();
+            moved.source_paths = vec!["moved.ifml".to_string()];
+            engine.ingest_ifml_manifest(&moved).await.unwrap();
+            let second = querier.get_ifml_manifest().await.unwrap();
+            assert_eq!(second, first);
+        });
+    }
+
+    #[test]
+    fn caching_querier_caches_an_absent_manifest() {
+        block_on(async {
+            let engine = MockEngine::new();
+            let querier = CachingQuerier::new(&engine);
+
+            // Old graphs carry no manifest node: None, cached, stable.
+            let first = querier.get_ifml_manifest().await.unwrap();
+            assert_eq!(first, None);
+            let second = querier.get_ifml_manifest().await.unwrap();
+            assert_eq!(second, None);
         });
     }
 }

@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use codegraph_config::DomainConfig;
 use codegraph_config::ux::{Display, UxRules};
 use codegraph_core::traits::GraphQuerier;
-use codegraph_naming::{to_kebab_case, to_pascal_case};
+use codegraph_core::types::IfmlManifestNode;
+use codegraph_naming::{to_kebab_case, to_pascal_case, to_snake_case};
 
 use super::super::api_paths::id_param_from;
 use super::super::context::{
@@ -22,7 +23,7 @@ use super::super::route_generator::{
 use super::super::selectors::{component_kind, is_collection, is_details, is_form};
 use super::fixtures::{
     Fixture, codelist_fixture_value, escape_regex, fixture_entries, form_spec, js_string,
-    modifiable_field, save_navigation_target, schema_backed_api, url_pattern,
+    modifiable_field, save_navigation_target, schema_backed_api, schema_for_entity, url_pattern,
     url_pattern_with_dialog, view_route,
 };
 use super::generator::IfmlE2eTestGenerator;
@@ -36,6 +37,7 @@ use super::spec_payload::{
     UxTimelineCheck, UxViewTest, ValidationTest, ViewJourney, ViewTestSpec, WorkflowTest,
     pick_transition,
 };
+use crate::ddd::service_ops::{self, ExecutionKind, ServiceOpRoute};
 
 impl IfmlE2eTestGenerator {
     pub(super) async fn build_view_spec(
@@ -1188,6 +1190,357 @@ fn path_persona(
             })
         })
         .map(|p| p.id.clone())
+}
+
+// ── WS6: the action-op plane (manifest → POM actions + action specs) ────────
+
+impl IfmlE2eTestGenerator {
+    /// Build one view's action spec from the folded manifest (WS6): every
+    /// `kind: action` edge whose component binds a schema-backed entity AND
+    /// whose action target resolves to a MOUNTED service-op route
+    /// (`routes_for_entity`, the same surface the API plane mounts) yields
+    /// one `ActionTest` with the legs the route provably supports.
+    ///
+    /// Resolution gates (each miss drops the edge silently — no invented
+    /// bindings): no manifest node (pre-WS6 graph), edge source not this
+    /// view, component not in the graph model (pattern-module-contributed
+    /// controls), entity/schema/API unresolved, no view id param, no
+    /// matching route, unplannable legs. `None` when no edge survives —
+    /// the spec file is not emitted (payload gating).
+    pub(super) async fn build_action_spec(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        vc: &IfmlViewContainer,
+        manifest: Option<&IfmlManifestNode>,
+    ) -> Option<(Vec<super::pom::PomAction>, super::spec_payload::ActionSpec)> {
+        use super::spec_payload::{ActionAct, ActionTest};
+        use rex_ir::ifml_manifest::{ManifestEdgeKind, ManifestEdgeSource};
+
+        let manifest = manifest?;
+        let manifest: rex_ir::ifml_manifest::IfmlManifest =
+            serde_json::from_str(&manifest.model_json).ok()?;
+        let id_param = id_param_from(&vc.params)?;
+
+        // The view's action edges, deterministic (manifest order — the
+        // derivation walks the expanded tree in declaration order).
+        let mut tests: Vec<ActionTest> = Vec::new();
+        let mut pom_actions: Vec<super::pom::PomAction> = Vec::new();
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        for edge in &manifest.edges {
+            if edge.kind != ManifestEdgeKind::Action {
+                continue;
+            }
+            let ManifestEdgeSource::View { view, component } = &edge.source else {
+                continue;
+            };
+            if view != &vc.name {
+                continue;
+            }
+            let Some(component_name) = component else {
+                continue;
+            };
+            let Some(component) = vc.components.iter().find(|c| &c.name == component_name) else {
+                continue;
+            };
+            let entity = component.entity.as_deref()?;
+            let Some(api) = schema_backed_api(db, config, entity, api_version).await else {
+                continue;
+            };
+            if !api.has_read && !api.has_update && !api.has_delete {
+                continue;
+            }
+            let Some(schema) = schema_for_entity(db, entity).await else {
+                continue;
+            };
+            let Some(domain) = entity_domain(db, config, &schema.title).await else {
+                continue;
+            };
+            let op_snake = to_snake_case(&edge.target);
+            if !seen.insert((component_name.clone(), op_snake.clone())) {
+                continue;
+            }
+            let routes =
+                service_ops::routes_for_entity(db, config, &domain, &schema.title, self.dto_casing)
+                    .await
+                    .unwrap_or_default();
+            let Some(route) = routes.iter().find(|r| r.snake == op_snake) else {
+                // The action names no mounted op — the dead-trigger scan
+                // (Ask 1) owns the warning; here it stays unbuilt.
+                continue;
+            };
+            let legs = plan_action_legs(db, &schema.title, route).await;
+            if legs.is_empty() {
+                continue;
+            }
+            let acts: Vec<ActionAct> = legs
+                .into_iter()
+                .map(|(kind, round_trip)| ActionAct { kind, round_trip })
+                .collect();
+            let statuses = acts
+                .iter()
+                .map(|a| a.kind.status())
+                .collect::<Vec<_>>()
+                .join(" then ");
+            tests.push(ActionTest {
+                title: format!("action {op_snake} on {}: {statuses}", component_name),
+                component: component_name.clone(),
+                op_snake,
+                fixture: self
+                    .attach_required_refs(
+                        db,
+                        config,
+                        api_version,
+                        component.entity.as_deref(),
+                        Fixture {
+                            casing: self.dto_casing,
+                            base_path: api.base_path.clone(),
+                            entries: self.typed_fixture_entries(db, config, component).await,
+                            deps: Vec::new(),
+                        },
+                    )
+                    .await,
+                acts,
+            });
+            pom_actions.push(super::pom::PomAction {
+                component: component_name.clone(),
+                pascal: to_pascal_case(component_name),
+                op_snake: route.snake.clone(),
+                op_kebab: to_kebab_case(&edge.target),
+            });
+        }
+        if tests.is_empty() {
+            return None;
+        }
+        Some((
+            pom_actions,
+            super::spec_payload::ActionSpec {
+                view_name: vc.name.clone(),
+                label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
+                route: view_route(&vc.name),
+                id_param: Some(id_param),
+                tests,
+            },
+        ))
+    }
+}
+
+/// The action legs one route provably supports (WS6). Every leg must be
+/// SOUND — the drive sequence must deterministically produce the asserted
+/// outcome for any conforming app. Unplannable shapes return an empty vec
+/// (the action stays unbuilt rather than guessed):
+///
+/// - `Seam` → `[501]` (the seam answers 501 naming the gap, any state).
+/// - `Read`/`Delete` → `[200]` (read returns the record; delete removes it).
+/// - `Update` without a `when` guard → `[200]`, plus `[409]` when the op's
+///   transitions all land on machine TERMINAL states (re-acting from the
+///   target state then provably conflicts).
+/// - `Update` WITH a `when` guard over the machine field → the guard admits
+///   the machine's initial state, the first act passes the guard and moves
+///   the record → `[200, 403]` (the re-act denies; authorize runs before
+///   the conflict check). A guard that doesn't admit the initial state, or
+///   whose shape the conservative scan cannot read, stays unbuilt.
+async fn plan_action_legs(
+    db: &dyn GraphQuerier,
+    entity_title: &str,
+    route: &ServiceOpRoute,
+) -> Vec<(super::spec_payload::ActionActKind, Option<(String, String)>)> {
+    use super::spec_payload::ActionActKind;
+
+    match &route.execution {
+        ExecutionKind::Seam { .. } => {
+            return vec![(ActionActKind::NotImplemented, None)];
+        }
+        ExecutionKind::Read | ExecutionKind::Delete => {
+            return vec![(ActionActKind::Ok, None)];
+        }
+        ExecutionKind::Update { .. } => {}
+    }
+
+    let Some(machine) = machine_for_entity(db, entity_title).await else {
+        // No machine: an unbound patch answers 200 (an empty body is an
+        // idempotent read), deterministically.
+        if route.authorize_fn.is_none() {
+            return vec![(ActionActKind::Ok, None)];
+        }
+        // A `when` guard without a machine cannot be driven to flip — skip.
+        return Vec::new();
+    };
+    let initial = machine.initial.clone();
+    let terminals: std::collections::HashSet<&str> =
+        machine.terminals.iter().map(String::as_str).collect();
+
+    // The op-level `when` guard's source states, read conservatively off
+    // the DSL condition text (the same `field == State` shape the rexlang
+    // guard typecheck admits): equality comparisons against declared
+    // machine states. Anything else refuses to plan.
+    let condition = operation_condition(db, entity_title, &route.op_name).await;
+    let guard_sources: Option<Vec<String>> = condition
+        .as_ref()
+        .map(|condition| machine_condition_source_states(condition, &machine.field, &machine));
+
+    // The op's transitions (the route plane already selected them).
+    let transitions = match &route.execution {
+        ExecutionKind::Update { state } => state
+            .as_ref()
+            .map(|s| s.op.as_slice())
+            .unwrap_or_default()
+            .to_vec(),
+        _ => Vec::new(),
+    };
+
+    if route.authorize_fn.is_some() {
+        // 200 + 403 requires: the guard admits the initial state (the
+        // first act passes), and the act MOVES the machine (the re-act
+        // then fails the guard).
+        let admits_initial = match &guard_sources {
+            Some(sources) => sources.contains(&initial),
+            None => false,
+        };
+        if admits_initial && !transitions.is_empty() {
+            let round_trip = ok_round_trip_check(route);
+            return vec![
+                (ActionActKind::Ok, round_trip),
+                (ActionActKind::Forbidden, None),
+            ];
+        }
+        return Vec::new();
+    }
+
+    // Unguarded update: 200 always; 409 when re-acting provably conflicts.
+    let mut legs = vec![(ActionActKind::Ok, ok_round_trip_check(route))];
+    if !transitions.is_empty()
+        && transitions
+            .iter()
+            .all(|t| terminals.contains(t.to.as_str()))
+    {
+        legs.push((ActionActKind::Conflict, None));
+    }
+    legs
+}
+
+/// The `field, expected` round-trip the ok leg asserts through the seeded
+/// record's GET: the machine field moving to the op's transition target
+/// (`Some` only when every transition shares one target — a single
+/// deterministic landing state).
+fn ok_round_trip_check(route: &ServiceOpRoute) -> Option<(String, String)> {
+    let ExecutionKind::Update { state } = &route.execution else {
+        return None;
+    };
+    let state = state.as_ref()?;
+    let mut targets = state.op.iter().map(|t| t.to.as_str().to_string());
+    let target = targets.next()?;
+    if targets.any(|other| other != target) {
+        return None;
+    }
+    Some((state.wire_key.as_str().to_string(), target))
+}
+
+/// The entity's machine, whole (the same rehydration the #449 surface
+/// uses). `None` when the entity carries no `.ddd` design machine.
+async fn machine_for_entity(
+    db: &dyn GraphQuerier,
+    entity_title: &str,
+) -> Option<rex_ir::ddd::StateMachine> {
+    let surface = crate::ddd::design::DddDesignSurface::from_graph(db)
+        .await
+        .ok()?;
+    surface.machine_for(entity_title)
+}
+
+/// The op-level `when` condition text for one op (the DDD design mirror).
+async fn operation_condition(
+    db: &dyn GraphQuerier,
+    entity_title: &str,
+    op_name: &str,
+) -> Option<String> {
+    let models = db.get_ddd_models().await.ok()?;
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                if op.name.eq_ignore_ascii_case(op_name) {
+                    return op.condition.clone();
+                }
+            }
+        }
+    }
+    let _ = entity_title;
+    None
+}
+
+/// The machine states a `when` condition reads, conservatively: only
+/// `field == State` / `State == field` comparisons against declared
+/// machine states, AND/OR-combined. `None` when the shape isn't
+/// recognized (the leg planner then refuses to plan a 403 drive).
+fn machine_condition_source_states(
+    condition: &str,
+    machine_field: &str,
+    machine: &rex_ir::ddd::StateMachine,
+) -> Vec<String> {
+    let mut sources = Vec::new();
+    for clause in condition.split("&&").chain(condition.split("||")) {
+        let clause = clause.trim();
+        let Some((lhs, rhs)) = clause.split_once("==") else {
+            continue;
+        };
+        let lhs = lhs.trim();
+        let rhs = rhs.trim();
+        let field_matches = |side: &str| {
+            side == machine_field
+                || side.eq_ignore_ascii_case(machine_field)
+                || codegraph_naming::to_snake_case(side)
+                    == codegraph_naming::to_snake_case(machine_field)
+        };
+        let state_names = machine.states();
+        let state_at = |side: &str| state_names.iter().any(|s| s.eq_ignore_ascii_case(side));
+        let state_name = if field_matches(lhs) && state_at(rhs) {
+            machine
+                .states()
+                .into_iter()
+                .find(|s| s.eq_ignore_ascii_case(rhs))
+                .map(str::to_string)
+        } else if field_matches(rhs) && state_at(lhs) {
+            machine
+                .states()
+                .into_iter()
+                .find(|s| s.eq_ignore_ascii_case(lhs))
+                .map(str::to_string)
+        } else {
+            None
+        };
+        if let Some(name) = state_name
+            && !sources.contains(&name)
+        {
+            sources.push(name);
+        }
+    }
+    sources
+}
+
+/// The domain key one entity title belongs to (schema-declared domain
+/// first, then the config scan — the `resolve_schema_with_domain`
+/// convention, mirrored locally to keep the api-paths module untouched).
+async fn entity_domain(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    entity_title: &str,
+) -> Option<String> {
+    if let Ok(Some(schema)) = db.get_schema(entity_title).await
+        && let Some(domain) = schema.domain
+    {
+        return Some(domain);
+    }
+    config
+        .domains
+        .iter()
+        .find(|(_, entry)| {
+            [entity_title, &format!("{entity_title}Type")]
+                .iter()
+                .any(|candidate| entry.entities.iter().any(|e| e == candidate))
+        })
+        .map(|(name, _)| name.clone())
 }
 
 #[cfg(test)]

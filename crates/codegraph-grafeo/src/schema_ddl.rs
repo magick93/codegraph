@@ -24,7 +24,14 @@
 /// Bumped to 3 for the `.ddd` machine mirror (`DddDesign.machine_json`): a
 /// cached graph persisted by a pre-machine binary reads the new nullable
 /// prop as NULL, silently losing the lifecycle — cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 3;
+///
+/// Bumped to 4 for the IFML manifest plane (WS6): the folded
+/// `IfmlManifestNode` (whole `IfmlManifest` blob) is a NEW node type —
+/// the #279 nullable-prop tolerance covers reads, but a cached graph
+/// persisted by a pre-WS6 binary would serve no manifest to the action
+/// plane and silently drop the e2e action surface — cold re-ingest
+/// instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 4;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -588,6 +595,16 @@ fn node_type_ddl() -> Vec<&'static str> {
         // families or edge types this time.
         "CREATE NODE TYPE IF NOT EXISTS DeployModel (
             source_path STRING NOT NULL,
+            model_json STRING NOT NULL
+        )",
+        // IFML manifest plane (rexlang #118, WS6). ONE singleton node per
+        // run: `model_json` carries the whole folded `IfmlManifest`
+        // serialized (`:DeployModel` pattern — consumers always want it
+        // whole), `source_paths` is the JSON array of the `.ifml` files
+        // that folded into it. Pre-WS6 graphs carry no node; consumers
+        // degrade to `None` (presence-gated).
+        "CREATE NODE TYPE IF NOT EXISTS IfmlManifest (
+            source_paths STRING NOT NULL,
             model_json STRING NOT NULL
         )",
     ]

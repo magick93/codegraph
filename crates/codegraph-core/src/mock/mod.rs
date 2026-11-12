@@ -103,6 +103,9 @@ pub struct MockEngine {
     evt_models: Mutex<Vec<EvtModelGraph>>,
     /// Ingested `.deploy` deployment models (rexlang #49).
     deploy_models: Mutex<Vec<DeployModelGraph>>,
+    /// The run's folded IFML control/route manifest (rexlang #118, WS6) —
+    /// a singleton: a re-ingest replaces it.
+    ifml_manifest: Mutex<Option<IfmlManifestNode>>,
     start_time: Instant,
 }
 
@@ -179,6 +182,7 @@ impl MockEngine {
             ddd_models: Mutex::new(Vec::new()),
             evt_models: Mutex::new(Vec::new()),
             deploy_models: Mutex::new(Vec::new()),
+            ifml_manifest: Mutex::new(None),
             start_time: Instant::now(),
         }
     }
