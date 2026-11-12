@@ -1,5 +1,5 @@
 //! Live acceptance gate for the #590 service-ops plane: the emitted
-//! `hurl/10_payroll_pay_run_actions.hurl` action contract must SERVE —
+//! `hurl/<nn>_payroll_pay_run_actions.hurl` action contract must SERVE —
 //! real HTTP against the generated axum app over a scratch Postgres —
 //! proving the whole lowering chain: 201 create / 200 wired delegations /
 //! 409 wrong-state transition guards / 501 abstract-op seams.
@@ -41,11 +41,21 @@ use test_framework::axum_server;
 use test_framework::postgres::{GateDb, database_reachable, resolve_base_target};
 use test_framework::process::have_tool;
 
-/// The emitted per-entity actions contract for the fixture's one entity
-/// (`ENTITY_NN_BASE = 10`, one entity → `10_payroll_pay_run_actions.hurl`;
-/// pinned by `service_ops_tests.rs`).
+/// The emitted per-entity actions contract for the fixture's pay_run
+/// entity (numbered from the generation order; the fixture gained a child
+/// entity in WS4, so the number is discovered rather than pinned).
 fn actions_path(output: &Path) -> PathBuf {
-    output.join("hurl/10_payroll_pay_run_actions.hurl")
+    let hurl_dir = output.join("hurl");
+    std::fs::read_dir(&hurl_dir)
+        .ok()
+        .and_then(|entries| {
+            entries.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+                p.extension().is_some_and(|x| x == "hurl")
+                    && p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().ends_with("_pay_run_actions.hurl"))
+            })
+        })
+        .unwrap_or_else(|| hurl_dir.join("10_payroll_pay_run_actions.hurl"))
 }
 
 fn gate_root() -> PathBuf {

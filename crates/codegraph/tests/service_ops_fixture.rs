@@ -22,6 +22,21 @@ pub const PAY_RUN_SCHEMA: &str = r#"{
   }
 }"#;
 
+/// A refers-linked CHILD entity: `role = "child"` in the entity config with
+/// `parent`/`parent_ref` — the unblocked target shape for child service ops
+/// (the route-nested child with its OWN repository). The parent FK is the
+/// synthetic `pay_run_id` column (config `parent_ref`), not a child-side
+/// schema property.
+pub const PAY_RUN_LINE_SCHEMA: &str = r#"{
+  "title": "PayRunLineType",
+  "type": "object",
+  "required": ["lineId"],
+  "properties": {
+    "lineId": { "type": "string" },
+    "notes": { "type": "string" }
+  }
+}"#;
+
 pub const PAY_RUN_MOX: &str = r#"
 package payroll
 
@@ -36,15 +51,20 @@ class PayRunType {
     String payRunId
     PayRunStatus payRunStatus
 }
+
+class PayRunLineType {
+    String lineId
+    String [0..1] notes
+}
 "#;
 
-/// One entity design with a full repository, a lifecycle machine, and a
-/// service carrying every lowering shape: capability-gated delete
-/// delegation, conditional-grant read delegation, an ungated update (`save`)
-/// delegation with no transition, a machine-bound transition (`submit`), an
-/// abstract seam (declared signature), and a protected op. Transition guards
-/// ride the GRANT `when`s (the `.actor` policy) and the machine state in the
-/// op-level `when`.
+/// Two entity designs (a root and its refers-linked CHILD, each with a full
+/// repository), a lifecycle machine on the root, and services carrying every
+/// lowering shape on both entities. The CHILD service ops delegate to the
+/// child repository: `adjust` (save), `remove` (delete), a
+/// capability-gated save (`reprice`), and a `findAll` delegation that keeps
+/// the 501 seam fail-closed (`summarize`). The child machine surface stays
+/// empty — child machines are title-keyed machinery, exercised by the root.
 pub const PAYROLL_DDD: &str = r#"
 import "pay_run.mox";
 
@@ -74,18 +94,27 @@ application Payroll {
             boolean notify(String note) capability SubmitPayRun;
             protected String internalAdjust();
         }
+        entity PayRunLineType scaffold repository PayRunLineRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        service PayRunLineService {
+            inject PayRunLineRepository;
+            adjust => PayRunLineRepository.save;
+            reprice => PayRunLineRepository.save capability AdjustPayRunLine;
+            remove => PayRunLineRepository.delete;
+            summarize => PayRunLineRepository.findAll;
+        }
     }
 }
 "#;
 
-/// Owner holds ApprovePayRun + SubmitPayRun unconditionally; Manager holds
-/// InspectPayRun unconditionally (lifecycle preconditions live in the
-/// `.ddd` op-level `when`, which binds the machine state). The `never_both`
-/// pair is
-/// split across TWO policy files — each compiles clean, but the MERGED
-/// policy has Owner holding both sides, which is exactly the runtime
-/// separation-of-duties gate's reason to exist (single-file violations
-/// are rejected statically by the rex actor compiler).
+/// Manager holds InspectPayRun unconditionally, plus the CHILD entity's
+/// `AdjustPayRunLine` (unconditional — child grant-`when` typing is
+/// upstream-blocked with the module's single machine; the capability gate
+/// itself is what the child handler pin exercises).
 pub const POLICY_ACTOR: &str = r#"
 import "pay_run.mox"
 
@@ -97,6 +126,7 @@ actors Payroll {
     capability InspectPayRun on PayRunType
     capability SubmitPayRun on PayRunType
     capability PreparePayRun on PayRunType
+    capability AdjustPayRunLine on PayRunLineType
 
     grant Owner {
         permit ApprovePayRun
@@ -105,6 +135,7 @@ actors Payroll {
 
     grant Manager {
         permit InspectPayRun
+        permit AdjustPayRunLine
     }
 
     never_both { PreparePayRun, ApprovePayRun }
@@ -136,7 +167,31 @@ operations = ["create", "read", "update", "delete", "list"]
 label = "Payroll"
 schema_dir = "model-schemas"
 postgres_schema = "payroll"
-entities = ["PayRunType"]
+entities = ["PayRunType", "PayRunLineType"]
+
+[domains.payroll.entity_config.PayRunLineType]
+role = "child"
+parent = "PayRunType"
+parent_ref = "pay_run_id"
+"#;
+
+/// The mox-first twin: NO `entities` key (author-declarative mox), no JSON
+/// schemas — the mox bridge owns the graph. Same child declaration. Pins
+/// the openapi service-op registration in mox-first mode (the pre-WS4 loop
+/// iterated `domain_entry.entities`, which is empty here).
+pub const DOMAINS_TOML_MOX_FIRST: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+
+[domains.payroll.entity_config.PayRunLineType]
+role = "child"
+parent = "PayRunType"
+parent_ref = "pay_run_id"
 "#;
 
 // ── Harness ────────────────────────────────────────────────────────────
@@ -157,6 +212,7 @@ pub fn write_fixture_in(_prefix: &str, ddd_source: &str) -> Fixture {
     let schemas_dir = root.join("model-schemas").join("payroll").join("json");
     fs::create_dir_all(&schemas_dir).unwrap();
     fs::write(schemas_dir.join("PayRunType.json"), PAY_RUN_SCHEMA).unwrap();
+    fs::write(schemas_dir.join("PayRunLineType.json"), PAY_RUN_LINE_SCHEMA).unwrap();
     let schemas_dir = root.join("model-schemas");
     let mox = root.join("pay_run.mox");
     fs::write(&mox, PAY_RUN_MOX).unwrap();
@@ -168,6 +224,33 @@ pub fn write_fixture_in(_prefix: &str, ddd_source: &str) -> Fixture {
     fs::write(&actor_b, POLICY_B_ACTOR).unwrap();
     let config = root.join("domains.toml");
     fs::write(&config, DOMAINS_TOML).unwrap();
+    Fixture {
+        schemas_dir,
+        mox,
+        ddd,
+        actor,
+        config,
+    }
+}
+
+/// A mox-FIRST variant of the fixture: no JSON schemas at all, and the
+/// config carries NO `entities` key (author-declarative mox). The mox
+/// bridge owns the graph; the `.ddd` + `.actor` inputs are unchanged.
+pub fn write_mox_first_fixture_in(_prefix: &str, ddd_source: &str) -> Fixture {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir); // the fixture outlives the guard on purpose
+    let schemas_dir = root.join("model-schemas");
+    let mox = root.join("pay_run.mox");
+    fs::write(&mox, PAY_RUN_MOX).unwrap();
+    let ddd = root.join("payroll.ddd");
+    fs::write(&ddd, ddd_source).unwrap();
+    let actor = root.join("policy.actor");
+    fs::write(&actor, POLICY_ACTOR).unwrap();
+    let actor_b = root.join("policy_b.actor");
+    fs::write(&actor_b, POLICY_B_ACTOR).unwrap();
+    let config = root.join("domains.toml");
+    fs::write(&config, DOMAINS_TOML_MOX_FIRST).unwrap();
     Fixture {
         schemas_dir,
         mox,
@@ -193,16 +276,18 @@ pub async fn ingest(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
         .values()
         .flat_map(|d| d.entities.iter().cloned())
         .collect();
-    codegraph::ingest::async_ingest::ingest_schemas(
-        &engine,
-        &fixture.schemas_dir,
-        &classifier,
-        &entity_names,
-        &codegraph_config::UiOverrideConfig::default(),
-        &config.defaults.type_suffix,
-    )
-    .await
-    .unwrap();
+    if !entity_names.is_empty() {
+        codegraph::ingest::async_ingest::ingest_schemas(
+            &engine,
+            &fixture.schemas_dir,
+            &classifier,
+            &entity_names,
+            &codegraph_config::UiOverrideConfig::default(),
+            &config.defaults.type_suffix,
+        )
+        .await
+        .unwrap();
+    }
     let mox_stats = codegraph::ingest::mox_ingest::ingest_mox_files(
         &engine,
         &engine,
@@ -213,7 +298,7 @@ pub async fn ingest(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
     .await
     .unwrap()
     .stats;
-    assert_eq!(mox_stats.skipped, 0, "mox class must bridge the schema");
+    assert_eq!(mox_stats.skipped, 0, "mox classes must bridge the schemas");
     let ddd_stats = codegraph::ingest::ddd_ingest::ingest_ddd_files(
         &engine,
         &engine,
@@ -222,7 +307,7 @@ pub async fn ingest(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
     )
     .await
     .unwrap();
-    assert_eq!(ddd_stats.services, 1, "the service must ingest");
+    assert_eq!(ddd_stats.services, 2, "both services must ingest");
     let policy = codegraph::ifml_actor_import::resolve_actor_policy(
         &["policy.actor".to_string(), "policy_b.actor".to_string()],
         fixture.ddd.parent().unwrap(),

@@ -273,6 +273,230 @@ pub mod compensation {
             }
         }
     }
+
+    /// WS4: the child entity's query module — mirrors the emitted
+    /// `queries/compensation/pay_run_line.sql` annotation set, including
+    /// the parent-scoped reads the child service-op handlers call.
+    pub mod pay_run_line {
+        use crate::client::GenericClient;
+        use std::marker::PhantomData;
+
+        type Error = tokio_postgres::Error;
+
+        /// Row shape: field-for-field what the generated
+        /// `cornucopia_repository_impl.rs` reads off `.opt()`/`.all()` rows.
+        #[derive(Debug)]
+        pub struct GetPayRunLine {
+            pub id: uuid::Uuid,
+            pub line_id: String,
+            pub notes: Option<String>,
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
+        }
+
+        pub type ListPayRunLine = GetPayRunLine;
+
+        // --! create_pay_run_line (line_id, notes?, parent_id) : (id)
+        pub struct CreatePayRunLineStmt;
+
+        pub fn create_pay_run_line() -> CreatePayRunLineStmt {
+            CreatePayRunLineStmt
+        }
+
+        pub struct CreatePayRunLineQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a (), &'s ())>,
+        }
+
+        impl CreatePayRunLineStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _line_id: &'a String,
+                _notes: &'a Option<String>,
+                _parent_id: &'a uuid::Uuid,
+            ) -> CreatePayRunLineQuery<'c, 'a, 's, C> {
+                CreatePayRunLineQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> CreatePayRunLineQuery<'c, 'a, 's, C> {
+            pub async fn one(&self) -> Result<uuid::Uuid, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! get_pay_run_line (id) : (id, line_id, notes?, created_at, updated_at)
+        pub struct GetPayRunLineStmt;
+
+        pub fn get_pay_run_line() -> GetPayRunLineStmt {
+            GetPayRunLineStmt
+        }
+
+        pub fn get_pay_run_line_including_deleted() -> GetPayRunLineStmt {
+            GetPayRunLineStmt
+        }
+
+        pub struct GetPayRunLineQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a uuid::Uuid, &'s ())>,
+        }
+
+        impl GetPayRunLineStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _id: &'a uuid::Uuid,
+            ) -> GetPayRunLineQuery<'c, 'a, 's, C> {
+                GetPayRunLineQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> GetPayRunLineQuery<'c, 'a, 's, C> {
+            pub async fn opt(&self) -> Result<Option<GetPayRunLine>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! get_pay_run_line_scoped (id, parent_id) : (…same row…)
+        pub struct GetPayRunLineScopedStmt;
+
+        pub fn get_pay_run_line_scoped() -> GetPayRunLineScopedStmt {
+            GetPayRunLineScopedStmt
+        }
+
+        pub fn get_pay_run_line_scoped_including_deleted() -> GetPayRunLineScopedStmt {
+            GetPayRunLineScopedStmt
+        }
+
+        pub struct GetPayRunLineScopedQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a (uuid::Uuid, uuid::Uuid), &'s ())>,
+        }
+
+        impl GetPayRunLineScopedStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _id: &'a uuid::Uuid,
+                _parent_id: &'a uuid::Uuid,
+            ) -> GetPayRunLineScopedQuery<'c, 'a, 's, C> {
+                GetPayRunLineScopedQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> GetPayRunLineScopedQuery<'c, 'a, 's, C> {
+            pub async fn opt(&self) -> Result<Option<GetPayRunLine>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! list_pay_run_line (offset, page_size) : (…same row…)
+        pub struct ListPayRunLineStmt;
+
+        pub fn list_pay_run_line() -> ListPayRunLineStmt {
+            ListPayRunLineStmt
+        }
+
+        pub fn list_pay_run_line_including_deleted() -> ListPayRunLineStmt {
+            ListPayRunLineStmt
+        }
+
+        pub struct ListPayRunLineQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a i64, &'s ())>,
+        }
+
+        impl ListPayRunLineStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _page_size: &'a i64,
+                _offset: &'a i64,
+            ) -> ListPayRunLineQuery<'c, 'a, 's, C> {
+                ListPayRunLineQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> ListPayRunLineQuery<'c, 'a, 's, C> {
+            pub async fn all(&self) -> Result<Vec<ListPayRunLine>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! count_pay_run_line : (count)
+        pub struct CountPayRunLineStmt;
+
+        pub fn count_pay_run_line() -> CountPayRunLineStmt {
+            CountPayRunLineStmt
+        }
+
+        pub fn count_pay_run_line_including_deleted() -> CountPayRunLineStmt {
+            CountPayRunLineStmt
+        }
+
+        pub struct CountPayRunLineQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a (), &'s ())>,
+        }
+
+        impl CountPayRunLineStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+            ) -> CountPayRunLineQuery<'c, 'a, 's, C> {
+                CountPayRunLineQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> CountPayRunLineQuery<'c, 'a, 's, C> {
+            pub async fn one(&self) -> Result<i64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! update_pay_run_line (id, line_id?, notes?) — exec: SET params
+        // bind in SQL first-occurrence order, the trailing `&id` last.
+        pub struct UpdatePayRunLineStmt;
+
+        pub fn update_pay_run_line() -> UpdatePayRunLineStmt {
+            UpdatePayRunLineStmt
+        }
+
+        impl UpdatePayRunLineStmt {
+            pub async fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _line_id: &'a Option<String>,
+                _notes: &'a Option<String>,
+                _id: &'a uuid::Uuid,
+            ) -> Result<u64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! delete_pay_run_line (id) — exec
+        pub struct DeletePayRunLineStmt;
+
+        pub fn delete_pay_run_line() -> DeletePayRunLineStmt {
+            DeletePayRunLineStmt
+        }
+
+        impl DeletePayRunLineStmt {
+            pub async fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _id: &'a uuid::Uuid,
+            ) -> Result<u64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+    }
 }
 "#;
 
@@ -337,34 +561,34 @@ fn assert_check_red(label: &str, expected_marker: &str, outcome: &CheckOutcome) 
 }
 
 /// The annotation names in the emitted SQL — the stub function set is
-/// pinned to exactly this list (both directions).
+/// pinned to exactly this list (both directions). Both fixture entities'
+/// SQL files feed the union (the stub carries a module per entity).
 fn emitted_query_fns(output: &Path) -> Vec<String> {
-    let sql_path = output
-        .join("queries")
-        .join(DOMAIN)
-        .join(format!("{TABLE}.sql"));
-    let sql = fs::read_to_string(&sql_path).unwrap_or_else(|e| {
-        panic!(
-            "emitted query SQL must exist at {}: {e}",
-            sql_path.display()
-        )
-    });
-    let mut names: Vec<String> = sql
-        .lines()
-        .filter_map(|line| {
+    let mut names = Vec::new();
+    for table in [TABLE, "pay_run_line"] {
+        let sql_path = output
+            .join("queries")
+            .join(DOMAIN)
+            .join(format!("{table}.sql"));
+        let sql = fs::read_to_string(&sql_path).unwrap_or_else(|e| {
+            panic!(
+                "emitted query SQL must exist at {}: {e}",
+                sql_path.display()
+            )
+        });
+        names.extend(sql.lines().filter_map(|line| {
             let trimmed = line.trim_start();
             trimmed
                 .strip_prefix("--! ")?
                 .split_whitespace()
                 .next()
                 .map(|name| name.trim_end_matches('(').to_string())
-        })
-        .collect();
+        }));
+    }
     names.sort();
     assert!(
         !names.is_empty(),
-        "emitted query SQL must carry `--!` annotations: {}",
-        sql_path.display()
+        "emitted query SQL must carry `--!` annotations"
     );
     names
 }
@@ -454,9 +678,42 @@ async fn generated_worker_wasm_check_is_in_ci() {
         type_expr: None,
     };
     let props = vec![text_prop("name", false), text_prop("notes", true)];
+    // WS4: the refers-linked CHILD entity — `role = "child"` config with a
+    // synthetic parent FK (`parent_ref`), exercising the child service-op
+    // plane's scoped load + nested routes under the workers topology.
+    let pay_run_line = codegraph_core::types::SchemaNode {
+        namespace: None,
+        schema_id: "compensation/json/PayRunLineType.json".to_string(),
+        title: "PayRunLineType".to_string(),
+        description: Some("A pay run line".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some(DOMAIN.to_string()),
+        rel_path: "compensation/json/PayRunLineType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "PayRunLine".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "PayRunLine".to_string(),
+        pg_table_name: "pay_run_line".to_string(),
+        api_path_segment: "pay-run-line".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: true,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    };
+    let line_props = vec![text_prop("line_id", false), text_prop("notes", true)];
     let mock = codegraph_core::mock::MockEngine::builder()
         .with_schema(pay_run)
         .with_properties(ENTITY_TITLE, props)
+        .with_schema(pay_run_line)
+        .with_properties("PayRunLineType", line_props)
         .build();
 
     // The service-op plane (issue #590): one capability-gated delegation op
@@ -471,83 +728,186 @@ async fn generated_worker_wasm_check_is_in_ci() {
             source_path: "fixture.ddd".to_string(),
         },
         modules: Vec::new(),
-        designs: vec![codegraph_core::types::DddDesignNode {
-            application: "Compilecheck".to_string(),
-            module: "compensation".to_string(),
-            class: "PayRun".to_string(),
-            resolved_title: Some(ENTITY_TITLE.to_string()),
-            stereotype: "entity".to_string(),
-            is_abstract: false,
-            flags: codegraph_core::types::DddDesignFlags::default(),
-            machine_json: None,
-            ordinal: 0,
-        }],
-        repositories: vec![codegraph_core::types::DddRepositoryNode {
-            application: "Compilecheck".to_string(),
-            name: "PayRunRepository".to_string(),
-            design_class: "PayRun".to_string(),
-            operations: vec![
-                codegraph_core::types::DddRepositoryOperation {
-                    name: "findById".to_string(),
-                    builtin: Some("findById".to_string()),
-                    return_type: None,
-                    return_multiplicity: None,
-                    params: Vec::new(),
-                    ordinal: 0,
-                    is_protected: false,
-                },
-                codegraph_core::types::DddRepositoryOperation {
-                    name: "findAll".to_string(),
-                    builtin: Some("findAll".to_string()),
-                    return_type: None,
-                    return_multiplicity: None,
-                    params: Vec::new(),
-                    ordinal: 1,
-                    is_protected: false,
-                },
-                codegraph_core::types::DddRepositoryOperation {
-                    name: "save".to_string(),
-                    builtin: Some("save".to_string()),
-                    return_type: None,
-                    return_multiplicity: None,
-                    params: Vec::new(),
-                    ordinal: 2,
-                    is_protected: false,
-                },
-                codegraph_core::types::DddRepositoryOperation {
-                    name: "delete".to_string(),
-                    builtin: Some("delete".to_string()),
-                    return_type: None,
-                    return_multiplicity: None,
-                    params: Vec::new(),
-                    ordinal: 3,
-                    is_protected: false,
-                },
-            ],
-        }],
-        services: vec![codegraph_core::types::DddServiceNode {
-            application: "Compilecheck".to_string(),
-            module: "compensation".to_string(),
-            name: "PayRunService".to_string(),
-            description: None,
-            dependencies: vec!["PayRunRepository".to_string()],
-            decision_dependencies: Vec::new(),
-            operations: vec![codegraph_core::types::DddServiceOperation {
-                name: "approve".to_string(),
-                return_type: None,
-                return_multiplicity: None,
-                params: Vec::new(),
-                delegation_target: Some("PayRunRepository".to_string()),
-                delegation_operation: Some("delete".to_string()),
-                capabilities: vec!["ApprovePayRun".to_string()],
-                is_protected: false,
-                condition: None,
-                emits: Vec::new(),
-                invokes: Vec::new(),
+        designs: vec![
+            codegraph_core::types::DddDesignNode {
+                application: "Compilecheck".to_string(),
+                module: "compensation".to_string(),
+                class: "PayRun".to_string(),
+                resolved_title: Some(ENTITY_TITLE.to_string()),
+                stereotype: "entity".to_string(),
+                is_abstract: false,
+                flags: codegraph_core::types::DddDesignFlags::default(),
+                machine_json: None,
                 ordinal: 0,
-            }],
-            ordinal: 0,
-        }],
+            },
+            // WS4: the child entity's own design + repository — the child
+            // service ops delegate to it (never to the parent's).
+            codegraph_core::types::DddDesignNode {
+                application: "Compilecheck".to_string(),
+                module: "compensation".to_string(),
+                class: "PayRunLine".to_string(),
+                resolved_title: Some("PayRunLineType".to_string()),
+                stereotype: "entity".to_string(),
+                is_abstract: false,
+                flags: codegraph_core::types::DddDesignFlags::default(),
+                machine_json: None,
+                ordinal: 1,
+            },
+        ],
+        repositories: vec![
+            codegraph_core::types::DddRepositoryNode {
+                application: "Compilecheck".to_string(),
+                name: "PayRunRepository".to_string(),
+                design_class: "PayRun".to_string(),
+                operations: vec![
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "findById".to_string(),
+                        builtin: Some("findById".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 0,
+                        is_protected: false,
+                    },
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "findAll".to_string(),
+                        builtin: Some("findAll".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 1,
+                        is_protected: false,
+                    },
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "save".to_string(),
+                        builtin: Some("save".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 2,
+                        is_protected: false,
+                    },
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "delete".to_string(),
+                        builtin: Some("delete".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 3,
+                        is_protected: false,
+                    },
+                ],
+            },
+            codegraph_core::types::DddRepositoryNode {
+                application: "Compilecheck".to_string(),
+                name: "PayRunLineRepository".to_string(),
+                design_class: "PayRunLine".to_string(),
+                operations: vec![
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "findById".to_string(),
+                        builtin: Some("findById".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 0,
+                        is_protected: false,
+                    },
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "findAll".to_string(),
+                        builtin: Some("findAll".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 1,
+                        is_protected: false,
+                    },
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "save".to_string(),
+                        builtin: Some("save".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 2,
+                        is_protected: false,
+                    },
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "delete".to_string(),
+                        builtin: Some("delete".to_string()),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        ordinal: 3,
+                        is_protected: false,
+                    },
+                ],
+            },
+        ],
+        services: vec![
+            codegraph_core::types::DddServiceNode {
+                application: "Compilecheck".to_string(),
+                module: "compensation".to_string(),
+                name: "PayRunService".to_string(),
+                description: None,
+                dependencies: vec!["PayRunRepository".to_string()],
+                decision_dependencies: Vec::new(),
+                operations: vec![codegraph_core::types::DddServiceOperation {
+                    name: "approve".to_string(),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    delegation_target: Some("PayRunRepository".to_string()),
+                    delegation_operation: Some("delete".to_string()),
+                    capabilities: vec!["ApprovePayRun".to_string()],
+                    is_protected: false,
+                    condition: None,
+                    emits: Vec::new(),
+                    invokes: Vec::new(),
+                    ordinal: 0,
+                }],
+                ordinal: 0,
+            },
+            // WS4: the child service — save + delete delegations lower via
+            // the child command plane over the parent-scoped load.
+            codegraph_core::types::DddServiceNode {
+                application: "Compilecheck".to_string(),
+                module: "compensation".to_string(),
+                name: "PayRunLineService".to_string(),
+                description: None,
+                dependencies: vec!["PayRunLineRepository".to_string()],
+                decision_dependencies: Vec::new(),
+                operations: vec![
+                    codegraph_core::types::DddServiceOperation {
+                        name: "adjust".to_string(),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        delegation_target: Some("PayRunLineRepository".to_string()),
+                        delegation_operation: Some("save".to_string()),
+                        capabilities: Vec::new(),
+                        is_protected: false,
+                        condition: None,
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
+                        ordinal: 0,
+                    },
+                    codegraph_core::types::DddServiceOperation {
+                        name: "remove".to_string(),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        delegation_target: Some("PayRunLineRepository".to_string()),
+                        delegation_operation: Some("delete".to_string()),
+                        capabilities: Vec::new(),
+                        is_protected: false,
+                        condition: None,
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
+                        ordinal: 1,
+                    },
+                ],
+                ordinal: 1,
+            },
+        ],
         searches: Vec::new(),
     };
     use codegraph_core::traits::GraphIngestor;
@@ -590,7 +950,12 @@ operations = ["create", "read", "update", "delete", "list"]
 label = "Compensation"
 schema_dir = "compensation"
 postgres_schema = "compensation"
-entities = ["PayRunType"]
+entities = ["PayRunType", "PayRunLineType"]
+
+[domains.compensation.entity_config.PayRunLineType]
+role = "child"
+parent = "PayRunType"
+parent_ref = "pay_run_id"
 "#,
     )
     .unwrap();
@@ -773,6 +1138,10 @@ directions = ["push"]
         "domain/compensation/pay_run/command.rs",
         "domain/compensation/pay_run/cornucopia_repository_impl.rs",
         "domain/compensation/pay_run/dto_response.rs",
+        // WS4: the child plane compiles under the workers topology too.
+        "domain/compensation/pay_run_line/command.rs",
+        "domain/compensation/pay_run_line/cornucopia_repository_impl.rs",
+        "domain/compensation/pay_run_line/dto_response.rs",
     ] {
         let path = worker_src.join(required);
         assert!(
@@ -782,12 +1151,17 @@ directions = ["push"]
         );
     }
     // The service-op plane (issue #590): routes + policy-gated handlers
-    // emit into the worker crate.
+    // emit into the worker crate. WS4: the CHILD's action routes nest under
+    // the parent router and its handler loads through the scoped read.
     let worker_router = fs::read_to_string(worker_src.join(format!("api/{DOMAIN}/router.rs")))
         .expect("worker router emits");
     assert!(
         worker_router.contains("/actions/approve"),
         "the worker router must register the action route:\n{worker_router}"
+    );
+    assert!(
+        worker_router.contains(".nest(\"/{pay_run_id}/pay-run-line\", pay_run_line_routes())"),
+        "the parent worker router must nest the child routes fn:\n{worker_router}"
     );
     let worker_handler =
         fs::read_to_string(worker_src.join(format!("api/{DOMAIN}/pay_run_handler.rs")))
@@ -800,6 +1174,21 @@ directions = ["push"]
         worker_handler.contains(r#"if role == "api_key""#),
         "the api_key bypass must render in the worker handler:\n{worker_handler}"
     );
+    let child_handler =
+        fs::read_to_string(worker_src.join(format!("api/{DOMAIN}/pay_run_line_handler.rs")))
+            .expect("worker child handler emits");
+    assert!(
+        child_handler.contains("Path((parent_id, pay_run_line_id)): Path<(Uuid, Uuid)>"),
+        "the child action handlers must bind the two-uuid tuple:\n{child_handler}"
+    );
+    assert!(
+        child_handler.contains("find_by_id_scoped(pay_run_line_id, parent_id"),
+        "the child record load must be parent-scoped in the worker crate:\n{child_handler}"
+    );
+    assert!(
+        child_handler.contains("service_op_adjust"),
+        "the child service op handler must emit:\n{child_handler}"
+    );
     for required in [
         "workers/gateway/src/integration_catalog.rs",
         "workers/gateway/src/integration_router.rs",
@@ -808,6 +1197,7 @@ directions = ["push"]
         "cornucopia-queries/Cargo.toml",
         "domain-types/Cargo.toml",
         "queries/compensation/pay_run.sql",
+        "queries/compensation/pay_run_line.sql",
     ] {
         let path = output_dir.join(required);
         assert!(path.exists(), "missing generated file: {}", path.display());

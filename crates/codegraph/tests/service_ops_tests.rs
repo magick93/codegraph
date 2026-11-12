@@ -25,7 +25,7 @@ use tempfile::TempDir;
 
 use fixture::{
     DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, read, run_generation,
-    tempdir, write_fixture_in,
+    tempdir, write_fixture_in, write_mox_first_fixture_in,
 };
 
 /// The first `HTTP <status>` after `needle` in a hurl file.
@@ -194,9 +194,10 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     );
 
     // ── hurl: per-entity actions contract ──
-    // Numbering mirrors the entity contract's global order; this fixture
-    // has one entity so the file is 10_payroll_pay_run_actions.hurl.
-    let actions = read(&out.path().join("hurl/10_payroll_pay_run_actions.hurl"));
+    // Numbering mirrors the entity contract's global order; the fixture's
+    // title-sort puts PayRunLineType first, so pay_run's actions file is
+    // 11_payroll_pay_run_actions.hurl.
+    let actions = read(&out.path().join("hurl/11_payroll_pay_run_actions.hurl"));
     // A fresh fixture is created and captured before the action legs.
     assert!(actions.contains("HTTP 201"), "{actions}");
     assert!(actions.contains("/actions/approve"), "{actions}");
@@ -248,6 +249,223 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     );
     // Policy note: the 403 surface rides JWT sessions; api keys bypass.
     assert!(actions.contains("bypass the policy gates"), "{actions}");
+}
+
+/// WS4: a service op bound to a refers-linked CHILD entity (`role = "child"`
+/// with parent/parent_ref) emits a NESTED action route under the parent's
+/// router — `POST /api/v1/{dom}/{parent}/{parent_id}/{child}/{child_id}/
+/// actions/{op}` — with a scoped record load, the child command plane,
+/// OpenAPI registration, and hurl coverage. Child `save`/`delete`
+/// delegations lower via the scoped load; everything else stays a 501 seam.
+#[tokio::test]
+async fn child_service_ops_emit_nested_routes_and_scoped_loads() {
+    let fixture = write_fixture_in("service_ops_child_ops", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // ── router: the child routes fn carries the action routes and the
+    //    PARENT nests it; the child is NOT mounted at top level ──
+    let router = read(&out.path().join("src/api/payroll/router.rs"));
+    assert!(
+        router.contains(".nest(\"/{pay_run_id}/pay-run-line\", pay_run_line_routes())"),
+        "the parent router must nest the child routes fn:\n{router}"
+    );
+    let child_router_start = router
+        .find("fn pay_run_line_routes()")
+        .expect("the child routes fn must emit");
+    let child_router = &router[child_router_start..];
+    for snake in ["adjust", "reprice", "remove", "summarize"] {
+        assert!(
+            child_router.contains(&format!("/actions/{snake}\"")),
+            "child router must register actions/{snake}:\n{child_router}"
+        );
+    }
+    assert!(
+        !router.contains(".nest(\"/pay-run-line\""),
+        "the child routes fn must not mount at top level:\n{router}"
+    );
+
+    // ── child handler: nested utoipa path, two-uuid Path tuple, scoped load ──
+    let handler = read(&out.path().join("src/api/payroll/pay_run_line_handler.rs"));
+    // The nested action path with BOTH path params.
+    assert!(
+        handler.contains(
+            "/api/v1/payroll/pay-run/{pay_run_id}/pay-run-line/{pay_run_line_id}/actions/adjust"
+        ),
+        "the child action utoipa path must nest under the parent:\n{handler}"
+    );
+    // The two-uuid Path tuple (depth-1 child; no grandparent segment).
+    assert!(
+        handler.contains("Path((parent_id, pay_run_line_id)): Path<(Uuid, Uuid)>"),
+        "child action handlers must bind the parent + child ids:\n{handler}"
+    );
+    // The record load rides the SCOPED read (only emitted for children with
+    // a parent_ref) — never the plain find_by_id.
+    assert!(
+        handler.contains("find_by_id_scoped(pay_run_line_id, parent_id"),
+        "the child record load must be parent-scoped:\n{handler}"
+    );
+    // save → the child update command; delete → the child delete command.
+    assert!(
+        handler.contains("pay_run_line_commands.update(\n        pay_run_line_id,"),
+        "the child save delegation must lower to the child command plane:\n{handler}"
+    );
+    assert!(
+        handler.contains("_commands.delete(pay_run_line_id,"),
+        "the child delete delegation must lower to the child command plane:\n{handler}"
+    );
+    // The post-update reload is scoped too (the child design is auditable
+    // by default — the Sculptor semantics — so the `false` include_deleted
+    // arg rides along).
+    assert!(
+        handler.contains("find_by_id_scoped(pay_run_line_id, parent_id, false, api_key_info"),
+        "the post-update reload must be scoped:\n{handler}"
+    );
+    // The capability-gated child op renders its authorize fn.
+    assert!(
+        handler.contains("fn service_op_reprice_authorize"),
+        "the capability-gated child op must render its authorize fn:\n{handler}"
+    );
+    // The findAll delegation keeps the 501 seam fail-closed.
+    assert!(
+        handler.contains("has no executable lowering"),
+        "the unlowered child delegation must stay a 501 seam:\n{handler}"
+    );
+    // The child response type resolves through the child's DTO module.
+    assert!(
+        handler.contains("crate::domain::payroll::pay_run_line::dto_response::PayRunLineResponse"),
+        "the child authorize fn must reference the child response type:\n{handler}"
+    );
+
+    // ── openapi: the child op registers (path-agnostic fn+module context) ──
+    let openapi = read(&out.path().join("src/api/openapi/payroll.rs"));
+    assert!(
+        openapi.contains("pay_run_line_handler::service_op_adjust"),
+        "openapi must register the child action paths:\n{openapi}"
+    );
+
+    // ── hurl: the child's actions contract is nested ──
+    let child_actions = read(&out.path().join("hurl/10_payroll_pay_run_line_actions.hurl"));
+    // The parent preamble captures the parent id first.
+    assert!(
+        child_actions.contains("POST {{base_url}}/api/v1/payroll/pay-run"),
+        "the child actions contract must create the parent first:\n{child_actions}"
+    );
+    assert!(
+        child_actions.contains("pay_run_id: jsonpath \"$.data.id\""),
+        "the parent preamble must capture the parent id:\n{child_actions}"
+    );
+    // The child create runs at the nested URL and captures the child id.
+    assert!(
+        child_actions
+            .contains("POST {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line"),
+        "the child create must POST the nested collection:\n{child_actions}"
+    );
+    assert!(
+        child_actions.contains("pay_run_line_id: jsonpath \"$.data.id\""),
+        "the child create must capture the child id:\n{child_actions}"
+    );
+    // The action legs POST the nested action route.
+    assert!(
+        child_actions.contains(
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/{{pay_run_line_id}}/actions/adjust"
+        ),
+        "the child action legs must ride the nested action route:\n{child_actions}"
+    );
+    assert_eq!(
+        status_after(&child_actions, "/actions/adjust"),
+        Some(200),
+        "{child_actions}"
+    );
+    assert_eq!(
+        status_after(&child_actions, "/actions/remove"),
+        Some(200),
+        "{child_actions}"
+    );
+    assert_eq!(
+        status_after(&child_actions, "/actions/summarize"),
+        Some(501),
+        "{child_actions}"
+    );
+    // The capability-gated child op rides the api_key bypass → 200.
+    assert_eq!(
+        status_after(&child_actions, "/actions/reprice"),
+        Some(200),
+        "{child_actions}"
+    );
+
+    // ── hurl: the child's ENTITY contract is nested too ──
+    let child_entity = read(&out.path().join("hurl/10_payroll_pay_run_line.hurl"));
+    assert!(
+        child_entity.contains(
+            "GET {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line?page=0&page_size=10"
+        ),
+        "the child entity contract's LIST must ride the nested collection:\n{child_entity}"
+    );
+    assert!(
+        child_entity.contains(
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/{{pay_run_line_id}}"
+        ),
+        "the child entity contract's item URLs must nest under the parent:\n{child_entity}"
+    );
+    // The zero-uuid 404 check rides the nested URL (parent exists, child doesn't).
+    assert!(
+        child_entity.contains(
+            "GET {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/00000000-0000-0000-0000-000000000000"
+        ),
+        "the zero-uuid 404 check must stay nested:\n{child_entity}"
+    );
+
+    // The parent's own entity contract stays top-level.
+    let parent_entity = read(&out.path().join("hurl/11_payroll_pay_run.hurl"));
+    assert!(
+        parent_entity.contains("GET {{base_url}}/api/v1/payroll/pay-run?page=0&page_size=10"),
+        "the parent entity contract must stay top-level:\n{parent_entity}"
+    );
+}
+
+/// The openapi service-op registration works in MOX-FIRST mode too: no
+/// `entities` key in domains.toml, no JSON schemas — the pre-WS4 loop
+/// iterated `domain_entry.entities`, which is empty there, so service ops
+/// got NO OpenAPI registration. The generation-order loop registers both
+/// entities' ops.
+#[tokio::test]
+async fn openapi_registers_service_ops_in_mox_first_mode() {
+    let fixture = write_mox_first_fixture_in("service_ops_mox_first_openapi", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    let openapi = read(&out.path().join("src/api/openapi/payroll.rs"));
+    assert!(
+        openapi.contains("pay_run_handler::service_op_approve"),
+        "mox-first mode must register ROOT service ops:\n{openapi}"
+    );
+    assert!(
+        openapi.contains("pay_run_line_handler::service_op_adjust"),
+        "mox-first mode must register CHILD service ops:\n{openapi}"
+    );
 }
 
 /// P2 determinism: a mox enum outside `common` emits its GLOBAL codelist
@@ -361,6 +579,11 @@ async fn no_ddd_services_keeps_router_and_handler_free_of_actions() {
         .join("json");
     fs::create_dir_all(&json_dir).unwrap();
     fs::write(json_dir.join("PayRunType.json"), PAY_RUN_SCHEMA).unwrap();
+    fs::write(
+        json_dir.join("PayRunLineType.json"),
+        fixture::PAY_RUN_LINE_SCHEMA,
+    )
+    .unwrap();
     let schemas_dir = dir.path().join("model-schemas");
     let mox = dir.path().join("pay_run.mox");
     fs::write(&mox, PAY_RUN_MOX).unwrap();

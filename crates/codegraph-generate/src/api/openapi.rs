@@ -33,8 +33,9 @@ pub struct OpenApiDomain {
     /// `[functions]` binding sets `exposure = "http"` (byte-identity).
     /// (NO skip_serializing_if — the Tera context needs the empty vec.)
     pub functions: Vec<OpenApiFunction>,
-    /// Service-op action endpoints (issue #590). Root entities only.
-    /// (NO skip_serializing_if — the Tera context needs the empty vec.)
+    /// Service-op action endpoints (issue #590). Child entities register
+    /// too — their utoipa paths nest under the parent. (NO
+    /// skip_serializing_if — the Tera context needs the empty vec.)
     pub service_ops: Vec<OpenApiServiceOp>,
 }
 
@@ -82,8 +83,9 @@ pub struct PerDomainOpenApiContext {
     /// `[functions]` binding opts in.
     /// (NO skip_serializing_if — the Tera context needs the empty vec.)
     pub functions: Vec<OpenApiFunction>,
-    /// Service-op action endpoints (issue #590). Root entities only.
-    /// (NO skip_serializing_if — the Tera context needs the empty vec.)
+    /// Service-op action endpoints (issue #590). Child entities register
+    /// too — their utoipa paths nest under the parent. (NO
+    /// skip_serializing_if — the Tera context needs the empty vec.)
     pub service_ops: Vec<OpenApiServiceOp>,
 }
 
@@ -159,59 +161,42 @@ impl GlobalGenerator for OpenApiGenerator {
         // `[functions]` binding opts in — the standing byte-identity default.
         let mut functions_per_domain: std::collections::BTreeMap<String, Vec<OpenApiFunction>> =
             Default::default();
-        // Service-op action endpoints per domain (issue #590). Root
-        // entities only; lowering refusals propagate as config errors.
+        // Service-op action endpoints per domain (issue #590). Iterated in
+        // GENERATION ORDER — not the config `entities` lists, which are
+        // empty in mox-first runs (author-declarative mox), silently
+        // registering no service ops there. Child entities register too
+        // (their utoipa paths nest under the parent). Lowering refusals
+        // propagate as config errors.
         let mut service_ops_per_domain: std::collections::BTreeMap<String, Vec<OpenApiServiceOp>> =
             Default::default();
-        for (domain_name, domain_entry) in &config.domains {
-            for entity_name in &domain_entry.entities {
-                let role = domain_entry
-                    .get_entity_config(entity_name)
-                    .and_then(|ec| ec.role.clone())
-                    .unwrap_or_else(|| "root".to_string());
-                if role != "root" {
-                    continue;
-                }
-                if let Some(title) = entities_per_domain
-                    .get(domain_name.as_str())
-                    .and_then(|set| {
-                        set.iter()
-                            .find(|t| {
-                                t.chars().filter(|c| !c.is_whitespace()).collect::<String>()
-                                    == entity_name
-                                        .chars()
-                                        .filter(|c| !c.is_whitespace())
-                                        .collect::<String>()
-                            })
-                            .copied()
-                    })
-                {
-                    for op in crate::ddd::service_ops::routes_for_entity(
-                        db,
-                        config,
-                        domain_name,
-                        title,
-                        project.codegen.dto_key_casing,
-                    )
+        for entry in generation_order {
+            if !config.domains.contains_key(entry.domain.as_str()) {
+                continue;
+            }
+            for op in crate::ddd::service_ops::routes_for_entity(
+                db,
+                config,
+                &entry.domain,
+                &entry.schema_title,
+                project.codegen.dto_key_casing,
+            )
+            .await
+            .map_err(codegraph_core::error::Error::Config)?
+            {
+                let module = db
+                    .get_schema_in_domain(&entry.schema_title, &entry.domain)
                     .await
-                    .map_err(codegraph_core::error::Error::Config)?
-                    {
-                        let module = db
-                            .get_schema_in_domain(title, domain_name)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|schema| schema.pg_table_name)
-                            .unwrap_or_default();
-                        service_ops_per_domain
-                            .entry(domain_name.clone())
-                            .or_default()
-                            .push(OpenApiServiceOp {
-                                fn_name: op.fn_name,
-                                module,
-                            });
-                    }
-                }
+                    .ok()
+                    .flatten()
+                    .map(|schema| schema.pg_table_name)
+                    .unwrap_or_default();
+                service_ops_per_domain
+                    .entry(entry.domain.clone())
+                    .or_default()
+                    .push(OpenApiServiceOp {
+                        fn_name: op.fn_name,
+                        module,
+                    });
             }
         }
 

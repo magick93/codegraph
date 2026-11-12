@@ -22,21 +22,27 @@ use fixture::{
 
 /// The fixture profiles: the workspace default with path deps (the gate
 /// must compile without network) and the gRPC generators stripped (no
-/// protoc requirement).
+/// protoc requirement). Also pins `type_contracts_base` at the local
+/// checkout: without it the generated domain-types crate pins
+/// `codegraph-type-contracts` at this checkout's (unpushed) git rev and
+/// the gate's cargo check fetch fails (the WS1 finding).
 fn write_profiles(dir: &Path) -> std::path::PathBuf {
-    let workspace_profiles = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("profiles.toml");
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let type_contracts = workspace_root.join("crates/codegraph-type-contracts");
+    let workspace_profiles = workspace_root.join("profiles.toml");
     let mut text = fs::read_to_string(&workspace_profiles).unwrap();
     // The init-scaffold meta shape: the domain-types crate lands at
     // crates/domain-types inside the output (the root stays the app
     // manifest), and path deps keep the gate network-free (#347).
     text = text.replace(
         "[profiles.default.meta]\n",
-        "[profiles.default.meta]\ndomain_types_base = \"crates/domain-types\"\n",
+        &format!(
+            "[profiles.default.meta]\n\
+             domain_types_base = \"crates/domain-types\"\n\
+             type_contracts_base = \"{}\"\n",
+            type_contracts.display()
+        ),
     );
     text = text.replace(
         "[profiles.default.features]\n",

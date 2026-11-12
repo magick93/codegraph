@@ -155,7 +155,8 @@ pub struct HandlerContext {
     pub mox_ops: Vec<MoxOpRoute>,
     /// Service operations routed as action endpoints (issue #590): POST
     /// `{id}/actions/{snake}` with the actor policy enforced server-side.
-    /// Root entities only. Empty = no op routes, byte-identical handler.
+    /// Child entities nest under the parent route (WS4). Empty = no op
+    /// routes, byte-identical handler.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub service_ops: Vec<crate::ddd::service_ops::ServiceOpRoute>,
     /// Handler-site eligibility guards (issue #338): the compiled rule
@@ -501,23 +502,23 @@ impl EntityGenerator for HandlerGenerator {
         // Mox op action routes (issue #508 R2).
         let mox_ops = routable_mox_ops(db, schema_title, &entity_name).await;
 
-        // Service-op action routes (issue #590). Root entities only —
-        // child op bindings emit no route (recorded follow-up). Lowering
-        // refusals (un-lowerable `when` conditions) are hard generation
-        // errors naming the capability.
-        let service_ops = if topo.role == "root" {
-            crate::ddd::service_ops::routes_for_entity(
-                db,
-                config,
-                &domain,
-                schema_title,
-                project.codegen.dto_key_casing,
-            )
-            .await
-            .map_err(crate::error::Error::Config)?
-        } else {
-            Vec::new()
-        };
+        // Service-op action routes (issue #590). Child entities emit them
+        // too — the handler template nests the utoipa path under the parent
+        // and loads the record through the parent-scoped read (WS4). The
+        // child router fn is nested by the parent's router, so the route
+        // mounts at
+        // `/api/{version}/{domain}/{parent}/{parent_id}/{child}/{child_id}/
+        // actions/{op}`. Lowering refusals (un-lowerable `when` conditions)
+        // are hard generation errors naming the capability.
+        let service_ops = crate::ddd::service_ops::routes_for_entity(
+            db,
+            config,
+            &domain,
+            schema_title,
+            project.codegen.dto_key_casing,
+        )
+        .await
+        .map_err(crate::error::Error::Config)?;
 
         // Handler-site eligibility guards (issue #338). Gated on the plan
         // carrying `rules` (the call targets must exist) and monolith

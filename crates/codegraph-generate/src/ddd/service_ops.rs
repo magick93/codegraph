@@ -1229,11 +1229,21 @@ async fn bind_entity(
     {
         return Some(title);
     }
-    // 3. Signature: first class-typed param, then the return type.
+    // 3. Signature: first class-typed param, then the return type. The rex
+    //    TypeRef wire shape is ADJACENT-tagged —
+    //    `{"type":"class","value":{"package":…,"name":…}}` (rex-ir types.rs)
+    //    — so both the tag and the nested `value` object must be read.
     let class_of = |json: Option<&serde_json::Value>| -> Option<String> {
         let value = json?;
-        let name = value.get("name")?.as_str()?;
-        (value.get("type")?.as_str()? == "class").then(|| name.to_string())
+        if value.get("type")?.as_str()? != "class" {
+            return None;
+        }
+        let inner = value.get("value")?;
+        let name = inner.get("name")?.as_str()?;
+        match inner.get("package").and_then(|p| p.as_str()) {
+            Some(package) if !package.is_empty() => Some(format!("{package}::{name}")),
+            _ => Some(name.to_string()),
+        }
     };
     for param in &op.params {
         if let Some(class) = class_of(Some(&param.type_json))
@@ -2604,5 +2614,129 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             }
             other => panic!("expected a no-record-load seam, got {other:?}"),
         }
+    }
+
+    // ── The rex TypeRef JSON shape (bug fix): the class-typed-signature
+    //    binding path must read the ADJACENT-tagged shape rex-ir serializes
+    //    (`{"type":"class","value":{"package":…,"name":…}}`), not a flat
+    //    top-level `name` that can never match. ───────────────────────────
+
+    fn op_with_type_json(
+        return_json: serde_json::Value,
+    ) -> codegraph_core::types::DddServiceOperation {
+        codegraph_core::types::DddServiceOperation {
+            name: "op".to_string(),
+            return_type: Some(return_json),
+            return_multiplicity: None,
+            params: Vec::new(),
+            delegation_target: None,
+            delegation_operation: None,
+            capabilities: Vec::new(),
+            is_protected: false,
+            condition: None,
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            ordinal: 0,
+        }
+    }
+
+    fn class_type_json(package: &str, name: &str) -> serde_json::Value {
+        // The rex-ir TypeRef wire shape (adjacently tagged, camelCase tags).
+        serde_json::json!({
+            "type": "class",
+            "value": { "package": package, "name": name }
+        })
+    }
+
+    #[tokio::test]
+    async fn class_typed_signature_binds_the_real_rex_json_shape() {
+        let engine = codegraph_core::mock::MockEngine::builder()
+            .with_schema(codegraph_core::types::SchemaNode {
+                namespace: None,
+                schema_id: "payroll/json/PayRunType.json".to_string(),
+                title: "PayRunType".to_string(),
+                description: None,
+                schema_type: "object".to_string(),
+                classification: "entity_reference".to_string(),
+                domain: Some("payroll".to_string()),
+                rel_path: "payroll/json/PayRunType.json".to_string(),
+                pg_type: "UUID".to_string(),
+                rust_type: "PayRun".to_string(),
+                sea_orm_type: "Uuid".to_string(),
+                rust_type_name: "PayRun".to_string(),
+                pg_table_name: "pay_run".to_string(),
+                api_path_segment: "pay-run".to_string(),
+                parent_schema: None,
+                is_entity: true,
+                is_codelist: false,
+                is_primitive_wrapper: false,
+                has_all_of: false,
+                has_one_of: false,
+                has_any_of: false,
+                has_definitions: false,
+                custom_annotations: Default::default(),
+                access: None,
+                annotations: None,
+            })
+            .build();
+
+        // The REAL rex shape: `{"type":"class","value":{"package":…,"name":…}}`.
+        let bound = bind_entity(
+            &pay_run_model(Vec::new()),
+            &op_with_type_json(class_type_json("payroll", "PayRun")),
+            &engine,
+            "Type",
+        )
+        .await;
+        assert_eq!(
+            bound.as_deref(),
+            Some("PayRunType"),
+            "the class-typed signature path must bind through the nested rex shape"
+        );
+
+        // The qualified name form keeps the `pkg::Name` resolution chain.
+        let bound = bind_entity(
+            &pay_run_model(Vec::new()),
+            &op_with_type_json(class_type_json("other.pkg", "PayRun")),
+            &engine,
+            "Type",
+        )
+        .await;
+        assert_eq!(bound.as_deref(), Some("PayRunType"));
+
+        // Non-class shapes bind nothing.
+        let primitive = bind_entity(
+            &pay_run_model(Vec::new()),
+            &op_with_type_json(serde_json::json!({ "type": "primitive", "value": "string" })),
+            &engine,
+            "Type",
+        )
+        .await;
+        assert_eq!(primitive, None);
+
+        // Unknown classes bind nothing (no fabricated titles).
+        let unknown = bind_entity(
+            &pay_run_model(Vec::new()),
+            &op_with_type_json(class_type_json("payroll", "NoSuchClass")),
+            &engine,
+            "Type",
+        )
+        .await;
+        assert_eq!(unknown, None);
+
+        // Param-typed signatures ride the same path.
+        let mut param_op = op_with_type_json(serde_json::Value::Null);
+        param_op.return_type = None;
+        param_op.params = vec![codegraph_core::types::DddParam {
+            name: "run".to_string(),
+            type_json: class_type_json("payroll", "PayRun"),
+            multiplicity: None,
+        }];
+        let bound = bind_entity(&pay_run_model(Vec::new()), &param_op, &engine, "Type").await;
+        assert_eq!(
+            bound.as_deref(),
+            Some("PayRunType"),
+            "param-typed signature"
+        );
     }
 }
