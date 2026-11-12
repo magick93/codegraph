@@ -69,7 +69,11 @@ jobs:
       - run: cargo audit
 
   test-ops-integration:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 (resolute), whose archive no
+    # longer ships the `libxml2` the hurl .deb depends on ("not installable").
+    # 24.04 (noble) installs it cleanly; everything else in this job is
+    # runner-agnostic (postgres:15 service, dtolnay toolchain, rust-cache).
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:15
