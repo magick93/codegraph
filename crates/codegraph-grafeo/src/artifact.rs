@@ -6,7 +6,7 @@
 //! a content-determined order. Export → import → export is byte-identical
 //! and the sha256 of the canonical bytes is stable across runs on
 //! identical inputs. The format is pinned by the conformance cases in
-//! `kit` (`tests/fixtures/artifact_kit/graph_document_v3.md`).
+//! `kit` (`tests/fixtures/artifact_kit/graph_document_v4.md`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;

@@ -248,7 +248,7 @@ fn run_case(case: &KitCase) -> Result<(), KitError> {
 mod tests {
     use super::*;
 
-    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v3.md");
+    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v4.md");
 
     #[test]
     fn kit_case_canonical_accepted_rejected() {
@@ -281,7 +281,7 @@ mod tests {
     fn kit_case_rejects_canonical_drift() {
         let md = concat!(
             "## drift\n\n```json canonical\n",
-            "{\"edges\":[],\"formatVersion\":3,\"nodes\":[]}\n",
+            "{\"edges\":[],\"formatVersion\":4,\"nodes\":[]}\n",
             "```\n"
         );
         let err = run_cases(md).expect_err("alphabetical field order must not be canonical");
