@@ -326,6 +326,12 @@ impl GlobalGenerator for IfmlRouteGenerator {
 
                 if remote {
                     let mut module = remote::RemoteModuleContext::from_load(&load_ctx);
+                    // S4c parity: the page imports get{Pascal}WorkflowLive
+                    // for every workflow-bound by-id component; the module
+                    // must emit exactly those exports (the flag mirrors the
+                    // page context — without it the import dangles and
+                    // svelte-check fails).
+                    module.live = ctx.components.iter().any(|c| c.workflow_live.is_some());
                     for comp in &ctx.components {
                         if let Some(submit) = comp.submit.as_ref()
                             && let Some(command) = &submit.remote_command
@@ -386,6 +392,18 @@ impl GlobalGenerator for IfmlRouteGenerator {
             });
             if select_variant_wired {
                 forms_plane::form_plane_files_select_variant(&self.output_dir, true);
+            } else {
+                // Sweep a stale wrapper: the wrapper imports the project's
+                // NativeSelect barrel, so a copy left by an older generator
+                // (pre wired-gate) or a removed mapping would dangle in a
+                // no-shadcn tree. The wrapper is if-absent — without the
+                // sweep a stale copy breaks svelte-check forever.
+                let stale = self
+                    .output_dir
+                    .join("src/lib/forms/fields/select-variant.svelte");
+                if stale.exists() {
+                    let _ = std::fs::remove_file(&stale);
+                }
             }
         }
 

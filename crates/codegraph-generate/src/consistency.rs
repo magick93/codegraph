@@ -6,8 +6,17 @@
 //! `person_legal_documents` 500 that surfaced this issue). Divergence is a
 //! generation-time ERROR: refusing to emit divergent output beats a missing
 //! table at runtime.
+//!
+//! WS5: entity-producing title collisions. Two DISTINCT titles in one
+//! domain that BOTH produce entities (tables) and strip to the same
+//! module/pg_table_name silently overwrite each other's entity module and
+//! migration (`PayRun` + `PayRunType` → `pay_run`). The ordering WARN is
+//! entity-blind (fixtures legitimately carry entity+VO/codelist pairs); this
+//! check is the entity-aware escalation to a hard `Error::Config`. It keys
+//! on titles/modules/tables and COMPLEMENTS the duplicate-FK gate below
+//! (different key: FK constraint names per (schema, table)).
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
@@ -15,7 +24,7 @@ use codegraph_core::types::ParentCandidate;
 
 use crate::db::ddl::DdlGenerator;
 use crate::ddd::repository_emitter::RepositoryImplEmitter;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::project_config::GenerationEntry;
 
 /// The consistency sweep. Returns one human-readable line per divergence
@@ -194,6 +203,95 @@ pub async fn check_child_table_consistency(
         divergences.insert(duplicate);
     }
     Ok(divergences.into_iter().collect())
+}
+
+/// The entity-aware module/table collision sweep (WS5). Within ONE domain,
+/// two DISTINCT schema titles that both produce entities (tables) and map
+/// to the same module name and/or the same pg_table_name would silently
+/// overwrite each other's entity module + migration — a hard error naming
+/// both titles, the domain, and the collision.
+///
+/// Entity-awareness is the point: the generation order carries VOs and
+/// codelists too, and a `PayRunType` entity + a `PayRun` contained value
+/// object sharing the `pay_run` module is LEGAL (the VO projects as
+/// `{parent}_{feature}` child tables and owns no module of its own; a
+/// codelist is a seed table). Only titles whose graph schema is
+/// entity-classified participate here. Titles whose entity-ness cannot be
+/// seen (profiles without the `ddl` generator — the check's gate) keep the
+/// entity-blind ordering WARN.
+///
+/// Returns one human-readable collision line per colliding group (empty =
+/// clean); the caller turns non-empty into `Error::Config`.
+pub async fn check_entity_module_collisions(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    order: &[GenerationEntry],
+) -> Result<Vec<String>> {
+    let schemas = db
+        .list_schemas(None)
+        .await
+        .map_err(|e| Error::Config(e.to_string()))?;
+    // title → schema record (the querier dedupes by title); entity-ness
+    // and the pg table name derive from the title, so one record per
+    // title is sufficient.
+    let by_title: HashMap<&str, &codegraph_core::types::SchemaNode> =
+        schemas.iter().map(|s| (s.title.as_str(), s)).collect();
+
+    // Entity-producing titles grouped by (domain, module) and by
+    // (domain, pg_table_name) — BTree keys + title sets so both the
+    // grouping and the error text are deterministic.
+    let mut by_module: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    let mut by_table: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    for entry in generation_entries(config, order) {
+        let Some(schema) = by_title.get(entry.schema_title.as_str()) else {
+            continue;
+        };
+        // Only entity-producing titles: a contained value object shares
+        // the module legally (child-table projection), a codelist is a
+        // seed table, inline children generate from their parent.
+        if !schema.is_entity
+            || schema.is_codelist
+            || schema.pg_table_name.is_empty()
+            || schema.parent_schema.is_some()
+        {
+            continue;
+        }
+        let module =
+            codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&entry.schema_title));
+        by_module
+            .entry((entry.domain.clone(), module))
+            .or_default()
+            .insert(entry.schema_title.clone());
+        by_table
+            .entry((entry.domain.clone(), schema.pg_table_name.clone()))
+            .or_default()
+            .insert(entry.schema_title.clone());
+    }
+
+    let mut collisions: BTreeSet<String> = BTreeSet::new();
+    for ((domain, module), titles) in &by_module {
+        if titles.len() > 1 {
+            let list: Vec<String> = titles.iter().map(|t| format!("`{t}`")).collect();
+            collisions.insert(format!(
+                "domain `{domain}`: entity-producing titles {} all map to module `{module}` \
+                 — rename all but one so their stripped names differ (each would emit the \
+                 same entity module and overwrite the others)",
+                list.join(", ")
+            ));
+        }
+    }
+    for ((domain, table), titles) in &by_table {
+        if titles.len() > 1 {
+            let list: Vec<String> = titles.iter().map(|t| format!("`{t}`")).collect();
+            collisions.insert(format!(
+                "domain `{domain}`: entity-producing titles {} all map to pg table \
+                 `{table}` — rename all but one so their stripped names differ (each \
+                 would emit the same table and migration)",
+                list.join(", ")
+            ));
+        }
+    }
+    Ok(collisions.into_iter().collect())
 }
 
 fn record_fk(

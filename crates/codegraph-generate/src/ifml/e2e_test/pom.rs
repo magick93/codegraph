@@ -86,6 +86,28 @@ pub(crate) struct ViewPom {
     /// Journey hop methods (issue #468 W5, auth-gated): the control clicks
     /// the `{view}.journey.spec.ts` walks drive.
     pub journey_steps: Vec<PomJourneyStep>,
+    /// Action-button surface (WS6): one entry per manifest-proven,
+    /// route-resolvable action op on this view — the `{op}` click methods,
+    /// the shared error-span accessor, and the `expect{Op}ActionError`
+    /// helper the action specs drive. Empty when the graph carries no
+    /// manifest (pre-WS6 graphs) or no action edge resolves to a mounted
+    /// route — flag-off / old-graph runs stay byte-identical.
+    pub actions: Vec<PomAction>,
+}
+
+/// One action op on one component (WS6): the button the #559 markup
+/// renders (`{comp}-action-{op_kebab}`), the handler the page wires
+/// (`call_{op_snake}`), and the service-op route the POST targets.
+#[derive(Debug, Clone)]
+pub(crate) struct PomAction {
+    /// The component carrying the action event (`info`).
+    pub component: String,
+    /// PascalCase of [`PomAction::component`] (`Info`) — method naming.
+    pub pascal: String,
+    /// The service op's snake name — the route segment (`escalate`).
+    pub op_snake: String,
+    /// The kebab name the button testid embeds (`escalate`).
+    pub op_kebab: String,
 }
 
 /// One wizard step: a nested container of an xor view and the component
@@ -228,6 +250,7 @@ pub(crate) fn build_view_pom(
     plans: &HashMap<String, UxPlan>,
     auth_enabled: bool,
     journey_steps: &[PomJourneyStep],
+    actions: Vec<super::pom::PomAction>,
 ) -> ViewPom {
     let mut pom = ViewPom {
         view_name: vc.name.clone(),
@@ -235,6 +258,7 @@ pub(crate) fn build_view_pom(
         route: view_route(&vc.name),
         auth_enabled,
         journey_steps: journey_steps.to_vec(),
+        actions,
         ..Default::default()
     };
     let selectors_for =
@@ -726,7 +750,17 @@ received = ["review"]
         let config = workflow_config();
         let vc = list_view();
 
-        let bare = build_view_pom(&config, None, &vc, None, None, &HashMap::new(), false, &[]);
+        let bare = build_view_pom(
+            &config,
+            None,
+            &vc,
+            None,
+            None,
+            &HashMap::new(),
+            false,
+            &[],
+            Vec::new(),
+        );
         let rendered = render_pom_page(&bare);
         assert!(
             rendered.contains("export class CustomerListPage extends BasePage {"),
@@ -837,6 +871,7 @@ received = ["review"]
             &HashMap::new(),
             false,
             &[],
+            Vec::new(),
         );
         let rendered = render_pom_page(&full);
         assert!(
@@ -893,6 +928,7 @@ entities = []
             &HashMap::new(),
             false,
             &[],
+            Vec::new(),
         );
         let rendered = render_pom_page(&pom);
         assert!(rendered.contains("heading(): Locator"), "{rendered}");
@@ -911,7 +947,17 @@ entities = []
         let config = workflow_config();
         let mut vc = list_view();
         vc.components.retain(|c| c.component_type == "details");
-        let pom = build_view_pom(&config, None, &vc, None, None, &HashMap::new(), false, &[]);
+        let pom = build_view_pom(
+            &config,
+            None,
+            &vc,
+            None,
+            None,
+            &HashMap::new(),
+            false,
+            &[],
+            Vec::new(),
+        );
         let rendered = render_pom_page(&pom);
         assert!(
             rendered
@@ -1039,6 +1085,7 @@ entities = []
             &HashMap::new(),
             true,
             &journey_steps,
+            Vec::new(),
         );
         let rendered = render_pom_page(&on);
         assert!(
@@ -1070,6 +1117,7 @@ entities = []
             &HashMap::new(),
             true,
             &[],
+            Vec::new(),
         );
         let guarded_rendered = render_pom_page(&guarded_on);
         assert!(
@@ -1091,6 +1139,7 @@ entities = []
             &HashMap::new(),
             false,
             &[],
+            Vec::new(),
         );
         let off_rendered = render_pom_page(&off);
         assert!(
@@ -1111,6 +1160,7 @@ entities = []
             &HashMap::new(),
             false,
             &[],
+            Vec::new(),
         );
         let guarded_off_rendered = render_pom_page(&guarded_off);
         assert!(
@@ -1133,6 +1183,7 @@ entities = []
             &HashMap::new(),
             true,
             &journey_steps,
+            Vec::new(),
         );
         let form_rendered = render_pom_page(&form_pom);
         assert!(

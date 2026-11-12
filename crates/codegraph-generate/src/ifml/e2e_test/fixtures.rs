@@ -48,14 +48,30 @@ impl Fixture {
     /// per-fixture JS variable prefix so two seeded fixtures in one test
     /// never redeclare the same dependency variable.
     fn data_literal_with(&self, prefix: Option<&str>) -> String {
-        let inner = self
+        self.literal_for(&self.entries, prefix)
+    }
+
+    /// The fixture body WITHOUT the dep-wired FK entries: a `dep_*_id`
+    /// placeholder only resolves once [`Fixture::dep_setup_js`] has bound
+    /// the parent id inside the consuming function, so callers that hoist
+    /// the body into a shared constant (the ux spec's `UX_DATA`) must
+    /// exclude them — a module-level reference would be a ReferenceError.
+    pub(crate) fn static_data_literal(&self) -> String {
+        let entries: Vec<(String, String)> = self
             .entries
+            .iter()
+            .filter(|(_, value)| !is_dep_placeholder(value))
+            .cloned()
+            .collect();
+        self.literal_for(&entries, None)
+    }
+
+    fn literal_for(&self, entries: &[(String, String)], prefix: Option<&str>) -> String {
+        let inner = entries
             .iter()
             .map(|(k, v)| {
                 let value = match prefix {
-                    Some(prefix) if v.starts_with("dep_") && v.ends_with("_id") => {
-                        format!("{prefix}_{v}")
-                    }
+                    Some(prefix) if is_dep_placeholder(v) => format!("{prefix}_{v}"),
                     _ => v.clone(),
                 };
                 format!("'{}': {value}", self.wire_key(k))
@@ -65,12 +81,14 @@ impl Fixture {
         format!("{{ {inner} }}")
     }
 
-    /// Render the dependency POSTs + this fixture's create as JS statements.
-    /// Returns the variable name holding the created record response.
-    pub(crate) fn setup_js(&self, var: &str, indent: &str) -> String {
+    /// Render ONLY the dependency POSTs (leaf-first), binding each created
+    /// parent id to `{var}_{dep.id_var}`. The caller composes its own
+    /// create statement — the ux spec's `createUxRow` keeps its
+    /// `UX_BASE`/overrides shape and wires the seeded ids into the body.
+    pub(crate) fn dep_setup_js(&self, var: &str, indent: &str) -> String {
         let mut out = String::new();
         for dep in &self.deps {
-            let entries = Fixture {
+            let dep_fixture = Fixture {
                 base_path: dep.base_path.clone(),
                 entries: dep.entries.clone(),
                 casing: dep.casing,
@@ -80,7 +98,7 @@ impl Fixture {
             out.push_str(&format!(
                 "{indent}const {dep_id}_resp = await request.post(apiUrl('{}'), {{ data: {} }});\n",
                 js_string(&dep.base_path),
-                entries.data_literal_with(Some(var))
+                dep_fixture.data_literal_with(Some(var))
             ));
             out.push_str(&format!(
                 "{indent}expect({dep_id}_resp.ok(), 'fixture dependency should be created').toBeTruthy();\n"
@@ -92,6 +110,13 @@ impl Fixture {
                 "{indent}const {dep_id} = {dep_id}_json.data?.id ?? {dep_id}_json.id;\n"
             ));
         }
+        out
+    }
+
+    /// Render the dependency POSTs + this fixture's create as JS statements.
+    /// Returns the variable name holding the created record response.
+    pub(crate) fn setup_js(&self, var: &str, indent: &str) -> String {
+        let mut out = self.dep_setup_js(var, indent);
         out.push_str(&format!(
             "{indent}const {var} = await request.post(apiUrl('{}'), {{ data: {} }});\n",
             js_string(&self.base_path),
@@ -161,6 +186,12 @@ impl Fixture {
     fn wire_key(&self, schema_field: &str) -> String {
         wire_key_for(schema_field, self.casing)
     }
+}
+
+/// Whether a fixture entry VALUE is a dep placeholder (`dep_<n>_id`) that
+/// only resolves once [`Fixture::dep_setup_js`] has run.
+pub(crate) fn is_dep_placeholder(value: &str) -> bool {
+    value.starts_with("dep_") && value.ends_with("_id")
 }
 
 /// The DTO serde key for a schema property name under the given casing.

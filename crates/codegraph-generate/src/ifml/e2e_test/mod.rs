@@ -16,10 +16,10 @@ mod ux_plans;
 pub use fixtures::Fixture;
 pub use generator::IfmlE2eTestGenerator;
 pub use spec_payload::{
-    ClickThroughTest, ModalCloseAssertions, PersonaTest, RenderTest, RoundTripTest, TransitionStep,
-    UxCellFormat, UxChipCheck, UxColumnCheck, UxCopyCheck, UxMenuCheck, UxTimelineCheck,
-    UxViewTest, ValidationTest, ViewTestSpec, WorkflowTest,
+    ActionAct, ActionActKind, ActionSpec, ActionTest, ClickThroughTest, ModalCloseAssertions,
+    PersonaTest, RenderTest, RoundTripTest, TransitionStep, UxCellFormat, UxChipCheck,
+    UxColumnCheck, UxCopyCheck, UxMenuCheck, UxTimelineCheck, UxViewTest, ValidationTest,
+    ViewTestSpec, WorkflowTest,
 };
-
 #[cfg(test)]
 mod tests;

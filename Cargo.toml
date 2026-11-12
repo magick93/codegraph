@@ -57,6 +57,16 @@ tree-sitter-language = "0.1"
 # salsa: no direct dependency anywhere — 0.22 rides in transitively via
 # auto-lsp 0.6.2 (0.23 via rex-driver). A direct salsa upgrade is gated on
 # the same auto-lsp release as tree-sitter above (issue #423).
+# rex-* @ 1fe0ca9: rexlang PR #174 dedup sweep (12 issues) — internal
+# refactor only (shared Import type replaces the ImportDecl/UcImport/
+# CmmnImport triplicate, rex-strings/rex-dates zero-dep leaf crates,
+# VersionedArtifact default methods + default_format_version!, centralized
+# format-version markers, did_you_mean hoisted to rex-diagnostics). Zero
+# codegraph fallout — full scan found no references to any swept surface,
+# all rex wire FORMAT_VERSIONs stay 1, conformance fixtures untouched, so
+# the committed ddd/evt goldens byte-match. Sigil pin UNCHANGED (upstream
+# still pins 69115a7 — lockstep is a no-op). Historical context of the
+# previous pin follows.
 # rex-* @ 194056b: bumped past the union integrity pass (rexlang #114's
 # merge — rex_driver::check_integrity, the cross-layer doctor stage below)
 # for the declaration-backed control/route manifest (rexlang #118 —
@@ -79,10 +89,10 @@ tree-sitter-language = "0.1"
 # transitive git deps (rex-diagnostics in-repo; xstate-ir from
 # restingstate.git; dsntk-recognizer/feel from the yestechgroup dsntk-rs
 # fork — all anonymously fetchable).
-rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
-rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
-rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
-rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "194056b933de57e9bbc746c30eaa796035f99bd1" }
+rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
+rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
+rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
+rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the rexlang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
 # into codegraph-generate / codegraph-core). Pinned to the SAME rev rexlang

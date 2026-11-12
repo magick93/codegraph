@@ -367,6 +367,179 @@ fn ux_spec_omits_absent_features_and_renders_timeline() {
     );
 }
 
+#[tokio::test]
+async fn ux_spec_seeds_required_fk_parents_before_create() {
+    // Schema-backed ChildType carries a REQUIRED entity-ref FK (`group` ->
+    // GroupType). The ux spec must keep the view's spec AND seed the parent
+    // row through the FixtureDep machinery before `createUxRow` posts — an
+    // FK-less body would 422 on the required column (#551-family contract:
+    // every emitted spec must run against the real API).
+    fn dep_schema(title: &str, segment: &str) -> SchemaNode {
+        SchemaNode {
+            namespace: None,
+            schema_id: format!("id:{title}"),
+            title: title.to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity".to_string(),
+            access: None,
+            annotations: None,
+            domain: Some("hr".to_string()),
+            rel_path: format!("{title}.json"),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: title.to_string(),
+            pg_table_name: segment.to_string(),
+            api_path_segment: segment.to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+    let mut title = ux_test_prop("title");
+    title.is_required = true;
+    let mut group = ux_test_prop("group");
+    group.is_required = true;
+    group.pg_column_name = "group_id".to_string();
+    group.rust_field_name = "group_id".to_string();
+    group.ref_target = Some("hr/json/group.schema.json".to_string());
+    group.classification_kind = Some(RefClassificationKind::EntityReference);
+    let mut status = ux_test_prop("status");
+    status.is_required = true;
+    status.classification_kind = Some(RefClassificationKind::CodelistReference);
+    status.ref_target = Some("codelist/RefundStatusCodeList.json".to_string());
+    let engine = MockEngine::builder()
+        .with_schema(dep_schema("GroupType", "group"))
+        .with_properties(
+            "GroupType",
+            vec![{
+                let mut name = ux_test_prop("name");
+                name.is_required = true;
+                name
+            }],
+        )
+        .with_schema(dep_schema("ChildType", "child"))
+        .with_properties("ChildType", vec![title, group, status])
+        .build();
+    let config: DomainConfig = toml::from_str(
+        r#"
+[domains.hr]
+label = "HR"
+schema_dir = "hr"
+postgres_schema = "hr"
+entities = ["GroupType", "ChildType"]
+"#,
+    )
+    .unwrap();
+    let rules = codegraph_config::builtin_ux_rules().unwrap().rules;
+    let c = super::super::context::IfmlComponent {
+        name: "grid".to_string(),
+        component_type: "list".to_string(),
+        mode: None,
+        entity: Some("ChildType".to_string()),
+        fields: vec!["title".to_string(), "status".to_string()],
+        fields_with_types: Vec::new(),
+        filter: None,
+        properties: HashMap::new(),
+        events: Vec::new(),
+        parts: Vec::new(),
+        spec: None,
+    };
+    let vc = IfmlViewContainer {
+        name: "ChildList".to_string(),
+        label: None,
+        is_xor: false,
+        is_default: false,
+        is_landmark: false,
+        is_modal: false,
+        conditional_expression: None,
+        conditional_expr_json: None,
+        roles: Vec::new(),
+        requires: Vec::new(),
+        params: Vec::new(),
+        components: vec![c],
+        events: Vec::new(),
+        containers: Vec::new(),
+    };
+    // The chip column is what keeps the spec alive (a plan must produce at
+    // least one check); built the same way the chip pin above builds one.
+    let status_prop = {
+        let mut prop = ux_test_prop("status");
+        prop.classification_kind = Some(RefClassificationKind::CodelistReference);
+        prop.ref_target = Some("codelist/RefundStatusCodeList.json".to_string());
+        prop
+    };
+    let field = super::ux_plans::ux_ui_field(&status_prop);
+    let plan = build_ux_plan(
+        Some(&rules),
+        &UxPlanInput {
+            entity_title: "ChildType",
+            fields: std::slice::from_ref(&field),
+            prop_by_name: BTreeMap::from([("status", &status_prop)]),
+            workflow_status_field: None,
+            workflow_terminal_states: &[],
+            has_soft_delete: false,
+            user_pinned_list_order: false,
+        },
+    )
+    .unwrap()
+    .expect("codelist column planned");
+    let plans = HashMap::from([("ChildType".to_string(), plan)]);
+    let generator = super::IfmlE2eTestGenerator::new(
+        std::path::Path::new("/tmp/codegraph-ws3-ux-deps"),
+        "svelte",
+    );
+    let test = generator
+        .build_view_ux_test(&engine, &config, "v1", &vc, &rules, &plans)
+        .await
+        .expect("a required-FK entity keeps its ux spec (dep-aware, not dropped)");
+    assert!(
+        !test.fixture.deps.is_empty(),
+        "the required FK must seed a parent dep: {:?}",
+        test.fixture.deps
+    );
+    assert_eq!(test.fixture.deps[0].base_path, "/api/v1/hr/group");
+    assert!(
+        test.fixture
+            .entries
+            .iter()
+            .any(|(field, value)| field == "group_id" && value == "dep_0_id"),
+        "the create body must wire the seeded parent id: {:?}",
+        test.fixture.entries
+    );
+    let rendered = render_ux_spec("ChildList", &test);
+    let dep_post = rendered
+        .find("apiUrl('/api/v1/hr/group')")
+        .expect("parent seed POST present");
+    let create = rendered
+        .find("await request.post(UX_BASE")
+        .expect("createUxRow posts the row");
+    assert!(
+        dep_post < create,
+        "the parent seed must run BEFORE the create:\n{rendered}"
+    );
+    // UX_DATA is a describe-level const: it must NOT carry the `dep_*_id`
+    // placeholder (a module-level reference to a function-local binding is
+    // a ReferenceError). The FK is wired inside createUxRow instead.
+    assert!(
+        rendered.contains("const UX_DATA = { 'title': 'Test title', 'status': 'Test status' };"),
+        "UX_DATA must exclude the dep placeholder:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "const response = await request.post(UX_BASE, { data: { ...UX_DATA, 'group_id': row_dep_0_id, ...overrides } });"
+        ),
+        "the create must wire the seeded id:\n{rendered}"
+    );
+}
+
 #[test]
 fn ux_menu_event_requires_a_second_navigate() {
     let navigate = |target: &str| super::super::context::IfmlEvent {
@@ -729,6 +902,7 @@ entities = []
             &HashMap::new(),
             false,
             &[],
+            Vec::new(),
         );
         let files = pom_file_set(&[("customer-list", &pom)]);
         let paths: Vec<String> = files
@@ -960,6 +1134,7 @@ entities = ["CustomerType"]
         &std::collections::HashMap::new(),
         true,
         &[],
+        Vec::new(),
     );
     // The plan carries no components — inject the primary root the way the
     // assembler does for mapped details views.
@@ -1053,4 +1228,129 @@ fn auth_vc(name: &str, roles: Vec<String>, params: Vec<ParameterDef>) -> IfmlVie
         events: Vec::new(),
         containers: Vec::new(),
     }
+}
+
+// ── WS6: action POM surface + action spec family ────────────────────────────
+
+#[test]
+fn action_plan_renders_pom_action_methods() {
+    use super::pom::{PomAction, ViewPom};
+    use super::pom_render::render_pom_page;
+
+    let mut pom = ViewPom {
+        view_name: "RefundRequestDetail".to_string(),
+        class_name: "RefundRequestDetailPage".to_string(),
+        route: "/refundrequestdetail".to_string(),
+        ..Default::default()
+    };
+    pom.actions.push(PomAction {
+        component: "info".to_string(),
+        pascal: "Info".to_string(),
+        op_snake: "escalate".to_string(),
+        op_kebab: "escalate".to_string(),
+    });
+
+    let rendered = render_pom_page(&pom);
+    // The button accessor names the #559 testid, the click method drives it,
+    // and the shared error span carries accessor + expect helper.
+    assert!(
+        rendered.contains("infoActionEscalate(): Locator"),
+        "button accessor missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("return this.page.getByTestId('info-action-escalate');"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("async actionInfoEscalate(): Promise<void>"),
+        "click method missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("infoActionError(): Locator"),
+        "error-span accessor missing:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("async expectInfoActionError(text: string): Promise<void>"),
+        "error expect helper missing:\n{rendered}"
+    );
+
+    // No actions ⇒ no action surface (payload gating, byte-identical
+    // flag-off): the same page class renders nothing action-shaped.
+    let mut bare = pom;
+    bare.actions.clear();
+    let rendered_bare = render_pom_page(&bare);
+    assert!(
+        !rendered_bare.contains("Action"),
+        "action surface must be payload-gated:\n{rendered_bare}"
+    );
+}
+
+#[test]
+fn action_spec_renders_legs_through_the_pom() {
+    use super::spec_payload::{ActionAct, ActionActKind, ActionSpec, ActionTest};
+
+    let spec = ActionSpec {
+        view_name: "RefundRequestDetail".to_string(),
+        label: "Refund Request".to_string(),
+        route: "/refundrequestdetail".to_string(),
+        id_param: Some("id".to_string()),
+        tests: vec![ActionTest {
+            title: "action escalate on info: 200 then 409".to_string(),
+            component: "info".to_string(),
+            op_snake: "escalate".to_string(),
+            fixture: Fixture {
+                casing: DtoKeyCasing::default(),
+                base_path: "/api/v1/refunds/refund_request".to_string(),
+                entries: vec![
+                    ("title".to_string(), "'Seed title'".to_string()),
+                    ("escalation".to_string(), "'none'".to_string()),
+                ],
+                deps: Vec::new(),
+            },
+            acts: vec![
+                ActionAct {
+                    kind: ActionActKind::Ok,
+                    round_trip: Some(("escalation".to_string(), "escalated".to_string())),
+                },
+                ActionAct {
+                    kind: ActionActKind::Conflict,
+                    round_trip: None,
+                },
+            ],
+        }],
+    };
+
+    let rendered = render_spec_action(&spec);
+    assert!(
+        rendered.contains("test('action escalate on info: 200 then 409'"),
+        "leg statuses must ride the title:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await ui.actionInfoEscalate();"),
+        "legs drive the POM click method:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "await ui.expectInfoActionError('has no transition from the current state');"
+        ),
+        "the conflict leg asserts the server's message through the POM:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("await expect(ui.infoActionError()).toHaveCount(0);"),
+        "the ok leg asserts the error span absent:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("(persisted.data ?? persisted).escalation")
+            && rendered.contains("}).toBe('escalated');"),
+        "the ok leg round-trips the mutated field:\n{rendered}"
+    );
+    // Zero raw testid construction in the spec body (the POM contract).
+    assert!(
+        !rendered.contains("getByTestId("),
+        "spec bodies must not carry raw testids:\n{rendered}"
+    );
+}
+
+fn render_spec_action(spec: &super::spec_payload::ActionSpec) -> String {
+    super::render::render_action_spec(spec)
 }

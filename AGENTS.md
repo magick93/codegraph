@@ -3829,6 +3829,127 @@ Policy-derived RLS is ADDITIVE with the domains.toml-driven RLS: permissive
 policies OR-combine (only widening); RESTRICTIVE policies from `rls.tera`
 still AND on top.
 
+## Lifecycle hardening phase 2 (Nov 2026)
+
+One integration branch, one PR; workstreams ws0–ws6, red-first TDD, all new
+live gates **Supabase-flavoured Postgres only** by product decision (no
+plain-Postgres portability paths added).
+
+- **WS0 — `rex-*` @ 1fe0ca9**: rev-only bump to the rexlang PR #174 dedup
+  sweep; see the dependency-policy pin for the fallout scan.
+- **WS1 — live `service_ops_hurl_gate`**
+  (`cargo test -p codegraph --test service_ops_hurl_gate -- --ignored
+  --nocapture`, wired into `test-ops-integration` with a hurl `.deb` install
+  step): generate the pay_run fixture → GateDb scratch DB (docker fallback) →
+  migrations (pgmq shim) → boot the generated axum app → provision an API key
+  → hurl the emitted state-aware actions contract (201 create / 200 wired
+  transitions / 409 wrong-state + guaranteed replay / 501 seam) plus a
+  hand-authored probe on its own row (create 201, submit 200, submit replay
+  **403** — the op-level `when` guard lowers into authorize BEFORE the
+  api-key bypass: business semantics apply to every session; approve replay
+  409 machine CONFLICT; notify 501; unknown-id 404) and a psql state proof.
+  Findings folded into the gates: `.actor` policies reach the driver graph
+  only via `.ifml` imports (the gate shims a minimal `.ifml`); driver-path
+  build gates must inject `type_contracts_base` into their profiles on
+  unpushed revs (domain-types pins a git rev by default).
+- **WS2 — Supabase-only workers live gate**
+  (`cargo test -p codegraph --test workers_live_gate -- --ignored
+  --nocapture` + nightly `.github/workflows/workers-gate.yml`, 03:30 UTC +
+  dispatch, no secrets needed): 10-domain fixture
+  `crates/codegraph/tests/fixtures/workers_gate/` (consumer-style workspace
+  with its own `gate-graph` wrapper, 10 dash-free domains, branching leave
+  machine via a domains.toml workflow with codelist-bound status,
+  cross-package `refers`, a `.ddd` notify seam, cornucopia profile,
+  `hurl_contract` in the plan, dedicated Supabase ports 54340+ away from
+  resident stacks). **Product decision: the workers suite is Supabase-only by
+  design** — plain-Postgres support is deliberately not implemented (faithful
+  RLS needs the Supabase image's non-superuser `postgres` role; a plain
+  docker superuser silently bypasses RLS). The gate drives regeneration
+  itself (the harness's `discover_workspace_root` resolves to the outermost
+  workspace by design) and passes `--skip-generate`; it pins migration
+  failures == 0 (`apply_migrations` only warns) and asserts a GENUINE
+  served-status mix (200/201/204/401/404/409/501 — never all-one-status)
+  with the hand-authored `hurl/90_workflow_transition_409.hurl` surviving
+  regen. `DEFAULT_HURL_SKIPS` left untouched (hr-specs consumer compat —
+  moving its entries needs coordination on that repo's manifests);
+  fixture-specific skips live in the fixture manifest.
+- **WS3 — UX-spec required-FK seeding**: the IFML UX family was the last
+  fixture family broken for required-FK entities (`createUxRow` posted an
+  FK-less body → guaranteed 422). `build_view_ux_test` now rides
+  `attach_required_refs` and `createUxRow` emits `dep_setup_js` seeding
+  before the create (fresh function scope per call — repeated calls cannot
+  collide; `static_data_literal()` keeps the describe-level `UX_DATA` const
+  placeholder-free). No-dep path byte-identical; `ux_column_checks`/
+  `ux_chip_checks` structurally skip `*_id`; flag-off canaries hold without
+  rebless.
+- **WS4 — child service-op routes + child delegation**: all five
+  `role == "root"` gates relaxed (router ×2, handler, openapi, hurl) — a
+  `refers`-linked child with its own repository emits nested action routes
+  `POST /api/v1/{dom}/{parent}/{parent_id}/{child}/{child_id}/actions/{op}`
+  with `find_by_id_scoped` loads (plain `find_by_id` is conditionally
+  emitted), two-uuid `Path` tuples, grandparent-aware paths, nested utoipa
+  documentation, mox-first OpenAPI registration (the loop now iterates
+  generation-order titles — the config-`entities` loop registered NOTHING in
+  mox-first runs), and nested hurl contracts via `resolve_nesting_chain`
+  (parent preamble capture → nested create → nested action legs; the
+  auth-suite anchor picks the first ROOT entity). Contained-VO ops stay 501
+  fail-closed (rex Rule 6 — no standalone child repository); depth-2
+  grandchild action routes render via the existing grandparent branch but
+  carry no compile pin yet (v1 deferral). Two bug fixes: `bind_entity`'s
+  class-typed-signature arm now reads the adjacently-tagged rex `TypeRef`
+  JSON (`{"type":"class","value":{package,name}}` — it could never match
+  before), and `hurl_contract::payload_fields` is workflow-aware
+  (workflow/approval-status/immutable fields excluded from create/echo/
+  update bodies — generated contracts no longer 422 for modeled status
+  fields). `service_ops_compile_gate` carries the child plane;
+  `worker_wasm_compile_tests` compiles child handlers natively + wasm32.
+- **WS5 — collision hard error + doctor unbound-op WARN**:
+  `check_entity_module_collisions` (consistency.rs, the same ddl-gated site
+  as the duplicate-FK gate, hoisted before `run_entity_phase`) hard-errors
+  `Error::Config` when two ENTITY-producing titles in one domain strip to
+  the same module or pg_table_name, naming both titles; entity +
+  contained-VO sharing a module stays legal; the entity-blind
+  `ordering.rs` WARN and the duplicate-FK gate are byte-untouched.
+  `codegraph doctor --ddd-files` warns on entity-unbound service ops
+  (compiled-model predicate mirroring `dead_surface_warnings` minus graph
+  lookups). Documented limits: profiles without `ddl` and the workers
+  topology keep WARN-only coverage.
+- **WS6 — IFML action e2e via the #591 manifest**: the driver's folded manifest
+  is PERSISTED, not dropped — `IfmlManifestNode` (singleton-per-run,
+  `source_paths` + `model_json`) with `ingest_ifml_manifest`/`get_ifml_manifest`
+  on the trait surface (Mock store; Grafeo parameterized `create_node_with_props`
+  upsert — the blob carries quotes a GQL literal would corrupt; CachingQuerier
+  first-read-wins INCLUDING absence); **`GRAPH_FORMAT_VERSION` 3→4** (a
+  pre-WS6 cached graph would serve no manifest and silently drop the action
+  surface, so it cold-re-ingests instead); both driver Pass-1b sites store.
+  Consumers: `ViewPom.actions` + `render_actions_section` (POM action methods,
+  `{comp}Action{Op}` + error-locator/expect helpers), `ActionTest` payloads
+  with sound-by-construction leg planners (501 seam / 200 read+delete /
+  200-then-409 update on all-terminal targets / 200-then-403 when-guarded —
+  authorize precedes execution, so API-key sessions still hit the denial;
+  unresolvable actions stay unbuilt), `render_action_spec` with zero raw
+  testids and `.action.spec.ts` stale sweep. The nightly gate runs the FRONT
+  DOOR (`compile_and_check_ifml`) + manifest/`.ddd` ingest instead of its
+  hand-rolled pipeline; `assert_categories` gains
+  `action ok/conflict/forbidden/seam`; the gate fixture gains `refunds.ddd`
+  (builtins keep the op set byte-equal) + 4 action declarations. Nightly
+  5/5, 37/37 specs. Load-bearing pre-existing fixes en route: the S4c live
+  flag was dead (the page imported a live export the module never emitted;
+  kit-2.x `query.live('unchecked', fn(id))` arity, `.current?.current_state`
+  badge yield, form `data_var` use-before-declaration), the #582 mapped
+  select was built but never imported (runtime ReferenceError), mapped
+  components now render #559 action buttons, action fail legs read
+  `error?.message` not the object (`[object Object]` bug), POM state
+  assertions wait out the 5s live poll (12s). Kit-2.x-specific badge/arity
+  changes are IFML-plane only — the entity plane (kit `3.0.0-next.24`) keeps
+  its own shapes (same object-yield class likely lurks there; recorded,
+  entity templates outside this plane's ownership).
+
+Upstream asks drafted under `docs/proposals/` (001 transition binding,
+002 module/table uniqueness, 003 executable service bodies, 004 aggregate
+child operations, 005 multi-machine `when` scoping, 006 register properties
++ session-kind grants — the last contingent on product/security approval).
+
 ## Branch & PR Workflow
 
 - **`master` is the single trunk.** All PRs target `master`; feature branches are
@@ -3867,7 +3988,7 @@ still AND on top.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `rex-*` @ 194056b (everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar, and #139's ifml-quality pass — PLUS this bump's surfaces: typed lifecycles (rexlang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — rexlang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (rexlang #135), the `.dmn` decision-model surface (rexlang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (rexlang #128), and the Rune statement IR (rex-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `rex-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev rexlang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with rexlang's pin; purely additive delta over 49a6a27: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `rex-*` @ 1fe0ca9 (the rexlang PR #174 dedup sweep — internal refactor only: shared `Import` type replacing the `ImportDecl`/`UcImport`/`CmmnImport` triplicate, `rex-strings`/`rex-dates` zero-dep leaf crates, `VersionedArtifact` default methods + `default_format_version!`, centralized format-version markers, `did_you_mean` hoisted to rex-diagnostics; ZERO codegraph fallout — no references to any swept surface, all wire FORMAT_VERSIONs still 1 so the ddd/evt goldens byte-match; sigil 69115a7 unchanged in lockstep. Previously @ 194056b — everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar, and #139's ifml-quality pass — PLUS this bump's surfaces: typed lifecycles (rexlang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — rexlang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (rexlang #135), the `.dmn` decision-model surface (rexlang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (rexlang #128), and the Rune statement IR (rex-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `rex-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev rexlang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with rexlang's pin; purely additive delta over 49a6a27: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.

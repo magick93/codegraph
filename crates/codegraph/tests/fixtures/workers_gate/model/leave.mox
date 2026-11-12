@@ -1,0 +1,35 @@
+/// Leave domain model for the workers gate. `LeaveRequestType` is the
+/// branching-machine entity: the workflow lives in domains.toml (NOT here —
+/// a bare-String status would be an upstream compile error, rexlang Rule 16)
+/// with `status` bound to the `LeaveStatus` codelist enum, and the `.ddd`
+/// design under design/leave.ddd carries the repository + the `notify`
+/// service seam.
+package leave
+
+/// The leave request lifecycle (codelist — the domains.toml workflow's
+/// status_field binds this). Variant spellings ARE the codelist codes and
+/// must match the workflow's state spellings exactly: the status column's
+/// DEFAULT is the machine's initial state, and the FK targets these codes.
+enum LeaveStatus {
+    draft = 0
+    submitted = 1
+    approved = 2
+    rejected = 3
+}
+
+/// A request for time off.
+class LeaveRequestType {
+    /// Short summary of the request.
+    String title
+
+    /// Workflow status (managed by the domains.toml machine — the create
+    /// DTO excludes it, so it stays optional in the model and absent from
+    /// every POST body).
+    LeaveStatus [0..1] status
+
+    /// The employee requesting leave (cross-package refers into `common`).
+    refers CommonEmployeeType [0..1] employee
+
+    /// Optional reason the employee gave.
+    String [0..1] reason
+}

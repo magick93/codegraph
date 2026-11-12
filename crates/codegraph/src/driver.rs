@@ -776,6 +776,17 @@ pub async fn run_with_graph_cache(
                 total_manifest.actions.len(),
                 total_manifest.commands.len(),
             );
+            // WS6: the folded manifest persists as the run's singleton
+            // IfmlManifestNode — the e2e action plane consumes it (it used
+            // to be dropped after the counts printed).
+            let source_paths: Vec<String> =
+                ifml_files.iter().map(|p| p.display().to_string()).collect();
+            crate::ingest::ifml_ingest::ingest_ifml_manifest(
+                be.ingestor(),
+                &total_manifest,
+                &source_paths,
+            )
+            .await?;
         }
 
         // Pass 1c: Ingest rexlang .ddd design files (issue #449): compiled
@@ -1436,6 +1447,12 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         total_manifest.actions.len(),
         total_manifest.commands.len(),
     );
+    // WS6: the folded manifest persists as the run's singleton
+    // IfmlManifestNode — the e2e action plane consumes it (it used to be
+    // dropped after the counts printed).
+    let source_paths: Vec<String> = ifml_files.iter().map(|p| p.display().to_string()).collect();
+    crate::ingest::ifml_ingest::ingest_ifml_manifest(be.ingestor(), &total_manifest, &source_paths)
+        .await?;
 
     // Pass 1c: ingest API model from domain configuration.
     {

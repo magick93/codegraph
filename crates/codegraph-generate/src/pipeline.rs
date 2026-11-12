@@ -170,6 +170,27 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     };
     let global_gens: Vec<Box<dyn GlobalGenerator>> = build_global_generators(&ctx);
 
+    // WS5: the entity-producing title collision sweep — two DISTINCT
+    // entity-classified titles in one domain stripping to the same
+    // module/pg_table_name silently overwrite each other's entity module
+    // and migration. A hard error BEFORE any generator runs, naming both
+    // titles + the domain + the collision. Same gate as the #460 sweep
+    // below (entity-ness is only escalated where entity-producing
+    // generators actually run; elsewhere the entity-blind ordering WARN
+    // stays), monolith-only for the same reason.
+    if entity_gens.iter().any(|g| g.name() == "ddl") {
+        let collisions =
+            crate::consistency::check_entity_module_collisions(ctx.db(), ctx.config, &order)
+                .await?;
+        if !collisions.is_empty() {
+            return Err(Error::Config(format!(
+                "entity-producing title collision: titles in one domain strip to the \
+                 same module/pg_table_name:\n  - {}",
+                collisions.join("\n  - ")
+            )));
+        }
+    }
+
     // Per-entity generators — run entities sequentially to ensure TypeRegistry
     // is populated for earlier entities before later entities reference their types.
     let entity_results = run_entity_phase(&ctx, &mut entity_gens, &parent_candidates, &order).await;

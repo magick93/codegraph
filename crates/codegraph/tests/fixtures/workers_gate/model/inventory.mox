@@ -1,0 +1,14 @@
+/// Inventory domain model for the workers gate.
+package inventory
+
+/// A stocked part.
+class InventoryPartType {
+    /// Part number.
+    String partNumber
+
+    /// Human-readable description.
+    String [0..1] description
+
+    /// Bin location.
+    String [0..1] binLocation
+}

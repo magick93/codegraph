@@ -110,6 +110,30 @@ pub struct ActionNode {
     pub domain: Option<String>,
 }
 
+/// The folded declaration-backed IFML control/route manifest (rexlang
+/// #118, WS6): ONE node per run carrying the whole
+/// `rex_ir::ifml_manifest::IfmlManifest` serialized — the
+/// `DddService.operations_json` / `:DeployModel.model_json` blob
+/// precedent. The driver folds every file's manifest, prints the counts,
+/// and (since WS6) lands it HERE instead of dropping it; the e2e generator
+/// consumes it to plan the POM action surface and the click-through action
+/// specs.
+///
+/// `model_json` is the serde JSON of the rex-ir wire artifact (versioned
+/// independently by `IFML_MANIFEST_FORMAT_VERSION`); consumers deserialize
+/// it wholesale. `source_paths` records the `.ifml` files that folded into
+/// it (diagnostics + provenance only). A run without `--ifml-files`
+/// ingests nothing: old graphs (and graph caches) carry no manifest node
+/// and `get_ifml_manifest()` degrades to `None` — every consumer is
+/// presence-gated on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IfmlManifestNode {
+    /// The `.ifml` files that folded into the manifest, in driver order.
+    pub source_paths: Vec<String>,
+    /// The whole folded `IfmlManifest` serialized (compact serde JSON).
+    pub model_json: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParameterDefinitionNode {
     pub name: String,

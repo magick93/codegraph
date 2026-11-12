@@ -1,0 +1,40 @@
+import "refunds.mox";
+
+application Refunds {
+    module refunds {
+        // The builtins keep the config-driven op set byte-equal (the
+        // ddd_pipeline_tests equivalence contract). The audit default
+        // stays ON — the config fallback this fixture ran with pre-WS6
+        // already audited (domains.toml leaves `auditable` unset), and the
+        // workflow/query planes must agree on the find_by_id arity.
+        entity RefundRequest scaffold repository RefundRequestRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        // WS6 action-spec machine: drives a NON-workflow-managed enum
+        // field (the workflow `status` field is machine-managed by the
+        // domains.toml workflow and excluded from the update DTO, which
+        // would seam every machine-bound op).
+        machine escalation: RefundEscalation {
+            initial none;
+            none -> escalated via Escalate;
+            terminal escalated;
+        }
+        service RefundRequestService {
+            inject RefundRequestRepository;
+            // 200: read delegation — returns the loaded record.
+            inspect => RefundRequestRepository.findById;
+            // 501: findAll delegation has no executable lowering.
+            summarize => RefundRequestRepository.findAll;
+            // 200 then 409: machine-bound save; re-acting from the
+            // terminal target conflicts.
+            escalate => RefundRequestRepository.save;
+            // 200 then 403: the op-level `when` guard denies once the
+            // machine field moved (authorize runs before the conflict
+            // check, and API-key sessions still hit it).
+            approve => RefundRequestRepository.save when (escalation == none);
+        }
+    }
+}

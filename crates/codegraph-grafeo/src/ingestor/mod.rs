@@ -37,11 +37,11 @@ use codegraph_core::types::{
     ChartDefinitionNode, CodeList, CollectionNode, CompositeColumn, CompositeRange, ConditionKind,
     ConditionNode, DataBindingNode, DddModelGraph, DeployModelGraph, EdgeProperties, EdgeType,
     EnumValue, ErrorDefinitionNode, EventNode, EvtModelGraph, FunctionNode, HttpEndpointNode,
-    IngestStats, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
-    MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode, PermissionNode,
-    PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind, RegulatoryNode,
-    RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode, SecurityIdentityNode,
-    TenantNode, ViewComponentNode, ViewContainerNode,
+    IfmlManifestNode, IngestStats, InteractionNode, LexiconNode, MembershipNode,
+    ModuleDefinitionNode, MoxDomainModel, NamespaceImport, NamespaceNode, ParameterDefinitionNode,
+    PermissionNode, PipelineNode, PolicyNode, PropertyNode, RegulatoryEdgeKind, RegulatoryKind,
+    RegulatoryNode, RegulatoryOwner, RelationshipNode, RepositoryNode, RuleNode, SchemaNode,
+    SecurityIdentityNode, TenantNode, ViewComponentNode, ViewContainerNode,
 };
 
 use self::gql::CountingSession;
@@ -870,5 +870,9 @@ impl GraphIngestor for GrafeoEngine {
 
     async fn ingest_deploy_model(&self, model: &DeployModelGraph) -> Result<(), GraphError> {
         self.insert_deploy_model(model).await
+    }
+
+    async fn ingest_ifml_manifest(&self, node: &IfmlManifestNode) -> Result<(), GraphError> {
+        self.insert_ifml_manifest(node).await
     }
 }

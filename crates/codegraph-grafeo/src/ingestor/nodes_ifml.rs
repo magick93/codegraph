@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    ActionNode, DataBindingNode, EventNode, ModuleDefinitionNode, ParameterDefinitionNode,
-    ViewComponentNode, ViewContainerNode,
+    ActionNode, DataBindingNode, EventNode, IfmlManifestNode, ModuleDefinitionNode,
+    ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
 };
 
 use super::gql::CountingSession;
@@ -246,5 +246,39 @@ impl GrafeoEngine {
             &props,
         )?;
         Ok(id)
+    }
+
+    /// The folded IFML control/route manifest (rexlang #118, WS6): ONE
+    /// singleton node per run — delete-then-insert, so a re-ingest (a
+    /// second driver pass into the same engine) REPLACES it rather than
+    /// duplicating it. The props go through the parameterized direct API
+    /// (`create_node_with_props`), NOT GQL string escaping — the
+    /// `model_json` blob legitimately contains quotes/backslashes (serde
+    /// escapes inside expression strings) that a `'{}'` GQL literal would
+    /// corrupt on read-back.
+    pub(super) async fn insert_ifml_manifest(
+        &self,
+        node: &IfmlManifestNode,
+    ) -> Result<(), GraphError> {
+        let session = CountingSession::new(self.db().session());
+        session
+            .execute("MATCH (m:IfmlManifest) DELETE m")
+            .map_err(|e| GraphError::Ingest(format!("ingest_ifml_manifest delete failed: {e}")))?;
+
+        let source_paths = serde_json::to_string(&node.source_paths).map_err(|e| {
+            GraphError::Ingest(format!("ingest_ifml_manifest source_paths failed: {e}"))
+        })?;
+        let props = HashMap::from([
+            (
+                "source_paths".to_string(),
+                grafeo::Value::String(source_paths.into()),
+            ),
+            (
+                "model_json".to_string(),
+                grafeo::Value::String(node.model_json.clone().into()),
+            ),
+        ]);
+        self.create_registered_node("IfmlManifest", &["ifml:manifest".to_string()], &props)?;
+        Ok(())
     }
 }

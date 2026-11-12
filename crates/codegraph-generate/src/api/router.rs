@@ -84,7 +84,8 @@ pub struct RouterEntity {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_ops: Vec<crate::api::handler::MoxOpRoute>,
     /// Service-op action routes (issue #590) — POST `{id}/actions/{snake}`,
-    /// policy-gated in the handler. Root entities only.
+    /// policy-gated in the handler. Child entities nest the route under the
+    /// parent's router (the handler's scoped load enforces ownership).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub service_ops: Vec<crate::ddd::service_ops::ServiceOpRoute>,
     pub entity_name: String,
@@ -325,23 +326,19 @@ impl DomainGenerator for RouterGenerator {
                 let role = entity_cfg
                     .and_then(|ec| ec.role.clone())
                     .unwrap_or_else(|| "root".into());
-                let service_ops = if role == "root" {
-                    crate::ddd::service_ops::routes_for_entity(
-                        db,
-                        config,
-                        domain,
-                        title,
-                        project.codegen.dto_key_casing,
-                    )
-                    .await
-                    .map_err(|e| {
-                        codegraph_core::error::Error::Config(format!(
-                            "service ops: entity '{title}': {e}"
-                        ))
-                    })?
-                } else {
-                    Vec::new()
-                };
+                let service_ops = crate::ddd::service_ops::routes_for_entity(
+                    db,
+                    config,
+                    domain,
+                    title,
+                    project.codegen.dto_key_casing,
+                )
+                .await
+                .map_err(|e| {
+                    codegraph_core::error::Error::Config(format!(
+                        "service ops: entity '{title}': {e}"
+                    ))
+                })?;
 
                 entities.push(RouterEntity {
                     mox_ops: crate::api::handler::routable_mox_ops(db, title, entity_name).await,
@@ -696,23 +693,17 @@ pub async fn build_router_context(
             let role = entity_cfg
                 .and_then(|ec| ec.role.clone())
                 .unwrap_or_else(|| "root".into());
-            let service_ops = if role == "root" {
-                crate::ddd::service_ops::routes_for_entity(
-                    db,
-                    config,
-                    domain,
-                    title,
-                    project.codegen.dto_key_casing,
-                )
-                .await
-                .map_err(|e| {
-                    codegraph_core::error::Error::Config(format!(
-                        "service ops: entity '{title}': {e}"
-                    ))
-                })?
-            } else {
-                Vec::new()
-            };
+            let service_ops = crate::ddd::service_ops::routes_for_entity(
+                db,
+                config,
+                domain,
+                title,
+                project.codegen.dto_key_casing,
+            )
+            .await
+            .map_err(|e| {
+                codegraph_core::error::Error::Config(format!("service ops: entity '{title}': {e}"))
+            })?;
 
             entities.push(RouterEntity {
                 mox_ops: crate::api::handler::routable_mox_ops(db, title, entity_name).await,

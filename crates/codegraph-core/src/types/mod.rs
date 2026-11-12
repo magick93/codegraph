@@ -74,7 +74,7 @@ pub use function::{
     FunctionPostCondition, FunctionTransform, FunctionTransformKind,
 };
 pub use ifml::{
-    ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode,
+    ActionNode, DataBindingNode, DataBindingResolution, DataFlowData, EventNode, IfmlManifestNode,
     ModuleDefinitionNode, ModuleUseRecord, NavigationFlowData, NavigationFlowRecord,
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode, strip_ifml_prefix,
 };

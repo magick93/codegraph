@@ -1,0 +1,14 @@
+/// Scheduling domain model for the workers gate.
+package scheduling
+
+/// A scheduled work shift.
+class SchedulingShiftType {
+    /// Shift name.
+    String name
+
+    /// Start time (ISO-8601 text in the v1 fixture).
+    String [0..1] startTime
+
+    /// End time (ISO-8601 text in the v1 fixture).
+    String [0..1] endTime
+}

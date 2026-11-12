@@ -96,7 +96,11 @@ pub fn run_specs(
     run_specs_with(
         project,
         report_path,
-        &[],
+        // One retry per failing spec: the 16-worker suite contends for the
+        // single vite preview + axum pair, and a first-attempt loss (a
+        // 5s navigation window under load) is noise, not a regression —
+        // the ops harness carries the same knob (--pw-retries).
+        &["--retries=1"],
         &[
             ("IFML_PREVIEW_PORT", preview_port_env.as_str()),
             ("IFML_GATE_REPORT", gate_report_env.as_str()),

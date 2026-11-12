@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    ActionNode, DataBindingResolution, EventNode, ModuleDefinitionNode, ModuleUseRecord,
-    NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
-    strip_ifml_prefix,
+    ActionNode, DataBindingResolution, EventNode, IfmlManifestNode, ModuleDefinitionNode,
+    ModuleUseRecord, NavigationFlowRecord, ParameterDefinitionNode, ViewComponentNode,
+    ViewContainerNode, strip_ifml_prefix,
 };
 
 use super::query::{query_gql, query_many, query_many_params};
@@ -356,4 +356,75 @@ fn component_owner_containers(
         );
     }
     Ok(owners)
+}
+
+impl GrafeoEngine {
+    /// The run's folded IFML manifest, whole (`model_json` deserialize +
+    /// source_paths read). `None` when the graph carries no node — every
+    /// pre-WS6 graph (the read-compat contract).
+    pub(super) async fn query_ifml_manifest(&self) -> Result<Option<IfmlManifestNode>, GraphError> {
+        let result = query_gql(
+            self,
+            "MATCH (m:IfmlManifest) \
+             RETURN m.source_paths AS source_paths, m.model_json AS model_json",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let Some(row) = result.rows.first() else {
+            return Ok(None);
+        };
+        let model_json = reader.get_string(row, "model_json")?;
+        let source_paths_json = reader.get_string(row, "source_paths")?;
+        let source_paths: Vec<String> = serde_json::from_str(&source_paths_json).map_err(|e| {
+            GraphError::Query(format!("ifml manifest has unreadable source_paths: {e}"))
+        })?;
+        let node = IfmlManifestNode {
+            source_paths,
+            model_json,
+        };
+        Ok(Some(node))
+    }
+}
+
+#[cfg(test)]
+mod manifest_round_trip_tests {
+    //! WS6: pins the storage contract — the singleton node reads back
+    //! WHOLE (source_paths + model_json byte-equal to the ingest), a
+    //! re-ingest REPLACES the prior node, and a graph without one reads
+    //! `None`.
+
+    use crate::engine::GrafeoEngine;
+    use codegraph_core::traits::{GraphIngestor, GraphQuerier};
+    use codegraph_core::types::IfmlManifestNode;
+
+    fn node(source: &str) -> IfmlManifestNode {
+        IfmlManifestNode {
+            source_paths: vec![source.to_string()],
+            // Exercise the escape path: an embedded single quote survives
+            // the parameterized insert unharmed.
+            model_json:
+                r#"{"formatVersion":1,"actions":[{"name":"It's","target":"RefundRequest"}]}"#
+                    .to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn manifest_round_trips_whole_and_is_a_singleton() {
+        let engine = GrafeoEngine::in_memory().unwrap();
+
+        let absent = engine.get_ifml_manifest().await.unwrap();
+        assert_eq!(absent, None, "a graph without a manifest reads None");
+
+        engine
+            .ingest_ifml_manifest(&node("app.ifml"))
+            .await
+            .unwrap();
+        engine
+            .ingest_ifml_manifest(&node("second.ifml"))
+            .await
+            .unwrap();
+
+        let loaded = engine.get_ifml_manifest().await.unwrap();
+        let expected = node("second.ifml");
+        assert_eq!(loaded.as_ref(), Some(&expected));
+    }
 }

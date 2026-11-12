@@ -1,0 +1,16 @@
+/// Payroll domain model for the workers gate (payroll2 — the `2` keeps the
+/// domain name disjoint from any consumer model on this machine; worker
+/// binaries/bindings also assume no dashes).
+package payroll2
+
+/// A payroll run over a period.
+class PayrollRunType {
+    /// Period label (e.g. 2026-11).
+    String periodLabel
+
+    /// Pay frequency.
+    String [0..1] frequency
+
+    /// Optional run notes.
+    String [0..1] notes
+}

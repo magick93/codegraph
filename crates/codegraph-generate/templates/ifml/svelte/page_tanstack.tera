@@ -38,6 +38,9 @@
 {%- if comp.tanstack and comp.tanstack.mapped_import %}
 	import { {{ comp.tanstack.mapped_import.export }} } from '{{ comp.tanstack.mapped_import.path }}';
 {%- endif %}
+{%- if comp.tanstack and comp.tanstack.mapped_select_import %}
+	import {{ comp.tanstack.mapped_select_import.export }} from '{{ comp.tanstack.mapped_select_import.path }}';
+{%- endif %}
 {%- endfor %}
 {%- endif %}
 {%- if needs_goto %}
@@ -86,7 +89,7 @@
 	// workflow_state is the SSR fallback (kit does not start streams
 	// during SSR). The badge and the transition buttons read the derived.
 	const {{ comp.workflow_live.live_var }} = browser ? {{ comp.workflow_live.export }}(viewParams['{{ comp.workflow_live.id_param }}']) : null;
-	const {{ comp.workflow_live.state_var }} = $derived({{ comp.workflow_live.live_var }}?.current ?? {{ comp.workflow_live.fallback_expr }});
+	const {{ comp.workflow_live.state_var }} = $derived({{ comp.workflow_live.live_var }}?.current?.current_state ?? {{ comp.workflow_live.fallback_expr }});
 {%- endif %}
 {%- endfor %}
 {%- if denial_helper_src %}
@@ -381,7 +384,7 @@
 			});
 			if (!response.ok) {
 				const body = await response.json().catch(() => null);
-				actionError = body?.error ?? body?.message ?? `Request failed (${response.status})`;
+				actionError = body?.error?.message ?? body?.message ?? `Request failed (${response.status})`;
 				return;
 			}
 			await invalidateAll();
@@ -537,6 +540,12 @@
 	{{ t.html }}
 {%- endfor %}
 {%- endif %}
+{%- endif %}
+{%- if comp.action_buttons %}
+{%- for btn in comp.action_buttons %}
+{{ btn.gate_open }}<button type="button" data-testid="{{ btn.testid }}" onclick={% raw %}{() => {% endraw %}{{ btn.handler_name }}(){% raw %}}{% endraw %}>{{ btn.label }}</button>{{ btn.gate_close }}
+{%- endfor %}
+{% if comp.action_buttons %}{% raw %}{#if actionError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-action-error"{% raw %}>{actionError}</span>{/if}{% endraw %}{% endif %}
 {%- endif %}
 {% elif comp.timeline %}
 {%- if not comp.in_container and comp.show_heading %}

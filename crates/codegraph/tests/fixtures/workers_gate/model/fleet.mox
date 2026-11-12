@@ -1,0 +1,14 @@
+/// Fleet domain model for the workers gate.
+package fleet
+
+/// A vehicle in the fleet.
+class FleetVehicleType {
+    /// Registration plate.
+    String registration
+
+    /// Make and model.
+    String [0..1] model
+
+    /// Optional home depot.
+    String [0..1] depot
+}

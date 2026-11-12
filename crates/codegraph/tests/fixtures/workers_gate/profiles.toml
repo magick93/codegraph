@@ -1,0 +1,61 @@
+# Generation profile for the WS2 workers live gate fixture.
+#
+# The api generator list is the root repo's `workers-cornucopia` profile
+# (per-domain Cloudflare Worker crates + gateway, cornucopia persistence —
+# the ONLY provider the workers topology accepts, a hard BuildPlan rule)
+# PLUS `hurl_contract` (per-entity contracts + the auth suite + the 501
+# actions files) and `ops` (the generated `testkit` harness crate).
+#
+# Path-dep bases: `domain_types_base` is OUTPUT-anchored (the crate is
+# generated at `{output}/gate-domain-types`, the same depth as the workers
+# workspace), so the codegraph crate bases below are expressed relative to
+# `generated-workers/workers/` — seven levels up to this checkout's root,
+# then into crates/. Both the workers workspace manifest and the generated
+# gate-domain-types crate resolve them, and both files are regenerated every
+# run, so the relative paths stay checkout-location-independent.
+
+[profiles.gate-workers.meta]
+name = "gate-workers"
+version = "1.0.0"
+description = "Workers live gate — 10-domain workers topology + cornucopia"
+app_name = "gate"
+generator_name = "gate-graph"
+api_title = "Workers Gate API"
+domain_types_crate = "gate_domain_types"
+domain_types_base = "gate-domain-types"
+codegraph_workflow_base = "../../../../../../../crates/codegraph-workflow"
+type_contracts_base = "../../../../../../../crates/codegraph-type-contracts"
+
+[profiles.gate-workers.features]
+auth = true
+pagination = true
+validation_level = "strict"
+database_target = "postgres"
+ops_backend = true
+# MANDATORY: workers topology requires cornucopia (hard BuildPlan error
+# otherwise — SeaORM cannot link wasm32).
+persistence_provider = "cornucopia"
+deployment_topology = "workers"
+# The generated testkit path-deps codegraph-ops from this checkout instead
+# of pinning an unfetchable local rev.
+dependency_strategy = "path"
+
+[profiles.gate-workers.api]
+generators = [
+    # Entity (sea_orm_entity stays in the cornucopia plan: the worker libs
+    # declare `pub mod entity` natively — see worker_lib.tera; the
+    # hr-specs cornucopia profile carries the same pairing)
+    "ddl", "sea_orm_entity", "cornucopia_queries", "cornucopia_repo", "dto", "repository",
+    "command", "query", "event", "handler", "workflow_action",
+    "lifecycle_trait", "domain_types_dto", "domain_types_query_service",
+    # Domain
+    "errors", "router", "links", "mox_ops",
+    # Global
+    "cornucopia_config", "worker_scaffold", "basejump_setup", "pgmq_setup",
+    "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "report_views", "openapi",
+    # Generated hurl contracts (incl. the 501 actions files) + ops harness
+    "hurl_contract", "ops",
+]
+output = "generated-workers/"
+scripts.post_gen = []

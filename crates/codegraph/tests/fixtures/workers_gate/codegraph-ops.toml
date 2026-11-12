@@ -1,0 +1,116 @@
+# Ops harness manifest for the WS2 workers live gate fixture.
+#
+# Hand-maintained (the workers suite's regeneration never wipes it —
+# REGEN_WIPE covers only the generated source tree). The `[workers]` section
+# is LOAD-BEARING: without it the harness falls back to its historical
+# hr-specs domain list (11 unrelated domains) — the trap this fixture
+# exists to guard against.
+
+app_name = "gate"
+graph_binary = "gate-graph"
+mox_files = [
+    "model/common.mox",
+    "model/leave.mox",
+    "model/billing.mox",
+    "model/dispatch.mox",
+    "model/fleet.mox",
+    "model/inventory.mox",
+    "model/payroll2.mox",
+    "model/scheduling.mox",
+    "model/security.mox",
+    "model/vendor.mox",
+]
+domain_config = "domains.toml"
+profile = "gate-workers"
+output_dir = "generated-workers"
+
+[servers]
+# Under the workers topology the "API" is the gateway worker.
+api_port = 8787
+ui_port = 5173
+bind_addr = "127.0.0.1"
+
+[database.api]
+# The fixture's dedicated Supabase postgres (supabase/config.toml pins db
+# port 54340; the health URL below rides Kong on the api port 54341). The
+# live gate retargets `database` at a per-run scratch database before
+# invoking the suite.
+host = "localhost"
+port = 54340
+user = "postgres"
+password = "postgres"
+database = "postgres"
+
+[capabilities]
+has_cli = false
+has_ui = false
+has_admin_cli = false
+has_grpc = false
+database_target = "postgres"
+persistence_provider = "cornucopia"
+
+[smoke]
+entity = "leave/leave-request"
+# mox classes generate singular kebab routes (/leave-request, not
+# /leave-requests).
+route = "leave/leave-request"
+create_body = '{"title":"workers-gate-smoke"}'
+
+api_version = "v1"
+
+[hurl]
+dir = "generated-workers/hurl"
+# Fixture-specific skips ONLY: these two generated files reference keys the
+# workers suite does not provision (it passes exactly base_url + api_key —
+# no api_key_limited / api_key_b). The scope-denial and cross-tenant 403/404
+# surfaces they pin are covered by the monolith api suite (hr-specs
+# precedent); 08_rls_isolation is skipped by the harness's default list and
+# intentionally NOT repeated here. The fixture's hand-authored
+# 90_workflow_transition_409.hurl is copied into the generated hurl dir by
+# the post_generate hook below.
+skip = ["03_scope_denial_403.hurl", "04_cross_tenant_404.hurl"]
+org_id_a = "00000000-0000-0000-0000-000000000001"
+org_id_b = "00000000-0000-0000-0000-000000000002"
+
+# The generated hurl dir is REGEN-immune (REGEN_WIPE does not cover it), so
+# the hand-authored workflow-409 contract rides every regeneration.
+[[hooks]]
+name = "seed-hand-authored-hurl"
+exec = "cp hurl/90_workflow_transition_409.hurl generated-workers/hurl/90_workflow_transition_409.hurl"
+on = "post_generate"
+fatal = false
+
+extensions = []
+
+# Local Supabase-compatible stack for THIS fixture (ports 54340+; the
+# foreign stacks at 54321-54334/54337 are never touched). Keys are the
+# standard local demo constants — codegraph-ops falls back to the same
+# values when absent, they are spelled out here for clarity.
+[supabase]
+dir = "supabase"
+health_url = "http://localhost:54341/auth/v1/health"
+anon_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0"
+service_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU"
+jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
+
+[workers]
+# The guard against the hr-specs domain leak: ALL TEN domains explicit, in
+# boot (port) order. No dashes anywhere (worker binaries/bindings assume
+# it). Default ports kept — `clean` sweeps these constants.
+profile = "gate-workers"
+output_dir = "generated-workers"
+domains = [
+    "billing",
+    "common",
+    "dispatch",
+    "fleet",
+    "inventory",
+    "leave",
+    "payroll2",
+    "scheduling",
+    "security",
+    "vendor",
+]
+binary_prefix = "gate"
+gateway_port = 8787
+worker_base_port = 3001

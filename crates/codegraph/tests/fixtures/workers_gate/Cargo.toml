@@ -1,0 +1,21 @@
+# Workspace for the WS2 workers live gate fixture — a consumer-style
+# monorepo (the init-scaffold shape, no checked-in generated output).
+#
+# `generated-workers/` (the workers-cornucopia output the suite wipes and
+# regenerates every run) is excluded so the packages inside it — the
+# generated `testkit` harness crate in particular — build standalone.
+[workspace]
+resolver = "2"
+members = ["gate-graph"]
+exclude = ["generated-workers"]
+
+[workspace.dependencies]
+codegraph = { path = "../../../../codegraph" }
+codegraph-backend = { path = "../../../../codegraph-backend" }
+codegraph-config = { path = "../../../../codegraph-config" }
+codegraph-classifier = { path = "../../../../codegraph-classifier" }
+codegraph-grafeo = { path = "../../../../codegraph-grafeo" }
+codegraph-core = { path = "../../../../codegraph-core" }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }

@@ -1,6 +1,20 @@
 package refunds
 
+enum RefundStatus {
+    draft = 0
+    submitted = 1
+    approved = 2
+    rejected = 3
+}
+
+enum RefundEscalation {
+    none = 0
+    escalated = 1
+}
+
 class RefundRequest {
     String title
     int amount
+    RefundStatus status
+    RefundEscalation escalation
 }

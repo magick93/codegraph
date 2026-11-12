@@ -931,6 +931,10 @@ impl GraphQuerier for MockEngine {
         Ok(models)
     }
 
+    async fn get_ifml_manifest(&self) -> Result<Option<IfmlManifestNode>, GraphError> {
+        Ok(self.ifml_manifest.lock().unwrap().clone())
+    }
+
     // ── Constraint plane queries (issue #261) ─────────────────────────
 
     async fn get_conditions_for_schema(

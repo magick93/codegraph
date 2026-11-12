@@ -22,13 +22,13 @@ use codegraph_core::types::{
     CollectionNode, CompositeColumn, CompositeRange, CompositionTree, ConditionNode,
     DataBindingResolution, DddModelGraph, DeployModelGraph, EnumValue, ErrorDefinitionNode,
     EventNode, EvtModelGraph, Extension, FunctionNode, GrantEdge, HttpEndpointNode,
-    InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode, MoxDerivedFeatureNode,
-    MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode, NavigationFlowRecord,
-    ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit, PipelineNode, PolicyNode,
-    PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode, RepositoryNode, RuleNode,
-    RuleRefRecord, SchemaClassificationData, SchemaNode, SecurityIdentityNode, StructuredSubField,
-    TenantNode, ViewComponentNode, ViewContainerNode, descendants, topological_namespace_order,
-    topological_order,
+    IfmlManifestNode, InteractionNode, LexiconNode, MembershipNode, ModuleDefinitionNode,
+    MoxDerivedFeatureNode, MoxOperationNode, MoxVocabularyNode, NamespaceImport, NamespaceNode,
+    NavigationFlowRecord, ParameterDefinitionNode, ParentCandidate, PermissionNode, Permit,
+    PipelineNode, PolicyNode, PropertyNode, RegulatoryNode, RegulatoryRefRecord, RelationshipNode,
+    RepositoryNode, RuleNode, RuleRefRecord, SchemaClassificationData, SchemaNode,
+    SecurityIdentityNode, StructuredSubField, TenantNode, ViewComponentNode, ViewContainerNode,
+    descendants, topological_namespace_order, topological_order,
 };
 
 use self::query::{query_gql, query_gql_params, query_many, query_many_params};
@@ -780,6 +780,10 @@ impl GraphQuerier for GrafeoEngine {
 
     async fn get_deploy_models(&self) -> Result<Vec<DeployModelGraph>, GraphError> {
         self.query_deploy_models().await
+    }
+
+    async fn get_ifml_manifest(&self) -> Result<Option<IfmlManifestNode>, GraphError> {
+        self.query_ifml_manifest().await
     }
 
     async fn composition_table_conflict(

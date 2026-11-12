@@ -586,6 +586,12 @@ impl GraphIngestor for MockEngine {
         Ok(())
     }
 
+    async fn ingest_ifml_manifest(&self, node: &IfmlManifestNode) -> Result<(), GraphError> {
+        // Singleton: the run's manifest IS the manifest.
+        *self.ifml_manifest.lock().unwrap() = Some(node.clone());
+        Ok(())
+    }
+
     async fn finalize(&self) -> Result<IngestStats, GraphError> {
         let schemas = self.schemas.lock().unwrap();
         let properties = self.properties.lock().unwrap();

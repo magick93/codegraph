@@ -509,6 +509,68 @@ pub fn write_shadcn_stubs(svelte: &Path) -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // Gate-owned stub of the project's NativeSelect barrel: the wired
+    // selection-field variant (#574 ledger, #582) emits
+    // `$lib/forms/fields/select-variant.svelte`, which imports THIS barrel.
+    // Root types `onchange` with the select element pinned so the
+    // wrapper's `(e) => onchange?.(e.currentTarget.value)` wiring type-checks.
+    let native_select = ui.join("native-select");
+    fs::create_dir_all(&native_select).map_err(|e| e.to_string())?;
+    fs::write(
+        native_select.join("index.ts"),
+        r#"// Gate-owned stub of the project's NativeSelect barrel (see
+// select-variant.svelte's import — the wired selection-field variant
+// composes a native <select>, never a snippet-rendered Select).
+export { default as Root } from './native-select.svelte';
+export { default as Option } from './native-select-option.svelte';
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        native_select.join("native-select.svelte"),
+        r#"<script lang="ts">
+	// Gate-owned stub of the project's NativeSelect Root: a native <select>
+	// with the select element pinned on `onchange` (the wrapper's arrow
+	// reads currentTarget.value). Accepts the forwarded `data-testid` the
+	// select-variant wrapper passes.
+	let {
+		name,
+		required = false,
+		value = $bindable(''),
+		onchange,
+		'data-testid': testid,
+		children
+	}: {
+		name?: string;
+		required?: boolean;
+		value?: string;
+		onchange?: (event: Event & { currentTarget: HTMLSelectElement }) => void;
+		'data-testid'?: string;
+		children?: import('svelte').Snippet;
+	} = $props();
+</script>
+
+<select {name} {required} bind:value data-testid={testid} onchange={(e) => onchange?.(e)}>
+	{@render children?.()}
+</select>
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+    fs::write(
+        native_select.join("native-select-option.svelte"),
+        r#"<script lang="ts">
+	// Gate-owned stub of the project's NativeSelect Option.
+	let { value, children }: {
+		value?: string;
+		children?: import('svelte').Snippet;
+	} = $props();
+</script>
+
+<option {value}>{@render children?.()}</option>
+"#,
+    )
+    .map_err(|e| e.to_string())?;
+
     // Issue #303: stubs for the ux-rules primitives the generated markup can
     // invoke (the row-actions overflow menu and truncate-tooltip surfaces).
     // Like the stubs above they render data-testid={testid} plus the

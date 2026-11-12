@@ -2233,3 +2233,147 @@ view "CustomerList" {
         "the wired union must pass the integrity stage"
     );
 }
+
+/// WS5: `codegraph doctor --ddd-files` warns on ENTITY-UNBOUND service
+/// ops — the graph-free mirror of the run path's dead-surface WARN (issue
+/// #590, Ask 1). An op binds no entity when it carries no capability
+/// class reference, no delegation to a repository of the model, and no
+/// class-typed param/return. WARN only, never fatal; fully-bound models
+/// stay quiet (no false positives).
+#[test]
+fn doctor_warns_on_entity_unbound_service_ops() {
+    let dir = TempDir::new().unwrap();
+    let mox = dir.path().join("payroll.mox");
+    fs::write(
+        &mox,
+        "package payroll\n\nclass PayRun {\n    String [1] reference\n    int sequence\n}\n",
+    )
+    .unwrap();
+    let config = dir.path().join("domains.toml");
+    fs::write(
+        &config,
+        "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n\
+         [domains.payroll]\nlabel = \"Payroll\"\nschema_dir = \"payroll\"\npostgres_schema = \"payroll\"\n",
+    )
+    .unwrap();
+
+    // The unbound op: primitive-only signature, no capability, no
+    // delegation — the run path warns on it; doctor must warn too.
+    let unbound_ddd = dir.path().join("unbound.ddd");
+    fs::write(
+        &unbound_ddd,
+        r#"import "payroll.mox";
+
+application Payroll {
+    base payroll
+    module ops {
+        service PayRunService {
+            inject PayRunRepository;
+            boolean ping(String name);
+        }
+        entity PayRun repository PayRunRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config: config.clone(),
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox.clone()],
+        rosetta_files: vec![],
+        ddd_files: vec![unbound_ddd],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+    })
+    .unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "the unbound model must still compile: {summary:?}"
+    );
+
+    // Baseline: the SAME doctor run with no .ddd file — the ambient
+    // warning set (ops manifest, profiles, env) is identical, so the
+    // delta below is attributable to the ddd check alone.
+    let baseline = cmd_doctor(&DoctorArgs {
+        config: config.clone(),
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox.clone()],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+    })
+    .unwrap();
+    assert_eq!(
+        baseline.hard_failures, 0,
+        "the baseline must pass: {baseline:?}"
+    );
+    assert_eq!(
+        summary.soft_warnings,
+        baseline.soft_warnings + 1,
+        "the entity-unbound service op must contribute exactly one WARN: {summary:?} vs baseline {baseline:?}"
+    );
+
+    // The fully-bound model: capability binding, repository delegation,
+    // and a class-typed signature — all three binding shapes covered, so
+    // doctor must stay QUIET (zero soft warnings from a clean compile).
+    let bound_ddd = dir.path().join("bound.ddd");
+    fs::write(
+        &bound_ddd,
+        r#"import "payroll.mox";
+
+application Payroll {
+    base payroll
+    module ops {
+        service PayRunService {
+            inject PayRunRepository;
+            boolean approve(String id) capability ApprovePayRun;
+            approveRun => PayRunRepository.save;
+            PayRun register(String reference);
+        }
+        entity PayRun repository PayRunRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox],
+        rosetta_files: vec![],
+        ddd_files: vec![bound_ddd],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+    })
+    .unwrap();
+    assert_eq!(
+        summary.soft_warnings, baseline.soft_warnings,
+        "fully-bound ops must not warn over the ambient baseline: {summary:?} vs baseline {baseline:?}"
+    );
+}

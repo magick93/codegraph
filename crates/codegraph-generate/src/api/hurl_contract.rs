@@ -378,6 +378,25 @@ impl DomainGenerator for HurlContractGenerator {
                 .position(|(t, d)| t == title && d == dom)
         };
 
+        // The auth-suite anchor: the first ROOT entity in generation order
+        // (children's routes nest under a parent, so top-level auth-suite
+        // URLs would 404 against them). All-child models fall back to the
+        // first entity.
+        let is_child = |title: &str, dom: &str| -> bool {
+            config
+                .domains
+                .get(dom)
+                .and_then(|d| d.get_entity_config(title))
+                .and_then(|ec| ec.role.clone())
+                .as_deref()
+                == Some("child")
+        };
+        let auth_anchor: Option<(String, String)> = entity_order
+            .iter()
+            .find(|(t, d)| !is_child(t, d))
+            .or_else(|| entity_order.first())
+            .cloned();
+
         let api_version = &config.defaults.api_version;
         let mut files = Vec::new();
 
@@ -404,54 +423,51 @@ impl DomainGenerator for HurlContractGenerator {
                 content: render_template(tera, "hurl/entity.tera", &contract)?,
             });
 
-            // The per-entity actions contract (issue #590): root entities
-            // with service ops only — children's action routes are a
-            // recorded follow-up.
-            let role = config
-                .domains
-                .get(domain)
-                .and_then(|d| d.get_entity_config(title))
-                .and_then(|ec| ec.role.clone())
-                .unwrap_or_else(|| "root".into());
-            if role == "root" {
-                let ops = crate::ddd::service_ops::routes_for_entity(
-                    db,
-                    config,
-                    domain,
-                    title,
-                    project.codegen.dto_key_casing,
-                )
-                .await
-                .map_err(codegraph_core::error::Error::Config)?;
-                if !ops.is_empty() {
-                    let legs = state_aware_legs(&ops);
-                    let ctx = ActionsContractCtx {
-                        domain: domain.to_string(),
-                        module: schema.pg_table_name.clone(),
-                        fk_sections: contract.fk_parent_sections.clone(),
-                        create_url: contract.create_url.clone(),
-                        auth_header: contract.auth_header.clone(),
-                        create_body: contract.create_body.clone(),
-                        capture_name: contract.capture_name.clone(),
-                        capture_ref: contract.capture_ref.clone(),
-                        create_asserts: contract.create_asserts,
-                        item_url_base: contract.item_url_base.clone(),
-                        ops: legs,
-                    };
-                    files.push(GeneratedFile {
-                        path: self.output_dir.join("hurl").join(format!(
-                            "{nn}_{}_{}_actions.hurl",
-                            domain, schema.pg_table_name
-                        )),
-                        content: render_template(tera, "hurl/actions.tera", &ctx)?,
-                    });
-                }
+            // The per-entity actions contract (issue #590): entities with
+            // service ops. Children emit it too — the contract's URLs nest
+            // under the parent collection (WS4), so the legs hit the real
+            // mounted route.
+            let ops = crate::ddd::service_ops::routes_for_entity(
+                db,
+                config,
+                domain,
+                title,
+                project.codegen.dto_key_casing,
+            )
+            .await
+            .map_err(codegraph_core::error::Error::Config)?;
+            if !ops.is_empty() {
+                let legs = state_aware_legs(&ops);
+                let ctx = ActionsContractCtx {
+                    domain: domain.to_string(),
+                    module: schema.pg_table_name.clone(),
+                    fk_sections: contract.fk_parent_sections.clone(),
+                    create_url: contract.create_url.clone(),
+                    auth_header: contract.auth_header.clone(),
+                    create_body: contract.create_body.clone(),
+                    capture_name: contract.capture_name.clone(),
+                    capture_ref: contract.capture_ref.clone(),
+                    create_asserts: contract.create_asserts,
+                    item_url_base: contract.item_url_base.clone(),
+                    ops: legs,
+                };
+                files.push(GeneratedFile {
+                    path: self.output_dir.join("hurl").join(format!(
+                        "{nn}_{}_{}_actions.hurl",
+                        domain, schema.pg_table_name
+                    )),
+                    content: render_template(tera, "hurl/actions.tera", &ctx)?,
+                });
             }
 
             // The authn/authz suite: exactly once per run, anchored at the
-            // first entity in generation order (its domain emits it).
+            // auth anchor — the first ROOT entity in generation order (its
+            // domain emits it). A child anchor would emit top-level URLs
+            // for nested routes, so children are skipped when any root
+            // entity exists; all-child models fall back to the first
+            // entity.
             if matches!(
-                entity_order.first(),
+                auth_anchor.as_ref(),
                 Some((t, d)) if d == domain && t == title
             ) {
                 files.extend(self.auth_suite(tera, domain, api_version, &contract)?);
@@ -641,14 +657,44 @@ async fn resolve_fk_parents(
 /// Returns `(create_lines, create_echo, update_lines, update_echo)` —
 /// deterministic per type: strings get `-v2` on update, numbers increment,
 /// booleans flip, codelists move to the second enum code. Required fields
-/// only.
+/// only, MINUS the workflow-managed status/approval fields and configured
+/// `dto.immutable_fields`: the generated Create/Update DTOs carry
+/// `deny_unknown_fields` and exclude those fields, so a contract body
+/// carrying them 422s (the WS2 live-gate finding — the exclusion set
+/// mirrors `ddd::dto`'s workflow_excluded_fields and
+/// `service_ops::state_field_is_dto_updatable`).
 #[allow(clippy::type_complexity)]
 async fn payload_fields(
     db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
     schema: &SchemaNode,
     fk_captures: &[(String, String)],
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>, Vec<String>)> {
     let props = db.get_properties(&schema.title).await?;
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(&schema.title));
+    let mut excluded: Vec<String> = entity_cfg
+        .and_then(|ec| ec.workflow.as_ref())
+        .map(|wf| {
+            let mut fields = vec![wf.status_field.clone()];
+            if let Some(ref approval) = wf.approval_status_field {
+                fields.push(approval.clone());
+            }
+            fields
+        })
+        .unwrap_or_default();
+    if let Some(ec) = entity_cfg {
+        excluded.extend(ec.dto.immutable_fields.iter().cloned());
+    }
+    let is_excluded = |name: &str| {
+        excluded
+            .iter()
+            .any(|f| codegraph_naming::to_snake_case(f) == name)
+    };
+
     let mut create = Vec::new();
     let mut echo = Vec::new();
     let mut update = Vec::new();
@@ -660,6 +706,9 @@ async fn payload_fields(
             continue;
         }
         if prop.is_array {
+            continue;
+        }
+        if is_excluded(name) {
             continue;
         }
         if prop.is_nullable || !prop.is_required {
@@ -794,7 +843,8 @@ async fn payload_sections(
         .iter()
         .map(|p| (p.json_name.clone(), p.capture.clone()))
         .collect();
-    let (create, echo, update, update_echo) = payload_fields(db, schema, &captures).await?;
+    let (create, echo, update, update_echo) =
+        payload_fields(db, config, domain, schema, &captures).await?;
 
     let body = |lines: &[String]| -> String {
         if lines.is_empty() {
@@ -812,6 +862,81 @@ async fn payload_sections(
     ))
 }
 
+/// One hop in a child entity's nesting chain: the parent row the nested
+/// route runs under, the capture its preamble POST introduces, and the
+/// parent's own create URL + minimal payload.
+struct NestingHop {
+    module: String,
+    route_segment: String,
+    /// The child-side FK column the config declares (`parent_ref`), which
+    /// doubles as the child-schema property name when the schema carries
+    /// the FK — payload fields reference the hop's capture through it.
+    fk_json_name: String,
+    capture_name: String,
+    create_url: String,
+    create_body: String,
+}
+
+/// Walk a child entity's config-declared parent chain (child → root),
+/// outermost parent first. Cycles stop the walk; depth is bounded. A root
+/// entity yields an empty chain.
+async fn resolve_nesting_chain(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema: &SchemaNode,
+    api_version: &str,
+) -> Result<Vec<NestingHop>> {
+    let mut hops: Vec<NestingHop> = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(schema.title.clone());
+    let mut current = schema.clone();
+    while hops.len() < 4 {
+        let ec = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(&current.title));
+        let Some(parent_title) = ec.and_then(|e| e.parent.clone()) else {
+            break;
+        };
+        if ec.and_then(|e| e.role.as_deref()) != Some("child") {
+            break;
+        }
+        let parent = match db.get_schema_in_domain(&parent_title, domain).await {
+            Ok(Some(parent)) => parent,
+            _ => break,
+        };
+        if !visited.insert(parent.title.clone()) {
+            break; // cycle — stop walking
+        }
+        let fk_json_name = ec.and_then(|e| e.parent_ref.clone()).unwrap_or_else(|| {
+            format!(
+                "{}_id",
+                codegraph_naming::to_snake_case(parent.rust_type_name.as_str())
+            )
+        });
+        let segment = route_segment_for(config, domain, &parent).await;
+        // The parent's own minimal payload; depth 1 skips ITS FK preamble
+        // recursion (the guard in `resolve_fk_parents`) — a parent with
+        // required FKs is seeded by its own contract file.
+        let create_body = minimal_body_for(db, config, domain, &parent, api_version, 1).await?;
+        hops.push(NestingHop {
+            capture_name: format!("{}_id", parent.pg_table_name),
+            module: parent.pg_table_name.clone(),
+            route_segment: segment,
+            fk_json_name,
+            create_url: format!(
+                "{{{{base_url}}}}/api/{api_version}/{domain}/{}",
+                route_segment_for(config, domain, &parent).await
+            ),
+            create_body,
+        });
+        current = parent;
+    }
+    hops.reverse(); // outermost parent first
+    Ok(hops)
+}
+
 /// Assemble one entity's full template context.
 async fn build_entity_contract(
     db: &dyn GraphQuerier,
@@ -821,8 +946,23 @@ async fn build_entity_contract(
     nn: &str,
     config: &DomainConfig,
 ) -> Result<EntityContractCtx> {
-    let (create_body, echo_asserts, update_body, update_asserts, fk_parents) =
-        payload_sections(db, config, domain, schema, api_version, 0).await?;
+    // The config-declared nesting chain (empty for roots): each hop's
+    // preamble POST creates the parent row and captures its id, and the
+    // entity's own URLs nest under the parent's collection.
+    let nesting = resolve_nesting_chain(db, config, domain, schema, api_version).await?;
+
+    // Required-FK parents of the entity itself. The nesting chain owns the
+    // parent FK capture when the schema carries that property — drop it
+    // from the FK resolution so the parent is created exactly once.
+    let mut fk_parents = resolve_fk_parents(db, config, domain, schema, api_version, 0).await?;
+    let child_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(&schema.title));
+    let child_parent_ref = child_cfg.and_then(|ec| ec.parent_ref.clone());
+    if let Some(ref parent_ref) = child_parent_ref {
+        fk_parents.retain(|p| p.json_name != *parent_ref);
+    }
 
     let operations = resolve_entity_operations(db, config, domain, &schema.title).await;
     let has = |op: &str| operations.iter().any(|o| o == op);
@@ -830,11 +970,33 @@ async fn build_entity_contract(
     let segment = route_segment_for(config, domain, schema).await;
     let module = &schema.pg_table_name;
     let domain_base = format!("{{{{base_url}}}}/api/{api_version}/{domain}");
-    let entity_url = format!("{domain_base}/{segment}");
+    let mut entity_url = domain_base.clone();
+    for hop in &nesting {
+        entity_url.push_str(&format!(
+            "/{}/{{{{{}}}}}",
+            hop.route_segment, hop.capture_name
+        ));
+    }
+    entity_url.push_str(&format!("/{segment}"));
 
     let capture_name = format!("{module}_id");
 
     let mut fk_parent_sections = Vec::new();
+    for hop in &nesting {
+        fk_parent_sections.push(ContractSection {
+            body: format!(
+                "# Parent {} — the nested route requires a parent row, id captured\n\
+                 POST {}\n\
+                 Authorization: Bearer {{{{api_key}}}}\n\
+                 {}\n\
+                 \n\
+                 HTTP 201\n\
+                 [Captures]\n\
+                 {}: jsonpath \"$.data.id\"",
+                hop.module, hop.create_url, hop.create_body, hop.capture_name,
+            ),
+        });
+    }
     for parent in &fk_parents {
         let parent_url = format!("{domain_base}/{}", parent.route_segment);
         fk_parent_sections.push(ContractSection {
@@ -851,6 +1013,30 @@ async fn build_entity_contract(
             ),
         });
     }
+
+    // Payload fields: the FK-parent captures plus the nesting chain's
+    // parent captures (a child schema carrying the parent-FK property
+    // references the nesting preamble's capture).
+    let mut captures: Vec<(String, String)> = fk_parents
+        .iter()
+        .map(|p| (p.json_name.clone(), p.capture.clone()))
+        .collect();
+    for hop in &nesting {
+        captures.push((hop.fk_json_name.clone(), hop.capture_name.clone()));
+    }
+    let (create, echo, update, update_echo) =
+        payload_fields(db, config, domain, schema, &captures).await?;
+    let body = |lines: &[String]| -> String {
+        if lines.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{\n{}\n}}", lines.join(",\n"))
+        }
+    };
+    let create_body = body(&create);
+    let echo_asserts = echo.join("\n");
+    let update_body = body(&update);
+    let update_asserts = update_echo.join("\n");
 
     Ok(EntityContractCtx {
         domain: domain.to_string(),
@@ -875,4 +1061,244 @@ async fn build_entity_contract(
         update_body,
         update_asserts,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codegraph_core::mock::MockEngine;
+    use codegraph_core::traits::GraphQuerier;
+
+    fn task_schema() -> SchemaNode {
+        SchemaNode {
+            namespace: None,
+            schema_id: "work/json/TaskType.json".to_string(),
+            title: "TaskType".to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity_reference".to_string(),
+            domain: Some("work".to_string()),
+            rel_path: "work/json/TaskType.json".to_string(),
+            pg_type: "UUID".to_string(),
+            rust_type: "Task".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: "Task".to_string(),
+            pg_table_name: "task".to_string(),
+            api_path_segment: "task".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
+        }
+    }
+
+    fn text_prop(name: &str, required: bool) -> PropertyNode {
+        PropertyNode {
+            is_id: false,
+            name: name.to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: required,
+            is_nullable: !required,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: codegraph_naming::to_snake_case(name),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: codegraph_naming::to_snake_case(name),
+            rust_field_type: "String".to_string(),
+            sea_orm_type: "Text".to_string(),
+            render_strategy: "direct_column".to_string(),
+            ref_target: None,
+            classification: Some("primitive_wrapper".to_string()),
+            projection: None,
+            classification_kind: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+            type_expr: None,
+        }
+    }
+
+    fn status_prop() -> PropertyNode {
+        let mut prop = text_prop("status", true);
+        prop.ref_target = Some("TaskStatusList".to_string());
+        prop.classification_kind =
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference);
+        prop
+    }
+
+    /// The dual-status pattern: a second workflow-managed field.
+    fn approval_status_prop() -> PropertyNode {
+        let mut prop = text_prop("approval_status", true);
+        prop.ref_target = Some("TaskStatusList".to_string());
+        prop.classification_kind =
+            Some(codegraph_type_contracts::RefClassificationKind::CodelistReference);
+        prop
+    }
+
+    fn workflow_config(status_field: &str, approval_field: Option<&str>) -> DomainConfig {
+        let approval_line = approval_field
+            .map(|f| format!("approval_status_field = \"{f}\"\n"))
+            .unwrap_or_default();
+        toml::from_str(&format!(
+            r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.work]
+label = "Work"
+schema_dir = "work"
+postgres_schema = "work"
+entities = ["TaskType"]
+
+[domains.work.entity_config.TaskType.workflow]
+status_field = "{status_field}"
+{approval_line}states = ["Draft", "Posted"]
+initial_state = "Draft"
+terminal_states = ["Posted"]
+"#,
+        ))
+        .unwrap()
+    }
+
+    fn plain_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.work]
+label = "Work"
+schema_dir = "work"
+postgres_schema = "work"
+entities = ["TaskType"]
+"#,
+        )
+        .unwrap()
+    }
+
+    async fn task_db(with_approval: bool) -> MockEngine {
+        let mut props = vec![text_prop("title", true), status_prop()];
+        if with_approval {
+            props.push(approval_status_prop());
+        }
+        MockEngine::builder()
+            .with_schema(task_schema())
+            .with_properties("TaskType", props)
+            .with_enum_values(
+                "TaskStatusList",
+                vec![
+                    codegraph_core::types::EnumValue {
+                        value: "Draft".to_string(),
+                        display_name: Some("Draft".to_string()),
+                        sort_order: 0,
+                    },
+                    codegraph_core::types::EnumValue {
+                        value: "Posted".to_string(),
+                        display_name: Some("Posted".to_string()),
+                        sort_order: 1,
+                    },
+                ],
+            )
+            .build()
+    }
+
+    /// Bug fix (WS2 live-gate finding): the hurl create/PUT payloads must
+    /// exclude workflow-managed status fields — the generated Create/Update
+    /// DTOs carry `deny_unknown_fields` and the status field is excluded
+    /// there, so a contract body carrying it 422s on every consumer with a
+    /// `domains.toml` workflow.
+    #[tokio::test]
+    async fn payload_fields_exclude_workflow_managed_status_fields() {
+        let db = task_db(false).await;
+        let schema = db.get_schema("TaskType").await.unwrap().unwrap();
+        let config = workflow_config("status", None);
+
+        let (create, _echo, update, _update_echo) =
+            payload_fields(&db, &config, "work", &schema, &[])
+                .await
+                .unwrap();
+        let create = create.join("\n");
+        let update = update.join("\n");
+
+        // The workflow-managed status field is absent from BOTH payloads.
+        assert!(
+            !create.contains("\"status\""),
+            "the create body must not carry the workflow-managed status field:\n{create}"
+        );
+        assert!(
+            !update.contains("\"status\""),
+            "the update body must not carry the workflow-managed status field:\n{update}"
+        );
+        // The non-workflow required field survives.
+        assert!(create.contains("\"title\""), "{create}");
+        assert!(update.contains("\"title\""), "{update}");
+    }
+
+    /// The approval-status field (dual-status pattern) is excluded too.
+    #[tokio::test]
+    async fn payload_fields_exclude_approval_status_fields() {
+        let db = task_db(true).await;
+        let schema = db.get_schema("TaskType").await.unwrap().unwrap();
+        let config = workflow_config("status", Some("approval_status"));
+
+        let (create, _echo, update, _update_echo) =
+            payload_fields(&db, &config, "work", &schema, &[])
+                .await
+                .unwrap();
+        let create = create.join("\n");
+        let update = update.join("\n");
+        assert!(
+            !create.contains("\"approval_status\""),
+            "the approval status field must be excluded from create:\n{create}"
+        );
+        assert!(
+            !update.contains("\"approval_status\""),
+            "the approval status field must be excluded from update:\n{update}"
+        );
+        assert!(create.contains("\"title\""), "{create}");
+    }
+
+    /// Without a configured workflow the codelist status field stays in the
+    /// payloads (the machine-bound create body convention — the initial
+    /// state rides the create body).
+    #[tokio::test]
+    async fn payload_fields_keep_codelist_fields_without_a_workflow() {
+        let db = task_db(false).await;
+        let schema = db.get_schema("TaskType").await.unwrap().unwrap();
+        let config = plain_config();
+
+        let (create, echo, update, _update_echo) =
+            payload_fields(&db, &config, "work", &schema, &[])
+                .await
+                .unwrap();
+        let create = create.join("\n");
+        assert!(
+            create.contains("\"status\": \"Draft\""),
+            "no workflow ⇒ the codelist field stays (first enum code):\n{create}"
+        );
+        assert!(
+            echo.join("\n").contains("\"$.data.status\" == \"Draft\""),
+            "{create}"
+        );
+        assert!(
+            update.join("\n").contains("\"status\": \"Posted\""),
+            "the PUT roundtrip moves to the second enum code"
+        );
+    }
 }

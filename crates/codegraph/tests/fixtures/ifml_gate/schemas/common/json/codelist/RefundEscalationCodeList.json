@@ -1,0 +1,7 @@
+{
+  "$id": "codelist/RefundEscalationCodeList.json",
+  "title": "RefundEscalationCodeList",
+  "description": "Escalation states for refund requests (the WS6 action machine)",
+  "type": "string",
+  "enum": ["none", "escalated"]
+}
