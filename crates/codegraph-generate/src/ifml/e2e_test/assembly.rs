@@ -553,6 +553,10 @@ impl IfmlE2eTestGenerator {
     /// view, and a live ux plan. Mapped components replace the fallback
     /// markup wholesale, so they never carry ux assertions; typed tables
     /// resolve their columns through a different path and are deferred.
+    /// Required-FK entities keep their spec with the parent seeds attached
+    /// (`add_required_refs`, the click-through family's machinery) — the
+    /// assertion checks computed below see only the PRE-dep entries, so
+    /// seeded FK columns never leak into chip/column/copy/timeline pins.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn build_view_ux_test(
         &self,
@@ -630,15 +634,24 @@ impl IfmlE2eTestGenerator {
                 }
                 crate::ux::plan::CollectionPlan::Table => None,
             };
+            let fixture = self
+                .attach_required_refs(
+                    db,
+                    config,
+                    api_version,
+                    c.entity.as_deref(),
+                    Fixture {
+                        casing: self.dto_casing,
+                        base_path: api.base_path,
+                        entries,
+                        deps: Vec::new(),
+                    },
+                )
+                .await;
             return Some(UxViewTest {
                 component_name: c.name.clone(),
                 route,
-                fixture: Fixture {
-                    casing: self.dto_casing,
-                    base_path: api.base_path,
-                    entries,
-                    deps: Vec::new(),
-                },
+                fixture,
                 table_testid: format!("{}-table", c.name),
                 row_testid: format!("{}-row", c.name),
                 chip_checks,

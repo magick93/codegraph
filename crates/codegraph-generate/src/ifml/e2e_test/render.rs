@@ -415,7 +415,9 @@ pub(crate) fn render_ux_spec(view_name: &str, test: &UxViewTest) -> String {
     ));
     s.push_str(&format!(
         "\tconst UX_DATA = {};\n",
-        test.fixture.data_literal()
+        // Dep-wired FK entries are excluded here: their placeholders only
+        // resolve once createUxRow has seeded the parents below.
+        test.fixture.static_data_literal()
     ));
     s.push_str(&format!(
         "\tconst UX_LOCALE = '{}';\n",
@@ -428,7 +430,26 @@ pub(crate) fn render_ux_spec(view_name: &str, test: &UxViewTest) -> String {
     s.push_str(
         "\tasync function createUxRow(request: any, overrides: Record<string, unknown> = {}) {\n",
     );
-    s.push_str("\t\tconst response = await request.post(UX_BASE, { data: { ...UX_DATA, ...overrides } });\n");
+    // Required-FK parents are seeded INSIDE the helper: every invocation
+    // gets a fresh function scope, so the repeated createUxRow calls across
+    // tests (and within one test) can never redeclare a dependency
+    // variable, and the create below wires each seeded id into its FK key.
+    s.push_str(&test.fixture.dep_setup_js("row", "\t\t"));
+    let fk_wiring = if test.fixture.deps.is_empty() {
+        String::new()
+    } else {
+        let pairs: Vec<String> = test
+            .fixture
+            .entries
+            .iter()
+            .filter(|(_, value)| is_dep_placeholder(value))
+            .map(|(field, value)| format!("'{field}': row_{value}"))
+            .collect();
+        format!(", {}", pairs.join(", "))
+    };
+    s.push_str(&format!(
+        "\t\tconst response = await request.post(UX_BASE, {{ data: {{ ...UX_DATA{fk_wiring}, ...overrides }} }});\n"
+    ));
     s.push_str("\t\texpect(response.ok(), 'ux fixture entity should be created').toBeTruthy();\n");
     s.push_str("\t\tconst body = await response.json();\n");
     s.push_str("\t\treturn (body.data ?? body) as Record<string, unknown>;\n\t}\n");
@@ -607,7 +628,9 @@ pub(crate) fn render_ux_spec(view_name: &str, test: &UxViewTest) -> String {
 
 use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent};
 use super::super::route_generator::RenderWorkflow;
-use super::fixtures::{codelist_fixture_value, entry_inner, fixture_entries, js_literal_inner};
+use super::fixtures::{
+    codelist_fixture_value, entry_inner, fixture_entries, is_dep_placeholder, js_literal_inner,
+};
 use super::spec_payload::{UxChipCheck, UxColumnCheck};
 use codegraph_config::DomainConfig;
 use codegraph_config::ux::{Align, Dimension, Display, UxRules};
