@@ -849,11 +849,24 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
                         services,
                         searches
                     );
+                    // Repository names of the model (across modules) —
+                    // the delegation leg of the graph-free binding
+                    // predicate below (`bind_entity` accepts repository
+                    // delegations only; service delegation is not an
+                    // entity binding).
+                    let repository_names: std::collections::HashSet<&str> = model
+                        .modules
+                        .iter()
+                        .flat_map(|m| m.designs.iter())
+                        .filter_map(|d| d.repository.as_ref())
+                        .map(|r| r.name.as_str())
+                        .collect();
                     // Dead service-op surface (issue #590, Ask 1 — WARN
                     // minimum): `protected` ops stay off the API plane by
                     // definition, so every IFML action bound to them is a
                     // dead trigger. Entity-unbound ops are warned on the
-                    // run path (they need the graph to resolve).
+                    // run path (they need the graph to resolve); doctor
+                    // warns via the graph-free mirror below.
                     for module in &model.modules {
                         for service in &module.services {
                             for op in &service.operations {
@@ -863,6 +876,16 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
                                         "WARN ddd — service op '{}::{}' is `protected` — \
                                          it emits no API surface; IFML actions bound to \
                                          it are dead triggers",
+                                        service.name, op.name
+                                    );
+                                    continue;
+                                }
+                                if service_op_binds_no_entity(op, &repository_names) {
+                                    soft += 1;
+                                    println!(
+                                        "WARN ddd — service op '{}::{}' binds no entity \
+                                         (no capability class, repository delegation, or \
+                                         class-typed signature) — it emits no API surface",
                                         service.name, op.name
                                     );
                                 }
@@ -879,6 +902,35 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
         }
     }
     (hard, soft)
+}
+
+/// The graph-free mirror of the run path's entity-binding predicate
+/// (`service_ops::bind_entity`, issue #590 Ask 1): doctor holds the
+/// COMPILED model only, so an op counts as entity-bound when it carries
+/// (1) a capability class reference (the run path resolves the capability
+/// to a class through the actor graph — doctor trusts the reference), (2)
+/// a delegation to a REPOSITORY of the model (service delegation is not an
+/// entity binding), or (3) a class-typed signature (any param, else the
+/// return). `protected` ops never reach here (they carry their own WARN).
+fn service_op_binds_no_entity(
+    op: &rex_ir::ddd::ServiceOperation,
+    repository_names: &std::collections::HashSet<&str>,
+) -> bool {
+    if !op.capabilities.is_empty() {
+        return false;
+    }
+    if let Some(delegation) = &op.delegation
+        && repository_names.contains(delegation.target.as_str())
+    {
+        return false;
+    }
+    let class_typed =
+        |t: Option<&rex_ir::TypeRef>| matches!(t, Some(rex_ir::TypeRef::Class { .. }));
+    if op.params.iter().any(|p| class_typed(Some(&p.type_))) || class_typed(op.return_type.as_ref())
+    {
+        return false;
+    }
+    true
 }
 
 /// Validate `--evt-files` for doctor (issue #454): every event contract
