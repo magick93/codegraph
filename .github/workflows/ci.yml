@@ -105,3 +105,12 @@ jobs:
         run: cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture
       - name: Worker wasm gate (issue #550)
         run: cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture
+      - name: Install hurl (service-ops live gates)
+        run: |
+          HURL_VERSION=8.1.0
+          curl --silent --location --remote-name \
+            "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get update && sudo apt-get install -y "./hurl_${HURL_VERSION}_amd64.deb"
+          hurl --version
+      - name: Service-ops hurl gate (lifecycle hardening WS1)
+        run: cargo test -p codegraph --test service_ops_hurl_gate -- --ignored --nocapture
