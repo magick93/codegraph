@@ -3914,7 +3914,36 @@ plain-Postgres portability paths added).
   (compiled-model predicate mirroring `dead_surface_warnings` minus graph
   lookups). Documented limits: profiles without `ddl` and the workers
   topology keep WARN-only coverage.
-- **WS6 — IFML action e2e via the #591 manifest**: (entry added on merge).
+- **WS6 — IFML action e2e via the #591 manifest**: the driver's folded manifest
+  is PERSISTED, not dropped — `IfmlManifestNode` (singleton-per-run,
+  `source_paths` + `model_json`) with `ingest_ifml_manifest`/`get_ifml_manifest`
+  on the trait surface (Mock store; Grafeo parameterized `create_node_with_props`
+  upsert — the blob carries quotes a GQL literal would corrupt; CachingQuerier
+  first-read-wins INCLUDING absence); **`GRAPH_FORMAT_VERSION` 3→4** (a
+  pre-WS6 cached graph would serve no manifest and silently drop the action
+  surface, so it cold-re-ingests instead); both driver Pass-1b sites store.
+  Consumers: `ViewPom.actions` + `render_actions_section` (POM action methods,
+  `{comp}Action{Op}` + error-locator/expect helpers), `ActionTest` payloads
+  with sound-by-construction leg planners (501 seam / 200 read+delete /
+  200-then-409 update on all-terminal targets / 200-then-403 when-guarded —
+  authorize precedes execution, so API-key sessions still hit the denial;
+  unresolvable actions stay unbuilt), `render_action_spec` with zero raw
+  testids and `.action.spec.ts` stale sweep. The nightly gate runs the FRONT
+  DOOR (`compile_and_check_ifml`) + manifest/`.ddd` ingest instead of its
+  hand-rolled pipeline; `assert_categories` gains
+  `action ok/conflict/forbidden/seam`; the gate fixture gains `refunds.ddd`
+  (builtins keep the op set byte-equal) + 4 action declarations. Nightly
+  5/5, 37/37 specs. Load-bearing pre-existing fixes en route: the S4c live
+  flag was dead (the page imported a live export the module never emitted;
+  kit-2.x `query.live('unchecked', fn(id))` arity, `.current?.current_state`
+  badge yield, form `data_var` use-before-declaration), the #582 mapped
+  select was built but never imported (runtime ReferenceError), mapped
+  components now render #559 action buttons, action fail legs read
+  `error?.message` not the object (`[object Object]` bug), POM state
+  assertions wait out the 5s live poll (12s). Kit-2.x-specific badge/arity
+  changes are IFML-plane only — the entity plane (kit `3.0.0-next.24`) keeps
+  its own shapes (same object-yield class likely lurks there; recorded,
+  entity templates outside this plane's ownership).
 
 Upstream asks drafted under `docs/proposals/` (001 transition binding,
 002 module/table uniqueness, 003 executable service bodies, 004 aggregate
