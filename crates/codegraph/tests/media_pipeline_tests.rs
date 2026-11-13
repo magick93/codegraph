@@ -171,13 +171,16 @@ async fn media_config_emits_media_module_and_noop() {
     let mod_rs = &files.iter().find(|f| f.path.ends_with("mod.rs")).unwrap().content;
     assert!(mod_rs.contains("pub trait MediaStorage"), "the seam trait");
     assert!(mod_rs.contains("#[async_trait]"), "hooks-SPI async convention");
+    // Formatting-agnostic: strip ALL whitespace on both sides — the pins are
+    // about the contract, not the wrap.
+    let flat = mod_rs.split_whitespace().collect::<String>();
     for m in [
-        "async fn put(&self, key: &str, data: Vec<u8>, mime_type: &str)",
-        "async fn delete(&self, key: &str)",
-        "async fn display_urls(&self, keys: &[String])",
-        "async fn presign_put(&self, key: &str, mime_type: &str, expires_in_secs: u64)",
+        "asyncfnput(&self,key:&str,data:Vec<u8>,mime_type:&str)->Result<StoredRef,MediaError>;",
+        "asyncfndelete(&self,key:&str)->Result<(),MediaError>;",
+        "asyncfndisplay_urls(&self,keys:&[String])->Result<BTreeMap<String,String>,MediaError>;",
+        "asyncfnpresign_put(&self,key:&str,mime_type:&str,expires_in_secs:u64,)->Result<PresignedPut,MediaError>;",
     ] {
-        assert!(mod_rs.contains(m), "trait method pin missing: {m}");
+        assert!(flat.contains(m), "trait method pin missing: {m}");
     }
     assert!(mod_rs.contains("pub mod noop;"), "noop re-exported");
     assert!(
@@ -204,16 +207,16 @@ async fn emission_is_deterministic() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
     let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
-    let a = run_generator(&engine, &config, tempfile::tempdir().unwrap().path())
-        .await
-        .expect("run a");
-    let b = run_generator(&engine, &config, tempfile::tempdir().unwrap().path())
-        .await
-        .expect("run b");
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let a = run_generator(&engine, &config, dir_a.path()).await.expect("run a");
+    let b = run_generator(&engine, &config, dir_b.path()).await.expect("run b");
     assert_eq!(a.len(), b.len());
     for (fa, fb) in a.iter().zip(b.iter()) {
-        assert_eq!(fa.path, fb.path);
-        assert_eq!(fa.content, fb.content);
+        let ra = fa.path.strip_prefix(dir_a.path()).unwrap();
+        let rb = fb.path.strip_prefix(dir_b.path()).unwrap();
+        assert_eq!(ra, rb, "same relative path");
+        assert_eq!(fa.content, fb.content, "byte-identical content for {}", ra.display());
     }
 }
 
