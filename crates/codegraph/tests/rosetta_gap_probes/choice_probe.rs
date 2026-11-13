@@ -145,6 +145,7 @@ fn plain_domain_entry(entities: &[&str]) -> codegraph_config::config::DomainEntr
         force_value_objects: vec![],
         exclude: vec![],
         auditable: None,
+        media: None,
         tier: "extended".into(),
         worker_name: None,
         custom_domain: None,

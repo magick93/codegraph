@@ -8,7 +8,7 @@ use crate::output::{
 use crate::traits::{DomainGenerator, EntityGenerator, GlobalGenerator};
 use crate::{
     api, atproto, charts, cli, db, ddd, domain_types, emdash, evt_events, fern, grpc, hooks, ifml,
-    integration, ops, playwright, scaffold, seed, test, ui, webhook,
+    integration, media, ops, playwright, scaffold, seed, test, ui, webhook,
 };
 
 /// Build the per-entity generator set.
@@ -432,6 +432,11 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
                     .unwrap_or_else(|| p.clone())
             })),
     ) as Box<dyn GlobalGenerator>);
+    // Media storage seam (issue #625 PR-A): `[media]` config is the flag,
+    // not the generator list — presence-gated inside, so it registers
+    // unconditionally and runs on every plan (the functions_sql precedent).
+    global_gens
+        .push(Box::new(media::MediaStorageGenerator::new(output_dir)) as Box<dyn GlobalGenerator>);
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {
         global_gens.push(
@@ -550,6 +555,7 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
                 });
                 generator.name() == "evt_events" && evt_events_implied
                     || generator.name() == "functions_sql"
+                    || generator.name() == "media_storage"
                     || generator.name() == "webhook_dispatch" && function_event_bindings
                     || { ctx.plan_has_global(generator.name()) }
             }

@@ -1080,6 +1080,12 @@ pub async fn run_with_graph_cache(
         return Err(crate::error::Error::Config(binding_errors.join("; ")));
     }
 
+    // Media storage (issue #625 PR-A): provider capability matrix, key
+    // template, and graph resolution are hard config errors naming the
+    // domain — a broken media config never half-generates. No-op when no
+    // domain declares [media].
+    codegraph_generate::media::validate_media_configs(be.querier(), &domain_config).await?;
+
     let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
 
     let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {

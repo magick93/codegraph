@@ -9,6 +9,7 @@ mod charts;
 mod domain;
 mod entity;
 mod functions;
+mod media;
 mod namespace;
 
 #[cfg(test)]
@@ -27,6 +28,10 @@ pub use entity::{
     default_min_roles, default_roles_hierarchy,
 };
 pub use functions::{FunctionBinding, FunctionBindings, FunctionExposure, FunctionImplementation};
+pub use media::{
+    MediaConfig, MediaProvider, MediaUploadMode, R2MediaConfig, S3MediaConfig, SupabaseMediaConfig,
+    validate_media_config,
+};
 pub use namespace::NamespaceEntry;
 
 /// Default operations for entities.
@@ -190,6 +195,7 @@ pub fn parse_domain_config_str(content: &str) -> Result<DomainConfig, DomainConf
     validate_rbac_config(&config)?;
     validate_append_only_config(&config)?;
     validate_dependencies(&config)?;
+    validate_media_config(&config)?;
     Ok(config)
 }
 

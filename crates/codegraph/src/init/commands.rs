@@ -926,11 +926,7 @@ fn service_op_binds_no_entity(
     }
     let class_typed =
         |t: Option<&rex_ir::TypeRef>| matches!(t, Some(rex_ir::TypeRef::Class { .. }));
-    if op.params.iter().any(|p| class_typed(Some(&p.type_))) || class_typed(op.return_type.as_ref())
-    {
-        return false;
-    }
-    true
+    !(op.params.iter().any(|p| class_typed(Some(&p.type_))) || class_typed(op.return_type.as_ref()))
 }
 
 /// Validate `--evt-files` for doctor (issue #454): every event contract
@@ -1645,6 +1641,32 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             hard_failures += 1;
             println!("FAIL domains.toml — {e}");
             println!("     hint: fix TOML syntax in {}", args.config.display());
+        }
+    }
+
+    // Media storage (issue #625 PR-A): the provider capability matrix and
+    // the key template need no graph — doctor runs the same check the run
+    // path runs (generate::media::validate_media_matrix_and_template), so
+    // doctor and generation cannot drift. Structural `[media]` checks ride
+    // the domains.toml parse above. Hard failure on mismatch; an INFO line
+    // per configured domain keeps the plane visible.
+    if let Ok(config) = &domain_config {
+        for (name, entry) in &config.domains {
+            let Some(media) = &entry.media else {
+                continue;
+            };
+            match codegraph_generate::media::plan::validate_media_matrix_and_template(name, media) {
+                Ok(()) => println!(
+                    "INFO media — {name}: {} / {} (bucket \"{}\")",
+                    media.provider.as_str(),
+                    media.upload_mode.as_str(),
+                    media.bucket
+                ),
+                Err(e) => {
+                    hard_failures += 1;
+                    println!("FAIL media — {e}");
+                }
+            }
         }
     }
 

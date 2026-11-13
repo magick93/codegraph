@@ -9,11 +9,12 @@ pub mod workflow_loader;
 pub use config::{
     Aggregate, ApprovalChainDef, ApprovalStepDef, ChartDefinitions, ChartEntry, ChartKind,
     ChartPayload, DataGuard, DefaultsConfig, DomainConfig, DomainEntry, DtoConfig, EntityConfig,
-    FunctionBinding, FunctionBindings, FunctionExposure, FunctionImplementation, MetricChartConfig,
-    NamespaceEntry, OrgChartConfig, SearchConfig, SeriesChartConfig, TimerDef, UiDomainConfig,
-    UiEntityEntry, UiOverrideConfig, UiOverrideEntry, UiWizardConfig, WorkflowConfig,
-    parse_ui_domains_config, parse_ui_domains_config_str, parse_ui_overrides_config,
-    parse_ui_overrides_config_str,
+    FunctionBinding, FunctionBindings, FunctionExposure, FunctionImplementation, MediaConfig,
+    MediaProvider, MediaUploadMode, MetricChartConfig, NamespaceEntry, OrgChartConfig,
+    R2MediaConfig, S3MediaConfig, SearchConfig, SeriesChartConfig, SupabaseMediaConfig, TimerDef,
+    UiDomainConfig, UiEntityEntry, UiOverrideConfig, UiOverrideEntry, UiWizardConfig,
+    WorkflowConfig, parse_ui_domains_config, parse_ui_domains_config_str,
+    parse_ui_overrides_config, parse_ui_overrides_config_str,
 };
 pub use error::DomainConfigError;
 pub use ifml_components::{

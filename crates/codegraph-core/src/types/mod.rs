@@ -16,6 +16,7 @@ mod field_def;
 mod function;
 mod ifml;
 mod incompleteness;
+mod media;
 mod mox;
 mod namespace;
 mod persistence;
@@ -79,6 +80,10 @@ pub use ifml::{
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode, strip_ifml_prefix,
 };
 pub use incompleteness::{Incompleteness, IncompletenessReason};
+pub use media::{
+    KeyPlaceholder, KeyTemplate, MediaFieldPlan, MediaObjectRef, MediaPlan, MediaProvider,
+    MediaProviderSettings, MediaVisibility, ProviderCapability, UploadMode, provider_capabilities,
+};
 pub use mox::{
     MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
     MoxParam, MoxVocabularyNode,

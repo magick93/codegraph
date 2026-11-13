@@ -312,6 +312,7 @@ mod tests {
                 force_value_objects: vec![],
                 exclude: vec![],
                 auditable: None,
+                media: None,
                 tier: "extended".to_string(),
                 worker_name: None,
                 custom_domain: None,

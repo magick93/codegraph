@@ -222,7 +222,6 @@ impl RepositoryImplEmitter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn emit_include_fetch_methods(
         &self,
         tree: &EntityTree,
@@ -465,7 +464,6 @@ impl RepositoryImplEmitter {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn emit_single_fetch_method(
         &self,
         tree: &EntityTree,
@@ -670,7 +668,6 @@ impl RepositoryImplEmitter {
         wln!(code, "    }}");
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     fn emit_batch_fetch_method(
         &self,

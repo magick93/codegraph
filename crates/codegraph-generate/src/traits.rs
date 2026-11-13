@@ -317,6 +317,7 @@ pub enum GlobalGeneratorKind {
     IntegrationCatalog,
     PublicOperationsRls,
     FunctionsSql,
+    MediaStorage,
 }
 
 impl GlobalGeneratorKind {
@@ -352,6 +353,7 @@ impl GlobalGeneratorKind {
             Self::SeedProvision => "seed_provision",
             Self::GrpcScaffold => "grpc_scaffold",
             Self::PolicyRls => "policy_rls",
+            Self::MediaStorage => "media_storage",
             Self::LexiconScaffold => "lexicon_scaffold",
             Self::AtprotoClientScaffold => "atproto_client_scaffold",
             Self::AtprotoIdentity => "atproto_identity",

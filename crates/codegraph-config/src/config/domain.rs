@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::entity::EntityConfig;
+use super::media::MediaConfig;
 
 /// A pinned external domain face (issue #276): a foreign domain published
 /// as a #275 artifact document and consumed read-only by this project.
@@ -55,6 +56,13 @@ pub struct DomainEntry {
     /// Defaults to `true` for entity-bearing domains.
     #[serde(default)]
     pub auditable: Option<bool>,
+    /// Media storage declaration for this domain (issue #625, PR-A):
+    /// `[domains.X.media]` with provider/upload_mode/bucket and the
+    /// structural knobs. Absent ⇒ the domain emits no media surface
+    /// (byte-identical). The provider capability matrix and key-template
+    /// syntax are validated generation-side against the core mirror.
+    #[serde(default)]
+    pub media: Option<MediaConfig>,
     /// Domain tier for progressive disclosure: "core" or "extended".
     #[serde(default = "default_tier")]
     pub tier: String,
@@ -160,6 +168,7 @@ impl DomainEntry {
             force_value_objects: Vec::new(),
             exclude: Vec::new(),
             auditable: None,
+            media: None,
             tier: default_tier(),
             worker_name: None,
             custom_domain: None,
