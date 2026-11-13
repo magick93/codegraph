@@ -3,6 +3,13 @@
 //! clean — routes, authorize fns, transition guards, delegation legs, and
 //! the 501 seams compile together with the rest of the app.
 //!
+//! The fixture carries the depth-2 GRANDCHILD surface too (issue #629 — the
+//! WS4 v1 deferral): nested action routes under both ancestors, three-uuid
+//! handler bindings, and the scoped loads compile with everything else.
+//! Before this extension the depth-2 branch rendered routes that compiled
+//! NOWHERE — exactly the #551 silent-emission class the pin policy exists
+//! for.
+//!
 //! Path deps (`dependency_strategy = "path"`, issue #347) keep the gate
 //! network-free. Skips gracefully when `cargo` is absent.
 //!
@@ -112,6 +119,29 @@ async fn generated_app_with_service_ops_compiles() {
     assert!(
         handler.contains("service_op_approve_authorize"),
         "the authorize fns must emit"
+    );
+
+    // The depth-2 grandchild surface (issue #629 — the #551 gap) must be
+    // present too: routes fn, nested handlers, authorize fns. The pins
+    // before any build spend keep a missing depth-2 emission from burning a
+    // cargo check to discover.
+    let grandchild_handler =
+        fs::read_to_string(output.join("src/api/payroll/pay_run_line_adjustment_handler.rs"))
+            .expect("the grandchild handler must emit (issue #629)");
+    assert!(
+        grandchild_handler.contains("service_op_recalculate"),
+        "the grandchild op handlers must emit"
+    );
+    assert!(
+        grandchild_handler.contains("service_op_recalculate_authorize"),
+        "the grandchild authorize fns must emit"
+    );
+    let router = fs::read_to_string(output.join("src/api/payroll/router.rs")).unwrap();
+    assert!(
+        router.contains(
+            ".nest(\"/{pay_run_line_id}/pay-run-line-adjustment\", pay_run_line_adjustment_routes())"
+        ),
+        "the child router must nest the grandchild routes fn"
     );
 
     codegraph::driver::check_generated_output(&output)

@@ -1,0 +1,13 @@
+# Rust toolchain pin (issue #627) — the single toolchain authority for
+# local `rustup` AND CI (`dtolnay/rust-toolchain@stable` reads this file).
+# Local↔CI compiler parity is structural: the clippy-lint-drift class that
+# fired on PR #626 cannot recur on a stable bump.
+#
+# Bump discipline (AGENTS.md dependency policy): move this pin DELIBERATELY
+# (monthly, alongside the Tier-0 lockfile refresh), never silently — bump
+# the channel here AND the PINNED_CHANNEL literal in
+# crates/codegraph/tests/ci_toolchain_contract.rs in the same commit.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
