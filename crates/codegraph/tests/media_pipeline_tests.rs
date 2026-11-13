@@ -7,8 +7,8 @@
 
 use std::fs;
 
-use codegraph_config::config::parse_domain_config_str;
 use codegraph_config::DomainConfig;
+use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
 use codegraph_generate::media::MediaStorageGenerator;
@@ -69,7 +69,11 @@ fn schema(id: &str, title: &str, classification: &str, table: &str, is_entity: b
 fn prop(name: &str, kind: RefClassificationKind, ref_target: Option<&str>) -> PropertyNode {
     PropertyNode {
         name: name.into(),
-        prop_type: if ref_target.is_some() { "object".into() } else { "string".into() },
+        prop_type: if ref_target.is_some() {
+            "object".into()
+        } else {
+            "string".into()
+        },
         description: None,
         format: None,
         is_required: false,
@@ -102,9 +106,15 @@ fn prop(name: &str, kind: RefClassificationKind, ref_target: Option<&str>) -> Pr
 }
 
 async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
-    db.ingest_schema(&schema("PersonType", "PersonType", "entity", "person", true))
-        .await
-        .expect("person schema");
+    db.ingest_schema(&schema(
+        "PersonType",
+        "PersonType",
+        "entity",
+        "person",
+        true,
+    ))
+    .await
+    .expect("person schema");
     db.ingest_schema(&schema(
         "MediaReferenceType",
         "MediaReferenceType",
@@ -116,7 +126,11 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
     .expect("media reference schema");
     for p in [
         prop("id", RefClassificationKind::EntityReference, None),
-        prop("avatar", RefClassificationKind::ValueObject, Some("MediaReferenceType")),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
     ] {
         db.ingest_property("PersonType", "PersonType", &p)
             .await
@@ -160,17 +174,36 @@ async fn media_config_emits_media_module_and_noop() {
     let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
     let out = tempfile::tempdir().expect("out dir");
 
-    let files = run_generator(&engine, &config, out.path()).await.expect("files");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
     let mut paths: Vec<String> = files
         .iter()
-        .map(|f| f.path.strip_prefix(out.path()).unwrap().to_string_lossy().to_string())
+        .map(|f| {
+            f.path
+                .strip_prefix(out.path())
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
         .collect();
     paths.sort();
-    assert_eq!(paths, vec!["src/media/mod.rs", "src/media/noop.rs"], "exact file set");
+    assert_eq!(
+        paths,
+        vec!["src/media/mod.rs", "src/media/noop.rs"],
+        "exact file set"
+    );
 
-    let mod_rs = &files.iter().find(|f| f.path.ends_with("mod.rs")).unwrap().content;
+    let mod_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("mod.rs"))
+        .unwrap()
+        .content;
     assert!(mod_rs.contains("pub trait MediaStorage"), "the seam trait");
-    assert!(mod_rs.contains("#[async_trait]"), "hooks-SPI async convention");
+    assert!(
+        mod_rs.contains("#[async_trait]"),
+        "hooks-SPI async convention"
+    );
     // Formatting-agnostic: strip ALL whitespace on both sides — the pins are
     // about the contract, not the wrap.
     let flat = mod_rs.split_whitespace().collect::<String>();
@@ -188,11 +221,20 @@ async fn media_config_emits_media_module_and_noop() {
         "PR-A emits no adapter modules — they land with PR-B/PR-C"
     );
 
-    let noop_rs = &files.iter().find(|f| f.path.ends_with("noop.rs")).unwrap().content;
+    let noop_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("noop.rs"))
+        .unwrap()
+        .content;
     assert!(noop_rs.contains("pub struct NoopStorage"));
-    assert!(noop_rs.contains("MediaError::Unconfigured"), "fail-closed semantics");
+    assert!(
+        noop_rs.contains("MediaError::Unconfigured"),
+        "fail-closed semantics"
+    );
     assert_eq!(
-        noop_rs.matches("Err(crate::media::MediaError::Unconfigured)").count(),
+        noop_rs
+            .matches("Err(crate::media::MediaError::Unconfigured)")
+            .count(),
         4,
         "all four operations fail closed"
     );
@@ -209,14 +251,23 @@ async fn emission_is_deterministic() {
     let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
     let dir_a = tempfile::tempdir().unwrap();
     let dir_b = tempfile::tempdir().unwrap();
-    let a = run_generator(&engine, &config, dir_a.path()).await.expect("run a");
-    let b = run_generator(&engine, &config, dir_b.path()).await.expect("run b");
+    let a = run_generator(&engine, &config, dir_a.path())
+        .await
+        .expect("run a");
+    let b = run_generator(&engine, &config, dir_b.path())
+        .await
+        .expect("run b");
     assert_eq!(a.len(), b.len());
     for (fa, fb) in a.iter().zip(b.iter()) {
         let ra = fa.path.strip_prefix(dir_a.path()).unwrap();
         let rb = fb.path.strip_prefix(dir_b.path()).unwrap();
         assert_eq!(ra, rb, "same relative path");
-        assert_eq!(fa.content, fb.content, "byte-identical content for {}", ra.display());
+        assert_eq!(
+            fa.content,
+            fb.content,
+            "byte-identical content for {}",
+            ra.display()
+        );
     }
 }
 
@@ -226,7 +277,9 @@ async fn no_media_config_emits_nothing() {
     ingest_model(&engine).await;
     let config = parse_domain_config_str(BASE_TOML).expect("toml");
     let out = tempfile::tempdir().expect("out dir");
-    let files = run_generator(&engine, &config, out.path()).await.expect("files");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
     assert!(files.is_empty(), "byte-identity: no [media] ⇒ zero files");
     assert!(!out.path().join("src/media").exists());
 }

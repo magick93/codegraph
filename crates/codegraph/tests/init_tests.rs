@@ -2158,7 +2158,10 @@ fn doctor_validates_media_matrix_and_template() {
         "\n[domains.common.media]\nprovider = \"supabase\"\nupload_mode = \"client-direct\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n",
     )
     .unwrap();
-    assert!(out.starts_with("ok: 0 hard"), "valid media config must pass: {out}");
+    assert!(
+        out.starts_with("ok: 0 hard"),
+        "valid media config must pass: {out}"
+    );
 
     // Matrix refusal (r2 cannot serve client-direct): one hard failure.
     let out = doctor_with_media(

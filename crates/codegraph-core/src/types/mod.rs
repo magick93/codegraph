@@ -46,10 +46,6 @@ pub use authorization::{
     NeverBothGroup, Permit, resolve_effective_permits,
 };
 pub use chart::{ChartDefinitionNode, ChartKind, ChartPropertyBinding};
-pub use media::{
-    KeyPlaceholder, KeyTemplate, MediaFieldPlan, MediaObjectRef, MediaPlan, MediaProvider,
-    MediaProviderSettings, MediaVisibility, ProviderCapability, UploadMode, provider_capabilities,
-};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
@@ -84,6 +80,10 @@ pub use ifml::{
     ParameterDefinitionNode, ViewComponentNode, ViewContainerNode, strip_ifml_prefix,
 };
 pub use incompleteness::{Incompleteness, IncompletenessReason};
+pub use media::{
+    KeyPlaceholder, KeyTemplate, MediaFieldPlan, MediaObjectRef, MediaPlan, MediaProvider,
+    MediaProviderSettings, MediaVisibility, ProviderCapability, UploadMode, provider_capabilities,
+};
 pub use mox::{
     MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,
     MoxParam, MoxVocabularyNode,

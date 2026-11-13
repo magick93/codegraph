@@ -43,7 +43,11 @@ impl MediaProvider {
 
     /// All known variants (deterministic order).
     pub fn all() -> &'static [MediaProvider] {
-        &[MediaProvider::Supabase, MediaProvider::R2, MediaProvider::S3]
+        &[
+            MediaProvider::Supabase,
+            MediaProvider::R2,
+            MediaProvider::S3,
+        ]
     }
 
     /// Emitted adapter module stem under `src/media/` in generated apps.
@@ -93,13 +97,9 @@ pub fn provider_capabilities(p: MediaProvider) -> BTreeSet<ProviderCapability> {
         .into(),
         // No end-user identity on objects: client-direct and storage-side RLS
         // are impossible; authority is issued by the app (presign or proxy).
-        MediaProvider::R2 | MediaProvider::S3 => [
-            ThroughAppUpload,
-            PresignPut,
-            PublicRead,
-            SignedDisplay,
-        ]
-        .into(),
+        MediaProvider::R2 | MediaProvider::S3 => {
+            [ThroughAppUpload, PresignPut, PublicRead, SignedDisplay].into()
+        }
     }
 }
 
@@ -267,7 +267,9 @@ impl KeyTemplate {
                         rest = &rest[close + 1..];
                     }
                     (Some(_), _) | (_, Some(_)) => {
-                        return Err(format!("unclosed placeholder braces in key template: \"{s}\""));
+                        return Err(format!(
+                            "unclosed placeholder braces in key template: \"{s}\""
+                        ));
                     }
                     _ => {
                         literal.push_str(rest);
@@ -459,7 +461,10 @@ mod tests {
             assert_eq!(MediaProvider::parse(p.adapter_module()), Some(*p));
         }
         assert_eq!(MediaProvider::parse("minio"), None);
-        assert_eq!(UploadMode::parse(UploadMode::Presigned.as_str()), Some(UploadMode::Presigned));
+        assert_eq!(
+            UploadMode::parse(UploadMode::Presigned.as_str()),
+            Some(UploadMode::Presigned)
+        );
         assert_eq!(UploadMode::parse("direct"), None);
     }
 
@@ -491,7 +496,10 @@ mod tests {
             id: uuid::uuid!("22222222-2222-2222-2222-222222222222"),
             field: "f".into(),
         };
-        assert_eq!(t.render(&r).unwrap(), "media/o/fixed/22222222-2222-2222-2222-222222222222/f");
+        assert_eq!(
+            t.render(&r).unwrap(),
+            "media/o/fixed/22222222-2222-2222-2222-222222222222/f"
+        );
     }
 
     #[test]
@@ -503,7 +511,10 @@ mod tests {
     #[test]
     fn missing_id_or_field_placeholder_is_parse_error() {
         let err = KeyTemplate::parse("{org}/{domain}/{entity}").unwrap_err();
-        assert!(err.contains("id") || err.contains("field"), "error names the gap: {err}");
+        assert!(
+            err.contains("id") || err.contains("field"),
+            "error names the gap: {err}"
+        );
         assert!(KeyTemplate::parse("{field}/{id}").is_ok());
     }
 

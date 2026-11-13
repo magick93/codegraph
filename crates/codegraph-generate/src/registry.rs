@@ -435,9 +435,8 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
     // Media storage seam (issue #625 PR-A): `[media]` config is the flag,
     // not the generator list — presence-gated inside, so it registers
     // unconditionally and runs on every plan (the functions_sql precedent).
-    global_gens.push(
-        Box::new(media::MediaStorageGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
-    );
+    global_gens
+        .push(Box::new(media::MediaStorageGenerator::new(output_dir)) as Box<dyn GlobalGenerator>);
     // Demo-data seed module + CLI (opt-in via the `seed_provision` capability).
     if ctx.capabilities.has(Capability::Seed) {
         global_gens.push(

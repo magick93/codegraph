@@ -16,13 +16,13 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use codegraph_config::config::parse_domain_config_str;
 use codegraph_config::DomainConfig;
+use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
+use codegraph_generate::ProjectConfig;
 use codegraph_generate::media::MediaStorageGenerator;
 use codegraph_generate::traits::GlobalGenerator;
-use codegraph_generate::ProjectConfig;
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -77,7 +77,11 @@ fn schema(id: &str, title: &str, classification: &str, table: &str, is_entity: b
 fn prop(name: &str, kind: RefClassificationKind, ref_target: Option<&str>) -> PropertyNode {
     PropertyNode {
         name: name.into(),
-        prop_type: if ref_target.is_some() { "object".into() } else { "string".into() },
+        prop_type: if ref_target.is_some() {
+            "object".into()
+        } else {
+            "string".into()
+        },
         description: None,
         format: None,
         is_required: false,
@@ -110,9 +114,15 @@ fn prop(name: &str, kind: RefClassificationKind, ref_target: Option<&str>) -> Pr
 }
 
 async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
-    db.ingest_schema(&schema("PersonType", "PersonType", "entity", "person", true))
-        .await
-        .expect("person schema");
+    db.ingest_schema(&schema(
+        "PersonType",
+        "PersonType",
+        "entity",
+        "person",
+        true,
+    ))
+    .await
+    .expect("person schema");
     db.ingest_schema(&schema(
         "MediaReferenceType",
         "MediaReferenceType",
@@ -124,7 +134,11 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
     .expect("media reference schema");
     for p in [
         prop("id", RefClassificationKind::EntityReference, None),
-        prop("avatar", RefClassificationKind::ValueObject, Some("MediaReferenceType")),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
     ] {
         db.ingest_property("PersonType", "PersonType", &p)
             .await
@@ -183,7 +197,9 @@ fn cargo_check_media_plane(mod_rs: &str, noop_rs: &str) {
     let root = scratch.path();
     fs::create_dir_all(root.join("src").join("media")).expect("src/media");
 
-    fs::write(root.join("Cargo.toml"), r#"[package]
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
 name = "media_plane_pin"
 version = "0.1.0"
 edition = "2021"
@@ -193,7 +209,8 @@ async-trait = "0.1"
 thiserror = "2"
 
 [workspace]
-"#)
+"#,
+    )
     .expect("scratch Cargo.toml");
     fs::write(root.join("src").join("lib.rs"), "pub mod media;\n").expect("lib.rs");
     fs::write(root.join("src").join("media").join("mod.rs"), mod_rs).expect("mod.rs");

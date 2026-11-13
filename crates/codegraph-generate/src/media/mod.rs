@@ -13,10 +13,10 @@ pub mod plan;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::MediaPlan;
-use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use serde_json::json;
 
 use crate::error::Result;
@@ -28,10 +28,7 @@ use crate::project_config::{GenerationEntry, ProjectConfig};
 /// never half-generates (the function-bindings precedent). No-op when no
 /// domain declares media. Rides the driver's pre-generation validation slot
 /// and doctor.
-pub async fn validate_media_configs(
-    db: &dyn GraphQuerier,
-    config: &DomainConfig,
-) -> Result<()> {
+pub async fn validate_media_configs(db: &dyn GraphQuerier, config: &DomainConfig) -> Result<()> {
     plan::build_media_plans(db, config).await.map(|_| ())
 }
 

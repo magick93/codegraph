@@ -1659,8 +1659,7 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
             let Some(media) = &entry.media else {
                 continue;
             };
-            match codegraph_generate::media::plan::validate_media_matrix_and_template(name, media)
-            {
+            match codegraph_generate::media::plan::validate_media_matrix_and_template(name, media) {
                 Ok(()) => println!(
                     "INFO media — {name}: {} / {} (bucket \"{}\")",
                     media.provider.as_str(),

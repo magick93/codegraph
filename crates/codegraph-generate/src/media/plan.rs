@@ -124,12 +124,8 @@ pub async fn build_media_plan_for_domain(
             required
         )));
     }
-    let key_template =
-        KeyTemplate::parse(&media.key_template).map_err(|e| {
-            Error::Config(format!(
-                "domain \"{domain_name}\" media key_template: {e}"
-            ))
-        })?;
+    let key_template = KeyTemplate::parse(&media.key_template)
+        .map_err(|e| Error::Config(format!("domain \"{domain_name}\" media key_template: {e}")))?;
 
     // Media classes resolve exact → +type_suffix (the wire_alias_refs chain).
     let mut media_classes = Vec::new();
@@ -185,8 +181,11 @@ pub async fn build_media_plan_for_domain(
                             prop.name
                         )));
                     }
-                    let url_column =
-                        find_column(&db.get_properties(&target.title).await?, &media.url_field, &target.title)?;
+                    let url_column = find_column(
+                        &db.get_properties(&target.title).await?,
+                        &media.url_field,
+                        &target.title,
+                    )?;
                     let mime_column = find_column(
                         &db.get_properties(&target.title).await?,
                         &media.mime_field,
@@ -223,7 +222,8 @@ pub async fn build_media_plan_for_domain(
             }
         }
     }
-    fields.sort_by(|a, b| (&a.entity_title, &a.field_snake).cmp(&(&b.entity_title, &b.field_snake)));
+    fields
+        .sort_by(|a, b| (&a.entity_title, &a.field_snake).cmp(&(&b.entity_title, &b.field_snake)));
 
     let provider_settings = match provider {
         MediaProvider::Supabase => MediaProviderSettings::Supabase,
@@ -267,11 +267,7 @@ pub async fn build_media_plan_for_domain(
 /// The url/mime column on the media class, matched snake-lowered against
 /// the configured field name; a miss is a config error naming the class
 /// and the expected column (the model must carry the reference shape).
-fn find_column(
-    props: &[PropertyNode],
-    expected: &str,
-    class_title: &str,
-) -> Result<String, Error> {
+fn find_column(props: &[PropertyNode], expected: &str, class_title: &str) -> Result<String, Error> {
     props
         .iter()
         .find(|p| to_snake_case(&p.name) == expected)

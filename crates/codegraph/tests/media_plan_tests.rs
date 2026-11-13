@@ -6,8 +6,8 @@
 //!
 //! Node-free PR-CI pins: in-memory Grafeo — no node, no DB, no protoc.
 
-use codegraph_config::config::parse_domain_config_str;
 use codegraph_config::DomainConfig;
+use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
 use codegraph_generate::error::Error;
@@ -124,10 +124,19 @@ fn person_name_schema() -> SchemaNode {
     }
 }
 
-fn prop(name: &str, kind: RefClassificationKind, ref_target: Option<&str>, is_array: bool) -> PropertyNode {
+fn prop(
+    name: &str,
+    kind: RefClassificationKind,
+    ref_target: Option<&str>,
+    is_array: bool,
+) -> PropertyNode {
     PropertyNode {
         name: name.into(),
-        prop_type: if ref_target.is_some() { "object".into() } else { "string".into() },
+        prop_type: if ref_target.is_some() {
+            "object".into()
+        } else {
+            "string".into()
+        },
         description: None,
         format: None,
         is_required: false,
@@ -160,7 +169,9 @@ fn prop(name: &str, kind: RefClassificationKind, ref_target: Option<&str>, is_ar
 }
 
 async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
-    db.ingest_schema(&person_schema()).await.expect("person schema");
+    db.ingest_schema(&person_schema())
+        .await
+        .expect("person schema");
     db.ingest_schema(&media_reference_schema())
         .await
         .expect("media reference schema");
@@ -171,9 +182,24 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
     // names (VO → PersonNameType, NOT media — the negative control).
     for p in [
         prop("id", RefClassificationKind::EntityReference, None, false),
-        prop("displayName", RefClassificationKind::EntityReference, None, false),
-        prop("avatar", RefClassificationKind::ValueObject, Some("MediaReferenceType"), false),
-        prop("names", RefClassificationKind::ValueObject, Some("PersonNameType"), true),
+        prop(
+            "displayName",
+            RefClassificationKind::EntityReference,
+            None,
+            false,
+        ),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+            false,
+        ),
+        prop(
+            "names",
+            RefClassificationKind::ValueObject,
+            Some("PersonNameType"),
+            true,
+        ),
     ] {
         db.ingest_property("PersonType", "PersonType", &p)
             .await
@@ -182,7 +208,12 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
     // MediaReference: url + mimeType (the HR Open reference shape).
     for p in [
         prop("url", RefClassificationKind::EntityReference, None, false),
-        prop("mimeType", RefClassificationKind::EntityReference, None, false),
+        prop(
+            "mimeType",
+            RefClassificationKind::EntityReference,
+            None,
+            false,
+        ),
     ] {
         db.ingest_property("MediaReferenceType", "MediaReferenceType", &p)
             .await
@@ -191,8 +222,18 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
     // PersonName: given/family (no url column — the missing-column case's
     // target when media_classes is overridden).
     for p in [
-        prop("givenName", RefClassificationKind::EntityReference, None, false),
-        prop("familyName", RefClassificationKind::EntityReference, None, false),
+        prop(
+            "givenName",
+            RefClassificationKind::EntityReference,
+            None,
+            false,
+        ),
+        prop(
+            "familyName",
+            RefClassificationKind::EntityReference,
+            None,
+            false,
+        ),
     ] {
         db.ingest_property("PersonNameType", "PersonNameType", &p)
             .await
@@ -252,7 +293,12 @@ async fn plan_resolves_child_table_and_columns() {
         codegraph_core::types::MediaVisibility::Signed
     );
     assert_eq!(plan.media_classes, vec!["MediaReferenceType".to_string()]);
-    assert_eq!(plan.fields.len(), 1, "names is not media: {:?}", plan.fields);
+    assert_eq!(
+        plan.fields.len(),
+        1,
+        "names is not media: {:?}",
+        plan.fields
+    );
     let f = &plan.fields[0];
     assert_eq!(f.entity_title, "PersonType");
     assert_eq!(f.entity_table, "person");
@@ -330,7 +376,12 @@ async fn refers_wins_media_target_is_config_error() {
 }
 
 async fn db_refers_avatar(db: &(impl GraphIngestor + GraphQuerier)) {
-    let p = prop("avatar", RefClassificationKind::EntityReference, Some("MediaReferenceType"), false);
+    let p = prop(
+        "avatar",
+        RefClassificationKind::EntityReference,
+        Some("MediaReferenceType"),
+        false,
+    );
     db.ingest_property("PersonType", "PersonType", &p)
         .await
         .expect("avatar re-ingest");
@@ -340,7 +391,12 @@ async fn db_refers_avatar(db: &(impl GraphIngestor + GraphQuerier)) {
 async fn array_media_field_is_config_error() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
-    let p = prop("gallery", RefClassificationKind::ValueObject, Some("MediaReferenceType"), true);
+    let p = prop(
+        "gallery",
+        RefClassificationKind::ValueObject,
+        Some("MediaReferenceType"),
+        true,
+    );
     db_ingest_prop(&engine, "PersonType", &p).await;
     ingest_gallery_items_edge(&engine).await;
     let config = parse(&media_toml("supabase", "client-direct"));
@@ -360,10 +416,10 @@ async fn missing_mime_column_is_config_error_naming_class() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
     // Point mime_field at a column the class lacks.
-    let config = parse(
-        &media_toml("supabase", "client-direct")
-            .replace("accept = [\"image/png\", \"image/jpeg\"]", "accept = [\"image/png\"]\nmime_field = \"mime_kind\""),
-    );
+    let config = parse(&media_toml("supabase", "client-direct").replace(
+        "accept = [\"image/png\", \"image/jpeg\"]",
+        "accept = [\"image/png\"]\nmime_field = \"mime_kind\"",
+    ));
     let err = match build_media_plans(&engine, &config).await {
         Err(Error::Config(msg)) => msg,
         other => panic!("expected Error::Config, got {other:?}"),

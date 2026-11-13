@@ -49,7 +49,11 @@ impl MediaProvider {
 
     /// All known variants (deterministic order) — KAT/audit use.
     pub fn all() -> &'static [MediaProvider] {
-        &[MediaProvider::Supabase, MediaProvider::R2, MediaProvider::S3]
+        &[
+            MediaProvider::Supabase,
+            MediaProvider::R2,
+            MediaProvider::S3,
+        ]
     }
 }
 
@@ -184,7 +188,9 @@ impl MediaConfig {
     /// `charts.rs` strictness ("validation is hard, never silent").
     pub fn validate(&self) -> Result<(), DomainConfigError> {
         if self.bucket.trim().is_empty() {
-            return Err(DomainConfigError::Invalid("bucket must be non-empty".to_string()));
+            return Err(DomainConfigError::Invalid(
+                "bucket must be non-empty".to_string(),
+            ));
         }
         if self.max_bytes == 0 {
             return Err(DomainConfigError::Invalid(
@@ -205,14 +211,19 @@ impl MediaConfig {
         }
         if self.key_template.trim().is_empty() {
             return Err(DomainConfigError::Invalid(
-                "key_template must be non-empty (the {org}/{domain}/{entity}/{id}/{field} default)".to_string(),
+                "key_template must be non-empty (the {org}/{domain}/{entity}/{id}/{field} default)"
+                    .to_string(),
             ));
         }
         if self.url_field.trim().is_empty() {
-            return Err(DomainConfigError::Invalid("url_field must be non-empty".to_string()));
+            return Err(DomainConfigError::Invalid(
+                "url_field must be non-empty".to_string(),
+            ));
         }
         if self.mime_field.trim().is_empty() {
-            return Err(DomainConfigError::Invalid("mime_field must be non-empty".to_string()));
+            return Err(DomainConfigError::Invalid(
+                "mime_field must be non-empty".to_string(),
+            ));
         }
         if self.media_classes.is_empty() {
             return Err(DomainConfigError::Invalid(
@@ -259,7 +270,9 @@ impl MediaConfig {
 
 /// Validate every domain's `[media]` declaration (no-op when none — the
 /// zero-media parse path must stay byte-identical for existing configs).
-pub fn validate_media_config(config: &crate::config::DomainConfig) -> Result<(), DomainConfigError> {
+pub fn validate_media_config(
+    config: &crate::config::DomainConfig,
+) -> Result<(), DomainConfigError> {
     for (name, entry) in &config.domains {
         if let Some(media) = &entry.media {
             media
@@ -307,8 +320,8 @@ mod tests {
 
     #[test]
     fn unknown_media_keys_are_parse_errors() {
-        let toml = base_toml("supabase", "client-direct")
-            + "\n[domains.core.media.bogus]\nkey = 1\n";
+        let toml =
+            base_toml("supabase", "client-direct") + "\n[domains.core.media.bogus]\nkey = 1\n";
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("bogus"), "{err}");
     }
@@ -350,8 +363,7 @@ mod tests {
 
     #[test]
     fn r2_requires_non_empty_binding() {
-        let toml = base_toml("r2", "through-app")
-            + "\n[domains.core.media.r2]\nbinding = \"\"\n";
+        let toml = base_toml("r2", "through-app") + "\n[domains.core.media.r2]\nbinding = \"\"\n";
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("binding"), "{err}");
     }
@@ -361,41 +373,47 @@ mod tests {
         let toml = base_toml("r2", "through-app")
             + "\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\npresign_ttl_secs = 60\n";
         let cfg = parse_domain_config_str(&toml).unwrap();
-        assert_eq!(cfg.domains["core"].media.as_ref().unwrap().provider, MediaProvider::R2);
+        assert_eq!(
+            cfg.domains["core"].media.as_ref().unwrap().provider,
+            MediaProvider::R2
+        );
     }
 
     #[test]
     fn zero_max_bytes_is_error() {
-        let toml = base_toml("supabase", "client-direct").replace("max_bytes = 5242880", "max_bytes = 0");
+        let toml =
+            base_toml("supabase", "client-direct").replace("max_bytes = 5242880", "max_bytes = 0");
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("max_bytes"), "{err}");
     }
 
     #[test]
     fn empty_accept_list_is_error() {
-        let toml = base_toml("supabase", "client-direct").replace("accept = [\"image/png\"]", "accept = []");
+        let toml = base_toml("supabase", "client-direct")
+            .replace("accept = [\"image/png\"]", "accept = []");
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("accept"), "{err}");
     }
 
     #[test]
     fn accept_entries_must_look_like_mime_types() {
-        let toml = base_toml("supabase", "client-direct").replace("accept = [\"image/png\"]", "accept = [\"png\"]");
+        let toml = base_toml("supabase", "client-direct")
+            .replace("accept = [\"image/png\"]", "accept = [\"png\"]");
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("png"), "{err}");
     }
 
     #[test]
     fn empty_bucket_is_error() {
-        let toml = base_toml("supabase", "client-direct").replace("bucket = \"person-media\"", "bucket = \"\"");
+        let toml = base_toml("supabase", "client-direct")
+            .replace("bucket = \"person-media\"", "bucket = \"\"");
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("bucket"), "{err}");
     }
 
     #[test]
     fn empty_key_template_is_error() {
-        let toml = base_toml("supabase", "client-direct")
-            + "\nkey_template = \"\"\n";
+        let toml = base_toml("supabase", "client-direct") + "\nkey_template = \"\"\n";
         let err = parse_domain_config_str(&toml).unwrap_err().to_string();
         assert!(err.contains("key_template"), "{err}");
     }
@@ -420,11 +438,16 @@ mod tests {
 
     #[test]
     fn upload_mode_string_sets_match_core_mirror() {
-        for m in [MediaUploadMode::ClientDirect, MediaUploadMode::ThroughApp, MediaUploadMode::Presigned] {
+        for m in [
+            MediaUploadMode::ClientDirect,
+            MediaUploadMode::ThroughApp,
+            MediaUploadMode::Presigned,
+        ] {
             assert_eq!(
                 codegraph_core::types::UploadMode::parse(m.as_str()),
                 Some(match m {
-                    MediaUploadMode::ClientDirect => codegraph_core::types::UploadMode::ClientDirect,
+                    MediaUploadMode::ClientDirect =>
+                        codegraph_core::types::UploadMode::ClientDirect,
                     MediaUploadMode::ThroughApp => codegraph_core::types::UploadMode::ThroughApp,
                     MediaUploadMode::Presigned => codegraph_core::types::UploadMode::Presigned,
                 }),
