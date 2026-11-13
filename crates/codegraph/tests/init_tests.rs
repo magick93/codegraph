@@ -2122,7 +2122,7 @@ fn doctor_with_media(domains_extra: &str) -> Option<String> {
     let project = dir.path().join("demo-app");
     cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
     let domains = project.join("domains.toml");
-    let mut toml = fs::read_to_string(&domains).unwrap();
+    let toml = fs::read_to_string(&domains).unwrap();
     // Drop the scaffolded mox manifest entry: the missing starter model
     // must not muddy the media signal.
     let toml = toml
