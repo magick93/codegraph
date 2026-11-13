@@ -80,7 +80,27 @@ pub enum ProviderCapability {
 /// The provider capability matrix (issue #625 §2). Total and exhaustive:
 /// adding a provider forces a row here — the compiler keeps the matrix honest.
 pub fn provider_capabilities(p: MediaProvider) -> BTreeSet<ProviderCapability> {
-    todo!("M1 GREEN: the capability matrix")
+    use ProviderCapability::*;
+    match p {
+        MediaProvider::Supabase => [
+            ClientDirectUpload,
+            ThroughAppUpload,
+            PresignPut,
+            PublicRead,
+            SignedDisplay,
+            StorageSideRls,
+        ]
+        .into(),
+        // No end-user identity on objects: client-direct and storage-side RLS
+        // are impossible; authority is issued by the app (presign or proxy).
+        MediaProvider::R2 | MediaProvider::S3 => [
+            ThroughAppUpload,
+            PresignPut,
+            PublicRead,
+            SignedDisplay,
+        ]
+        .into(),
+    }
 }
 
 /// The upload data path (config-declared, validated against the matrix).
@@ -115,7 +135,11 @@ impl UploadMode {
 
     /// The matrix capability this mode requires.
     pub fn as_capability(&self) -> ProviderCapability {
-        todo!("M1 GREEN: mode → capability")
+        match self {
+            Self::ClientDirect => ProviderCapability::ClientDirectUpload,
+            Self::ThroughApp => ProviderCapability::ThroughAppUpload,
+            Self::Presigned => ProviderCapability::PresignPut,
+        }
     }
 }
 
@@ -130,7 +154,7 @@ pub enum MediaVisibility {
 }
 
 /// One placeholder in a rendered object key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KeyPlaceholder {
     Org,
@@ -190,30 +214,116 @@ pub struct MediaObjectRef {
 }
 
 impl KeyTemplate {
-    /// The default overwrite-in-place template.
+    /// The default overwrite-in-place template: `{org}/{domain}/{entity}/{id}/{field}`.
     pub fn default_template() -> Self {
-        Self {
-            segments: vec![
-                KeySegment::Placeholder(KeyPlaceholder::Org),
-                KeySegment::Placeholder(KeyPlaceholder::Domain),
-                KeySegment::Placeholder(KeyPlaceholder::Entity),
-                KeySegment::Placeholder(KeyPlaceholder::Id),
-                KeySegment::Placeholder(KeyPlaceholder::Field),
-            ],
+        const PLACEHOLDERS: [KeyPlaceholder; 5] = [
+            KeyPlaceholder::Org,
+            KeyPlaceholder::Domain,
+            KeyPlaceholder::Entity,
+            KeyPlaceholder::Id,
+            KeyPlaceholder::Field,
+        ];
+        let mut segments = Vec::new();
+        for (idx, ph) in PLACEHOLDERS.iter().enumerate() {
+            if idx > 0 {
+                segments.push(KeySegment::Literal("/".to_string()));
+            }
+            segments.push(KeySegment::Placeholder(*ph));
         }
+        Self { segments }
     }
 
     /// Parse `{a}/{b}/literal` syntax. Unknown placeholders and templates
     /// without `{id}` or `{field}` are errors (naming the problem) — keys
     /// would otherwise collide across objects or fields.
     pub fn parse(s: &str) -> Result<Self, String> {
-        todo!("M2 GREEN: template parse")
+        let mut segments = Vec::new();
+        let mut placeholders = BTreeSet::new();
+        let chunks: Vec<&str> = s.split('/').collect();
+        let last = chunks.len().saturating_sub(1);
+        for (idx, raw) in chunks.iter().enumerate() {
+            if raw.is_empty() {
+                return Err(format!(
+                    "key template segment {idx} is empty (check for stray slashes): \"{s}\""
+                ));
+            }
+            let mut rest = *raw;
+            let mut literal = String::new();
+            loop {
+                match (rest.find('{'), rest.find('}')) {
+                    (Some(open), Some(close)) if close > open => {
+                        literal.push_str(&rest[..open]);
+                        if !literal.is_empty() {
+                            segments.push(KeySegment::Literal(std::mem::take(&mut literal)));
+                        }
+                        let name = &rest[open + 1..close];
+                        let ph = KeyPlaceholder::parse(name).ok_or_else(|| {
+                            format!(
+                                "unknown key placeholder \"{{{name}}}\" (known: org, domain, entity, id, field)"
+                            )
+                        })?;
+                        placeholders.insert(ph);
+                        segments.push(KeySegment::Placeholder(ph));
+                        rest = &rest[close + 1..];
+                    }
+                    (Some(_), _) | (_, Some(_)) => {
+                        return Err(format!("unclosed placeholder braces in key template: \"{s}\""));
+                    }
+                    _ => {
+                        literal.push_str(rest);
+                        break;
+                    }
+                }
+            }
+            if !literal.is_empty() {
+                segments.push(KeySegment::Literal(literal));
+            }
+            if idx != last {
+                segments.push(KeySegment::Literal("/".to_string()));
+            }
+        }
+        if segments.is_empty() {
+            return Err("key template is empty".to_string());
+        }
+        for required in [KeyPlaceholder::Id, KeyPlaceholder::Field] {
+            if !placeholders.contains(&required) {
+                return Err(format!(
+                    "key template must contain the {{{}}} placeholder — keys without it collide across {}s",
+                    required.as_str(),
+                    required.as_str()
+                ));
+            }
+        }
+        Ok(Self { segments })
     }
 
     /// Render the key. Segment values may not contain `/` (rejected — a
     /// path-traversal-shaped key would escape the bucket prefix).
     pub fn render(&self, r: &MediaObjectRef) -> Result<String, String> {
-        todo!("M2 GREEN: template render")
+        let mut out = String::new();
+        for seg in &self.segments {
+            match seg {
+                KeySegment::Literal(lit) => out.push_str(lit),
+                KeySegment::Placeholder(ph) => {
+                    let piece = match ph {
+                        KeyPlaceholder::Org => r.org.clone(),
+                        KeyPlaceholder::Domain => r.domain.clone(),
+                        KeyPlaceholder::Entity => r.entity.clone(),
+                        KeyPlaceholder::Id => r.id.to_string(),
+                        KeyPlaceholder::Field => r.field.clone(),
+                    };
+                    if piece.contains('/') || piece.is_empty() {
+                        return Err(format!(
+                            "key segment {{{}}} renders to \"{}\" — empty values and '/' are rejected (path-shaped keys would escape the bucket prefix)",
+                            ph.as_str(),
+                            piece
+                        ));
+                    }
+                    out.push_str(&piece);
+                }
+            }
+        }
+        Ok(out)
     }
 }
 
