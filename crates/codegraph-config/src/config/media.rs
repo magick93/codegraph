@@ -183,7 +183,77 @@ impl MediaConfig {
     /// bounds, accept entries. Errors name the offending key — the
     /// `charts.rs` strictness ("validation is hard, never silent").
     pub fn validate(&self) -> Result<(), DomainConfigError> {
-        todo!("M3 GREEN: structural validation")
+        if self.bucket.trim().is_empty() {
+            return Err(DomainConfigError::Invalid("bucket must be non-empty".to_string()));
+        }
+        if self.max_bytes == 0 {
+            return Err(DomainConfigError::Invalid(
+                "max_bytes must be greater than zero".to_string(),
+            ));
+        }
+        if self.accept.is_empty() {
+            return Err(DomainConfigError::Invalid(
+                "accept must list at least one mime type (e.g. \"image/png\")".to_string(),
+            ));
+        }
+        for entry in &self.accept {
+            if !entry.contains('/') {
+                return Err(DomainConfigError::Invalid(format!(
+                    "accept entry \"{entry}\" is not a mime type (expected \"type/subtype\" or \"type/*\")"
+                )));
+            }
+        }
+        if self.key_template.trim().is_empty() {
+            return Err(DomainConfigError::Invalid(
+                "key_template must be non-empty (the {org}/{domain}/{entity}/{id}/{field} default)".to_string(),
+            ));
+        }
+        if self.url_field.trim().is_empty() {
+            return Err(DomainConfigError::Invalid("url_field must be non-empty".to_string()));
+        }
+        if self.mime_field.trim().is_empty() {
+            return Err(DomainConfigError::Invalid("mime_field must be non-empty".to_string()));
+        }
+        if self.media_classes.is_empty() {
+            return Err(DomainConfigError::Invalid(
+                "media_classes must name at least one contained-value class (e.g. \"MediaReference\")"
+                    .to_string(),
+            ));
+        }
+        // Provider-subsection agreement: a table is only legal under its own
+        // provider, and r2 cannot stand without its binding.
+        if self.supabase.is_some() && self.provider != MediaProvider::Supabase {
+            return Err(DomainConfigError::Invalid(format!(
+                "media.supabase table present but provider = \"{}\"",
+                self.provider.as_str()
+            )));
+        }
+        if self.r2.is_some() && self.provider != MediaProvider::R2 {
+            return Err(DomainConfigError::Invalid(format!(
+                "media.r2 table present but provider = \"{}\"",
+                self.provider.as_str()
+            )));
+        }
+        if self.s3.is_some() && self.provider != MediaProvider::S3 {
+            return Err(DomainConfigError::Invalid(format!(
+                "media.s3 table present but provider = \"{}\"",
+                self.provider.as_str()
+            )));
+        }
+        if self.provider == MediaProvider::R2 {
+            let r2 = self.r2.as_ref().ok_or_else(|| {
+                DomainConfigError::Invalid(
+                    "provider = \"r2\" requires the media.r2 table (binding name)".to_string(),
+                )
+            })?;
+            if r2.binding.trim().is_empty() {
+                return Err(DomainConfigError::Invalid(
+                    "media.r2.binding must be non-empty (the wrangler [[r2_buckets]] binding name)"
+                        .to_string(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
