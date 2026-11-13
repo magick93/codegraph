@@ -481,7 +481,10 @@ async fn grandchild_service_ops_emit_depth2_routes_and_scoped_loads() {
     }
 
     // ── handler: depth-2 utoipa path, three-uuid Path tuple, scoped load ──
-    let handler = read(&out.path().join("src/api/payroll/pay_run_line_adjustment_handler.rs"));
+    let handler = read(
+        &out.path()
+            .join("src/api/payroll/pay_run_line_adjustment_handler.rs"),
+    );
     assert!(
         handler.contains(
             "/api/v1/payroll/pay-run/{pay_run_id}/pay-run-line/{pay_run_line_id}/pay-run-line-adjustment/{pay_run_line_adjustment_id}/actions/recalculate"
@@ -531,8 +534,7 @@ async fn grandchild_service_ops_emit_depth2_routes_and_scoped_loads() {
 
     // ── hurl: the grandchild's contracts capture the FULL nesting chain ──
     let grandchild_actions = read(
-        &out
-            .path()
+        &out.path()
             .join("hurl/10_payroll_pay_run_line_adjustment_actions.hurl"),
     );
     // Grandparent + child preambles: two captures before the action legs.
@@ -545,9 +547,8 @@ async fn grandchild_service_ops_emit_depth2_routes_and_scoped_loads() {
         "the grandparent preamble must capture its id:\n{grandchild_actions}"
     );
     assert!(
-        grandchild_actions.contains(
-            "POST {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line"
-        ),
+        grandchild_actions
+            .contains("POST {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line"),
         "the child preamble must POST the nested collection:\n{grandchild_actions}"
     );
     assert!(
