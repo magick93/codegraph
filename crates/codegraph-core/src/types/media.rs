@@ -327,6 +327,69 @@ impl KeyTemplate {
     }
 }
 
+/// Provider-specific settings carried from the config surface to the
+/// emitted adapter construction (PR-B/PR-C consume the variants).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MediaProviderSettings {
+    /// Env-driven (SUPABASE_URL / service key) — nothing to carry in PR-A.
+    Supabase,
+    R2 {
+        binding: String,
+        presign_ttl_secs: u64,
+    },
+    S3 {
+        region: Option<String>,
+        endpoint: Option<String>,
+    },
+}
+
+/// One contained-value media field resolved against the graph: the child
+/// table + columns the media surface reads and writes. All names go through
+/// the `codegraph-naming` single-source helpers (#460).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaFieldPlan {
+    /// Schema title of the owning entity (e.g. "PersonType").
+    pub entity_title: String,
+    /// Postgres table of the owning entity (e.g. "person").
+    pub entity_table: String,
+    /// The contained-value feature name as authored (e.g. "avatar").
+    pub field_name: String,
+    /// snake_case of the feature (e.g. "avatar").
+    pub field_snake: String,
+    /// `{parent}_{feature}` (e.g. "person_avatar").
+    pub child_table: String,
+    /// `{parent}_id` (e.g. "person_id").
+    pub parent_fk_column: String,
+    /// The url column on the child table (e.g. "url").
+    pub url_column: String,
+    /// The mime-type column on the child table (e.g. "mime_type").
+    pub mime_column: String,
+}
+
+/// One domain's resolved media plane (issue #625 §3b L2): built
+/// post-ingest/pre-generation from `[domains.X.media]` + the graph;
+/// consumed by the `media_storage` generator. Deterministic — BTreeMap
+/// keying upstream, sorted fields.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaPlan {
+    pub domain: String,
+    pub provider: MediaProvider,
+    pub upload_mode: UploadMode,
+    pub bucket: String,
+    pub key_template: KeyTemplate,
+    /// Public if `public_read`, else Signed (private bucket + signed
+    /// display URLs — the privacy default).
+    pub visibility: MediaVisibility,
+    pub max_bytes: u64,
+    pub accept: Vec<String>,
+    pub display_ttl_secs: u64,
+    /// Resolved media class titles (exact or `+type_suffix`).
+    pub media_classes: Vec<String>,
+    /// Contained-value media fields, sorted by (entity_title, field_snake).
+    pub fields: Vec<MediaFieldPlan>,
+    pub provider_settings: MediaProviderSettings,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

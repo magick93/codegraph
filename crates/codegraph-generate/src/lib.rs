@@ -7,6 +7,7 @@ pub mod filter_fields;
 pub mod forms;
 pub mod ifml;
 pub mod manifest;
+pub mod media;
 pub mod mox_expr;
 pub mod persistence;
 pub mod profile;

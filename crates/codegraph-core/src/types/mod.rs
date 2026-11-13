@@ -47,8 +47,8 @@ pub use authorization::{
 };
 pub use chart::{ChartDefinitionNode, ChartKind, ChartPropertyBinding};
 pub use media::{
-    KeyPlaceholder, KeyTemplate, MediaObjectRef, MediaProvider, MediaVisibility, ProviderCapability,
-    UploadMode, provider_capabilities,
+    KeyPlaceholder, KeyTemplate, MediaFieldPlan, MediaObjectRef, MediaPlan, MediaProvider,
+    MediaProviderSettings, MediaVisibility, ProviderCapability, UploadMode, provider_capabilities,
 };
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
