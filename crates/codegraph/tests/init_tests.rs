@@ -2093,7 +2093,6 @@ fn doctor_validates_function_bindings() {
         out.contains("hard check") || !out.starts_with("ok:"),
         "{out}"
     );
-
     // `sql` on the postgres target (no profiles.toml ⇒ default): passes.
     let out = doctor_with_functions(
         "\n[functions.\"OrderScore\"]\nimplementation = \"sql\"\n",
@@ -2111,6 +2110,74 @@ fn doctor_validates_function_bindings() {
     assert!(
         out.contains("hard check") || !out.starts_with("ok:"),
         "sql on sqlite must fail: {out}"
+    );
+}
+
+/// Media storage doctor gate (issue #625 PR-A): the graph-free checks
+/// (provider capability matrix + key template) run in doctor exactly as
+/// they run in the generation path — the shared validator, so the two
+/// cannot drift. Structural `[media]` checks ride the domains.toml parse.
+fn doctor_with_media(domains_extra: &str) -> Option<String> {
+    let dir = TempDir::new().unwrap();
+    let project = dir.path().join("demo-app");
+    cmd_init(&init_args(dir.path(), "demo-app", None, false)).unwrap();
+    let domains = project.join("domains.toml");
+    let mut toml = fs::read_to_string(&domains).unwrap();
+    // Drop the scaffolded mox manifest entry: the missing starter model
+    // must not muddy the media signal.
+    let toml = toml
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("mox_files"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&domains, format!("{toml}\n{domains_extra}")).unwrap();
+
+    let result = cmd_doctor(&DoctorArgs {
+        config: domains,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![project.join("model/common.mox")],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+    });
+    match result {
+        Ok(summary) => Some(format!("ok: {} hard", summary.hard_failures)),
+        Err(e) => Some(format!("{e}")),
+    }
+}
+
+#[test]
+fn doctor_validates_media_matrix_and_template() {
+    // Valid matrix + template: zero hard failures.
+    let out = doctor_with_media(
+        "\n[domains.common.media]\nprovider = \"supabase\"\nupload_mode = \"client-direct\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n",
+    )
+    .unwrap();
+    assert!(out.starts_with("ok: 0 hard"), "valid media config must pass: {out}");
+
+    // Matrix refusal (r2 cannot serve client-direct): one hard failure.
+    let out = doctor_with_media(
+        "\n[domains.common.media]\nprovider = \"r2\"\nupload_mode = \"client-direct\"\nbucket = \"b\"\nmax_bytes = 1000\naccept = [\"image/png\"]\n\n[domains.common.media.r2]\nbinding = \"MEDIA\"\n",
+    )
+    .unwrap();
+    assert!(
+        out.contains("1 hard check"),
+        "r2 + client-direct must hard-fail doctor: {out}"
+    );
+
+    // Broken key template: one hard failure.
+    let out = doctor_with_media(
+        "\n[domains.common.media]\nprovider = \"supabase\"\nupload_mode = \"client-direct\"\nbucket = \"b\"\nmax_bytes = 1000\naccept = [\"image/png\"]\nkey_template = \"{org}/{bucket}\"\n",
+    )
+    .unwrap();
+    assert!(
+        out.contains("1 hard check"),
+        "an unknown key placeholder must hard-fail doctor: {out}"
     );
 }
 

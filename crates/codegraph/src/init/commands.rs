@@ -1648,6 +1648,33 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         }
     }
 
+    // Media storage (issue #625 PR-A): the provider capability matrix and
+    // the key template need no graph — doctor runs the same check the run
+    // path runs (generate::media::validate_media_matrix_and_template), so
+    // doctor and generation cannot drift. Structural `[media]` checks ride
+    // the domains.toml parse above. Hard failure on mismatch; an INFO line
+    // per configured domain keeps the plane visible.
+    if let Ok(config) = &domain_config {
+        for (name, entry) in &config.domains {
+            let Some(media) = &entry.media else {
+                continue;
+            };
+            match codegraph_generate::media::plan::validate_media_matrix_and_template(name, media)
+            {
+                Ok(()) => println!(
+                    "INFO media — {name}: {} / {} (bucket \"{}\")",
+                    media.provider.as_str(),
+                    media.upload_mode.as_str(),
+                    media.bucket
+                ),
+                Err(e) => {
+                    hard_failures += 1;
+                    println!("FAIL media — {e}");
+                }
+            }
+        }
+    }
+
     // Scan the schemas dir (when provided) up front: the classifier verdict
     // depends on whether JSON schemas are present.
     let schemas_dir = args.schemas.as_deref();

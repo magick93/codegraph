@@ -51,6 +51,43 @@ pub async fn build_media_plans(
     Ok(plans)
 }
 
+/// Graph-free validation (doctor parity): the provider capability matrix
+/// and the key-template syntax — the checks that need no graph. Doctor
+/// runs this per `[media]` domain (hard failure, the function-bindings
+/// precedent); the plan builder runs it first too, so the cheap config
+/// errors fail before any graph read.
+pub fn validate_media_matrix_and_template(
+    domain_name: &str,
+    media: &MediaConfig,
+) -> Result<(), Error> {
+    let provider = MediaProvider::parse(media.provider.as_str()).ok_or_else(|| {
+        Error::Config(format!(
+            "domain \"{domain_name}\" media: provider \"{}\" missing from the core mirror",
+            media.provider.as_str()
+        ))
+    })?;
+    let caps = provider_capabilities(provider);
+    let upload_mode = UploadMode::parse(media.upload_mode.as_str()).ok_or_else(|| {
+        Error::Config(format!(
+            "domain \"{domain_name}\" media: upload mode \"{}\" missing from the core mirror",
+            media.upload_mode.as_str()
+        ))
+    })?;
+    let required = upload_mode.as_capability();
+    if !caps.contains(&required) {
+        return Err(Error::Config(format!(
+            "domain \"{domain_name}\" media: provider \"{}\" does not support upload_mode \"{}\" \
+             (missing capability {:?}); pick a supported mode or provider",
+            media.provider.as_str(),
+            media.upload_mode.as_str(),
+            required
+        )));
+    }
+    KeyTemplate::parse(&media.key_template)
+        .map(|_| ())
+        .map_err(|e| Error::Config(format!("domain \"{domain_name}\" media key_template: {e}")))
+}
+
 /// Build one domain's plan from explicit entity titles (the generator
 /// passes `generation_order` titles; [`build_media_plans`] derives them
 /// from the graph).
@@ -61,6 +98,7 @@ pub async fn build_media_plan_for_domain(
     type_suffix: &str,
     entity_titles: &[String],
 ) -> Result<MediaPlan, Error> {
+    validate_media_matrix_and_template(domain_name, media)?;
     let provider = MediaProvider::parse(media.provider.as_str()).ok_or_else(|| {
         Error::Config(format!(
             "domain \"{domain_name}\" media: provider \"{}\" missing from the core mirror",
