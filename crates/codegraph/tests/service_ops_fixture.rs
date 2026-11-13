@@ -37,6 +37,20 @@ pub const PAY_RUN_LINE_SCHEMA: &str = r#"{
   }
 }"#;
 
+/// The depth-2 GRANDCHILD entity (issue #629): refers-linked under the
+/// CHILD — `role = "child"` with `parent = "PayRunLineType"`. The service-op
+/// plane renders its action routes through the grandparent branch; the
+/// #551 compile pin exists because that surface compiled NOWHERE before.
+pub const PAY_RUN_LINE_ADJUSTMENT_SCHEMA: &str = r#"{
+  "title": "PayRunLineAdjustmentType",
+  "type": "object",
+  "required": ["adjustmentId"],
+  "properties": {
+    "adjustmentId": { "type": "string" },
+    "reason": { "type": "string" }
+  }
+}"#;
+
 pub const PAY_RUN_MOX: &str = r#"
 package payroll
 
@@ -55,6 +69,11 @@ class PayRunType {
 class PayRunLineType {
     String lineId
     String [0..1] notes
+}
+
+class PayRunLineAdjustmentType {
+    String adjustmentId
+    String [0..1] reason
 }
 "#;
 
@@ -107,6 +126,17 @@ application Payroll {
             remove => PayRunLineRepository.delete;
             summarize => PayRunLineRepository.findAll;
         }
+        entity PayRunLineAdjustmentType scaffold repository PayRunLineAdjustmentRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        service PayRunLineAdjustmentService {
+            inject PayRunLineAdjustmentRepository;
+            recalculate => PayRunLineAdjustmentRepository.save capability RecalculateAdjustment;
+            voidOut => PayRunLineAdjustmentRepository.delete;
+        }
     }
 }
 "#;
@@ -127,6 +157,7 @@ actors Payroll {
     capability SubmitPayRun on PayRunType
     capability PreparePayRun on PayRunType
     capability AdjustPayRunLine on PayRunLineType
+    capability RecalculateAdjustment on PayRunLineAdjustmentType
 
     grant Owner {
         permit ApprovePayRun
@@ -136,6 +167,7 @@ actors Payroll {
     grant Manager {
         permit InspectPayRun
         permit AdjustPayRunLine
+        permit RecalculateAdjustment
     }
 
     never_both { PreparePayRun, ApprovePayRun }
@@ -167,12 +199,17 @@ operations = ["create", "read", "update", "delete", "list"]
 label = "Payroll"
 schema_dir = "model-schemas"
 postgres_schema = "payroll"
-entities = ["PayRunType", "PayRunLineType"]
+entities = ["PayRunType", "PayRunLineType", "PayRunLineAdjustmentType"]
 
 [domains.payroll.entity_config.PayRunLineType]
 role = "child"
 parent = "PayRunType"
 parent_ref = "pay_run_id"
+
+[domains.payroll.entity_config.PayRunLineAdjustmentType]
+role = "child"
+parent = "PayRunLineType"
+parent_ref = "pay_run_line_id"
 "#;
 
 /// The mox-first twin: NO `entities` key (author-declarative mox), no JSON
@@ -192,6 +229,11 @@ postgres_schema = "payroll"
 role = "child"
 parent = "PayRunType"
 parent_ref = "pay_run_id"
+
+[domains.payroll.entity_config.PayRunLineAdjustmentType]
+role = "child"
+parent = "PayRunLineType"
+parent_ref = "pay_run_line_id"
 "#;
 
 // ── Harness ────────────────────────────────────────────────────────────
@@ -213,6 +255,11 @@ pub fn write_fixture_in(_prefix: &str, ddd_source: &str) -> Fixture {
     fs::create_dir_all(&schemas_dir).unwrap();
     fs::write(schemas_dir.join("PayRunType.json"), PAY_RUN_SCHEMA).unwrap();
     fs::write(schemas_dir.join("PayRunLineType.json"), PAY_RUN_LINE_SCHEMA).unwrap();
+    fs::write(
+        schemas_dir.join("PayRunLineAdjustmentType.json"),
+        PAY_RUN_LINE_ADJUSTMENT_SCHEMA,
+    )
+    .unwrap();
     let schemas_dir = root.join("model-schemas");
     let mox = root.join("pay_run.mox");
     fs::write(&mox, PAY_RUN_MOX).unwrap();
@@ -307,7 +354,10 @@ pub async fn ingest(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
     )
     .await
     .unwrap();
-    assert_eq!(ddd_stats.services, 2, "both services must ingest");
+    assert_eq!(
+        ddd_stats.services, 3,
+        "all three services must ingest (root, child, grandchild)"
+    );
     let policy = codegraph::ifml_actor_import::resolve_actor_policy(
         &["policy.actor".to_string(), "policy_b.actor".to_string()],
         fixture.ddd.parent().unwrap(),

@@ -197,7 +197,7 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     // Numbering mirrors the entity contract's global order; the fixture's
     // title-sort puts PayRunLineType first, so pay_run's actions file is
     // 11_payroll_pay_run_actions.hurl.
-    let actions = read(&out.path().join("hurl/11_payroll_pay_run_actions.hurl"));
+    let actions = read(&out.path().join("hurl/12_payroll_pay_run_actions.hurl"));
     // A fresh fixture is created and captured before the action legs.
     assert!(actions.contains("HTTP 201"), "{actions}");
     assert!(actions.contains("/actions/approve"), "{actions}");
@@ -356,7 +356,7 @@ async fn child_service_ops_emit_nested_routes_and_scoped_loads() {
     );
 
     // ── hurl: the child's actions contract is nested ──
-    let child_actions = read(&out.path().join("hurl/10_payroll_pay_run_line_actions.hurl"));
+    let child_actions = read(&out.path().join("hurl/11_payroll_pay_run_line_actions.hurl"));
     // The parent preamble captures the parent id first.
     assert!(
         child_actions.contains("POST {{base_url}}/api/v1/payroll/pay-run"),
@@ -406,7 +406,7 @@ async fn child_service_ops_emit_nested_routes_and_scoped_loads() {
     );
 
     // ── hurl: the child's ENTITY contract is nested too ──
-    let child_entity = read(&out.path().join("hurl/10_payroll_pay_run_line.hurl"));
+    let child_entity = read(&out.path().join("hurl/11_payroll_pay_run_line.hurl"));
     assert!(
         child_entity.contains(
             "GET {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line?page=0&page_size=10"
@@ -428,10 +428,147 @@ async fn child_service_ops_emit_nested_routes_and_scoped_loads() {
     );
 
     // The parent's own entity contract stays top-level.
-    let parent_entity = read(&out.path().join("hurl/11_payroll_pay_run.hurl"));
+    let parent_entity = read(&out.path().join("hurl/12_payroll_pay_run.hurl"));
     assert!(
         parent_entity.contains("GET {{base_url}}/api/v1/payroll/pay-run?page=0&page_size=10"),
         "the parent entity contract must stay top-level:\n{parent_entity}"
+    );
+}
+
+/// Depth-2 GRANDCHILD service ops (issue #629 — the #551 gap): a
+/// refers-linked child of the CHILD with its own repository emits action
+/// routes through the grandparent branch —
+/// `POST /api/v1/{dom}/{parent}/{pid}/{child}/{cid}/{grandchild}/{gid}/
+/// actions/{op}` — with a three-uuid Path tuple, a scoped record load, and
+/// hurl contracts that capture the full nesting chain. The surface rendered
+/// via the existing depth-2 branch since WS4 but compiled NOWHERE before
+/// the `service_ops_compile_gate` extension.
+#[tokio::test]
+async fn grandchild_service_ops_emit_depth2_routes_and_scoped_loads() {
+    let fixture = write_fixture_in("service_ops_grandchild_ops", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // ── router: the CHILD routes fn nests the grandchild; the grandchild is
+    //    not mounted at top level or directly under the parent ──
+    let router = read(&out.path().join("src/api/payroll/router.rs"));
+    assert!(
+        router.contains(
+            ".nest(\"/{pay_run_line_id}/pay-run-line-adjustment\", pay_run_line_adjustment_routes())"
+        ),
+        "the child router must nest the grandchild routes fn:\n{router}"
+    );
+    let grandchild_router_start = router
+        .find("fn pay_run_line_adjustment_routes()")
+        .expect("the grandchild routes fn must emit");
+    let grandchild_router = &router[grandchild_router_start..];
+    for snake in ["recalculate", "void_out"] {
+        assert!(
+            grandchild_router.contains(&format!("/actions/{snake}\"")),
+            "grandchild router must register actions/{snake}:\n{grandchild_router}"
+        );
+    }
+
+    // ── handler: depth-2 utoipa path, three-uuid Path tuple, scoped load ──
+    let handler = read(&out.path().join("src/api/payroll/pay_run_line_adjustment_handler.rs"));
+    assert!(
+        handler.contains(
+            "/api/v1/payroll/pay-run/{pay_run_id}/pay-run-line/{pay_run_line_id}/pay-run-line-adjustment/{pay_run_line_adjustment_id}/actions/recalculate"
+        ),
+        "the grandchild action utoipa path must nest under BOTH ancestors:\n{handler}"
+    );
+    assert!(
+        handler.contains(
+            "Path((_grandparent_id, parent_id, pay_run_line_adjustment_id)): Path<(Uuid, Uuid, Uuid)>"
+        ),
+        "grandchild action handlers must bind all three ids (the grandparent\n\
+         positionally as _grandparent_id, the parent as parent_id):\n{handler}"
+    );
+    assert!(
+        handler.contains("fn service_op_recalculate_authorize"),
+        "the capability-gated grandchild op must render its authorize fn:\n{handler}"
+    );
+    // save → the grandchild update command; delete → the grandchild delete
+    // command (the wired delegation legs at depth 2).
+    assert!(
+        handler.contains("_commands.update("),
+        "the grandchild save delegation must lower to the command plane:\n{handler}"
+    );
+    assert!(
+        handler.contains("_commands.delete("),
+        "the grandchild delete delegation must lower to the command plane:\n{handler}"
+    );
+    // The record load rides the SCOPED read — never a plain find_by_id.
+    assert!(
+        handler.contains("find_by_id_scoped(pay_run_line_adjustment_id,"),
+        "the grandchild record load must be parent-scoped:\n{handler}"
+    );
+    // The authorize fn references the grandchild's DTO module.
+    assert!(
+        handler.contains(
+            "crate::domain::payroll::pay_run_line_adjustment::dto_response::PayRunLineAdjustmentResponse"
+        ),
+        "the grandchild authorize fn must reference the grandchild response type:\n{handler}"
+    );
+
+    // ── openapi: the grandchild op registers ──
+    let openapi = read(&out.path().join("src/api/openapi/payroll.rs"));
+    assert!(
+        openapi.contains("pay_run_line_adjustment_handler::service_op_recalculate"),
+        "openapi must register the grandchild action paths:\n{openapi}"
+    );
+
+    // ── hurl: the grandchild's contracts capture the FULL nesting chain ──
+    let grandchild_actions = read(
+        &out
+            .path()
+            .join("hurl/10_payroll_pay_run_line_adjustment_actions.hurl"),
+    );
+    // Grandparent + child preambles: two captures before the action legs.
+    assert!(
+        grandchild_actions.contains("POST {{base_url}}/api/v1/payroll/pay-run"),
+        "the grandchild actions contract must create the grandparent first:\n{grandchild_actions}"
+    );
+    assert!(
+        grandchild_actions.contains("pay_run_id: jsonpath \"$.data.id\""),
+        "the grandparent preamble must capture its id:\n{grandchild_actions}"
+    );
+    assert!(
+        grandchild_actions.contains(
+            "POST {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line"
+        ),
+        "the child preamble must POST the nested collection:\n{grandchild_actions}"
+    );
+    assert!(
+        grandchild_actions.contains("pay_run_line_id: jsonpath \"$.data.id\""),
+        "the child preamble must capture its id:\n{grandchild_actions}"
+    );
+    assert!(
+        grandchild_actions.contains(
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/{{pay_run_line_id}}/pay-run-line-adjustment/{{pay_run_line_adjustment_id}}/actions/recalculate"
+        ),
+        "the grandchild action legs must ride the depth-2 action route:\n{grandchild_actions}"
+    );
+    assert_eq!(
+        status_after(&grandchild_actions, "/actions/recalculate"),
+        Some(200),
+        "{grandchild_actions}"
+    );
+    assert_eq!(
+        status_after(&grandchild_actions, "/actions/void_out"),
+        Some(200),
+        "{grandchild_actions}"
     );
 }
 

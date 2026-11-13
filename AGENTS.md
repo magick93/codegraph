@@ -3894,14 +3894,22 @@ plain-Postgres portability paths added).
   (parent preamble capture → nested create → nested action legs; the
   auth-suite anchor picks the first ROOT entity). Contained-VO ops stay 501
   fail-closed (rex Rule 6 — no standalone child repository); depth-2
-  grandchild action routes render via the existing grandparent branch but
-  carry no compile pin yet (v1 deferral). Two bug fixes: `bind_entity`'s
+  grandchild action routes render via the existing grandparent branch and
+  now carry the compile pin (issue #629 — the v1 deferral retired: the
+  fixture carries a grandchild entity + service ops, the gate asserts the
+  depth-2 route/handler/authorize emission and the app `cargo check`s
+  clean; the pin's first runs caught the depth-2 service-op utoipa path
+  missing the grandparent hop — fixed in `handler.tera`; the CRUD child
+  utoipa paths still render only the immediate-parent hop at depth 2, a
+  recorded pre-existing gap). Two bug fixes: `bind_entity`'s
   class-typed-signature arm now reads the adjacently-tagged rex `TypeRef`
   JSON (`{"type":"class","value":{package,name}}` — it could never match
   before), and `hurl_contract::payload_fields` is workflow-aware
   (workflow/approval-status/immutable fields excluded from create/echo/
   update bodies — generated contracts no longer 422 for modeled status
-  fields). `service_ops_compile_gate` carries the child plane;
+  fields). `service_ops_compile_gate` carries the child plane AND the
+  depth-2 grandchild surface (issue #629 — wired into CI's
+  `test-ops-integration` job and the `just ci-local ops` recipe);
   `worker_wasm_compile_tests` compiles child handlers natively + wasm32.
 - **WS5 — collision hard error + doctor unbound-op WARN**:
   `check_entity_module_collisions` (consistency.rs, the same ddl-gated site
