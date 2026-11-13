@@ -16,6 +16,7 @@ mod field_def;
 mod function;
 mod ifml;
 mod incompleteness;
+mod media;
 mod mox;
 mod namespace;
 mod persistence;
@@ -45,6 +46,10 @@ pub use authorization::{
     NeverBothGroup, Permit, resolve_effective_permits,
 };
 pub use chart::{ChartDefinitionNode, ChartKind, ChartPropertyBinding};
+pub use media::{
+    KeyPlaceholder, KeyTemplate, MediaObjectRef, MediaProvider, MediaVisibility, ProviderCapability,
+    UploadMode, provider_capabilities,
+};
 pub use codelist::{CodeList, EnumValue};
 pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
