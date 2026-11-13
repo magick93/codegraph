@@ -35,6 +35,5 @@ pub async fn build_media_plans(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
 ) -> Result<BTreeMap<String, MediaPlan>, Error> {
-    let _ = (db, config);
-    todo!("M4 GREEN: plan builder")
+    plan::build_media_plans(db, config).await
 }

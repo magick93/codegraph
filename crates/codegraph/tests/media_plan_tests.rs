@@ -9,7 +9,7 @@
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
-use codegraph_core::types::{PropertyNode, SchemaNode};
+use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
 use codegraph_generate::error::Error;
 use codegraph_generate::media::build_media_plans;
 use codegraph_grafeo::GrafeoEngine;
@@ -198,6 +198,30 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
             .await
             .expect("person name property");
     }
+    // Ref edges: get_property_ref_target resolves through
+    // `(:Property)-[:ReferencesSchema]->(:Schema)` — the property node's
+    // ref_target field alone does not resolve.
+    for (from, to) in [
+        ("avatar::PersonType", "MediaReferenceType"),
+        ("names::PersonType", "PersonNameType"),
+    ] {
+        db.ingest_edge(from, to, EdgeType::ReferencesSchema, None)
+            .await
+            .expect("references edge");
+    }
+}
+
+/// The array-media fixture's item edge: `get_array_item_schema` resolves
+/// through `[:ItemsOf]`.
+async fn ingest_gallery_items_edge(db: &(impl GraphIngestor + GraphQuerier)) {
+    db.ingest_edge(
+        "gallery::PersonType",
+        "MediaReferenceType",
+        EdgeType::ItemsOf,
+        None,
+    )
+    .await
+    .expect("items edge");
 }
 
 fn parse(toml: &str) -> DomainConfig {
@@ -318,6 +342,7 @@ async fn array_media_field_is_config_error() {
     ingest_model(&engine).await;
     let p = prop("gallery", RefClassificationKind::ValueObject, Some("MediaReferenceType"), true);
     db_ingest_prop(&engine, "PersonType", &p).await;
+    ingest_gallery_items_edge(&engine).await;
     let config = parse(&media_toml("supabase", "client-direct"));
     let err = match build_media_plans(&engine, &config).await {
         Err(Error::Config(msg)) => msg,
