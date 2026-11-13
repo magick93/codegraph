@@ -926,11 +926,7 @@ fn service_op_binds_no_entity(
     }
     let class_typed =
         |t: Option<&rex_ir::TypeRef>| matches!(t, Some(rex_ir::TypeRef::Class { .. }));
-    if op.params.iter().any(|p| class_typed(Some(&p.type_))) || class_typed(op.return_type.as_ref())
-    {
-        return false;
-    }
-    true
+    !(op.params.iter().any(|p| class_typed(Some(&p.type_))) || class_typed(op.return_type.as_ref()))
 }
 
 /// Validate `--evt-files` for doctor (issue #454): every event contract
