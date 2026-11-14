@@ -72,6 +72,3 @@ anyhow = "1"
 insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"
-# Issue #489 Phase 0 benchmark: head-to-head codegen throughput against Tera.
-# Dev-only — the production crates do not depend on genco.
-genco = "0.20"

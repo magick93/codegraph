@@ -2772,10 +2772,11 @@ buffer, byte-identical output (verified by diffing a full `flywheel`
 regeneration). New `CodeWriter` call sites should use `wln!`/`w!` and never
 hand-roll `format!` into `push_line`.
 
-Gates: `cargo test -p codegraph --test genco_bench` (2, node-free pins —
-byte-identity across all four engines + the managed-import surface) and
-`cargo test --release -p codegraph --test genco_bench -- --include-ignored
---nocapture` (the numbers).
+Gates: `cargo test -p codegraph --test codegen_bench` (2, node-free pins —
+byte-identity between the Tera render and both `CodeWriter` paths, plus a
+workload-shape pin) and `cargo test --release -p codegraph --test
+codegen_bench -- --include-ignored --nocapture` (the numbers). The genco
+contestants are deliberately not carried: no benchmark-only dependency.
 
 ## Template Overrides
 

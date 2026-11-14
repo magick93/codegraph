@@ -868,7 +868,6 @@ dependencies = [
  "codegraph-ops",
  "codegraph-type-contracts",
  "futures",
- "genco",
  "heck 0.5.0",
  "hotpath",
  "insta",
@@ -1859,28 +1858,6 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "genco"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b9baa0af01aa73e334f1d5533ddd013a27d5451ea2bc2551fb84bd710cf9a95"
-dependencies = [
- "genco-macros",
- "relative-path",
- "smallvec",
-]
-
-[[package]]
-name = "genco-macros"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfc2f50e990ca43e548926a9b52545a21a2510ddda41d2422fab6e293784e200"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -3727,15 +3704,6 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
-
-[[package]]
-name = "relative-path"
-version = "2.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38540a682c6e9bca04a8bca9e5ec5a6ba168dfbb04c9998fe517a9befb92eb68"
-dependencies = [
- "serde_core",
-]
 
 [[package]]
 name = "reqwest"

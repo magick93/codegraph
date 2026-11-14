@@ -56,7 +56,7 @@ Release build, 200 iterations after 5 warm-ups, per-file microseconds.
 | E | genco, managed imports | 9.07 | 122.0 | 1,160 B |
 
 A/B/C/D are **byte-identical** (pinned by
-`genco_bench::all_engines_produce_identical_output`). E emits a smaller
+the Phase 0 harness, which asserted byte-identity before timing). E emits a smaller
 document, so its throughput is not directly comparable.
 
 ### Finding 1 — genco is at parity with Tera's renderer, not faster
@@ -100,7 +100,7 @@ The reason #489 exists. Measured on the same workload:
 - genco's Rust mode rewrites `///` / `//!` comments into `#[doc = "…"]`
   attributes and interpolates nothing inside them. Reproducing today's bytes
   required passing every doc line as a pre-formatted interpolated literal
-  (`genco_bench::doc`).
+  (a local `doc()` helper in the Phase 0 harness).
 
 ---
 
@@ -160,7 +160,7 @@ speed.
 
 ### Re-open conditions
 
-Re-measure with `genco_bench` + `CODEGRAPH_PROFILE_GEN=1` if any of these hold:
+Re-measure with `codegen_bench` + `CODEGRAPH_PROFILE_GEN=1` if any of these hold:
 
 - Template work exceeds ~30% of generation wall clock on a real consumer run.
 - A second programmatic emitter appears whose import wiring is as complex as
@@ -174,7 +174,7 @@ Re-measure with `genco_bench` + `CODEGRAPH_PROFILE_GEN=1` if any of these hold:
 
 ```bash
 # Engine head-to-head (byte-identity pinned by the non-ignored tests)
-cargo test --release -p codegraph --test genco_bench -- --include-ignored --nocapture
+cargo test --release -p codegraph --test codegen_bench -- --include-ignored --nocapture
 
 # Share-of-run profiling on any fixture
 CODEGRAPH_PROFILE_GEN=1 cargo run --release -p codegraph -- run \
@@ -185,3 +185,19 @@ CODEGRAPH_PROFILE_GEN=1 cargo run --release -p codegraph -- run \
 
 The report goes to stderr only, so profiling can be left on without perturbing
 byte-identity canaries.
+
+## Reproducing the genco numbers
+
+The genco contestants are **not carried in the repo**. Keeping a dependency
+that exists only to run a benchmark that already settled its question is not a
+trade worth making, so `tests/codegen_bench.rs` measures Tera vs the two
+`CodeWriter` paths only. The genco figures above came from the same harness
+with two extra contestants and are recorded here as the decision record.
+
+To re-measure genco, add it back as a **dev-dependency** and implement the two
+contestants against `rust::Tokens`; the harness shape (warmup, 200 iterations,
+`black_box`, identical output) is already in place. The byte-identity
+requirement that made the port expensive is worth re-reading first: genco
+rewrites `///` into `#[doc = "…"]`, does not interpolate inside comments, and
+re-quotes/unescapes string literals — reproducing the current bytes needed
+every doc line passed as a pre-formatted literal.
