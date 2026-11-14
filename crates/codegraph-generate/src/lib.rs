@@ -5,6 +5,7 @@ pub mod domain_model;
 pub mod error;
 pub mod filter_fields;
 pub mod forms;
+pub mod gen_profile;
 pub mod ifml;
 pub mod manifest;
 pub mod media;

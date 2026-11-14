@@ -77,10 +77,17 @@ pub fn render_template<C: serde::Serialize>(
     template_name: &str,
     ctx: &C,
 ) -> Result<String> {
+    let serialize_started = std::time::Instant::now();
     let context = tera::Context::from_serialize(ctx)
         .map_err(|e| Error::Template(format!("Serialize context: {}", e)))?;
-    tera.render(template_name, &context)
-        .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))
+    let serialize_elapsed = serialize_started.elapsed();
+
+    let render_started = std::time::Instant::now();
+    let out = tera
+        .render(template_name, &context)
+        .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))?;
+    crate::gen_profile::record_render(template_name, serialize_elapsed, render_started.elapsed());
+    Ok(out)
 }
 
 /// Like [`render_template`] but injects `project` into the template context.
@@ -91,11 +98,18 @@ pub fn render_template_with_project<C: serde::Serialize>(
     ctx: &C,
     project: &ProjectConfig,
 ) -> Result<String> {
+    let serialize_started = std::time::Instant::now();
     let mut context = tera::Context::from_serialize(ctx)
         .map_err(|e| Error::Template(format!("Serialize context: {}", e)))?;
     context.insert("project", project);
-    tera.render(template_name, &context)
-        .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))
+    let serialize_elapsed = serialize_started.elapsed();
+
+    let render_started = std::time::Instant::now();
+    let out = tera
+        .render(template_name, &context)
+        .map_err(|e| Error::Template(format!("'{}': {}", template_name, e)))?;
+    crate::gen_profile::record_render(template_name, serialize_elapsed, render_started.elapsed());
+    Ok(out)
 }
 
 /// Render a template with project context, resolving the template name

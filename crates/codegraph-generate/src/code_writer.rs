@@ -7,6 +7,8 @@
 //! the infallibility explicit: appends cannot fail, so there is no error
 //! to plumb and nothing to unwrap.
 
+use std::fmt;
+
 /// Append-only text buffer for generated code.
 ///
 /// `push_line` is the [`wln!`] equivalent of `writeln!` (always appends a
@@ -29,6 +31,25 @@ impl CodeWriter {
     /// Appends `s` verbatim, without a trailing newline (mirrors `write!`).
     pub fn push_str(&mut self, s: &str) {
         self.buf.push_str(s);
+    }
+
+    /// Appends formatted output followed by a newline, **without** allocating
+    /// an intermediate `String` (mirrors `writeln!` semantics).
+    ///
+    /// This is the [`wln!`] fast path: the previous implementation built a
+    /// `format!(...)` per line and handed the result to [`Self::push_line`],
+    /// costing one heap allocation per emitted line. Measured at ~1.8x the
+    /// throughput of the allocating form (issue #489 Phase 0 benchmark).
+    pub fn push_line_fmt(&mut self, args: fmt::Arguments<'_>) {
+        // Writing into a `String` cannot fail; there is no error to plumb.
+        let _ = fmt::Write::write_fmt(&mut self.buf, args);
+        self.buf.push('\n');
+    }
+
+    /// Appends formatted output with no trailing newline and no intermediate
+    /// allocation (mirrors `write!` semantics). The [`w!`] fast path.
+    pub fn push_fmt(&mut self, args: fmt::Arguments<'_>) {
+        let _ = fmt::Write::write_fmt(&mut self.buf, args);
     }
 
     pub fn as_str(&self) -> &str {
@@ -62,20 +83,20 @@ macro_rules! wln {
         $w.push_line("")
     };
     ($w:expr, $fmt:expr $(,)?) => {
-        $w.push_line(&format!($fmt))
+        $w.push_line_fmt(format_args!($fmt))
     };
     ($w:expr, $fmt:expr, $($arg:tt)+) => {
-        $w.push_line(&format!($fmt, $($arg)+))
+        $w.push_line_fmt(format_args!($fmt, $($arg)+))
     };
 }
 
 /// `write!` into a [`CodeWriter`] — infallible, no trailing newline.
 macro_rules! w {
     ($w:expr, $fmt:expr $(,)?) => {
-        $w.push_str(&format!($fmt))
+        $w.push_fmt(format_args!($fmt))
     };
     ($w:expr, $fmt:expr, $($arg:tt)+) => {
-        $w.push_str(&format!($fmt, $($arg)+))
+        $w.push_fmt(format_args!($fmt, $($arg)+))
     };
 }
 
@@ -149,5 +170,52 @@ mod tests {
         let w = CodeWriter::default();
         assert!(w.is_empty());
         assert_eq!(w.as_str(), "");
+    }
+
+    #[test]
+    fn push_line_fmt_matches_push_line() {
+        let mut allocating = CodeWriter::new();
+        allocating.push_line(&format!("id = {} name = {}", 7, "x"));
+
+        let mut direct = CodeWriter::new();
+        direct.push_line_fmt(format_args!("id = {} name = {}", 7, "x"));
+
+        assert_eq!(allocating.as_str(), direct.as_str());
+        assert_eq!(direct.as_str(), "id = 7 name = x\n");
+    }
+
+    #[test]
+    fn push_fmt_has_no_trailing_newline() {
+        let mut w = CodeWriter::new();
+        w.push_fmt(format_args!("a{}", 1));
+        w.push_fmt(format_args!("b"));
+        assert_eq!(w.as_str(), "a1b");
+    }
+
+    /// The fast paths must be byte-identical to the allocating forms for the
+    /// shapes generators actually emit, including escapes and multi-line
+    /// interpolations.
+    #[test]
+    fn fmt_paths_are_byte_identical_to_allocating_paths() {
+        let rows = ["alpha", "beta", "gamma"];
+        let mut allocating = CodeWriter::new();
+        for (i, row) in rows.iter().enumerate() {
+            allocating.push_line(&format!("/// {}", row));
+            allocating.push_line(&format!("pub fn {}() -> {} {{", row, i));
+            allocating.push_line(&format!("    // {{}} \"quoted\" {}", i));
+            allocating.push_line("}");
+            allocating.push_line("");
+        }
+
+        let mut direct = CodeWriter::new();
+        for (i, row) in rows.iter().enumerate() {
+            direct.push_line_fmt(format_args!("/// {}", row));
+            direct.push_line_fmt(format_args!("pub fn {}() -> {} {{", row, i));
+            direct.push_line_fmt(format_args!("    // {{}} \"quoted\" {}", i));
+            direct.push_line("}");
+            direct.push_line("");
+        }
+
+        assert_eq!(allocating.as_str(), direct.as_str());
     }
 }

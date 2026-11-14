@@ -1,0 +1,187 @@
+# genco vs Tera — codegen engine evaluation (issue #489 Phase 0)
+
+**Status:** evaluated 2026-11-14. **Decision: do not migrate to genco.** Tera
+stays the template engine; `CodeWriter` gained the allocation fix the
+benchmark exposed. Reproduce with the commands at the bottom.
+
+This document records the measurements the decision rests on, so the question
+does not have to be re-litigated from opinion.
+
+---
+
+## The question
+
+Issue #489 proposed replacing Rust-emitting codegen with
+[genco](https://github.com/udoprog/genco) — a compile-time quasiquoter with
+automatic import management. The tracked reasons for *not* adopting it in
+2026-10-18 were byte-identity cost, partial adoption (two codegen systems
+side by side), and a new proc-macro dependency. What was never measured was
+the actual cost of the thing being replaced.
+
+Phase 0 therefore had two gates:
+
+1. **Stop if genco is significantly slower than Tera.** (Product owner's gate.)
+2. **Stop if the ceiling on savings is under 5% of generation wall clock.**
+   A migration worth weeks of work plus permanent byte-identity churn cannot be
+   justified by a rounding error.
+
+---
+
+## What is actually being replaced
+
+| Surface | Size |
+|---|---|
+| Tera templates total | 362 files / 40,801 lines |
+| Templates that emit **Rust** | **118 files / ~18,426 lines** |
+| Programmatic emitters (no Tera) | `repository_emitter/` 6,877 lines, `cornucopia_repo`, `mox_ops`, `service_ops`, `rules`, `ddd/functions*` — all via `CodeWriter` |
+| Rust output volume (review fixture) | 418 files / 45,705 lines / 1.46 MB |
+
+---
+
+## Measurement 1 — engine head-to-head on identical output
+
+Workload: a faithful `DtoContext` with mixed required/optional/array/entity-ref
+fields, two child DTOs (one nested), codelist + structured imports, a derived
+field, and a workflow section — rendered through the real
+`domain_types/dto_response.tera` (98 lines / 3,556 bytes per file).
+Release build, 200 iterations after 5 warm-ups, per-file microseconds.
+
+| # | Contestant | µs/file | MB/s | Output |
+|---|---|---|---|---|
+| A | Tera — `Context::from_serialize` + render | **60.84** | 55.7 | 3,556 B |
+| A2 | Tera — render only (context prebuilt) | **15.88** | 213.5 | 3,556 B |
+| B | `CodeWriter` legacy (`format!` per line) | 5.40 | 627.7 | 3,556 B |
+| C | `CodeWriter::push_line_fmt` (shipped here) | **3.11** | 1,091.6 | 3,556 B |
+| D | genco, literal `use` lines | **14.65** | 231.5 | 3,556 B |
+| E | genco, managed imports | 9.07 | 122.0 | 1,160 B |
+
+A/B/C/D are **byte-identical** (pinned by
+`genco_bench::all_engines_produce_identical_output`). E emits a smaller
+document, so its throughput is not directly comparable.
+
+### Finding 1 — genco is at parity with Tera's renderer, not faster
+
+`D` (14.65 µs) vs `A2` (15.88 µs) = **0.92x**. On identical bytes, genco's
+token stream plus its second formatting pass costs about what Tera's template
+walk costs.
+
+genco *looks* 4.15x faster only against `A`, the full path — and that entire
+advantage is `Context::from_serialize`, which is **74% of A** (45.0 µs of
+60.8 µs). Skipping serialization is not a genco feature; it is what any typed
+emitter does.
+
+### Finding 2 — genco is slower than the buffer we already have
+
+`D` (14.65 µs) vs `C` (3.11 µs) = **4.7x slower**; vs legacy `B` = 2.7x
+slower. genco materialises a `Vec<Item>` token stream, bookkeeps imports, and
+resolves indentation in a second pass. `CodeWriter` appends in one pass.
+
+This matters because **the repository emitter — #489's own proposed beachhead —
+is a programmatic `CodeWriter` emitter, not a template.** Converting it to
+genco would be a ~3-5x regression on the exact component the issue targeted.
+
+### Finding 3 — most of the current cost is our own buffer, not Tera
+
+`C` vs `B` = **1.74x**, from removing one `String` allocation per emitted line.
+That is a ~20-line change with zero output difference, and it is shipped in
+this PR.
+
+### Finding 4 — genco's import management does not reach our type surface
+
+The reason #489 exists. Measured on the same workload:
+
+- Imports routed through `rust::import` are generated, deduped, grouped
+  (`use serde::{Deserialize, Serialize};`) and **re-ordered alphabetically by
+  path** — a byte-level diff every converted generator would absorb.
+- **Dynamically-built type strings bypass management entirely.** Our emitters
+  carry `field.rust_type` as a `String`; genco emits it verbatim with no
+  import. Retiring `resolve_imports` would require re-plumbing every derived
+  type through `rust::import` — a far larger change than swapping engines.
+- genco's Rust mode rewrites `///` / `//!` comments into `#[doc = "…"]`
+  attributes and interpolates nothing inside them. Reproducing today's bytes
+  required passing every doc line as a pre-formatted interpolated literal
+  (`genco_bench::doc`).
+
+---
+
+## Measurement 2 — how much of a run is template work at all
+
+`CODEGRAPH_PROFILE_GEN=1 codegraph run …` (stderr-only; generated bytes are
+unchanged). The instrumentation splits **context build**
+(`Context::from_serialize`) from **render** (`Tera::render`), because
+conflating them is what makes a 4x claim appear from a 0.92x result.
+
+The two `Instant::now()` calls that make the split are unconditional (they
+cannot be skipped without duplicating the render call). Their cost is
+~44 ns per render — 0.28 ms across the 6,298 renders in `flywheel`, or
+**0.014%** of the generation phase: two orders of magnitude below run-to-run
+noise, and the price of the number that settled this decision.
+
+| Fixture | Generation wall | Context build | Render | Template total | Output |
+|---|---|---|---|---|---|
+| `rosetta_bridge` (2 domains, 521 files) | 73.9 ms | 11.1 ms (15.0%) | 6.0 ms (8.1%) | **17.0 ms (23.1%)** | 474 renders / 160 templates |
+| `flywheel` (11 packages, 134 entities, 6,240 files) | 1,999.5 ms | 188.7 ms (9.4%) | 104.8 ms (5.2%) | **293.6 ms (14.7%)** | 6,298 renders / 139 templates |
+
+`flywheel` is the largest consumer-shaped corpus in-tree and is the honest
+upper bound: everything the template engine does is 14.7% of generation, and
+genco could recover at most the context-build half.
+
+### Gate arithmetic
+
+- Ceiling on any engine swap, `flywheel`: **14.7%** of generation wall clock.
+- Realistic genco saving (build eliminated, render at parity): **~9.5%**,
+  ~197 ms.
+- At documented consumer scale (warm generate ~1 min on a persistent graph,
+  where reads dominate), those same ~200 ms are **~0.3%**.
+
+So the 5% gate **passes on the in-memory corpus and fails at consumer scale** —
+and on top of that, the cheap alternative (`C`) already captures the
+"no serialization" benefit for every programmatic emitter at 4.7x genco's
+speed.
+
+---
+
+## Decision
+
+**Do not migrate.** Concretely:
+
+1. **Tera stays.** genco is not slower than Tera's renderer (0.92x — parity),
+   so the "significantly slower" gate does not fire; the 5% ceiling gate does,
+   at consumer scale.
+2. **`CodeWriter` keeps its job and gains the fix.** `wln!` / `w!` now write
+   through `push_line_fmt` / `push_fmt` (`fmt::Arguments` straight into the
+   buffer) instead of building a `String` per line. 1.74x on the buffer,
+   byte-identical output, verified by diffing a full `flywheel` regeneration
+   (6,220 files).
+3. **#489's import-management rationale is real but does not clear the bar.**
+   It cannot cover dynamically-derived type strings, and re-plumbing those is
+   the actual work — which is a typing/architecture improvement worth doing on
+   its own terms, not something a template engine swap delivers for free.
+
+### Re-open conditions
+
+Re-measure with `genco_bench` + `CODEGRAPH_PROFILE_GEN=1` if any of these hold:
+
+- Template work exceeds ~30% of generation wall clock on a real consumer run.
+- A second programmatic emitter appears whose import wiring is as complex as
+  `repository_emitter`'s (the #489 trigger).
+- `Context::from_serialize` is eliminated some other way and render alone
+  becomes the dominant residue.
+
+---
+
+## Reproduce
+
+```bash
+# Engine head-to-head (byte-identity pinned by the non-ignored tests)
+cargo test --release -p codegraph --test genco_bench -- --include-ignored --nocapture
+
+# Share-of-run profiling on any fixture
+CODEGRAPH_PROFILE_GEN=1 cargo run --release -p codegraph -- run \
+  --rosetta-files crates/codegraph/tests/fixtures/flywheel/model/common.rosetta \
+  --config crates/codegraph/tests/fixtures/flywheel/domains.toml \
+  --output /tmp/out --no-post-gen
+```
+
+The report goes to stderr only, so profiling can be left on without perturbing
+byte-identity canaries.
