@@ -35,9 +35,15 @@ pub fn key_format_for(
             KeySegment::Placeholder(ph) => match ph {
                 KeyPlaceholder::Org => out.push_str("{org}"),
                 KeyPlaceholder::Id => out.push_str("{id}"),
-                KeyPlaceholder::Domain => out.push_str(domain),
-                KeyPlaceholder::Entity => out.push_str(entity),
-                KeyPlaceholder::Field => out.push_str(field_snake),
+                KeyPlaceholder::Domain => {
+                    out.push_str(&domain.replace('{', "{{").replace('}', "}}"))
+                }
+                KeyPlaceholder::Entity => {
+                    out.push_str(&entity.replace('{', "{{").replace('}', "}}"))
+                }
+                KeyPlaceholder::Field => {
+                    out.push_str(&field_snake.replace('{', "{{").replace('}', "}}"))
+                }
             },
         }
     }
@@ -101,7 +107,9 @@ pub fn render_cleanup_block(domain: &str, fields: &[MediaCleanupField]) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codegraph_core::types::{MediaFieldPlan, MediaProvider, MediaProviderSettings, MediaVisibility, UploadMode};
+    use codegraph_core::types::{
+        MediaFieldPlan, MediaProvider, MediaProviderSettings, MediaVisibility, UploadMode,
+    };
 
     fn template() -> KeyTemplate {
         KeyTemplate::parse("{org}/{domain}/{entity}/{id}/{field}").expect("template")
@@ -122,7 +130,10 @@ mod tests {
         let t2 = KeyTemplate::parse("{id}/{field}").expect("template");
         let _ = t2; // parse guard
         let literal = key_format_for(&template(), "co{re}", "per{son", "avatar");
-        assert!(literal.contains("co{{re}}"), "literal braces escaped: {literal}");
+        assert!(
+            literal.contains("co{{re}}"),
+            "literal braces escaped: {literal}"
+        );
         assert!(literal.contains("per{{son"), "{literal}");
     }
 
@@ -175,7 +186,10 @@ mod tests {
         };
         let fields = cleanup_fields_for(&plan, "PersonType");
         assert_eq!(
-            fields.iter().map(|f| f.field_snake.as_str()).collect::<Vec<_>>(),
+            fields
+                .iter()
+                .map(|f| f.field_snake.as_str())
+                .collect::<Vec<_>>(),
             vec!["banner_image", "avatar"],
             "only this entity's fields, in plan order"
         );
@@ -189,15 +203,23 @@ mod tests {
             key_format: "{org}/core/person/{id}/avatar".to_string(),
         }];
         let block = render_cleanup_block("core", &fields);
-        assert!(block.contains("if let Some(storage) = &state.core_media_storage {"), "{block}");
         assert!(
-            block.contains("for key in [\n            format!(\"{org}/core/person/{id}/avatar\"),\n        ] {"),
+            block.contains("if let Some(storage) = &state.core_media_storage {"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "for key in [\n            format!(\"{org}/core/person/{id}/avatar\"),\n        ] {"
+            ),
             "the per-field key list: {block}"
         );
         assert!(
             block.contains("storage.delete(&key).await"),
             "best-effort provider delete: {block}"
         );
-        assert!(render_cleanup_block("core", &[]).is_empty(), "flag-off ⇒ empty block");
+        assert!(
+            render_cleanup_block("core", &[]).is_empty(),
+            "flag-off ⇒ empty block"
+        );
     }
 }

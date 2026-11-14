@@ -177,15 +177,14 @@ impl GlobalGenerator for UiScaffoldGenerator {
                 .map(|s| s.title)
                 .collect();
             titles.sort();
-            if let Ok(plan) =
-                crate::media::plan::build_media_plan_for_domain(
-                    db,
-                    domain_name,
-                    media,
-                    &config.defaults.type_suffix,
-                    &titles,
-                )
-                .await
+            if let Ok(plan) = crate::media::plan::build_media_plan_for_domain(
+                db,
+                domain_name,
+                media,
+                &config.defaults.type_suffix,
+                &titles,
+            )
+            .await
             {
                 for f in &plan.fields {
                     media_fields.push(UiMediaField {
@@ -255,12 +254,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             });
             files.push(GeneratedFile {
                 path: lib.join("media").join("MediaField.svelte"),
-                content: render_template_with_project(
-                    tera,
-                    "ui/media_field.tera",
-                    &ctx,
-                    project,
-                )?,
+                content: render_template_with_project(tera, "ui/media_field.tera", &ctx, project)?,
             });
         }
         files.extend(

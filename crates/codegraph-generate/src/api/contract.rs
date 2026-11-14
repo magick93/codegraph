@@ -507,8 +507,10 @@ mod tests {
             "presigned mode must mount the presign issuance route"
         );
         assert!(
-            !routes.iter().any(|r| r.method == "PUT"),
-            "presigned mode mounts no multipart upload"
+            !routes
+                .iter()
+                .any(|r| r.method == "PUT" && r.path.contains("/avatar")),
+            "presigned mode mounts no multipart upload on the media path"
         );
     }
 

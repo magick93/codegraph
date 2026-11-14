@@ -51,12 +51,12 @@ HAVING bool_or(EXISTS (
 /// it only reports the count. `bucket` restricts the sweep (all buckets
 /// when absent).
 pub fn gc_sql(bucket: Option<&str>, collect: bool) -> Result<String, String> {
-    if let Some(b) = bucket {
-        if !safe_bucket(b) {
-            return Err(format!(
-                "bucket name {b:?} is not safe to interpolate (letters, digits, '-', '_', '.' only)"
-            ));
-        }
+    if let Some(b) = bucket
+        && !safe_bucket(b)
+    {
+        return Err(format!(
+            "bucket name {b:?} is not safe to interpolate (letters, digits, '-', '_', '.' only)"
+        ));
     }
     let bucket_filter = bucket
         .map(|b| format!(" AND o.bucket_id = '{b}'"))
@@ -121,10 +121,10 @@ pub async fn run(config: &OpsConfig, collect: bool, bucket: Option<&str>) -> Ops
     let sql = gc_sql(bucket, collect).map_err(crate::error::OpsError::Config)?;
     let out = crate::db::psql_query(target, &sql).await?;
     for line in out.lines().filter(|l| !l.trim().is_empty()) {
-        output::info(line.trim().to_string());
+        output::info(line.trim());
     }
     if !collect {
-        output::info("report only — pass --gc to delete the orphans".to_string());
+        output::info("report only — pass --gc to delete the orphans");
     }
     Ok(())
 }
@@ -137,8 +137,7 @@ mod tests {
     fn gc_sql_discovers_media_child_tables_and_counts_orphans() {
         let sql = gc_sql(None, false).unwrap();
         assert!(
-            sql.contains("c.column_name = 'url'")
-                && sql.contains("c2.column_name = 'mime_type'"),
+            sql.contains("c.column_name = 'url'") && sql.contains("c2.column_name = 'mime_type'"),
             "the MediaReference shape discovery: {sql}"
         );
         assert!(
@@ -159,14 +158,8 @@ mod tests {
     #[test]
     fn collect_deletes_and_the_bucket_filter_interpolates() {
         let sql = gc_sql(Some("person-media"), true).unwrap();
-        assert!(
-            sql.contains("DELETE FROM storage.objects o"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("AND o.bucket_id = 'person-media'"),
-            "{sql}"
-        );
+        assert!(sql.contains("DELETE FROM storage.objects o"), "{sql}");
+        assert!(sql.contains("AND o.bucket_id = 'person-media'"), "{sql}");
         assert!(
             sql.contains("GET DIAGNOSTICS deleted_count = ROW_COUNT"),
             "{sql}"

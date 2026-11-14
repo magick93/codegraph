@@ -53,17 +53,16 @@ accept = ["image/png"]
 "#;
 
 fn r2_toml() -> String {
-    format!(
-        "{BASE_TOML}\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    format!("{BASE_TOML}\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n").replace(
+        "provider = \"supabase\"\nupload_mode = \"client-direct\"",
+        "provider = \"r2\"\nupload_mode = \"through-app\"",
     )
-    .replace("provider = \"supabase\"\nupload_mode = \"client-direct\"", "provider = \"r2\"\nupload_mode = \"through-app\"")
 }
 
 /// The AWS-published S3 SigV4 GET example (AWS docs "Authenticating
 /// Requests: Using the Authorization Header"). The canonical request below
 /// was verified against the published signature before being pinned.
-const SIGV4_KAT_EXPECTED: &str =
-    "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41";
+const SIGV4_KAT_EXPECTED: &str = "f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41";
 
 fn schema(id: &str, title: &str, classification: &str, table: &str, is_entity: bool) -> SchemaNode {
     SchemaNode {
@@ -275,7 +274,9 @@ const SUPABASE_DEPS: &str = "serde_json = \"1\"";
 async fn supabase_plane_compiles_native() {
     let config: DomainConfig = parse_domain_config_str(BASE_TOML).expect("domains.toml");
     let files = emit_media_plane(&config).await;
-    let deps = format!("{CORE_DEPS}\n{SUPABASE_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n");
+    let deps = format!(
+        "{CORE_DEPS}\n{SUPABASE_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
+    );
     let (ok, stdout, stderr) = run_cargo(
         "media_supabase_pin",
         &deps,
@@ -295,7 +296,9 @@ async fn supabase_plane_compiles_native() {
 async fn r2_plane_compiles_native() {
     let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
     let files = emit_media_plane(&config).await;
-    let deps = format!("{CORE_DEPS}\n{SIG_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n");
+    let deps = format!(
+        "{CORE_DEPS}\n{SIG_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
+    );
     let (ok, stdout, stderr) = run_cargo(
         "media_r2_pin",
         &deps,
@@ -303,7 +306,10 @@ async fn r2_plane_compiles_native() {
         None,
         &["check", "--all-targets"],
     );
-    assert!(ok, "the emitted r2 plane must compile standalone:\n{stdout}\n{stderr}");
+    assert!(
+        ok,
+        "the emitted r2 plane must compile standalone:\n{stdout}\n{stderr}"
+    );
 }
 
 /// Issue #632 wasm32 leg: the plane compiles for wasm32-unknown-unknown
@@ -312,10 +318,7 @@ async fn r2_plane_compiles_native() {
 /// adapter that claims wasm per the #551 documentation rule.)
 #[tokio::test]
 async fn media_plane_compiles_on_wasm32_without_an_http_dependency() {
-    for (label, config_str) in [
-        ("supabase", BASE_TOML.to_string()),
-        ("r2", r2_toml()),
-    ] {
+    for (label, config_str) in [("supabase", BASE_TOML.to_string()), ("r2", r2_toml())] {
         let config: DomainConfig = parse_domain_config_str(&config_str).expect("domains.toml");
         let files = emit_media_plane(&config).await;
         let deps = match label {

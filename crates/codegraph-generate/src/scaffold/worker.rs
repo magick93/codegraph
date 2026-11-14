@@ -1351,8 +1351,6 @@ entities = ["CodeType"]
         assert!(domains.iter().all(|d| !d.has_integration_dispatch));
     }
 
-    /// Render the per-domain wrangler template and assert the TOML output.
-    #[test]
     /// Issue #625 PR-C: the `[[r2_buckets]]` wrangler block renders ONLY for
     /// a domain whose media provider is r2 (binding + bucket from the plan);
     /// supabase / no-media domains keep the byte-identical wrangler.
@@ -1418,7 +1416,10 @@ entities = ["CodeType"]
         );
     }
 
-    fn worker_wrangler_renders_hyperdrive_services_crons_and_routes() {        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    /// Render the per-domain wrangler template and assert the TOML output.
+    #[test]
+    fn worker_wrangler_renders_hyperdrive_services_crons_and_routes() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let tera = crate::template_engine::create_tera(&template_dir).unwrap();
         let project = ProjectConfig::default();
 

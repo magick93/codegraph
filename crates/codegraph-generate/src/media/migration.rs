@@ -27,9 +27,9 @@ pub const MEDIA_MIGRATION_BAND: u32 = 23_000;
 pub fn emit_media_storage_migration(plans: &BTreeMap<String, MediaPlan>) -> Option<String> {
     // One provider per app (validated upstream); supabase carries the SQL
     // surface. Any other provider ⇒ no migration file at all.
-    let supabase = plans.values().find(|p| {
-        matches!(p.provider, codegraph_core::types::MediaProvider::Supabase)
-    })?;
+    let supabase = plans
+        .values()
+        .find(|p| matches!(p.provider, codegraph_core::types::MediaProvider::Supabase))?;
     Some(render_sql(supabase))
 }
 

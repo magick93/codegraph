@@ -174,11 +174,8 @@ async fn media_fields_emit_the_fallback_upload_control() {
     let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
     let out = tempfile::tempdir().expect("out dir");
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
-    let generator = codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(
-        out.path(),
-        false,
-        false,
-    );
+    let generator =
+        codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(out.path(), false, false);
     use codegraph_generate::traits::GlobalGenerator;
     let files = generator
         .generate(&engine, &config, &[], &tera, &ProjectConfig::default())
@@ -199,12 +196,16 @@ async fn media_fields_emit_the_fallback_upload_control() {
         .find(|f| f.path.ends_with("media/MediaField.svelte"))
         .expect("the fallback control");
     assert!(
-        component.content.contains("data-testid=\"media-{spec.field}-input\""),
+        component
+            .content
+            .contains("data-testid=\"media-{spec.field}-input\""),
         "testid contract: {}",
         component.content
     );
     assert!(
-        component.content.contains("upload: (id: string, file: File) => Promise<MediaUploadResult>"),
+        component
+            .content
+            .contains("upload: (id: string, file: File) => Promise<MediaUploadResult>"),
         "transport-agnostic upload callback (the override contract): {}",
         component.content
     );
@@ -217,33 +218,28 @@ async fn no_media_emits_no_ui_media_module() {
     let config = parse_domain_config_str(BASE_TOML).expect("toml");
     let out = tempfile::tempdir().expect("out dir");
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
-    let generator = codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(
-        out.path(),
-        false,
-        false,
-    );
+    let generator =
+        codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(out.path(), false, false);
     use codegraph_generate::traits::GlobalGenerator;
     let files = generator
         .generate(&engine, &config, &[], &tera, &ProjectConfig::default())
         .await
         .expect("ui scaffold");
     assert!(
-        !files.iter().any(|f| f.path.to_string_lossy().contains("media")),
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("media")),
         "byte-identity: no [media] ⇒ no lib/media files"
     );
 }
 
 // ── PR-C route revival-lite (#632): mode-gated media routes ────────────
 
-async fn run_media_route_generator(
-    db: &dyn GraphQuerier,
-    config: &DomainConfig,
-) -> Vec<String> {
+async fn run_media_route_generator(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<String> {
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
     let project = ProjectConfig::default();
     let out = tempfile::tempdir().expect("out dir");
-    let generator =
-        codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
+    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
     use codegraph_generate::traits::EntityGenerator;
     generator
         .generate(db, "PersonType", "core", config, &tera, &project)
@@ -254,10 +250,7 @@ async fn run_media_route_generator(
         .collect()
 }
 
-async fn rendered_router_media_block(
-    db: &dyn GraphQuerier,
-    config: &DomainConfig,
-) -> String {
+async fn rendered_router_media_block(db: &dyn GraphQuerier, config: &DomainConfig) -> String {
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
     let project = ProjectConfig::default();
     let out = tempfile::tempdir().expect("out dir");
@@ -291,7 +284,10 @@ async fn through_app_mode_emits_child_row_upload_routes() {
     );
     assert!(!module.contains("pub async fn presign"), "{module}");
     // The CHILD row model (R4) — the dormant template wrote parent columns:
-    assert!(module.contains("person_avatar"), "child table writes: {module}");
+    assert!(
+        module.contains("person_avatar"),
+        "child table writes: {module}"
+    );
     assert!(module.contains("person_id"), "parent fk writes: {module}");
     // The AppState media slot (PR-B) — never the hooks-crate registry slot:
     assert!(
@@ -386,9 +382,7 @@ async fn run_scaffold(
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])?;
     let project = ProjectConfig::default();
     let generator = codegraph_generate::scaffold::generator::ScaffoldGenerator::new(
-        out,
-        false, false, false, false, false, false, false, false, false, false,
-        "parallel",
+        out, false, false, false, false, false, false, false, false, false, false, "parallel",
     );
     let generation_order = vec![GenerationEntry {
         schema_title: "PersonType".to_string(),
@@ -401,11 +395,7 @@ async fn run_scaffold(
         .await
 }
 
-fn scaffold_file<'a>(
-    files: &'a [GeneratedFile],
-    out: &std::path::Path,
-    rel: &str,
-) -> &'a str {
+fn scaffold_file<'a>(files: &'a [GeneratedFile], out: &std::path::Path, rel: &str) -> &'a str {
     files
         .iter()
         .find(|f| f.path == out.join(rel))
@@ -419,11 +409,15 @@ async fn scaffold_wires_the_per_domain_media_slot_and_module_declaration() {
     ingest_model(&engine).await;
     let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
     let out = tempfile::tempdir().expect("out dir");
-    let files = run_scaffold(&engine, &config, out.path()).await.expect("scaffold");
+    let files = run_scaffold(&engine, &config, out.path())
+        .await
+        .expect("scaffold");
 
     let app_state = scaffold_file(&files, out.path(), "src/app_state.rs");
     assert!(
-        app_state.contains("pub core_media_storage: Option<std::sync::Arc<dyn crate::media::MediaStorage>>"),
+        app_state.contains(
+            "pub core_media_storage: Option<std::sync::Arc<dyn crate::media::MediaStorage>>"
+        ),
         "the per-domain provider slot: {app_state}"
     );
 
@@ -454,7 +448,9 @@ async fn no_media_scaffold_carries_no_media_surface() {
     ingest_model(&engine).await;
     let config = parse_domain_config_str(BASE_TOML).expect("toml");
     let out = tempfile::tempdir().expect("out dir");
-    let files = run_scaffold(&engine, &config, out.path()).await.expect("scaffold");
+    let files = run_scaffold(&engine, &config, out.path())
+        .await
+        .expect("scaffold");
 
     let app_state = scaffold_file(&files, out.path(), "src/app_state.rs");
     assert!(
@@ -495,7 +491,10 @@ async fn supabase_plan_emits_the_storage_bootstrap_migration() {
         migration.content
     );
     // The file is written to the real migrations root by the pipeline.
-    let _ = out.path().join("migrations").join("023000_media_storage.sql");
+    let _ = out
+        .path()
+        .join("migrations")
+        .join("023000_media_storage.sql");
 }
 
 #[tokio::test]
@@ -511,9 +510,7 @@ async fn r2_plan_emits_no_storage_migration() {
         .await
         .expect("files");
     assert!(
-        !files
-            .iter()
-            .any(|f| f.path.ends_with("media_storage.sql")),
+        !files.iter().any(|f| f.path.ends_with("media_storage.sql")),
         "R2 buckets are platform-side — no migration analogue"
     );
 }
@@ -534,8 +531,8 @@ async fn run_handler_generator(
             codegraph_generate::profile::DeploymentTopology::Workers;
     }
     let out = tempfile::tempdir().expect("out dir");
-    let generator =
-        codegraph_generate::api::handler::HandlerGenerator::new(out.path()).with_rules_guards(false);
+    let generator = codegraph_generate::api::handler::HandlerGenerator::new(out.path())
+        .with_rules_guards(false);
     use codegraph_generate::traits::EntityGenerator;
     let files = generator
         .generate(db, "PersonType", "core", config, &tera, &project)
@@ -578,7 +575,9 @@ async fn delete_handler_carries_media_cleanup_when_media_declared() {
     let cleanup_pos = handler
         .find("state.core_media_storage")
         .expect("cleanup present");
-    let no_content_pos = handler.rfind("StatusCode::NO_CONTENT").expect("204 present");
+    let no_content_pos = handler
+        .rfind("StatusCode::NO_CONTENT")
+        .expect("204 present");
     assert!(
         delete_pos < cleanup_pos && cleanup_pos < no_content_pos,
         "cleanup runs post-command, pre-204"
@@ -663,8 +662,14 @@ async fn supabase_plan_emits_adapter_http_seam_and_noop() {
     }
     // Provider purity (the PR-A pin contract): no SigV4, no R2 vocabulary —
     // invalid combos are refused at generation time, not branched at runtime.
-    assert!(!supabase_rs.contains("AWS4-HMAC-SHA256"), "no SigV4 in supabase");
-    assert!(!supabase_rs.contains("r2"), "no r2 vocabulary in supabase adapter",);
+    assert!(
+        !supabase_rs.contains("AWS4-HMAC-SHA256"),
+        "no SigV4 in supabase"
+    );
+    assert!(
+        !supabase_rs.contains("r2"),
+        "no r2 vocabulary in supabase adapter",
+    );
     // Transport injection: the adapter never constructs an HTTP client itself.
     assert!(
         supabase_rs.contains("MediaHttp"),
@@ -684,7 +689,10 @@ async fn supabase_plan_emits_adapter_http_seam_and_noop() {
         http_rs.contains("target_arch = \"wasm32\""),
         "native transport is cfg-gated so the wasm32 pin compiles the plane without reqwest"
     );
-    assert!(http_rs.contains("reqwest"), "native leg rides the app's reqwest");
+    assert!(
+        http_rs.contains("reqwest"),
+        "native leg rides the app's reqwest"
+    );
 }
 
 #[tokio::test]
@@ -824,7 +832,10 @@ async fn media_config_emits_media_module_and_noop() {
     }
     assert!(mod_rs.contains("pub mod noop;"), "noop re-exported");
     // PR-B (#630): the supabase plan emits its adapter + the transport seam.
-    assert!(mod_rs.contains("pub mod supabase;"), "supabase adapter module");
+    assert!(
+        mod_rs.contains("pub mod supabase;"),
+        "supabase adapter module"
+    );
     assert!(mod_rs.contains("pub mod http;"), "native transport module");
 
     let noop_rs = &files

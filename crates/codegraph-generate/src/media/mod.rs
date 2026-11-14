@@ -8,9 +8,9 @@
 //! pre-generation validation slot and doctor). `mod.rs` holds the
 //! presence-gated global generator emitting `src/media/{mod,noop}.rs`.
 
-pub mod plan;
-pub mod migration;
 pub mod keys;
+pub mod migration;
+pub mod plan;
 
 /// The fallback presign TTL when the provider settings carry none (the r2
 /// config default; supabase presign expiry comes from the caller).
@@ -117,11 +117,12 @@ impl GlobalGenerator for MediaStorageGenerator {
                     "media provider \"s3\" adapter lands in a follow-up slice — use provider \
                      \"r2\" with R2_S3_ENDPOINT for S3-compatible stores today"
                         .to_string(),
-                ))
+                ));
             }
         };
         let ctx = json!({ "adapters": [adapter] });
-        let mut files = vec![            GeneratedFile {
+        let mut files = vec![
+            GeneratedFile {
                 path: self.output_dir.join("src").join("media").join("mod.rs"),
                 content: render_template_with_project(tera, "media/mod.tera", &ctx, project)?,
             },
@@ -175,32 +176,29 @@ impl GlobalGenerator for MediaStorageGenerator {
         if let Some((domain_name, mode, plan)) = plans.values().find_map(|p| {
             let mode = plan::media_upload_mode(config, &p.domain)?;
             Some((p.domain.clone(), mode, p.clone()))
-        }) {
-            if let Some(field) = plan.fields.first() {
-                let kind = if mode == UploadMode::Presigned {
-                    "presigned"
-                } else {
-                    "through_app"
-                };
-                let base = format!(
-                    "/api/v1/{domain_name}/{}/{}/{{id}}/{}",
-                    field.entity_table,
-                    field.field_snake,
-                    field.field_snake
-                );
-                let ctx = json!({
-                    "kind": kind,
-                    "domain": domain_name,
-                    "field": field.field_snake,
-                    "mime": media_cfg_accept(config, &domain_name),
-                    "upload_url": base,
-                    "presign_url": format!("{base}/presign"),
-                });
-                files.push(GeneratedFile {
-                    path: self.output_dir.join("hurl").join("09_media.hurl"),
-                    content: render_template_with_project(tera, "hurl/media.tera", &ctx, project)?,
-                });
-            }
+        }) && let Some(field) = plan.fields.first()
+        {
+            let kind = if mode == UploadMode::Presigned {
+                "presigned"
+            } else {
+                "through_app"
+            };
+            let base = format!(
+                "/api/v1/{domain_name}/{}/{}/{{id}}/{}",
+                field.entity_table, field.field_snake, field.field_snake
+            );
+            let ctx = json!({
+                "kind": kind,
+                "domain": domain_name,
+                "field": field.field_snake,
+                "mime": media_cfg_accept(config, &domain_name),
+                "upload_url": base,
+                "presign_url": format!("{base}/presign"),
+            });
+            files.push(GeneratedFile {
+                path: self.output_dir.join("hurl").join("09_media.hurl"),
+                content: render_template_with_project(tera, "hurl/media.tera", &ctx, project)?,
+            });
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)

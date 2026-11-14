@@ -324,7 +324,8 @@ impl KeyTemplate {
 
     /// Render the key. Segment values may not contain `/` (rejected — a
     /// path-traversal-shaped key would escape the bucket prefix).
-    pub fn render(&self, r: &MediaObjectRef) -> Result<String, String> {        let mut out = String::new();
+    pub fn render(&self, r: &MediaObjectRef) -> Result<String, String> {
+        let mut out = String::new();
         for seg in &self.segments {
             match seg {
                 KeySegment::Literal(lit) => out.push_str(lit),
@@ -372,7 +373,9 @@ impl MediaProviderSettings {
     /// the default (the scaffold falls back to `DEFAULT_PRESIGN_TTL_SECS`).
     pub fn presign_ttl_secs(&self) -> Option<u64> {
         match self {
-            Self::R2 { presign_ttl_secs, .. } => Some(*presign_ttl_secs),
+            Self::R2 {
+                presign_ttl_secs, ..
+            } => Some(*presign_ttl_secs),
             Self::Supabase | Self::S3 { .. } => None,
         }
     }

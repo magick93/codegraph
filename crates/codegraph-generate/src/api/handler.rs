@@ -551,7 +551,10 @@ impl EntityGenerator for HandlerGenerator {
         // the plans resolve (the driver's pre-generation pass already
         // hard-failed on a broken config). Empty otherwise — byte-identical.
         let media_cleanup_block = if !project.is_workers_topology()
-            && config.domains.get(&domain).is_some_and(|d| d.media.is_some())
+            && config
+                .domains
+                .get(&domain)
+                .is_some_and(|d| d.media.is_some())
         {
             crate::media::build_media_plans(db, config)
                 .await
@@ -560,7 +563,7 @@ impl EntityGenerator for HandlerGenerator {
                 .map(|plan| {
                     crate::media::keys::render_cleanup_block(
                         &domain,
-                        &crate::media::keys::cleanup_fields_for(&plan, &schema_title),
+                        &crate::media::keys::cleanup_fields_for(&plan, schema_title),
                     )
                 })
                 .unwrap_or_default()
