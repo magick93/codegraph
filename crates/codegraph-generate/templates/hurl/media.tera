@@ -1,0 +1,24 @@
+{% if kind == "through_app" %}# hurl_contract: media surface (issue #625 PR-B) — {{ domain }}.{{ field }}.
+# Deterministic legs only: the authn surface (the shared middleware runs
+# BEFORE the handler). The happy-path upload/display legs need the storage
+# provider configured (and 2xx under it, 503 without) — those live in the
+# runtime lane (issue #625 open question 8), not this static contract.
+
+PUT {{ upload_url }}
+
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "UNAUTHORIZED"
+{% endif %}{% if kind == "presigned" %}# hurl_contract: media surface (issue #625 PR-C) — {{ domain }}.{{ field }}.
+# Deterministic legs only: the authn surface of the presign issuance op.
+# The presign happy path needs the storage provider configured (and 2xx
+# under it, 503 without) — the runtime lane owns that (issue #625 OQ8).
+
+POST {{ presign_url }}
+Content-Type: application/json
+{"mime_type": "{{ mime }}"}
+
+HTTP 401
+[Asserts]
+jsonpath "$.error.code" == "UNAUTHORIZED"
+{% endif %}

@@ -165,6 +165,218 @@ async fn run_generator(
     generator.generate(db, config, &[], &tera, &project).await
 }
 
+// ── PR-B UI upload control (#630) ───────────────────────────────────────
+
+#[tokio::test]
+async fn media_fields_emit_the_fallback_upload_control() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let generator = codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(
+        out.path(),
+        false,
+        false,
+    );
+    use codegraph_generate::traits::GlobalGenerator;
+    let files = generator
+        .generate(&engine, &config, &[], &tera, &ProjectConfig::default())
+        .await
+        .expect("ui scaffold");
+
+    let media_ts = files
+        .iter()
+        .find(|f| f.path.ends_with("media/media.ts"))
+        .expect("the shared validation module");
+    assert!(
+        media_ts.content.contains("validateMediaFile") && media_ts.content.contains("maxBytes"),
+        "pre-flight validation mirroring the API checks: {}",
+        media_ts.content
+    );
+    let component = files
+        .iter()
+        .find(|f| f.path.ends_with("media/MediaField.svelte"))
+        .expect("the fallback control");
+    assert!(
+        component.content.contains("data-testid=\"media-{spec.field}-input\""),
+        "testid contract: {}",
+        component.content
+    );
+    assert!(
+        component.content.contains("upload: (id: string, file: File) => Promise<MediaUploadResult>"),
+        "transport-agnostic upload callback (the override contract): {}",
+        component.content
+    );
+}
+
+#[tokio::test]
+async fn no_media_emits_no_ui_media_module() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(BASE_TOML).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let generator = codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(
+        out.path(),
+        false,
+        false,
+    );
+    use codegraph_generate::traits::GlobalGenerator;
+    let files = generator
+        .generate(&engine, &config, &[], &tera, &ProjectConfig::default())
+        .await
+        .expect("ui scaffold");
+    assert!(
+        !files.iter().any(|f| f.path.to_string_lossy().contains("media")),
+        "byte-identity: no [media] ⇒ no lib/media files"
+    );
+}
+
+// ── PR-C route revival-lite (#632): mode-gated media routes ────────────
+
+async fn run_media_route_generator(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Vec<String> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let project = ProjectConfig::default();
+    let out = tempfile::tempdir().expect("out dir");
+    let generator =
+        codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
+    use codegraph_generate::traits::EntityGenerator;
+    generator
+        .generate(db, "PersonType", "core", config, &tera, &project)
+        .await
+        .expect("media route generation")
+        .iter()
+        .map(|f| f.content.clone())
+        .collect()
+}
+
+async fn rendered_router_media_block(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> String {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let project = ProjectConfig::default();
+    let out = tempfile::tempdir().expect("out dir");
+    let ctx = codegraph_generate::api::router::build_router_context(
+        db,
+        "core",
+        &["PersonType".to_string()],
+        config,
+        &[],
+        &project,
+    )
+    .await
+    .expect("router context");
+    let _ = out;
+    codegraph_generate::render_template_with_project(&tera, "api/router.tera", &ctx, &project)
+        .expect("router render")
+}
+
+#[tokio::test]
+async fn through_app_mode_emits_child_row_upload_routes() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert_eq!(modules.len(), 1, "one module per media field");
+    let module = &modules[0];
+    assert!(
+        module.contains("pub async fn upload"),
+        "through-app mounts the multipart upload: {module}"
+    );
+    assert!(!module.contains("pub async fn presign"), "{module}");
+    // The CHILD row model (R4) — the dormant template wrote parent columns:
+    assert!(module.contains("person_avatar"), "child table writes: {module}");
+    assert!(module.contains("person_id"), "parent fk writes: {module}");
+    // The AppState media slot (PR-B) — never the hooks-crate registry slot:
+    assert!(
+        module.contains(".core_media_storage"),
+        "dispatches through the AppState slot: {module}"
+    );
+    assert!(
+        !module.contains("registry.media_storage"),
+        "the hooks-crate slot is not the runtime surface: {module}"
+    );
+    // Overwrite-in-place key from the domain template (R7):
+    assert!(
+        module.contains("format!(\"{org}/core/person/{id}/avatar\")"),
+        "{module}"
+    );
+
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        router.contains("media_person_avatar::upload"),
+        "router mounts the upload: {router}"
+    );
+    assert!(
+        router.contains("media_person_avatar::display"),
+        "router mounts signed display: {router}"
+    );
+    assert!(
+        !router.contains("/presign"),
+        "through-app mounts no presign route: {router}"
+    );
+}
+
+#[tokio::test]
+async fn presigned_mode_emits_the_presign_issuance_route() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert_eq!(modules.len(), 1);
+    let module = &modules[0];
+    assert!(
+        module.contains("pub async fn presign"),
+        "presigned mode issues the presign op: {module}"
+    );
+    assert!(
+        module.contains("presign_put"),
+        "the adapter trait call: {module}"
+    );
+    assert!(
+        !module.contains("pub async fn upload"),
+        "no multipart upload in presigned mode: {module}"
+    );
+
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        router.contains("/presign"),
+        "router mounts presign issuance: {router}"
+    );
+    assert!(
+        !router.contains("::upload"),
+        "presigned mode mounts no multipart upload route: {router}"
+    );
+}
+
+#[tokio::test]
+async fn client_direct_emits_no_media_routes_at_all() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert!(
+        modules.is_empty(),
+        "R5: client-direct speaks to the provider with its session — no routes"
+    );
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        !router.contains("media_person_avatar"),
+        "no media routes for client-direct: {router}"
+    );
+}
+
 // ── PR-B AppState wiring (#630) ─────────────────────────────────────────
 async fn run_scaffold(
     db: &dyn codegraph_core::traits::GraphQuerier,
@@ -502,12 +714,13 @@ async fn r2_plan_emits_the_r2_adapter_with_sigv4() {
     assert_eq!(
         paths,
         vec![
+            "hurl/09_media.hurl",
             "src/media/http.rs",
             "src/media/mod.rs",
             "src/media/noop.rs",
             "src/media/r2.rs",
         ],
-        "r2 plan emits the r2 adapter + transport (no supabase module, no migration)"
+        "r2 plan emits the r2 adapter + transport + hurl contract (no supabase module, no migration)"
     );
 
     let r2_rs = &files

@@ -101,6 +101,9 @@ pub struct ScaffoldMedia {
     pub public_read: bool,
     pub display_ttl_secs: u64,
     pub presign_ttl_secs: u64,
+    /// The wrangler `[[r2_buckets]]` binding (provider r2 only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r2_binding: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -360,6 +363,12 @@ pub async fn build_scaffold_domains(
                     .provider_settings
                     .presign_ttl_secs()
                     .unwrap_or(crate::media::DEFAULT_PRESIGN_TTL_SECS),
+                r2_binding: match &p.provider_settings {
+                    codegraph_core::types::MediaProviderSettings::R2 { binding, .. } => {
+                        Some(binding.clone())
+                    }
+                    _ => None,
+                },
             });
             Some(ScaffoldDomain {
                 name: name.clone(),

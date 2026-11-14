@@ -16,13 +16,23 @@ pub mod keys;
 /// config default; supabase presign expiry comes from the caller).
 pub const DEFAULT_PRESIGN_TTL_SECS: u64 = 900;
 
+/// The domain's configured accept list — the hurl context's mime sample.
+fn media_cfg_accept(config: &DomainConfig, domain_name: &str) -> String {
+    config
+        .domains
+        .get(domain_name)
+        .and_then(|d| d.media.as_ref())
+        .and_then(|m| m.accept.first().cloned())
+        .unwrap_or_else(|| "application/octet-stream".to_string())
+}
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::{MediaPlan, MediaProvider};
+use codegraph_core::types::{MediaPlan, MediaProvider, UploadMode};
 use serde_json::json;
 
 use crate::error::Result;
@@ -156,6 +166,39 @@ impl GlobalGenerator for MediaStorageGenerator {
                         migration::MEDIA_MIGRATION_BAND
                     )),
                     content: sql,
+                });
+            }
+        }
+        // The media hurl contract (issue #630): one file per run, anchored to
+        // the FIRST route-mode domain's first media field. Client-direct runs
+        // emit nothing (no media surface to contract).
+        if let Some((domain_name, mode, plan)) = plans.values().find_map(|p| {
+            let mode = plan::media_upload_mode(config, &p.domain)?;
+            Some((p.domain.clone(), mode, p.clone()))
+        }) {
+            if let Some(field) = plan.fields.first() {
+                let kind = if mode == UploadMode::Presigned {
+                    "presigned"
+                } else {
+                    "through_app"
+                };
+                let base = format!(
+                    "/api/v1/{domain_name}/{}/{}/{{id}}/{}",
+                    field.entity_table,
+                    field.field_snake,
+                    field.field_snake
+                );
+                let ctx = json!({
+                    "kind": kind,
+                    "domain": domain_name,
+                    "field": field.field_snake,
+                    "mime": media_cfg_accept(config, &domain_name),
+                    "upload_url": base,
+                    "presign_url": format!("{base}/presign"),
+                });
+                files.push(GeneratedFile {
+                    path: self.output_dir.join("hurl").join("09_media.hurl"),
+                    content: render_template_with_project(tera, "hurl/media.tera", &ctx, project)?,
                 });
             }
         }

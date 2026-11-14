@@ -326,11 +326,22 @@ fn entity_routes(entity: &RouterEntity, base_path: &str) -> Vec<ApiContractRoute
     }
 
     // Media fields (the router template hardcodes the literal `{id}` segment).
+    // Mode-aware (issue #625 PR-C): presigned mode issues a presign POST;
+    // through-app uploads multipart PUT. Both mount signed display (GET)
+    // and reference removal (DELETE).
     for mf in &entity.media_fields {
         let media_path = format!("{}/{{id}}/{}", base_path, mf);
-        routes.push(route("PUT", &media_path, &format!("media_upload_{mf}")));
-        routes.push(route("GET", &media_path, &format!("media_download_{mf}")));
-        routes.push(route("DELETE", &media_path, &format!("media_delete_{mf}")));
+        if entity.media_mode_presigned {
+            routes.push(route(
+                "POST",
+                &format!("{media_path}/presign"),
+                &format!("media_presign_{mf}"),
+            ));
+        } else {
+            routes.push(route("PUT", &media_path, &format!("media_upload_{mf}")));
+        }
+        routes.push(route("GET", &media_path, &format!("media_display_{mf}")));
+        routes.push(route("DELETE", &media_path, &format!("media_remove_{mf}")));
     }
 
     routes
@@ -372,6 +383,7 @@ mod tests {
             children: vec![],
             cross_refs: vec![],
             media_fields: vec![],
+            media_mode_presigned: false,
             hierarchy_field: None,
             pipeline_middleware: vec![],
             has_pipeline_layer: false,
@@ -473,6 +485,30 @@ mod tests {
         assert!(
             !paths.iter().any(|p| p.contains("{public_event_id}/avatar")),
             "media route must use literal {{id}} segment"
+        );
+        // Through-app (default): PUT upload + GET display + DELETE remove.
+        for expected in [
+            "PUT:/api/v1/events/public-event/{id}/avatar",
+            "GET:/api/v1/events/public-event/{id}/avatar",
+            "DELETE:/api/v1/events/public-event/{id}/avatar",
+        ] {
+            let (method, path) = expected.split_once(':').unwrap();
+            assert!(
+                routes.iter().any(|r| r.method == method && r.path == path),
+                "missing media route {method} {path}"
+            );
+        }
+        // Presigned mode: presign POST replaces the multipart PUT.
+        e.media_mode_presigned = true;
+        let routes = entity_routes(&e, "/api/v1/events/public-event");
+        assert!(
+            routes.iter().any(|r| r.method == "POST"
+                && r.path == "/api/v1/events/public-event/{id}/avatar/presign"),
+            "presigned mode must mount the presign issuance route"
+        );
+        assert!(
+            !routes.iter().any(|r| r.method == "PUT"),
+            "presigned mode mounts no multipart upload"
         );
     }
 
