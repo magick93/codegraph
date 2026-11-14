@@ -10,6 +10,7 @@
 
 pub mod plan;
 pub mod migration;
+pub mod keys;
 
 /// The fallback presign TTL when the provider settings carry none (the r2
 /// config default; supabase presign expiry comes from the caller).

@@ -627,7 +627,7 @@ pub async fn delete(
             }
         }
             .with_correlation_id(correlation_id))?;
-    Ok(StatusCode::NO_CONTENT)
+{{ media_cleanup_block }}    Ok(StatusCode::NO_CONTENT)
 }
 {% endif %}
 {% if has_list %}

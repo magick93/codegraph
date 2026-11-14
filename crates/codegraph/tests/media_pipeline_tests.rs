@@ -166,7 +166,6 @@ async fn run_generator(
 }
 
 // ── PR-B AppState wiring (#630) ─────────────────────────────────────────
-
 async fn run_scaffold(
     db: &dyn codegraph_core::traits::GraphQuerier,
     config: &DomainConfig,
@@ -308,6 +307,92 @@ async fn r2_plan_emits_no_storage_migration() {
 }
 
 // ── PR-B/PR-C adapter emission (#630, #632) ─────────────────────────────
+
+// ── #631 deletion cleanup in the DELETE handler ─────────────────────────
+
+async fn run_handler_generator(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    workers: bool,
+) -> String {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let mut project = ProjectConfig::default();
+    if workers {
+        project.deployment.deployment_topology =
+            codegraph_generate::profile::DeploymentTopology::Workers;
+    }
+    let out = tempfile::tempdir().expect("out dir");
+    let generator =
+        codegraph_generate::api::handler::HandlerGenerator::new(out.path()).with_rules_guards(false);
+    use codegraph_generate::traits::EntityGenerator;
+    let files = generator
+        .generate(db, "PersonType", "core", config, &tera, &project)
+        .await
+        .expect("handler generation");
+    files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("_handler.rs"))
+        .map(|f| f.content.clone())
+        .expect("handler file")
+}
+
+#[tokio::test]
+async fn delete_handler_carries_media_cleanup_when_media_declared() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let handler = run_handler_generator(&engine, &config, false).await;
+    assert!(
+        handler.contains("if let Some(storage) = &state.core_media_storage {"),
+        "the cleanup dispatches through the domain slot: {handler}"
+    );
+    assert!(
+        handler.contains("format!(\"{org}/core/person/{id}/avatar\")"),
+        "the lowered key format (overwrite-in-place, no child-row read): {handler}"
+    );
+    assert!(
+        handler.contains("storage.delete(&key).await"),
+        "best-effort provider delete: {handler}"
+    );
+    assert!(
+        handler.contains("testkit storage --gc"),
+        "the gc sweep is the named backstop: {handler}"
+    );
+    // Placement: inside the DELETE route, after the command completes and
+    // before the 204.
+    let delete_pos = handler
+        .find("pub async fn delete(")
+        .expect("delete route present");
+    let cleanup_pos = handler
+        .find("state.core_media_storage")
+        .expect("cleanup present");
+    let no_content_pos = handler.rfind("StatusCode::NO_CONTENT").expect("204 present");
+    assert!(
+        delete_pos < cleanup_pos && cleanup_pos < no_content_pos,
+        "cleanup runs post-command, pre-204"
+    );
+}
+
+#[tokio::test]
+async fn delete_handler_has_no_media_cleanup_without_media_or_under_workers() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    // Flag-off: no [media] ⇒ no cleanup block (byte-identity).
+    let config = parse_domain_config_str(BASE_TOML).expect("toml");
+    let handler = run_handler_generator(&engine, &config, false).await;
+    assert!(
+        !handler.contains("media_cleanup") && !handler.contains("core_media_storage"),
+        "flag-off byte-identity: {handler}"
+    );
+    // Workers topology: the media slot is a monolith surface (the recorded
+    // deferral) — the block must be absent so the worker handler compiles.
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let handler = run_handler_generator(&engine, &config, true).await;
+    assert!(
+        !handler.contains("core_media_storage"),
+        "workers topology has no media slot to reference: {handler}"
+    );
+}
 
 #[tokio::test]
 async fn supabase_plan_emits_adapter_http_seam_and_noop() {

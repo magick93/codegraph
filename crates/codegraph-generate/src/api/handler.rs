@@ -183,6 +183,11 @@ pub struct HandlerContext {
     #[serde(default)]
     pub read_guard_block: String,
     #[serde(default)]
+    /// Media deletion cleanup (issue #631 R7): the pre-rendered post-delete
+    /// key-recompute + storage.delete block. Empty unless the domain
+    /// declares `[media]` and the topology is monolith.
+    pub media_cleanup_block: String,
+    #[serde(default)]
     pub create_guard_block: String,
 }
 
@@ -540,6 +545,29 @@ impl EntityGenerator for HandlerGenerator {
             &eligibility_guards,
         );
 
+        // Media deletion cleanup (issue #631 R7). Monolith topology only
+        // (the media slot lives in the monolith AppState — worker placement
+        // is the recorded deferral); the domain must declare `[media]` and
+        // the plans resolve (the driver's pre-generation pass already
+        // hard-failed on a broken config). Empty otherwise — byte-identical.
+        let media_cleanup_block = if !project.is_workers_topology()
+            && config.domains.get(&domain).is_some_and(|d| d.media.is_some())
+        {
+            crate::media::build_media_plans(db, config)
+                .await
+                .ok()
+                .and_then(|plans| plans.get(&domain).cloned())
+                .map(|plan| {
+                    crate::media::keys::render_cleanup_block(
+                        &domain,
+                        &crate::media::keys::cleanup_fields_for(&plan, &schema_title),
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -593,6 +621,7 @@ impl EntityGenerator for HandlerGenerator {
             delete_guard_block: guard_blocks.delete_guard_block,
             read_guard_block: guard_blocks.read_guard_block,
             create_guard_block: guard_blocks.create_guard_block,
+            media_cleanup_block,
         };
 
         let content = render_template_with_project(tera, "api/handler.tera", &ctx, project)?;
