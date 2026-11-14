@@ -215,6 +215,20 @@ testkit dlq --requeue --limit 50")]
         #[arg(long)]
         limit: Option<u32>,
     },
+    /// Media storage garbage collection (issue #631 R7): report orphaned
+    /// objects (default) or collect them.
+    #[command(after_help = "Examples:\n  \
+testkit storage\n  \
+testkit storage --gc\n  \
+testkit storage --gc --bucket person-media")]
+    Storage {
+        /// Delete the orphaned media objects (default: report only).
+        #[arg(long)]
+        gc: bool,
+        /// Restrict the sweep to one bucket.
+        #[arg(long)]
+        bucket: Option<String>,
+    },
     /// Full E2E: Supabase -> generate -> build -> Playwright.
     #[command(after_help = "Examples:\n  \
 testkit e2e --results e2e.json\n  \
@@ -471,6 +485,10 @@ pub async fn main() -> i32 {
             output::bold("Dead-letter queue surface (issue #611)");
             crate::dlq::run(&config, *requeue, channel.as_deref(), limit.unwrap_or(0)).await
         }
+        Cmd::Storage { gc, bucket } => {
+            output::bold("Media storage garbage collection (issue #631 R7)");
+            crate::storage::run(&config, *gc, bucket.as_deref()).await
+        }
         Cmd::Replay {
             event,
             channel,
@@ -634,6 +652,7 @@ fn subcommand_name(cmd: &Cmd) -> &'static str {
         Cmd::Clean { .. } => "clean",
         Cmd::Doctor => "doctor",
         Cmd::Dlq { .. } => "dlq",
+        Cmd::Storage { .. } => "storage",
         Cmd::Replay { .. } => "replay",
         Cmd::Bundle => "bundle",
         Cmd::Smoke { .. } => "smoke",

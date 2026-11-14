@@ -59,6 +59,43 @@ pub trait MediaStorage: Send + Sync {
 }
 
 pub mod noop;
+/// Transport seam: adapters speak HTTP through this object so the media
+/// plane compiles on wasm32 with NO HTTP dependency (issue #632 — the
+/// worker compile pin links the plane bare). The native leg lives in
+/// `http` (reqwest, cfg-gated); adapters never construct a client.
+#[async_trait]
+pub trait MediaHttp: Send + Sync {
+    async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        headers: std::collections::BTreeMap<String, String>,
+        body: Vec<u8>,
+    ) -> Result<MediaHttpResponse, MediaError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaHttpResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+/// Percent-encode an object key for a URL path, preserving `/` separators
+/// (RFC 3986 unreserved characters pass through; everything else is escaped).
+pub fn encode_key(key: &str) -> String {
+    let mut out = String::with_capacity(key.len());
+    for b in key.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+pub mod http;
 {% for adapter in adapters %}
 pub mod {{ adapter }};
 {% endfor %}

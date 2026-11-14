@@ -253,10 +253,27 @@ pub struct WorkerDomain {
     /// per-domain half of the project-level `has_extension_points` flag
     /// (mirrors `has_webhooks`).
     pub has_integration_dispatch: bool,
+    /// Media storage with provider `r2` on this domain (issue #625 PR-C):
+    /// the wrangler config gains the `[[r2_buckets]]` block (binding +
+    /// bucket). The adapter's env-credentialed S3 path is topology-shared;
+    /// the binding is the workers-native PUT path (the worker AppState
+    /// runtime wiring is the recorded deferral). Absent for supabase/no-
+    /// media domains — byte-identical wrangler.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_r2: Option<WorkerMediaR2>,
     /// The folded queue-level delivery facts (rexlang #31's delivery
     /// model), when the model declared a non-default policy; `None` keeps
     /// the drain template's hardcoded constants (byte-identical).
     pub evt_delivery: Option<WorkerEvtDelivery>,
+}
+
+/// The `[[r2_buckets]]` wrangler facts for one media domain.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkerMediaR2 {
+    /// The `[[r2_buckets]]` binding name (the config's `media.r2.binding`).
+    pub binding: String,
+    /// The bucket name (the config's `media.bucket`).
+    pub bucket: String,
 }
 
 /// Context for the workers scaffold templates.
@@ -429,6 +446,16 @@ pub fn build_worker_domains(
                 has_events,
                 extra_event_queues,
                 has_integration_dispatch: push_covered_domains.contains(&d.name),
+                media_r2: d.media.as_ref().and_then(|m| {
+                    if m.provider == "r2" {
+                        m.r2_binding.clone().map(|binding| WorkerMediaR2 {
+                            binding,
+                            bucket: m.bucket.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                }),
                 evt_delivery: if drain.is_default() {
                     None
                 } else {
@@ -484,7 +511,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await;
+        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await?;
         if scaffold_domains.is_empty() {
             return Ok(Vec::new());
         }
@@ -992,6 +1019,7 @@ service_bindings = ["timecard"]
             atproto_nsids: vec![],
             has_manual_functions: false,
             has_external_functions: false,
+            media: None,
         }
     }
 
@@ -1323,6 +1351,71 @@ entities = ["CodeType"]
         assert!(domains.iter().all(|d| !d.has_integration_dispatch));
     }
 
+    /// Issue #625 PR-C: the `[[r2_buckets]]` wrangler block renders ONLY for
+    /// a domain whose media provider is r2 (binding + bucket from the plan);
+    /// supabase / no-media domains keep the byte-identical wrangler.
+    #[test]
+    fn worker_wrangler_renders_r2_buckets_only_for_r2_media_domains() {
+        let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let tera = crate::template_engine::create_tera(&template_dir).unwrap();
+        let project = ProjectConfig::default();
+        let config = test_config();
+
+        // r2 media domain: the block renders and the toml parses.
+        let mut domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+            Default::default(),
+        );
+        domains[0].media_r2 = Some(WorkerMediaR2 {
+            binding: "MEDIA_BUCKET".to_string(),
+            bucket: "person-media".to_string(),
+        });
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_wrangler.tera",
+            &domains[0],
+            &project,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&rendered).expect("wrangler.toml must parse");
+        assert_eq!(
+            parsed["r2_buckets"][0]["binding"].as_str(),
+            Some("MEDIA_BUCKET")
+        );
+        assert_eq!(
+            parsed["r2_buckets"][0]["bucket_name"].as_str(),
+            Some("person-media")
+        );
+
+        // No media ⇒ no block (byte-identity with the pre-#632 wrangler).
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            vec![scaffold_domain("payroll")],
+            None,
+            None,
+            &HashSet::new(),
+            Default::default(),
+        );
+        let rendered = render_template_with_project(
+            &tera,
+            "scaffold/worker_wrangler.tera",
+            &domains[0],
+            &project,
+        )
+        .unwrap();
+        let parsed: toml::Value = toml::from_str(&rendered).expect("wrangler.toml must parse");
+        assert!(
+            parsed.get("r2_buckets").is_none(),
+            "no media ⇒ no r2_buckets block: {rendered}"
+        );
+    }
+
     /// Render the per-domain wrangler template and assert the TOML output.
     #[test]
     fn worker_wrangler_renders_hyperdrive_services_crons_and_routes() {
@@ -1621,6 +1714,7 @@ entities = ["CodeType"]
             atproto_nsids: vec![],
             has_manual_functions: false,
             has_external_functions: false,
+            media: None,
         };
         let mut domains = build_worker_domains(
             "hr",

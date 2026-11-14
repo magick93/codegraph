@@ -1668,6 +1668,12 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
                 }
             }
         }
+        // One provider per app in v1 (issue #625 PR-B): the SAME check the
+        // run path runs, so doctor and generation cannot drift.
+        if let Err(e) = codegraph_generate::media::validate_media_provider_consistency(config) {
+            hard_failures += 1;
+            println!("FAIL media — {e}");
+        }
     }
 
     // Scan the schemas dir (when provided) up front: the classifier verdict

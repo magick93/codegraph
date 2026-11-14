@@ -29,6 +29,7 @@ pub async fn build_media_plans(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
 ) -> Result<BTreeMap<String, MediaPlan>, Error> {
+    validate_media_provider_consistency(config)?;
     let mut plans = BTreeMap::new();
     for (name, entry) in &config.domains {
         let Some(media) = &entry.media else {
@@ -86,6 +87,88 @@ pub fn validate_media_matrix_and_template(
     KeyTemplate::parse(&media.key_template)
         .map(|_| ())
         .map_err(|e| Error::Config(format!("domain \"{domain_name}\" media key_template: {e}")))
+}
+
+/// One provider per app in v1 (issue #625 PR-B decision): the AppState
+/// media surface is single-provider — a mixed declaration is a config error
+/// naming both providers and the domains, never a silently half-configured
+/// plane. Graph-free: doctor runs the SAME function, so doctor and the run
+/// path cannot drift.
+pub fn validate_media_provider_consistency(config: &DomainConfig) -> Result<(), Error> {
+    let mut first: Option<(MediaProvider, String)> = None;
+    for (name, entry) in &config.domains {
+        let Some(media) = &entry.media else {
+            continue;
+        };
+        let provider = MediaProvider::parse(media.provider.as_str()).ok_or_else(|| {
+            Error::Config(format!(
+                "domain \"{name}\" media: provider \"{}\" missing from the core mirror",
+                media.provider.as_str()
+            ))
+        })?;
+        match &first {
+            None => first = Some((provider, name.clone())),
+            Some((first_provider, first_domain)) if provider != *first_provider => {
+                return Err(Error::Config(format!(
+                    "media: domains \"{first_domain}\" and \"{name}\" declare different \
+                     providers (\"{}\" vs \"{}\") — one provider per app in v1; split the \
+                     providers across apps or align the declarations",
+                    first_provider.as_str(),
+                    provider.as_str()
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// The media fields that emit HTTP routes for one entity (issue #625 PR-C):
+/// the domain plan's media fields when the upload mode needs an app-plane
+/// route (`through-app` | `presigned`). Client-direct emits NO routes (R5 —
+/// the browser speaks to the provider directly with its session; the app
+/// plane authorizes through bucket RLS + the normal update path). Sorted by
+/// field snake — deterministic router emission.
+pub async fn media_route_fields(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    entity_title: &str,
+) -> Result<Vec<String>, Error> {
+    let Some(media) = config
+        .domains
+        .get(domain_name)
+        .and_then(|d| d.media.as_ref())
+    else {
+        return Ok(Vec::new());
+    };
+    if media.upload_mode == codegraph_config::MediaUploadMode::ClientDirect {
+        return Ok(Vec::new());
+    }
+    let titles = [entity_title.to_string()];
+    let plan = build_media_plan_for_domain(
+        db,
+        domain_name,
+        media,
+        &config.defaults.type_suffix,
+        &titles,
+    )
+    .await?;
+    Ok(plan.fields.iter().map(|f| f.field_snake.clone()).collect())
+}
+
+/// The domain's configured upload mode when it needs routes (`Some`).
+/// The router template branches on it (presign issuance vs multipart).
+pub fn media_upload_mode(config: &DomainConfig, domain_name: &str) -> Option<UploadMode> {
+    config.domains.get(domain_name).and_then(|d| {
+        d.media
+            .as_ref()
+            .filter(|m| m.upload_mode != codegraph_config::MediaUploadMode::ClientDirect)
+            .map(|m| match m.upload_mode {
+                codegraph_config::MediaUploadMode::Presigned => UploadMode::Presigned,
+                _ => UploadMode::ThroughApp,
+            })
+    })
 }
 
 /// Build one domain's plan from explicit entity titles (the generator

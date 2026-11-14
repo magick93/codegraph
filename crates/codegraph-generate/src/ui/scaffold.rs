@@ -40,6 +40,11 @@ pub struct UiScaffoldContext {
     /// Chart nav entries (issue #577) — one per modeled chart route.
     /// Empty (no charts) keeps the layout byte-identical.
     pub nav_charts: Vec<crate::charts::ChartNavItem>,
+    /// Media fields (issue #630 PR-B): the fallback upload control scaffold
+    /// (`$lib/media/{media.ts,MediaField.svelte}`). Empty (no media) keeps
+    /// the lib tree byte-identical.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub media_fields: Vec<UiMediaField>,
     /// The auth suite's probe route (issue #575): the first domain's first
     /// entity collection — a REAL route, because axum layers run only for
     /// MATCHED requests and a synthetic path 404s under the fallback
@@ -117,6 +122,18 @@ pub struct UiScaffoldGenerator {
     has_webhooks: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct UiMediaField {
+    /// Owning domain (the API route prefix segment).
+    pub domain: String,
+    /// The entity's API path segment.
+    pub entity_segment: String,
+    /// The contained-value feature (snake).
+    pub field: String,
+    pub accept: Vec<String>,
+    pub max_bytes: u64,
+}
+
 impl UiScaffoldGenerator {
     pub fn new(output_dir: &Path, has_integrations: bool, has_webhooks: bool) -> Self {
         Self {
@@ -143,6 +160,46 @@ impl GlobalGenerator for UiScaffoldGenerator {
     ) -> Result<Vec<GeneratedFile>> {
         let domains = build_ui_domains(db, config, generation_order).await;
         let nav_charts = crate::charts::chart_nav_items(db).await?;
+
+        // Media fields (issue #630 PR-B): every media-declaring domain's
+        // fields (any upload mode — the control is transport-agnostic).
+        // Sorted (domain, entity, field) — deterministic emission.
+        let mut media_fields: Vec<UiMediaField> = Vec::new();
+        for (domain_name, entry) in &config.domains {
+            let Some(media) = &entry.media else {
+                continue;
+            };
+            let mut titles: Vec<String> = db
+                .list_schemas(Some(domain_name))
+                .await?
+                .into_iter()
+                .filter(|s| s.is_entity)
+                .map(|s| s.title)
+                .collect();
+            titles.sort();
+            if let Ok(plan) = crate::media::plan::build_media_plan_for_domain(
+                db,
+                domain_name,
+                media,
+                &config.defaults.type_suffix,
+                &titles,
+            )
+            .await
+            {
+                for f in &plan.fields {
+                    media_fields.push(UiMediaField {
+                        domain: domain_name.clone(),
+                        entity_segment: f.entity_table.clone(),
+                        field: f.field_snake.clone(),
+                        accept: media.accept.clone(),
+                        max_bytes: media.max_bytes,
+                    });
+                }
+            }
+        }
+        media_fields.sort_by(|a, b| {
+            (&a.domain, &a.entity_segment, &a.field).cmp(&(&b.domain, &b.entity_segment, &b.field))
+        });
 
         // The auth suite's probe route (issue #575): the first entity
         // collection under the first domain — a route the auth middleware
@@ -173,6 +230,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             tanstack_svelte_form_version: crate::forms::TANSTACK_SVELTE_FORM_VERSION,
             zod_version: crate::forms::ZOD_VERSION,
             nav_charts,
+            media_fields,
         };
 
         let ui = self.output_dir.join("ui");
@@ -186,6 +244,19 @@ impl GlobalGenerator for UiScaffoldGenerator {
             core_scaffold_templates(&ui, &src, &lib),
         )
         .await?;
+
+        // Media fallback control (issue #630 PR-B) — presence-gated on the
+        // resolved media fields (no media ⇒ byte-identical lib tree).
+        if !ctx.media_fields.is_empty() {
+            files.push(GeneratedFile {
+                path: lib.join("media").join("media.ts"),
+                content: render_template_with_project(tera, "ui/media_ts.tera", &ctx, project)?,
+            });
+            files.push(GeneratedFile {
+                path: lib.join("media").join("MediaField.svelte"),
+                content: render_template_with_project(tera, "ui/media_field.tera", &ctx, project)?,
+            });
+        }
         files.extend(
             render_template_set(
                 tera,

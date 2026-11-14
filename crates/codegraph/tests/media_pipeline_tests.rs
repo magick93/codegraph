@@ -13,7 +13,7 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
 use codegraph_generate::media::MediaStorageGenerator;
 use codegraph_generate::traits::{GeneratedFile, GlobalGenerator};
-use codegraph_generate::{ProjectConfig, error::Error};
+use codegraph_generate::{GenerationEntry, ProjectConfig, error::Error};
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -165,6 +165,615 @@ async fn run_generator(
     generator.generate(db, config, &[], &tera, &project).await
 }
 
+// ── PR-B UI upload control (#630) ───────────────────────────────────────
+
+#[tokio::test]
+async fn media_fields_emit_the_fallback_upload_control() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let generator =
+        codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(out.path(), false, false);
+    use codegraph_generate::traits::GlobalGenerator;
+    let files = generator
+        .generate(&engine, &config, &[], &tera, &ProjectConfig::default())
+        .await
+        .expect("ui scaffold");
+
+    let media_ts = files
+        .iter()
+        .find(|f| f.path.ends_with("media/media.ts"))
+        .expect("the shared validation module");
+    assert!(
+        media_ts.content.contains("validateMediaFile") && media_ts.content.contains("maxBytes"),
+        "pre-flight validation mirroring the API checks: {}",
+        media_ts.content
+    );
+    let component = files
+        .iter()
+        .find(|f| f.path.ends_with("media/MediaField.svelte"))
+        .expect("the fallback control");
+    assert!(
+        component
+            .content
+            .contains("data-testid=\"media-{spec.field}-input\""),
+        "testid contract: {}",
+        component.content
+    );
+    assert!(
+        component
+            .content
+            .contains("upload: (id: string, file: File) => Promise<MediaUploadResult>"),
+        "transport-agnostic upload callback (the override contract): {}",
+        component.content
+    );
+}
+
+#[tokio::test]
+async fn no_media_emits_no_ui_media_module() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(BASE_TOML).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let generator =
+        codegraph_generate::ui::scaffold::UiScaffoldGenerator::new(out.path(), false, false);
+    use codegraph_generate::traits::GlobalGenerator;
+    let files = generator
+        .generate(&engine, &config, &[], &tera, &ProjectConfig::default())
+        .await
+        .expect("ui scaffold");
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.to_string_lossy().contains("media")),
+        "byte-identity: no [media] ⇒ no lib/media files"
+    );
+}
+
+// ── PR-C route revival-lite (#632): mode-gated media routes ────────────
+
+async fn run_media_route_generator(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<String> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let project = ProjectConfig::default();
+    let out = tempfile::tempdir().expect("out dir");
+    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
+    use codegraph_generate::traits::EntityGenerator;
+    generator
+        .generate(db, "PersonType", "core", config, &tera, &project)
+        .await
+        .expect("media route generation")
+        .iter()
+        .map(|f| f.content.clone())
+        .collect()
+}
+
+async fn rendered_router_media_block(db: &dyn GraphQuerier, config: &DomainConfig) -> String {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let project = ProjectConfig::default();
+    let out = tempfile::tempdir().expect("out dir");
+    let ctx = codegraph_generate::api::router::build_router_context(
+        db,
+        "core",
+        &["PersonType".to_string()],
+        config,
+        &[],
+        &project,
+    )
+    .await
+    .expect("router context");
+    let _ = out;
+    codegraph_generate::render_template_with_project(&tera, "api/router.tera", &ctx, &project)
+        .expect("router render")
+}
+
+#[tokio::test]
+async fn through_app_mode_emits_child_row_upload_routes() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert_eq!(modules.len(), 1, "one module per media field");
+    let module = &modules[0];
+    assert!(
+        module.contains("pub async fn upload"),
+        "through-app mounts the multipart upload: {module}"
+    );
+    assert!(!module.contains("pub async fn presign"), "{module}");
+    // The CHILD row model (R4) — the dormant template wrote parent columns:
+    assert!(
+        module.contains("person_avatar"),
+        "child table writes: {module}"
+    );
+    assert!(module.contains("person_id"), "parent fk writes: {module}");
+    // The AppState media slot (PR-B) — never the hooks-crate registry slot:
+    assert!(
+        module.contains(".core_media_storage"),
+        "dispatches through the AppState slot: {module}"
+    );
+    assert!(
+        !module.contains("registry.media_storage"),
+        "the hooks-crate slot is not the runtime surface: {module}"
+    );
+    // Overwrite-in-place key from the domain template (R7):
+    assert!(
+        module.contains("format!(\"{org}/core/person/{id}/avatar\")"),
+        "{module}"
+    );
+
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        router.contains("media_person_avatar::upload"),
+        "router mounts the upload: {router}"
+    );
+    assert!(
+        router.contains("media_person_avatar::display"),
+        "router mounts signed display: {router}"
+    );
+    assert!(
+        !router.contains("/presign"),
+        "through-app mounts no presign route: {router}"
+    );
+}
+
+#[tokio::test]
+async fn presigned_mode_emits_the_presign_issuance_route() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert_eq!(modules.len(), 1);
+    let module = &modules[0];
+    assert!(
+        module.contains("pub async fn presign"),
+        "presigned mode issues the presign op: {module}"
+    );
+    assert!(
+        module.contains("presign_put"),
+        "the adapter trait call: {module}"
+    );
+    assert!(
+        !module.contains("pub async fn upload"),
+        "no multipart upload in presigned mode: {module}"
+    );
+
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        router.contains("/presign"),
+        "router mounts presign issuance: {router}"
+    );
+    assert!(
+        !router.contains("::upload"),
+        "presigned mode mounts no multipart upload route: {router}"
+    );
+}
+
+#[tokio::test]
+async fn client_direct_emits_no_media_routes_at_all() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert!(
+        modules.is_empty(),
+        "R5: client-direct speaks to the provider with its session — no routes"
+    );
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        !router.contains("media_person_avatar"),
+        "no media routes for client-direct: {router}"
+    );
+}
+
+// ── PR-B AppState wiring (#630) ─────────────────────────────────────────
+async fn run_scaffold(
+    db: &dyn codegraph_core::traits::GraphQuerier,
+    config: &DomainConfig,
+    out: &std::path::Path,
+) -> Result<Vec<GeneratedFile>, Error> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])?;
+    let project = ProjectConfig::default();
+    let generator = codegraph_generate::scaffold::generator::ScaffoldGenerator::new(
+        out, false, false, false, false, false, false, false, false, false, false, "parallel",
+    );
+    let generation_order = vec![GenerationEntry {
+        schema_title: "PersonType".to_string(),
+        domain: "core".to_string(),
+        pg_schema: "core".to_string(),
+        is_cyclic: false,
+    }];
+    generator
+        .generate(db, config, &generation_order, &tera, &project)
+        .await
+}
+
+fn scaffold_file<'a>(files: &'a [GeneratedFile], out: &std::path::Path, rel: &str) -> &'a str {
+    files
+        .iter()
+        .find(|f| f.path == out.join(rel))
+        .map(|f| f.content.as_str())
+        .unwrap_or_else(|| panic!("scaffold must emit {rel}"))
+}
+
+#[tokio::test]
+async fn scaffold_wires_the_per_domain_media_slot_and_module_declaration() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_scaffold(&engine, &config, out.path())
+        .await
+        .expect("scaffold");
+
+    let app_state = scaffold_file(&files, out.path(), "src/app_state.rs");
+    assert!(
+        app_state.contains(
+            "pub core_media_storage: Option<std::sync::Arc<dyn crate::media::MediaStorage>>"
+        ),
+        "the per-domain provider slot: {app_state}"
+    );
+
+    let server = scaffold_file(&files, out.path(), "src/server.rs");
+    assert!(
+        server.contains("core_media_storage:"),
+        "the AppState construction site carries the slot: {server}"
+    );
+    assert!(
+        server.contains("SupabaseStorage::from_env"),
+        "the configured provider constructs: {server}"
+    );
+    assert!(
+        server.contains("ReqwestHttp::new"),
+        "the native transport constructs once at boot: {server}"
+    );
+
+    let lib = scaffold_file(&files, out.path(), "src/lib.rs");
+    assert!(
+        lib.contains("pub mod media;"),
+        "the module must be REACHABLE — PR-A's emission was dead without this: {lib}"
+    );
+}
+
+#[tokio::test]
+async fn no_media_scaffold_carries_no_media_surface() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(BASE_TOML).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_scaffold(&engine, &config, out.path())
+        .await
+        .expect("scaffold");
+
+    let app_state = scaffold_file(&files, out.path(), "src/app_state.rs");
+    assert!(
+        !app_state.contains("media_storage"),
+        "byte-identity: no [media] ⇒ no AppState slot"
+    );
+    let server = scaffold_file(&files, out.path(), "src/server.rs");
+    assert!(!server.contains("media_storage"), "{server}");
+    let lib = scaffold_file(&files, out.path(), "src/lib.rs");
+    assert!(!lib.contains("pub mod media;"), "{lib}");
+}
+
+// ── PR-B storage bootstrap migration (#630) ─────────────────────────────
+
+#[tokio::test]
+async fn supabase_plan_emits_the_storage_bootstrap_migration() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let migration = files
+        .iter()
+        .find(|f| f.path.ends_with("023000_media_storage.sql"))
+        .expect("the static-band media migration");
+    assert!(
+        migration.content.contains("INSERT INTO storage.buckets"),
+        "bucket bootstrap: {}",
+        migration.content
+    );
+    assert!(
+        migration
+            .content
+            .contains("CREATE POLICY media_core_org_scoped ON storage.objects"),
+        "org-scoped defense-in-depth policy: {}",
+        migration.content
+    );
+    // The file is written to the real migrations root by the pipeline.
+    let _ = out
+        .path()
+        .join("migrations")
+        .join("023000_media_storage.sql");
+}
+
+#[tokio::test]
+async fn r2_plan_emits_no_storage_migration() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"through-app\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    assert!(
+        !files.iter().any(|f| f.path.ends_with("media_storage.sql")),
+        "R2 buckets are platform-side — no migration analogue"
+    );
+}
+
+// ── PR-B/PR-C adapter emission (#630, #632) ─────────────────────────────
+
+// ── #631 deletion cleanup in the DELETE handler ─────────────────────────
+
+async fn run_handler_generator(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    workers: bool,
+) -> String {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let mut project = ProjectConfig::default();
+    if workers {
+        project.deployment.deployment_topology =
+            codegraph_generate::profile::DeploymentTopology::Workers;
+    }
+    let out = tempfile::tempdir().expect("out dir");
+    let generator = codegraph_generate::api::handler::HandlerGenerator::new(out.path())
+        .with_rules_guards(false);
+    use codegraph_generate::traits::EntityGenerator;
+    let files = generator
+        .generate(db, "PersonType", "core", config, &tera, &project)
+        .await
+        .expect("handler generation");
+    files
+        .iter()
+        .find(|f| f.path.to_string_lossy().contains("_handler.rs"))
+        .map(|f| f.content.clone())
+        .expect("handler file")
+}
+
+#[tokio::test]
+async fn delete_handler_carries_media_cleanup_when_media_declared() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let handler = run_handler_generator(&engine, &config, false).await;
+    assert!(
+        handler.contains("if let Some(storage) = &state.core_media_storage {"),
+        "the cleanup dispatches through the domain slot: {handler}"
+    );
+    assert!(
+        handler.contains("format!(\"{org}/core/person/{id}/avatar\")"),
+        "the lowered key format (overwrite-in-place, no child-row read): {handler}"
+    );
+    assert!(
+        handler.contains("storage.delete(&key).await"),
+        "best-effort provider delete: {handler}"
+    );
+    assert!(
+        handler.contains("testkit storage --gc"),
+        "the gc sweep is the named backstop: {handler}"
+    );
+    // Placement: inside the DELETE route, after the command completes and
+    // before the 204.
+    let delete_pos = handler
+        .find("pub async fn delete(")
+        .expect("delete route present");
+    let cleanup_pos = handler
+        .find("state.core_media_storage")
+        .expect("cleanup present");
+    let no_content_pos = handler
+        .rfind("StatusCode::NO_CONTENT")
+        .expect("204 present");
+    assert!(
+        delete_pos < cleanup_pos && cleanup_pos < no_content_pos,
+        "cleanup runs post-command, pre-204"
+    );
+}
+
+#[tokio::test]
+async fn delete_handler_has_no_media_cleanup_without_media_or_under_workers() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    // Flag-off: no [media] ⇒ no cleanup block (byte-identity).
+    let config = parse_domain_config_str(BASE_TOML).expect("toml");
+    let handler = run_handler_generator(&engine, &config, false).await;
+    assert!(
+        !handler.contains("media_cleanup") && !handler.contains("core_media_storage"),
+        "flag-off byte-identity: {handler}"
+    );
+    // Workers topology: the media slot is a monolith surface (the recorded
+    // deferral) — the block must be absent so the worker handler compiles.
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let handler = run_handler_generator(&engine, &config, true).await;
+    assert!(
+        !handler.contains("core_media_storage"),
+        "workers topology has no media slot to reference: {handler}"
+    );
+}
+
+#[tokio::test]
+async fn supabase_plan_emits_adapter_http_seam_and_noop() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let mut paths: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.path
+                .strip_prefix(out.path())
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "migrations/023000_media_storage.sql",
+            "src/media/http.rs",
+            "src/media/mod.rs",
+            "src/media/noop.rs",
+            "src/media/supabase.rs",
+        ],
+        "exact file set: trait + noop + adapter + transport + storage bootstrap"
+    );
+
+    let supabase_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("supabase.rs"))
+        .unwrap()
+        .content;
+    assert!(supabase_rs.contains("pub struct SupabaseStorage"));
+    assert!(
+        supabase_rs.contains("impl crate::media::MediaStorage for SupabaseStorage"),
+        "implements the emitted seam"
+    );
+    // The adapter speaks the Supabase Storage REST surface (issue #625 §2):
+    // service-key ops against /storage/v1, session-token display signing.
+    for fragment in [
+        "/storage/v1/object/",
+        "x-upsert",
+        "/storage/v1/object/sign/",
+        "/storage/v1/object/upload/sign/",
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_KEY",
+    ] {
+        assert!(supabase_rs.contains(fragment), "adapter pin: {fragment}");
+    }
+    // Provider purity (the PR-A pin contract): no SigV4, no R2 vocabulary —
+    // invalid combos are refused at generation time, not branched at runtime.
+    assert!(
+        !supabase_rs.contains("AWS4-HMAC-SHA256"),
+        "no SigV4 in supabase"
+    );
+    assert!(
+        !supabase_rs.contains("r2"),
+        "no r2 vocabulary in supabase adapter",
+    );
+    // Transport injection: the adapter never constructs an HTTP client itself.
+    assert!(
+        supabase_rs.contains("MediaHttp"),
+        "adapters speak through the MediaHttp seam"
+    );
+    assert!(
+        !supabase_rs.contains("reqwest::"),
+        "provider purity: no HTTP dependency inside the adapter"
+    );
+
+    let http_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("http.rs"))
+        .unwrap()
+        .content;
+    assert!(
+        http_rs.contains("target_arch = \"wasm32\""),
+        "native transport is cfg-gated so the wasm32 pin compiles the plane without reqwest"
+    );
+    assert!(
+        http_rs.contains("reqwest"),
+        "native leg rides the app's reqwest"
+    );
+}
+
+#[tokio::test]
+async fn r2_plan_emits_the_r2_adapter_with_sigv4() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"through-app\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let mut paths: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.path
+                .strip_prefix(out.path())
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "hurl/09_media.hurl",
+            "src/media/http.rs",
+            "src/media/mod.rs",
+            "src/media/noop.rs",
+            "src/media/r2.rs",
+        ],
+        "r2 plan emits the r2 adapter + transport + hurl contract (no supabase module, no migration)"
+    );
+
+    let r2_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("r2.rs"))
+        .unwrap()
+        .content;
+    assert!(r2_rs.contains("pub struct R2Storage"));
+    assert!(
+        r2_rs.contains("impl crate::media::MediaStorage for R2Storage"),
+        "implements the emitted seam"
+    );
+    // SigV4 (issue #632): header-signed ops + query-signed presigned PUT.
+    for fragment in [
+        "AWS4-HMAC-SHA256",
+        "UNSIGNED-PAYLOAD",
+        "aws4_request",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_ACCOUNT_ID",
+        "r2.cloudflarestorage.com",
+    ] {
+        assert!(r2_rs.contains(fragment), "r2 adapter pin: {fragment}");
+    }
+    assert!(
+        r2_rs.contains("MediaHttp"),
+        "adapters speak through the MediaHttp seam"
+    );
+    assert!(
+        !r2_rs.contains("reqwest::"),
+        "provider purity: no HTTP dependency inside the adapter"
+    );
+
+    let mod_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("mod.rs"))
+        .unwrap()
+        .content;
+    assert!(mod_rs.contains("pub mod r2;"), "r2 adapter module declared");
+    assert!(
+        !mod_rs.contains("pub mod supabase;"),
+        "only the configured provider's adapter is declared"
+    );
+}
+
 // ── emission ────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -190,8 +799,14 @@ async fn media_config_emits_media_module_and_noop() {
     paths.sort();
     assert_eq!(
         paths,
-        vec!["src/media/mod.rs", "src/media/noop.rs"],
-        "exact file set"
+        vec![
+            "migrations/023000_media_storage.sql",
+            "src/media/http.rs",
+            "src/media/mod.rs",
+            "src/media/noop.rs",
+            "src/media/supabase.rs",
+        ],
+        "exact file set: trait + noop + provider adapter + native transport + storage bootstrap"
     );
 
     let mod_rs = &files
@@ -216,10 +831,12 @@ async fn media_config_emits_media_module_and_noop() {
         assert!(flat.contains(m), "trait method pin missing: {m}");
     }
     assert!(mod_rs.contains("pub mod noop;"), "noop re-exported");
+    // PR-B (#630): the supabase plan emits its adapter + the transport seam.
     assert!(
-        !mod_rs.contains("pub mod supabase") && !mod_rs.contains("pub mod r2"),
-        "PR-A emits no adapter modules — they land with PR-B/PR-C"
+        mod_rs.contains("pub mod supabase;"),
+        "supabase adapter module"
     );
+    assert!(mod_rs.contains("pub mod http;"), "native transport module");
 
     let noop_rs = &files
         .iter()
@@ -240,7 +857,7 @@ async fn media_config_emits_media_module_and_noop() {
     );
 
     // The emitted tree is real on disk (written by the pipeline).
-    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 2);
+    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 5);
     let _ = fs::read_to_string(out.path().join("src/media/mod.rs"));
 }
 
