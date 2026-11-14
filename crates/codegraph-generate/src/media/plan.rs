@@ -29,6 +29,38 @@ pub async fn build_media_plans(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
 ) -> Result<BTreeMap<String, MediaPlan>, Error> {
+    // One provider per app in v1 (issue #625 PR-B decision): the AppState
+    // media surface is single-provider — a mixed declaration is a config
+    // error naming both providers and the domains, never a silent
+    // half-configured plane.
+    {
+        let mut first: Option<(MediaProvider, String)> = None;
+        for (name, entry) in &config.domains {
+            let Some(media) = &entry.media else {
+                continue;
+            };
+            let provider =
+                MediaProvider::parse(media.provider.as_str()).ok_or_else(|| {
+                    Error::Config(format!(
+                        "domain \"{name}\" media: provider \"{}\" missing from the core mirror",
+                        media.provider.as_str()
+                    ))
+                })?;
+            match &first {
+                None => first = Some((provider, name.clone())),
+                Some((first_provider, first_domain)) if provider != *first_provider => {
+                    return Err(Error::Config(format!(
+                        "media: domains \"{first_domain}\" and \"{name}\" declare different \
+                         providers (\"{}\" vs \"{}\") — one provider per app in v1; split the \
+                         providers across apps or align the declarations",
+                        first_provider.as_str(),
+                        provider.as_str()
+                    )));
+                }
+                _ => {}
+            }
+        }
+    }
     let mut plans = BTreeMap::new();
     for (name, entry) in &config.domains {
         let Some(media) = &entry.media else {

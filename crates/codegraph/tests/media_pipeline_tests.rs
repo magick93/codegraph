@@ -165,6 +165,166 @@ async fn run_generator(
     generator.generate(db, config, &[], &tera, &project).await
 }
 
+// ── PR-B/PR-C adapter emission (#630, #632) ─────────────────────────────
+
+#[tokio::test]
+async fn supabase_plan_emits_adapter_http_seam_and_noop() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let mut paths: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.path
+                .strip_prefix(out.path())
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "src/media/http.rs",
+            "src/media/mod.rs",
+            "src/media/noop.rs",
+            "src/media/supabase.rs",
+        ],
+        "exact file set: trait + noop + supabase adapter + native transport"
+    );
+
+    let supabase_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("supabase.rs"))
+        .unwrap()
+        .content;
+    assert!(supabase_rs.contains("pub struct SupabaseStorage"));
+    assert!(
+        supabase_rs.contains("impl crate::media::MediaStorage for SupabaseStorage"),
+        "implements the emitted seam"
+    );
+    // The adapter speaks the Supabase Storage REST surface (issue #625 §2):
+    // service-key ops against /storage/v1, session-token display signing.
+    for fragment in [
+        "/storage/v1/object/",
+        "x-upsert",
+        "/storage/v1/object/sign/",
+        "/storage/v1/object/upload/sign/",
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_KEY",
+    ] {
+        assert!(supabase_rs.contains(fragment), "adapter pin: {fragment}");
+    }
+    // Provider purity (the PR-A pin contract): no SigV4, no R2 vocabulary —
+    // invalid combos are refused at generation time, not branched at runtime.
+    assert!(!supabase_rs.contains("AWS4-HMAC-SHA256"), "no SigV4 in supabase");
+    assert!(!supabase_rs.contains("r2"), "no r2 vocabulary in supabase adapter",);
+    // Transport injection: the adapter never constructs an HTTP client itself.
+    assert!(
+        supabase_rs.contains("MediaHttp"),
+        "adapters speak through the MediaHttp seam"
+    );
+    assert!(
+        !supabase_rs.contains("reqwest::"),
+        "provider purity: no HTTP dependency inside the adapter"
+    );
+
+    let http_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("http.rs"))
+        .unwrap()
+        .content;
+    assert!(
+        http_rs.contains("target_arch = \"wasm32\""),
+        "native transport is cfg-gated so the wasm32 pin compiles the plane without reqwest"
+    );
+    assert!(http_rs.contains("reqwest"), "native leg rides the app's reqwest");
+}
+
+#[tokio::test]
+async fn r2_plan_emits_the_r2_adapter_with_sigv4() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"through-app\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let mut paths: Vec<String> = files
+        .iter()
+        .map(|f| {
+            f.path
+                .strip_prefix(out.path())
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        vec![
+            "src/media/http.rs",
+            "src/media/mod.rs",
+            "src/media/noop.rs",
+            "src/media/r2.rs",
+        ],
+        "r2 plan emits the r2 adapter (no supabase module — one provider per app)"
+    );
+
+    let r2_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("r2.rs"))
+        .unwrap()
+        .content;
+    assert!(r2_rs.contains("pub struct R2Storage"));
+    assert!(
+        r2_rs.contains("impl crate::media::MediaStorage for R2Storage"),
+        "implements the emitted seam"
+    );
+    // SigV4 (issue #632): header-signed ops + query-signed presigned PUT.
+    for fragment in [
+        "AWS4-HMAC-SHA256",
+        "UNSIGNED-PAYLOAD",
+        "aws4_request",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_ACCOUNT_ID",
+        "r2.cloudflarestorage.com",
+    ] {
+        assert!(r2_rs.contains(fragment), "r2 adapter pin: {fragment}");
+    }
+    assert!(
+        r2_rs.contains("MediaHttp"),
+        "adapters speak through the MediaHttp seam"
+    );
+    assert!(
+        !r2_rs.contains("reqwest::"),
+        "provider purity: no HTTP dependency inside the adapter"
+    );
+
+    let mod_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("mod.rs"))
+        .unwrap()
+        .content;
+    assert!(mod_rs.contains("pub mod r2;"), "r2 adapter module declared");
+    assert!(
+        !mod_rs.contains("pub mod supabase;"),
+        "only the configured provider's adapter is declared"
+    );
+}
+
 // ── emission ────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -190,8 +350,13 @@ async fn media_config_emits_media_module_and_noop() {
     paths.sort();
     assert_eq!(
         paths,
-        vec!["src/media/mod.rs", "src/media/noop.rs"],
-        "exact file set"
+        vec![
+            "src/media/http.rs",
+            "src/media/mod.rs",
+            "src/media/noop.rs",
+            "src/media/supabase.rs",
+        ],
+        "exact file set: trait + noop + provider adapter + native transport"
     );
 
     let mod_rs = &files
@@ -216,10 +381,9 @@ async fn media_config_emits_media_module_and_noop() {
         assert!(flat.contains(m), "trait method pin missing: {m}");
     }
     assert!(mod_rs.contains("pub mod noop;"), "noop re-exported");
-    assert!(
-        !mod_rs.contains("pub mod supabase") && !mod_rs.contains("pub mod r2"),
-        "PR-A emits no adapter modules — they land with PR-B/PR-C"
-    );
+    // PR-B (#630): the supabase plan emits its adapter + the transport seam.
+    assert!(mod_rs.contains("pub mod supabase;"), "supabase adapter module");
+    assert!(mod_rs.contains("pub mod http;"), "native transport module");
 
     let noop_rs = &files
         .iter()
@@ -240,7 +404,7 @@ async fn media_config_emits_media_module_and_noop() {
     );
 
     // The emitted tree is real on disk (written by the pipeline).
-    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 2);
+    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 4);
     let _ = fs::read_to_string(out.path().join("src/media/mod.rs"));
 }
 

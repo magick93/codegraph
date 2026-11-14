@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
-use codegraph_core::types::MediaPlan;
+use codegraph_core::types::{MediaPlan, MediaProvider};
 use serde_json::json;
 
 use crate::error::Result;
@@ -77,11 +77,29 @@ impl GlobalGenerator for MediaStorageGenerator {
         if plans.is_empty() {
             return Ok(Vec::new());
         }
-        // Distinct configured providers would each contribute an adapter
-        // module; PR-A emits none (the adapters context stays empty so the
-        // mod.tera loop renders nothing — no `pub mod` without its file).
-        let ctx = json!({ "adapters": [] });
-        Ok(vec![
+        // One provider per app in v1 (validated in the plan builder — the
+        // adapter set is derived from the single surviving provider).
+        let provider = plans
+            .values()
+            .next()
+            .map(|p| p.provider)
+            .unwrap_or(MediaProvider::Supabase);
+        let adapter = match provider {
+            MediaProvider::Supabase => "supabase",
+            MediaProvider::R2 => "r2",
+            // The generic S3 slice is not landed; R2's adapter accepts plain
+            // S3-compatible endpoints today (R2_S3_ENDPOINT). A named error,
+            // never silent emission of a broken plane (#551 in spirit).
+            MediaProvider::S3 => {
+                return Err(crate::error::Error::Config(
+                    "media provider \"s3\" adapter lands in a follow-up slice — use provider \
+                     \"r2\" with R2_S3_ENDPOINT for S3-compatible stores today"
+                        .to_string(),
+                ))
+            }
+        };
+        let ctx = json!({ "adapters": [adapter] });
+        let mut files = vec![
             GeneratedFile {
                 path: self.output_dir.join("src").join("media").join("mod.rs"),
                 content: render_template_with_project(tera, "media/mod.tera", &ctx, project)?,
@@ -90,6 +108,25 @@ impl GlobalGenerator for MediaStorageGenerator {
                 path: self.output_dir.join("src").join("media").join("noop.rs"),
                 content: render_template_with_project(tera, "media/noop.tera", &ctx, project)?,
             },
-        ])
+            GeneratedFile {
+                path: self.output_dir.join("src").join("media").join("http.rs"),
+                content: render_template_with_project(tera, "media/http.tera", &ctx, project)?,
+            },
+            GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("src")
+                    .join("media")
+                    .join(format!("{adapter}.rs")),
+                content: render_template_with_project(
+                    tera,
+                    &format!("media/{adapter}.tera"),
+                    &ctx,
+                    project,
+                )?,
+            },
+        ];
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
     }
 }
