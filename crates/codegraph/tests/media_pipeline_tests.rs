@@ -165,6 +165,57 @@ async fn run_generator(
     generator.generate(db, config, &[], &tera, &project).await
 }
 
+// ── PR-B storage bootstrap migration (#630) ─────────────────────────────
+
+#[tokio::test]
+async fn supabase_plan_emits_the_storage_bootstrap_migration() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let migration = files
+        .iter()
+        .find(|f| f.path.ends_with("023000_media_storage.sql"))
+        .expect("the static-band media migration");
+    assert!(
+        migration.content.contains("INSERT INTO storage.buckets"),
+        "bucket bootstrap: {}",
+        migration.content
+    );
+    assert!(
+        migration
+            .content
+            .contains("CREATE POLICY media_core_org_scoped ON storage.objects"),
+        "org-scoped defense-in-depth policy: {}",
+        migration.content
+    );
+    // The file is written to the real migrations root by the pipeline.
+    let _ = out.path().join("migrations").join("023000_media_storage.sql");
+}
+
+#[tokio::test]
+async fn r2_plan_emits_no_storage_migration() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"through-app\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    assert!(
+        !files
+            .iter()
+            .any(|f| f.path.ends_with("media_storage.sql")),
+        "R2 buckets are platform-side — no migration analogue"
+    );
+}
+
 // ── PR-B/PR-C adapter emission (#630, #632) ─────────────────────────────
 
 #[tokio::test]
@@ -191,12 +242,13 @@ async fn supabase_plan_emits_adapter_http_seam_and_noop() {
     assert_eq!(
         paths,
         vec![
+            "migrations/023000_media_storage.sql",
             "src/media/http.rs",
             "src/media/mod.rs",
             "src/media/noop.rs",
             "src/media/supabase.rs",
         ],
-        "exact file set: trait + noop + supabase adapter + native transport"
+        "exact file set: trait + noop + adapter + transport + storage bootstrap"
     );
 
     let supabase_rs = &files
@@ -279,7 +331,7 @@ async fn r2_plan_emits_the_r2_adapter_with_sigv4() {
             "src/media/noop.rs",
             "src/media/r2.rs",
         ],
-        "r2 plan emits the r2 adapter (no supabase module — one provider per app)"
+        "r2 plan emits the r2 adapter + transport (no supabase module, no migration)"
     );
 
     let r2_rs = &files
@@ -351,12 +403,13 @@ async fn media_config_emits_media_module_and_noop() {
     assert_eq!(
         paths,
         vec![
+            "migrations/023000_media_storage.sql",
             "src/media/http.rs",
             "src/media/mod.rs",
             "src/media/noop.rs",
             "src/media/supabase.rs",
         ],
-        "exact file set: trait + noop + provider adapter + native transport"
+        "exact file set: trait + noop + provider adapter + native transport + storage bootstrap"
     );
 
     let mod_rs = &files
@@ -404,7 +457,7 @@ async fn media_config_emits_media_module_and_noop() {
     );
 
     // The emitted tree is real on disk (written by the pipeline).
-    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 4);
+    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 5);
     let _ = fs::read_to_string(out.path().join("src/media/mod.rs"));
 }
 

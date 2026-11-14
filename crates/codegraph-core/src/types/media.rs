@@ -188,7 +188,7 @@ impl KeyPlaceholder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum KeySegment {
+pub enum KeySegment {
     Literal(String),
     Placeholder(KeyPlaceholder),
 }
@@ -299,10 +299,32 @@ impl KeyTemplate {
         Ok(Self { segments })
     }
 
+    /// The parsed segments (structural access for consumers that inspect
+    /// the key shape — the media migration's org-position check).
+    pub fn segments(&self) -> &[KeySegment] {
+        &self.segments
+    }
+
+    /// Assemble from explicit segments (the mirror of [`Self::parse`]).
+    /// Enforces the same `{id}`+`{field}` invariant parse does.
+    pub fn from_segments(segments: Vec<KeySegment>) -> Self {
+        let mut placeholders = BTreeSet::new();
+        for seg in &segments {
+            if let KeySegment::Placeholder(ph) = seg {
+                placeholders.insert(*ph);
+            }
+        }
+        debug_assert!(
+            placeholders.contains(&KeyPlaceholder::Id)
+                && placeholders.contains(&KeyPlaceholder::Field),
+            "key templates must carry the {{id}} and {{field}} placeholders"
+        );
+        Self { segments }
+    }
+
     /// Render the key. Segment values may not contain `/` (rejected — a
     /// path-traversal-shaped key would escape the bucket prefix).
-    pub fn render(&self, r: &MediaObjectRef) -> Result<String, String> {
-        let mut out = String::new();
+    pub fn render(&self, r: &MediaObjectRef) -> Result<String, String> {        let mut out = String::new();
         for seg in &self.segments {
             match seg {
                 KeySegment::Literal(lit) => out.push_str(lit),

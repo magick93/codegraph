@@ -196,10 +196,10 @@ async fn emit_media_plane(config: &DomainConfig) -> BTreeMap<String, String> {
         .generate(&engine, config, &[], &tera, &ProjectConfig::default())
         .await
         .expect("generation");
-    assert_eq!(
-        files.len(),
-        4,
-        "the plane is trait + noop + native transport + one adapter"
+    assert!(
+        files.len() == 4 || files.len() == 5,
+        "the plane is trait + noop + native transport + one adapter (+ the \
+         supabase storage bootstrap migration when the provider carries SQL)"
     );
     let mut map = BTreeMap::new();
     for f in &files {

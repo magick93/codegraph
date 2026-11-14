@@ -9,6 +9,7 @@
 //! presence-gated global generator emitting `src/media/{mod,noop}.rs`.
 
 pub mod plan;
+pub mod migration;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -105,8 +106,7 @@ impl GlobalGenerator for MediaStorageGenerator {
             }
         };
         let ctx = json!({ "adapters": [adapter] });
-        let mut files = vec![
-            GeneratedFile {
+        let mut files = vec![            GeneratedFile {
                 path: self.output_dir.join("src").join("media").join("mod.rs"),
                 content: render_template_with_project(tera, "media/mod.tera", &ctx, project)?,
             },
@@ -132,6 +132,28 @@ impl GlobalGenerator for MediaStorageGenerator {
                 )?,
             },
         ];
+        // The Supabase leg carries the SQL surface (bucket + defense-in-depth
+        // storage RLS, issue #625 PR-B). Static band 023000; R2 buckets are
+        // platform-side — no migration analogue. Postgres only (a sqlite
+        // target has no Supabase Storage to bind).
+        if provider == MediaProvider::Supabase {
+            if project.database.database_target == crate::db::dialect::DatabaseTarget::Sqlite {
+                return Err(crate::error::Error::Config(
+                    "media provider \"supabase\" requires database_target \"postgres\" — \
+                     Supabase Storage bootstrap (bucket + RLS policies) is Postgres-only"
+                        .to_string(),
+                ));
+            }
+            if let Some(sql) = migration::emit_media_storage_migration(&plans) {
+                files.push(GeneratedFile {
+                    path: crate::db::migrations_root(&self.output_dir).join(format!(
+                        "{:06}_media_storage.sql",
+                        migration::MEDIA_MIGRATION_BAND
+                    )),
+                    content: sql,
+                });
+            }
+        }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
     }
