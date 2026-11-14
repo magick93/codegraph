@@ -32,6 +32,12 @@ pub async fn validate_media_configs(db: &dyn GraphQuerier, config: &DomainConfig
     plan::build_media_plans(db, config).await.map(|_| ())
 }
 
+/// Graph-free provider-consistency check (one provider per app, v1) — the
+/// doctor-parity half of the plan builder's validation.
+pub fn validate_media_provider_consistency(config: &DomainConfig) -> Result<()> {
+    plan::validate_media_provider_consistency(config)
+}
+
 /// Build the media plan for every domain that declares `[media]`, keyed by
 /// domain name (BTreeMap — deterministic iteration, the charts precedent).
 pub async fn build_media_plans(

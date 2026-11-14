@@ -2182,6 +2182,18 @@ fn doctor_validates_media_matrix_and_template() {
         out.contains("1 hard check"),
         "an unknown key placeholder must hard-fail doctor: {out}"
     );
+
+    // One provider per app in v1 (issue #625 PR-B): two domains with
+    // different providers — one hard failure, the SAME shared validator
+    // the run path runs.
+    let out = doctor_with_media(
+        "\n[domains.common.media]\nprovider = \"supabase\"\nupload_mode = \"client-direct\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.billing]\nlabel = \"Billing\"\nschema_dir = \"billing\"\npostgres_schema = \"billing\"\n\n[domains.billing.media]\nprovider = \"r2\"\nupload_mode = \"through-app\"\nbucket = \"billing-media\"\nmax_bytes = 1000\naccept = [\"image/png\"]\n\n[domains.billing.media.r2]\nbinding = \"MEDIA\"\n",
+    )
+    .unwrap();
+    assert!(
+        out.contains("1 hard check"),
+        "mixed providers must hard-fail doctor: {out}"
+    );
 }
 
 /// The union integrity stage (rexlang #114): a granted-but-uncarried

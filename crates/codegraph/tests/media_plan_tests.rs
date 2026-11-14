@@ -459,3 +459,26 @@ async fn bad_key_template_is_config_error_naming_template() {
     };
     assert!(err.contains("bucket"), "{err}");
 }
+
+// ── PR-B: one provider per app (issue #625) ─────────────────────────────
+
+#[tokio::test]
+async fn mixed_providers_across_domains_are_config_error_naming_both() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    // Domain `core` is supabase (the BASE_TOML fixture in this file), a
+    // second domain declares r2.
+    let config = parse(&format!(
+        "{}\n[domains.billing]\nlabel = \"Billing\"\nschema_dir = \"billing\"\npostgres_schema = \"billing\"\n\n[domains.billing.media]\nprovider = \"r2\"\nupload_mode = \"through-app\"\nbucket = \"billing-media\"\nmax_bytes = 1000\naccept = [\"image/png\"]\n\n[domains.billing.media.r2]\nbinding = \"MEDIA\"\n",
+        media_toml("supabase", "client-direct")
+    ));
+    let err = match build_media_plans(&engine, &config).await {
+        Err(Error::Config(msg)) => msg,
+        other => panic!("expected Error::Config, got {other:?}"),
+    };
+    assert!(err.contains("core"), "{err}");
+    assert!(err.contains("billing"), "{err}");
+    assert!(err.contains("supabase"), "{err}");
+    assert!(err.contains("r2"), "{err}");
+    assert!(err.contains("one provider per app"), "{err}");
+}
