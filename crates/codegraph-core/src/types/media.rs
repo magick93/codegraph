@@ -367,6 +367,17 @@ pub enum MediaProviderSettings {
     },
 }
 
+impl MediaProviderSettings {
+    /// The presign TTL for providers that declare one (r2); `None` carries
+    /// the default (the scaffold falls back to `DEFAULT_PRESIGN_TTL_SECS`).
+    pub fn presign_ttl_secs(&self) -> Option<u64> {
+        match self {
+            Self::R2 { presign_ttl_secs, .. } => Some(*presign_ttl_secs),
+            Self::Supabase | Self::S3 { .. } => None,
+        }
+    }
+}
+
 /// One contained-value media field resolved against the graph: the child
 /// table + columns the media surface reads and writes. All names go through
 /// the `codegraph-naming` single-source helpers (#460).

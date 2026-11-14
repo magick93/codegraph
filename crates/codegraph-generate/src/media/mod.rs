@@ -11,6 +11,10 @@
 pub mod plan;
 pub mod migration;
 
+/// The fallback presign TTL when the provider settings carry none (the r2
+/// config default; supabase presign expiry comes from the caller).
+pub const DEFAULT_PRESIGN_TTL_SECS: u64 = 900;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

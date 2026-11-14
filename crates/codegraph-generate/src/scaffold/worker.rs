@@ -484,7 +484,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await;
+        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await?;
         if scaffold_domains.is_empty() {
             return Ok(Vec::new());
         }
@@ -992,6 +992,7 @@ service_bindings = ["timecard"]
             atproto_nsids: vec![],
             has_manual_functions: false,
             has_external_functions: false,
+            media: None,
         }
     }
 
@@ -1621,6 +1622,7 @@ entities = ["CodeType"]
             atproto_nsids: vec![],
             has_manual_functions: false,
             has_external_functions: false,
+            media: None,
         };
         let mut domains = build_worker_domains(
             "hr",

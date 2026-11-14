@@ -13,7 +13,7 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
 use codegraph_generate::media::MediaStorageGenerator;
 use codegraph_generate::traits::{GeneratedFile, GlobalGenerator};
-use codegraph_generate::{ProjectConfig, error::Error};
+use codegraph_generate::{GenerationEntry, ProjectConfig, error::Error};
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -163,6 +163,97 @@ async fn run_generator(
     let project = ProjectConfig::default();
     let generator = MediaStorageGenerator::new(out);
     generator.generate(db, config, &[], &tera, &project).await
+}
+
+// ── PR-B AppState wiring (#630) ─────────────────────────────────────────
+
+async fn run_scaffold(
+    db: &dyn codegraph_core::traits::GraphQuerier,
+    config: &DomainConfig,
+    out: &std::path::Path,
+) -> Result<Vec<GeneratedFile>, Error> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])?;
+    let project = ProjectConfig::default();
+    let generator = codegraph_generate::scaffold::generator::ScaffoldGenerator::new(
+        out,
+        false, false, false, false, false, false, false, false, false, false,
+        "parallel",
+    );
+    let generation_order = vec![GenerationEntry {
+        schema_title: "PersonType".to_string(),
+        domain: "core".to_string(),
+        pg_schema: "core".to_string(),
+        is_cyclic: false,
+    }];
+    generator
+        .generate(db, config, &generation_order, &tera, &project)
+        .await
+}
+
+fn scaffold_file<'a>(
+    files: &'a [GeneratedFile],
+    out: &std::path::Path,
+    rel: &str,
+) -> &'a str {
+    files
+        .iter()
+        .find(|f| f.path == out.join(rel))
+        .map(|f| f.content.as_str())
+        .unwrap_or_else(|| panic!("scaffold must emit {rel}"))
+}
+
+#[tokio::test]
+async fn scaffold_wires_the_per_domain_media_slot_and_module_declaration() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_scaffold(&engine, &config, out.path()).await.expect("scaffold");
+
+    let app_state = scaffold_file(&files, out.path(), "src/app_state.rs");
+    assert!(
+        app_state.contains("pub core_media_storage: Option<std::sync::Arc<dyn crate::media::MediaStorage>>"),
+        "the per-domain provider slot: {app_state}"
+    );
+
+    let server = scaffold_file(&files, out.path(), "src/server.rs");
+    assert!(
+        server.contains("core_media_storage:"),
+        "the AppState construction site carries the slot: {server}"
+    );
+    assert!(
+        server.contains("SupabaseStorage::from_env"),
+        "the configured provider constructs: {server}"
+    );
+    assert!(
+        server.contains("ReqwestHttp::new"),
+        "the native transport constructs once at boot: {server}"
+    );
+
+    let lib = scaffold_file(&files, out.path(), "src/lib.rs");
+    assert!(
+        lib.contains("pub mod media;"),
+        "the module must be REACHABLE — PR-A's emission was dead without this: {lib}"
+    );
+}
+
+#[tokio::test]
+async fn no_media_scaffold_carries_no_media_surface() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(BASE_TOML).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_scaffold(&engine, &config, out.path()).await.expect("scaffold");
+
+    let app_state = scaffold_file(&files, out.path(), "src/app_state.rs");
+    assert!(
+        !app_state.contains("media_storage"),
+        "byte-identity: no [media] ⇒ no AppState slot"
+    );
+    let server = scaffold_file(&files, out.path(), "src/server.rs");
+    assert!(!server.contains("media_storage"), "{server}");
+    let lib = scaffold_file(&files, out.path(), "src/lib.rs");
+    assert!(!lib.contains("pub mod media;"), "{lib}");
 }
 
 // ── PR-B storage bootstrap migration (#630) ─────────────────────────────
