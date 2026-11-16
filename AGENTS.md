@@ -2459,6 +2459,19 @@ ifml_media_upload_tests`, and the nightly
 category; the live upload leg needs a configured provider, so the gate
 asserts the wired shape).
 
+**The media data-plane handler compiles as a real app** (found by that
+nightly boot after the gate fixture gained `[media]`): `media_route.tera`
+imports `sea_orm::ConnectionTrait` and issues raw SQL through
+`execute_raw`/`query_one_raw` (sea-orm 2's generic `execute`/`query_one` take
+`&S: StatementBuilder`, a bound `Statement` does not satisfy — the raw-SQL
+methods are the correct pair), and `scaffold/main.tera` declares
+`mod media;` beside `lib.rs`'s declaration (the binary re-declares the module
+tree, so a lib-only declaration left `crate::media` unresolved from
+`app_state.rs`/`server.rs`). Both are presence-gated on `has_media`;
+flag-off output is unchanged. The compile coverage for this plane is the
+nightly gate's T0 boot — a PR-CI #551 compile pin for the media handler is
+tracked in #683.
+
 ## Compile-pin policy (issue #551)
 
 **Every generator that emits Rust ships a test that COMPILES its output.**

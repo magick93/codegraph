@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use sea_orm::{DatabaseBackend, Statement};
+use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 use uuid::Uuid;
 
 use crate::app_state::AppState;
@@ -192,7 +192,7 @@ pub async fn upload(
     );
     state
         .db
-        .execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
         .await
         .map_err(|e| AppError::internal(format!("failed to persist media reference: {e}")))?;
 
@@ -239,7 +239,7 @@ pub async fn display(
     );
     let row = state
         .db
-        .query_one(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .query_one_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
         .await
         .map_err(|e| AppError::internal(format!("failed to load media reference: {e}")))?;
     let key = row
@@ -292,7 +292,7 @@ pub async fn remove(
     );
     let row = state
         .db
-        .query_one(Statement::from_string(DatabaseBackend::Postgres, select))
+        .query_one_raw(Statement::from_string(DatabaseBackend::Postgres, select))
         .await
         .map_err(|e| AppError::internal(format!("failed to load media reference: {e}")))?;
     let key = row
@@ -308,7 +308,7 @@ pub async fn remove(
     );
     state
         .db
-        .execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+        .execute_raw(Statement::from_string(DatabaseBackend::Postgres, sql))
         .await
         .map_err(|e| AppError::internal(format!("failed to remove media reference: {e}")))?;
     Ok(StatusCode::NO_CONTENT)
