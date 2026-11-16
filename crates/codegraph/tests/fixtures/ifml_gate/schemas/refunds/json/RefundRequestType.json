@@ -38,6 +38,10 @@
     "escalation": {
       "$ref": "../../common/json/codelist/RefundEscalationCodeList.json",
       "description": "Escalation state driven by the action plane (WS6)"
+    },
+    "receipt": {
+      "$ref": "MediaReferenceType.json",
+      "description": "The uploaded receipt (issue #633: the media route's reference)"
     }
   },
   "required": [

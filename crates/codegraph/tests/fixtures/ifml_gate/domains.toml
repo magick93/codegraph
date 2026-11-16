@@ -14,6 +14,9 @@ label = "Refunds"
 schema_dir = "refunds"
 postgres_schema = "refunds"
 entities = ["RefundRequestType"]
+# The media reference is a contained value (issue #633): force the VO so the
+# classifier never scaffolds a CRUD surface for the upload target.
+force_value_objects = ["MediaReferenceType"]
 
 [domains.refunds.entity_config.RefundRequestType]
 role = "root"

@@ -53,11 +53,16 @@ generators = [
     "ddl", "sea_orm_entity", "codelist", "dto", "repository", "command",
     "query", "handler", "workflow_action",
     "domain_types_dto", "domain_types_query_service",
+    # Media (issue #633): the modeled `input file` field needs the
+    # app-plane upload route the router already references.
+    "media_route",
     # Domain
     "errors", "router", "links",
     # Global
     "scaffold", "platform_schema", "workflow_seed", "openapi",
     "domain_types_scaffold",
+    # Media storage (issue #633): the AppState slot the upload route reads.
+    "media_storage",
 ]
 
 [profiles.gate.ui]

@@ -52,8 +52,8 @@ pub struct PageSvelteContext {
     /// (issue #557).
     pub(super) has_api_surface: bool,
     /// Media file-field wiring (issue #633): the page-script blocks (state
-    /// + upload handlers) and the `data.remote.ts` command exports the page
-    /// imports. Empty without a wired file field — every other page is
+    /// and upload handlers) and the `data.remote.ts` command exports the
+    /// page imports. Empty without a wired file field — every other page is
     /// byte-identical.
     #[serde(default)]
     pub(super) file_scripts: String,
