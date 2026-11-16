@@ -18,10 +18,15 @@
   const isEdit = $derived(!!page.params.id);
   const endpointId = $derived(page.params.id);
   // The edit route's load provides the endpoint; the new route carries no
-  // load, so the prop is read defensively (issue #574 S2).
-  const existing = $derived(
-    (data as { endpoint?: WebhookEndpoint } | undefined)?.endpoint ?? null
-  );
+  // load, so the prop is declared defensively (issue #574 S2). It MUST be
+  // declared: in runes mode an undeclared `data` is a TS/`$props()`
+  // contract break, not an implicit prop (issue #634).
+  interface Props {
+    data?: { endpoint?: WebhookEndpoint };
+  }
+
+  let { data = undefined }: Props = $props();
+  const existing = $derived(data?.endpoint ?? null);
 
   let url = $state(existing?.url ?? '');
   let description = $state(existing?.description ?? '');

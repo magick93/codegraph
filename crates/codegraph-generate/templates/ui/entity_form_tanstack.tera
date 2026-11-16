@@ -2,7 +2,13 @@
 <!-- TanStack Form component for {{ entity_name }} (issue #580): the zod
      schema is lowered IN RUST (forms::ZodObject) and interpolated; field
      errors come from TanStack field state meta; the submit button rides
-     form.Subscribe. 422 field details map onto the matching fields. -->
+     form.Subscribe. 422 field details map onto the matching fields.
+     The reset affordance is rendered INLINE against this component's own
+     form instance (issue #634): `$lib/forms/form.ts` is an if-absent
+     consumer extension point, so a tree scaffolding before a form
+     component was registered would resolve the registered reset component
+     to undefined. The registration stays available for consumer code;
+     generated pages depend only on generator-owned output. -->
 <script lang="ts">
 	import { createAppForm } from '$lib/forms/form';
 	import { z } from 'zod';
@@ -238,7 +244,14 @@
 		<form.Subscribe selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}>
 			{% raw %}{#snippet children({ canSubmit, isSubmitting })}
 				<div class="flex flex-col-reverse gap-3 pt-4 sm:flex-row sm:justify-end">
-					<form.ResetButton label={m.common_reset()} testid="{% endraw %}{{ tid.reset_btn }}{% raw %}" />
+					<button
+						type="button"
+						class="inline-flex h-9 items-center justify-center rounded-md border border-input bg-transparent px-4 text-sm font-medium shadow-sm"
+						onclick={() => form.reset()}
+						data-testid="{% endraw %}{{ tid.reset_btn }}{% raw %}"
+					>
+						{m.common_reset()}
+					</button>
 					<Button variant="outline" type="button" onclick={() => history.back()} data-testid="{% endraw %}{{ tid.cancel_btn }}{% raw %}">
 						{m.common_cancel()}
 					</Button>

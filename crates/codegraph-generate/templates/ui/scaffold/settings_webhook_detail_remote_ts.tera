@@ -41,7 +41,7 @@ export const toggleActive = command(
 			const body = await response.json().catch(() => null);
 			return {
 				ok: false as const,
-				message: body?.error ?? body?.message ?? `Request failed (${response.status})`
+				message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})`
 			};
 		}
 		// Single-flight refresh (issue #574 S4a): the fresh endpoint data
@@ -64,7 +64,7 @@ export const rotateSecret = command('unchecked', async (id: string) => {
 		const body = await response.json().catch(() => null);
 		return {
 			ok: false as const,
-			message: body?.error ?? body?.message ?? `Request failed (${response.status})`
+			message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})`
 		};
 	}
 	const json = await response.json();
@@ -82,7 +82,7 @@ export const deleteSubscription = command(
 			const body = await response.json().catch(() => null);
 			return {
 				ok: false as const,
-				message: body?.error ?? body?.message ?? `Request failed (${response.status})`
+				message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})`
 			};
 		}
 		void getEndpointData(endpointId).refresh();
@@ -92,8 +92,9 @@ export const deleteSubscription = command(
 {% if ui_live_queries %}
 // Live delivery log (issue #574 S4c): a query.live stream polling the
 // deliveries read every 5s. The page consumes the instance reactively on
-// the client; the load payload stays the SSR fallback.
-export const getDeliveriesLive = query.live(async function* (id: string) {
+// the client; the load payload stays the SSR fallback. The `'unchecked'`
+// first argument is kit's input-carrying overload (issue #634).
+export const getDeliveriesLive = query.live('unchecked', async function* (id: string) {
 	while (true) {
 		const res = await apiFetch(`/api/v1/webhooks/webhook-endpoints/${id}/deliveries`);
 		if (res.ok) {

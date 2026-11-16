@@ -24,7 +24,7 @@ export const deleteEndpoint = command('unchecked', async (id: string) => {
 		const body = await response.json().catch(() => null);
 		return {
 			ok: false as const,
-			message: body?.error ?? body?.message ?? `Request failed (${response.status})`
+			message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})`
 		};
 	}
 	return { ok: true as const };

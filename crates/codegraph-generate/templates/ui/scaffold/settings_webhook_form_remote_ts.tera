@@ -32,7 +32,7 @@ export const createEndpoint = command(
 			const res = await response.json().catch(() => null);
 			return {
 				ok: false as const,
-				message: res?.error ?? res?.message ?? `Request failed (${response.status})`
+				message: res?.error?.message ?? res?.message ?? `Request failed (${response.status})`
 			};
 		}
 		const json = await response.json();
@@ -59,7 +59,7 @@ export const updateEndpoint = command(
 			const res = await response.json().catch(() => null);
 			return {
 				ok: false as const,
-				message: res?.error ?? res?.message ?? `Request failed (${response.status})`
+				message: res?.error?.message ?? res?.message ?? `Request failed (${response.status})`
 			};
 		}
 		const json = await response.json();

@@ -8,7 +8,9 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
+{% if has_delete %}
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+{% endif %}
 {% if has_workflow %}
 	import WorkflowPanel from '#lib/components/ui/WorkflowPanel.svelte';
 	import { transitionItem } from './data.remote';

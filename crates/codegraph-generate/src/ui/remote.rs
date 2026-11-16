@@ -255,7 +255,12 @@ fn child_queries(ctx: &UiPageContext, api_version: &str) -> String {
 }
 
 /// The commands' shared failure leg (discriminated `{ ok: false }`).
-const COMMAND_FAIL_LEG: &str = "\tif (!response.ok) {\n\t\tconst body = await response.json().catch(() => null);\n\t\treturn { ok: false as const, message: body?.error ?? body?.message ?? `Request failed (${response.status})` };\n\t}\n";
+///
+/// The API's error body is `{ error: { code, message, details? } }` — the
+/// pre-#634 legs read `body?.error ?? …`, which stringified the OBJECT
+/// into the toast (`[object Object]`). Read the message field (issue #634,
+/// the #582 IFML-plane lesson applied one plane over).
+const COMMAND_FAIL_LEG: &str = "\tif (!response.ok) {\n\t\tconst body = await response.json().catch(() => null);\n\t\treturn { ok: false as const, message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})` };\n\t}\n";
 
 /// The create/update failure leg under the TanStack form layer (issue
 /// #580): the 422 `VALIDATION_ERROR` body's `details: [{field, message}]`
@@ -420,11 +425,16 @@ fn media_remove_command(
 /// polling the `/workflow` read every 5s. Kit consumes it as a
 /// `query.live` — SSR takes nothing (the page guards on the instance),
 /// the client stays connected while the page shows the state.
+///
+/// Kit's overloads are `live(fn: (arg: void) => …)` and
+/// `live(validate: "unchecked", fn: (arg: Input) => …)`: an id-taking
+/// live query MUST pass `'unchecked'` or the call is a TS2345 (issue
+/// #634 — the IFML plane already carried the correct form).
 fn workflow_live_query(ctx: &UiPageContext, api_version: &str) -> String {
     let mut wf = item_path_from_ids(ctx, api_version);
     wf.push_str("/workflow");
     let mut s = String::new();
-    s.push_str("export const getWorkflowLive = query.live(async function* (id: string) {\n");
+    s.push_str("export const getWorkflowLive = query.live('unchecked', async function* (id: string) {\n");
     s.push_str("\twhile (true) {\n");
     s.push_str("\t\tconst res = await apiFetch(`");
     s.push_str(&wf);
@@ -530,7 +540,12 @@ pub(super) fn render_detail_module(ctx: &UiPageContext, api_version: &str, live:
     let mut bodies = Vec::new();
     let mut queries = 0usize;
     let mut commands = 0usize;
-    if ctx.has_read {
+    // The transition command single-flight-refreshes `getItem` (issue #574
+    // S4a), so the read query is emitted whenever ANYTHING in the module
+    // refreshes it — not only when the page reads the record (issue #634:
+    // a workflow without the read op referenced an unexported refresh
+    // target).
+    if ctx.has_read || ctx.has_workflow {
         bodies.push(item_query(ctx, api_version));
         queries += 1;
     }
@@ -652,6 +667,37 @@ mod tests {
         // Without the ux row-action plane there is no delete on the list.
         let m = render_list_module(&ctx, "v1", false);
         assert!(!m.contains("deleteItem"), "{m}");
+        // ...and neither when the entity has no delete op — the list page's
+        // IMPORT gate must follow the module's emission rule (issue #634
+        // class 1: an imported-but-unemitted export is a Rollup failure).
+        let mut no_delete = root_ctx();
+        no_delete.has_delete = false;
+        let m = render_list_module(&no_delete, "v1", true);
+        assert!(!m.contains("deleteItem"), "{m}");
+    }
+
+    #[test]
+    fn command_fail_legs_read_the_error_message_not_the_object() {
+        // The API's error body is `{ error: { code, message, details? } }`.
+        // Reading `body?.error` returns the OBJECT and renders
+        // `[object Object]` in a toast (issue #634 class 5).
+        let ctx = root_ctx();
+        for (label, module) in [
+            ("create", render_create_module(&ctx, "v1", false)),
+            ("create+form", render_create_module(&ctx, "v1", true)),
+            ("edit", render_edit_module(&ctx, "v1", false)),
+            ("edit+form", render_edit_module(&ctx, "v1", true)),
+            ("detail", render_detail_module(&ctx, "v1", false)),
+        ] {
+            assert!(
+                module.contains("body?.error?.message"),
+                "{label} fail leg must read the message field:\n{module}"
+            );
+            assert!(
+                !module.contains("body?.error ??"),
+                "{label} fail leg reads the error OBJECT:\n{module}"
+            );
+        }
     }
 
     #[test]
@@ -706,11 +752,13 @@ mod tests {
         );
         // Flag off: no live stream.
         assert!(!m.contains("query.live"), "{m}");
-        // Flag on: the workflow live stream rides the module.
+        // Flag on: the workflow live stream rides the module. Kit's
+        // input-carrying `query.live` overload requires the `'unchecked'`
+        // first argument (issue #634: the bare-generator form is a TS2345).
         let live = render_detail_module(&ctx, "v1", true);
         assert!(
             live.contains(
-                "export const getWorkflowLive = query.live(async function* (id: string) {"
+                "export const getWorkflowLive = query.live('unchecked', async function* (id: string) {"
             ),
             "{live}"
         );
