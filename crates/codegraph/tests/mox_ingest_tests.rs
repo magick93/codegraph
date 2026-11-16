@@ -409,7 +409,7 @@ async fn mox_compile_failure_is_a_hard_error_naming_the_diagnostic() {
     let error = codegraph::ingest::mox_ingest::ingest_mox_files(
         &engine,
         &engine,
-        &[mox.clone()],
+        std::slice::from_ref(&mox),
         &config,
         &config.defaults.type_suffix,
     )

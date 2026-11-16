@@ -1,6 +1,6 @@
 /// Leave domain model for the workers gate. `LeaveRequestType` is the
 /// branching-machine entity: the workflow lives in domains.toml (NOT here —
-/// a bare-String status would be an upstream compile error, rexlang Rule 16)
+/// a bare-String status would be an upstream compile error, pherolang Rule 16)
 /// with `status` bound to the `LeaveStatus` codelist enum, and the `.ddd`
 /// design under design/leave.ddd carries the repository + the `notify`
 /// service seam.
