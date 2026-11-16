@@ -114,6 +114,10 @@ pub struct RouterEntity {
     pub children: Vec<ChildInfo>,
     pub cross_refs: Vec<CrossRefInfo>,
     pub media_fields: Vec<String>,
+    /// The domain's media upload mode needs presign issuance (issue #625
+    /// PR-C): the router mounts `presign` instead of the multipart upload.
+    /// False when no media routes exist or the mode is through-app.
+    pub media_mode_presigned: bool,
     /// When set, this entity supports the /tree endpoint (self-referencing hierarchy).
     pub hierarchy_field: Option<String>,
     /// Middleware names from the Pipeline that applies to this entity's endpoints.
@@ -295,17 +299,14 @@ impl DomainGenerator for RouterGenerator {
                     .map(|ec| ec.search.fts_rest_mode.clone())
                     .unwrap_or_else(|| "query_param".to_string());
 
-                let media_fields: Vec<String> = db
-                    .get_properties(title)
-                    .await
-                    .unwrap_or_default()
-                    .iter()
-                    .filter(|p| {
-                        p.effective_kind()
-                            == Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
-                    })
-                    .map(|p| p.pg_column_name.clone())
-                    .collect();
+                // Media route fields (issue #625 PR-C): plan-driven, mode-
+                // gated (through-app | presigned). The driver's pre-generation
+                // pass already hard-failed a broken media config, so a plan
+                // error here cannot silently drop routes.
+                let media_fields: Vec<String> =
+                    crate::media::plan::media_route_fields(db, config, domain, title)
+                        .await
+                        .unwrap_or_default();
 
                 let permissions = entity_cfg
                     .map(|ec| ec.permissions.clone())
@@ -364,6 +365,8 @@ impl DomainGenerator for RouterGenerator {
                     children: vec![],
                     cross_refs: vec![],
                     media_fields,
+                    media_mode_presigned: crate::media::plan::media_upload_mode(config, domain)
+                        .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
                     hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
                     pipeline_middleware: Vec::new(),
                     has_pipeline_layer: false,
@@ -662,17 +665,13 @@ pub async fn build_router_context(
                 .map(|cols| !cols.is_empty())
                 .unwrap_or(false);
 
-            let media_fields: Vec<String> = db
-                .get_properties(title)
-                .await
-                .unwrap_or_default()
-                .iter()
-                .filter(|p| {
-                    p.effective_kind()
-                        == Some(codegraph_type_contracts::RefClassificationKind::MediaWrapper)
-                })
-                .map(|p| p.pg_column_name.clone())
-                .collect();
+            // Media route fields (issue #625 PR-C) — the SAME helper as the
+            // sibling build_router_context site so the api contract cannot
+            // drift (#590 precedent).
+            let media_fields: Vec<String> =
+                crate::media::plan::media_route_fields(db, config, domain, title)
+                    .await
+                    .unwrap_or_default();
 
             let permissions = entity_cfg
                 .map(|ec| ec.permissions.clone())
@@ -729,6 +728,8 @@ pub async fn build_router_context(
                 children: vec![],
                 cross_refs: vec![],
                 media_fields,
+                media_mode_presigned: crate::media::plan::media_upload_mode(config, domain)
+                    .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
                 hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
                 pipeline_middleware: Vec::new(),
                 has_pipeline_layer: false,
@@ -1142,6 +1143,7 @@ mod tests {
                 children: vec![],
                 cross_refs: vec![],
                 media_fields: vec![],
+                media_mode_presigned: false,
                 hierarchy_field: None,
                 pipeline_middleware: vec![],
                 has_pipeline_layer: false,

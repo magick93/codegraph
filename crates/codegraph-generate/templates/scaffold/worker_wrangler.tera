@@ -47,8 +47,18 @@ max_retries = {{ queue_max_retries }}
 [[services]]
 binding = "{{ binding.binding }}"
 service = "{{ binding.service_name }}"
-{% endfor %}
-{% if custom_domain %}
+{% endfor %}{% if media_r2 %}
+
+# R2 bucket binding (issue #625 PR-C): this domain's media storage. The
+# adapter's env-credentialed S3 path (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY)
+# works on any topology; THIS binding is the workers-native PUT path
+# (env.{{ media_r2.binding }} — the worker AppState runtime wiring is the
+# recorded v1 deferral). Create the bucket with:
+#   wrangler r2 bucket create {{ media_r2.bucket }}
+[[r2_buckets]]
+binding = "{{ media_r2.binding }}"
+bucket_name = "{{ media_r2.bucket }}"
+{% endif %}{% if custom_domain %}
 
 [[routes]]
 pattern = "{{ custom_domain }}"

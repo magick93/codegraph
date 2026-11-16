@@ -127,12 +127,24 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
         .route("/{ {{- entity.param_name -}} }/actions/{{ op.snake }}", axum::routing::post({{ entity.module_name }}_handler::{{ op.fn_name }}))
 {%- endfor %}
 {% for mf in entity.media_fields %}
+{%- if entity.media_mode_presigned %}
+        .route(
+            "/{id}/{{ mf }}/presign",
+            axum::routing::post(media_{{ entity.module_name }}_{{ mf }}::presign).guard("{{ domain }}:{{ entity.path_segment }}", "update"),
+        )
+        .route(
+            "/{id}/{{ mf }}",
+            axum::routing::get(media_{{ entity.module_name }}_{{ mf }}::display).guard("{{ domain }}:{{ entity.path_segment }}", "read")
+                .merge(axum::routing::delete(media_{{ entity.module_name }}_{{ mf }}::remove).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+        )
+{%- else %}
         .route(
             "/{id}/{{ mf }}",
             axum::routing::put(media_{{ entity.module_name }}_{{ mf }}::upload).guard("{{ domain }}:{{ entity.path_segment }}", "update")
-                .merge(axum::routing::get(media_{{ entity.module_name }}_{{ mf }}::download).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
-                .merge(axum::routing::delete(media_{{ entity.module_name }}_{{ mf }}::delete).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
+                .merge(axum::routing::get(media_{{ entity.module_name }}_{{ mf }}::display).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
+                .merge(axum::routing::delete(media_{{ entity.module_name }}_{{ mf }}::remove).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
         )
+{%- endif %}
 {% endfor %}
 {% for child in entity.children %}
         .nest("/{ {{- entity.param_name -}} }/{{ child.path_segment }}", {{ child.module_name }}_routes())

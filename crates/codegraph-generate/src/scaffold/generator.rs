@@ -55,6 +55,10 @@ pub struct ScaffoldContext {
     /// the webhook CRUD surface. Skipped when false (byte-identity).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_function_events: bool,
+    /// Whether any domain declares `[media]` (issue #625 PR-B) — gates
+    /// `pub mod media;` in lib.rs. Skipped when false (byte-identity).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_media: bool,
     /// Resolved path (relative to the output dir when possible) of the
     /// `hr-seed` crate, discovered by walking up from the output dir and
     /// CWD looking for a sibling `hr-seed` directory.
@@ -79,6 +83,27 @@ pub struct ScaffoldEntity {
     /// Whether the generated query handler takes a hooks argument (mirrors the
     /// `uses_find_by_id` condition in ddd/query.tera).
     pub has_query_hooks: bool,
+}
+
+/// One domain's media storage wiring (issue #625 PR-B): the AppState slot +
+/// boot construction facts, resolved from the domain's `[media]` plan.
+/// `None` (byte-identical flag-off) when the domain declares no media.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScaffoldMedia {
+    /// The configured provider (`supabase` | `r2`) — the adapter module +
+    /// constructor selection is generation-time (never runtime branching).
+    pub provider: String,
+    /// The adapter struct (`SupabaseStorage` | `R2Storage`).
+    pub adapter_struct: String,
+    /// Generation-known bucket name — the object-key template's consumer.
+    pub bucket: String,
+    /// Public-bucket posture (R8 default false — private + signed display).
+    pub public_read: bool,
+    pub display_ttl_secs: u64,
+    pub presign_ttl_secs: u64,
+    /// The wrangler `[[r2_buckets]]` binding (provider r2 only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub r2_binding: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,6 +131,11 @@ pub struct ScaffoldDomain {
     /// the `{domain}_service_base_url` config slot; server.tera constructs
     /// them `None` / env-read. Flag-off = byte-identical.
     pub has_external_functions: bool,
+    /// Media storage wiring (issue #625 PR-B): `None` when the domain
+    /// declares no `[media]` — every template block it gates is absent,
+    /// keeping flag-off output byte-identical.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<ScaffoldMedia>,
 }
 
 pub struct ScaffoldGenerator {
@@ -220,7 +250,7 @@ pub async fn build_scaffold_domains(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     generation_order: &[GenerationEntry],
-) -> Vec<ScaffoldDomain> {
+) -> crate::error::Result<Vec<ScaffoldDomain>> {
     // Hand-owned + HTTP-exposed function domains (issues #450/#337) — the
     // AppState `{domain}_manual_impls` provider slots.
     let manual_domains: std::collections::HashSet<String> =
@@ -236,6 +266,10 @@ pub async fn build_scaffold_domains(
             Ok(domains) => domains.into_iter().collect(),
             Err(_) => Default::default(),
         };
+    // Media storage plans (issue #625 PR-B): the AppState slot facts. A
+    // broken media config fails here too — the scaffold is the emission
+    // surface for the slots, so it shares the run path's validation.
+    let media_plans = crate::media::build_media_plans(db, config).await?;
     let mut domain_entity_map: std::collections::HashMap<String, Vec<ScaffoldEntity>> =
         std::collections::HashMap::new();
     let mut domain_nsids: std::collections::HashMap<String, Vec<String>> =
@@ -315,6 +349,27 @@ pub async fn build_scaffold_domains(
                 None if entry.custom_routes => Vec::new(),
                 None => return None,
             };
+            let media = media_plans.get(name.as_str()).map(|p| ScaffoldMedia {
+                provider: p.provider.as_str().to_string(),
+                adapter_struct: match p.provider {
+                    codegraph_core::types::MediaProvider::Supabase => "SupabaseStorage".to_string(),
+                    codegraph_core::types::MediaProvider::R2 => "R2Storage".to_string(),
+                    codegraph_core::types::MediaProvider::S3 => "S3Storage".to_string(),
+                },
+                bucket: p.bucket.clone(),
+                public_read: p.visibility == codegraph_core::types::MediaVisibility::Public,
+                display_ttl_secs: p.display_ttl_secs,
+                presign_ttl_secs: p
+                    .provider_settings
+                    .presign_ttl_secs()
+                    .unwrap_or(crate::media::DEFAULT_PRESIGN_TTL_SECS),
+                r2_binding: match &p.provider_settings {
+                    codegraph_core::types::MediaProviderSettings::R2 { binding, .. } => {
+                        Some(binding.clone())
+                    }
+                    _ => None,
+                },
+            });
             Some(ScaffoldDomain {
                 name: name.clone(),
                 label: entry.label.clone(),
@@ -324,11 +379,12 @@ pub async fn build_scaffold_domains(
                 atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
                 has_manual_functions: manual_domains.contains(name.as_str()),
                 has_external_functions: external_domains.contains(name.as_str()),
+                media,
             })
         })
         .collect();
     domains.sort_by(|a, b| a.name.cmp(&b.name));
-    domains
+    Ok(domains)
 }
 
 #[async_trait]
@@ -345,7 +401,8 @@ impl GlobalGenerator for ScaffoldGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let domains = build_scaffold_domains(db, config, generation_order).await;
+        let domains = build_scaffold_domains(db, config, generation_order).await?;
+        let has_media = domains.iter().any(|d| d.media.is_some());
 
         // Compute absolute output dir (shared by all path calculations)
         let abs_output = if self.output_dir.is_absolute() {
@@ -412,6 +469,7 @@ impl GlobalGenerator for ScaffoldGenerator {
             has_seed: self.has_seed,
             has_events,
             has_function_events,
+            has_media,
             seed_crate_path,
             migration_strategy: self.migration_strategy.clone(),
         };
@@ -711,6 +769,7 @@ mod tests {
                 atproto_nsids: vec![],
                 has_manual_functions: false,
                 has_external_functions: false,
+                media: None,
             }],
             codegraph_workflow_path: String::new(),
             type_contracts_path: String::new(),
@@ -732,6 +791,7 @@ mod tests {
             has_seed: false,
             has_events: false,
             has_function_events: false,
+            has_media: false,
             seed_crate_path: String::new(),
             migration_strategy: "sea-orm".to_string(),
         }

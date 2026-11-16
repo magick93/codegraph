@@ -42,6 +42,12 @@ pub struct AppState {
     pub {{ domain.name }}_external_impls: Option<std::sync::Arc<dyn crate::domain::{{ domain.name }}::functions::ExternalFnImpls>>,
     pub {{ domain.name }}_service_base_url: Option<String>,
 {% endif %}
+{%- if domain.media %}
+    /// Media storage slot (issue #625 PR-B, domain `{{ domain.name }}`):
+    /// constructed from the provider env at boot; `None` until configured —
+    /// the media surface answers 503 (fail-closed, never a hard dep).
+    pub {{ domain.name }}_media_storage: Option<std::sync::Arc<dyn crate::media::MediaStorage>>,
+{% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}
     pub {{ domain.name }}_{{ entity.module_name }}_commands: crate::domain::{{ domain.name }}::{{ entity.module_name }}::command::{{ entity.name }}CommandHandler,{% endif %}

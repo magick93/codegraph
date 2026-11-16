@@ -717,7 +717,7 @@ impl EvtEventsGenerator {
             return Ok(Vec::new());
         }
 
-        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await;
+        let scaffold_domains = build_scaffold_domains(db, config, generation_order).await?;
         let worker_domains: HashSet<String> =
             scaffold_domains.iter().map(|d| d.name.clone()).collect();
         let deploy_models = db.get_deploy_models().await.unwrap_or_default();

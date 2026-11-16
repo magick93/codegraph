@@ -315,6 +315,20 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     // cornucopia (workers topology) each worker crate constructs its own
     // dispatcher from the ClientSource handle — the monolith carries None.
     let integration_dispatcher = {% if project.persistence_provider == "sea_orm" %}Some(std::sync::Arc::new(crate::integration_dispatch::IntegrationDispatcher::new(app_db.clone()))){% else %}None{% endif %};
+{% endif %}{% if has_media %}
+    // Media storage (issue #625 PR-B): the transport seam is constructed
+    // once (native reqwest leg); each media domain's adapter reads its
+    // provider env at boot. Missing env ⇒ the slot stays `None` with a
+    // warning — the plane answers 503 until configured, never a hard dep.
+    let media_http: Option<std::sync::Arc<dyn crate::media::MediaHttp>> = {
+        match crate::media::http::native::ReqwestHttp::new() {
+            Ok(client) => Some(std::sync::Arc::new(client) as std::sync::Arc<dyn crate::media::MediaHttp>),
+            Err(e) => {
+                tracing::warn!("{e}");
+                None
+            }
+        }
+    };
 {% endif %}
 
     let state = crate::app_state::AppState {
@@ -325,6 +339,30 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 {%- if domain.has_external_functions %}
         {{ domain.name }}_external_impls: None,
         {{ domain.name }}_service_base_url: std::env::var("{{ domain.name | upper }}_SERVICE_BASE_URL").ok(),
+{% endif %}
+{%- if domain.media %}
+        {{ domain.name }}_media_storage: {
+            match media_http.as_ref() {
+                Some(http) => {
+                    match crate::media::{{ domain.media.provider }}::{{ domain.media.adapter_struct }}::from_env(
+                        std::sync::Arc::clone(http),
+                        "{{ domain.media.bucket }}",
+                        {{ domain.media.public_read }},
+                        {{ domain.media.display_ttl_secs }},
+                    ) {
+                        Ok(storage) => Some(std::sync::Arc::new(storage) as std::sync::Arc<dyn crate::media::MediaStorage>),
+                        Err(e) => {
+                            tracing::warn!("media storage for {{ domain.name }} unavailable: {e}");
+                            None
+                        }
+                    }
+                }
+                None => {
+                    tracing::warn!("media transport unavailable — {{ domain.name }} media slot disabled");
+                    None
+                }
+            }
+        },
 {% endif %}
 {% for entity in domain.entities %}
 {%- if entity.has_commands %}

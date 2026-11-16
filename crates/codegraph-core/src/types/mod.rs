@@ -81,8 +81,9 @@ pub use ifml::{
 };
 pub use incompleteness::{Incompleteness, IncompletenessReason};
 pub use media::{
-    KeyPlaceholder, KeyTemplate, MediaFieldPlan, MediaObjectRef, MediaPlan, MediaProvider,
-    MediaProviderSettings, MediaVisibility, ProviderCapability, UploadMode, provider_capabilities,
+    KeyPlaceholder, KeySegment, KeyTemplate, MediaFieldPlan, MediaObjectRef, MediaPlan,
+    MediaProvider, MediaProviderSettings, MediaVisibility, ProviderCapability, UploadMode,
+    provider_capabilities,
 };
 pub use mox::{
     MoxDerivedFeatureNode, MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode,

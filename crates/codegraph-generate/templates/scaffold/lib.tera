@@ -20,7 +20,8 @@ pub mod metrics_middleware;
 pub mod webhook_api;{% endif %}{% if has_webhooks or has_function_events %}
 pub mod webhook_dispatch;{% endif %}{% if has_webhooks %}
 pub mod webhook_router;
-{% endif %}{% if has_events %}
+{% endif %}{% if has_media %}
+pub mod media;{% endif %}{% if has_events %}
 pub mod events;
 pub mod event_handlers;{% endif %}
 {% if has_seed %}
