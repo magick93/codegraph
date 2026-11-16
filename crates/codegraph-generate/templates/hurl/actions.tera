@@ -10,7 +10,11 @@
 # valid from the record's CURRENT state (the CREATE above starts at the
 # machine's initial state); an out-of-order op pins 409, and one transition
 # is replayed after the sequence to prove the wrong-state contract. Ops with
-# no executable lowering pin 501.
+# no executable lowering pin 501.{% if has_statement_bodies %}
+# A lowered `.ddd` statement body (issue #662) pins 200 with its declared
+# parameters as the action body; a body carrying a declared 4xx raise has no
+# deterministic expected status and emits no leg (the live gate drives it
+# with a hand-authored probe).{% endif %}
 {% for parent in fk_sections %}
 {{ parent.body }}
 {% endfor %}
@@ -27,7 +31,8 @@ HTTP 201
 {% for op in ops %}
 # service op `{{ op.op_name }}` (service `{{ op.service }}`){% if op.seam %} — 501 seam: {{ op.seam_reason }}{% elif op.wrong_state %} — wrong-state guard (409): {{ op.seam_reason }}{% endif %}
 POST {{ item_url_base }}/{{ capture_ref }}/actions/{{ op.snake }}
-{{ auth_header }}
+{{ auth_header }}{% if op.body %}
+{{ op.body }}{% endif %}
 
 HTTP {{ op.expect }}
 {% endfor %}

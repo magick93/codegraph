@@ -178,7 +178,7 @@ impl GlobalGenerator for OpenApiGenerator {
                 config,
                 &entry.domain,
                 &entry.schema_title,
-                project.codegen.dto_key_casing,
+                &crate::ddd::service_ops::BodyRenderContext::from_project(project),
             )
             .await
             .map_err(codegraph_core::error::Error::Config)?

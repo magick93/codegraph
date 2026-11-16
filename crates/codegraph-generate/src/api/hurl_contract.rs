@@ -118,13 +118,40 @@ struct OpLeg {
     op_name: String,
     service: String,
     snake: String,
-    /// Expected status: 200 (wired delegation), 409 (wrong state for a
-    /// machine transition), or 501 (seam).
+    /// Expected status: 200 (wired delegation / lowered body), 409 (wrong
+    /// state for a machine transition), or 501 (seam).
     expect: u16,
     seam: bool,
     seam_reason: String,
     /// A replay leg proving the wrong-state 409 contract.
     wrong_state: bool,
+    /// The JSON action body a bodied op's declared parameters need (issue
+    /// #662); empty for every other lowering.
+    body: String,
+}
+
+/// The action-body JSON one leg sends: one minimal value per declared
+/// parameter (`{}` when the op declares none). Empty string ⇒ no body line.
+fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
+    use crate::ddd::service_ops::ExecutionKind;
+    let ExecutionKind::Body { plan } = &route.execution else {
+        return String::new();
+    };
+    if plan.params.is_empty() {
+        return String::new();
+    }
+    let mut object = serde_json::Map::new();
+    for param in &plan.params {
+        object.insert(
+            param.name.clone(),
+            if param.optional {
+                serde_json::Value::Null
+            } else {
+                param.sample.clone()
+            },
+        );
+    }
+    serde_json::Value::Object(object).to_string()
 }
 
 /// Build the state-aware action legs: walk the machine from its initial
@@ -136,10 +163,10 @@ struct OpLeg {
 fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLeg> {
     use crate::ddd::service_ops::{ExecutionKind, ServiceOpTransition};
 
-    let mut current: Option<String> = ops.iter().find_map(|op| match &op.execution {
-        ExecutionKind::Update { state: Some(state) } => Some(state.initial.as_str().to_string()),
-        _ => None,
-    });
+    let mut current: Option<String> = ops
+        .iter()
+        .find_map(|op| op.execution.transition_state())
+        .map(|state| state.initial.as_str().to_string());
 
     let mut legs = Vec::with_capacity(ops.len() + 1);
     // Delete legs run LAST: a delete removes the captured row, so any
@@ -157,7 +184,18 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 seam: false,
                 seam_reason: "wired".to_string(),
                 wrong_state: false,
+                body: String::new(),
             });
+            continue;
+        }
+        // A bodied op that may answer a declared 4xx has NO deterministic
+        // expected status (it depends on the fixture row the contract just
+        // created) — the leg is omitted rather than mis-pinned. The live
+        // gate drives those with a hand-authored probe carrying the real
+        // parameter values.
+        if let ExecutionKind::Body { plan } = &op.execution
+            && plan.may_refuse
+        {
             continue;
         }
         let leg = match &op.execution {
@@ -169,8 +207,19 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 seam: true,
                 seam_reason: reason.clone(),
                 wrong_state: false,
+                body: String::new(),
             },
-            ExecutionKind::Update { state: Some(state) } if !state.op.is_empty() => {
+            ExecutionKind::Update { .. } | ExecutionKind::Body { .. }
+                if op
+                    .execution
+                    .transition_state()
+                    .is_some_and(|state| !state.op.is_empty()) =>
+            {
+                let state = op
+                    .execution
+                    .transition_state()
+                    .expect("guarded by the match arm");
+                let body = op_body_json(op);
                 let from = current
                     .clone()
                     .unwrap_or_else(|| state.initial.as_str().to_string());
@@ -190,6 +239,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                             seam: false,
                             seam_reason: "wired".to_string(),
                             wrong_state: false,
+                            body,
                         }
                     }
                     None => OpLeg {
@@ -200,6 +250,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                         seam: false,
                         seam_reason: format!("no transition from the current state `{from}`"),
                         wrong_state: true,
+                        body,
                     },
                 }
             }
@@ -211,6 +262,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 seam: false,
                 seam_reason: "wired".to_string(),
                 wrong_state: false,
+                body: op_body_json(op),
             },
         };
         legs.push(leg);
@@ -236,6 +288,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 transition.from
             ),
             wrong_state: true,
+            body: String::new(),
         });
     }
     legs.extend(delete_legs);
@@ -260,6 +313,10 @@ struct ActionsContractCtx {
     create_asserts: &'static str,
     item_url_base: String,
     ops: Vec<OpLeg>,
+    /// Whether the entity carries a lowered `.ddd` statement body (issue
+    /// #662) — gates the body-plane doc line so a body-less model's contract
+    /// stays byte-identical.
+    has_statement_bodies: bool,
 }
 
 /// Shared route context for the auth-suite files (all anchor-entity routes).
@@ -432,7 +489,7 @@ impl DomainGenerator for HurlContractGenerator {
                 config,
                 domain,
                 title,
-                project.codegen.dto_key_casing,
+                &crate::ddd::service_ops::BodyRenderContext::from_project(project),
             )
             .await
             .map_err(codegraph_core::error::Error::Config)?;
@@ -449,6 +506,12 @@ impl DomainGenerator for HurlContractGenerator {
                     capture_ref: contract.capture_ref.clone(),
                     create_asserts: contract.create_asserts,
                     item_url_base: contract.item_url_base.clone(),
+                    has_statement_bodies: ops.iter().any(|op| {
+                        matches!(
+                            op.execution,
+                            crate::ddd::service_ops::ExecutionKind::Body { .. }
+                        )
+                    }),
                     ops: legs,
                 };
                 files.push(GeneratedFile {

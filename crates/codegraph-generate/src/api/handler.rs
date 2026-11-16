@@ -520,7 +520,7 @@ impl EntityGenerator for HandlerGenerator {
             config,
             &domain,
             schema_title,
-            project.codegen.dto_key_casing,
+            &crate::ddd::service_ops::BodyRenderContext::from_project(project),
         )
         .await
         .map_err(crate::error::Error::Config)?;
@@ -1200,7 +1200,7 @@ fn build_handler_imports(
     type_registry::resolve_imports(&handler_refs, &handler_caller)
 }
 
-async fn resolve_is_auditable(
+pub(crate) async fn resolve_is_auditable(
     db: &dyn GraphQuerier,
     schema_title: &str,
     config: &DomainConfig,

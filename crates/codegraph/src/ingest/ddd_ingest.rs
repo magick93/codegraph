@@ -491,6 +491,13 @@ pub fn ddd_model_graph_from_phero(
                     condition: op.condition.clone(),
                     emits: op.emits.clone(),
                     invokes: op.invokes.clone(),
+                    // DD7 vocabulary + pherolang#178 bodies (issue #662):
+                    // the `throws` set rides as phero-ir `ErrorRef` JSON and
+                    // the checked body payload stays opaque (canonical
+                    // `StmtBody` JSON under the `"stmt"` target).
+                    throws: op.throws.iter().map(to_json).collect(),
+                    bodies: op.bodies.clone(),
+                    body_receiver: op.body_receiver.clone(),
                     ordinal,
                 })
                 .collect();

@@ -332,7 +332,7 @@ impl DomainGenerator for RouterGenerator {
                     config,
                     domain,
                     title,
-                    project.codegen.dto_key_casing,
+                    &crate::ddd::service_ops::BodyRenderContext::from_project(project),
                 )
                 .await
                 .map_err(|e| {
@@ -697,7 +697,7 @@ pub async fn build_router_context(
                 config,
                 domain,
                 title,
-                project.codegen.dto_key_casing,
+                &crate::ddd::service_ops::BodyRenderContext::from_project(project),
             )
             .await
             .map_err(|e| {

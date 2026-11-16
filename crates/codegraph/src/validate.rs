@@ -21,7 +21,7 @@ pub struct ValidationPass;
 impl ValidationPass {
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -34,6 +34,7 @@ impl ValidationPass {
             Self::check_service_op_surface(db, config),
             Self::check_status_bypass(db, config),
             Self::check_repository_queries(db),
+            Self::check_service_op_bodies(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -48,7 +49,33 @@ impl ValidationPass {
         issues.extend(r10);
         issues.extend(r11);
         issues.extend(r12);
+        issues.extend(r13);
         issues
+    }
+
+    /// Executable service-op statement bodies (issue #662): every bodied
+    /// operation must lower into the generated action handler. A construct
+    /// outside the documented subset is a HARD error naming the op and the
+    /// construct — the generator's own refusal is collected non-fatally by
+    /// the domain phase, so this pre-generation pass is what makes it fail
+    /// BEFORE any tree is written (the DD9 `query_refusals` precedent).
+    async fn check_service_op_bodies(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) = codegraph_generate::ddd::service_ops::body_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(service op body)".to_string(),
+                check: "service_op_body",
+                message,
+            })
+            .collect()
     }
 
     /// DD9 typed repository queries (issue #659): every query-carrying

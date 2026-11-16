@@ -16,7 +16,7 @@ use codegraph_core::types::{
 };
 use phero_ir::ddd::{
     Application, BuiltinRepositoryOp, DddModel, DddParam, DddTypeRef, Delegation, Design,
-    DesignFlags, DocumentField, Module, Pagination, RankingStrategy, Repository,
+    DesignFlags, DocumentField, ErrorRef, Module, Pagination, RankingStrategy, Repository,
     RepositoryOperation, SearchDef, SearchField, SearchFilter, SearchSort, Service,
     ServiceOperation, Stereotype,
 };
@@ -130,6 +130,16 @@ fn sample_model() -> DddModel {
         operation: "save".to_string(),
     });
     renew.condition = Some(r#"status == "OnLoan""#.to_string());
+    // Issue #662: the checked `.ddd` statement body rides the graph as the
+    // opaque canonical `StmtBody` payload, alongside the `throws` set and
+    // the `=> <Repository>` body receiver.
+    renew.bodies.insert(
+        "stmt".to_string(),
+        r#"{"stmts":[{"kind":"guard","expr":"run.total > 0","error":{"variant":"Conflict","args":["\"total\""]}}]}"#
+            .to_string(),
+    );
+    renew.body_receiver = Some("LoanRepository".to_string());
+    renew.throws = vec![ErrorRef::prelude("Conflict")];
 
     let mut lending = Module::new("lending");
     lending.designs = vec![book, money, summary];
@@ -383,6 +393,22 @@ fn conversion_maps_module_major_order_and_every_payload() {
     // #590): it is the route-level transition guard.
     assert_eq!(renew.condition.as_deref(), Some(r#"status == "OnLoan""#));
     assert_eq!(borrow.condition, None);
+    // Issue #662: the body, its receiver, and the `throws` vocabulary survive
+    // conversion (the body payload stays OPAQUE — generation re-parses it).
+    assert_eq!(renew.body_receiver.as_deref(), Some("LoanRepository"));
+    assert_eq!(
+        renew.bodies.get("stmt").map(String::as_str),
+        Some(
+            r#"{"stmts":[{"kind":"guard","expr":"run.total > 0","error":{"variant":"Conflict","args":["\"total\""]}}]}"#
+        )
+    );
+    assert_eq!(
+        renew.throws,
+        vec![serde_json::to_value(ErrorRef::prelude("Conflict")).unwrap()]
+    );
+    assert!(borrow.bodies.is_empty(), "a body-less op omits the map");
+    assert_eq!(borrow.body_receiver, None);
+    assert!(borrow.throws.is_empty());
 
     // Searches: the discovery module's search carries every knob.
     assert_eq!(graph.searches.len(), 1);

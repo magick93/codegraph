@@ -1262,10 +1262,18 @@ impl IfmlE2eTestGenerator {
             if !seen.insert((component_name.clone(), op_snake.clone())) {
                 continue;
             }
-            let routes =
-                service_ops::routes_for_entity(db, config, &domain, &schema.title, self.dto_casing)
-                    .await
-                    .unwrap_or_default();
+            let routes = service_ops::routes_for_entity(
+                db,
+                config,
+                &domain,
+                &schema.title,
+                &service_ops::BodyRenderContext {
+                    dto_casing: self.dto_casing,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_or_default();
             let Some(route) = routes.iter().find(|r| r.snake == op_snake) else {
                 // The action names no mounted op — the dead-trigger scan
                 // (Ask 1) owns the warning; here it stays unbuilt.
@@ -1356,7 +1364,14 @@ async fn plan_action_legs(
         ExecutionKind::Read | ExecutionKind::Delete => {
             return vec![(ActionActKind::Ok, None)];
         }
-        ExecutionKind::Update { .. } => {}
+        // A lowered statement body that may answer a declared 4xx has no
+        // deterministic outcome for a conforming drive (it depends on the
+        // fixture row's values) — the action stays unbuilt rather than
+        // guessed (issue #662).
+        ExecutionKind::Body { plan } if plan.may_refuse => {
+            return Vec::new();
+        }
+        ExecutionKind::Update { .. } | ExecutionKind::Body { .. } => {}
     }
 
     let Some(machine) = machine_for_entity(db, entity_title).await else {
