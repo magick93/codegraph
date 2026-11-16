@@ -438,7 +438,9 @@ fn workflow_live_query(ctx: &UiPageContext, api_version: &str) -> String {
     let mut wf = item_path_from_ids(ctx, api_version);
     wf.push_str("/workflow");
     let mut s = String::new();
-    s.push_str("export const getWorkflowLive = query.live('unchecked', async function* (id: string) {\n");
+    s.push_str(
+        "export const getWorkflowLive = query.live('unchecked', async function* (id: string) {\n",
+    );
     s.push_str("\twhile (true) {\n");
     s.push_str("\t\tconst res = await apiFetch(`");
     s.push_str(&wf);

@@ -1694,7 +1694,9 @@ mod ux_child_section_template_tests {
         )
         .expect("remote child section component renders");
         assert!(
-            remote.contains("onDelete: (childId: string) => Promise<{ ok: boolean; message?: string }>"),
+            remote.contains(
+                "onDelete: (childId: string) => Promise<{ ok: boolean; message?: string }>"
+            ),
             "the remote component must declare the server-command delete callback:\n{remote}"
         );
         assert!(

@@ -276,8 +276,9 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
     // profile): the workflow state rides a query.live stream — a 5s poll
     // of the /workflow read with the load payload as the SSR fallback.
     assert!(
-        detail_remote
-            .contains("export const getWorkflowLive = query.live('unchecked', async function* (id: string) {"),
+        detail_remote.contains(
+            "export const getWorkflowLive = query.live('unchecked', async function* (id: string) {"
+        ),
         "the live workflow stream rides the detail module:\n{detail_remote}"
     );
     assert!(
@@ -649,7 +650,9 @@ fn refresh_targets(source: &str) -> Vec<String> {
     let mut targets = Vec::new();
     for (idx, _) in source.match_indices(NEEDLE) {
         let head = &source[..idx];
-        let Some(open) = head.rfind('(') else { continue };
+        let Some(open) = head.rfind('(') else {
+            continue;
+        };
         let callee: String = head[..open]
             .chars()
             .rev()
@@ -684,7 +687,11 @@ async fn every_remote_import_and_refresh_target_resolves_against_its_module() {
     let mut pages = Vec::new();
     collect_files(&routes, ".svelte", &mut pages);
     collect_files(&routes, "+page.server.ts", &mut pages);
-    assert!(!pages.is_empty(), "no emitted pages under {}", routes.display());
+    assert!(
+        !pages.is_empty(),
+        "no emitted pages under {}",
+        routes.display()
+    );
 
     let mut failures: Vec<String> = Vec::new();
     let mut checked = 0usize;
@@ -694,10 +701,7 @@ async fn every_remote_import_and_refresh_target_resolves_against_its_module() {
         if imports.is_empty() {
             continue;
         }
-        let module = page
-            .parent()
-            .expect("page parent")
-            .join("data.remote.ts");
+        let module = page.parent().expect("page parent").join("data.remote.ts");
         assert!(
             module.exists(),
             "{} imports './data.remote' but the module was never emitted",
@@ -715,7 +719,10 @@ async fn every_remote_import_and_refresh_target_resolves_against_its_module() {
             }
         }
     }
-    assert!(checked > 0, "no './data.remote' imports found — pin is inert");
+    assert!(
+        checked > 0,
+        "no './data.remote' imports found — pin is inert"
+    );
     assert!(
         failures.is_empty(),
         "page imports a remote export the module never emits (Rollup failure):\n{}",
@@ -741,7 +748,10 @@ async fn every_remote_import_and_refresh_target_resolves_against_its_module() {
             }
         }
     }
-    assert!(refreshes > 0, "no single-flight refreshes found — pin is inert");
+    assert!(
+        refreshes > 0,
+        "no single-flight refreshes found — pin is inert"
+    );
     assert!(
         refresh_failures.is_empty(),
         "a command refreshes a query its module never emits (runtime \
@@ -799,10 +809,7 @@ async fn generated_pages_declare_the_props_they_read() {
             page.contains("$props()"),
             "{rel} reads `data` without declaring it via $props():\n{page}"
         );
-        assert!(
-            page.contains("data"),
-            "{rel} lost its load prop:\n{page}"
-        );
+        assert!(page.contains("data"), "{rel} lost its load prop:\n{page}");
     }
 }
 
@@ -814,10 +821,7 @@ async fn generated_forms_do_not_depend_on_the_consumer_owned_form_registration()
     // creator without `ResetButton` — `<form.ResetButton>` would be an
     // undefined component. The generated form owns the reset affordance
     // inline instead; the registration stays available for consumers.
-    let form = read(
-        &ui,
-        "src/lib/components/forms/RequestForm.svelte",
-    );
+    let form = read(&ui, "src/lib/components/forms/RequestForm.svelte");
     assert!(
         !form.contains("form.ResetButton"),
         "the generated form must not depend on the consumer-owned creator's \

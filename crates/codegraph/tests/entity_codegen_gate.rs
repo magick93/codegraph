@@ -293,11 +293,7 @@ export interface CodelistData {
 fn stub_api_types() -> Result<(), String> {
     let ui = ui_dir();
     let mut names = std::collections::BTreeSet::new();
-    fn walk(
-        dir: &Path,
-        ui_root: &Path,
-        names: &mut std::collections::BTreeSet<String>,
-    ) {
+    fn walk(dir: &Path, ui_root: &Path, names: &mut std::collections::BTreeSet<String>) {
         for entry in fs::read_dir(dir).into_iter().flatten() {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
@@ -336,7 +332,12 @@ fn stub_api_types() -> Result<(), String> {
 /// `'./api/types.ts'` (modules inside `src/lib`) — and imports may span
 /// lines, so this brace-scans rather than matching per line.
 fn collect_type_import_names(text: &str, names: &mut std::collections::BTreeSet<String>) {
-    const NEEDLES: &[&str] = &["api/types.ts'", "api/types.ts\"", "api/types'", "api/types\""];
+    const NEEDLES: &[&str] = &[
+        "api/types.ts'",
+        "api/types.ts\"",
+        "api/types'",
+        "api/types\"",
+    ];
     for needle in NEEDLES {
         let mut rest = text;
         while let Some(pos) = rest.find(needle) {
@@ -650,10 +651,7 @@ fn generated_diagnostics<'a>(diagnostics: &'a [Diagnostic], ui: &Path) -> Vec<&'
     diagnostics
         .iter()
         .filter(|d| d.severity == Severity::Error)
-        .filter(|d| {
-            d.ui_relative(ui)
-                .is_some_and(|rel| !consumer_owned(&rel))
-        })
+        .filter(|d| d.ui_relative(ui).is_some_and(|rel| !consumer_owned(&rel)))
         .collect()
 }
 
@@ -661,10 +659,7 @@ fn consumer_diagnostics<'a>(diagnostics: &'a [Diagnostic], ui: &Path) -> Vec<&'a
     diagnostics
         .iter()
         .filter(|d| d.severity == Severity::Error)
-        .filter(|d| {
-            d.ui_relative(ui)
-                .is_none_or(|rel| consumer_owned(&rel))
-        })
+        .filter(|d| d.ui_relative(ui).is_none_or(|rel| consumer_owned(&rel)))
         .collect()
 }
 
@@ -688,14 +683,12 @@ struct KnownDefect {
     reference: &'static str,
 }
 
-const KNOWN_DEFECTS: &[KnownDefect] = &[
-    KnownDefect {
-        path: "src/lib/server/api.ts",
-        message: "'$env/dynamic/private'",
-        reference: "entity-kit-sweep gap G1 (shared server_api.rs helper: kit 2 ships \
+const KNOWN_DEFECTS: &[KnownDefect] = &[KnownDefect {
+    path: "src/lib/server/api.ts",
+    message: "'$env/dynamic/private'",
+    reference: "entity-kit-sweep gap G1 (shared server_api.rs helper: kit 2 ships \
                     $env/dynamic/private, kit 3 moved it to $app/env/private)",
-    },
-];
+}];
 
 fn render_diagnostic(d: &Diagnostic, ui: &Path) -> String {
     let where_ = d
@@ -707,13 +700,7 @@ fn render_diagnostic(d: &Diagnostic, ui: &Path) -> String {
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
         })
         .unwrap_or_else(|| d.path.to_string_lossy().into_owned());
-    format!(
-        "{}:{}:{} — {}",
-        where_,
-        d.line,
-        d.column,
-        d.message
-    )
+    format!("{}:{}:{} — {}", where_, d.line, d.column, d.message)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -790,8 +777,9 @@ async fn entity_app_builds_and_typechecks() {
     // gate-owned api stubs) whose fidelity is not the generator's contract
     // — diagnostics against those are reported, not asserted (issue #634:
     // every one is printed AND written to a file, never silently dropped).
-    let (diagnostics, summary) = parse_svelte_check(&output)
-        .unwrap_or_else(|e| panic!("svelte-check report unparsable: {e}\n--- output ---\n{output}"));
+    let (diagnostics, summary) = parse_svelte_check(&output).unwrap_or_else(|e| {
+        panic!("svelte-check report unparsable: {e}\n--- output ---\n{output}")
+    });
     let (reported_errors, _reported_warnings) = summary.unwrap_or_else(|| {
         panic!(
             "svelte-check printed no `svelte-check found N errors …` summary — the gate \
@@ -1267,8 +1255,14 @@ fn generated_paths_are_fail_closed_and_consumer_paths_are_recorded() {
     let diagnostics = vec![
         // Generated planes — asserted (including src/lib/forms, the #634
         // allowlist hole, and a NEW directory nobody listed).
-        diag("/tmp/app/ui/src/lib/forms/fields/text.svelte", Severity::Error),
-        diag("/tmp/app/ui/src/lib/media/MediaField.svelte", Severity::Error),
+        diag(
+            "/tmp/app/ui/src/lib/forms/fields/text.svelte",
+            Severity::Error,
+        ),
+        diag(
+            "/tmp/app/ui/src/lib/media/MediaField.svelte",
+            Severity::Error,
+        ),
         diag("/tmp/app/ui/src/lib/brand-new/thing.ts", Severity::Error),
         // Recorded only.
         diag("/tmp/app/ui/src/lib/api/types.ts", Severity::Error),
