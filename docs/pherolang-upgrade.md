@@ -262,7 +262,7 @@ Each item **deletes** a heuristic or seam we wrote as a workaround.
    EVERY other construct — arithmetic, calls, `?.`, `?:`, `let`, lambdas,
    collection algebra, `if`, class-typed parameter navigation,
    column-to-column comparisons — is a **named hard rejection**
-   (`query \`Repo.op\`: … cannot be lowered …`) raised by
+   (`query Repo.op: … cannot be lowered …`) raised by
    `ValidationPass::check_repository_queries` BEFORE generation, never a
    broader query. Gate: `cargo test -p codegraph --test ddd_query_tests`
    + the in-crate `ddd::repository_query` predicate matrix + the extended

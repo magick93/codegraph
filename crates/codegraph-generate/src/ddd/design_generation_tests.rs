@@ -1116,9 +1116,7 @@ async fn cornucopia_query_literals_bind_through_distinct_temporaries() {
     // typed temporary per bind — sharing one name would silently alias the
     // second value onto the first.
     let db = db_with_model(Some(query_model(
-        query_block(
-            "self.title == \"A\" && self.status == \"B\" || self.title != \"A\"",
-        ),
+        query_block("self.title == \"A\" && self.status == \"B\" || self.title != \"A\""),
         vec![],
         true,
     )))

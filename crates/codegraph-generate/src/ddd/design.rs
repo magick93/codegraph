@@ -442,7 +442,7 @@ impl DddDesignSurface {
 }
 
 /// Every DD9 query that cannot be lowered, as fully-qualified messages
-/// (`query \`{Repository}.{operation}\`: …`).
+/// (`query {Repository}.{operation}: …`).
 ///
 /// This is the run-path validation seam: a design query whose predicate,
 /// sort key, or page falls outside the documented subset must stop a run
@@ -673,7 +673,7 @@ fn lower_finder(
 
 /// Lower one DD9 `query`-carrying repository operation into a
 /// [`DesignFinder`]. Every refusal is a hard, fully-qualified message
-/// (`query \`{Repository}.{operation}\`: …`) — the caller propagates it as a
+/// (`query {Repository}.{operation}: …`) — the caller propagates it as a
 /// generation error rather than skipping the method, because a skipped query
 /// is indistinguishable from a broader one at the call site.
 fn lower_query_op(

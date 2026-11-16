@@ -494,7 +494,7 @@ docs: `docs/DDD.md` upstream; driver contract `phero_driver::compile_ddd_str`.
   (negation pushed down to atoms), parentheses, `field == null` /
   `!= null` → `IS NULL`/`IS NOT NULL`, bare `bool` columns. EVERY other
   construct is a **named hard rejection** naming the repository, the
-  operation, and the construct (`query \`Repo.op\`: arithmetic (`+`) …
+  operation, and the construct (`query Repo.op: arithmetic (+) …
   cannot be lowered …`) — checked pre-generation by
   `ValidationPass::check_repository_queries` (`query_refusals`) so no tree
   is ever half-written, and never a silently broader query. v1 deferrals:

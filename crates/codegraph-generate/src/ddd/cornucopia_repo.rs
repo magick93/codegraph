@@ -1122,19 +1122,11 @@ fn emit_adapter_design_query(
                 let (rust_type, value) = match literal {
                     QueryLiteral::Int(value) => ("i64", format!("{value}i64")),
                     QueryLiteral::Float(value) => ("f64", format!("{value}f64")),
-                    QueryLiteral::String(text) => {
-                        ("String", format!("{text:?}.to_string()"))
-                    }
+                    QueryLiteral::String(text) => ("String", format!("{text:?}.to_string()")),
                     QueryLiteral::Bool(value) => ("bool", value.to_string()),
-                    QueryLiteral::Date(text) => {
-                        ("String", format!("{text:?}.to_string()"))
-                    }
+                    QueryLiteral::Date(text) => ("String", format!("{text:?}.to_string()")),
                 };
-                wln!(
-                    code,
-                    "        let {}: {rust_type} = {value};",
-                    arg.name
-                );
+                wln!(code, "        let {}: {rust_type} = {value};", arg.name);
                 binds.push(format!("&{}", arg.name));
             }
         }

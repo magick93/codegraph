@@ -469,14 +469,12 @@ pub struct SqlQuery {
     pub args: Vec<SqlArg>,
 }
 
-/// Resolve `name` against the query column universe: the authored feature
-/// name, the Rust field name, or the PostgreSQL column name (the `?sort=`
+/// Locate `name` in the query column universe: the authored feature name,
+/// the Rust field name, or the PostgreSQL column name (the `?sort=`
 /// allow-list convention). An ambiguous match is a refusal, never a guess.
-fn resolve_column<'a>(
-    label: &str,
-    name: &str,
-    columns: &'a [QueryColumn],
-) -> Result<&'a QueryColumn, String> {
+/// The reason is returned WITHOUT the caller's label so predicate and sort
+/// diagnostics can frame it themselves.
+fn locate_column<'a>(name: &str, columns: &'a [QueryColumn]) -> Result<&'a QueryColumn, String> {
     let snake = codegraph_naming::to_snake_case(name);
     let matches: Vec<&QueryColumn> = columns
         .iter()
@@ -488,11 +486,10 @@ fn resolve_column<'a>(
     match matches.as_slice() {
         [column] => Ok(column),
         [] => Err(format!(
-            "{label}: `{name}` is neither a parameter of the operation nor a feature of the \
-             designed class"
+            "`{name}` is neither a parameter of the operation nor a feature of the designed class"
         )),
         _ => Err(format!(
-            "{label}: `{name}` is ambiguous — it names {} features ({})",
+            "`{name}` is ambiguous — it names {} features ({})",
             matches.len(),
             matches
                 .iter()
@@ -501,6 +498,15 @@ fn resolve_column<'a>(
                 .join(", ")
         )),
     }
+}
+
+/// [`locate_column`] with the caller's label prefixed.
+fn resolve_column<'a>(
+    label: &str,
+    name: &str,
+    columns: &'a [QueryColumn],
+) -> Result<&'a QueryColumn, String> {
+    locate_column(name, columns).map_err(|reason| format!("{label}: {reason}"))
 }
 
 /// Require a resolved column to be a stored scalar (the only comparable /
@@ -874,7 +880,7 @@ fn write_path(expr: &Expr) -> String {
 /// Lower a `QuerySpec`'s predicate source text, sort keys, and pagination.
 ///
 /// `label` is the human prefix embedded in every refusal — the caller passes
-/// `query \`{Repository}.{operation}\`` so a rejection always names both.
+/// `query {Repository}.{operation}` so a rejection always names both.
 pub fn lower_query_spec(
     spec: &phero_ir::ddd::QuerySpec,
     label: &str,
@@ -930,15 +936,15 @@ fn finish_plan(
 ) -> Result<QueryPlan, String> {
     let mut order = Vec::with_capacity(spec.sort.len());
     for key in &spec.sort {
-        let column = resolve_column(label, &key.field, columns).map_err(|err| {
+        let column = locate_column(&key.field, columns).map_err(|reason| {
             format!(
-                "{label}: sort key `{}` cannot be resolved — {err}",
+                "{label}: sort key `{}` cannot be resolved — {reason}",
                 key.field
             )
         })?;
-        let column = scalar_column(label, column).map_err(|err| {
+        let column = scalar_column(label, column).map_err(|reason| {
             format!(
-                "{label}: sort key `{}` cannot be ordered — {err}",
+                "{label}: sort key `{}` cannot be ordered — {reason}",
                 key.field
             )
         })?;
@@ -1294,6 +1300,14 @@ mod tests {
 
     fn columns() -> Vec<QueryColumn> {
         vec![
+            QueryColumn {
+                feature: "id".to_string(),
+                field: "id".to_string(),
+                pg_column: "id".to_string(),
+                rust_type: "Uuid".to_string(),
+                is_nullable: false,
+                kind: QueryColumnKind::Scalar,
+            },
             column("title", "String", false),
             column("synopsis", "String", true),
             column("runtimeMinutes", "i64", false),
@@ -1529,7 +1543,10 @@ mod tests {
             ("self.genre?.title == target_title", "safe navigation"),
             ("self.synopsis ?: \"\" == target_title", "`?:`"),
             ("if self.active { true } else { false }", "`if`"),
-            ("self.title == does_not_exist", "`does_not_exist`"),
+            (
+                "self.title == does_not_exist",
+                "`does_not_exist` is neither a parameter",
+            ),
             ("self.active > false", "boolean feature"),
         ] {
             let err = refusal(source);
@@ -1639,7 +1656,7 @@ mod tests {
             &columns(),
         )
         .expect_err("unknown sort keys are refused");
-        assert!(err.contains("sort key `ghost`"), "{err}");
+        assert!(err.contains("sort key `ghost` cannot be resolved"), "{err}");
     }
 
     #[test]
@@ -1755,6 +1772,54 @@ mod tests {
         .unwrap();
         let sql = render_sql(&plan, &params());
         assert_eq!(sql.order_by, "\"runtime_minutes\" DESC, \"id\" ASC");
+    }
+
+    #[test]
+    fn sql_orders_multiple_keys_in_declaration_order() {
+        let spec = phero_ir::ddd::QuerySpec::new("self.title == target_title").with_sort(vec![
+            phero_ir::ddd::QuerySortKey::new(
+                "runtimeMinutes",
+                phero_ir::TypeRef::Primitive(phero_ir::PrimitiveType::Int),
+                phero_ir::ddd::SortDirection::Desc,
+            ),
+            phero_ir::ddd::QuerySortKey::new(
+                "title",
+                phero_ir::TypeRef::Primitive(phero_ir::PrimitiveType::String),
+                phero_ir::ddd::SortDirection::Asc,
+            ),
+        ]);
+        let plan = lower_query_spec(
+            &spec,
+            "query `MovieRepository.recent`",
+            &[],
+            &params(),
+            &columns(),
+        )
+        .unwrap();
+        assert_eq!(
+            render_sql(&plan, &params()).order_by,
+            "\"runtime_minutes\" DESC, \"title\" ASC, \"id\" ASC"
+        );
+    }
+
+    #[test]
+    fn sorting_by_identity_does_not_duplicate_the_tiebreaker() {
+        let spec = phero_ir::ddd::QuerySpec::new("self.title == target_title").with_sort(vec![
+            phero_ir::ddd::QuerySortKey::new(
+                "id",
+                phero_ir::TypeRef::Primitive(phero_ir::PrimitiveType::String),
+                phero_ir::ddd::SortDirection::Desc,
+            ),
+        ]);
+        let plan = lower_query_spec(
+            &spec,
+            "query `MovieRepository.recent`",
+            &[],
+            &params(),
+            &columns(),
+        )
+        .unwrap();
+        assert_eq!(render_sql(&plan, &params()).order_by, "\"id\" DESC");
     }
 
     #[test]
