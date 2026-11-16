@@ -344,13 +344,13 @@ fn collect_type_import_names(text: &str, names: &mut std::collections::BTreeSet<
             let head = &rest[..pos];
             if let Some(import_at) = head.rfind("import ") {
                 let window = &head[import_at..];
-                if let (Some(open), Some(close)) = (window.find('{'), window.rfind('}')) {
-                    if close > open {
-                        for raw in window[open + 1..close].split(',') {
-                            let name = raw.trim().trim_start_matches("type ").trim();
-                            if !name.is_empty() {
-                                names.insert(name.to_string());
-                            }
+                if let (Some(open), Some(close)) = (window.find('{'), window.rfind('}'))
+                    && close > open
+                {
+                    for raw in window[open + 1..close].split(',') {
+                        let name = raw.trim().trim_start_matches("type ").trim();
+                        if !name.is_empty() {
+                            names.insert(name.to_string());
                         }
                     }
                 }
@@ -563,7 +563,10 @@ fn parse_path_header(line: &str) -> Option<(PathBuf, u32, u32)> {
 /// M warnings[ in K files]` summary. Unattributed `Error:`/`Warn:` lines
 /// are a hard parser failure — that is exactly the shape drift the pre-#634
 /// gate swallowed.
-fn parse_svelte_check(output: &str) -> Result<(Vec<Diagnostic>, Option<(usize, usize)>), String> {
+/// `(diagnostics, Some((errors, warnings)))` from svelte-check's summary.
+type CheckReport = (Vec<Diagnostic>, Option<(usize, usize)>);
+
+fn parse_svelte_check(output: &str) -> Result<CheckReport, String> {
     let mut diagnostics = Vec::new();
     let mut pending: Option<(PathBuf, u32, u32)> = None;
     let mut summary = None;
