@@ -303,6 +303,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 ..Default::default()
             },
             machine_json: None,
+            child_operations: Vec::new(),
             ordinal: 0,
         }],
         repositories: vec![DddRepositoryNode {
@@ -368,6 +369,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 bodies: Default::default(),
                 body_receiver: None,
                 transition: None,
+                child_scope: None,
             }],
             ordinal: 0,
         }],

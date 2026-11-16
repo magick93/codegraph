@@ -1382,6 +1382,18 @@ async fn plan_action_legs(
         ExecutionKind::Read | ExecutionKind::Delete => {
             return vec![(ActionActKind::Ok, None)];
         }
+        // Aggregate child operations (issue #661). `remove`/`save` address an
+        // element the parent-scoped seed fixture already created → 200. `add`
+        // is a COLLECTION-level action (it appends a new element, no element
+        // id in the path), and the emitted POM action surface posts to the
+        // ITEM route — so the leg is left unbuilt rather than guessed
+        // (TODO(#661): a collection-add POM surface).
+        ExecutionKind::ChildOp { action, .. } => {
+            if *action == crate::ddd::service_ops::ChildAction::Add {
+                return Vec::new();
+            }
+            return vec![(ActionActKind::Ok, None)];
+        }
         // A lowered statement body that may answer a declared 4xx has no
         // deterministic outcome for a conforming drive (it depends on the
         // fixture row's values) — the action stays unbuilt rather than

@@ -142,6 +142,7 @@ fn design(class: &str, title: Option<&str>, flags: DddDesignFlags) -> DddDesignN
         is_abstract: false,
         flags,
         machine_json: None,
+        child_operations: Vec::new(),
         ordinal: 0,
     }
 }

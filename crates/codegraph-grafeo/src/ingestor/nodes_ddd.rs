@@ -50,10 +50,15 @@ impl GrafeoEngine {
         for design in &model.designs {
             let flags_json = json_string(&design.flags)?;
             let machine_json = design.machine_json.as_ref().map(json_string).transpose()?;
+            // Issue #661: the design's `children <Class>` operations ride as
+            // one serde-serialized blob (the `operations_json` precedent) —
+            // always written, `[]` for an extend-less design, so a readback
+            // never has to tell "absent" from "empty".
+            let child_operations_json = json_string(&design.child_operations)?;
             let gql = format!(
                 "INSERT (:DddDesign {{ application: '{}', module: '{}', class: '{}', \
                  resolved_title: {}, stereotype: '{}', is_abstract: {}, \
-                 flags_json: '{}', machine_json: {}, ordinal: {} }})",
+                 flags_json: '{}', machine_json: {}, child_operations_json: '{}', ordinal: {} }})",
                 escape_gql(&design.application),
                 escape_gql(&design.module),
                 escape_gql(&design.class),
@@ -62,6 +67,7 @@ impl GrafeoEngine {
                 design.is_abstract,
                 escape_gql(&flags_json),
                 opt_str(&machine_json),
+                escape_gql(&child_operations_json),
                 design.ordinal,
             );
             session

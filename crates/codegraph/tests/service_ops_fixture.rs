@@ -151,6 +151,183 @@ application Payroll {
 }
 "#;
 
+// ── Issue #661: aggregate child operations (`children <Class>`) ────────
+
+/// The aggregate-child domain (issue #661): a `PayRunType` root with a
+/// `refers PayRunLineType[0..] lines` child COLLECTION (the cross-reference
+/// shape — a `contains` child is a value object with no standalone
+/// repository, which upstream Rule 6 forbids and #661 excludes), and the
+/// child's inverse `refers PayRunType[0..1] payRun` so the parent's array
+/// resolves to the child-side `pay_run_id` FK (no junction table).
+pub const CHILD_OPS_MOX: &str = r#"
+package payroll
+
+enum PayRunStatus {
+    Draft = 0
+    Calculated = 1
+}
+
+class PayRunType {
+    String payRunId
+    PayRunStatus payRunStatus
+    int total
+    refers PayRunLineType[] lines opposite payRun
+}
+
+class PayRunLineType {
+    String lineId
+    int quantity
+    String [0..1] notes
+    refers PayRunType[0..1] payRun opposite lines
+}
+"#;
+
+/// The aggregate-child design (issue #661): the module-level
+/// `children PayRunType { … => lines.<action> }` block — upstream's
+/// child-operation declaration — over an aggregate root whose child class
+/// is a repository-bearing entity (the #661 in-scope shape). The
+/// `AddLineUnscoped` service op is the RETAINED cross-aggregate seam: a
+/// capability binds it to the root while it delegates to the CHILD's
+/// repository, and it carries no `childScope` — it must stay a 501 naming
+/// the missing modeling construct.
+pub const CHILD_OPS_DDD: &str = r#"
+import "childops.mox";
+
+application Payroll {
+    module payroll {
+        entity PayRunType scaffold repository PayRunRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        entity PayRunLineType scaffold repository PayRunLineRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        dto PayRunLineDraft from PayRunLineType {
+            lineId;
+            quantity;
+            notes;
+        }
+        children PayRunType {
+            boolean addLine(PayRunLineDraft line) => lines.add;
+            boolean saveLine(PayRunLineDraft line) => lines.save;
+            boolean removeLine() => lines.remove;
+        }
+        service PayRunService {
+            inject PayRunRepository;
+            addUnscoped => PayRunLineRepository.save capability AddUnscopedLine;
+        }
+    }
+}
+"#;
+
+/// The aggregate-child actor policy: the capability that binds
+/// `addUnscoped` to the ROOT entity while its delegation targets the child
+/// (the cross-aggregate seam shape).
+pub const CHILD_OPS_ACTOR: &str = r#"
+import "childops.mox"
+
+actors Payroll {
+    actor Owner
+
+    capability AddUnscopedLine on PayRunType
+
+    grant Owner {
+        permit AddUnscopedLine
+    }
+}
+"#;
+
+/// The aggregate-child config: mox-first (no `entities` key), with the
+/// child entity configured as a `role = "child"` of the root so its action
+/// routes nest under the parent (the WS4 shape) and the parent-scoped read
+/// exists. `parent_ref` names the REAL `pay_run_id` column the mox
+/// `refers … opposite` pair projects.
+pub const CHILD_OPS_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+
+[domains.payroll.entity_config.PayRunLineType]
+role = "child"
+parent = "PayRunType"
+parent_ref = "pay_run_id"
+"#;
+
+/// Write the aggregate-child fixture (issue #661).
+pub fn write_child_ops_fixture() -> Fixture {
+    write_child_ops_fixture_with(CHILD_OPS_DOMAINS_TOML)
+}
+
+/// [`write_child_ops_fixture`] with a caller-supplied config — the
+/// fail-closed variant (no `role = "child"`) needs the SAME model.
+pub fn write_child_ops_fixture_with(config_text: &str) -> Fixture {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir); // the fixture outlives the guard on purpose
+    let schemas_dir = root.join("model-schemas");
+    fs::create_dir_all(&schemas_dir).unwrap();
+    let mox = root.join("childops.mox");
+    fs::write(&mox, CHILD_OPS_MOX).unwrap();
+    let ddd = root.join("childops.ddd");
+    fs::write(&ddd, CHILD_OPS_DDD).unwrap();
+    let actor = root.join("policy.actor");
+    fs::write(&actor, CHILD_OPS_ACTOR).unwrap();
+    let config = root.join("domains.toml");
+    fs::write(&config, config_text).unwrap();
+    Fixture {
+        schemas_dir,
+        mox,
+        ddd,
+        actor,
+        config,
+    }
+}
+
+/// Ingest the aggregate-child fixture: mox bridge → `.ddd` design → actor
+/// policy (the run path's order).
+pub async fn ingest_child_ops(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let mox_stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(mox_stats.skipped, 0, "mox classes must bridge the schemas");
+    codegraph::ingest::ddd_ingest::ingest_ddd_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.ddd),
+        &config,
+    )
+    .await
+    .unwrap();
+    let policy = codegraph::ifml_actor_import::resolve_actor_policy(
+        &["policy.actor".to_string()],
+        fixture.ddd.parent().unwrap(),
+    )
+    .expect("the aggregate-child policy must resolve");
+    engine
+        .ingest_actor_policy(&policy)
+        .await
+        .expect("policy ingests");
+    engine
+}
+
 // ── Issue #660: authored transition bindings ──────────────────────────
 
 /// Two entities in ONE module, each carrying its own lifecycle machine, and

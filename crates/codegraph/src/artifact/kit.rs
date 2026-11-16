@@ -7,7 +7,7 @@
 //! onto the canonical bytes), and `json rejected diagnostic=<name>` (must
 //! fail with that named diagnostic). The committed case file pinning the
 //! graph document format lives at
-//! `tests/fixtures/artifact_kit/graph_document_v9.md`.
+//! `tests/fixtures/artifact_kit/graph_document_v10.md`.
 
 use codegraph_grafeo::artifact::{ArtifactError, canonical_bytes, normalize, parse_document};
 
@@ -248,7 +248,7 @@ fn run_case(case: &KitCase) -> Result<(), KitError> {
 mod tests {
     use super::*;
 
-    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v9.md");
+    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v10.md");
 
     #[test]
     fn kit_case_canonical_accepted_rejected() {
@@ -281,7 +281,7 @@ mod tests {
     fn kit_case_rejects_canonical_drift() {
         let md = concat!(
             "## drift\n\n```json canonical\n",
-            "{\"edges\":[],\"formatVersion\":9,\"nodes\":[]}\n",
+            "{\"edges\":[],\"formatVersion\":10,\"nodes\":[]}\n",
             "```\n"
         );
         let err = run_cases(md).expect_err("alphabetical field order must not be canonical");

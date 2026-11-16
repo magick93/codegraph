@@ -59,7 +59,16 @@
 /// entity/CRUD surface with no error — the delivered facts (declared table,
 /// `mox_class_kind = "register"` annotation, codelist classification) are
 /// exactly the ones a cached graph silently lacks. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 9;
+///
+/// Bumped to 10 for aggregate child operations (issue #661):
+/// `DddDesignNode.child_operations` is a new nullable prop
+/// (`child_operations_json`) and `DddServiceOperation.child_scope` rides
+/// the `operations_json` blob. A cached graph persisted by a pre-#661
+/// binary would serve NO child operations at all — a modeled
+/// `children PayRun { addLine => lines.add }` block would silently emit
+/// nothing (the pre-#661 silent-drop) instead of its nested action route.
+/// Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 10;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -541,6 +550,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             is_abstract BOOLEAN NOT NULL,
             flags_json STRING NOT NULL,
             machine_json STRING,
+            child_operations_json STRING,
             ordinal INTEGER NOT NULL
         )",
         "CREATE NODE TYPE IF NOT EXISTS DddRepository (

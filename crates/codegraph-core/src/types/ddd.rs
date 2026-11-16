@@ -77,6 +77,14 @@ pub struct DddDesignNode {
     /// persisted before the field existed.
     #[serde(default)]
     pub machine_json: Option<serde_json::Value>,
+    /// Child-scoped operations declared by the module's `children <Class>`
+    /// blocks (phero-ir `Design::child_operations`, issue #661) — root-side
+    /// operations over the aggregate's child collection, each carrying a
+    /// [`DddChildRef`] in [`DddServiceOperation::child_scope`]. Serde-
+    /// defaulted and omitted when empty, so a model with no `children`
+    /// block serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_operations: Vec<DddServiceOperation>,
     /// Declaration order within the module.
     pub ordinal: usize,
 }
@@ -256,8 +264,32 @@ pub struct DddServiceOperation {
     /// exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<DddTransitionRef>,
+    /// The child-scoped target of a `children <Class>` operation (phero-ir
+    /// `ChildRef`, issue #661): the root's child feature, the resolved child
+    /// class, and the validated child action (`add`/`remove`/`save`).
+    /// Serde-defaulted and omitted when absent, so every ordinary service
+    /// operation serializes exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_scope: Option<DddChildRef>,
     /// Declaration order within the service.
     pub ordinal: usize,
+}
+
+/// The child-scoped target of a `children <Class>` operation (phero-ir
+/// `ChildRef`, issue #661).
+///
+/// The action vocabulary is CLOSED and validated upstream: `add` (append an
+/// element to a many-valued feature), `remove` (unlink one), `save` (persist
+/// one — the only action legal on a single-valued feature).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DddChildRef {
+    /// The root class's child feature name, exactly as authored (`lines`).
+    pub feature: String,
+    /// The child class the feature resolves to, package-qualified
+    /// (`nz.example.payroll.PayRunLineType`).
+    pub class: String,
+    /// The validated child action: `"add"`, `"remove"`, or `"save"`.
+    pub action: String,
 }
 
 /// An authored `transition <Trigger>` binding (phero-ir `TransitionRef`,
