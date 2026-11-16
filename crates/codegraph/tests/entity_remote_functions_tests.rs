@@ -54,6 +54,13 @@ class Request {
     /// Lifecycle status.
     RequestStatus status
 }
+
+/// A request type that cannot be deleted (issue #634: the list page's
+/// remote import gate must follow the delete capability, not the ux flag).
+class ReadOnlyRequest {
+    /// Request title.
+    String title
+}
 "#;
 
 const DOMAINS_TOML: &str = r#"[defaults]
@@ -63,7 +70,7 @@ api_version = "v1"
 label = "Portal"
 schema_dir = "portal"
 postgres_schema = "portal"
-entities = ["Request"]
+entities = ["Request", "ReadOnlyRequest"]
 
 [domains.portal.entity_config.Request]
 role = "root"
@@ -78,6 +85,10 @@ generate_action_endpoints = true
 [domains.portal.entity_config.Request.workflow.transitions]
 Draft = ["Submitted"]
 Submitted = ["Approved"]
+
+[domains.portal.entity_config.ReadOnlyRequest]
+role = "root"
+operations = ["create", "read", "update", "list"]
 "#;
 
 struct Fixture {
@@ -266,7 +277,7 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
     // of the /workflow read with the load payload as the SSR fallback.
     assert!(
         detail_remote
-            .contains("export const getWorkflowLive = query.live(async function* (id: string) {"),
+            .contains("export const getWorkflowLive = query.live('unchecked', async function* (id: string) {"),
         "the live workflow stream rides the detail module:\n{detail_remote}"
     );
     assert!(
@@ -424,7 +435,7 @@ async fn entity_remote_functions_flag_emits_the_server_side_plane() {
     );
     assert!(
         wh_detail_remote
-            .contains("export const getDeliveriesLive = query.live(async function* (id: string) {"),
+            .contains("export const getDeliveriesLive = query.live('unchecked', async function* (id: string) {"),
         "{wh_detail_remote}"
     );
     let wh_form = read(&ui, "src/routes/(app)/settings/webhooks/new/+page.svelte");
@@ -566,4 +577,258 @@ async fn entity_remote_functions_off_keeps_the_client_plane() {
     // No experimental options in the scaffold.
     let vite = read(&ui, "vite.config.ts");
     assert!(!vite.contains("remoteFunctions"), "{vite}");
+}
+
+// ── Structural parity pins (issue #634) ─────────────────────────────────────
+//
+// The #634 class: a page imports a `./data.remote` export the colocated
+// module never emits (Rollup hard-fails), and a command body refreshes a
+// query the module does not export. String pins on individual templates
+// missed both — these diff the EMITTED tree instead, so a new gate or a
+// changed capability rule is caught structurally.
+
+/// Named imports of `specifier` in `source` (brace group, multi-line safe).
+fn named_imports(source: &str, specifier: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for (idx, _) in source.match_indices(specifier) {
+        let head = &source[..idx];
+        let Some(import_at) = head.rfind("import ") else {
+            continue;
+        };
+        let segment = &source[import_at..idx];
+        let (Some(open), Some(close)) = (segment.find('{'), segment.rfind('}')) else {
+            continue;
+        };
+        if close < open {
+            continue;
+        }
+        for raw in segment[open + 1..close].split(',') {
+            let name = raw.trim().trim_start_matches("type ").trim();
+            if !name.is_empty() {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Named exports of a remote module (`export const X` / `export function X`
+/// / `export { A, B }`).
+fn module_exports(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in source.lines() {
+        let line = line.trim_start();
+        if let Some(rest) = line
+            .strip_prefix("export const ")
+            .or_else(|| line.strip_prefix("export async function "))
+            .or_else(|| line.strip_prefix("export function "))
+        {
+            let ident: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !ident.is_empty() {
+                names.push(ident);
+            }
+        } else if let Some(rest) = line.strip_prefix("export {") {
+            let body = rest.split('}').next().unwrap_or("");
+            for raw in body.split(',') {
+                let name = raw.trim();
+                if !name.is_empty() {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
+/// The callees a module refreshes: `getX(args).refresh()` → `getX`.
+fn refresh_targets(source: &str) -> Vec<String> {
+    const NEEDLE: &str = ".refresh()";
+    let mut targets = Vec::new();
+    for (idx, _) in source.match_indices(NEEDLE) {
+        let head = &source[..idx];
+        let Some(open) = head.rfind('(') else { continue };
+        let callee: String = head[..open]
+            .chars()
+            .rev()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if !callee.is_empty() {
+            targets.push(callee);
+        }
+    }
+    targets
+}
+
+fn collect_files(dir: &Path, suffix: &str, found: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("dir") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            collect_files(&path, suffix, found);
+        } else if path.to_string_lossy().ends_with(suffix) {
+            found.push(path);
+        }
+    }
+}
+
+#[tokio::test]
+async fn every_remote_import_and_refresh_target_resolves_against_its_module() {
+    let (_fixture, ui) = generate(true).await;
+    let routes = ui.join("src/routes");
+
+    let mut pages = Vec::new();
+    collect_files(&routes, ".svelte", &mut pages);
+    collect_files(&routes, "+page.server.ts", &mut pages);
+    assert!(!pages.is_empty(), "no emitted pages under {}", routes.display());
+
+    let mut failures: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for page in &pages {
+        let source = fs::read_to_string(page).unwrap_or_default();
+        let imports = named_imports(&source, "'./data.remote'");
+        if imports.is_empty() {
+            continue;
+        }
+        let module = page
+            .parent()
+            .expect("page parent")
+            .join("data.remote.ts");
+        assert!(
+            module.exists(),
+            "{} imports './data.remote' but the module was never emitted",
+            page.display()
+        );
+        let exports = module_exports(&fs::read_to_string(&module).unwrap_or_default());
+        for name in imports {
+            checked += 1;
+            if !exports.iter().any(|e| e == &name) {
+                failures.push(format!(
+                    "{} imports `{name}` — not exported by {} (exports: {exports:?})",
+                    page.strip_prefix(&ui).unwrap_or(page).display(),
+                    module.strip_prefix(&ui).unwrap_or(&module).display()
+                ));
+            }
+        }
+    }
+    assert!(checked > 0, "no './data.remote' imports found — pin is inert");
+    assert!(
+        failures.is_empty(),
+        "page imports a remote export the module never emits (Rollup failure):\n{}",
+        failures.join("\n")
+    );
+
+    // Command bodies may only refresh queries the module itself exports.
+    let mut modules = Vec::new();
+    collect_files(&routes, "data.remote.ts", &mut modules);
+    assert!(!modules.is_empty(), "no data.remote.ts modules emitted");
+    let mut refresh_failures = Vec::new();
+    let mut refreshes = 0usize;
+    for module in &modules {
+        let source = fs::read_to_string(module).unwrap_or_default();
+        let exports = module_exports(&source);
+        for target in refresh_targets(&source) {
+            refreshes += 1;
+            if !exports.iter().any(|e| e == &target) {
+                refresh_failures.push(format!(
+                    "{} refreshes `{target}` — not exported by the module (exports: {exports:?})",
+                    module.strip_prefix(&ui).unwrap_or(module).display()
+                ));
+            }
+        }
+    }
+    assert!(refreshes > 0, "no single-flight refreshes found — pin is inert");
+    assert!(
+        refresh_failures.is_empty(),
+        "a command refreshes a query its module never emits (runtime \
+         ReferenceError / TS2339):\n{}",
+        refresh_failures.join("\n")
+    );
+}
+
+#[tokio::test]
+async fn remote_fail_legs_read_the_error_message_not_the_object() {
+    let (_fixture, ui) = generate(true).await;
+    let mut modules = Vec::new();
+    collect_files(&ui.join("src/routes"), "data.remote.ts", &mut modules);
+    assert!(!modules.is_empty(), "no data.remote.ts modules emitted");
+    let mut offenders = Vec::new();
+    for module in &modules {
+        let source = fs::read_to_string(module).unwrap_or_default();
+        for (n, line) in source.lines().enumerate() {
+            // `body?.error ?? …` renders `[object Object]` in a toast: the
+            // API body is `{ error: { code, message, details? } }`.
+            if (line.contains("body?.error ??")
+                || line.contains("res?.error ??")
+                || line.contains("json?.error ??"))
+                && !line.contains("error?.message")
+            {
+                offenders.push(format!(
+                    "{}:{}: {}",
+                    module.strip_prefix(&ui).unwrap_or(module).display(),
+                    n + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "fail legs read the error OBJECT (renders `[object Object]`):\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[tokio::test]
+async fn generated_pages_declare_the_props_they_read() {
+    let (_fixture, ui) = generate(true).await;
+    // The webhook form is emitted to BOTH `new/` and `[id]/edit/`; the edit
+    // route has a load, the new route does not — the prop must be declared
+    // in both (issue #634: it was read with no `$props()` at all, a runtime
+    // ReferenceError).
+    for rel in [
+        "src/routes/(app)/settings/webhooks/new/+page.svelte",
+        "src/routes/(app)/settings/webhooks/[id]/edit/+page.svelte",
+    ] {
+        let page = read(&ui, rel);
+        assert!(
+            page.contains("$props()"),
+            "{rel} reads `data` without declaring it via $props():\n{page}"
+        );
+        assert!(
+            page.contains("data"),
+            "{rel} lost its load prop:\n{page}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn generated_forms_do_not_depend_on_the_consumer_owned_form_registration() {
+    let (_fixture, ui) = generate(true).await;
+    // Issue #634 class 6: `lib/forms/form.ts` is emitted IF-ABSENT (a
+    // consumer extension point), so a tree scaffolding before #601 keeps a
+    // creator without `ResetButton` — `<form.ResetButton>` would be an
+    // undefined component. The generated form owns the reset affordance
+    // inline instead; the registration stays available for consumers.
+    let form = read(
+        &ui,
+        "src/lib/components/forms/RequestForm.svelte",
+    );
+    assert!(
+        !form.contains("form.ResetButton"),
+        "the generated form must not depend on the consumer-owned creator's \
+         registration:\n{form}"
+    );
+    assert!(
+        form.contains("-reset-btn\""),
+        "the reset affordance keeps its testid:\n{form}"
+    );
+    assert!(
+        form.contains("form.reset()"),
+        "the reset affordance resets the generated form instance:\n{form}"
+    );
 }

@@ -240,13 +240,19 @@ async fn entity_form_flag_emits_the_tanstack_form_plane() {
         list_form.contains("createAppForm"),
         "the form renders through the app form creator:\n{list_form}"
     );
-    // The reset affordance (issue #574 ledger): the actions row renders
-    // the REGISTERED <form.ResetButton> library component — i18n'd label,
-    // entity testid — inside the AppForm wrapper (the component reads
-    // useFormContext, which AppForm provides).
+    // The reset affordance (issue #574 ledger; #634): the actions row
+    // renders an INLINE reset button against this component's own form
+    // instance — i18n'd label, entity testid — rather than
+    // `<form.ResetButton>`. The registered component lives in the
+    // IF-ABSENT consumer-owned `$lib/forms/form.ts`, so a tree scaffolding
+    // before #601 would resolve it to undefined (issue #634 class 6).
     assert!(
-        list_form.contains("<form.ResetButton"),
-        "the actions row renders the registered reset component:\n{list_form}"
+        !list_form.contains("<form.ResetButton"),
+        "the generated form must not depend on consumer-owned form registration:\n{list_form}"
+    );
+    assert!(
+        list_form.contains("onclick={() => form.reset()}"),
+        "the inline reset resets the generated form instance:\n{list_form}"
     );
     assert!(
         list_form.contains("m.common_reset()"),

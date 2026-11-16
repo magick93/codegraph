@@ -12,14 +12,30 @@
 //! the generated paraglide output. Zero type errors is the bar.
 //!
 //! ```text
-//! cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture
+//! cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture --test-threads=1
 //! ```
+//!
+//! `--test-threads=1` is REQUIRED: both tests regenerate the same fixture
+//! in place (and install into the same `node_modules`), so a parallel libtest
+//! run corrupts itself. The nightly workflow
+//! (`.github/workflows/entity-gate.yml`) always passes it.
 //!
 //! Needs node 22 + npx. The entity e2e lane (`entity_specs_run_green`,
 //! issue #575) holds the emitted-config coverage invariant over every
 //! emitted test file and runs the sessionless `auth` project live against
 //! a booted API over `vite preview`; the UI-driven families stay the
 //! consumer `testkit e2e` lane (they need the Supabase persona stack).
+//!
+//! Diagnostic attribution (issue #634): svelte-check prints the file path on
+//! the line BEFORE the `Error:`/`Warn:` line, so the pre-#634 assertion
+//! (which filtered lines containing `"Error:"`) could never match a path and
+//! the "zero diagnostics on generated paths" gate was vacuous. The gate now
+//! parses `path:line:col` + severity blocks, RECONCILES the parsed error
+//! count against svelte-check's own summary line (and its exit status), and
+//! asserts on every diagnostic inside a GENERATED path. Consumer-authored /
+//! gate-owned paths are reported explicitly (and written to
+//! `target/entity-gate/consumer-diagnostics.txt`) instead of silently
+//! disappearing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -472,6 +488,178 @@ fn svelte_project() -> NodeProject {
     NodeProject::new(ui_dir(), logs_dir())
 }
 
+// ── svelte-check report parsing (issue #634) ────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Severity {
+    Error,
+    Warn,
+}
+
+#[derive(Debug, Clone)]
+struct Diagnostic {
+    path: PathBuf,
+    line: u32,
+    column: u32,
+    severity: Severity,
+    message: String,
+}
+
+impl Diagnostic {
+    /// The path relative to the fixture's `ui/` directory, `/`-normalized
+    /// when the diagnostic points inside it.
+    fn ui_relative(&self, ui: &Path) -> Option<String> {
+        let rel = self.path.strip_prefix(ui).ok()?;
+        Some(rel.to_string_lossy().replace('\\', "/"))
+    }
+}
+
+/// Parse a `path:line:col` header line. svelte-check prints absolute paths
+/// on Unix; the trailing two `:`-segments are the position.
+fn parse_path_header(line: &str) -> Option<(PathBuf, u32, u32)> {
+    let (path, line_no, column) = {
+        let mut parts = line.rsplitn(3, ':');
+        let column: u32 = parts.next()?.parse().ok()?;
+        let line_no: u32 = parts.next()?.parse().ok()?;
+        let path = parts.next()?;
+        (path, line_no, column)
+    };
+    if path.is_empty() || !Path::new(path).is_absolute() {
+        return None;
+    }
+    Some((PathBuf::from(path), line_no, column))
+}
+
+/// Parse svelte-check's report: `path:line:col` header, then the
+/// `Error:`/`Warn:` line, plus the final `svelte-check found N errors and
+/// M warnings[ in K files]` summary. Unattributed `Error:`/`Warn:` lines
+/// are a hard parser failure — that is exactly the shape drift the pre-#634
+/// gate swallowed.
+fn parse_svelte_check(output: &str) -> Result<(Vec<Diagnostic>, Option<(usize, usize)>), String> {
+    let mut diagnostics = Vec::new();
+    let mut pending: Option<(PathBuf, u32, u32)> = None;
+    let mut summary = None;
+    let mut unattributed = Vec::new();
+
+    for line in output.lines() {
+        let trimmed = line.trim_end();
+
+        if let Some(rest) = trimmed.strip_prefix("svelte-check found ") {
+            let nums: Vec<usize> = rest
+                .split(|c: char| !c.is_ascii_digit())
+                .filter(|s| !s.is_empty())
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            if nums.len() >= 2 {
+                summary = Some((nums[0], nums[1]));
+            }
+            continue;
+        }
+
+        if let Some((path, line_no, column)) = parse_path_header(trimmed) {
+            pending = Some((path, line_no, column));
+            continue;
+        }
+
+        let severity = if let Some(message) = trimmed
+            .strip_prefix("Error: ")
+            .or_else(|| trimmed.strip_prefix("Error:"))
+        {
+            Some((Severity::Error, message.trim().to_string()))
+        } else {
+            trimmed
+                .strip_prefix("Warn: ")
+                .or_else(|| trimmed.strip_prefix("Warn:"))
+                .map(|message| (Severity::Warn, message.trim().to_string()))
+        };
+        if let Some((severity, message)) = severity {
+            match pending.take() {
+                Some((path, line_no, column)) => diagnostics.push(Diagnostic {
+                    path,
+                    line: line_no,
+                    column,
+                    severity,
+                    message,
+                }),
+                None => unattributed.push(trimmed.to_string()),
+            }
+        }
+    }
+
+    if !unattributed.is_empty() {
+        return Err(format!(
+            "{} diagnostic line(s) carried no preceding `path:line:col` header — the gate \
+             parser drifted from svelte-check's print shape (a vacuous attribution set is \
+             how the pre-#634 gate always passed):\n{}",
+            unattributed.len(),
+            unattributed.join("\n")
+        ));
+    }
+    Ok((diagnostics, summary))
+}
+
+/// Paths the gate does NOT assert (consumer-authored or gate-owned): the
+/// openapi-typescript stub + the consumer api module the fixture's
+/// hand-authored forms import, and the hand-authored `src/forms` tree the
+/// gate tsconfig excludes. Everything else under `ui/src` is generator
+/// output and must typecheck clean — the allowlist is fail-closed (a new
+/// generated directory is asserted by default).
+///
+/// `forms/` (top-level, NOT `src/`) is the legacy cosmos form plane whose
+/// imports resolve through the consumer monorepo's design system
+/// (`@community-os/ui`) — the gate stubs that package, so a diagnostic
+/// there measures the stub, not the generator. Its diagnostics are
+/// recorded (printed + written) on every run.
+fn consumer_owned(path: &str) -> bool {
+    matches!(
+        path,
+        "src/lib/api/types.ts" | "src/lib/api/index.ts" | "src/forms"
+    ) || path.starts_with("src/forms/")
+        || path.starts_with("src/lib/paraglide/")
+        || path.starts_with("forms/")
+}
+
+fn generated_diagnostics<'a>(diagnostics: &'a [Diagnostic], ui: &Path) -> Vec<&'a Diagnostic> {
+    diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .filter(|d| {
+            d.ui_relative(ui)
+                .is_some_and(|rel| !consumer_owned(&rel))
+        })
+        .collect()
+}
+
+fn consumer_diagnostics<'a>(diagnostics: &'a [Diagnostic], ui: &Path) -> Vec<&'a Diagnostic> {
+    diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .filter(|d| {
+            d.ui_relative(ui)
+                .is_none_or(|rel| consumer_owned(&rel))
+        })
+        .collect()
+}
+
+fn render_diagnostic(d: &Diagnostic, ui: &Path) -> String {
+    let where_ = d
+        .ui_relative(ui)
+        .or_else(|| {
+            d.path
+                .strip_prefix(ui.parent().unwrap_or(ui))
+                .ok()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+        })
+        .unwrap_or_else(|| d.path.to_string_lossy().into_owned());
+    format!(
+        "{}:{}:{} — {}",
+        where_,
+        d.line,
+        d.column,
+        d.message
+    )
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "entity ui gate: run with --ignored (needs node)"]
 async fn entity_app_builds_and_typechecks() {
@@ -542,40 +730,63 @@ async fn entity_app_builds_and_typechecks() {
         panic!("failed to launch svelte-check");
     };
     // The gate holds the GENERATOR's surface to zero type errors. The
-    // fixture also carries consumer-authored artifacts (ui/forms/*, the
-    // hand pages' design-system imports) whose stub fidelity is not the
-    // generator's contract — diagnostics against those are reported, not
-    // asserted. Any error on a generated path (routes, lib components,
-    // hooks, format, env) fails the gate.
-    let generated_error = |line: &str| -> bool {
-        let path_part = line.split("generated-candidate/ui/").nth(1);
-        let Some(rel) = path_part else {
-            return false;
-        };
-        rel.starts_with("src/routes/")
-            || rel.starts_with("src/lib/components/")
-            || rel.starts_with("src/lib/stores/")
-            || rel.starts_with("src/lib/server/")
-            || rel.starts_with("src/hooks")
-            || rel == "src/lib/format.ts"
-            || rel == "src/env.ts"
-    };
-    let error_lines: Vec<&str> = output
-        .lines()
-        .filter(|l| l.contains("Error:") || l.starts_with("Error: "))
-        .collect();
-    let generated: Vec<&&str> = error_lines.iter().filter(|l| generated_error(l)).collect();
+    // fixture also carries consumer-authored artifacts (src/forms/*, the
+    // gate-owned api stubs) whose fidelity is not the generator's contract
+    // — diagnostics against those are reported, not asserted (issue #634:
+    // every one is printed AND written to a file, never silently dropped).
+    let (diagnostics, summary) = parse_svelte_check(&output)
+        .unwrap_or_else(|e| panic!("svelte-check report unparsable: {e}\n--- output ---\n{output}"));
+    let (reported_errors, _reported_warnings) = summary.unwrap_or_else(|| {
+        panic!(
+            "svelte-check printed no `svelte-check found N errors …` summary — the gate \
+             cannot reconcile its attribution set against the compiler's own count:\n{output}"
+        )
+    });
+    let parsed_errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    assert_eq!(
+        parsed_errors, reported_errors,
+        "gate parser drift: attributed {parsed_errors} error diagnostic(s) but svelte-check \
+         reported {reported_errors}. A mismatch means the report shape moved and the \
+         generated-path assertion is blind again (issue #634):\n{output}"
+    );
+    assert_eq!(
+        check_ok,
+        reported_errors == 0,
+        "svelte-check's exit status ({check_ok}) disagrees with its own summary \
+         ({reported_errors} errors) — the gate must fail on the compiler's verdict, not \
+         disown it"
+    );
+
+    let generated = generated_diagnostics(&diagnostics, &ui_dir());
+    let consumer = consumer_diagnostics(&diagnostics, &ui_dir());
+    if !consumer.is_empty() {
+        let report = consumer
+            .iter()
+            .map(|d| render_diagnostic(d, &ui_dir()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(logs_dir().join("consumer-diagnostics.txt"), &report)
+            .map_err(|e| e.to_string())
+            .unwrap();
+        println!(
+            "gate: {} NON-GENERATED (consumer-authored/gate-owned) error(s) — recorded, not \
+             asserted (target/entity-gate/consumer-diagnostics.txt):\n{report}",
+            consumer.len()
+        );
+    }
     assert!(
         generated.is_empty(),
-        "svelte-check reported {} errors on GENERATED files:\n{}",
+        "svelte-check reported {} error(s) on GENERATED files:\n{}",
         generated.len(),
         generated
             .iter()
-            .map(|l| l.to_string())
+            .map(|d| render_diagnostic(d, &ui_dir()))
             .collect::<Vec<_>>()
             .join("\n")
     );
-    let _ = check_ok;
 }
 
 // ── The entity e2e lane (issue #575) ────────────────────────────────────────
@@ -881,4 +1092,118 @@ async fn entity_specs_run_green() {
 
     db.cleanup().await;
     result.unwrap();
+}
+
+// ── The report-parser pins (issue #634) ─────────────────────────────────────
+//
+// Node-free: these run in PR CI (`cargo test -p codegraph --test
+// entity_codegen_gate`) and are what keep the gate's attribution honest —
+// the pre-#634 gate asserted over a set that was always empty.
+
+#[test]
+fn parser_attributes_the_path_printed_on_the_preceding_line() {
+    // The EXACT shape captured from the ws6 gate run (svelte-check prints
+    // the path, then `Error:` on the next line, then an indented code
+    // frame) — the shape the pre-#634 `contains("Error:")` filter could
+    // never match to a path.
+    let output = "\
+Loading svelte-check in workspace: /tmp/app/ui
+Getting Svelte diagnostics...
+
+/home/u/app/ui/src/lib/forms/fields/select-variant.svelte:10:32
+Error: Cannot find module '$lib/components/ui/native-select/index.js'. (ts)
+\timport * as NativeSelect from '$lib/components/ui/native-select/index.js';
+\t                              ^
+
+/home/u/app/ui/src/routes/request/+page.svelte:7:2
+Warn: `<span>` with a mouseover handler must have an ARIA role (svelte)
+<span class=\"tooltip\">
+
+====================================
+svelte-check found 1 error and 1 warning in 2 files
+";
+    let (diagnostics, summary) = parse_svelte_check(output).expect("parse");
+    assert_eq!(summary, Some((1, 1)));
+    assert_eq!(diagnostics.len(), 2);
+    let error = &diagnostics[0];
+    assert_eq!(error.severity, Severity::Error);
+    assert_eq!(
+        error.path,
+        PathBuf::from("/home/u/app/ui/src/lib/forms/fields/select-variant.svelte")
+    );
+    assert_eq!((error.line, error.column), (10, 32));
+    assert!(error.message.contains("Cannot find module"), "{error:?}");
+    assert_eq!(diagnostics[1].severity, Severity::Warn);
+}
+
+#[test]
+fn parser_summary_shape_without_the_files_suffix() {
+    let output = "\
+====================================
+svelte-check found 0 errors and 0 warnings
+";
+    let (diagnostics, summary) = parse_svelte_check(output).expect("parse");
+    assert!(diagnostics.is_empty());
+    assert_eq!(summary, Some((0, 0)));
+}
+
+#[test]
+fn parser_refuses_unattributed_diagnostics() {
+    // If svelte-check's shape moves, an `Error:` with no path header must
+    // be a HARD failure — silently zeroing the attribution set is the
+    // vacuous-gate failure mode (issue #634).
+    let err = parse_svelte_check("Error: something broke (ts)\n").unwrap_err();
+    assert!(err.contains("no preceding"), "{err}");
+}
+
+#[test]
+fn generated_paths_are_fail_closed_and_consumer_paths_are_recorded() {
+    let ui = Path::new("/tmp/app/ui");
+    let diag = |path: &str, severity| Diagnostic {
+        path: PathBuf::from(path),
+        line: 1,
+        column: 1,
+        severity,
+        message: "x".into(),
+    };
+    let diagnostics = vec![
+        // Generated planes — asserted (including src/lib/forms, the #634
+        // allowlist hole, and a NEW directory nobody listed).
+        diag("/tmp/app/ui/src/lib/forms/fields/text.svelte", Severity::Error),
+        diag("/tmp/app/ui/src/lib/media/MediaField.svelte", Severity::Error),
+        diag("/tmp/app/ui/src/lib/brand-new/thing.ts", Severity::Error),
+        // Recorded only.
+        diag("/tmp/app/ui/src/lib/api/types.ts", Severity::Error),
+        diag("/tmp/app/ui/forms/amount_form.svelte", Severity::Error),
+        diag("/outside/the/fixture.ts", Severity::Error),
+        // Warnings never fail the gate.
+        diag("/tmp/app/ui/src/routes/+page.svelte", Severity::Warn),
+    ];
+    let generated: Vec<String> = generated_diagnostics(&diagnostics, ui)
+        .iter()
+        .map(|d| d.ui_relative(ui).unwrap())
+        .collect();
+    assert_eq!(
+        generated,
+        vec![
+            "src/lib/forms/fields/text.svelte",
+            "src/lib/media/MediaField.svelte",
+            "src/lib/brand-new/thing.ts",
+        ]
+    );
+    let consumer: Vec<String> = consumer_diagnostics(&diagnostics, ui)
+        .iter()
+        .map(|d| {
+            d.ui_relative(ui)
+                .unwrap_or_else(|| d.path.to_string_lossy().into_owned())
+        })
+        .collect();
+    assert_eq!(
+        consumer,
+        vec![
+            "src/lib/api/types.ts",
+            "forms/amount_form.svelte",
+            "/outside/the/fixture.ts",
+        ]
+    );
 }
