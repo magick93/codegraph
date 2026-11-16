@@ -194,3 +194,56 @@ async fn entity_plus_contained_vo_sharing_the_module_still_runs() {
         all_sql
     );
 }
+
+/// Issue #668: a DECLARED mox table (`class X table "…"`) that lands on
+/// another class's table is a hard generation error naming BOTH classes and
+/// the declaring one — the declaration is what has to change.
+///
+/// Upstream catches the same-PACKAGE case as E0301 (the compiler refuses the
+/// pair). Cross-package, one DOMAIN: the compiler is silent (its checks are
+/// per package) but both classes emit tables into the same PostgreSQL schema,
+/// so codegraph's collision gate owns it. Two packages whose last segment is
+/// the domain name — the shape a model split across files takes.
+#[tokio::test]
+async fn declared_table_collision_hard_errors_naming_both_classes() {
+    let mox = r#"
+package acme.payroll
+
+/// Derived table `ledger`.
+class Ledger {
+    String [1] label
+}
+"#;
+    let second = r#"
+package other.payroll
+
+/// Declared onto Ledger's derived table — distinct module name, one table.
+class PayRunType table "ledger" {
+    String [1] reference
+}
+"#;
+    let fixture = write_fixture(mox);
+    fs::write(fixture.root.path().join("model/books.mox"), second).unwrap();
+    let output = fixture.out();
+    let mox_files = vec![
+        fixture.mox.clone(),
+        fixture.root.path().join("model/books.mox"),
+    ];
+
+    let err = codegraph::driver::run(run_args(&fixture, &mox_files, &output))
+        .await
+        .expect_err(
+            "a declared table colliding with another class's table must fail generation \
+             (the two would emit the same table and migration)",
+        );
+    let message = format!("{err}");
+    assert!(message.contains("`Ledger`"), "must name Ledger: {message}");
+    assert!(
+        message.contains("`PayRunType`"),
+        "must name PayRunType: {message}"
+    );
+    assert!(
+        message.contains("table \"ledger\""),
+        "must name the declaration: {message}"
+    );
+}

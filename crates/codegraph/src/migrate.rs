@@ -21,48 +21,6 @@ pub const STDLIB_PACKAGE: &str = "codegraph_stdlib";
 pub const STDLIB_FILE_NAME: &str = "codegraph_stdlib.mox";
 pub const STDLIB_SOURCE: &str = include_str!("migrate/stdlib.mox");
 
-/// Hard pherolang keywords: legal identifiers only in escaped `^name` form.
-const KEYWORDS: &[&str] = &[
-    "package",
-    "annotation",
-    "as",
-    "class",
-    "extends",
-    "interface",
-    "enum",
-    "type",
-    "wraps",
-    "opaque",
-    "contains",
-    "refers",
-    "container",
-    "opposite",
-    "op",
-    "derived",
-    "true",
-    "false",
-    "vocabulary",
-    "from",
-    "version",
-    "key",
-    "facet",
-    "actors",
-    "actor",
-    "agent",
-    "capability",
-    "grant",
-    "permit",
-    "forbid",
-    "when",
-    "obligation",
-    "on",
-    "never_both",
-    "delegation",
-    "purpose",
-    "cedar",
-    "import",
-];
-
 /// JSON Schema string formats with a `codegraph_stdlib` datatype counterpart.
 const FORMAT_TYPES: &[(&str, &str)] = &[
     ("uuid", "Uuid"),
@@ -1048,8 +1006,16 @@ fn sanitize_identifier(name: &str) -> Option<String> {
 }
 
 /// The source form of a bare identifier: pherolang keywords need the `^` escape.
+///
+/// The word tables come from the COMPILER (`phero_syntax::words`), never a
+/// local copy (issue #668): a hand-maintained list had drifted (missing
+/// `event`, `channel`, `publishes`, `subscription`, …), so `migrate` could
+/// emit identifiers the compiler rejects. `MOX_CONTEXTUAL` words stay
+/// UNESCAPED by this function — they are ordinary identifiers outside the one
+/// grammar position that makes them special (`register` is the canonical
+/// case: it is a declaration word, never a reserved name).
 fn emit_name(bare: &str) -> String {
-    if KEYWORDS.contains(&bare) {
+    if phero_syntax::words::KEYWORDS.contains(&bare) {
         format!("^{bare}")
     } else {
         bare.to_string()

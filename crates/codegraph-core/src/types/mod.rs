@@ -112,7 +112,10 @@ pub use relationship::{
     Cardinality, ForeignKeySpec, Ownership, PropagationRule, PropagationTrigger, RelationshipNode,
 };
 pub use rule::{RuleKind, RuleNode, RuleRefRecord};
-pub use schema::{Access, MOX_SOURCE, SchemaClassificationData, SchemaNode};
+pub use schema::{
+    Access, MOX_CLASS_KIND, MOX_CLASS_KIND_REGISTER, MOX_SOURCE, SchemaClassificationData,
+    SchemaNode,
+};
 pub use security::{
     MembershipNode, MembershipStatus, Scope, ScopeKind, SecurityIdentityNode, TenantNode,
 };

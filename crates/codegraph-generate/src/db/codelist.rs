@@ -18,6 +18,11 @@ pub struct CodelistContext {
     pub display_name: String,
     pub values: Vec<CodelistValue>,
     pub render_as: String,
+    /// `true` when the codelist is a mox `register` class (issue #668): an
+    /// org/role reference-data noun space rather than an enum literal set.
+    /// The rendered header says so, so the generated migration explains why a
+    /// `register` has a seed table and no entity/CRUD surface.
+    pub is_register: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -109,6 +114,7 @@ impl EntityGenerator for CodelistGenerator {
             display_name: display_name.to_string(),
             values,
             render_as: schema.classification.clone(),
+            is_register: schema.is_register_class(),
         };
 
         let content = render_template_with_project(

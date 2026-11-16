@@ -51,6 +51,7 @@ tree-sitter = { workspace = true }
 tree-sitter-svelte-next = "0.1.1"
 phero-ir = { workspace = true }
 phero-driver = { workspace = true }
+phero-syntax = { workspace = true }
 phero-ifml = { workspace = true }
 phero-expr = { workspace = true }
 # Sigil (Rune DSL) — issue #255: workspace rev-pins, codegraph-crate-only.

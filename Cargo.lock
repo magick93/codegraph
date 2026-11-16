@@ -886,6 +886,7 @@ dependencies = [
  "phero-expr",
  "phero-ifml",
  "phero-ir",
+ "phero-syntax",
  "proc-macro2",
  "rust_decimal",
  "serde",

@@ -51,7 +51,15 @@
 /// binary deserializes it as `None` — every authored binding would
 /// silently degrade to the trigger heuristics it replaces (a wrong
 /// `from -> to`, or none at all), with no error. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 8;
+///
+/// Bumped to 9 for mox explicit table names and register classes (issue
+/// #668): a pre-#668 binary ingested `class X table "…"` with the DERIVED
+/// `pg_table_name` (ignoring the declaration) and a `register` class as an
+/// ordinary entity. A warm cache would keep serving the derived table and the
+/// entity/CRUD surface with no error — the delivered facts (declared table,
+/// `mox_class_kind = "register"` annotation, codelist classification) are
+/// exactly the ones a cached graph silently lacks. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 9;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact

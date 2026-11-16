@@ -60,6 +60,52 @@ mapping (String→TEXT, wraps-String→TEXT, `format "uuid"`→UUID, dates→DAT
 (natural-key parts are plain columns; no UNIQUE). Gates:
 `cargo test -p codegraph --test mox_identity_tests`.
 
+**Explicit table names (the `table` annotation, issue #668)**: `class X
+table "pay_run_rows"` (upstream pherolang#177 `ClassDef::table_name`) is the
+effective storage table on EVERY plane — the mox bridge writes the declared
+spelling into `SchemaNode.pg_table_name`, the ONE field the DDL
+(`db/ddl/query.rs`), the SeaORM entity (`db/entity.rs`), the repository
+emitter, the filters and the hurl/openapi naming all read, so the planes
+cannot drift (`SchemaNode::declares_table_name`/`derived_table_name` tell a
+declaration from a derived default). The declared spelling is
+snake_case-normalized (a changing normalization WARNs — `pg_table_name` is
+also the module/file stem); URLs are unaffected (`api_path_segment` stays
+title-derived); the composition child-table derivation follows the DECLARED
+parent (`pay_run_rows_lines`). A declared table colliding with another
+class's table in the same domain is a hard `Error::Config` naming both
+classes (`consistency::check_entity_module_collisions`, the declared-table
+message — upstream E0301 covers the same-package pair, this gate covers
+cross-package/one-domain). Gates: `cargo test -p codegraph --test
+mox_table_name_tests` + `--test module_collision_tests` + the
+`mox_ingest_tests` bridge pins.
+
+**Register classes (issue #668)**: `register Role { … }` (upstream
+pherolang#181, `ClassKind::Register`) is an org/role noun space — attributes
+only, no relations, no `extends`, no table annotation — so it maps onto the
+REFERENCE-DATA (codelist/seed-table) plane: a `CodeList` node plus a
+`classification = "codelist"` `SchemaNode` carrying
+`custom_annotations["mox_class_kind"] = "register"`
+(`codegraph_core::types::{MOX_CLASS_KIND, MOX_CLASS_KIND_REGISTER}`,
+`SchemaNode::is_register_class`). `ordering::compute_generation_order` SKIPS
+register schemas — that skip is what removes the entity module, table,
+repository, handlers, routes and UI pages, leaving the `common.{table}` seed
+migration and the (zero-variant `empty_enum.tera`) codelist Rust enum the
+codelist generators own. Declared attributes still ingest as properties (the
+model graph stays non-lossy; projecting them into the seed table is a
+recorded follow-up, as is the CRUD-free *entity* reading of a register,
+which needs the api/op plane). References TO a register stay ordinary class
+references (`role_id UUID` columns / junction child tables). Rationale and
+the rejected alternatives: `docs/tdd/668-mox-tables.tdd.md`.
+
+**`migrate` escapes from the compiler's word tables (issue #668)**:
+`phero_syntax::words::KEYWORDS` (aliased `MOX_KEYWORDS`) drives
+`migrate::emit_name`; the old hand-copied list had drifted (`event`,
+`channel`, `publishes`, `subscription` missing) and could emit identifiers
+the compiler rejects. `MOX_CONTEXTUAL` words are never escaped — `register`
+is special only at the top-level item position. Gate:
+`migrate_tests::keyword_heavy_schema_round_trips_through_the_compiler`
+(a schema spelling every documented word must compile round-trip).
+
 ### `import schema` (JSON Schema types from .mox)
 
 ```mox

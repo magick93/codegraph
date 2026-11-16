@@ -206,10 +206,15 @@ pub async fn check_child_table_consistency(
 }
 
 /// The entity-aware module/table collision sweep (WS5). Within ONE domain,
-/// two DISTINCT schema titles that both produce entities (tables) and map
-/// to the same module name and/or the same pg_table_name would silently
-/// overwrite each other's entity module + migration — a hard error naming
-/// both titles, the domain, and the collision.
+/// two DISTINCT schema titles that both produce entities (tables) and land on
+/// the same effective table name (which is also the generated module/file
+/// stem) would silently overwrite each other's entity module + migration — a
+/// hard error naming both titles, the domain, and the collision.
+///
+/// A mox `table "…"` override (issue #668) joins the table key as the
+/// EFFECTIVE name, so a declared table colliding with another class's
+/// (declared or derived) table is caught with a dedicated message naming the
+/// declaring classes — the declaration is what has to change.
 ///
 /// Entity-awareness is the point: the generation order carries VOs and
 /// codelists too, and a `PayRunType` entity + a `PayRun` contained value
@@ -231,16 +236,18 @@ pub async fn check_entity_module_collisions(
         .list_schemas(None)
         .await
         .map_err(|e| Error::Config(e.to_string()))?;
-    // title → schema record (the querier dedupes by title); entity-ness
-    // and the pg table name derive from the title, so one record per
-    // title is sufficient.
+    // title → schema record (the querier dedupes by title); entity-ness is
+    // the schema's own flag and the pg table name its effective (declared or
+    // derived) name, so one record per title is sufficient.
     let by_title: HashMap<&str, &codegraph_core::types::SchemaNode> =
         schemas.iter().map(|s| (s.title.as_str(), s)).collect();
 
-    // Entity-producing titles grouped by (domain, module) and by
-    // (domain, pg_table_name) — BTree keys + title sets so both the
-    // grouping and the error text are deterministic.
-    let mut by_module: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    // Entity-producing titles grouped by (domain, effective table name) —
+    // BTree keys + title sets so both the grouping and the error text are
+    // deterministic. ONE key covers both collisions the WS5 sweep cares
+    // about: `pg_table_name` is the PostgreSQL table AND the generated
+    // module/file stem on every plane (entity module, domain dir, migration
+    // file), so a declared `table "…"` moves both together (issue #668).
     let mut by_table: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
     for entry in generation_entries(config, order) {
         let Some(schema) = by_title.get(entry.schema_title.as_str()) else {
@@ -256,12 +263,6 @@ pub async fn check_entity_module_collisions(
         {
             continue;
         }
-        let module =
-            codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&entry.schema_title));
-        by_module
-            .entry((entry.domain.clone(), module))
-            .or_default()
-            .insert(entry.schema_title.clone());
         by_table
             .entry((entry.domain.clone(), schema.pg_table_name.clone()))
             .or_default()
@@ -269,24 +270,35 @@ pub async fn check_entity_module_collisions(
     }
 
     let mut collisions: BTreeSet<String> = BTreeSet::new();
-    for ((domain, module), titles) in &by_module {
-        if titles.len() > 1 {
-            let list: Vec<String> = titles.iter().map(|t| format!("`{t}`")).collect();
-            collisions.insert(format!(
-                "domain `{domain}`: entity-producing titles {} all map to module `{module}` \
-                 — rename all but one so their stripped names differ (each would emit the \
-                 same entity module and overwrite the others)",
-                list.join(", ")
-            ));
-        }
-    }
     for ((domain, table), titles) in &by_table {
         if titles.len() > 1 {
             let list: Vec<String> = titles.iter().map(|t| format!("`{t}`")).collect();
+            // A DECLARED `table "…"` (issue #668) gets its own message: the
+            // declaration is what must change, and both classes are named.
+            let declaring: Vec<String> = titles
+                .iter()
+                .filter(|title| {
+                    by_title
+                        .get(title.as_str())
+                        .is_some_and(|s| s.declares_table_name(&config.defaults.type_suffix))
+                })
+                .map(|title| format!("`{title}`"))
+                .collect();
+            if !declaring.is_empty() {
+                collisions.insert(format!(
+                    "domain `{domain}`: classes {} all resolve to pg table `{table}` — {} \
+                     declares it with `table \"{table}\"`; rename the class or re-point the \
+                     declaration so each class keeps its own table (each would emit the same \
+                     table and migration)",
+                    list.join(", "),
+                    declaring.join(", ")
+                ));
+                continue;
+            }
             collisions.insert(format!(
-                "domain `{domain}`: entity-producing titles {} all map to pg table \
-                 `{table}` — rename all but one so their stripped names differ (each \
-                 would emit the same table and migration)",
+                "domain `{domain}`: entity-producing titles {} all map to module/pg table \
+                 `{table}` — rename all but one so their stripped names differ (each would \
+                 emit the same entity module, table and migration)",
                 list.join(", ")
             ));
         }

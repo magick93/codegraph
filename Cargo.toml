@@ -91,6 +91,10 @@ tree-sitter-language = "0.1"
 # dedup sweep; artifacts carried `rexVersion` with formatVersion 1.
 phero-ir = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
 phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+# `phero-syntax` owns the compiler's PUBLIC word tables (`words::KEYWORDS`,
+# `words::MOX_CONTEXTUAL`) — `codegraph migrate` escapes emitted identifiers
+# from them instead of a hand-copied list (issue #668).
+phero-syntax = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
 phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
 phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the pherolang

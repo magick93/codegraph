@@ -81,7 +81,7 @@ impl GlobalGenerator for WorkflowSeedGenerator {
 
     async fn generate(
         &self,
-        _db: &dyn GraphQuerier,
+        db: &dyn GraphQuerier,
         config: &DomainConfig,
         _generation_order: &[GenerationEntry],
         tera: &tera::Tera,
@@ -111,8 +111,19 @@ impl GlobalGenerator for WorkflowSeedGenerator {
                 // Build state machine JSON from transitions + dual_status_guards
                 let state_machine = build_state_machine_json(workflow);
 
-                let entity_table =
-                    codegraph_naming::to_snake_case(&config.defaults.strip_suffix(entity_name));
+                // The graph's table is authoritative: a mox `table "…"`
+                // declaration (issue #668) overrides the title-derived name,
+                // and seeding the derived table would write rows into a table
+                // the DDL never creates. Absent a graph schema (config-only
+                // entity) the derived name stays.
+                let entity_table = match db.get_schema_in_domain(entity_name, domain_name).await {
+                    Ok(Some(schema)) if !schema.pg_table_name.is_empty() => {
+                        schema.pg_table_name.clone()
+                    }
+                    _ => {
+                        codegraph_naming::to_snake_case(&config.defaults.strip_suffix(entity_name))
+                    }
+                };
 
                 // Build approval chain seeds
                 let approval_chains: Vec<ApprovalChainSeed> = workflow
