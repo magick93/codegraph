@@ -785,3 +785,310 @@ async fn service_ops_contract_serves_over_http() {
     db.cleanup().await;
     result.unwrap();
 }
+
+// ── Issue #661: aggregate child operations over real HTTP ──────────────
+
+/// The aggregate-child gate's root (separate from the #590 gate so the two
+/// apps' cargo caches never collide).
+fn child_gate_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/service-ops-child-gate")
+}
+
+fn child_actions_path(output: &Path) -> PathBuf {
+    let hurl_dir = output.join("hurl");
+    std::fs::read_dir(&hurl_dir)
+        .ok()
+        .and_then(|entries| {
+            entries.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+                p.extension().is_some_and(|x| x == "hurl")
+                    && p.file_name().is_some_and(|n| {
+                        n.to_string_lossy()
+                            .ends_with("_payroll_pay_run_line_actions.hurl")
+                    })
+            })
+        })
+        .unwrap_or_else(|| hurl_dir.join("11_payroll_pay_run_line_actions.hurl"))
+}
+
+/// The hand-authored parent-ownership probe (issue #661): a child element
+/// created under parent A must be invisible — and un-actionable — through
+/// parent B. Every denial pins 404, and the element survives the denials
+/// (the scoped load refuses BEFORE any write, never a cross-parent patch).
+const CHILD_OWNERSHIP_PROBE: &str = r#"# WS661 aggregate child ownership probe — hand-authored.
+# Two parents, one child: the child belongs to A alone.
+POST {{base_url}}/api/v1/payroll/pay-run
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_id": "ws661-parent-a",
+  "pay_run_status": "Draft",
+  "total": 1
+}
+
+HTTP 201
+[Captures]
+parent_a: jsonpath "$.data.id"
+
+POST {{base_url}}/api/v1/payroll/pay-run
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_id": "ws661-parent-b",
+  "pay_run_status": "Draft",
+  "total": 2
+}
+
+HTTP 201
+[Captures]
+parent_b: jsonpath "$.data.id"
+
+# the child is created under A (the nested create writes A's FK)
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line
+Authorization: Bearer {{api_key}}
+@CHILD_BODY@
+
+HTTP 201
+[Captures]
+child_a: jsonpath "$.data.id"
+
+# `add` under A — the collection-level action (create-and-link)
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/actions/add_line
+Authorization: Bearer {{api_key}}
+{
+  "line_id": "ws661-added-line",
+  "quantity": 3
+}
+
+HTTP 200
+[Captures]
+added_line: jsonpath "$.data.id"
+[Asserts]
+jsonpath "$.data.pay_run_id" == "{{parent_a}}"
+
+# the added element is READABLE under A
+GET {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{added_line}}
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+
+# `save` under A — an item-level update
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{child_a}}/actions/save_line
+Authorization: Bearer {{api_key}}
+{
+  "quantity": 7
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.quantity" == 7
+
+# parent ownership: parent B cannot read the child
+GET {{base_url}}/api/v1/payroll/pay-run/{{parent_b}}/pay-run-line/{{child_a}}
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+
+# parent ownership: parent B cannot save the child
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_b}}/pay-run-line/{{child_a}}/actions/save_line
+Authorization: Bearer {{api_key}}
+{
+  "quantity": 99
+}
+
+HTTP 404
+
+# parent ownership: parent B cannot remove the child
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_b}}/pay-run-line/{{child_a}}/actions/remove_line
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+
+# the denials left the child untouched (still A's, still quantity 7)
+GET {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{child_a}}
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.quantity" == 7
+
+# `remove` under A — the element is gone afterwards
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{child_a}}/actions/remove_line
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+
+GET {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{child_a}}
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+"#;
+
+/// The emitted child actions contract must carry every child-op leg class
+/// BEFORE any build spend: the collection-level add (200 + capture), the
+/// read-back, the item-level save/remove, and both failure legs (422/404).
+fn assert_child_emitted_surface(output: &Path) -> Result<(), String> {
+    let path = child_actions_path(output);
+    let actions = fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "the child actions contract is missing ({}): {e}",
+            path.display()
+        )
+    })?;
+    for (needle, why) in [
+        (
+            "/pay-run-line/actions/add_line",
+            "the collection-level add leg",
+        ),
+        ("added_add_line_id: jsonpath", "the add capture"),
+        ("/actions/save_line", "the item-level save leg"),
+        ("/actions/remove_line", "the item-level remove leg"),
+        ("HTTP 422", "the add failure leg"),
+        ("HTTP 404", "the ownership failure leg"),
+        ("__unknown_field__", "the unknown-field failure body"),
+    ] {
+        if !actions.contains(needle) {
+            return Err(format!(
+                "the emitted child actions contract lacks {why} (`{needle}`):\n{actions}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "live gate: needs Postgres, hurl, and a cargo build of the generated app"]
+async fn aggregate_child_actions_serve_over_http() {
+    if let Err(reason) = gate_prerequisites(have_tool("hurl")) {
+        skip(&reason);
+        return;
+    }
+    let Ok(base) = resolve_base_target().await else {
+        skip("no usable postgres (DATABASE_URL + docker fallback failed)");
+        return;
+    };
+    if !database_reachable(&base).await {
+        skip("postgres not reachable");
+        return;
+    }
+
+    println!("generating the aggregate-child fixture app…");
+    let fixture = fixture::write_child_ops_fixture();
+    let _engine = fixture::ingest_child_ops(&fixture).await;
+
+    let root = child_gate_root();
+    let output = root.join("app");
+    fs::create_dir_all(&output).expect("create child gate app dir");
+    let fixture_root = fixture.config.parent().expect("fixture root").to_path_buf();
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the aggregate-child fixture must succeed");
+
+    assert_child_emitted_surface(&output)
+        .expect("the emitted child actions contract must be complete");
+    let actions = fs::read_to_string(child_actions_path(&output)).expect("read child actions");
+    println!("emitted child actions contract:\n{actions}");
+
+    let db = GateDb::create(base).await.expect("scratch database");
+    db.apply_prelude().await.expect("prelude");
+    let db_url = db.url();
+    let scratch = codegraph_ops::pg::PgTarget::from_url(&db_url).expect("scratch target");
+    let (migrations_dir, _staged) = resolve_migrations_dir(&scratch, &output).await;
+    db.apply_migrations(&migrations_dir)
+        .await
+        .expect("migrations");
+    let api_key = db.provision_api_key().await.expect("api key");
+
+    let target_dir = root.join("target");
+    let target_logs = root.join("logs");
+    let result = async {
+        let bin = axum_server::build_app(
+            &output.join("Cargo.toml"),
+            &output,
+            &target_dir,
+            &target_logs,
+            "app",
+        )?;
+        let jwt_secret = "ws661-child-ops-gate-jwt-secret-0123456789abcdef";
+        let server = axum_server::boot_server(
+            &bin,
+            &[
+                ("DATABASE_URL", db_url.as_str()),
+                ("SUPABASE_JWT_SECRET", jwt_secret),
+                ("APP_NAME", "child-ops-gate-app"),
+            ],
+            "child-ops-gate-app",
+            &target_logs,
+        )
+        .await?;
+        println!("gate: server booted on 127.0.0.1:{}", server.port);
+
+        // The emitted contract (create → add → read-back → failure legs →
+        // save → remove) then the hand-authored ownership probe.
+        let (_, child_body) =
+            extract_create_entry(&actions).map_err(|e| format!("CREATE entry: {e}"))?;
+        let probe = CHILD_OWNERSHIP_PROBE.replace("@CHILD_BODY@", &child_body);
+        let probe_path = root.join("child_ownership_probe.hurl");
+        fs::write(&probe_path, probe).map_err(|e| format!("write probe file: {e}"))?;
+        run_hurl(
+            server.port,
+            &api_key,
+            &[child_actions_path(&output), probe_path],
+        )?;
+
+        // DB-level proof: parent A owns exactly the added LIVE line (the
+        // probe's own child was removed — auditable entities soft-delete, so
+        // it survives as a deleted row and must not be counted live), and
+        // nothing landed under parent B.
+        let rows = codegraph_ops::db::psql_query(
+            &scratch,
+            "SELECT p.pay_run_id, \
+                    count(l.id) FILTER (WHERE l.deleted_at IS NULL) AS live, \
+                    count(l.id) AS total \
+             FROM payroll.pay_run p \
+             LEFT JOIN payroll.pay_run_line l ON l.pay_run_id = p.id \
+             WHERE p.pay_run_id IN ('ws661-parent-a', 'ws661-parent-b') \
+             GROUP BY p.pay_run_id ORDER BY p.pay_run_id;",
+        )
+        .await
+        .map_err(|e| format!("ownership query failed: {e}"))?;
+        println!("gate: per-parent child counts (live|total):\n{rows}");
+        let lines: Vec<&str> = rows.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["ws661-parent-a|1|2", "ws661-parent-b|0|0"],
+            "parent A must own exactly the added LIVE line (its own child was \
+             removed through the auditable soft-delete) and parent B none — \
+             the cross-parent denials must never have written"
+        );
+        Ok::<(), String>(())
+    }
+    .await;
+
+    db.cleanup().await;
+    result.unwrap();
+}

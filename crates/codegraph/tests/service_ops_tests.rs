@@ -24,8 +24,10 @@ use codegraph_core::traits::GraphQuerier;
 use tempfile::TempDir;
 
 use fixture::{
-    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, ingest_binding, read,
-    run_generation, tempdir, write_binding_fixture, write_fixture_in, write_mox_first_fixture_in,
+    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, ingest_binding,
+    ingest_child_ops, read, run_generation, tempdir, write_binding_fixture,
+    write_child_ops_fixture, write_child_ops_fixture_with, write_fixture_in,
+    write_mox_first_fixture_in,
 };
 
 /// The first `HTTP <status>` after `needle` in a hurl file.
@@ -1223,5 +1225,246 @@ async fn unresolvable_authored_bindings_fail_validation_naming_the_machines() {
     assert!(
         errors.iter().any(|e| e.contains("prepareRelease")),
         "{errors:?}"
+    );
+}
+
+// ── Issue #661: aggregate child operations (`children <Class>`) ────────
+
+/// Acceptance (1) + (3): a modeled `children PayRunType { boolean
+/// addLine(PayRunLineDraft line) => lines.add }` generates the nested child
+/// action routes — against the CHILD's plane, under the parent's aggregate
+/// path, with the parent ownership load the WS4 child plane already
+/// generates — and the emitted actions contract exercises add → read-back
+/// with its failure leg pinned.
+#[tokio::test]
+async fn child_scoped_operations_lower_to_nested_child_action_routes() {
+    let fixture = write_child_ops_fixture();
+    let engine = ingest_child_ops(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // ── router: the child routes fn carries the child actions; the parent
+    //    nests it (the WS4 shape — no second nesting) ──
+    let router = read(&out.path().join("src/api/payroll/router.rs"));
+    assert!(
+        router.contains(".nest(\"/{pay_run_id}/pay-run-line\", pay_run_line_routes())"),
+        "the parent router must nest the child routes fn:\n{router}"
+    );
+    let child_router = &router[router
+        .find("fn pay_run_line_routes()")
+        .expect("the child routes fn must emit")..];
+    assert!(
+        child_router.contains("\"/actions/add_line\""),
+        "`add` is a COLLECTION-level action (no child id in the path):\n{child_router}"
+    );
+    for (action, snake) in [("save", "save_line"), ("remove", "remove_line")] {
+        assert!(
+            child_router.contains(&format!("\"/{{pay_run_line_id}}/actions/{snake}\"")),
+            "child `{action}` must ride the item route:\n{child_router}"
+        );
+    }
+
+    // ── child handler: nested utoipa paths, the parent-scoped load, and the
+    //    child command plane per action ──
+    let handler = read(&out.path().join("src/api/payroll/pay_run_line_handler.rs"));
+    assert!(
+        handler.contains("/api/v1/payroll/pay-run/{pay_run_id}/pay-run-line/actions/add_line"),
+        "the add utoipa path must be the nested collection action:\n{handler}"
+    );
+    assert!(
+        handler.contains(
+            "/api/v1/payroll/pay-run/{pay_run_id}/pay-run-line/{pay_run_line_id}/actions/save_line"
+        ),
+        "the save utoipa path must be the nested item action:\n{handler}"
+    );
+    assert!(
+        handler.contains("Path((parent_id, pay_run_line_id)): Path<(Uuid, Uuid)>"),
+        "item-level child actions bind the parent + child ids:\n{handler}"
+    );
+    assert!(
+        handler.contains("Path(parent_id): Path<Uuid>,"),
+        "the collection-level add binds the parent only:\n{handler}"
+    );
+    // add → the child create command, linked to the parent by the path.
+    assert!(
+        handler.contains("_commands.create(\n        item,\n        parent_id,"),
+        "child `add` must create through the child's command plane, parent-linked:\n{handler}"
+    );
+    // save → the child update command; remove → the child delete command.
+    assert!(
+        handler.contains("_commands.update(\n        pay_run_line_id,"),
+        "child `save` must update through the child's command plane:\n{handler}"
+    );
+    assert!(
+        handler.contains("_commands.delete(pay_run_line_id,"),
+        "child `remove` must delete through the child's command plane:\n{handler}"
+    );
+    // The scoped read is the parent ownership contract for item actions.
+    assert!(
+        handler.contains("find_by_id_scoped(pay_run_line_id, parent_id"),
+        "item-level child actions must load the parent-scoped record:\n{handler}"
+    );
+    // DD3: the fixture's `dto PayRunLineDraft from PayRunLineType` projection
+    // must NOT shadow the entity design on the same title — the design surface
+    // still sees the entity design, so the audit plane (and its
+    // `include_deleted` argument) survives.
+    assert!(
+        handler.contains("find_by_id_scoped(pay_run_line_id, parent_id, false, api_key_info"),
+        "a projection DTO must not shadow the entity design (the auditable \
+         `include_deleted` argument must survive):\n{handler}"
+    );
+    // None of the three child actions may seam.
+    assert!(
+        !handler.contains("child operation `addLine`")
+            && !handler.contains("child operation `saveLine`"),
+        "the modeled child actions must lower, not seam:\n{handler}"
+    );
+    // The RETAINED cross-aggregate seam carries the improved message naming
+    // the modeling construct (acceptance 2) — it rides the ROOT handler.
+    let root_handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));
+    assert!(
+        root_handler.contains("children PayRunType"),
+        "the cross-aggregate seam must name the `children <Root>` construct:\n{root_handler}"
+    );
+    assert!(
+        root_handler.contains("childScope"),
+        "the seam must name the childScope modeling construct:\n{root_handler}"
+    );
+    assert!(
+        root_handler.contains("Refusing to patch the parent row silently"),
+        "the seam keeps its never-silently-patch guarantee:\n{root_handler}"
+    );
+
+    // ── openapi: the child actions register through the child's module ──
+    let openapi = read(&out.path().join("src/api/openapi/payroll.rs"));
+    for snake in ["add_line", "save_line", "remove_line"] {
+        assert!(
+            openapi.contains(&format!("pay_run_line_handler::service_op_{snake}")),
+            "openapi must register the child action `{snake}`:\n{openapi}"
+        );
+    }
+
+    // ── hurl: create → add → read-back → failure leg → save/remove ──
+    let actions = read(&actions_file(
+        out.path(),
+        "_payroll_pay_run_line_actions.hurl",
+    ));
+    assert!(
+        actions.contains(
+            "POST {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/actions/add_line"
+        ),
+        "the add leg must post the nested collection action:\n{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/add_line"),
+        Some(200),
+        "{actions}"
+    );
+    assert!(
+        actions.contains("added_add_line_id: jsonpath \"$.data.id\""),
+        "the add leg must capture the created element:\n{actions}"
+    );
+    // The read-back proves the element landed and is readable under the parent.
+    assert!(
+        actions.contains(
+            "GET {{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/{{added_add_line_id}}"
+        ),
+        "the add leg must read the element back by id:\n{actions}"
+    );
+    assert!(
+        actions.contains("jsonpath \"$.data.id\" exists"),
+        "the read-back must assert the element exists:\n{actions}"
+    );
+    // The failure legs: the create DTO's unknown-field denial and the
+    // parent-ownership 404.
+    assert!(
+        actions.contains("__unknown_field__"),
+        "the add failure leg must send an unknown field:\n{actions}"
+    );
+    assert!(
+        actions.contains(
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line/00000000-0000-0000-0000-000000000000/actions/remove_line"
+        ),
+        "the remove failure leg must target an element the parent does not own:\n{actions}"
+    );
+    assert!(
+        actions.contains("HTTP 422") && actions.contains("HTTP 404"),
+        "the child action contracts must pin both failure legs:\n{actions}"
+    );
+    // save/remove ride the item route and answer 200.
+    assert_eq!(
+        status_after(&actions, "/actions/save_line"),
+        Some(200),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/remove_line"),
+        Some(200),
+        "{actions}"
+    );
+    // The seeded row must survive long enough for the item legs: remove runs
+    // LAST (it deletes the captured element).
+    let save_at = actions.find("/actions/save_line").expect("save leg");
+    let remove_at = actions.find("/actions/remove_line").expect("remove leg");
+    assert!(
+        save_at < remove_at,
+        "`remove` must run after `save` (it deletes the captured row):\n{actions}"
+    );
+}
+
+/// Fail-closed pin: the SAME model with the child entity NOT declared a
+/// nested child warns and emits no route (never a top-level route that
+/// silently drops the parent anchor), and the app still generates.
+#[tokio::test]
+async fn child_operations_without_a_nested_child_declaration_emit_nothing() {
+    let fixture = write_child_ops_fixture_with(
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+"#,
+    );
+    let engine = ingest_child_ops(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    let router = read(&out.path().join("src/api/payroll/router.rs"));
+    let child_router = &router[router
+        .find("fn pay_run_line_routes()")
+        .expect("the child routes fn still emits")..];
+    for snake in ["add_line", "save_line", "remove_line"] {
+        assert!(
+            !child_router.contains(&format!("/actions/{snake}")),
+            "an un-nested child must emit no `{snake}` route:\n{child_router}"
+        );
+    }
+    let handler = read(&out.path().join("src/api/payroll/pay_run_line_handler.rs"));
+    assert!(
+        !handler.contains("service_op_add_line"),
+        "an un-nested child must emit no child action handler:\n{handler}"
     );
 }

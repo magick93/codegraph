@@ -229,3 +229,82 @@ async fn generated_app_with_authored_transition_bindings_compiles() {
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with authored transition bindings must compile");
 }
+
+/// Issue #661: the AGGREGATE CHILD OPERATION plane compiles. The fixture
+/// models `children PayRunType { … => lines.add|save|remove }` over a
+/// repository-bearing child entity declared as a nested child, so the
+/// emitted handlers drive the CHILD's create/update/delete command planes
+/// through the parent's aggregate path — the collection-level `add` (create
+/// + reload), the item-level `save` (update + reload), and `remove`
+/// (delete). The pin's teeth: the child action handlers must name the
+/// child's real DTO modules and command methods (a misspelt
+/// `Create{Child}Request` or a create signature without `parent_id` is a
+/// compile error, never a silent seam).
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_aggregate_child_operations_compiles() {
+    let fixture = fixture::write_child_ops_fixture();
+    let engine = fixture::ingest_child_ops(&fixture).await;
+    let _ = &engine;
+
+    let out_dir = tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the aggregate-child fixture must succeed");
+
+    // The child action surface must be ON DISK before the build spend, and
+    // it must reach the child's OWN planes (the #551 lesson: a misspelt
+    // module is a compile error only if we bother to compile it).
+    let handler =
+        fs::read_to_string(output.join("src/api/payroll/pay_run_line_handler.rs")).unwrap();
+    for needle in [
+        "service_op_add_line",
+        "service_op_save_line",
+        "service_op_remove_line",
+        "CreatePayRunLineBody",
+        "dto_update::UpdatePayRunLineRequest",
+    ] {
+        assert!(
+            handler.contains(needle),
+            "the child action surface must carry `{needle}` before the build:\n{handler}"
+        );
+    }
+    let router = fs::read_to_string(output.join("src/api/payroll/router.rs")).unwrap();
+    assert!(
+        router.contains("\"/actions/add_line\""),
+        "the collection-level add route must emit:\n{router}"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with aggregate child operations must compile");
+}
