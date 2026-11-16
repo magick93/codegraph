@@ -247,8 +247,37 @@ pub struct DddServiceOperation {
     /// operation without a body receiver.
     #[serde(default)]
     pub body_receiver: Option<String>,
+    /// The explicit transition binding of a delegated operation
+    /// (`name => Repository.save transition <Trigger>`, pherolang#176,
+    /// issue #660). When present it is the PRIMARY selector for the
+    /// operation's machine transition; the name/`when`/capability
+    /// heuristics are the no-binding fallback only. Serde-defaulted and
+    /// omitted when absent, so a model declaring no binding serializes
+    /// exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition: Option<DddTransitionRef>,
     /// Declaration order within the service.
     pub ordinal: usize,
+}
+
+/// An authored `transition <Trigger>` binding (phero-ir `TransitionRef`,
+/// issue #660): the machine-bound transition a `save` delegation fires.
+///
+/// The machine qualifier names the machine's **enum type** (`PayRunStatus`),
+/// never the machine field — Phero Lang machine declarations are
+/// field-named, so an enum-type qualifier is the only machine
+/// qualification the surface has. `None` when the source wrote the
+/// unqualified spelling; a module with more than one machine-bearing design
+/// requires it (upstream E0352).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DddTransitionRef {
+    /// The trigger name as authored — an explicit `via` name or a bare
+    /// arrow's derived name (the lowerCamel of the target state).
+    pub trigger: String,
+    /// The machine's enum type name, when the source qualified the
+    /// binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
 }
 
 /// A search definition designed over one entity (phero-ir `SearchDef`): the

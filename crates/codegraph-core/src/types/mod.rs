@@ -53,7 +53,7 @@ pub use condition::{ConditionKind, ConditionNode};
 pub use ddd::{
     DddApplicationNode, DddDesignFlags, DddDesignNode, DddDocumentField, DddModelGraph,
     DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
-    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
+    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation, DddTransitionRef,
 };
 pub use deploy::{
     DeployApplicationNode, DeployBindingNode, DeployComponentNode, DeployConnectionNode,

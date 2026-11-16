@@ -1752,6 +1752,7 @@ fn ddd_fixture() -> DddModelGraph {
                         throws: Vec::new(),
                         bodies: Default::default(),
                         body_receiver: None,
+                        transition: None,
                     },
                     DddServiceOperation {
                         name: "renew".to_string(),
@@ -1769,6 +1770,7 @@ fn ddd_fixture() -> DddModelGraph {
                         throws: Vec::new(),
                         bodies: Default::default(),
                         body_receiver: None,
+                        transition: None,
                     },
                 ],
                 ordinal: 0,
@@ -1797,6 +1799,7 @@ fn ddd_fixture() -> DddModelGraph {
                     throws: Vec::new(),
                     bodies: Default::default(),
                     body_receiver: None,
+                    transition: None,
                 }],
                 ordinal: 0,
             },

@@ -1507,6 +1507,14 @@ async fn operation_condition(
 /// `field == State` / `State == field` comparisons against declared
 /// machine states, AND/OR-combined. `None` when the shape isn't
 /// recognized (the leg planner then refuses to plan a 403 drive).
+///
+/// This is NOT the transition selector and must not become one (issue
+/// #660): the op's transitions come from the route plane
+/// ([`ExecutionKind::transition_state`]), which since #660 is the authored
+/// `transition <Trigger>` binding or — for unbound models only — the
+/// documented heuristics. This scan answers the narrower guard question
+/// ("does the op-level `when` admit the initial state, so the act can flip
+/// it for the 403 leg?"), which the binding does not answer.
 fn machine_condition_source_states(
     condition: &str,
     machine_field: &str,

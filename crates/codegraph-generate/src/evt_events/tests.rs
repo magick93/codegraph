@@ -1823,6 +1823,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
                 throws: Vec::new(),
                 bodies: Default::default(),
                 body_receiver: None,
+                transition: None,
                 ordinal: 0,
             }],
         }],

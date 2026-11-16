@@ -44,7 +44,14 @@
 /// a pre-#662 binary deserializes them as EMPTY (serde defaults) — every
 /// bodied operation would silently degrade to the 501 seam it replaces,
 /// with no error. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 7;
+///
+/// Bumped to 8 for authored transition bindings (issue #660):
+/// `DddServiceOperation.transition` rides the serde-serialized
+/// `operations_json` blob, so a cached graph persisted by a pre-#660
+/// binary deserializes it as `None` — every authored binding would
+/// silently degrade to the trigger heuristics it replaces (a wrong
+/// `from -> to`, or none at all), with no error. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 8;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact

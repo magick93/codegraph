@@ -59,7 +59,6 @@ fn actions_file(output: &Path, suffix: &str) -> PathBuf {
         .unwrap_or_else(|| panic!("no hurl file ending in `{suffix}` in {output:?}"))
 }
 
-
 // ── Pins ───────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -993,6 +992,30 @@ async fn authored_transition_binding_selects_the_declared_transition() {
     .await;
     assert!(!report.has_errors(), "generation errors: {report:?}");
 
+    // The binding survives ingest → graph → readback as authored (issue
+    // #660): trigger + enum-type qualifier, so the planner never re-derives
+    // it from names.
+    let models = engine.get_ddd_models().await.unwrap();
+    let binding = models
+        .iter()
+        .flat_map(|m| &m.services)
+        .flat_map(|s| &s.operations)
+        .find(|o| o.name == "prepareRelease")
+        .and_then(|o| o.transition.clone())
+        .expect("the authored binding must mirror into the graph");
+    assert_eq!(binding.trigger, "SignOff");
+    assert_eq!(binding.machine.as_deref(), Some("ReleaseStatus"));
+    let unbound = models
+        .iter()
+        .flat_map(|m| &m.services)
+        .flat_map(|s| &s.operations)
+        .find(|o| o.name == "inspect")
+        .expect("the read op");
+    assert!(
+        unbound.transition.is_none(),
+        "a delegation without a binding must mirror as None"
+    );
+
     // ── routes: both entities' action planes emit ──
     let router = read(&out.path().join("src/api/release/router.rs"));
     for snake in ["prepare_release", "finalize", "prepare_review"] {
@@ -1131,9 +1154,74 @@ async fn unbound_machine_ops_warn_once_for_the_missing_binding() {
     let bound_config = codegraph_config::config::parse_domain_config(&bound.config).unwrap();
     let bound_issues = codegraph::validate::ValidationPass::run(&bound_engine, &bound_config).await;
     assert!(
-        !bound_issues.iter().any(|i| i.check
-            == "service_op_transition_binding"
-            && matches!(i.severity, codegraph::validate::Severity::Warning)),
+        !bound_issues
+            .iter()
+            .any(|i| i.check == "service_op_transition_binding"
+                && matches!(i.severity, codegraph::validate::Severity::Warning)),
         "an authored binding must silence the fallback warning: {bound_issues:?}"
+    );
+}
+
+/// An authored binding that cannot be resolved is a HARD pre-generation
+/// error naming the op and the machines (issue #660) — never a silent
+/// fallback to the trigger heuristics, never a half-written tree.
+///
+/// Upstream rejects an unqualified binding in a multi-machine module at
+/// compile time, so this pin drives the class the graph-side check exists
+/// for: a STALE/hand-built artifact (the same module re-ingested with the
+/// qualifier dropped), which validates the same posture as the DD9
+/// `query_refusals` and the #662 body refusals.
+#[tokio::test]
+async fn unresolvable_authored_bindings_fail_validation_naming_the_machines() {
+    use codegraph_core::traits::GraphIngestor;
+
+    let fixture = write_binding_fixture();
+    let engine = ingest_binding(&fixture).await;
+    let models = engine.get_ddd_models().await.unwrap();
+    let mut stale = models
+        .iter()
+        .find(|m| m.source_path.ends_with("release.ddd"))
+        .expect("the release model")
+        .clone();
+    stale.source_path = "stale_release.ddd".to_string();
+    let op = stale
+        .services
+        .iter_mut()
+        .find(|s| s.name == "ReleaseService")
+        .and_then(|s| s.operations.iter_mut().find(|o| o.name == "prepareRelease"))
+        .expect("the bound op");
+    op.transition = Some(codegraph_core::types::DddTransitionRef {
+        trigger: "SignOff".to_string(),
+        machine: None,
+    });
+    engine.ingest_ddd_model(&stale).await.unwrap();
+
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let refusal = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_transition_binding"
+        })
+        .unwrap_or_else(|| panic!("expected a hard binding refusal, got: {issues:?}"));
+    assert!(
+        refusal.message.contains("prepareRelease"),
+        "the refusal must name the op: {refusal:?}"
+    );
+    for machine in ["ReleaseType", "ReviewType"] {
+        assert!(
+            refusal.message.contains(machine),
+            "the refusal must name both machines of the module ({machine}): {refusal:?}"
+        );
+    }
+
+    // The direct collector exposes the same finding (the run path's source).
+    let errors = codegraph_generate::ddd::service_ops::transition_binding_errors(&engine, &config)
+        .await
+        .unwrap();
+    assert!(
+        errors.iter().any(|e| e.contains("prepareRelease")),
+        "{errors:?}"
     );
 }
