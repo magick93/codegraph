@@ -1,7 +1,13 @@
 # Proposal: multi-machine and cross-entity `when` scoping
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd machines.rs + integrity; rex-ir condition)
+Status: **implemented upstream** (pherolang 0.3, issue pherolang#180) — consumer work: #663
+Shipped as: `ServiceOperation.condition_paths` — every resolved field path of a `when`
+condition, scoped `OwnRecord` or `Injected { repository, class }`, emitted where a
+consumer cannot re-derive them (always for injected scope). The driver also lifted the
+single-machine-module restriction. codegraph still assumes own-record only; #663 admits
+injected-scope guards and multi-machine modules.
+
+Target: pherolang (phero-driver ddd machines.rs + integrity; phero-ir condition)
 
 ## Problem
 

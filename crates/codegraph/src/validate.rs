@@ -53,7 +53,7 @@ impl ValidationPass {
     /// a configured workflow whose status field is a bare `String` accepts
     /// arbitrary status values on create/update — every state machine is
     /// bypassable via scaffold CRUD. WARN until typed lifecycles land
-    /// (rexlang #114): bind the field to a codelist or await machine
+    /// (pherolang #114): bind the field to a codelist or await machine
     /// validation on the scaffold path.
     async fn check_status_bypass(
         db: &dyn GraphQuerier,
@@ -94,7 +94,7 @@ impl ValidationPass {
                         "workflow status field '{}' is a bare {} — create/update \
                          accept arbitrary status values, so the {} state machine is \
                          bypassable via scaffold CRUD; bind the field to a codelist \
-                         or adopt typed lifecycles (rexlang #114)",
+                         or adopt typed lifecycles (pherolang #114)",
                         workflow.status_field,
                         status.rust_field_type,
                         workflow.states.len(),

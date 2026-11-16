@@ -68,7 +68,7 @@ fn write_file(dir: &Path, rel: &str, contents: &str) {
 }
 
 async fn ingest_ifml_file(engine: &GrafeoEngine, ifml_path: &Path) -> usize {
-    let model = rex_ifml::parse_ifml_file(ifml_path).expect("parse .ifml");
+    let model = phero_ifml::parse_ifml_file(ifml_path).expect("parse .ifml");
     let mut stats = codegraph::ingest::ifml_ingest::ingest_ifml_model(engine, &model)
         .await
         .expect("ingest model");
@@ -165,24 +165,24 @@ async fn actor_source_import_ingests_policy_and_persists_requires() {
 #[tokio::test]
 async fn artifact_json_import_ingests_policy() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let artifact = rex_ir::ActorModel::new().block(
-        rex_ir::ActorsDef::new("Audit")
-            .actor(rex_ir::ActorDef::new("Auditor").kind(rex_ir::ActorKind::Agent))
-            .capability(rex_ir::CapabilityDef::new(
+    let artifact = phero_ir::ActorModel::new().block(
+        phero_ir::ActorsDef::new("Audit")
+            .actor(phero_ir::ActorDef::new("Auditor").kind(phero_ir::ActorKind::Agent))
+            .capability(phero_ir::CapabilityDef::new(
                 "ViewAuditLog",
-                rex_ir::TypeRef::Class {
+                phero_ir::TypeRef::Class {
                     package: "audit".to_string(),
                     name: "AuditLog".to_string(),
                 },
             ))
             .grant(
-                rex_ir::GrantDef::new("Auditor")
-                    .entry(rex_ir::GrantEntry::permit("ViewAuditLog").when("log.level > 1")),
+                phero_ir::GrantDef::new("Auditor")
+                    .entry(phero_ir::GrantEntry::permit("ViewAuditLog").when("log.level > 1")),
             ),
     );
     let json = artifact.to_json().expect("serialize artifact");
     let ifml = r#"
-import "policies/audit.rex.json"
+import "policies/audit.phero.json"
 
 view "AuditLog" {
     roles: [Auditor];
@@ -195,7 +195,7 @@ view "AuditLog" {
 }
 "#;
     write_file(tmp.path(), "app.ifml", ifml);
-    write_file(tmp.path(), "policies/audit.rex.json", &json);
+    write_file(tmp.path(), "policies/audit.phero.json", &json);
 
     let engine = GrafeoEngine::in_memory().expect("engine");
     let imported = ingest_ifml_file(&engine, &tmp.path().join("app.ifml")).await;
@@ -412,12 +412,12 @@ actors Broken {
 async fn invalid_artifact_json_warns_without_failing() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let ifml = r#"
-import "policies/broken.rex.json"
+import "policies/broken.phero.json"
 
 view "Plain" {}
 "#;
     write_file(tmp.path(), "app.ifml", ifml);
-    write_file(tmp.path(), "policies/broken.rex.json", "{ not json");
+    write_file(tmp.path(), "policies/broken.phero.json", "{ not json");
 
     let engine = GrafeoEngine::in_memory().expect("engine");
     let imported = ingest_ifml_file(&engine, &tmp.path().join("app.ifml")).await;
@@ -446,7 +446,7 @@ view "Guarded" {
 }
 
 /// An `.actor` policy over a domain that declares `import schema`: the
-/// domain files' imports must be resolved and provided to the rex compiler
+/// domain files' imports must be resolved and provided to the pherolang compiler
 /// (issue #230) or the plain compile errors with `imported schema '…' was
 /// not provided`. The capability binds the import alias; the imported
 /// schema's graph node is the JSON pipeline's business, not the policy's.

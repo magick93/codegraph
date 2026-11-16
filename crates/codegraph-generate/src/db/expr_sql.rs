@@ -1,12 +1,12 @@
-//! Lowering of rexlang `when` expressions to Postgres RLS predicates.
+//! Lowering of pherolang `when` expressions to Postgres RLS predicates.
 //!
 //! The stored `when_expr` on a [`GrantEdge`](codegraph_core::types::GrantEdge)
-//! is rexlang expression SOURCE text (see `crates/codegraph/src/ifml_actor_import.rs`).
-//! This module parses it with `rex-expr` (parse only — no model, no
+//! is pherolang expression SOURCE text (see `crates/codegraph/src/ifml_actor_import.rs`).
+//! This module parses it with `phero-expr` (parse only — no model, no
 //! typechecking) and lowers a **documented closed subset** to a Postgres
 //! boolean expression usable in `USING` / `WITH CHECK`:
 //!
-//! | rexlang                          | SQL                              |
+//! | pherolang                          | SQL                              |
 //! |----------------------------------|----------------------------------|
 //! | `field` (own-table field ref)    | quoted column                    |
 //! | `123` / `-123`                   | numeric literal                  |
@@ -15,7 +15,7 @@
 //! | `date("YYYY-MM-DD")`             | `DATE '...'` (format-validated;  |
 //! |                                  | the compared field is guaranteed |
 //! |                                  | date-typed by the upstream       |
-//! |                                  | rex-driver typecheck)            |
+//! |                                  | phero-driver typecheck)            |
 //! | `==` and `=`                     | `=`                              |
 //! | `!=`                             | `<>`                             |
 //! | `<`, `<=`, `>`, `>=`             | `<`, `<=`, `>`, `>=`             |
@@ -26,16 +26,16 @@
 //! ANYTHING ELSE is refused: arithmetic, `?.`, `?:`, `let`, lambdas,
 //! collection algebra, `if`, operation calls, list literals, dotted
 //! (relationship) navigation, and references to fields that are not columns
-//! of the capability's class. Per the rexlang Cedar-backend philosophy, what
+//! of the capability's class. Per the pherolang Cedar-backend philosophy, what
 //! cannot be mapped faithfully is a hard generation error — every refusal
 //! message names the capability.
 
 use std::collections::HashMap;
 
 use codegraph_naming::quote_pg_column;
-use rex_expr::{BinOp, Expr, ExprKind, UnOp};
+use phero_expr::{BinOp, Expr, ExprKind, UnOp};
 
-/// Lower `source` (a rexlang expression) to a Postgres predicate.
+/// Lower `source` (a pherolang expression) to a Postgres predicate.
 ///
 /// `capability` and `class` appear verbatim in refusal diagnostics.
 /// `fields` maps feature names as written in the expression (plus their
@@ -47,12 +47,12 @@ pub fn lower_when_expr(
     class: &str,
     fields: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let parsed = rex_expr::parse(source);
+    let parsed = phero_expr::parse(source);
     match parsed.ast {
         Some(ast) if parsed.errors.is_empty() => lower(&ast, capability, class, fields),
         _ => Err(format!(
             "capability `{capability}`: `when` condition is not valid \
-             rexlang expression syntax: {source:?}"
+             pherolang expression syntax: {source:?}"
         )),
     }
 }
@@ -227,10 +227,10 @@ fn float_literal(value: f64) -> String {
 
 /// Lower a `date("...")` literal to a Postgres `DATE '...'` literal.
 ///
-/// The literal text is format-validated before interpolation (rex-expr's
+/// The literal text is format-validated before interpolation (phero-expr's
 /// parse-only mode does not validate it — that happens in the checker, and
 /// `.actor` policies reaching the graph have already been typechecked by
-/// rex-driver, which guarantees the compared field is date-typed).
+/// phero-driver, which guarantees the compared field is date-typed).
 fn date_literal(text: &str, capability: &str) -> Result<String, String> {
     if parse_date_text(text).is_some() {
         Ok(format!("DATE '{text}'"))
@@ -245,7 +245,7 @@ fn date_literal(text: &str, capability: &str) -> Result<String, String> {
 /// Validate `YYYY-MM-DD` (extended ISO-8601 calendar date, proleptic
 /// Gregorian, optional `-` year sign) and return the components.
 ///
-/// Mirrors rex-expr's private `parse_date_text` / `rex_runtime::Date::from_str`
+/// Mirrors phero-expr's private `parse_date_text` / `phero_runtime::Date::from_str`
 /// calendar rules so both sides accept exactly the same literal text.
 pub(crate) fn parse_date_text(text: &str) -> Option<(i32, u32, u32)> {
     let (sign, rest) = match text.strip_prefix('-') {
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn string_literal_escapes_single_quotes() {
-        // rexlang strings are double-quoted; embedded single quotes must be
+        // pherolang strings are double-quoted; embedded single quotes must be
         // doubled for Postgres.
         assert_sql("status == \"it's\"", "(status = 'it''s')");
     }
@@ -560,6 +560,6 @@ mod tests {
 
     #[test]
     fn parse_failure_is_refused_naming_capability() {
-        assert_refusal("status ====", "valid rexlang expression syntax");
+        assert_refusal("status ====", "valid pherolang expression syntax");
     }
 }

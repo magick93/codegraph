@@ -102,9 +102,9 @@ mod tests {
             !content.contains("--classifier"),
             "run hint must not reference --classifier:\n{content}"
         );
-        let compilation = rex_driver::compile_files(
+        let compilation = phero_driver::compile_files(
             &[("model/billing.mox".to_string(), content)],
-            &rex_driver::DomainImports::default(),
+            &phero_driver::DomainImports::default(),
         );
         assert!(
             compilation.model.is_some(),

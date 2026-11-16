@@ -1,7 +1,13 @@
 # Proposal: explicit service-op transition binding
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd compiler + rex-ir)
+Status: **implemented upstream** (pherolang 0.3, issue pherolang#176) — consumer work: #660
+Shipped as: `ServiceOperation.transition` → `TransitionRef { trigger, machine? }`, validated
+by the compiler against the target repository's designed machine (multi-machine modules
+require the qualifier). codegraph still infers the transition from the op name
+(`trigger_candidates`), the `when` state set (`condition_source_states`) and a
+capability-sharing heuristic; #660 replaces all three with the authored binding.
+
+Target: pherolang (phero-driver ddd compiler + phero-ir)
 
 ## Problem
 
@@ -40,7 +46,7 @@ service PayRunService {
 ## Proposed IR
 
 ```rust
-// rex-ir ddd.rs (serde-defaulted — wire back-compat)
+// phero-ir ddd.rs (serde-defaulted — wire back-compat)
 pub struct ServiceOperation {
     // ... existing fields ...
     pub transition: Option<TransitionRef>,   // NEW
@@ -53,7 +59,7 @@ pub struct TransitionRef {
 }
 ```
 
-Compiler checks (rex-driver ddd graph/integrity):
+Compiler checks (phero-driver ddd graph/integrity):
 
 - the trigger must exist on the machine bound to the op's entity (else compile
   error naming trigger + machine);

@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-/// The graph-native mirror of one compiled rexlang `.evt` event-contract
-/// artifact (`rex_ir::events::EventModel`, issue #454): the declared
+/// The graph-native mirror of one compiled pherolang `.evt` event-contract
+/// artifact (`phero_ir::events::EventModel`, issue #454): the declared
 /// events, the channels publishing them, and the subscriptions consuming
-/// them. codegraph-core takes no rex-* deps, so payload field types cross
+/// them. codegraph-core takes no phero-* deps, so payload field types cross
 /// this boundary as pre-serialized `serde_json::Value` payloads (the
-/// `DddParam::type_json` precedent — rex-ir `TypeRef` JSON, adjacent
+/// `DddParam::type_json` precedent — phero-ir `TypeRef` JSON, adjacent
 /// tagging under the `"type"` key).
 ///
 /// Events are file-scoped: channel `publishes` entries and subscription
@@ -26,7 +26,7 @@ pub struct EvtModelGraph {
 }
 
 /// A declared event: a named contract with its typed payload fields
-/// (rex-ir `EventDef` plus its source path).
+/// (phero-ir `EventDef` plus its source path).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EvtEventNode {
     /// The `.evt` source file the event was declared in.
@@ -39,7 +39,7 @@ pub struct EvtEventNode {
     /// Payload fields, in declaration order.
     pub fields: Vec<EvtEventField>,
     /// The CloudEvents attribute passthrough (`type`/`source`/`subject`),
-    /// when the declaration carried one (rexlang #31's delivery model
+    /// when the declaration carried one (pherolang #31's delivery model
     /// slice): stored verbatim and AUTHORITATIVE — a downstream generator
     /// maps these onto its CloudEvents envelope instead of deriving
     /// `type`/`source` from the event name. Serde-defaulted for read-compat
@@ -50,7 +50,7 @@ pub struct EvtEventNode {
     pub ordinal: usize,
 }
 
-/// The CloudEvents attribute passthrough of an [`EvtEventNode`] (rex-ir
+/// The CloudEvents attribute passthrough of an [`EvtEventNode`] (phero-ir
 /// `CloudEventsAttributes`): the attributes exactly as authored.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvtCloudEventsNode {
@@ -64,20 +64,20 @@ pub struct EvtCloudEventsNode {
     pub subject: Option<String>,
 }
 
-/// One typed payload field of an [`EvtEventNode`] (rex-ir `EventField`).
+/// One typed payload field of an [`EvtEventNode`] (phero-ir `EventField`).
 /// Deliberately plain: a name and a resolved type, nothing else.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EvtEventField {
     /// Field name, unique within its event.
     pub name: String,
-    /// The resolved field type as rex-ir `TypeRef` JSON (adjacent tagging).
+    /// The resolved field type as phero-ir `TypeRef` JSON (adjacent tagging).
     pub type_json: serde_json::Value,
     /// The schema title the field's type resolved to at ingest; `None` when
     /// the type is primitive or unresolved.
     pub resolved_title: Option<String>,
 }
 
-/// A declared channel with the events published on it (rex-ir `ChannelDef`
+/// A declared channel with the events published on it (phero-ir `ChannelDef`
 /// plus its source path).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvtChannelNode {
@@ -87,7 +87,7 @@ pub struct EvtChannelNode {
     pub name: String,
     /// The published event names, as authored, in declaration order.
     pub publishes: Vec<String>,
-    /// The parameterized-channel scope (`of`/`scope` clause, rexlang #31's
+    /// The parameterized-channel scope (`of`/`scope` clause, pherolang #31's
     /// slice 2: topic templates), verbatim when declared; `None` for a
     /// plain channel. Serde-defaulted for read-compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,7 +97,7 @@ pub struct EvtChannelNode {
 }
 
 /// A declared subscription: a named set of events delivered to one consumer
-/// (rex-ir `SubscriptionDef` plus its source path).
+/// (phero-ir `SubscriptionDef` plus its source path).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvtSubscriptionNode {
     /// The `.evt` source file the subscription was declared in.
@@ -109,12 +109,12 @@ pub struct EvtSubscriptionNode {
     /// The consumer receiving the events; an opaque name, verbatim.
     pub consumer: String,
     /// The `when (...)` filter's source text, verbatim between the
-    /// parentheses (rexlang #31's delivery model slice): an envelope-level
+    /// parentheses (pherolang #31's delivery model slice): an envelope-level
     /// delivery filter, as authored. Serde-defaulted for read-compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
     /// The declared `delivery` policy block, when the declaration carried
-    /// one (rexlang #31's slice 2): the consumer-side knobs the events
+    /// one (pherolang #31's slice 2): the consumer-side knobs the events
     /// plane lowers (mode, attempt ceiling, backoff, timeout, dead-letter
     /// channel). Serde-defaulted for read-compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,7 +123,7 @@ pub struct EvtSubscriptionNode {
     pub ordinal: usize,
 }
 
-/// The delivery policy of an [`EvtSubscriptionNode`] (rex-ir
+/// The delivery policy of an [`EvtSubscriptionNode`] (phero-ir
 /// `DeliveryPolicy`): mode plus the tuning knobs, each omitted when the
 /// declaration didn't pin them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,7 +144,7 @@ pub struct EvtDeliveryPolicyNode {
     pub dead_letter: Option<String>,
 }
 
-/// The delivery mode of an [`EvtDeliveryPolicyNode`] (rex-ir
+/// The delivery mode of an [`EvtDeliveryPolicyNode`] (phero-ir
 /// `DeliveryMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

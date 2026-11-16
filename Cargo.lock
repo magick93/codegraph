@@ -148,7 +148,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36f5e3dca4e09a6f340a61a0e9c7b61e030c69fc27bf29d73218f7e5e3b7638f"
 dependencies = [
  "concolor",
- "unicode-width",
+ "unicode-width 0.1.14",
+ "yansi",
+]
+
+[[package]]
+name = "ariadne"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8454c8a44ce2cb9cc7e7fae67fc6128465b343b92c6631e94beca3c8d1524ea5"
+dependencies = [
+ "unicode-width 0.2.3",
  "yansi",
 ]
 
@@ -456,7 +466,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d61d9083d2df0e070ec4267945904fa76f7814a47146a6a0f1011e5faa5358"
 dependencies = [
  "anyhow",
- "ariadne",
+ "ariadne 0.5.1",
  "downcast-rs",
  "fastrace",
  "log",
@@ -872,11 +882,11 @@ dependencies = [
  "hotpath",
  "insta",
  "pathdiff",
+ "phero-driver",
+ "phero-expr",
+ "phero-ifml",
+ "phero-ir",
  "proc-macro2",
- "rex-driver",
- "rex-expr",
- "rex-ifml",
- "rex-ir",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -973,9 +983,9 @@ dependencies = [
  "futures",
  "heck 0.5.0",
  "pathdiff",
- "rex-expr",
- "rex-ifml",
- "rex-ir",
+ "phero-expr",
+ "phero-ifml",
+ "phero-ir",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -1469,7 +1479,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 [[package]]
 name = "dsntk-common"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "dsntk-macros",
  "serde",
@@ -1482,7 +1492,7 @@ dependencies = [
 [[package]]
 name = "dsntk-feel"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1498,7 +1508,7 @@ dependencies = [
 [[package]]
 name = "dsntk-feel-grammar"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "convert_case",
  "regex",
@@ -1507,7 +1517,7 @@ dependencies = [
 [[package]]
 name = "dsntk-feel-number"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "dfp-number-sys",
  "dsntk-common",
@@ -1517,7 +1527,7 @@ dependencies = [
 [[package]]
 name = "dsntk-feel-parser"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "antex",
  "dsntk-common",
@@ -1529,7 +1539,7 @@ dependencies = [
 [[package]]
 name = "dsntk-feel-temporal"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -1542,7 +1552,7 @@ dependencies = [
 [[package]]
 name = "dsntk-macros"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1552,7 +1562,7 @@ dependencies = [
 [[package]]
 name = "dsntk-recognizer"
 version = "0.3.0-dev"
-source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=0826f7e3138527f485bfd1e0ebd828e21c215d2d#0826f7e3138527f485bfd1e0ebd828e21c215d2d"
+source = "git+https://github.com/yestechgroup/dsntk-rs.git?rev=b926458c089085fb59e9178d549f27a8119e45ff#b926458c089085fb59e9178d549f27a8119e45ff"
 dependencies = [
  "dsntk-common",
  "dsntk-macros",
@@ -2153,6 +2163,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a596f1b20ed2cc5ecac41a164aaebc7258057060f06c0cf7a2ba3991ee7990fb"
+dependencies = [
+ "hashbrown 0.17.1",
+]
+
+[[package]]
 name = "hdrhistogram"
 version = "7.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2543,11 +2562,17 @@ dependencies = [
 
 [[package]]
 name = "intrusive-collections"
-version = "0.9.7"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "189d0897e4cbe8c75efedf3502c18c887b05046e59d28404d4d8e46cbc4d1e86"
+checksum = "4275b20e6057cd7733fd8df8a5a31701e4fe44497dad0f3fa0e1c4fb971506be"
+
+[[package]]
+name = "inventory"
+version = "0.3.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c"
 dependencies = [
- "memoffset",
+ "rustversion",
 ]
 
 [[package]]
@@ -3125,16 +3150,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "papaya"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da2442474a9404698c42509b8967f437249dbc7b50493e83020333d3943ec0ae"
-dependencies = [
- "equivalent",
- "seize",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3209,54 +3224,138 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "pest"
-version = "2.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45d3aca230fad2e6f6317ca0a72724338c4960cb97168a85cdee66df4a9a21a8"
-dependencies = [
- "memchr",
- "ucd-trie",
-]
-
-[[package]]
-name = "pest_derive"
-version = "2.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "284b60557f2c4a2e72ad3f2d34d42685a2fa4a6a61d0d2a10c0ae2a5e916c2cf"
-dependencies = [
- "pest",
- "pest_generator",
-]
-
-[[package]]
-name = "pest_generator"
-version = "2.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d9d1f08a115309ee99268cf85e5228e0e56aa9caf8841ec12866b6be07c3109"
-dependencies = [
- "pest",
- "pest_meta",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "pest_meta"
-version = "2.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed93ba1a9ffcca32130a5188701c81c0c49cf00d4b7c5007d5148951d743adcb"
-dependencies = [
- "pest",
-]
-
-[[package]]
 name = "pgvector"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3673cba5b9a124916096a423b806a9f29620972c6c97b08db5f2053e9428b481"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "phero-dates"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+
+[[package]]
+name = "phero-diagnostics"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+
+[[package]]
+name = "phero-driver"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "anyhow",
+ "ariadne 0.6.0",
+ "dsntk-feel",
+ "dsntk-feel-parser",
+ "dsntk-recognizer",
+ "phero-diagnostics",
+ "phero-expr",
+ "phero-ifml",
+ "phero-ir",
+ "phero-syntax",
+ "phero-verify",
+ "phero-vocab",
+ "salsa 0.28.5",
+ "serde",
+ "serde_json",
+ "sigil-diag",
+ "sigil-model",
+ "sigil-resolve",
+ "sigil-syntax",
+ "xstate-ir",
+]
+
+[[package]]
+name = "phero-expr"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "chumsky 0.10.1",
+ "logos",
+ "phero-dates",
+ "phero-diagnostics",
+ "phero-ir",
+ "phero-parser",
+ "phero-strings",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "phero-ifml"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "chumsky 0.10.1",
+ "logos",
+ "phero-diagnostics",
+ "phero-expr",
+ "phero-ir",
+ "phero-parser",
+ "phero-strings",
+ "thiserror",
+]
+
+[[package]]
+name = "phero-ir"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "phero-parser"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "chumsky 0.10.1",
+ "thiserror",
+]
+
+[[package]]
+name = "phero-strings"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+
+[[package]]
+name = "phero-syntax"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "chumsky 0.10.1",
+ "logos",
+ "phero-parser",
+ "phero-strings",
+ "thiserror",
+]
+
+[[package]]
+name = "phero-verify"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "creusot-std",
+]
+
+[[package]]
+name = "phero-vocab"
+version = "0.3.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+dependencies = [
+ "anyhow",
+ "phero-ir",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror",
+ "ureq",
 ]
 
 [[package]]
@@ -3746,120 +3845,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rex-dates"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-
-[[package]]
-name = "rex-diagnostics"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-
-[[package]]
-name = "rex-driver"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "anyhow",
- "ariadne",
- "dsntk-feel",
- "dsntk-feel-parser",
- "dsntk-recognizer",
- "rex-diagnostics",
- "rex-expr",
- "rex-ifml",
- "rex-ir",
- "rex-syntax",
- "rex-verify",
- "rex-vocab",
- "salsa 0.23.0",
- "serde",
- "serde_json",
- "sigil-diag",
- "sigil-model",
- "sigil-resolve",
- "sigil-syntax",
- "thiserror",
- "xstate-ir",
-]
-
-[[package]]
-name = "rex-expr"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "chumsky 0.10.1",
- "logos",
- "rex-dates",
- "rex-diagnostics",
- "rex-ir",
- "rex-strings",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "rex-ifml"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "pest",
- "pest_derive",
- "rex-diagnostics",
- "rex-expr",
- "rex-ir",
- "thiserror",
-]
-
-[[package]]
-name = "rex-ir"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "rex-strings"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-
-[[package]]
-name = "rex-syntax"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "chumsky 0.10.1",
- "logos",
- "rex-strings",
- "thiserror",
-]
-
-[[package]]
-name = "rex-verify"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "creusot-std",
-]
-
-[[package]]
-name = "rex-vocab"
-version = "0.1.0"
-source = "git+https://github.com/yestechgroup/rexlang.git?rev=1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf#1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf"
-dependencies = [
- "anyhow",
- "rex-ir",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
- "ureq",
-]
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4002,27 +3987,28 @@ dependencies = [
 
 [[package]]
 name = "salsa"
-version = "0.23.0"
+version = "0.28.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e235afdb8e510f38a07138fbe5a0b64691894358a9c0cbd813b1aade110efc9"
+checksum = "27d2e6e19e39591cd99c01ac4141544b4d012cfd0831348629b8187fa9fe6d34"
 dependencies = [
  "boxcar",
  "crossbeam-queue",
  "crossbeam-utils",
- "hashbrown 0.15.5",
- "hashlink 0.10.0",
+ "hashbrown 0.17.1",
+ "hashlink 0.12.2",
  "indexmap",
  "intrusive-collections",
- "papaya",
+ "inventory",
  "parking_lot 0.12.5",
  "portable-atomic",
  "rayon",
  "rustc-hash",
- "salsa-macro-rules 0.23.0",
- "salsa-macros 0.23.0",
+ "salsa-macro-rules 0.28.5",
+ "salsa-macros 0.28.5",
  "smallvec",
  "thin-vec",
  "tracing",
+ "typeid",
 ]
 
 [[package]]
@@ -4033,9 +4019,9 @@ checksum = "8ea72b3c06f2ce6350fe3a0eeb7aaaf842d1d8352b706973c19c4f02e298a87c"
 
 [[package]]
 name = "salsa-macro-rules"
-version = "0.23.0"
+version = "0.28.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2edb86a7e9c91f6d30c9ce054312721dbe773a162db27bbfae834d16177b30ce"
+checksum = "baf90a551c38f25ed8489111d3d5827aa18e1b85963f5e6a298505b1d1e2cb7e"
 
 [[package]]
 name = "salsa-macros"
@@ -4052,14 +4038,13 @@ dependencies = [
 
 [[package]]
 name = "salsa-macros"
-version = "0.23.0"
+version = "0.28.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0778d6e209051bc4e75acfe83bcd7848601ec3dbe9c3dbb982829020e9128af"
+checksum = "69dd77f86ec10e72e314f4ddf7c44c8d349e73cdff1aad524ba9668603fb0549"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
- "synstructure 0.13.2",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -4247,16 +4232,6 @@ checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
 dependencies = [
  "core-foundation-sys",
  "libc",
-]
-
-[[package]]
-name = "seize"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5331,16 +5306,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "typeid"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
-
-[[package]]
-name = "ucd-trie"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
 
 [[package]]
 name = "unicode-bidi"
@@ -5380,6 +5355,12 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "unicode-xid"

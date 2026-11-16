@@ -38,7 +38,7 @@ fn profiles_path() -> std::path::PathBuf {
 
 /// The fixture actor policy ingested into the engine for every test here:
 /// two human actors, one agent (extends a human), two capabilities bound to
-/// the `CandidateType` class (one via the rexlang-qualified
+/// the `CandidateType` class (one via the pherolang-qualified
 /// `recruiting::CandidateType` form, one bare), permit + forbid effects, and
 /// a `when` expression on one permit.
 fn fixture_policy() -> ActorPolicyModel {

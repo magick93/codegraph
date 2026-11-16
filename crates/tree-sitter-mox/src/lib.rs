@@ -1,4 +1,4 @@
-//! Tree-sitter parser for the rexlang `.mox` modeling language.
+//! Tree-sitter parser for the pherolang `.mox` modeling language.
 //!
 //! The generated parser ([`src/parser.c`]) is committed and is regenerated
 //! with `npx tree-sitter-cli generate --abi 14` from the grammar source in

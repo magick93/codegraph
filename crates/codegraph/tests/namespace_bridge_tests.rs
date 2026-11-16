@@ -126,34 +126,51 @@ async fn mox_package_bridges_namespace_on_grafeo() {
 }
 
 #[tokio::test]
-async fn mox_without_package_stays_namespaceless_on_mock() {
+async fn mox_without_package_is_a_hard_error_on_mock() {
     let engine = MockEngine::new();
     assert_mox_packageless(&engine).await;
 }
 
 #[tokio::test]
-async fn mox_without_package_stays_namespaceless_on_grafeo() {
+async fn mox_without_package_is_a_hard_error_on_grafeo() {
     let engine = GrafeoEngine::in_memory().unwrap();
     assert_mox_packageless(&engine).await;
 }
 
-/// The rex grammar REQUIRES a `package` declaration: a package-less file
-/// fails to compile, so a namespace-less mox model cannot exist — every
-/// compilable mox model carries package (= namespace) provenance. The
-/// byte-identity pin therefore lives on the JSON surface (schemas without
-/// `$id`/`$namespace` stay namespace-less, see the tests below) and on the
-/// equivalence gate (mox WITH a package vs namespace-less JSON must stay
-/// byte-identical in generated output, since the flat gate ignores
-/// namespaces). Here we pin the upstream contract: the package-less file
-/// bridges nothing and creates no namespace nodes.
+/// The pherolang grammar REQUIRES a `package` declaration, so a
+/// package-less file does not compile and a namespace-less mox model cannot
+/// exist — every compilable mox model carries package (= namespace)
+/// provenance. The byte-identity pin therefore lives on the JSON surface
+/// (schemas without `$id`/`$namespace` stay namespace-less, see the tests
+/// below) and on the equivalence gate (mox WITH a package vs namespace-less
+/// JSON must stay byte-identical in generated output, since the flat gate
+/// ignores namespaces).
+///
+/// Here we pin the upstream contract *and* the #675 hardening: the file is
+/// a HARD error (it used to be a silent skip, which meant a zero-entity
+/// run), and nothing namespace-shaped may reach the graph on that path.
 async fn assert_mox_packageless(db: &(impl GraphIngestor + GraphQuerier)) {
-    let stats = ingest_mox(db, MOX_PACKAGELESS).await;
-    assert_eq!(stats.namespaces, 0, "no namespace nodes");
-    assert_eq!(
-        stats.classes, 0,
-        "compile failed upstream — nothing bridges"
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("model.mox");
+    fs::write(&path, MOX_PACKAGELESS).unwrap();
+    let config: DomainConfig = parse_domain_config_str(BRIDGE_DOMAINS_TOML).unwrap();
+
+    let error = codegraph::ingest::mox_ingest::ingest_mox_files(
+        db,
+        db,
+        &[path],
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .expect_err("a package-less model cannot compile");
+    let message = format!("{error}");
+    assert!(
+        message.contains("missing `package`"),
+        "the error must carry the compile diagnostic: {message}"
     );
-    assert!(stats.skipped > 0, "the file counts as skipped");
+    dir.close().unwrap();
+
     let schemas = db.list_schemas(None).await.unwrap();
     assert!(
         schemas.iter().all(|s| s.namespace.is_none()),
@@ -161,7 +178,7 @@ async fn assert_mox_packageless(db: &(impl GraphIngestor + GraphQuerier)) {
     );
     assert!(
         db.list_namespaces().await.unwrap().is_empty(),
-        "namespace-less model must not create namespace nodes"
+        "a model that never compiled must not create namespace nodes"
     );
 }
 

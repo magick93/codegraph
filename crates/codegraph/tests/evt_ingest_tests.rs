@@ -1,4 +1,4 @@
-//! Events-plane ingest tests (issue #454 Phase 2a): the rex-ir to
+//! Events-plane ingest tests (issue #454 Phase 2a): the phero-ir to
 //! `EvtModelGraph` conversion (declaration order, every payload, dense
 //! per-kind ordinals), payload field-type title resolution (primitives
 //! silent, exact, +type_suffix, miss counted), the end-to-end
@@ -13,8 +13,8 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{
     EvtChannelNode, EvtEventField, EvtEventNode, EvtSubscriptionNode, SchemaNode,
 };
-use rex_ir::events::{ChannelDef, EventDef, EventField, EventModel, SubscriptionDef};
-use rex_ir::{PrimitiveType, TypeRef};
+use phero_ir::events::{ChannelDef, EventDef, EventField, EventModel, SubscriptionDef};
+use phero_ir::{PrimitiveType, TypeRef};
 
 // ── conversion ─────────────────────────────────────────────────────────
 
@@ -119,7 +119,7 @@ fn event(
 #[test]
 fn conversion_maps_declaration_order_and_every_payload() {
     let model = sample_model();
-    let graph = codegraph::ingest::evt_ingest::evt_model_graph_from_rex(
+    let graph = codegraph::ingest::evt_ingest::evt_model_graph_from_phero(
         &model,
         "orders.evt",
         &sample_resolver(),
@@ -459,7 +459,7 @@ async fn unknown_field_type_is_a_hard_error_with_the_diagnostic_text() {
             assert!(file.ends_with("bad.evt"), "{file}");
             assert!(
                 reason.contains("unknown type 'Mystery'"),
-                "the rendered diagnostic carries rexlang's wording: {reason}"
+                "the rendered diagnostic carries pherolang's wording: {reason}"
             );
         }
         other => panic!("expected Error::EvtModel, got {other:?}"),

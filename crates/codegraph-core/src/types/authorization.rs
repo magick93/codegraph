@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// An actor declared in a rexlang `.actor` block: a human or agent principal
+/// An actor declared in a pherolang `.actor` block: a human or agent principal
 /// that capabilities are granted to. `extends` names the parent actor and
 /// forms a single-parent inheritance chain resolved by
 /// [`resolve_effective_permits`].
@@ -34,7 +34,7 @@ pub struct GrantEdge {
     pub when: Option<String>,
     pub obligations: Vec<String>,
     /// Canonical AST JSON of `when` (issue #278), produced at ingest by
-    /// parsing the source with rex-expr; `None` for unconditional grants
+    /// parsing the source with phero-expr; `None` for unconditional grants
     /// and when the source does not parse. Purely additive: legacy
     /// payloads without this field deserialize to `None`.
     #[serde(default)]

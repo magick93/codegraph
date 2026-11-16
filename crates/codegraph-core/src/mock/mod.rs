@@ -101,9 +101,9 @@ pub struct MockEngine {
     ddd_models: Mutex<Vec<DddModelGraph>>,
     /// Ingested `.evt` event-contract models (issue #454).
     evt_models: Mutex<Vec<EvtModelGraph>>,
-    /// Ingested `.deploy` deployment models (rexlang #49).
+    /// Ingested `.deploy` deployment models (pherolang #49).
     deploy_models: Mutex<Vec<DeployModelGraph>>,
-    /// The run's folded IFML control/route manifest (rexlang #118, WS6) —
+    /// The run's folded IFML control/route manifest (pherolang #118, WS6) —
     /// a singleton: a re-ingest replaces it.
     ifml_manifest: Mutex<Option<IfmlManifestNode>>,
     start_time: Instant,

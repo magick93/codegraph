@@ -1,16 +1,16 @@
 //! Lowering of canonical expression AST JSON to TypeScript (issue #278).
 //!
-//! Mirrors `crate::db::expr_sql` (the rexlang `when` → Postgres lowering)
+//! Mirrors `crate::db::expr_sql` (the pherolang `when` → Postgres lowering)
 //! with the same **closed subset** philosophy: what cannot be mapped
 //! faithfully to TypeScript is a hard, named error — never a silent
 //! passthrough. Two carriers are supported:
 //!
-//! - [`lower_when_json`]: the canonical rex-expr AST JSON persisted on
+//! - [`lower_when_json`]: the canonical phero-expr AST JSON persisted on
 //!   `GrantEdge.expr_json` (produced by `codegraph::expr_json`).
 //! - [`lower_ifml_json`]: the typed IFML `Expression` wire JSON persisted
 //!   on the four IFML conditional carriers (`expr_json`).
 //!
-//! | rexlang / IFML              | TypeScript                     |
+//! | pherolang / IFML              | TypeScript                     |
 //! |-----------------------------|--------------------------------|
 //! | `==` and `=`                | `===`                          |
 //! | `!=`                        | `!==`                          |
@@ -47,7 +47,7 @@ impl ExprTsError {
     }
 }
 
-/// Lower a `GrantEdge.expr_json` payload (canonical rex-expr AST JSON) to
+/// Lower a `GrantEdge.expr_json` payload (canonical phero-expr AST JSON) to
 /// a TypeScript expression.
 pub fn lower_when_json(expr_json: &str, owner: &str) -> Result<String, ExprTsError> {
     let payload = parse_payload(expr_json, owner)?;
@@ -55,7 +55,7 @@ pub fn lower_when_json(expr_json: &str, owner: &str) -> Result<String, ExprTsErr
 }
 
 /// Lower an IFML `conditional_expression` `expr_json` payload (the typed
-/// `rex_ifml::Expression` wire JSON) to a TypeScript expression.
+/// `phero_ifml::Expression` wire JSON) to a TypeScript expression.
 pub fn lower_ifml_json(expr_json: &str, owner: &str) -> Result<String, ExprTsError> {
     let payload = parse_payload(expr_json, owner)?;
     lower_ifml_value(&payload, owner)
@@ -66,7 +66,7 @@ fn parse_payload(expr_json: &str, owner: &str) -> Result<Value, ExprTsError> {
         .map_err(|e| ExprTsError::new(owner, format!("expr_json is not valid JSON: {e}")))
 }
 
-// ── rexlang `when` shape (kind-tagged) ─────────────────────────────────
+// ── pherolang `when` shape (kind-tagged) ─────────────────────────────────
 
 fn lower_when_value(value: &Value, owner: &str) -> Result<String, ExprTsError> {
     let reject = |construct: &str| {
@@ -414,7 +414,7 @@ mod tests {
         value.to_string()
     }
 
-    // ── rexlang `when` goldens ──────────────────────────────────────────
+    // ── pherolang `when` goldens ──────────────────────────────────────────
 
     #[test]
     fn comparisons_and_bool_ops_lower_to_ts() {

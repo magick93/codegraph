@@ -26,10 +26,10 @@ struct Cli {
 enum Commands {
     /// Ingest the .mox model (+ the design plane), then run the generators.
     Run {
-        /// rexlang .mox domain model files (primary model source).
+        /// pherolang .mox domain model files (primary model source).
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
-        /// rexlang .ddd design files; defaults to `design/leave.ddd`.
+        /// pherolang .ddd design files; defaults to `design/leave.ddd`.
         #[arg(long = "ddd-files")]
         ddd_files: Option<Vec<PathBuf>>,
         /// Domain config path.

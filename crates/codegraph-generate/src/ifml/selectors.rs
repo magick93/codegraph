@@ -14,7 +14,7 @@
 //! is documented in [`crate::ux::plan::ids`].
 
 use codegraph_config::{IfmlComponentMappings, SemanticRole};
-use rex_ifml::ComponentSpec;
+use phero_ifml::ComponentSpec;
 
 use super::context::IfmlComponent;
 
@@ -130,7 +130,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use rex_ifml::TableSpec;
+    use phero_ifml::TableSpec;
 
     fn component(name: &str, component_type: &str) -> IfmlComponent {
         IfmlComponent {

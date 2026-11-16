@@ -1,18 +1,18 @@
-//! Golden-conformance gate for the rexlang DDD design artifact (issue #449
-//! Phase 4): the committed `library.ddd` — verbatim from the rexlang
+//! Golden-conformance gate for the pherolang DDD design artifact (issue #449
+//! Phase 4): the committed `library.ddd` — verbatim from the pherolang
 //! conformance suite at the pinned rev — compiles with zero error
 //! diagnostics and serializes byte-identically to the committed
 //! `library.ddd.json` wire artifact. This is the in-process equivalent of
-//! the rexlang CLI gates (`rexlang check` + `rexlang artifact check`) —
+//! the pherolang CLI gates (`pherolang check` + `pherolang artifact check`) —
 //! node-free and CI-safe. Also pins the hard-error contract for a design
-//! violating the aggregate boundary: `Error::DddModel` with rexlang's
+//! violating the aggregate boundary: `Error::DddModel` with pherolang's
 //! wording, and NOTHING ingested.
 
 use std::path::PathBuf;
 
 use codegraph_core::mock::MockEngine;
 use codegraph_core::traits::GraphQuerier as _;
-use rex_ir::ddd::DddModel;
+use phero_ir::ddd::DddModel;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -35,9 +35,17 @@ postgres_schema = "library"
 /// [`DddModel`] byte-equals the committed `library.ddd.json`, which then
 /// round-trips back through [`DddModel::from_json`] to an equal model.
 ///
-/// Byte-equality is direct: rex's `to_json_pretty` (serde_json pretty,
+/// Byte-equality is direct: pherolang's `to_json_pretty` (serde_json pretty,
 /// 2-space) emits NO trailing newline and the committed artifact has none
 /// — no normalization applied.
+///
+/// **The `pheroVersion` line is deliberate.** The artifact stamps the
+/// `phero-ir` version that wrote it, so every `phero-*` rev bump re-blesses
+/// this fixture. That is the point: the golden doubles as a rev canary — a
+/// dependency move is visible in the diff instead of hiding behind a
+/// normalized provenance line. Do not strip or normalize it; re-bless with
+/// `DDD_GOLDEN_BLESS=1` as part of the bump (the same PR), and read the rest
+/// of the diff for shape changes.
 #[test]
 fn library_ddd_compiles_clean_and_byte_matches_the_committed_artifact() {
     let compiled = codegraph::ingest::ddd_ingest::read_and_compile_ddd(&fixture("library.ddd"))
@@ -85,7 +93,7 @@ fn library_ddd_compiles_clean_and_byte_matches_the_committed_artifact() {
 /// The aggregate-boundary violation: `invalid.ddd` designs `Chapter` (a
 /// non-root — it sits inside Book inside Library) with a repository. The
 /// ingest hard-errors with [`codegraph::error::Error::DddModel`], the
-/// reason carries rexlang's aggregate-boundary wording, and NOTHING was
+/// reason carries pherolang's aggregate-boundary wording, and NOTHING was
 /// ingested (`get_ddd_models` empty — a broken design never half-ingests).
 #[tokio::test]
 async fn repository_on_non_root_aggregate_hard_errors_and_ingests_nothing() {

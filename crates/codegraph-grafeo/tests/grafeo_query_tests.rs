@@ -1504,7 +1504,7 @@ fn count_edges(engine: &GrafeoEngine, label: &str) -> usize {
 
 /// A full-featured DddModelGraph: two modules, designs of all three
 /// stereotypes with flags, repositories with builtin + declared operations
-/// (rex-ir TypeRef/Multiplicity JSON payloads), services with delegation +
+/// (phero-ir TypeRef/Multiplicity JSON payloads), services with delegation +
 /// capabilities, and a search with text/filters/sorts/document/ranking/
 /// pagination. Vecs are in canonical order (ordinals, repository names).
 fn ddd_fixture() -> DddModelGraph {

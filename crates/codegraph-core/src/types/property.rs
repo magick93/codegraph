@@ -87,7 +87,7 @@ pub struct PropertyNode {
     pub format: Option<String>,
     pub is_required: bool,
     pub is_nullable: bool,
-    /// `true` for a class identity feature (the rexlang `id` modifier).
+    /// `true` for a class identity feature (the pherolang `id` modifier).
     /// Identity columns are never FKs — FK resolution must not match them
     /// by column-name convention. Serde-defaulted for backward compat.
     #[serde(default)]

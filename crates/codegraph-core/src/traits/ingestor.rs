@@ -58,7 +58,7 @@ pub trait GraphIngestor: Send + Sync {
     /// Update the is_entity flag on an already-ingested schema node.
     async fn ingest_view_container(&self, node: &ViewContainerNode) -> Result<String, GraphError>;
 
-    /// Ingest a DSL `module "Name"` declaration (rex-ir `ModuleDeclaration`):
+    /// Ingest a DSL `module "Name"` declaration (phero-ir `ModuleDeclaration`):
     /// the reusable pattern node view-level and module-internal `use`
     /// statements resolve against.
     async fn ingest_module_definition(
@@ -220,7 +220,7 @@ pub trait GraphIngestor: Send + Sync {
     /// file is a consumer concern, never a graph-plane one.
     async fn ingest_evt_model(&self, model: &EvtModelGraph) -> Result<(), GraphError>;
 
-    // ── Deployment plane (rexlang #49) ──────────────────────────────
+    // ── Deployment plane (pherolang #49) ──────────────────────────────
 
     /// Ingest a full `.deploy` deployment model: the declared applications
     /// (components + `connects` edges), profiles (target + defaults +
@@ -230,7 +230,7 @@ pub trait GraphIngestor: Send + Sync {
     /// consumer concern, never a graph-plane one.
     async fn ingest_deploy_model(&self, model: &DeployModelGraph) -> Result<(), GraphError>;
 
-    // ── IFML manifest plane (rexlang #118, WS6) ─────────────────────
+    // ── IFML manifest plane (pherolang #118, WS6) ─────────────────────
 
     /// Ingest the folded declaration-backed control/route manifest: ONE
     /// singleton node per run (`IfmlManifestNode`) carrying the whole

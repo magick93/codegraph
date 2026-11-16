@@ -1,5 +1,5 @@
 use codegraph_config::{IfmlComponentMapping, SemanticRole};
-use rex_ifml::ComponentSpec;
+use phero_ifml::ComponentSpec;
 
 use crate::ifml::context::{IfmlComponent, IfmlViewContainer};
 use crate::ifml::control_core;

@@ -9,7 +9,7 @@
 //
 // The branching state machine is NOT declared here: it lives in domains.toml
 // (`leave.leave_request` workflow), because a bare-String status would be an
-// upstream compile error (rexlang Rule 16) and the fixture's status is
+// upstream compile error (pherolang Rule 16) and the fixture's status is
 // codelist-bound. No op-level `when` either — the rex compiler only admits
 // it on modules whose design carries one of those state machines.
 

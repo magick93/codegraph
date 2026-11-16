@@ -3,7 +3,7 @@ name = "tree-sitter-mox"
 version = "0.1.0"
 edition = { workspace = true }
 license = { workspace = true }
-description = "Generated parser for the rexlang .mox modeling language (tree-sitter grammar)"
+description = "Generated parser for the pherolang .mox modeling language (tree-sitter grammar)"
 build = "build.rs"
 
 # Generated from codegraph-vscode/grammar-mox (the grammar source of truth)

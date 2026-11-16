@@ -50,7 +50,7 @@ view "Plain" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML with module uses");
+    let model = phero_ifml::parse_ifml(ifml).expect("Should parse IFML with module uses");
     assert_eq!(model.views[0].module_uses.len(), 1);
     assert_eq!(model.views[0].containers[0].module_uses.len(), 1);
 
@@ -111,7 +111,7 @@ view "Storefront" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML with actors/roles");
+    let model = phero_ifml::parse_ifml(ifml).expect("Should parse IFML with actors/roles");
     assert_eq!(model.actors.len(), 2);
     assert_eq!(model.views[0].roles, vec!["admin", "manager"]);
     assert!(
@@ -160,7 +160,7 @@ view "Dashboard" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML");
+    let model = phero_ifml::parse_ifml(ifml).expect("Should parse IFML");
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
         .expect("Should ingest");
@@ -216,21 +216,21 @@ view "EditCustomer" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML");
+    let model = phero_ifml::parse_ifml(ifml).expect("Should parse IFML");
 
     let params = &model.views[0].params;
     assert_eq!(params[0].default, None, "param without default stays None");
     assert_eq!(
         params[1].default,
-        Some(rex_ifml::ValueExpression::String("details".to_string()))
+        Some(phero_ifml::ValueExpression::String("details".to_string()))
     );
     assert_eq!(
         params[2].default,
-        Some(rex_ifml::ValueExpression::Number(1.0.into()))
+        Some(phero_ifml::ValueExpression::Number(1.0.into()))
     );
 
     let fields = match &model.views[0].components[0].spec {
-        Some(rex_ifml::ComponentSpec::Form(spec)) => &spec.fields,
+        Some(phero_ifml::ComponentSpec::Form(spec)) => &spec.fields,
         other => panic!("Expected Form spec, got {:?}", other),
     };
     assert_eq!(fields[0].messages, vec!["Name too short".to_string()]);
@@ -266,7 +266,7 @@ view "Refunds" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML with event requires");
+    let model = phero_ifml::parse_ifml(ifml).expect("Should parse IFML with event requires");
 
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
@@ -341,7 +341,7 @@ view "FilingDetail" {
 }
 "#;
     let engine = codegraph_grafeo::GrafeoEngine::in_memory().expect("in-memory Grafeo engine");
-    let model = rex_ifml::parse_ifml(ifml).expect("Should parse IFML");
+    let model = phero_ifml::parse_ifml(ifml).expect("Should parse IFML");
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
         .expect("Should ingest");

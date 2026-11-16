@@ -1,5 +1,5 @@
 //! mox domain ingest: compile `.mox` domain sources in-process via
-//! `rex_driver::compile_files` and walk the resulting `rex_ir::Model` into
+//! `phero_driver::compile_files` and walk the resulting `phero_ir::Model` into
 //! the graph (issues #218, #229).
 //!
 //! What lands in the graph:
@@ -49,8 +49,8 @@ use codegraph_core::types::{
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind, TypeExpr};
-use rex_driver::{DomainImports, SchemaImports, compile_files};
-use rex_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
+use phero_driver::{DomainImports, SchemaImports, compile_files};
+use phero_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
 use crate::error::{Error, Result};
 use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
@@ -138,11 +138,11 @@ impl std::fmt::Display for MoxIngestStats {
 
 /// One `import schema "<path>" (as <Alias>)?` declaration scanned from a
 /// `.mox` source (issue #230). A line-oriented scan stands in for the
-/// rex-syntax AST here (the lowered IR drops import declarations); limits
+/// phero-syntax AST here (the lowered IR drops import declarations); limits
 /// are pinned on [`scan_schema_imports`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaImportDecl {
-    /// The quoted path exactly as written — the key the rex compiler's
+    /// The quoted path exactly as written — the key the pherolang compiler's
     /// `SchemaImports` provider matches on.
     pub path: String,
     /// `as <Alias>` when present; the file stem otherwise (mirroring the
@@ -151,7 +151,7 @@ pub struct SchemaImportDecl {
 }
 
 /// A scanned import resolved to a readable file, ready for the JSON schema
-/// pipeline and the rex compile's `SchemaImports` provider.
+/// pipeline and the pherolang compile's `SchemaImports` provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoxSchemaImport {
     /// The .mox file declaring the import — the compile path it must match.
@@ -215,9 +215,42 @@ pub struct MoxIngestOutcome {
     pub pending_alias_refs: Vec<PendingAliasRef>,
 }
 
+/// Render the error diagnostics of a compile that produced no model:
+/// one `pherolang render`-ed block per source file (spanned, with the
+/// offending source), falling back to `path: message` for diagnostics
+/// attributed to a file we do not hold the text of (an import).
+fn render_mox_compile_failure(
+    sources: &[(String, String)],
+    diagnostics: &[(String, phero_driver::Diagnostic)],
+) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    for (path, text) in sources {
+        let owned: Vec<phero_driver::Diagnostic> = diagnostics
+            .iter()
+            .filter(|(file, diagnostic)| file == path && diagnostic.is_error())
+            .map(|(_, diagnostic)| diagnostic.clone())
+            .collect();
+        if owned.is_empty() {
+            continue;
+        }
+        blocks.push(phero_driver::render(path, text, &owned));
+    }
+    for (path, diagnostic) in diagnostics {
+        if !diagnostic.is_error() || sources.iter().any(|(known, _)| known == path) {
+            continue;
+        }
+        blocks.push(format!("{path}: {}", diagnostic.message));
+    }
+    if blocks.is_empty() {
+        "compilation produced no model".to_string()
+    } else {
+        blocks.join("\n")
+    }
+}
+
 /// Scan `.mox` source text for `import schema "<path>" (as <Alias>)?`
 /// declarations. A line-oriented scan like the `.actor` import scanner: the
-/// lowered rex IR does not carry import declarations, and a full rex-syntax
+/// lowered pherolang IR does not carry import declarations, and a full phero-syntax
 /// parse here would duplicate the compile. Pinned v1 limits: the
 /// declaration must start its (trimmed) line with `import schema`, the path
 /// is a plain double-quoted string without escapes, and the optional alias
@@ -327,7 +360,7 @@ pub(crate) fn collect_schema_imports(
 ///
 /// `import schema "<path>"` declarations are scanned before compiling,
 /// resolved against the .mox file's directory, and their JSON content
-/// validated and provided to the rex compiler ([`SchemaImports`]). A
+/// validated and provided to the pherolang compiler ([`SchemaImports`]). A
 /// missing or invalid import file is a HARD error ([`Error::MoxSchemaImport`])
 /// naming both paths. The imported files themselves are returned on
 /// [`MoxIngestOutcome::imported_files`] for the schema pipeline to ingest,
@@ -400,20 +433,21 @@ pub async fn ingest_mox_files(
 
     let imports = DomainImports {
         schemas: schema_imports,
-        sigil: rex_driver::SigilImports::new(),
+        sigil: phero_driver::SigilImports::new(),
     };
     let compilation = compile_files(&sources, &imports);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!("Warning: mox diagnostic in {path}: {}", diagnostic.message);
     }
+    // A compile that lowers NO model is a hard error, not a skip: every
+    // class, enum and vocabulary would silently vanish and the run would
+    // happily generate an empty app (the WS5 failure mode). Individual
+    // file-level problems that still leave a partial model keep the warn
+    // path above — this is the total-failure case only.
     let Some(model) = compilation.model else {
-        eprintln!("Warning: mox compilation produced no model — nothing ingested");
+        let reason = render_mox_compile_failure(&sources, &compilation.diagnostics);
         stats.skipped += sources.len();
-        return Ok(MoxIngestOutcome {
-            stats,
-            imported_files,
-            pending_alias_refs: Vec::new(),
-        });
+        return Err(Error::MoxModel { reason });
     };
 
     // Schema entities already in the graph: mox classes attach by NAME
@@ -704,7 +738,7 @@ pub async fn ingest_mox_files(
     // (inherited features before own features, each group name-sorted) so
     // property insertion order — and thus the CachingQuerier's warm-cache
     // ordering — matches the JSON path byte-for-byte (issue #233).
-    let class_map: HashMap<&str, &rex_ir::ClassDef> = class_index
+    let class_map: HashMap<&str, &phero_ir::ClassDef> = class_index
         .iter()
         .map(|entry| (entry.class.name.as_str(), entry.class))
         .collect();
@@ -944,7 +978,7 @@ pub async fn wire_alias_refs(
 /// resolved domain, namespace (the package name — `None` when package-less),
 /// and the `schema_id` used for its graph node.
 struct ClassEntry<'a> {
-    class: &'a rex_ir::ClassDef,
+    class: &'a phero_ir::ClassDef,
     domain: String,
     schema_id: String,
     namespace: Option<String>,
@@ -952,7 +986,7 @@ struct ClassEntry<'a> {
 
 /// One mox enum flattened for ingestion (same shape as [`ClassEntry`]).
 struct EnumEntry<'a> {
-    enum_def: &'a rex_ir::EnumDef,
+    enum_def: &'a phero_ir::EnumDef,
     domain: String,
     schema_id: String,
     namespace: Option<String>,
@@ -1089,7 +1123,7 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         has_any_of: false,
         has_definitions: false,
         custom_annotations,
-        // rex-ir v1 (rev 77688ee) carries neither an access flag nor
+        // phero-ir v1 (rev 77688ee) carries neither an access flag nor
         // structured annotations on `ClassDef` — `None` keeps the bridge
         // byte-identical (issue #279); producers connect upstream.
         access: None,
@@ -1146,14 +1180,14 @@ fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
 /// path) has no `ORDER BY`, so insertion order is output field order and
 /// must match the JSON path byte-for-byte (issue #233).
 fn ordered_bridge_features<'a>(
-    class: &'a rex_ir::ClassDef,
-    class_map: &HashMap<&str, &'a rex_ir::ClassDef>,
+    class: &'a phero_ir::ClassDef,
+    class_map: &HashMap<&str, &'a phero_ir::ClassDef>,
     bridged: &HashSet<String>,
-) -> Vec<&'a rex_ir::Feature> {
+) -> Vec<&'a phero_ir::Feature> {
     let mut ordered = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
     collect_ancestor_features(class, class_map, bridged, &mut visited, &mut ordered);
-    let mut own: Vec<&rex_ir::Feature> = class.features.iter().collect();
+    let mut own: Vec<&phero_ir::Feature> = class.features.iter().collect();
     own.sort_by(|a, b| a.name.cmp(&b.name));
     ordered.extend(own);
     // First occurrence wins per name — the same semantics the generators'
@@ -1170,11 +1204,11 @@ fn ordered_bridge_features<'a>(
 /// before its own features), skipping JSON-owned or unknown parents — the
 /// schema pass merges those on the JSON side.
 fn collect_ancestor_features<'a>(
-    class: &'a rex_ir::ClassDef,
-    class_map: &HashMap<&str, &'a rex_ir::ClassDef>,
+    class: &'a phero_ir::ClassDef,
+    class_map: &HashMap<&str, &'a phero_ir::ClassDef>,
     bridged: &HashSet<String>,
     visited: &mut HashSet<String>,
-    out: &mut Vec<&'a rex_ir::Feature>,
+    out: &mut Vec<&'a phero_ir::Feature>,
 ) {
     for parent in &class.extends {
         let TypeRef::Class { name, .. } = parent else {
@@ -1187,7 +1221,7 @@ fn collect_ancestor_features<'a>(
             continue;
         };
         collect_ancestor_features(parent_class, class_map, bridged, visited, out);
-        let mut own: Vec<&rex_ir::Feature> = parent_class.features.iter().collect();
+        let mut own: Vec<&phero_ir::Feature> = parent_class.features.iter().collect();
         own.sort_by(|a, b| a.name.cmp(&b.name));
         out.extend(own);
     }
@@ -1197,7 +1231,7 @@ fn collect_ancestor_features<'a>(
 /// classification and type-string conventions. Returns `None` for features
 /// that produce no stored column (interfaces).
 fn feature_property(
-    feature: &rex_ir::Feature,
+    feature: &phero_ir::Feature,
     schema_title: &str,
     datatype_formats: &HashMap<(String, String), String>,
     sole_identity: bool,
@@ -1548,7 +1582,7 @@ fn type_ref_name(type_ref: &TypeRef) -> String {
     }
 }
 
-/// Convert a rex [`DefaultValue`] (vocabulary facet values) to a plain JSON
+/// Convert a pherolang [`DefaultValue`] (vocabulary facet values) to a plain JSON
 /// value for graph storage.
 fn default_value_json(value: &DefaultValue) -> serde_json::Value {
     match value {
@@ -1566,11 +1600,11 @@ mod tests {
     #[test]
     fn type_ref_name_resolves_primitives_and_qualified_names() {
         assert_eq!(
-            type_ref_name(&TypeRef::Primitive(rex_ir::PrimitiveType::String)),
+            type_ref_name(&TypeRef::Primitive(phero_ir::PrimitiveType::String)),
             "string"
         );
         assert_eq!(
-            type_ref_name(&TypeRef::Primitive(rex_ir::PrimitiveType::Int)),
+            type_ref_name(&TypeRef::Primitive(phero_ir::PrimitiveType::Int)),
             "int"
         );
     }
@@ -1727,7 +1761,7 @@ postgres_schema = "lib"
     }
 
     #[test]
-    fn primitive_pg_type_covers_every_rex_primitive() {
+    fn primitive_pg_type_covers_every_pherolang_primitive() {
         assert_eq!(primitive_pg_type(PrimitiveType::String), PgType::Text);
         assert_eq!(primitive_pg_type(PrimitiveType::Char), PgType::Text);
         assert_eq!(primitive_pg_type(PrimitiveType::Int), PgType::Integer);

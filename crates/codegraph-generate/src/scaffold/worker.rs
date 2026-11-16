@@ -161,7 +161,7 @@ fn domain_has_workflow_timers(entry: &codegraph_config::DomainEntry) -> bool {
         .any(|ec| ec.workflow.as_ref().is_some_and(|wf| !wf.timers.is_empty()))
 }
 
-/// The folded queue-level delivery facts a worker's drain lowers (rexlang
+/// The folded queue-level delivery facts a worker's drain lowers (pherolang
 /// #31's delivery model): present on the `WorkerDomain` context ONLY when
 /// the model declared a non-default policy — absent (`null` in the Tera
 /// context) keeps the template's hardcoded today-constants, byte-identical.
@@ -261,7 +261,7 @@ pub struct WorkerDomain {
     /// media domains — byte-identical wrangler.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub media_r2: Option<WorkerMediaR2>,
-    /// The folded queue-level delivery facts (rexlang #31's delivery
+    /// The folded queue-level delivery facts (pherolang #31's delivery
     /// model), when the model declared a non-default policy; `None` keeps
     /// the drain template's hardcoded constants (byte-identical).
     pub evt_delivery: Option<WorkerEvtDelivery>,
@@ -535,7 +535,7 @@ impl GlobalGenerator for WorkerScaffoldGenerator {
         let gateway_name = format!("{app_name}-gateway");
         let gateway_lib_name = codegraph_naming::to_snake_case(&gateway_name);
 
-        // The `.deploy` plane (rexlang #49) decides the Workers topology's
+        // The `.deploy` plane (pherolang #49) decides the Workers topology's
         // wiring when it deploys a CloudflareWorkers profile: per-domain
         // service bindings come from `connects` edges and the gateway binds
         // only the domains it connects to. An empty graph query (no deploy

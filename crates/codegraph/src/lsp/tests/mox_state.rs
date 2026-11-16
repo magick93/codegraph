@@ -47,7 +47,7 @@ fn mox_workspace() -> (tempfile::TempDir, MoxState) {
         r#"{ "title": "Person", "type": "object", "properties": {} }"#,
     )
     .unwrap();
-    // The Currency vocabulary's vendored snapshot (unique file — the rex
+    // The Currency vocabulary's vendored snapshot (unique file — the pherolang
     // compiler takes the version from the filename).
     std::fs::create_dir_all(dir.path().join("vocab")).unwrap();
     std::fs::write(

@@ -8,7 +8,7 @@
 //! for the entity's schema title, so a graph without ddd models keeps every
 //! generator byte-identical to the pre-#449 output.
 //!
-//! Mapping summary (Sculptor semantics, `rexlang/docs/DDD.md`):
+//! Mapping summary (Sculptor semantics, `pherolang/docs/DDD.md`):
 //! - repository built-ins → CRUD operations: `findById→read`, `findAll→list`,
 //!   `save→create`+`update`, `delete→delete`. A design without a repository
 //!   maps to an EMPTY operation set (the entity gets no CRUD).
@@ -165,9 +165,9 @@ impl DddDesignSurface {
 
     /// The lifecycle state machine designed for the entity, when the graph
     /// carries one (`.ddd` `machine <field>: <Enum>`). The stored form is
-    /// opaque rex-ir JSON; codegraph-generate (which may depend on rex-ir)
+    /// opaque phero-ir JSON; codegraph-generate (which may depend on phero-ir)
     /// rehydrates it here.
-    pub fn machine_for(&self, schema_title: &str) -> Option<rex_ir::ddd::StateMachine> {
+    pub fn machine_for(&self, schema_title: &str) -> Option<phero_ir::ddd::StateMachine> {
         let design = self.designs.get(schema_title)?;
         let value = design.machine_json.as_ref()?;
         serde_json::from_value(value.clone()).ok()
@@ -361,7 +361,7 @@ impl DddDesignSurface {
 
     fn warn_flags(&self, app: &str, design: &DddDesignNode) {
         let flags = &design.flags;
-        // `optimisticLocking` is defaulted ON for entity designs (rexlang
+        // `optimisticLocking` is defaulted ON for entity designs (pherolang
         // #47) and recorded on the flag plane; its version-column emission
         // remains a tracked deferral, so it no longer warns (a warning on
         // every entity design would be noise). Explicit opt-outs keep their
@@ -469,10 +469,16 @@ fn lower_finder(
     let Some(return_json) = &op.return_type else {
         return Err("no return type declared".to_string());
     };
-    let return_type: rex_ir::TypeRef = serde_json::from_value(return_json.clone())
-        .map_err(|e| format!("unresolvable return type ({e})"))?;
-    let class_name = match &return_type {
-        rex_ir::TypeRef::Class { name, .. } => name.clone(),
+    // DD3: the slot is a `DddTypeRef` — a domain type or a DTO boundary.
+    let return_slot = crate::ddd::signature::signature_type(return_json);
+    let Some(return_type) = return_slot.as_domain() else {
+        return Err(format!(
+            "return type is a {} — a finder must return the designing entity",
+            return_slot.describe()
+        ));
+    };
+    let class_name = match return_type {
+        phero_ir::TypeRef::Class { name, .. } => name.clone(),
         _ => {
             return Err(format!(
                 "return type `{}` does not resolve to the designing entity",
@@ -489,7 +495,7 @@ fn lower_finder(
     let returns_many = op
         .return_multiplicity
         .as_ref()
-        .map(|m| serde_json::from_value::<rex_ir::Multiplicity>(m.clone()).map(|m| m.is_many()))
+        .map(|m| serde_json::from_value::<phero_ir::Multiplicity>(m.clone()).map(|m| m.is_many()))
         .transpose()
         .map_err(|e| format!("unresolvable return multiplicity ({e})"))?
         .unwrap_or(false);
@@ -506,21 +512,27 @@ fn lower_finder(
                 param.name
             ));
         }
-        let type_ref: rex_ir::TypeRef = serde_json::from_value(param.type_json.clone())
-            .map_err(|e| format!("unresolvable parameter type for `{}` ({e})", param.name))?;
+        let slot = crate::ddd::signature::signature_type(&param.type_json);
+        let Some(type_ref) = slot.as_domain() else {
+            return Err(format!(
+                "parameter `{}` is a {} — a finder parameter must be a domain type",
+                param.name,
+                slot.describe()
+            ));
+        };
         let snake = codegraph_naming::to_snake_case(&param.name);
         // Primitives and the `Uuid`/`DateTime`/`Decimal` named family map
         // directly; any other named type (`.mox` wraps datatypes such as
         // `JurisdictionCode`) resolves to its COLUMN PROJECTION — the named
         // feature's base type (issue #523), so the signature binds the same
         // columns the DTOs expose.
-        let rust_type = match rex_type_to_rust(&type_ref) {
+        let rust_type = match phero_type_to_rust(type_ref) {
             Some(rt) => rt,
-            None => match &type_ref {
+            None => match type_ref {
                 // A codelist enum/vocabulary filter binds the stored TEXT
                 // code: the DTO exposes the enum, but the column is text and
                 // the equality finder compares codes (P2.5).
-                rex_ir::TypeRef::Enum { .. } | rex_ir::TypeRef::Vocabulary { .. } => {
+                phero_ir::TypeRef::Enum { .. } | phero_ir::TypeRef::Vocabulary { .. } => {
                     "String".to_string()
                 }
                 _ => features.resolve_type(&snake).ok_or_else(|| {
@@ -750,31 +762,33 @@ fn example_finder(
     })
 }
 
-/// Map a rex-ir type reference to the Rust type the generated repositories
+/// Map a phero-ir type reference to the Rust type the generated repositories
 /// use for it. Returns `None` for anything the equality-finder lowering
 /// cannot express (struct/class/enum/vocabulary parameters).
-pub fn rex_type_to_rust(type_ref: &rex_ir::TypeRef) -> Option<String> {
+pub fn phero_type_to_rust(type_ref: &phero_ir::TypeRef) -> Option<String> {
     match type_ref {
-        rex_ir::TypeRef::Primitive(prim) => match prim {
-            rex_ir::PrimitiveType::String | rex_ir::PrimitiveType::Char => {
+        phero_ir::TypeRef::Primitive(prim) => match prim {
+            phero_ir::PrimitiveType::String | phero_ir::PrimitiveType::Char => {
                 Some("String".to_string())
             }
-            rex_ir::PrimitiveType::Boolean => Some("bool".to_string()),
-            rex_ir::PrimitiveType::Int
-            | rex_ir::PrimitiveType::Long
-            | rex_ir::PrimitiveType::Short
-            | rex_ir::PrimitiveType::Byte => Some("i64".to_string()),
-            rex_ir::PrimitiveType::Float | rex_ir::PrimitiveType::Double => Some("f64".to_string()),
-            rex_ir::PrimitiveType::Date => Some("chrono::NaiveDate".to_string()),
+            phero_ir::PrimitiveType::Boolean => Some("bool".to_string()),
+            phero_ir::PrimitiveType::Int
+            | phero_ir::PrimitiveType::Long
+            | phero_ir::PrimitiveType::Short
+            | phero_ir::PrimitiveType::Byte => Some("i64".to_string()),
+            phero_ir::PrimitiveType::Float | phero_ir::PrimitiveType::Double => {
+                Some("f64".to_string())
+            }
+            phero_ir::PrimitiveType::Date => Some("chrono::NaiveDate".to_string()),
         },
         // Named types match by their name leaf against the datatypes the
-        // generated code models (the rex `Uuid`/`DateTime`/`Decimal` family
+        // generated code models (the pherolang `Uuid`/`DateTime`/`Decimal` family
         // and the `.mox` stdlib datatypes).
-        rex_ir::TypeRef::Class { name, .. }
-        | rex_ir::TypeRef::Enum { name, .. }
-        | rex_ir::TypeRef::Datatype { name, .. }
-        | rex_ir::TypeRef::Interface { name, .. }
-        | rex_ir::TypeRef::Vocabulary { name, .. } => match name.as_str() {
+        phero_ir::TypeRef::Class { name, .. }
+        | phero_ir::TypeRef::Enum { name, .. }
+        | phero_ir::TypeRef::Datatype { name, .. }
+        | phero_ir::TypeRef::Interface { name, .. }
+        | phero_ir::TypeRef::Vocabulary { name, .. } => match name.as_str() {
             "Uuid" => Some("Uuid".to_string()),
             "DateTime" | "Instant" | "Timestamp" => {
                 Some("chrono::DateTime<chrono::Utc>".to_string())
@@ -1155,6 +1169,46 @@ mod tests {
             surface
                 .finders_for("BookType", "Book", &features("Book"))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn finder_with_a_dto_boundary_slot_names_the_boundary() {
+        // DD3: a signature slot may be a DTO boundary (`{"dto":"Name"}`).
+        // A finder binds and returns the designing entity, so a boundary is
+        // refused by NAME — never reported as a generic parse failure.
+        let dto = || serde_json::json!({ "dto": "BookSummary" });
+
+        let dto_return = DddRepositoryOperation {
+            name: "summaries".to_string(),
+            builtin: None,
+            return_type: Some(dto()),
+            return_multiplicity: None,
+            params: vec![param("title", string_json())],
+            ordinal: 8,
+            is_protected: false,
+        };
+        let reason = lower_finder(&dto_return, "Book", "Book", &features("Book"))
+            .expect_err("a DTO return type cannot lower to a finder");
+        assert!(
+            reason.contains("DTO boundary `BookSummary`"),
+            "reason must name the boundary: {reason}"
+        );
+
+        let dto_param = DddRepositoryOperation {
+            name: "findBySummary".to_string(),
+            builtin: None,
+            return_type: Some(class_json("Book")),
+            return_multiplicity: None,
+            params: vec![param("request", dto())],
+            ordinal: 9,
+            is_protected: false,
+        };
+        let reason = lower_finder(&dto_param, "Book", "Book", &features("Book"))
+            .expect_err("a DTO parameter cannot lower to a finder");
+        assert!(
+            reason.contains("DTO boundary `BookSummary`"),
+            "reason must name the boundary: {reason}"
         );
     }
 

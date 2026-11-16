@@ -646,7 +646,7 @@ async fn non_common_mox_codelists_are_common_and_deterministic() {
 // The refusal discipline (un-lowerable `when` conditions hard-fail
 // generation naming the op) is pinned at the unit level
 // (`refusals_name_the_capability` in `ddd::service_ops`): the upstream
-// rex-driver typechecker already rejects most of the out-of-subset
+// phero-driver typechecker already rejects most of the out-of-subset
 // surface before the graph, so the graph-side refusal is defense-in-depth
 // for `.json` actor artifacts.
 

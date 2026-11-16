@@ -1,4 +1,4 @@
-//! Shared rexlang source-import plumbing: `import "x.mox"` domain
+//! Shared pherolang source-import plumbing: `import "x.mox"` domain
 //! collection, `import schema` / `import sigil` line scans, and the
 //! rosetta candidate-pool directory walk. Used by both the `.actor`
 //! policy imports ([`crate::ifml_actor_import`]) and the `.ddd` design
@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// One collected `.mox` domain: the import-path-as-written key the rex
+/// One collected `.mox` domain: the import-path-as-written key the pherolang
 /// compiler matches on, the source text, and the directory its own imports
 /// (`import "x.mox"`, `import schema "y.json"`, `import sigil "z.rosetta"`)
 /// resolve against.
@@ -17,9 +17,9 @@ pub(crate) struct DomainSource {
     pub dir: PathBuf,
 }
 
-/// Collect the `.mox` domain sources a rexlang surface file imports,
+/// Collect the `.mox` domain sources a pherolang surface file imports,
 /// following `import "x.mox"` lines transitively. Paths are keyed exactly
-/// as written (that is what the rex compile matches on) and resolved
+/// as written (that is what the pherolang compile matches on) and resolved
 /// relative to the importing file's directory; missing files warn and are
 /// skipped (the compile reports the unsatisfied import).
 pub(crate) fn collect_domains(dir: &Path, source: &str) -> Vec<DomainSource> {
@@ -47,14 +47,14 @@ fn collect_domains_inner(dir: &Path, source: &str, domains: &mut Vec<DomainSourc
             }
             Err(e) => {
                 eprintln!(
-                    "Warning: domain file '{import}' imported by a rexlang source was not found ({e}) — skipped"
+                    "Warning: domain file '{import}' imported by a pherolang source was not found ({e}) — skipped"
                 );
             }
         }
     }
 }
 
-/// Scan source text for rexlang domain import lines (`import "path.mox"`).
+/// Scan source text for pherolang domain import lines (`import "path.mox"`).
 /// A simple line-oriented scan is sufficient for codegraph's import
 /// resolution; `import schema`/`import sigil` lines do not match (their
 /// next token is a keyword, not a quote).
@@ -86,7 +86,7 @@ pub(crate) fn scan_sigil_imports(source: &str) -> Vec<String> {
 }
 
 /// Recursively collects `*.rosetta` files under `file`'s directory,
-/// mirroring sigil's project discovery (the rex-cli
+/// mirroring sigil's project discovery (the phero-cli
 /// `discover_rosetta_files` port): entries whose name starts with `.` or is
 /// exactly `target` are skipped with their subtree, and the walk is
 /// depth-capped (bounding symlink cycles). The named file itself is not

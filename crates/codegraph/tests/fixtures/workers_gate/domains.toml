@@ -5,7 +5,7 @@
 # object is decided by refers/contains targeting).
 #
 # The branching machine lives HERE, not in the .ddd design: a bare-String
-# status would be an upstream compile error (rexlang Rule 16). Binding the
+# status would be an upstream compile error (pherolang Rule 16). Binding the
 # status field to the mox `LeaveStatus` enum keeps check_status_bypass quiet
 # and the workflow plane typed.
 [defaults]

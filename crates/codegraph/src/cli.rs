@@ -85,7 +85,7 @@ pub enum Commands {
         #[arg(long, default_value = "table")]
         format: ClassifyFormat,
 
-        /// Paths to rexlang .mox domain model files; their classes bypass
+        /// Paths to pherolang .mox domain model files; their classes bypass
         /// the classifier and show up as `override:source=mox`
         #[arg(long)]
         mox_files: Vec<PathBuf>,
@@ -143,7 +143,7 @@ pub enum Commands {
         /// Paths to OpenAPI 3.0/3.1 spec files (JSON) to import into the graph
         #[arg(long)]
         openapi_files: Vec<PathBuf>,
-        /// Paths to rexlang .mox domain model files to ingest into the graph
+        /// Paths to pherolang .mox domain model files to ingest into the graph
         /// (vocabularies with facets, class operations, derived features)
         #[arg(long)]
         mox_files: Vec<PathBuf>,
@@ -151,15 +151,15 @@ pub enum Commands {
         /// the graph data plane (types/choices/enums/attributes)
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
-        /// Paths to rexlang .ddd design files; compiled against their imported
+        /// Paths to pherolang .ddd design files; compiled against their imported
         /// .mox domains and ingested as the DDD design plane
         #[arg(long)]
         ddd_files: Vec<PathBuf>,
-        /// Paths to rexlang .evt event-contract files; compiled against their
+        /// Paths to pherolang .evt event-contract files; compiled against their
         /// imported .mox domains and ingested as the events plane
         #[arg(long)]
         evt_files: Vec<PathBuf>,
-        /// Paths to rexlang .deploy deployment files; compiled against their
+        /// Paths to pherolang .deploy deployment files; compiled against their
         /// imported .ddd designs and .ifml flows and ingested as the
         /// deployment plane
         #[arg(long)]
@@ -283,15 +283,15 @@ pub enum Commands {
         #[arg(long)]
         config: Option<PathBuf>,
 
-        /// rexlang .mox domain model files powering .mox diagnostics and
+        /// pherolang .mox domain model files powering .mox diagnostics and
         /// completions (repeatable). Without them, .mox documents get
         /// syntax diagnostics only.
         #[arg(long)]
         mox_files: Vec<PathBuf>,
     },
-    /// Convert a JSON Schema directory tree into rexlang .mox domain sources
+    /// Convert a JSON Schema directory tree into pherolang .mox domain sources
     /// plus the shared codegraph_stdlib package. Output is parse-verified
-    /// with the rex compiler before anything is written.
+    /// with the pherolang compiler before anything is written.
     Migrate(MigrateArgs),
     /// Scaffold a new consumer project (domains.toml, schemas, workspace, ops harness)
     Init {
@@ -361,7 +361,7 @@ pub enum Commands {
         #[arg(long)]
         profiles_config: Option<PathBuf>,
 
-        /// Paths to rexlang .mox domain model files; each package must match
+        /// Paths to pherolang .mox domain model files; each package must match
         /// a domains.toml domain. With .mox present the JSON schemas check
         /// degrades to an info line (mox-first projects)
         #[arg(long)]
@@ -374,26 +374,26 @@ pub enum Commands {
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
 
-        /// Paths to rexlang .ddd design files; compile-verified against
+        /// Paths to pherolang .ddd design files; compile-verified against
         /// their imported .mox domains (import schema/sigil targets
         /// included). Error-severity diagnostics are hard failures
         #[arg(long)]
         ddd_files: Vec<PathBuf>,
 
-        /// Paths to rexlang .evt event-contract files; compiled against
+        /// Paths to pherolang .evt event-contract files; compiled against
         /// their imported .mox domains and ingested as the events plane.
         /// Error-severity diagnostics are hard failures
         #[arg(long)]
         evt_files: Vec<PathBuf>,
 
-        /// Paths to rexlang .deploy deployment files; compile-verified
+        /// Paths to pherolang .deploy deployment files; compile-verified
         /// against their imported .ddd designs and .ifml flows, plus
         /// profile/topology and component-coverage cross-checks.
         /// Error-severity diagnostics are hard failures
         #[arg(long)]
         deploy_files: Vec<PathBuf>,
 
-        /// Paths to rexlang .ifml interaction-model files; parse-verified
+        /// Paths to pherolang .ifml interaction-model files; parse-verified
         /// and their `import "….actor"` policy imports resolved. Errors
         /// and unresolvable imports are hard failures
         #[arg(long)]

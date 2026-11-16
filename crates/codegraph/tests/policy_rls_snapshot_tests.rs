@@ -294,7 +294,7 @@ async fn no_policy_graph_emits_nothing() {
 }
 
 /// A `when` expression outside the closed subset is a HARD generation error
-/// naming the capability (rexlang Cedar-backend philosophy).
+/// naming the capability (pherolang Cedar-backend philosophy).
 #[tokio::test]
 async fn unmappable_when_expr_is_a_hard_error_naming_the_capability() {
     let engine = engine_with_candidate();

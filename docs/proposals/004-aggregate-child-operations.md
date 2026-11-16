@@ -1,7 +1,12 @@
 # Proposal: aggregate/child operation semantics
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd designs + Rule 6; rex-ir ServiceOperation)
+Status: **implemented upstream** (pherolang 0.3, issue pherolang#179) — consumer work: #661
+Shipped as: `Design.child_operations` (module-level `children <Class>` blocks; `extend`
+is a deprecated alias warning E0387) with `ServiceOperation.child_scope` →
+`ChildRef { feature, class, action: add|remove|save }`. codegraph still fails closed on
+cross-entity delegation; #661 lowers the child route against the child's repository.
+
+Target: pherolang (phero-driver ddd designs + Rule 6; phero-ir ServiceOperation)
 
 ## Problem
 

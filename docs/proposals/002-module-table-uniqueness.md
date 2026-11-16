@@ -1,7 +1,12 @@
 # Proposal: module/table name uniqueness (compile-time)
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd/graph integrity; mox compiler naming)
+Status: **implemented upstream** (pherolang 0.3) — consumer work: #668
+Shipped as: the `class X table "explicit_name"` annotation (`ClassDef.table_name`) plus
+the upstream E0301 duplicate-name rule. codegraph derives its pg table from the title
+and ignores the annotation; #668 honours it and keeps the generation-time collision
+gate as defense-in-depth.
+
+Target: pherolang (phero-driver ddd/graph integrity; mox compiler naming)
 
 ## Problem
 
@@ -47,7 +52,7 @@ exist).
 - Compile error naming both declarations for `PayRun` + `PayRunType`
   (both entities) in one package.
 - Entity + contained VO sharing the stripped name compiles.
-- `table "..."` disambiguation compiles and flows through rex-ir
+- `table "..."` disambiguation compiles and flows through phero-ir
   (`ClassDef.table_name: Option<String>`, serde-defaulted) so consumers stop
   re-deriving table names.
 - Conformance fixtures for all three shapes.
@@ -60,4 +65,4 @@ exist).
 - The `table_name` IR field lets codegraph delete its own stripped-name
   table derivation over time (config layer keeps precedence).
 - codegraph's generation-time hard error stays as defense-in-depth (it also
-  covers non-rex sources: JSON Schema `$id`s).
+  covers non-pherolang sources: JSON Schema `$id`s).

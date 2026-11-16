@@ -26,6 +26,12 @@ pub enum Error {
         /// Failure cause ("could not be read: …" / "is not valid JSON: …").
         reason: String,
     },
+    #[error("mox model error: {reason}")]
+    MoxModel {
+        /// Failure cause, including the rendered pherolang diagnostics
+        /// (grouped per file) when a compile lowered no model at all.
+        reason: String,
+    },
     #[error("rosetta model error in '{file}': {reason}")]
     RosettaModel {
         /// The .rosetta file the error came from.
@@ -38,7 +44,7 @@ pub enum Error {
     DddModel {
         /// The .ddd file the error came from.
         file: String,
-        /// Failure cause, including the rendered rex diagnostics when the
+        /// Failure cause, including the rendered pherolang diagnostics when the
         /// error comes from compilation (grouped per file).
         reason: String,
     },
@@ -46,7 +52,7 @@ pub enum Error {
     EvtModel {
         /// The .evt file the error came from.
         file: String,
-        /// Failure cause, including the rendered rex diagnostics when the
+        /// Failure cause, including the rendered pherolang diagnostics when the
         /// error comes from compilation (grouped per file).
         reason: String,
     },
@@ -54,7 +60,7 @@ pub enum Error {
     DeployModel {
         /// The .deploy file the error came from.
         file: String,
-        /// Failure cause, including the rendered rex diagnostics when the
+        /// Failure cause, including the rendered pherolang diagnostics when the
         /// error comes from compilation (grouped per file).
         reason: String,
     },

@@ -21,7 +21,7 @@ Workspace root `Cargo.toml` with 12 crates:
 | `codegraph-ops` | Rust test & deploy harness (see "Ops Harness" section) |
 
 The 12 members above are the workspace (the IFML DSL parser lives upstream in
-the rexlang repo as `rex-ifml`, consumed as a rev-pinned git dep — see the
+the pherolang repo as `phero-ifml`, consumed as a rev-pinned git dep — see the
 "IFML Integration" section). The tree also carries
 non-workspace directories: `codegraph-vscode/` (IFML VS Code extension),
 `crates/tree-sitter-ifml/` and `crates/tree-sitter-mox/` (editor grammars),
@@ -30,7 +30,7 @@ and `crates/review/` (regenerated fixture app exercised by
 
 ## mox-First Modeling (epic #228)
 
-`.mox` (rexlang) is the **primary text-based modeling language**; JSON
+`.mox` (pherolang) is the **primary text-based modeling language**; JSON
 Schema is the legacy/import surface. `codegraph run --mox-files model.mox
 --config domains.toml --output out/` works without `--schemas`. Pipeline
 order in `driver::run`: **Pass 1 mox** (bridges classes → Schema/Property/
@@ -72,8 +72,8 @@ class TodoListType {
 }
 ```
 
-rexlang owns the NAME (opaque nominal registration, `SchemaImports`
-provider API, upstream `yestechgroup/rexlang` rev `699b3a5`+); codegraph
+pherolang owns the NAME (opaque nominal registration, `SchemaImports`
+provider API, upstream `yestechgroup/pherolang` rev `699b3a5`+); codegraph
 owns the GRAPH: imported files flow through the existing classifier-aware
 JSON pipeline (`ingest_imported_schemas` — wrapper/range/codelist config
 keeps working), and `wire_alias_refs` resolves deferred alias-typed
@@ -100,7 +100,7 @@ committed parser in `crates/tree-sitter-mox/` (regenerate with
 `node-types.json`, `src/tree_sitter/parser.h` into the crate). Follow-up:
 VS Code extension must register the `mox` language + `.mox` extension and
 pass per-file parser initializationOptions; actor-internals validation
-belongs to upstream rex-lsp.
+belongs to upstream phero-lsp.
 
 Rosetta (Rune DSL) is the sibling primary model source (sigil-parsed,
 bridged, auto-scored): integration guide at `docs/rosetta.md`, construct
@@ -344,7 +344,7 @@ retired).
   and unchanged templates (canaries hold).
 - **Deferred**: server-side aggregate endpoints (`?aggregate=` GROUP BY
   plane); IFML `type: chart` ChartSpec ↔ ChartDefinition unification (+ an
-  `org` kind upstream in rexlang — tracked in the rexlang repo);
+  `org` kind upstream in pherolang — tracked in the pherolang repo);
   ux-rules rule 31 second half (`[[collection]] display = "chart"` →
   `CollectionPlan::Chart`); dashboard composition (multi-chart routes);
   chart-aware doctor/LSP validation; e2e render specs via the entity POM;
@@ -360,7 +360,7 @@ every emitted type resolves within the generated tree:
 
 - **One model surface** (`ddd/mox_ops.rs` → `{domain_types_base}/src/{domain}/mox_types.rs`):
   row mirrors + `from_response` + the `Resource` arena + the op impls
-  live TOGETHER (the rex-backend-rust layout). The app-side
+  live TOGETHER (the phero-backend-rust layout). The app-side
   `src/domain/<domain>/mox_ops.rs` is **retired** (an inherent impl on a
   foreign type is E0116 — the #517 compile pin exposed this); the plane
   is reachable from every band through the domain-types dependency
@@ -376,9 +376,9 @@ every emitted type resolves within the generated tree:
   it).
 - **`Resource`** (issue #508 R4): request context + a synchronous arena
   (`res.get_<class>(id)`/`insert_<class>`) — lowered `x.field`
-  navigation resolves through it (the rex-backend-rust contract).
+  navigation resolves through it (the phero-backend-rust contract).
 - **Op signatures (issue #517)**: every slot RESOLVES — primitives map
-  per the rex contract, known class refs (incl. `pkg::Name`/suffix forms)
+  per the pherolang contract, known class refs (incl. `pkg::Name`/suffix forms)
   → `uuid::Uuid` (the `{Class}Id` slot), codelists →
   `{domain_types}::codelist::{Enum}`; **unresolvable slots are generation
   errors naming the op** (never a bare name). `rust` bodies embed
@@ -421,28 +421,28 @@ every emitted type resolves within the generated tree:
 
 ## DDD design models as generator input (issue #449)
 
-rexlang's Sculptor-style design layer: `.ddd` files compile — against their
+pherolang's Sculptor-style design layer: `.ddd` files compile — against their
 imported `.mox` domains (which may `import schema` JSON / `import sigil`
-rosetta) — into the versioned `rex_ir::ddd::DddModel` wire artifact
+rosetta) — into the versioned `phero_ir::ddd::DddModel` wire artifact
 (format v1). `codegraph run --mox-files model.mox --ddd-files design.ddd
 --config domains.toml --output out/` ingests the design (driver **Pass 1c**,
 after the IFML pass) and the DDD generators become model-driven. Normative
-docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
+docs: `docs/DDD.md` upstream; driver contract `phero_driver::compile_ddd_str`.
 
 - **Import resolution**: imports resolve relative to the `.ddd` file
   (line-scan `import "x.mox"`, transitive mox via
-  `ingest/rex_imports.rs` — the deduped home of `collect_domains`/
+  `ingest/phero_imports.rs` — the deduped home of `collect_domains`/
   `scan_imports`, shared with `ifml_actor_import.rs`); `import schema` via
   `scan_schema_imports`; `import sigil` content is the named file PLUS a
   candidate pool of every sibling `*.rosetta` (dot/`target` subtrees
-  skipped, depth 16) — the rexlang CLI's directory-walk rule.
+  skipped, depth 16) — the pherolang CLI's directory-walk rule.
 - **Hard error on design errors** (rosetta precedent):
-  `Error::DddModel{file, reason}` with `rex_driver::render`-ed per-file
+  `Error::DddModel{file, reason}` with `phero_driver::render`-ed per-file
   diagnostics; a broken design never half-ingests. Class resolution is
   exact → `+type_suffix` → warn (the `wire_alias_refs` chain) at ingest;
-  mox-unknown classes are rex compile errors (hard), graph-unknown classes
+  mox-unknown classes are pherolang compile errors (hard), graph-unknown classes
   ingest softly with `resolved_title = None` and skip mapping.
-- **Graph plane** (rex-free): `DddModelGraph` + node families
+- **Graph plane** (phero-free): `DddModelGraph` + node families
   `DddApplication/DddModule/DddDesign/DddRepository/DddRepositoryOperation/
   DddService/DddSearch` in `codegraph-core/src/types/ddd.rs`; 7 edge types
   (`DddHasModule/Design/Repository/Service/Search/Operation`, 
@@ -452,9 +452,9 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   Vec<DddModelGraph>` (Mock + Grafeo + CachingQuerier). **Ordering
   contract**: nodes carry `ordinal`s; reads restore module-major
   declaration order (designs → services → searches per module) — the
-  converter must walk rex modules in order. Signatures ride as rex-ir
+  converter must walk pherolang modules in order. Signatures ride as phero-ir
   serde JSON (`type_json`/`return_type`), rehydrated by codegraph-generate
-  (which may depend on rex-ir; codegraph-core may NOT). CachingQuerier
+  (which may depend on phero-ir; codegraph-core may NOT). CachingQuerier
   caches `get_ddd_models`/`get_evt_models` (first-read-wins): every
   ddd-aware generator context rebuilds the design surface from these
   readbacks, and uncached they re-run several GQL queries + a whole-model
@@ -491,7 +491,7 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   unique child/grandchild columns (`contains T[]` children, back-refs
   included) and generate one **EXISTS** equality subquery per child table
   with that table's params ANDed inside (same-row semantics; dotted
-  `taxIdentifiers.number` syntax is upstream-blocked by the rexlang
+  `taxIdentifiers.number` syntax is upstream-blocked by the pherolang
   grammar). Ambiguous contained matches and nesting deeper than
   grandchild drop with a dedicated reason; every skipped-finder warning
   names its cause (unresolvable type X / no column named Y / ambiguous
@@ -509,7 +509,7 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   language (search default analyzer); boosts recorded only. DTO
   create/update emission follows design ops (`dto_response` always).
   Stereotype vs `is_entity` mismatch warns (mox owns entity/VO).
-- **Sculptor semantics (rexlang #47, carried through the pin moves)**: entity designs are
+- **Sculptor semantics (pherolang #47, carried through the pin moves)**: entity designs are
   `auditable` + `optimisticLocking` by DEFAULT — the artifact bools carry
   the effective decision, `!flag` opts out, negating default-off flags is
   a compile error. `protected` ops (service + repository) lower onto the
@@ -530,7 +530,7 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   a tracked deferral — recorded, no longer warned (default-on would warn
   on every design).
 - **Gates**: `cargo test -p codegraph --test ddd_golden_tests` (committed
-  rexlang `library.{mox,ddd,ddd.json}` fixture byte-compared in-process —
+  pherolang `library.{mox,ddd,ddd.json}` fixture byte-compared in-process —
   the CLI-gates treatment, node-free) and `--test ddd_pipeline_tests`
   (end-to-end mox+ddd generation, determinism, and the
   config-driven-vs-design-driven BYTE-EQUALITY equivalence gate) plus
@@ -541,7 +541,7 @@ docs: `docs/DDD.md` upstream; driver contract `rex_driver::compile_ddd_str`.
   delegation ops by the #590 service-op plane — see "Service ops lower to
   API surface"; service-to-service/search delegation and `save` payloads
   remain seams); `compile_ddd_str_with_actors` (capabilities recorded
-  unvalidated, same as the rexlang CLI); optimistic-locking/cache
+  unvalidated, same as the pherolang CLI); optimistic-locking/cache
   emission; nonPersistent DDL suppression; search backends beyond
   Postgres FTS + document projections; per-field analyzers/boosts in the
   FTS plumbing; ddd on the classify/ifml-generate paths; LSP for `.ddd`.
@@ -572,7 +572,7 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   Option-aware comparisons, refusals are hard generation errors naming
   the capability), and the per-op `authorize` fn rendered at generation
   time (pre-rendered, whitespace-exact — the #338 guard-block pattern).
-  Note the rex actor compiler already rejects single-file `never_both`
+  Note the pherolang actor compiler already rejects single-file `never_both`
   violations statically — the runtime SoD gate exists for policies
   MERGED across multiple `.actor` imports (each file valid, union
   violates).
@@ -593,14 +593,14 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   `{nn}_{domain}_{module}_actions.hurl` contract (fresh CREATE fixture
   then one POST per op pinning 200/501; the 403 surface rides JWT
   sessions).
-- **The op-level `when` condition** rides the graph now: rex-ir
+- **The op-level `when` condition** rides the graph now: phero-ir
   `ServiceOperation.condition` (trunk pin 194056b) →
   `DddServiceOperation.condition` (`#[serde(default)]`, inside the
   `:DddService.operations_json` blob — **`GRAPH_FORMAT_VERSION` bumped
   1→2** so cached graphs cold-re-ingest; the artifact-kit canonical
   fixtures moved to v2) → lowered into the authorize fn BEFORE the
   api_key bypass (business semantics apply to every session). Upstream
-  note: the rex compiler only admits an op-level `when` on modules with
+  note: the pherolang compiler only admits an op-level `when` on modules with
   exactly one machine-bearing design (typed lifecycles) — grant `when`s
   are the unconditional-availability path.
 - **Ask 1 diagnostics (WARN, transitional)**:
@@ -612,7 +612,7 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   (`check_ddd_files` warns on protected ops from the compiled model).
 - **Ask 3 (WARN)**: `validate.rs::check_status_bypass` — an entity with a
   `domains.toml` workflow whose status field is not codelist-bound warns
-  that scaffold CRUD bypasses the machine (typed lifecycles = rexlang
+  that scaffold CRUD bypasses the machine (typed lifecycles = pherolang
   #114 — LANDED at 194056b as Rule 16: a `.ddd` entity design whose
   resolved class carries a bare-String `status`/`state` feature is a
   COMPILE error upstream; codegraph's WARN still covers the
@@ -659,13 +659,13 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   (the compile pin + byte pins cover the emitted contract; the live boot
   is the documented follow-up); IFML action-op e2e spec category +
   POM surface; ddd op-`condition` beyond machine-bearing modules (typed
-  lifecycles, rexlang #114); doctor WARN for entity-unbound ops (needs
+  lifecycles, pherolang #114); doctor WARN for entity-unbound ops (needs
   the graph; the run path owns it); hurl 403 legs over JWT personas;
-  register-class properties (issue Ask 4, upstream rexlang #83).
+  register-class properties (issue Ask 4, upstream pherolang #83).
 
 ## Events DSL as generator input (issues #454, #455)
 
-rexlang `.evt` event contracts compile — against their imported `.mox`
+pherolang `.evt` event contracts compile — against their imported `.mox`
 domains — into the events plane: typed payload contracts, per-channel
 publishers, per-subscription consumers, and the transport bindings behind
 them. `codegraph run --mox-files model.mox --evt-files events.evt --config
@@ -677,16 +677,16 @@ generators become model-driven; `--evt-files` also rides `codegraph doctor`
 - **Pipeline**: `ingest_evt_files`
   (`crates/codegraph/src/ingest/evt_ingest.rs`) reads each contract file,
   collects its transitively imported `.mox` domains (the shared
-  `rex_imports` plumbing; imports resolve relative to the `.evt` file,
+  `phero_imports` plumbing; imports resolve relative to the `.evt` file,
   `import schema`/`import sigil` content included), compiles with
-  `rex_driver::compile_evt_str`, and hard-errors on any error-severity
+  `phero_driver::compile_evt_str`, and hard-errors on any error-severity
   diagnostic (`Error::EvtModel`, the `Error::DddModel` precedent — a broken
   contract never half-ingests). Payload field types resolve against the
   ingested schema titles: exact → title + `type_suffix` → warn + count on
   miss; primitives resolve silently (never a warning, never counted).
 - **Semantic IR (#455)**: `codegraph-generate/src/events/model.rs` —
   `EventArchitecture::from_graph` builds `events` (payload fields mapped to
-  Rust: rex primitives, resolved schemas' `rust_type_name`,
+  Rust: pherolang primitives, resolved schemas' `rust_type_name`,
   `serde_json::Value` on a miss) / `channels` / `domain_channels` /
   `subscriptions`. `PublicationSource::{Application, Database(Trigger)}`
   folds the CRUD-diff per-table trigger plane in as the implicit
@@ -728,7 +728,7 @@ generators become model-driven; `--evt-files` also rides `codegraph doctor`
   config ⇒ the historical write-once scaffold (byte-identical).
   Gate: `evt_pipeline_tests::committed_event_handlers_source_is_copied_verbatim`.
 - **Gates**: `cargo test -p codegraph --test evt_golden_tests` (the
-  committed rexlang `orders.{mox,evt,evt.json}` conformance fixture
+  committed pherolang `orders.{mox,evt,evt.json}` conformance fixture
   byte-compared in-process — the CLI-gates treatment, node-free),
   `--test evt_ingest_tests` (conversion/resolution/hard-error semantics +
   the inputs group), and `--test evt_pipeline_tests` (end-to-end mox+evt
@@ -788,7 +788,7 @@ reconciliation").
 - **Gates**: `cargo test -p codegraph --test evt_workers_tests` (the
   workers leg + flag-off byte-identity over the worker tree, node-free)
   and the in-crate placement unit tests (`events::placement::tests`).
-- **Delivery model consumed (rexlang #31 slice 2, landed at 194056b)**:
+- **Delivery model consumed (pherolang #31 slice 2, landed at 194056b)**:
   a subscription's declared `delivery` block now rides the graph
   (`EvtSubscriptionNode.delivery`/`.when`, `EvtChannelNode.scope`,
   `EvtEventNode.cloud_events` — serde-defaulted mirrors) and FOLDS into
@@ -809,13 +809,13 @@ reconciliation").
   fold is architecture-wide); subscription `when` filters + channel
   `scope` topic templates (mirrored, unconsumed); deployment-profile
   transport bindings (#455 §13); full Connector SPI (#455 §14);
-  publisher/aggregate binding + event domain attribution (rexlang issue
+  publisher/aggregate binding + event domain attribution (pherolang issue
   drafts, see below); webhook `DECLARED` vocabulary validation parity in
   the cornucopia worker variant; LSP for `.evt`.
 
 ### The events hardening epic (issues #609–#616, one PR)
 
-Eight issues materialized the upstream rexlang #31 asks onto the
+Eight issues materialized the upstream pherolang #31 asks onto the
 existing #454/#455 plane. All ride ONE presence gate (`.evt` or
 function-consumer input ⇒ non-empty `EventArchitecture`) — no new
 capabilities, `evt_events` stays implied into every plan, and flag-off
@@ -837,7 +837,7 @@ capabilities, `evt_events` stays implied into every plan, and flag-off
   speak BOTH shapes via the shared `event_name_of`/`payload_of`
   normalizers (mixed producers route correctly), and the POST
   content-type switches to `application/cloudevents+json`. The #511
-  body-only HMAC covers the CE body unchanged. When upstream rexlang #31
+  body-only HMAC covers the CE body unchanged. When upstream pherolang #31
   adds CE attribute DECLARATIONS they override the derived defaults —
   the mapping stays in the one table.
 - **Generated consumer idempotency (#612)**: `event_idempotency` bool
@@ -882,7 +882,7 @@ capabilities, `evt_events` stays implied into every plan, and flag-off
 - **Per-event JSON Schemas (#614)**: `events::docs` (pure projections,
   tree-global, emitted once by `EvtEventsGenerator` regardless of
   topology, inert without `.evt`): `schemas/events/{Event}.json`
-  (2020-12, declaration-order properties, rex primitives → JSON types,
+  (2020-12, declaration-order properties, pherolang primitives → JSON types,
   unmapped/resolved-schema-typed fields PERMISSIVE with the resolution
   recorded + a one-time WARN — never silently strict) and
   `{Event}.Envelope.json` (native 12-key or CE wrapper, payload `$ref`
@@ -911,12 +911,12 @@ capabilities, `evt_events` stays implied into every plan, and flag-off
   (version, owning domain, payload fields with rust types + resolved
   schema titles, publishing channels + transport, subscriptions +
   consumers + delivery policies), the cross-plane `emits` edges (`.ddd`
-  service ops declaring event emission — rex-ir
+  service ops declaring event emission — phero-ir
   `ServiceOperation.emits`, carried through the graph mirror as
   `DddServiceOperation.emits`, serde-defaulted), the synthetic
   function-consumer entries (#450 slice D), a fenced-mermaid dependency
   view, and governance slots (owner/classification/retention/pii —
-  rexlang #31 item 14) that render when the artifact carries them and
+  pherolang #31 item 14) that render when the artifact carries them and
   stay omitted otherwise. Pure projection — no new graph edges.
 - **Runtime gate (`events_runtime_tests`, ignored, the
   test-ops-integration lane)**: assembles the GENERATED events module +
@@ -940,7 +940,7 @@ capabilities, `evt_events` stays implied into every plan, and flag-off
   codegraph-ops` (247: dlq 5 + replay 5 + the harness suites),
   evt_pipeline/evt_workers pins extended (the evt-only file set now
   includes `schemas/events/*` + `docs/{asyncapi,events}.md`).
-- **Deferred**: CE attribute declarations from upstream rexlang #31
+- **Deferred**: CE attribute declarations from upstream pherolang #31
   (override the derived mapping); per-subscription idempotency/replay
   DSL syntax (upstream slice 2); generated admin endpoints for
   replay/DLQ (ops verbs only in v1); schema-registry publication
@@ -948,9 +948,9 @@ capabilities, `evt_events` stays implied into every plan, and flag-off
   template pins cover it); DLQ retention/dead-letter policy
   configuration (fixed convention + default policy in v1).
 
-## Deployment models as generator input (rexlang #49)
+## Deployment models as generator input (pherolang #49)
 
-rexlang `.deploy` deployment models compile — against their imported `.ddd`
+pherolang `.deploy` deployment models compile — against their imported `.ddd`
 designs and `.ifml` flows — into the deployment plane: applications of
 components (kinded: api/worker/database/queue/objectStore/frontend) and
 `connects` edges, profiles (closed targets incl. `cloudflareWorkers` +
@@ -966,7 +966,7 @@ component coverage — the second warns, the first is hard).
   (`crates/codegraph/src/ingest/deploy_ingest.rs`) reads each deployment
   file, resolves its imports relative to the file (`.ddd` designs compile
   through the shared `read_and_compile_ddd` union path, `.ifml` flows via
-  `parse_ifml_file`), compiles with `rex_driver::compile_deploy_str`, and
+  `parse_ifml_file`), compiles with `phero_driver::compile_deploy_str`, and
   hard-errors on any error-severity diagnostic (`Error::DeployModel` — a
   broken deployment model never half-ingests).
 - **Storage**: ONE `:DeployModel` node per source file — `source_path` +
@@ -1009,11 +1009,11 @@ component coverage — the second warns, the first is hard).
   with `?` (nullability is header-driven, and bare `:p IS NULL` references
   are indeterminate at prepare time).
 - **Deferred**: crons/observability/webhook queues/hyperdrive names as
-  `.deploy` component settings (needs rex-driver setting-vocabulary
+  `.deploy` component settings (needs phero-driver setting-vocabulary
   extensions); `queue`/`objectStore` components driving worker queues;
   `remote_include_mode = "http"` over service bindings; non-workers
   targets (standalone/dockerCompose/kubernetes backends do not exist yet
-  — rexlang #49 slice 2).
+  — pherolang #49 slice 2).
 
 ## Namespaces as first-class citizens (issue #267)
 
@@ -1072,7 +1072,7 @@ Producers now populate the #267 plane; generation consumes it behind the
 
 - **mox** (`ingest/mox_ingest.rs`): `package <dotted.name>` → NamespaceNode
   (source `"mox"`) + dotted `NamespaceParent` chains + `SchemaNode.namespace`
-  + `InNamespace` edges for every bridged class/enum schema. The rex grammar
+  + `InNamespace` edges for every bridged class/enum schema. The pherolang grammar
   REQUIRES a package, so every compilable mox model is namespaced; the mox
   equivalence gate pins that this changes NO generated output (flat layout is
   namespace-inert). New `MoxIngestStats::namespaces` counter (displayed only
@@ -1142,9 +1142,9 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 
 | Layer | Location | Technology |
 |-------|----------|------------|
-| **DSL Parser** | rexlang `crates/rex-ifml` (git dep, rev-pinned) | Pest (Rust PEG parser), consumed via `use rex_ifml::*` |
-| **AST types** | rexlang `crates/rex-ir/src/ifml.rs` (re-exported by `rex-ifml`) | Serde-serializable AST + `render_expression()` (camelCase, type-tagged wire format) |
-| **Grammar** | rexlang `crates/rex-ifml/src/grammar/ifml.pest` | PEG grammar (source of truth) |
+| **DSL Parser** | pherolang `crates/phero-ifml` (git dep, rev-pinned) | logos lexer + chumsky parser (Pest left the graph with pherolang 0.3), consumed via `use phero_ifml::*` |
+| **AST types** | pherolang `crates/phero-ir/src/ifml.rs` (re-exported by `phero-ifml`) | Serde-serializable AST + `render_expression()` (camelCase, type-tagged wire format) |
+| **Grammar** | pherolang `crates/phero-ifml/src/parser/mod.rs` | Normative EBNF in the parser module docs (the `.pest` file is gone; `docs/IFML.md` stays non-normative) |
 | **Tree-sitter grammar** | `codegraph-vscode/grammar/grammar.js` → `crates/tree-sitter-ifml/src/parser.c` | LSP/editor parsing; regenerate with `npx tree-sitter-cli generate --abi 14` |
 | **Graph model** | `crates/codegraph-core/src/types/ifml.rs` | 7 node types, 16 edge types, `NavigationFlowRecord`, `ModuleUseRecord` |
 | **Grafeo DDL** | `crates/codegraph-grafeo/src/schema_ddl.rs` | GQL CREATE statements |
@@ -1220,7 +1220,7 @@ persist to the graph, and flow into generation (messages → `data-validate-mess
 defaults → load-fn fallbacks). Actor declarations are parsed/counted only — no node
 type yet; role-based route-guard codegen is deferred.
 
-Module composition (rexlang grammar, carried through the pin moves): `ModuleDeclaration.module_uses`
+Module composition (pherolang grammar, carried through the pin moves): `ModuleDeclaration.module_uses`
 (`use "Other" as alias { overrides };` inside a module body) ingest as
 `ModuleDefinitionNode`s (`ingest_module_definition` — trait + Grafeo +
 Mock; internal uses ride the node prop AND module→module
@@ -1326,15 +1326,15 @@ the entity pipeline's workflow test convention. Both are presence-gated: no role
 no workflow → byte-identical output. Deferred: transition buttons, mapped-component
 badge parity, DSL-level state guards.
 
-### rexlang authorization integration (issue #199)
+### pherolang authorization integration (issue #199)
 
 The IFML DSL supports `import "<path>.actor";` (top-level, `.ifml`-relative) and
-view `requires: [Capability, ...];`. codegraph depends on the rexlang crates
-(`rex-ir`, `rex-driver` as workspace path deps — git-pin at release): policy
-parsing/typechecking stays in rexlang, codegraph consumes the typechecked
+view `requires: [Capability, ...];`. codegraph depends on the pherolang crates
+(`phero-ir`, `phero-driver` as workspace path deps — git-pin at release): policy
+parsing/typechecking stays in pherolang, codegraph consumes the typechecked
 `ActorModel`. `crates/codegraph/src/ifml_actor_import.rs` resolves `.json`
 artifacts (`ActorModel::from_json`) or `.actor` sources
-(`rex_driver::compile_actors_str` with transitively collected `.mox` domains),
+(`phero_driver::compile_actors_str` with transitively collected `.mox` domains),
 merges+dedups imports, and ingests via `ingest_actor_policy` (diagnostics warn,
 never fail generation; `imported_policies` stat).
 
@@ -1797,7 +1797,7 @@ e2e-generator stubs. Forms branch at runtime: id-param views emit
 
 `crates/codegraph/tests/ifml_codegen_gate.rs` — TDD acceptance gate that runs the
 FULL pipeline over the kitchen-sink fixture (`tests/fixtures/ifml_gate/`: shadcn
-pack, modal view, requires/roles + rexlang `policy.actor`, workflow, codelists)
+pack, modal view, requires/roles + pherolang `policy.actor`, workflow, codelists)
 into `target/ifml-gate/` and asserts the generated app works against a real
 backend: T0 migrations apply + axum boots (`/health`), T1 `svelte-check` zero
 errors, T2 `vite build`, T3 Playwright specs pass (render/click-through/
@@ -1841,19 +1841,19 @@ not policy business.
 
 ### The IFML checker gate (issue #591)
 
-The rexlang upgrade (#117 workspace-level resolution + #118 the
+The pherolang upgrade (#117 workspace-level resolution + #118 the
 declaration-backed control/route manifest) moved the reference proof
 upstream, and codegraph now ENFORCES it:
 
 - **Front door** (`crates/codegraph/src/ifml_compile.rs::
   compile_and_check_ifml`): gather the import closure through
-  `rex_driver::project::gather_ifml_project` (`.ifml` imports feed the
+  `phero_driver::project::gather_ifml_project` (`.ifml` imports feed the
   resolver bundle; missing `.ifml` import = hard compile error),
-  `rex_ifml::compile_ifml_str`, `rex_ifml::check_ifml_with_actors`
+  `phero_ifml::compile_ifml_str`, `phero_ifml::check_ifml_with_actors`
   (actors from the file's `.actor`/`.json` imports via
   `ifml_actor_import::resolve_actor_models` — per-import warn-and-continue,
   the run-path contract; an empty slice skips E0107/E0108), and
-  `rex_ifml::manifest_ifml`. `domains: None` — the E0104–E0106
+  `phero_ifml::manifest_ifml`. `domains: None` — the E0104–E0106
   interaction-reference pass and the E0107/E0108 authorization pass run;
   the E0100–E0103 expression checks stay off (the domain-union slice is a
   recorded follow-up; passing it today would fail consumer models on
@@ -2395,6 +2395,14 @@ cargo test -p codegraph --test profile_smoke_tests
 cargo test -p codegraph --test hurl_contract_tests    # 2, hurl golden + [hurl] manifest coupling
 cargo test -p codegraph --test ifml_auth_setup_tests  # 5, auth.setup/personas/auth specs/journeys/POM
 
+# pherolang pin migration gate (node-free, DB-free, <1s): every fixture
+# compiles through the production front doors (`.mox` as one union per group,
+# `.ddd`/`.evt` via read_and_compile_*, `.ifml` via compile_and_check_ifml).
+# `ddd/invalid.ddd` is the one expected failure (the aggregate-boundary rule).
+# Re-run this FIRST on any `phero-*` rev bump; goldens re-bless with
+# DDD_GOLDEN_BLESS=1 / EVT_GOLDEN_BLESS=1.
+cargo test -p codegraph --test pherolang_fixture_sweep
+
 # Compile-pin policy (#551) — node-free PR-CI pins (scratch-crate cargo check)
 cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native + wasm32 (#517)
 cargo test -p codegraph --test repository_compile_tests  # 3, SeaORM repository impl + design finders
@@ -2569,7 +2577,7 @@ template (`init/model_starter.rs`), verified before write. Rosetta-first
 projects (`model/*.rosetta` present or `--rosetta`) get
 `model/<name>.rosetta` namespaced `{app_name}.{domain}`, sigil-verified
 (parse → lower → resolve); everything else gets `model/<name>.mox`
-compile-verified with the rex compiler. No `schemas/<name>/` directory is
+compile-verified with the pherolang compiler. No `schemas/<name>/` directory is
 created. Rejects duplicate domain names.
 
 ### Hello-world TODO example
@@ -3791,9 +3799,9 @@ cargo test -p codegraph --test grafeo_e2e_tests -- grafeo_generated_code_compile
 
 ### Overview
 
-The `policy_rls` global generator turns the rexlang actor policy graph
+The `policy_rls` global generator turns the pherolang actor policy graph
 (`ActorNode` / `CapabilityNode` / `GrantEdge`, ingested from `.actor`
-imports — see the rexlang authorization section) into ONE Postgres
+imports — see the pherolang authorization section) into ONE Postgres
 migration, `020000_policy_rls.sql` (after the per-entity RLS band). Opt-in
 via `rls_from_policy = true` under `[features]` in profiles.toml plus
 `"policy_rls"` in an `[api]` generators list; the capability requires the
@@ -3814,16 +3822,16 @@ from pre-feature master).
 
 ### `when` → SQL closed subset
 
-`db/expr_sql.rs` parses the stored expression source with `rex-expr` (parse
+`db/expr_sql.rs` parses the stored expression source with `phero-expr` (parse
 only, no model) and lowers: own-table field refs (→ quoted column, resolved
 through the class's schema properties), string/number/boolean literals,
 `date("YYYY-MM-DD")` literals (→ `DATE '...'`, format-validated; the compared
-field is guaranteed date-typed by the upstream rex-driver typecheck),
+field is guaranteed date-typed by the upstream phero-driver typecheck),
 `==`/`=`/`!=`/`<`/`<=`/`>`/`>=`, `&&`/`||`/`!`, parentheses, and `field ==
 null` / `field != null` → `IS NULL` / `IS NOT NULL`. EVERYTHING else —
 arithmetic, `?.`, `?:`, `let`, lambdas, collection algebra, date calendar
 algebra (`plus_days` etc.), `if`, calls, list literals, dotted navigation,
-unknown fields — is a HARD generation error naming the capability (rexlang
+unknown fields — is a HARD generation error naming the capability (pherolang
 Cedar-backend philosophy). Postgres only; sqlite is a documented no-op.
 Policy-derived RLS is ADDITIVE with the domains.toml-driven RLS: permissive
 policies OR-combine (only widening); RESTRICTIVE policies from `rls.tera`
@@ -3835,7 +3843,7 @@ One integration branch, one PR; workstreams ws0–ws6, red-first TDD, all new
 live gates **Supabase-flavoured Postgres only** by product decision (no
 plain-Postgres portability paths added).
 
-- **WS0 — `rex-*` @ 1fe0ca9**: rev-only bump to the rexlang PR #174 dedup
+- **WS0 — `rex-*` @ 1fe0ca9** (historical; the live pin is `phero-*` @ 298267e): rev-only bump to the 0.2-era dedup
   sweep; see the dependency-policy pin for the fallout scan.
 - **WS1 — live `service_ops_hurl_gate`**
   (`cargo test -p codegraph --test service_ops_hurl_gate -- --ignored
@@ -3893,7 +3901,7 @@ plain-Postgres portability paths added).
   mox-first runs), and nested hurl contracts via `resolve_nesting_chain`
   (parent preamble capture → nested create → nested action legs; the
   auth-suite anchor picks the first ROOT entity). Contained-VO ops stay 501
-  fail-closed (rex Rule 6 — no standalone child repository); depth-2
+  fail-closed (pherolang Rule 6 — no standalone child repository); depth-2
   grandchild action routes render via the existing grandparent branch and
   now carry the compile pin (issue #629 — the v1 deferral retired: the
   fixture carries a grandchild entity + service ops, the gate asserts the
@@ -3902,7 +3910,7 @@ plain-Postgres portability paths added).
   missing the grandparent hop — fixed in `handler.tera`; the CRUD child
   utoipa paths still render only the immediate-parent hop at depth 2, a
   recorded pre-existing gap). Two bug fixes: `bind_entity`'s
-  class-typed-signature arm now reads the adjacently-tagged rex `TypeRef`
+  class-typed-signature arm now reads the adjacently-tagged pherolang `TypeRef`
   JSON (`{"type":"class","value":{package,name}}` — it could never match
   before), and `hurl_contract::payload_fields` is workflow-aware
   (workflow/approval-status/immutable fields excluded from create/echo/
@@ -3956,7 +3964,10 @@ plain-Postgres portability paths added).
 Upstream asks drafted under `docs/proposals/` (001 transition binding,
 002 module/table uniqueness, 003 executable service bodies, 004 aggregate
 child operations, 005 multi-machine `when` scoping, 006 register properties
-+ session-kind grants — the last contingent on product/security approval).
++ session-kind grants). **All six shipped upstream in pherolang 0.3** — each
+file now records the IR field it became and the codegraph consumer issue
+(#660, #668, #662, #661, #663, #668/#670); Part B of 006 stays
+decision-gated.
 
 ## Branch & PR Workflow
 
@@ -3996,13 +4007,77 @@ child operations, 005 multi-machine `when` scoping, 006 register properties
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `rex-*` @ 1fe0ca9 (the rexlang PR #174 dedup sweep — internal refactor only: shared `Import` type replacing the `ImportDecl`/`UcImport`/`CmmnImport` triplicate, `rex-strings`/`rex-dates` zero-dep leaf crates, `VersionedArtifact` default methods + `default_format_version!`, centralized format-version markers, `did_you_mean` hoisted to rex-diagnostics; ZERO codegraph fallout — no references to any swept surface, all wire FORMAT_VERSIONs still 1 so the ddd/evt goldens byte-match; sigil 69115a7 unchanged in lockstep. Previously @ 194056b — everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar, and #139's ifml-quality pass — PLUS this bump's surfaces: typed lifecycles (rexlang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — rexlang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (rexlang #135), the `.dmn` decision-model surface (rexlang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (rexlang #128), and the Rune statement IR (rex-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `rex-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev rexlang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with rexlang's pin; purely additive delta over 49a6a27: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `phero-*` @ 298267e (yestechgroup/pherolang) — the rexlang → Phero Lang rebrand (0.3) plus the DDD epic DD1–DD9. `phero-ir|driver|expr|ifml` are the four crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). See **Pherolang 0.3 upgrade** below and `docs/pherolang-upgrade.md`. Previous pin: `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
   - Rust toolchain: root `rust-toolchain.toml` pins the channel (currently `1.100.0` — issue #627). `dtolnay/rust-toolchain@stable` reads it, so local and CI compilers cannot drift (the PR #626 clippy-lint-drift class is structurally closed). The pin moves MONTHLY alongside the Tier-0 lockfile refresh, never silently: bump the channel AND the `PINNED_CHANNEL` literal in `crates/codegraph/tests/ci_toolchain_contract.rs` in the same commit (the contract test enforces the pairing and the file's presence/shape — components rustfmt+clippy, target wasm32-unknown-unknown for the #517/#550 gates).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
-- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0308` (salsa 0.23 unsound — via rex-driver; fixed upstream in salsa 0.28.5; moves with the rexlang rev pin, #535), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the rexlang 194056b bump, rides the monthly lockfile refresh).
+- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh).
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
+
+## Pherolang 0.3 upgrade (rebrand + the DDD/IR epic)
+
+`yestechgroup/rexlang` is now **`yestechgroup/pherolang`**; every crate is
+`phero-*`. We pin `298267e` (default-branch HEAD = `v0.3.0` + the DDD epic
+DD1–DD9). Full review, break inventory and the feature roadmap:
+`docs/pherolang-upgrade.md`; epic #654.
+
+- **Wire break (0.3).** Provenance key `pheroVersion` (was `rexVersion`),
+  instance `"$type":"phero.instance"`, `$id` `urn:phero:model:…`, artifact
+  file convention `.phero.json`, and **every artifact `formatVersion`
+  1 → 2** (`FORMAT_VERSION`, `ACTOR_/DDD_/IFML_/IFML_MANIFEST_/EVENT_/
+  DEPLOY_/USE_CASE_/CMMN_/DMN_/INSTANCE_`). 0.2 artifacts are rejected —
+  no dual-accept window. `GRAPH_MODEL_FORMAT_VERSION`, the `graph query`
+  envelope and the receipt formats stay at 1. **0.3 does not read 0.2
+  artifacts**, so a consumer's committed `.rex.json` must be regenerated.
+- **`GRAPH_FORMAT_VERSION` 4 → 5** moved with the pin: the graph-cache
+  inputs hash covers model/config contents + graph format + storage
+  generation, **not** the compiler rev, so without the bump a warm
+  `.graph-cache/` would silently serve the pre-upgrade graph. The
+  artifact kit fixture is `graph_document_v5.md`.
+- **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
+  byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use
+  (`parse_ifml`, `parse_ifml_file`, `compile_ifml_str`,
+  `check_ifml_with_actors`, `manifest_ifml`) are unchanged. The normative
+  grammar is the EBNF in `phero-ifml`'s `parser/mod.rs`.
+- **The DD epic, consumed incrementally.** DD1 resolved identities, DD2
+  strict value semantics, DD3 DTO boundaries (`Design.class` became
+  `Option<String>` — standalone DTOs; signatures became `DddTypeRef`:
+  `Domain(TypeRef)` | `{"dto": "<Boundary>"}`), DD4 authored aggregate
+  boundaries, DD5 `invariants`, DD6 collection sets, DD7 error vocabulary
+  + `throws`, DD8 multi-file design applications, DD9 typed repository
+  queries. Every consumer of a signature slot goes through
+  `codegraph_generate::ddd::signature` so the split is interpreted once.
+  Ingest skips standalone DTO boundaries with a WARN (they have no `.mox`
+  source); a DTO-typed finder/op slot is a *named* rejection.
+- **All six of our upstream proposals shipped** (transition binding,
+  explicit `table "…"`, executable bodies, aggregate child operations,
+  `condition_paths`, register classes + session-kind grants) — the P5
+  workstreams delete the workarounds those asks existed to replace.
+- **Dependency fallout**: salsa 0.23 → 0.28.5 (clears `RUSTSEC-2026-0308`,
+  closing #535), pest/pest_derive leave the graph, tokio still rides the
+  monthly lockfile refresh (#533). `cargo audit`'s watch list drops salsa.
+- **Migration gate**: `cargo test -p codegraph --test
+  pherolang_fixture_sweep` compiles every fixture through the production
+  front doors (`.mox` as one union per group, `.ddd`/`.evt` via
+  `read_and_compile_*`, `.ifml` via `compile_and_check_ifml`), pinning
+  `ddd/invalid.ddd` as the one expected hard-error fixture. A new upstream
+  compile rule surfaces there instead of as a consumer `run` failure.
+  Goldens: `DDD_GOLDEN_BLESS=1` / `EVT_GOLDEN_BLESS=1`. The DDD golden
+  carries `pheroVersion`, so it doubles as a rev canary.
+- **Hardening that fell out of the bump (#675)**: a `.mox` set that
+  compiles to **no model** is now `Error::MoxModel { reason }` with the
+  rendered diagnostics, not a warning + an empty generation. pherolang 0.3
+  rejects more models (E0300 duplicate stripped names, Rule 16, …), so the
+  old warn-and-skip would have turned a compile rejection into a
+  zero-entity app with zero errors. File-level problems that still leave a
+  partial model keep warning.
+
+**Deferred** (epic P5/P6): typed queries, the authored transition binding,
+child operations, executable bodies, injected-scope `when`, collection
+sets, error vocabulary, invariants, DTO boundaries, `table "…"`/register
+classes, the editor grammar, session-kind grants; `.dmn`/`.uc`/`.cmmn`
+surfaces and the upstream semantic-graph analytics. None ride the upgrade.
 
 ## Include Path System (`?include=`)
 

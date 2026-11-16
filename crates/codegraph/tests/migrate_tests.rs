@@ -1,4 +1,4 @@
-//! Integration tests for `codegraph migrate` (JSON Schema → rexlang .mox).
+//! Integration tests for `codegraph migrate` (JSON Schema → pherolang .mox).
 
 use std::fs;
 use std::path::Path;
@@ -164,7 +164,7 @@ fn migrate_emits_compiling_mox_per_domain_and_stdlib() {
         "needs_review should mention NoteType.body: {:?}",
         report.needs_review
     );
-    // The float default has no rex literal form.
+    // The float default has no pherolang literal form.
     assert!(
         report
             .needs_review
@@ -271,7 +271,7 @@ fn migrate_emits_compiling_mox_per_domain_and_stdlib() {
         "array ref: {sales}"
     );
 
-    // Parse-verify the written output with the rex compiler, independently
+    // Parse-verify the written output with the pherolang compiler, independently
     // of the migration's own verification.
     let sources = vec![
         (
@@ -281,7 +281,8 @@ fn migrate_emits_compiling_mox_per_domain_and_stdlib() {
         ("hr.mox".to_string(), hr.clone()),
         ("sales.mox".to_string(), sales.clone()),
     ];
-    let compilation = rex_driver::compile_files(&sources, &rex_driver::DomainImports::default());
+    let compilation =
+        phero_driver::compile_files(&sources, &phero_driver::DomainImports::default());
     let errors: Vec<String> = compilation
         .diagnostics
         .iter()

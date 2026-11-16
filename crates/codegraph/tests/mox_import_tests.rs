@@ -1,6 +1,6 @@
 //! mox `import schema` tests (issue #230, epic #228 — C1, codegraph half).
 //!
-//! rexlang owns NAME resolution (the lowered IR carries a nominal
+//! pherolang owns NAME resolution (the lowered IR carries a nominal
 //! feature-less class per import); codegraph's existing JSON Schema
 //! pipeline owns the graph nodes for imported files:
 //!

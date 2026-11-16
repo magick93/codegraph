@@ -585,7 +585,7 @@ exists, and what it would take.
 | Section heads | 35 | `[[collection]] section_by = "…"` (unimplemented) | grouped rendering pass over sorted rows in the table template |
 | Charts from time-ordered data | 31 (chart half) | `[[collection]] display = "chart"` (unimplemented) | new CollectionPlan variant + a chart template; timeline covers the v1 need |
 | LSP UX diagnostics (rule violations in-editor) | — | none | needs the rules parse to run inside the LSP server and a virtual document for the TOML |
-| Upstream rexlang `dimension:` DSL extension | — | `dimension` on mox features | the config seam already exists (Dimension vocabulary); rexlang grammar + bridge work is upstream |
+| Upstream pherolang `dimension:` DSL extension | — | `dimension` on mox features | the config seam already exists (Dimension vocabulary); pherolang grammar + bridge work is upstream |
 | react/vue parity for IFML framework targets | — | none | the IFML svelte template carries the ux markup; port the attr-driven branch chain per framework |
 
 ### Known follow-ups (shipped-state caveats)
@@ -603,7 +603,7 @@ exists, and what it would take.
   stays authoritative: consumers merge config children first and dedupe.
   Scalar `refers` remains config-only (intent ambiguous — the same FK
   shape serves plain references). Note: a `refers` without an explicit
-  multiplicity defaults to MANY upstream (rexlang `lower_relation`), so
+  multiplicity defaults to MANY upstream (pherolang `lower_relation`), so
   single-valued back-references like the init starter's `refers
   TodoListType todoList` lower as arrays and DO derive children.
 - **Diagnostics are pinned at the `report()` boundary**: in-process

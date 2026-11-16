@@ -1,13 +1,19 @@
 # Proposal: register-class properties + session-kind grant predicates
 
-Status: draft — CONTINGENT on product/security approval (codegraph lifecycle
-hardening phase 2, Nov 2026)
-Target: rexlang (rex-ir class/actors; rex-driver compiler)
+Status: **implemented upstream** (pherolang 0.3) — consumer work: #668 (Part A), #670 (Part B)
+
+Part A shipped as `ClassKind::Register` (`register Role { … }`; a plain class on the wire,
+attributes only, no relations/`extends`/table annotation) — #668 maps it. Part B shipped as
+`SessionKind` on grants (`human`/`agent`/`any`, default `any` and omitted on the wire) —
+**#670 remains decision-gated** on the product/security approval this proposal flagged;
+RLS still has no notion of session kind, so an agent session gets a human grant today.
+
+Target: pherolang (phero-ir class/actors; phero-driver compiler)
 
 Two small, independent asks bundled because both sit at the same
 model-to-enforcement boundary.
 
-## Part A — register-class properties (rexlang #83)
+## Part A — register-class properties (pherolang #83)
 
 **Problem.** Register classes (the BaseJump-style org/role noun space) accept
 no property declarations, so consumers cannot model role attributes

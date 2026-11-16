@@ -107,7 +107,7 @@ fn fixture_with_flag(dir: &tempfile::TempDir, with_flag: bool) -> Fixture {
     // Extend the starter model: a junction array + a codelist enum feature
     // on the list, and bound the item's refers to `[0..1]` so it projects
     // the stored `todo_list_id` FK (plain `refers` lowers to MANY in the
-    // rex driver — a junction — which the list's own form exercises).
+    // pherolang driver — a junction — which the list's own form exercises).
     let model_path = project.join("model/common.mox");
     let model = fs::read_to_string(&model_path).unwrap();
     let with_features = model

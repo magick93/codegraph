@@ -2,7 +2,7 @@
 //!
 //! Ingest layer: a `.mox` domain source (vocabulary with facets + entries, a
 //! class operation with an `expr` body, derived features) is compiled
-//! in-process via `rex_driver::compile_files` and lands in the graph as
+//! in-process via `phero_driver::compile_files` and lands in the graph as
 //! Vocabulary/Operation/DerivedFeature nodes with BelongsToClass /
 //! VocabularyInPackage edges. Class attachment matches by NAME against
 //! schema-ingested entities; mismatches warn and count as skipped — they
@@ -90,10 +90,10 @@ class GhostType {
 "#;
 
 /// Probe: compile a mox source exercising classes, enums, datatypes,
-/// extends, and every feature kind, and dump the lowered rex_ir model.
-/// Pins what `rex_driver::compile_files` actually populates (issue #229).
+/// extends, and every feature kind, and dump the lowered phero_ir model.
+/// Pins what `phero_driver::compile_files` actually populates (issue #229).
 #[test]
-fn rex_compile_populates_enums_datatypes_and_feature_kinds() {
+fn phero_compile_populates_enums_datatypes_and_feature_kinds() {
     let src = r#"
 package probe.domain
 
@@ -133,9 +133,9 @@ class Part {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("probe.mox");
     fs::write(&path, src).unwrap();
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &[(path.display().to_string(), src.to_string())],
-        &rex_driver::DomainImports::default(),
+        &phero_driver::DomainImports::default(),
     );
     for (p, d) in &compilation.diagnostics {
         eprintln!("diag {p}: {}", d.message);
@@ -191,9 +191,9 @@ class Part {
     let widget = pkg.classes.iter().find(|c| c.name == "Widget").unwrap();
     assert_eq!(widget.extends.len(), 1);
     let kinds: Vec<_> = widget.features.iter().map(|f| f.kind).collect();
-    assert!(kinds.contains(&rex_ir::FeatureKind::Attribute));
-    assert!(kinds.contains(&rex_ir::FeatureKind::Containment));
-    assert!(kinds.contains(&rex_ir::FeatureKind::CrossReference));
+    assert!(kinds.contains(&phero_ir::FeatureKind::Attribute));
+    assert!(kinds.contains(&phero_ir::FeatureKind::Containment));
+    assert!(kinds.contains(&phero_ir::FeatureKind::CrossReference));
 }
 
 /// Broken mox source: syntax error, no model lowered.
@@ -393,8 +393,12 @@ async fn mox_class_mismatch_warns_counts_skipped_and_never_fails() {
     assert_eq!(linked[0].name, "upperId");
 }
 
+/// A compile that lowers NO model is a hard error, not a silent skip: every
+/// class would vanish and the run would generate an empty app with 0 errors
+/// (the WS5 failure mode). The message carries the rendered pherolang
+/// diagnostic, so the cause is in the error, not only on stderr.
 #[tokio::test]
-async fn mox_compile_failure_warns_and_skips_without_ingesting() {
+async fn mox_compile_failure_is_a_hard_error_naming_the_diagnostic() {
     let engine = GrafeoEngine::in_memory().unwrap();
     let config = load_fixture_config();
     ingest_fixture_schemas(&engine, &config).await;
@@ -402,23 +406,29 @@ async fn mox_compile_failure_warns_and_skips_without_ingesting() {
     let dir = tempfile::tempdir().unwrap();
     let mox = write_mox_fixture(dir.path(), "broken.mox", BROKEN_MOX);
 
-    let stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+    let error = codegraph::ingest::mox_ingest::ingest_mox_files(
         &engine,
         &engine,
-        &[mox],
+        std::slice::from_ref(&mox),
         &config,
         &config.defaults.type_suffix,
     )
     .await
-    .unwrap()
-    .stats;
+    .expect_err("a compile that produces no model must not be skipped silently");
 
-    assert_eq!(stats.skipped, 1);
-    assert_eq!(stats.vocabularies, 0);
-    assert_eq!(stats.operations, 0);
-    assert_eq!(stats.derived_features, 0);
+    let message = format!("{error}");
+    assert!(
+        message.contains("mox model error"),
+        "the error must name the model failure: {message}"
+    );
+    assert!(
+        message.contains("broken.mox"),
+        "the error must name the offending file: {message}"
+    );
+
+    // Nothing was ingested on the failure path.
+    assert_eq!(engine.get_mox_operations().await.unwrap().len(), 0);
     assert!(engine.get_mox_derived_features().await.unwrap().is_empty());
-    assert!(engine.get_mox_operations().await.unwrap().is_empty());
 }
 
 // ── Class bridge (issue #229): .mox classes → Schema/Property nodes ──

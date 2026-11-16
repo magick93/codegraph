@@ -1,7 +1,7 @@
-//! rexlang `.deploy` deployment ingest (rexlang #49): resolve each
+//! pherolang `.deploy` deployment ingest (pherolang #49): resolve each
 //! deployment file's `import`ed `.ddd` designs and `.ifml` flows, compile
-//! with `rex_driver::compile_deploy_str`, convert the resulting
-//! `rex_ir::deploy::DeployModel` into the graph-native
+//! with `phero_driver::compile_deploy_str`, convert the resulting
+//! `phero_ir::deploy::DeployModel` into the graph-native
 //! [`DeployModelGraph`], and land it through
 //! [`GraphIngestor::ingest_deploy_model`].
 //!
@@ -11,7 +11,7 @@
 //! set; flow imports parse the way the driver's IFML pass does. A
 //! deployment file is self-contained for names — resolution of `connects`
 //! endpoints, `deployment ... for`, and `use` references happens inside
-//! the rex driver, and the graph keeps everything verbatim.
+//! the pherolang driver, and the graph keeps everything verbatim.
 //!
 //! Compilation failures are HARD errors ([`Error::DeployModel`], the
 //! [`Error::EvtModel`] precedent) — a broken deployment never half-ingests.
@@ -54,15 +54,15 @@ impl std::fmt::Display for DeployIngestStats {
 
 // ── Conversion ──────────────────────────────────────────────────────────────
 
-/// Convert a compiled rexlang deployment artifact into its graph-native
+/// Convert a compiled pherolang deployment artifact into its graph-native
 /// representation. Every name, path, expression, and resource crosses
 /// verbatim; component kinds and targets lower through their `.keyword()`
-/// (the authored spelling) because codegraph-core carries no rex types.
+/// (the authored spelling) because codegraph-core carries no pherolang types.
 /// Ordinals are declaration order within their parent (`ordinal` on
 /// components; every other family keeps its Vec order).
 pub fn deploy_model_to_graph(
     source_path: &str,
-    model: &rex_ir::deploy::DeployModel,
+    model: &phero_ir::deploy::DeployModel,
 ) -> DeployModelGraph {
     let applications = model
         .applications
@@ -187,13 +187,13 @@ pub fn deploy_model_to_graph(
     }
 }
 
-/// Lower a rex-ir setting value to its graph-native tagged enum (variant
+/// Lower a phero-ir setting value to its graph-native tagged enum (variant
 /// for variant; the wire shapes match under the codegraph-core mirror).
-fn setting_value(value: &rex_ir::deploy::DeployValue) -> DeployValueNode {
+fn setting_value(value: &phero_ir::deploy::DeployValue) -> DeployValueNode {
     match value {
-        rex_ir::deploy::DeployValue::Int(value) => DeployValueNode::Int(*value),
-        rex_ir::deploy::DeployValue::Text(value) => DeployValueNode::Text(value.clone()),
-        rex_ir::deploy::DeployValue::Word(value) => DeployValueNode::Word(value.clone()),
+        phero_ir::deploy::DeployValue::Int(value) => DeployValueNode::Int(*value),
+        phero_ir::deploy::DeployValue::Text(value) => DeployValueNode::Text(value.clone()),
+        phero_ir::deploy::DeployValue::Word(value) => DeployValueNode::Word(value.clone()),
     }
 }
 
@@ -209,28 +209,28 @@ pub struct DeployCompiled {
     /// The deployment file's source text.
     pub source: String,
     /// The imported design sources as `(resolved path, source text)` —
-    /// keys are the paths the rex driver's import matcher resolves
+    /// keys are the paths the pherolang driver's import matcher resolves
     /// against (import-as-written joined onto the deployment file's
     /// directory).
     pub design_sources: Vec<(String, String)>,
     /// The imported flow sources, keyed like [`Self::design_sources`].
     pub flow_sources: Vec<(String, String)>,
-    /// The compile's diagnostics, verbatim from the rex driver (the raw
+    /// The compile's diagnostics, verbatim from the pherolang driver (the raw
     /// material [`render_deploy_diagnostics`] groups and renders).
-    pub diagnostics: Vec<(String, rex_driver::Diagnostic)>,
+    pub diagnostics: Vec<(String, phero_driver::Diagnostic)>,
     /// The converted graph, present exactly when the compile produced a
     /// model (error-severity diagnostics drop it).
     pub graph: Option<DeployModelGraph>,
-    /// The rex model itself (rexlang #114's union integrity pass consumes
+    /// The pherolang model itself (pherolang #114's union integrity pass consumes
     /// it — the graph conversion drops the protocol-level facts the pass
     /// diagnoses across surfaces). Present under the same conditions as
     /// [`Self::graph`].
-    pub model: Option<rex_ir::deploy::DeployModel>,
+    pub model: Option<phero_ir::deploy::DeployModel>,
 }
 
 impl DeployCompiled {
     /// The source text of the file with the given driver path, if it is
-    /// the deployment file or an imported design/flow (the rex-cli
+    /// the deployment file or an imported design/flow (the phero-cli
     /// `source_of` shape).
     fn source_of(&self, path: &str) -> Option<&str> {
         if path == self.path {
@@ -244,7 +244,7 @@ impl DeployCompiled {
     }
 }
 
-/// Wrap [`rex_driver::compile_deploy_str`] and convert its model: the pure
+/// Wrap [`phero_driver::compile_deploy_str`] and convert its model: the pure
 /// compile step [`read_and_resolve_deploy`] lands on after resolving the
 /// file's imports. Error-severity diagnostics drop the model (the driver
 /// already yields `model: None` for them — this mirrors that in the
@@ -256,13 +256,13 @@ impl DeployCompiled {
 pub fn read_and_compile_deploy(
     path: &str,
     source: &str,
-    designs: &[(String, rex_ir::ddd::DddModel)],
-    flows: &[(String, rex_ir::ifml::IfmlModel)],
+    designs: &[(String, phero_ir::ddd::DddModel)],
+    flows: &[(String, phero_ir::ifml::IfmlModel)],
 ) -> (
     Option<DeployModelGraph>,
-    Vec<(String, rex_driver::Diagnostic)>,
+    Vec<(String, phero_driver::Diagnostic)>,
 ) {
-    let compilation = rex_driver::compile_deploy_str(path, source, designs, flows);
+    let compilation = phero_driver::compile_deploy_str(path, source, designs, flows);
     let graph = compilation
         .model
         .as_ref()
@@ -288,15 +288,15 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
 
-    // `import "<path>"` lines (the shared rexlang scan — `.deploy` imports
+    // `import "<path>"` lines (the shared pherolang scan — `.deploy` imports
     // carry no trailing-semicolon complication the scan doesn't already
     // tolerate).
-    let mut designs: Vec<(String, rex_ir::ddd::DddModel)> = Vec::new();
-    let mut flows: Vec<(String, rex_ir::ifml::IfmlModel)> = Vec::new();
+    let mut designs: Vec<(String, phero_ir::ddd::DddModel)> = Vec::new();
+    let mut flows: Vec<(String, phero_ir::ifml::IfmlModel)> = Vec::new();
     let mut design_sources: Vec<(String, String)> = Vec::new();
     let mut flow_sources: Vec<(String, String)> = Vec::new();
-    for import in crate::ingest::rex_imports::scan_imports(&source) {
-        // The key the rex driver's import matcher resolves against: the
+    for import in crate::ingest::phero_imports::scan_imports(&source) {
+        // The key the pherolang driver's import matcher resolves against: the
         // import as written joined onto the deployment file's directory
         // (its lexical normalization is the matcher's other branch).
         let resolved = dir.join(&import);
@@ -317,7 +317,7 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
                 design_sources.push((key.clone(), compiled.source));
                 designs.push((key, model));
             }
-            Some("ifml") => match rex_ifml::parse_ifml_file(&resolved) {
+            Some("ifml") => match phero_ifml::parse_ifml_file(&resolved) {
                 Ok(model) => {
                     let source_text = std::fs::read_to_string(&resolved).unwrap_or_default();
                     flow_sources.push((key.clone(), source_text));
@@ -338,7 +338,7 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
     }
 
     let (graph, diagnostics) = read_and_compile_deploy(&deploy_path, &source, &designs, &flows);
-    let model = rex_driver::compile_deploy_str(&deploy_path, &source, &designs, &flows).model;
+    let model = phero_driver::compile_deploy_str(&deploy_path, &source, &designs, &flows).model;
     Ok(DeployCompiled {
         path: deploy_path,
         source,
@@ -352,13 +352,13 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
 
 // ── Diagnostics rendering ───────────────────────────────────────────────────
 
-/// Render a deployment compilation's diagnostics per file with the rex
+/// Render a deployment compilation's diagnostics per file with the pherolang
 /// renderer: diagnostics are grouped by their file path (first-appearance
 /// order) and each group is rendered against its own source text (the
 /// deployment file or an imported design/flow). Paths with no retained
 /// source fall back to plain `path: severity: message` lines.
 pub fn render_deploy_diagnostics(compiled: &DeployCompiled) -> String {
-    let mut groups: Vec<(String, Vec<&rex_driver::Diagnostic>)> = Vec::new();
+    let mut groups: Vec<(String, Vec<&phero_driver::Diagnostic>)> = Vec::new();
     for (path, diagnostic) in &compiled.diagnostics {
         match groups.iter_mut().find(|(name, _)| name == path) {
             Some((_, group)) => group.push(diagnostic),
@@ -369,9 +369,9 @@ pub fn render_deploy_diagnostics(compiled: &DeployCompiled) -> String {
     for (path, group) in groups {
         match compiled.source_of(&path) {
             Some(source) => {
-                let owned: Vec<rex_driver::Diagnostic> =
+                let owned: Vec<phero_driver::Diagnostic> =
                     group.iter().map(|d| (*d).clone()).collect();
-                blocks.push(rex_driver::render(&path, source, &owned));
+                blocks.push(phero_driver::render(&path, source, &owned));
             }
             None => {
                 for diagnostic in group {
@@ -390,7 +390,7 @@ pub fn render_deploy_diagnostics(compiled: &DeployCompiled) -> String {
 
 // ── Ingest ──────────────────────────────────────────────────────────────────
 
-/// Ingest rexlang `.deploy` deployment files into the graph's deployment
+/// Ingest pherolang `.deploy` deployment files into the graph's deployment
 /// plane.
 ///
 /// Per file: read + resolve imports + compile through
@@ -466,7 +466,7 @@ mod tests {
             "    configure { gateway.replicas: 4 }\n",
             "}\n",
         );
-        let compilation = rex_driver::compile_deploy_str("shop.deploy", source, &[], &[]);
+        let compilation = phero_driver::compile_deploy_str("shop.deploy", source, &[], &[]);
         assert!(
             compilation.diagnostics.is_empty(),
             "{:?}",

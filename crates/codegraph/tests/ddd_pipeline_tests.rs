@@ -169,7 +169,7 @@ async fn library_design_drives_the_generated_repository_dto_and_search_surface()
     assert!(movie_trait.contains("async fn delete("));
     assert!(movie_trait.contains("async fn find_by_id("));
     assert!(movie_trait.contains("async fn list("));
-    // Sculptor defaults (rexlang #47): an entity design is auditable unless
+    // Sculptor defaults (pherolang #47): an entity design is auditable unless
     // `!auditable` opts out — Movie's default-on flag drives the auditable
     // repository shape (the include_deleted parameter on find/list).
     assert!(

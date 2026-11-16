@@ -59,7 +59,7 @@ fn pascal_pkg(p: usize) -> String {
 
 /// The K scalar features cycle through these mox types; `decimal` rides a
 /// `wraps String { format "decimal" }` datatype (no Decimal primitive in
-/// rex).
+/// pherolang).
 fn scalar_feature(j: usize, pascal: &str) -> String {
     match j % 5 {
         0 => format!("    String field{j}"),

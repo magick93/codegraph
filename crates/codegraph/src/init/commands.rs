@@ -271,7 +271,7 @@ pub struct DoctorArgs {
     pub classifier: Option<PathBuf>,
     /// profiles.toml path (optional; skipped when absent and profile is default).
     pub profiles_config: Option<PathBuf>,
-    /// rexlang .mox domain model files (optional). When present each
+    /// pherolang .mox domain model files (optional). When present each
     /// package must match a domains.toml domain, and the JSON schemas
     /// check degrades to an info line (mox-first projects).
     pub mox_files: Vec<PathBuf>,
@@ -280,22 +280,22 @@ pub struct DoctorArgs {
     /// segment matches no domains.toml key warns (compute_generation_order
     /// silently drops such schemas).
     pub rosetta_files: Vec<PathBuf>,
-    /// rexlang .ddd design files (optional). Compile-verified against their
+    /// pherolang .ddd design files (optional). Compile-verified against their
     /// imported .mox domains (the same read+collect+compile the ingest
     /// path uses); error-severity diagnostics are hard failures.
     pub ddd_files: Vec<PathBuf>,
-    /// rexlang .evt event-contract files (optional). Compile-verified
+    /// pherolang .evt event-contract files (optional). Compile-verified
     /// against their imported .mox domains (the same read+collect+compile
     /// the ingest path uses); error-severity diagnostics are hard failures.
     pub evt_files: Vec<PathBuf>,
-    /// rexlang .deploy deployment files (optional). Compile-verified
+    /// pherolang .deploy deployment files (optional). Compile-verified
     /// against their imported .ddd designs and .ifml flows (the same
     /// read+resolve+compile the ingest path uses), then cross-checked
     /// against the resolved BuildPlan topology and the domains.toml
     /// component coverage; error-severity diagnostics are hard failures.
     pub deploy_files: Vec<PathBuf>,
-    /// rexlang .ifml interaction-model files (optional). Parse-verified
-    /// through the same `rex_ifml::parse_ifml_file` the ingest path uses;
+    /// pherolang .ifml interaction-model files (optional). Parse-verified
+    /// through the same `phero_ifml::parse_ifml_file` the ingest path uses;
     /// `import "….actor"` statements are resolved read-only through
     /// `resolve_actor_policy` (a policy the run path would silently skip
     /// is a hard failure here). Parse errors are hard failures.
@@ -464,7 +464,7 @@ fn check_codegraph_rev() -> usize {
     }
 }
 
-/// Validate `--mox-files` for doctor: every file must compile with the rex
+/// Validate `--mox-files` for doctor: every file must compile with the pherolang
 /// compiler and every package must resolve to a domains.toml domain.
 /// `import schema` targets (issue #230) are validated too — a missing or
 /// invalid target is a hard failure naming the import path and the .mox
@@ -485,7 +485,7 @@ fn check_mox_files(
     // Read every file and validate its `import schema` targets; imports
     // resolve relative to each file's directory (unchanged, per file).
     let mut sources: Vec<(String, String)> = Vec::new();
-    let mut schema_imports = rex_driver::SchemaImports::new();
+    let mut schema_imports = phero_driver::SchemaImports::new();
     let mut import_counts: HashMap<String, usize> = HashMap::new();
     for path in mox_files {
         let text = match fs::read_to_string(path) {
@@ -541,11 +541,11 @@ fn check_mox_files(
     }
 
     // Union compile: one workspace, diagnostics tagged with their file path.
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &sources,
-        &rex_driver::DomainImports {
+        &phero_driver::DomainImports {
             schemas: schema_imports,
-            sigil: rex_driver::SigilImports::new(),
+            sigil: phero_driver::SigilImports::new(),
         },
     );
     for (p, diagnostic) in &compilation.diagnostics {
@@ -557,7 +557,7 @@ fn check_mox_files(
     // `model: None` gate; the union model is None whenever any file erred).
     let mut error_files: HashSet<String> = HashSet::new();
     for (p, diagnostic) in &compilation.diagnostics {
-        if diagnostic.severity == rex_driver::Severity::Error {
+        if diagnostic.severity == phero_driver::Severity::Error {
             error_files.insert(p.clone());
         }
     }
@@ -569,13 +569,13 @@ fn check_mox_files(
             // (the conservative fallback; mirrors the per-file gate).
             hard += 1;
             println!("FAIL mox — {mox_path} does not compile");
-            println!("     hint: fix the rexlang syntax errors reported above");
+            println!("     hint: fix the pherolang syntax errors reported above");
             continue;
         }
         if error_files.contains(mox_path) {
             hard += 1;
             println!("FAIL mox — {mox_path} does not compile");
-            println!("     hint: fix the rexlang syntax errors reported above");
+            println!("     hint: fix the pherolang syntax errors reported above");
             continue;
         }
         let Some(config) = domain_config else {
@@ -620,14 +620,14 @@ fn check_mox_files(
     (hard, soft)
 }
 
-/// The body-less mox operations of a compiled model — the rexlang
-/// "abstract hook" gap class (rexlang `docs/DDD.md`): a body-less `op`
+/// The body-less mox operations of a compiled model — the pherolang
+/// "abstract hook" gap class (pherolang `docs/DDD.md`): a body-less `op`
 /// stays an abstract hook implemented by hand in target code. `codegraph
 /// doctor --mox-files` prints each seam as an INFO line so the gap is
 /// visible instead of silent (issue #501 slice 3). The generated
 /// `src/domain/<domain>/mox_ops.rs` carries the matching signature-complete
 /// stub. Sorted (package, class, op) for deterministic output.
-pub fn bodyless_op_seams(model: &rex_ir::Model) -> Vec<String> {
+pub fn bodyless_op_seams(model: &phero_ir::Model) -> Vec<String> {
     let mut seams = Vec::new();
     for package in &model.packages {
         for class in &package.classes {
@@ -827,7 +827,7 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
                 if has_errors || compiled.compilation.model.is_none() {
                     hard += 1;
                     println!("FAIL ddd — {} does not compile", path.display());
-                    println!("     hint: fix the rexlang design errors reported above");
+                    println!("     hint: fix the pherolang design errors reported above");
                     continue;
                 }
                 soft += compiled.compilation.diagnostics.len();
@@ -913,7 +913,7 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
 /// entity binding), or (3) a class-typed signature (any param, else the
 /// return). `protected` ops never reach here (they carry their own WARN).
 fn service_op_binds_no_entity(
-    op: &rex_ir::ddd::ServiceOperation,
+    op: &phero_ir::ddd::ServiceOperation,
     repository_names: &std::collections::HashSet<&str>,
 ) -> bool {
     if !op.capabilities.is_empty() {
@@ -924,8 +924,16 @@ fn service_op_binds_no_entity(
     {
         return false;
     }
-    let class_typed =
-        |t: Option<&rex_ir::TypeRef>| matches!(t, Some(rex_ir::TypeRef::Class { .. }));
+    // DD3: a signature slot is a `DddTypeRef` — a resolved domain type or a
+    // DTO boundary. Only a domain class binds the op to an entity.
+    let class_typed = |t: Option<&phero_ir::ddd::DddTypeRef>| {
+        matches!(
+            t,
+            Some(phero_ir::ddd::DddTypeRef::Domain(
+                phero_ir::TypeRef::Class { .. }
+            ))
+        )
+    };
     !(op.params.iter().any(|p| class_typed(Some(&p.type_))) || class_typed(op.return_type.as_ref()))
 }
 
@@ -953,7 +961,7 @@ fn check_evt_files(evt_files: &[PathBuf]) -> (usize, usize) {
                 if has_errors || compiled.compilation.model.is_none() {
                     hard += 1;
                     println!("FAIL evt — {} does not compile", path.display());
-                    println!("     hint: fix the rexlang event-contract errors reported above");
+                    println!("     hint: fix the pherolang event-contract errors reported above");
                     continue;
                 }
                 soft += compiled.compilation.diagnostics.len();
@@ -977,7 +985,7 @@ fn check_evt_files(evt_files: &[PathBuf]) -> (usize, usize) {
     (hard, soft)
 }
 
-/// Compile the `--deploy-files` plane for doctor (rexlang #49): every
+/// Compile the `--deploy-files` plane for doctor (pherolang #49): every
 /// deployment file resolves its imported .ddd designs and .ifml flows and
 /// compiles through the SAME read+resolve+compile helper the ingest path
 /// uses, so doctor and ingest cannot drift. Error-severity diagnostics
@@ -1006,7 +1014,7 @@ fn compile_deploy_files(
                 if has_errors || compiled.graph.is_none() {
                     hard += 1;
                     println!("FAIL deploy — {} does not compile", path.display());
-                    println!("     hint: fix the rexlang deployment errors reported above");
+                    println!("     hint: fix the pherolang deployment errors reported above");
                     continue;
                 }
                 soft += compiled.diagnostics.len();
@@ -1032,7 +1040,7 @@ fn compile_deploy_files(
     (compiled_models, hard, soft)
 }
 
-/// Cross-checks over the compiled `.deploy` models (rexlang #49): the
+/// Cross-checks over the compiled `.deploy` models (pherolang #49): the
 /// `cloudflareWorkers` profile target vs the resolved BuildPlan topology
 /// (hard) and per-domain component coverage (soft). Takes the models
 /// compiled by `compile_deploy_files` (#510) — which also feeds the
@@ -1114,11 +1122,11 @@ fn check_extension_points(
                         .map(|t| (p.display().to_string(), t))
                 })
                 .collect();
-            let compilation = rex_driver::compile_files(
+            let compilation = phero_driver::compile_files(
                 &sources,
-                &rex_driver::DomainImports {
-                    schemas: rex_driver::SchemaImports::new(),
-                    sigil: rex_driver::SigilImports::new(),
+                &phero_driver::DomainImports {
+                    schemas: phero_driver::SchemaImports::new(),
+                    sigil: phero_driver::SigilImports::new(),
                 },
             );
             if let Some(model) = compilation.model {
@@ -1382,7 +1390,7 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
                 hard += 1;
                 println!("FAIL ifml — {e}");
                 println!(
-                    "     hint: fix the rexlang interaction-model errors above \
+                    "     hint: fix the pherolang interaction-model errors above \
                      (E0104–E0108 name the exact token — declare the backing \
                      view, action, or capability)"
                 );
@@ -1392,9 +1400,9 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
     (hard, soft)
 }
 
-/// The union integrity pass (rexlang #114) over the gathered artifacts:
+/// The union integrity pass (pherolang #114) over the gathered artifacts:
 /// the cross-layer lifecycle wiring no per-surface compiler can see.
-/// `rex_driver::check_integrity` diagnoses — across the whole provided
+/// `phero_driver::check_integrity` diagnoses — across the whole provided
 /// union, one application — capability clauses naming undeclared
 /// capabilities, granted capabilities no operation or search carries,
 /// `.ifml` action declarations bound to no service operation,
@@ -1429,11 +1437,11 @@ fn check_union_integrity(
         return (0, 0);
     }
 
-    let mut designs: Vec<(String, rex_ir::ddd::DddModel)> = Vec::new();
-    let mut events: Vec<(String, rex_ir::events::EventModel)> = Vec::new();
-    let mut deploys: Vec<(String, rex_ir::deploy::DeployModel)> = Vec::new();
-    let mut flows: Vec<(String, rex_ir::ifml::IfmlModel)> = Vec::new();
-    let mut actors: Vec<(String, rex_ir::ActorModel)> = Vec::new();
+    let mut designs: Vec<(String, phero_ir::ddd::DddModel)> = Vec::new();
+    let mut events: Vec<(String, phero_ir::events::EventModel)> = Vec::new();
+    let mut deploys: Vec<(String, phero_ir::deploy::DeployModel)> = Vec::new();
+    let mut flows: Vec<(String, phero_ir::ifml::IfmlModel)> = Vec::new();
+    let mut actors: Vec<(String, phero_ir::ActorModel)> = Vec::new();
     // path → source, for rendering the pass's path-tagged diagnostics.
     let mut sources: std::collections::BTreeMap<String, String> = Default::default();
 
@@ -1491,11 +1499,11 @@ fn check_union_integrity(
         deploys.push((compiled.path.clone(), model));
     }
 
-    let diagnostics = rex_driver::check_integrity(&designs, &actors, &events, &deploys, &flows);
+    let diagnostics = phero_driver::check_integrity(&designs, &actors, &events, &deploys, &flows);
     if diagnostics.is_empty() {
         println!(
             "PASS union integrity — {} design(s), {} actor model(s), {} event contract(s), \
-             {} deployment(s), {} flow(s) cross-checked (rexlang #114)",
+             {} deployment(s), {} flow(s) cross-checked (pherolang #114)",
             designs.len(),
             actors.len(),
             events.len(),
@@ -1516,8 +1524,8 @@ fn check_union_integrity(
         }
     }
     // Group consecutive same-path diagnostics so each file's block renders
-    // once against its source (the rex-cli `group_by_path` shape).
-    let mut grouped: Vec<(String, Vec<rex_driver::Diagnostic>)> = Vec::new();
+    // once against its source (the phero-cli `group_by_path` shape).
+    let mut grouped: Vec<(String, Vec<phero_driver::Diagnostic>)> = Vec::new();
     for (path, diagnostic) in &diagnostics {
         match grouped.last_mut() {
             Some((group_path, group)) if *group_path == *path => group.push(diagnostic.clone()),
@@ -1526,17 +1534,17 @@ fn check_union_integrity(
     }
     for (path, group) in &grouped {
         let source = sources.get(path).map(String::as_str).unwrap_or_default();
-        print!("{}", rex_driver::render(path, source, group));
+        print!("{}", phero_driver::render(path, source, group));
     }
     println!(
         "     hint: declare the missing capability/op binding, carry the granted \
          capability on an operation or search, or point the subscription at a \
-         declared deploy component (rexlang #114's diagnostic text names each)"
+         declared deploy component (pherolang #114's diagnostic text names each)"
     );
     (hard, soft)
 }
 
-/// Profile/target vs topology cross-check (rexlang #49): a
+/// Profile/target vs topology cross-check (pherolang #49): a
 /// `cloudflareWorkers` profile needs the Workers deployment topology and
 /// vice versa — a deploy file and a profiles.toml that disagree describe
 /// scaffolds that cannot host the declared components. Skipped when no
@@ -1579,7 +1587,7 @@ fn check_deploy_topology(
     }
 }
 
-/// Component-coverage cross-check (rexlang #49): every domains.toml domain
+/// Component-coverage cross-check (pherolang #49): every domains.toml domain
 /// that declares entities should appear as an application component in the
 /// deployment models — a domain with no component has nowhere to run in
 /// the declared architecture. Advisory (WARN, never FAIL): a deployment
@@ -1865,7 +1873,7 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         soft_warnings += soft;
     }
 
-    // The .deploy deployment plane (rexlang #49): compile-verify each
+    // The .deploy deployment plane (pherolang #49): compile-verify each
     // file when provided. Compilation is hoisted ahead of the
     // extension-points check (#510) so both checks share one parse of the
     // deploy surface; the topology/component cross-checks run in the
@@ -1904,7 +1912,7 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         soft_warnings += soft;
     }
 
-    // The union integrity plane (rexlang #114): the cross-layer lifecycle
+    // The union integrity plane (pherolang #114): the cross-layer lifecycle
     // wiring the per-surface checks above cannot see. Runs over the same
     // compiled artifacts, so a model that passes per-surface can still
     // fail here — that is the point (the dangling-wiring class: a
@@ -2187,9 +2195,9 @@ pub fn cmd_add_domain(config_path: &Path, domain_name: &str, rosetta: bool) -> R
         let model_content = super::model_starter::starter_model_mox(&name, &label, "codegraph")
             .map_err(Error::Config)?;
         let mox_rel = format!("model/{name}.mox");
-        let compilation = rex_driver::compile_files(
+        let compilation = phero_driver::compile_files(
             &[(mox_rel.clone(), model_content.clone())],
-            &rex_driver::DomainImports::default(),
+            &phero_driver::DomainImports::default(),
         );
         if compilation.model.is_none() {
             return Err(Error::Config(format!(
@@ -2290,9 +2298,9 @@ other = "0.1"
         let model = dir.path().join("model/billing.mox");
         assert!(model.is_file(), "add domain must create model/billing.mox");
         let content = fs::read_to_string(&model).unwrap();
-        let compilation = rex_driver::compile_files(
+        let compilation = phero_driver::compile_files(
             &[("model/billing.mox".to_string(), content)],
-            &rex_driver::DomainImports::default(),
+            &phero_driver::DomainImports::default(),
         );
         assert!(
             compilation.model.is_some(),

@@ -1,5 +1,5 @@
-//! Policy-driven RLS generation from the rexlang actor policy graph
-//! (issue #219, from yestechgroup/rexlang#5 phase B6).
+//! Policy-driven RLS generation from the pherolang actor policy graph
+//! (issue #219, from yestechgroup/pherolang#5 phase B6).
 //!
 //! Reads the ingested policy (`ActorNode` / `CapabilityNode` / `GrantEdge`)
 //! from the graph and emits ONE Postgres migration
@@ -169,7 +169,7 @@ fn role_for(actor: &ActorNode) -> String {
     }
 }
 
-/// Strip the rexlang package qualifier: the class name is the last `::`
+/// Strip the pherolang package qualifier: the class name is the last `::`
 /// segment of `capability.class`.
 fn unqualified_class(class: &str) -> String {
     class.rsplit("::").next().unwrap_or(class).to_string()
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn class_takes_the_last_qualified_segment() {
         assert_eq!(
-            unqualified_class("rex.conformance.actors::Ticket"),
+            unqualified_class("pherolang.conformance.actors::Ticket"),
             "Ticket"
         );
         assert_eq!(
