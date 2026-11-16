@@ -151,6 +151,102 @@ application Payroll {
 }
 "#;
 
+// ── Issue #660: authored transition bindings ──────────────────────────
+
+/// Two entities in ONE module, each carrying its own lifecycle machine, and
+/// service operations that declare their transition explicitly
+/// (`name => Repository.save transition <EnumType>.<Trigger>`).
+///
+/// The two machines force the qualified spelling upstream (E0352): a module
+/// with more than one machine-bearing design requires the enum-type
+/// qualifier, so this fixture pins the `TransitionRef.machine` resolution
+/// too. The op names resemble NEITHER trigger (`prepareRelease`, `finalize`,
+/// `prepareReview`, `clearReview`), so the heuristics can only ever reach
+/// them by accident — the authored binding is the whole selector.
+pub const RELEASE_MOX: &str = r#"
+package release
+
+enum ReleaseStatus {
+    Held = 0
+    SignedOff = 1
+    Released = 2
+}
+
+enum ReviewStatus {
+    Pending = 0
+    Cleared = 1
+}
+
+class ReleaseType {
+    String releaseId
+    ReleaseStatus releaseStatus
+    int total
+    String [0..1] note
+}
+
+class ReviewType {
+    String reviewId
+    ReviewStatus reviewStatus
+    String [0..1] remarks
+}
+"#;
+
+pub const RELEASE_DDD: &str = r#"
+import "release.mox";
+
+application Release {
+    module release {
+        entity ReleaseType scaffold repository ReleaseRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine releaseStatus: ReleaseStatus {
+            initial Held;
+            Held -> SignedOff via SignOff;
+            SignedOff -> Released via Publish;
+            terminal Released;
+        }
+        entity ReviewType scaffold repository ReviewRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine reviewStatus: ReviewStatus {
+            initial Pending;
+            Pending -> Cleared via Clear;
+            terminal Cleared;
+        }
+        service ReleaseService {
+            inject ReleaseRepository;
+            prepareRelease => ReleaseRepository.save transition ReleaseStatus.SignOff;
+            finalize => ReleaseRepository.save transition ReleaseStatus.Publish;
+            inspect => ReleaseRepository.findById;
+            summarize => ReleaseRepository.findAll;
+        }
+        service ReviewService {
+            inject ReviewRepository;
+            prepareReview => ReviewRepository.save transition ReviewStatus.Clear;
+            inspectReview => ReviewRepository.findById;
+        }
+    }
+}
+"#;
+
+/// The binding fixture's config: mox-first (no `entities` key — the mox
+/// bridge owns the graph), one domain.
+pub const RELEASE_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.release]
+label = "Release"
+schema_dir = "model-schemas"
+postgres_schema = "release"
+"#;
+
 /// The same design with ONE unlowerable statement body (issue #662): the
 /// `let` initializer uses arithmetic, which the closed body subset refuses.
 /// The run-path validation pass must surface it as a HARD error naming the
@@ -326,6 +422,64 @@ pub fn write_mox_first_fixture_in(_prefix: &str, ddd_source: &str) -> Fixture {
         actor,
         config,
     }
+}
+
+/// The authored-transition-binding fixture (issue #660): mox-first, one
+/// domain, two machine-bearing designs in one module (the qualifier-forcing
+/// shape), and every machine-bound op declaring `transition`.
+pub fn write_binding_fixture() -> Fixture {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir); // the fixture outlives the guard on purpose
+    let schemas_dir = root.join("model-schemas");
+    fs::create_dir_all(&schemas_dir).unwrap();
+    let mox = root.join("release.mox");
+    fs::write(&mox, RELEASE_MOX).unwrap();
+    let ddd = root.join("release.ddd");
+    fs::write(&ddd, RELEASE_DDD).unwrap();
+    // No actor policy: the fixture's ops are ungated, so no capability
+    // plane is involved (the binding plane is independent of it).
+    let actor = root.join("policy.actor");
+    let config = root.join("domains.toml");
+    fs::write(&config, RELEASE_DOMAINS_TOML).unwrap();
+    Fixture {
+        schemas_dir,
+        mox,
+        ddd,
+        actor,
+        config,
+    }
+}
+
+/// Ingest the binding fixture: the mox bridge + the `.ddd` design, with no
+/// actor policy (nothing in the fixture is capability-gated).
+pub async fn ingest_binding(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let mox_stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(mox_stats.skipped, 0, "mox classes must bridge the schemas");
+    let ddd_stats = codegraph::ingest::ddd_ingest::ingest_ddd_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.ddd),
+        &config,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ddd_stats.services, 2,
+        "both services must ingest (release + review)"
+    );
+    engine
 }
 
 pub fn tempdir() -> TempDir {

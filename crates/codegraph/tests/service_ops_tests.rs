@@ -24,8 +24,8 @@ use codegraph_core::traits::GraphQuerier;
 use tempfile::TempDir;
 
 use fixture::{
-    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, read, run_generation,
-    tempdir, write_fixture_in, write_mox_first_fixture_in,
+    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, ingest_binding, read,
+    run_generation, tempdir, write_binding_fixture, write_fixture_in, write_mox_first_fixture_in,
 };
 
 /// The first `HTTP <status>` after `needle` in a hurl file.
@@ -43,6 +43,22 @@ fn status_after_last(hay: &str, needle: &str) -> Option<u16> {
     let http = rest.find("HTTP ")?;
     rest[http + 5..].split_whitespace().next()?.parse().ok()
 }
+
+/// The one emitted actions contract whose file name ends with `suffix`
+/// (`_release_actions.hurl`) — the fixture's numbering is discovered, never
+/// pinned (the generation order owns it).
+fn actions_file(output: &Path, suffix: &str) -> PathBuf {
+    fs::read_dir(output.join("hurl"))
+        .expect("hurl dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(suffix))
+        })
+        .unwrap_or_else(|| panic!("no hurl file ending in `{suffix}` in {output:?}"))
+}
+
 
 // ── Pins ───────────────────────────────────────────────────────────────
 
@@ -944,5 +960,180 @@ async fn no_ddd_services_keeps_router_and_handler_free_of_actions() {
     assert!(
         !handler.contains("service_op_"),
         "no services ⇒ no op handlers:\n{handler}"
+    );
+}
+
+// ── Issue #660: the authored `transition` binding is the selector ───────
+
+/// The binding mirrored off the design is the primary selector: a
+/// `name => Repository.save transition <EnumType>.<Trigger>` operation
+/// applies EXACTLY the declared `from -> to`, whatever its name looks like,
+/// and the emitted state-aware hurl contract simulates the machine off it
+/// in declaration order (the guaranteed wrong-state replay and the 501 seam
+/// stay).
+///
+/// The fixture's two machine-bearing designs in ONE module force the
+/// qualified spelling upstream, so this also pins the `TransitionRef.machine`
+/// resolution: `ReleaseStatus.SignOff` selects the `releaseStatus` machine,
+/// `ReviewStatus.Clear` the `reviewStatus` one.
+#[tokio::test]
+async fn authored_transition_binding_selects_the_declared_transition() {
+    let fixture = write_binding_fixture();
+    let engine = ingest_binding(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // ── routes: both entities' action planes emit ──
+    let router = read(&out.path().join("src/api/release/router.rs"));
+    for snake in ["prepare_release", "finalize", "prepare_review"] {
+        assert!(
+            router.contains(&format!("/actions/{snake}\"")),
+            "router must register actions/{snake}:\n{router}"
+        );
+    }
+
+    // ── handler: the DECLARED transition pair, nothing inferred ──
+    let handler = read(&out.path().join("src/api/release/release_handler.rs"));
+    assert!(
+        handler.contains(r#""Held" => Some("SignedOff")"#),
+        "`prepareRelease` must apply its authored Held -> SignedOff:\n{handler}"
+    );
+    assert!(
+        handler.contains(r#""SignedOff" => Some("Released")"#),
+        "`finalize` must apply its authored SignedOff -> Released:\n{handler}"
+    );
+    // The op names resemble no trigger; a heuristic would have selected
+    // NOTHING here, so any other arm is a wrong inference.
+    for inferred in [
+        r#""Held" => Some("Released")"#,
+        r#""SignedOff" => Some("SignedOff")"#,
+    ] {
+        assert!(
+            !handler.contains(inferred),
+            "an inferred arm leaked into the authored binding ({inferred}):\n{handler}"
+        );
+    }
+
+    // ── the SECOND machine resolves through the enum-type qualifier ──
+    let review = read(&out.path().join("src/api/release/review_handler.rs"));
+    assert!(
+        review.contains(r#""Pending" => Some("Cleared")"#),
+        "`prepareReview` must apply its authored Pending -> Cleared:\n{review}"
+    );
+
+    // ── hurl: declaration order, exact legs ──
+    let actions = read(&actions_file(out.path(), "_release_actions.hurl"));
+    // The machine starts at Held: the first bound op advances to SignedOff,
+    // the second from SignedOff to Released, the read answers 200, the
+    // findAll delegation still seams 501.
+    assert_eq!(
+        status_after(&actions, "/actions/prepare_release"),
+        Some(200),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/finalize"),
+        Some(200),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/inspect"),
+        Some(200),
+        "{actions}"
+    );
+    assert_eq!(
+        status_after(&actions, "/actions/summarize"),
+        Some(501),
+        "{actions}"
+    );
+    // The guaranteed replay: `finalize` (SignedOff -> Released) from the
+    // post-sequence state Released has no transition.
+    assert_eq!(
+        status_after_last(&actions, "/actions/finalize"),
+        Some(409),
+        "the wrong-state replay must pin 409:\n{actions}"
+    );
+    assert!(
+        actions.contains("wrong-state"),
+        "the contract must document the replay leg:\n{actions}"
+    );
+
+    let review_actions = read(&actions_file(out.path(), "_review_actions.hurl"));
+    assert_eq!(
+        status_after(&review_actions, "/actions/prepare_review"),
+        Some(200),
+        "{review_actions}"
+    );
+    assert_eq!(
+        status_after(&review_actions, "/actions/inspect_review"),
+        Some(200),
+        "{review_actions}"
+    );
+    assert_eq!(
+        status_after_last(&review_actions, "/actions/prepare_review"),
+        Some(409),
+        "the review machine's replay must pin 409:\n{review_actions}"
+    );
+}
+
+/// The no-binding fallback stays: PAYROLL_DDD declares no `transition`, so
+/// every op the heuristics resolve warns ONCE naming the missing binding
+/// (the run-path diagnostic), and an op that applies no transition at all
+/// stays quiet.
+#[tokio::test]
+async fn unbound_machine_ops_warn_once_for_the_missing_binding() {
+    let fixture = write_fixture_in("service_ops_transition_warn", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let warnings: Vec<&codegraph::validate::ValidationIssue> = issues
+        .iter()
+        .filter(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Warning)
+                && i.check == "service_op_transition_binding"
+        })
+        .collect();
+    for op in ["submit", "approve", "reverse"] {
+        let hit = warnings
+            .iter()
+            .find(|w| w.message.contains(&format!("PayRunService::{op}")))
+            .unwrap_or_else(|| panic!("a WARN must name `{op}`: {issues:?}"));
+        assert!(
+            hit.message.contains("declares no `transition` binding"),
+            "the warning must name the missing binding: {hit:?}"
+        );
+    }
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.message.contains("::archive") || w.message.contains("::notify")),
+        "an op applying no transition must not warn: {warnings:?}"
+    );
+    assert_eq!(
+        warnings.len(),
+        3,
+        "exactly one WARN per heuristic-resolved op: {warnings:?}"
+    );
+
+    // A fully-bound model produces none of these warnings.
+    let bound = write_binding_fixture();
+    let bound_engine = ingest_binding(&bound).await;
+    let bound_config = codegraph_config::config::parse_domain_config(&bound.config).unwrap();
+    let bound_issues = codegraph::validate::ValidationPass::run(&bound_engine, &bound_config).await;
+    assert!(
+        !bound_issues.iter().any(|i| i.check
+            == "service_op_transition_binding"
+            && matches!(i.severity, codegraph::validate::Severity::Warning)),
+        "an authored binding must silence the fallback warning: {bound_issues:?}"
     );
 }
