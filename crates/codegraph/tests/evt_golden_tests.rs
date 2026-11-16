@@ -1,16 +1,16 @@
-//! Golden-conformance gate for the rexlang event-contract artifact (issue
-//! #454 Phase 2a): the committed `orders.evt` — verbatim from the rexlang
+//! Golden-conformance gate for the pherolang event-contract artifact (issue
+//! #454 Phase 2a): the committed `orders.evt` — verbatim from the pherolang
 //! conformance suite at the pinned rev — compiles with zero error
 //! diagnostics and serializes byte-identically to the committed
 //! `orders.evt.json` wire artifact. This is the in-process equivalent of
-//! the rexlang CLI gates — node-free and CI-safe. Also pins the wire facts
+//! the pherolang CLI gates — node-free and CI-safe. Also pins the wire facts
 //! downstream consumers build on (the pinned event version and the
 //! enum-typed payload field).
 
 use std::path::PathBuf;
 
-use rex_ir::TypeRef;
-use rex_ir::events::EventModel;
+use phero_ir::TypeRef;
+use phero_ir::events::EventModel;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,7 +23,7 @@ fn fixture(name: &str) -> PathBuf {
 /// [`EventModel`] byte-equals the committed `orders.evt.json`, which then
 /// round-trips back through [`EventModel::from_json`] to an equal model.
 ///
-/// Byte-equality is direct: rex's `to_json_pretty` (serde_json pretty,
+/// Byte-equality is direct: pherolang's `to_json_pretty` (serde_json pretty,
 /// 2-space) emits NO trailing newline and the committed artifact has none
 /// (verified: it ends `}`) — no normalization applied.
 #[test]
@@ -50,10 +50,17 @@ fn orders_evt_compiles_clean_and_byte_matches_the_committed_artifact() {
         .expect("a clean compile produces the event artifact");
 
     let committed = std::fs::read_to_string(fixture("orders.evt.json")).unwrap();
+    if std::env::var("EVT_GOLDEN_BLESS").is_ok() {
+        std::fs::write(fixture("orders.evt.json"), model.to_json_pretty().unwrap())
+            .expect("re-bless the committed orders.evt.json");
+        eprintln!("BLESS: orders.evt.json re-written; re-run without EVT_GOLDEN_BLESS");
+        return;
+    }
     assert_eq!(
         model.to_json_pretty().unwrap(),
         committed,
-        "serialized artifact must byte-equal the committed orders.evt.json"
+        "serialized artifact must byte-equal the committed orders.evt.json \
+         (re-bless with EVT_GOLDEN_BLESS=1 after a deliberate fixture repair)"
     );
 
     let round_tripped = EventModel::from_json(&committed).expect("artifact deserializes");

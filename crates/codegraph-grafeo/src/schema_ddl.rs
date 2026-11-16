@@ -13,7 +13,7 @@
 /// pre-#590 binary would read every op condition as `None` and silently
 /// drop the route-level transition guards — cold re-ingest instead.
 ///
-/// NOT bumped for the rexlang 194056b mirror fields: `emits`/`invokes` ride
+/// NOT bumped for the pherolang 194056b mirror fields: `emits`/`invokes` ride
 /// the same `operations_json` blob (old payloads deserialize to `[]` via
 /// serde defaults), `DddService.decision_dependencies` rides a new nullable
 /// `decision_dependencies_json` prop (old graphs read NULL → `[]`, and
@@ -31,7 +31,7 @@
 /// persisted by a pre-WS6 binary would serve no manifest to the action
 /// plane and silently drop the e2e action surface — cold re-ingest
 /// instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 4;
+pub const GRAPH_FORMAT_VERSION: u32 = 5;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -490,7 +490,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             payload_json STRING NOT NULL
         )",
         // DDD design plane (issue #449). Seven node families mirroring the
-        // rex-ir `.ddd` artifact; service/search sub-structures persist as
+        // phero-ir `.ddd` artifact; service/search sub-structures persist as
         // JSON-string properties (the ActorPolicy singleton pattern), while
         // repository operations are their own node family (repositories are
         // cross-queried).
@@ -558,7 +558,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             ordinal INTEGER NOT NULL
         )",
         // Event-contract plane (issue #454). Three standalone node families
-        // mirroring the rex-ir `.evt` artifact; the intra-file event
+        // mirroring the phero-ir `.evt` artifact; the intra-file event
         // references (channel publishes, subscription events) and payload
         // fields persist as JSON-string properties (the DddService
         // `operations_json` pattern) — no edge types this time. Unrelated
@@ -587,7 +587,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             delivery_json STRING,
             ordinal INTEGER NOT NULL
         )",
-        // Deployment plane (rexlang #49). ONE node per `.deploy` model (the
+        // Deployment plane (pherolang #49). ONE node per `.deploy` model (the
         // model is small and consumers always want it whole — the
         // FunctionNode payload_json pattern): `source_path` is the upsert
         // key and `model_json` carries the whole `DeployModelGraph`
@@ -597,7 +597,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             source_path STRING NOT NULL,
             model_json STRING NOT NULL
         )",
-        // IFML manifest plane (rexlang #118, WS6). ONE singleton node per
+        // IFML manifest plane (pherolang #118, WS6). ONE singleton node per
         // run: `model_json` carries the whole folded `IfmlManifest`
         // serialized (`:DeployModel` pattern — consumers always want it
         // whole), `source_paths` is the JSON array of the `.ifml` files

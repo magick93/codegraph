@@ -248,7 +248,7 @@ fn run_case(case: &KitCase) -> Result<(), KitError> {
 mod tests {
     use super::*;
 
-    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v4.md");
+    const CASES: &str = include_str!("../../tests/fixtures/artifact_kit/graph_document_v5.md");
 
     #[test]
     fn kit_case_canonical_accepted_rejected() {
