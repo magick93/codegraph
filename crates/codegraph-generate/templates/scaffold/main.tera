@@ -15,7 +15,8 @@ mod integrations;
 mod integration_catalog;
 mod integration_router;
 mod integration_config;
-{% endif %}mod metrics_middleware;
+{% endif %}{% if has_media %}
+mod media;{% endif %}mod metrics_middleware;
 mod middleware;
 {% if project.persistence_provider == "cornucopia" %}mod db_client;
 {% endif %}mod qs_query;
@@ -395,7 +396,8 @@ mod integrations;
 mod integration_catalog;
 mod integration_router;
 mod integration_config;
-{% endif %}mod metrics_middleware;
+{% endif %}{% if has_media %}
+mod media;{% endif %}mod metrics_middleware;
 mod middleware;
 {% if project.persistence_provider == "cornucopia" %}mod db_client;
 {% endif %}mod qs_query;
