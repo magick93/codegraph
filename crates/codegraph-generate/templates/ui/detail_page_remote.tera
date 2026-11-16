@@ -8,12 +8,14 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
+{% if has_delete %}
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
+{% endif %}
 {% if has_workflow %}
 	import WorkflowPanel from '#lib/components/ui/WorkflowPanel.svelte';
 	import { transitionItem } from './data.remote';
 {% if project.ui_live_queries %}
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { getWorkflowLive } from './data.remote';
 {% endif %}
 {% endif %}
@@ -128,17 +130,16 @@
 		goto(`/${domain}/${pathSegment}/${childId}`);
 	}
 
-	function refreshChildren() {
-		void invalidateAll().then(() => {
+	async function refreshChildren(): Promise<void> {
+		await invalidateAll();
 {% for section in child_sections %}
-			{{ section.module_name }}Items = (data.children?.['{{ section.module_name }}'] ?? []) as {{ section.entity_name }}Response[];
+		{{ section.module_name }}Items = (data.children?.['{{ section.module_name }}'] ?? []) as {{ section.entity_name }}Response[];
 {% endfor %}
-		});
 	}
 {% for section in child_sections %}
 
 	async function delete{{ section.entity_name }}(childId: string): Promise<{ ok: boolean; message?: string }> {
-		const result = await delete{{ section.entity_name }}Child(childId, item.id);
+		const result = await delete{{ section.entity_name }}Child({ childId, parentId: item.id });
 		if (!result.ok) {
 			toast.error(m.common_delete_failed({ error: result.message ?? 'Request failed' }));
 		}
@@ -302,7 +303,7 @@
 {% elif field.structured_sub_fields | length > 0 and field.is_array %}
 {% if field.nested_type_name %}						{% raw %}{#if Array.isArray(item.{% endraw %}{{ field.name }}{% raw %}) && item.{% endraw %}{{ field.name }}{% raw %}.length > 0}
 							<ul class="list-disc list-inside">
-								{#each (item.{% endraw %}{{ field.name }}{% raw %} as {% endraw %}{{ field.nested_type_name }}{% raw %}Response[]) as id}
+								{#each (item.{% endraw %}{{ field.name }}{% raw %} as Array<Record<string, unknown>>) as id}
 									<li>{fmt.format{% endraw %}{{ field.nested_type_name | pascal_case }}{% raw %}(id)}{#if 'schemeId' in id && id.schemeId} <span class="text-muted-foreground text-xs">({id.schemeId})</span>{/if}</li>
 								{/each}
 							</ul>
@@ -397,7 +398,7 @@
 				actionEditTid="{{ section.tid.action_edit }}"
 				actionDeleteTid="{{ section.tid.action_delete }}"
 				manageBtnTid="{{ section.tid.manage_btn }}"
-				hasChildren={{ section.has_children }}
+				hasChildren={% raw %}{{% endraw %}{{ section.has_children }}{% raw %}}{% endraw %}
 				deleteDialogTid="{{ section.tid.delete_dialog }}"
 				deleteDialogConfirmTid="{{ section.tid.delete_dialog_confirm }}"
 {% if ux_actions %}

@@ -7,7 +7,9 @@
 import { command, query } from '$app/server';
 import { apiFetch } from '$lib/server/api';
 
-export const getEndpoints = query('unchecked', async () => {
+// Zero-argument query: kit 3's `query(fn: () => …)` overload — the
+// `'unchecked'` form takes exactly ONE input argument (issue #634).
+export const getEndpoints = query(async () => {
 	const response = await apiFetch('/api/v1/webhooks/webhook-endpoints');
 	if (!response.ok) {
 		return [];
@@ -24,7 +26,7 @@ export const deleteEndpoint = command('unchecked', async (id: string) => {
 		const body = await response.json().catch(() => null);
 		return {
 			ok: false as const,
-			message: body?.error ?? body?.message ?? `Request failed (${response.status})`
+			message: body?.error?.message ?? body?.message ?? `Request failed (${response.status})`
 		};
 	}
 	return { ok: true as const };

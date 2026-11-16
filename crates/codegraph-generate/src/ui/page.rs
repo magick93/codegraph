@@ -541,18 +541,25 @@ impl EntityGenerator for UiPageGenerator {
         // bytes, emitted once per run when ANY entity has child sections
         // (issue #468 W4). The detail template renders `<ChildSection …>`
         // tags per section; this file is the single implementation.
+        //
+        // The REMOTE variant is selected under `entity_remote_functions`
+        // (issue #634 class 6): the remote detail page passes an `onDelete`
+        // callback (the child delete is a server-side command — the browser
+        // fetch plane is retired), and the non-remote component's Props do
+        // not declare it. The variant existed but was never selected, so
+        // every remote details page with child sections was a type error.
         if has_child_sections
             && self
                 .child_section_component_emitted
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
         {
-            let content = render_template_with_project(
-                tera,
-                "ui/child_section_component.tera",
-                &ctx,
-                project,
-            )?;
+            let template = if project.codegen.entity_remote_functions {
+                "ui/child_section_component_remote.tera"
+            } else {
+                "ui/child_section_component.tera"
+            };
+            let content = render_template_with_project(tera, template, &ctx, project)?;
             files.push(GeneratedFile {
                 path: self
                     .output_dir
@@ -1668,6 +1675,50 @@ mod ux_child_section_template_tests {
         let golden = include_str!("testdata/pre299_flag_off_detail_render.txt");
         let out = render_detail(&detail_ctx(false));
         assert_eq!(out, golden, "flag-off detail render drifted");
+    }
+
+    /// The remote child-section component (issue #634 class 6): the remote
+    /// detail page passes an `onDelete` server-command callback; the
+    /// component must DECLARE it — the variant existed but was never
+    /// selected, so every remote details page with child sections was a
+    /// type error and the delete affordance had no server plane.
+    #[test]
+    fn remote_child_section_component_declares_the_ondelete_callback() {
+        let tera = crate::template_engine::create_tera(std::path::Path::new("."))
+            .expect("embedded templates");
+        let remote = crate::render_template_with_project(
+            &tera,
+            "ui/child_section_component_remote.tera",
+            &detail_ctx(true),
+            &ProjectConfig::default(),
+        )
+        .expect("remote child section component renders");
+        assert!(
+            remote.contains(
+                "onDelete: (childId: string) => Promise<{ ok: boolean; message?: string }>"
+            ),
+            "the remote component must declare the server-command delete callback:\n{remote}"
+        );
+        assert!(
+            remote.contains("await onDelete(childId)"),
+            "the remote component dispatches the callback:\n{remote}"
+        );
+
+        // The flag-off component stays untouched (no server plane).
+        // (`onDelete:` — `actionDeleteTid` contains "onDelete" as a
+        // substring, so a bare needle would false-pass.)
+        let local = render_component();
+        assert!(!local.contains("onDelete:"), "{local}");
+
+        // And the remote detail page wires it.
+        let page = crate::render_template_with_project(
+            &tera,
+            "ui/detail_page_remote.tera",
+            &detail_ctx(true),
+            &ProjectConfig::default(),
+        )
+        .expect("remote detail page renders");
+        assert!(page.contains("onDelete={deleteSubTaskType}"), "{page}");
     }
 
     /// Flag-off: the page renders the component tag with the full testid

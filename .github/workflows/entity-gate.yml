@@ -1,0 +1,69 @@
+name: Entity Gate
+
+# The entity ui gate (issue #574 S2, repaired by #634): the generated entity
+# SvelteKit app must BUILD (vite) and TYPECHECK (svelte-check) with zero
+# diagnostics on GENERATED paths, and the sessionless entity spec slice
+# (`auth` project) must run green against the booted app. The gate was
+# documentation-only until #634 — it was not wired into any workflow, and its
+# assertion could not fail (svelte-check prints the path on the line BEFORE
+# the `Error:` line, so the old filter always produced an empty set).
+#
+# `--test-threads=1` is REQUIRED: both tests regenerate the same review
+# fixture in place and share one `node_modules`.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 04:00 UTC — offset from the IFML gate (03:00) and the workers gate
+    # (03:30) so the three heavyweight lanes never contend for runners.
+    - cron: '0 4 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C debuginfo=0
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+
+jobs:
+  entity-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        # The Supabase postgres image: the generated stack relies on the
+        # `auth` schema (BaseJump sessions, auth.uid() RLS) which only this
+        # image ships (the same contract as the IFML gate).
+        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Install Playwright chromium
+        run: npx --yes playwright@1.62.0 install --with-deps chromium
+      - name: Run entity codegen gate (build + typecheck + sessionless spec lane)
+        run: cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture --test-threads=1
+      - name: Upload gate logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: entity-gate-logs
+          path: target/entity-gate/
+          if-no-files-found: ignore

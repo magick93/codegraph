@@ -6,8 +6,6 @@
 // field is picked at GENERATION time from its actual fields, so rendering
 // is typed and total (fallback in the generator, not a runtime chain).
 
-import type { CandidateProcessHistoryResponseResponse, CandidateDistributionGuidelinesResponseResponse, CandidateNameResponseResponse, CandidateQualificationResponseResponse, RsvpEventBaseResponseResponse } from './api/types.ts';
-
 /** The pre-W2 duck-typing chain, kept as the last resort for values whose
  * shape generation could not resolve (dynamic objects only). */
 export function formatFallback(obj: Record<string, unknown>): string {
@@ -33,33 +31,58 @@ export function formatRange(range: unknown): string {
 	}
 }
 
-/** Render CandidateProcessHistoryResponse by its generation-resolved display field. */
-export function formatCandidateProcessHistoryResponse(vo: CandidateProcessHistoryResponseResponse | null | undefined): string {
+/** Render ProcessHistoryType by its generation-resolved display field.
+ * Keyed on the SCHEMA TITLE so the detail page's
+ * `fmt.formatProcessHistoryType(...)` call and this export can
+ * never drift (issue #634); the parameter is the structural shape rather
+ * than a scoped `{Parent}...Response` alias, which varies per containing
+ * entity. */
+export function formatProcessHistoryType(vo: Record<string, unknown> | null | undefined): string {
 	if (!vo) return '—';
-	return vo.action_date ?? '—';
+	return (vo.action_date ?? '—') as string;
 }
 
-/** Render CandidateDistributionGuidelinesResponse by its generation-resolved display field. */
-export function formatCandidateDistributionGuidelinesResponse(vo: CandidateDistributionGuidelinesResponseResponse | null | undefined): string {
+/** Render DistributionGuidelinesType by its generation-resolved display field.
+ * Keyed on the SCHEMA TITLE so the detail page's
+ * `fmt.formatDistributionGuidelinesType(...)` call and this export can
+ * never drift (issue #634); the parameter is the structural shape rather
+ * than a scoped `{Parent}...Response` alias, which varies per containing
+ * entity. */
+export function formatDistributionGuidelinesType(vo: Record<string, unknown> | null | undefined): string {
 	if (!vo) return '—';
-	return vo.scope ?? '—';
+	return (vo.scope ?? '—') as string;
 }
 
-/** Render CandidateNameResponse by its generation-resolved display field. */
-export function formatCandidateNameResponse(vo: CandidateNameResponseResponse | null | undefined): string {
+/** Render NameType by its generation-resolved display field.
+ * Keyed on the SCHEMA TITLE so the detail page's
+ * `fmt.formatNameType(...)` call and this export can
+ * never drift (issue #634); the parameter is the structural shape rather
+ * than a scoped `{Parent}...Response` alias, which varies per containing
+ * entity. */
+export function formatNameType(vo: Record<string, unknown> | null | undefined): string {
 	if (!vo) return '—';
-	return vo.family_name ?? '—';
+	return (vo.family_name ?? '—') as string;
 }
 
-/** Render CandidateQualificationResponse by its generation-resolved display field. */
-export function formatCandidateQualificationResponse(vo: CandidateQualificationResponseResponse | null | undefined): string {
+/** Render QualificationType by its generation-resolved display field.
+ * Keyed on the SCHEMA TITLE so the detail page's
+ * `fmt.formatQualificationType(...)` call and this export can
+ * never drift (issue #634); the parameter is the structural shape rather
+ * than a scoped `{Parent}...Response` alias, which varies per containing
+ * entity. */
+export function formatQualificationType(vo: Record<string, unknown> | null | undefined): string {
 	if (!vo) return '—';
-	return vo.date_awarded ?? '—';
+	return (vo.date_awarded ?? '—') as string;
 }
 
-/** Render RsvpEventBaseResponse by its generation-resolved display field. */
-export function formatRsvpEventBaseResponse(vo: RsvpEventBaseResponseResponse | null | undefined): string {
+/** Render EventBaseType by its generation-resolved display field.
+ * Keyed on the SCHEMA TITLE so the detail page's
+ * `fmt.formatEventBaseType(...)` call and this export can
+ * never drift (issue #634); the parameter is the structural shape rather
+ * than a scoped `{Parent}...Response` alias, which varies per containing
+ * entity. */
+export function formatEventBaseType(vo: Record<string, unknown> | null | undefined): string {
 	if (!vo) return '—';
-	return vo.title ?? '—';
+	return (vo.title ?? '—') as string;
 }
 

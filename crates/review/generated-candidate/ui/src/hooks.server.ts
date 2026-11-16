@@ -9,7 +9,10 @@ const SB_AUTH_COOKIE = `sb-${REF}-auth-token`;
 
 export const handle: Handle = ({ event, resolve }) =>
 	paraglideMiddleware(event.request, ({ request: localizedRequest, locale }) => {
-		event.request = localizedRequest;
+		// SvelteKit 3 makes `RequestEvent.request` readonly: the localized
+		// request is passed to `resolve` as a NEW event instead of being
+		// mutated (issue #634).
+		const localizedEvent = { ...event, request: localizedRequest };
 
 		const raw = event.cookies.get(SB_AUTH_COOKIE);
 		if (raw) {
@@ -24,7 +27,7 @@ export const handle: Handle = ({ event, resolve }) =>
 			}
 		}
 
-		return resolve(event, {
+		return resolve(localizedEvent, {
 			transformPageChunk: ({ html }) =>
 				html.replace('%lang%', locale).replace('%dir%', 'ltr'),
 		});

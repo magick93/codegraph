@@ -22,7 +22,22 @@ pub struct UiTypesContext {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UiNestedType {
+    /// The VO's SCHEMA TITLE (e.g. `ProcessHistoryType`) — the ONE key both
+    /// the detail page's formatter call and `format.ts`'s export derive
+    /// from. It must NOT be the scoped TS type name: that name embeds the
+    /// parent entity (`CandidateProcessHistoryResponse`), so two entities
+    /// containing the same VO would disagree on the formatter identity
+    /// (issue #634: the page called `fmt.formatProcessHistoryType` while
+    /// `format.ts` exported `formatCandidateProcessHistoryResponse` — a
+    /// runtime `undefined is not a function` on every details page with a
+    /// structured field).
     pub name: String,
+    /// The nested interface's TS name in `#lib/api/types.ts` — the SCOPED
+    /// spelling the containing entity's response interface references
+    /// (e.g. `CandidateProcessHistoryResponse`). Separate from `name`
+    /// because the formatter identity is shared per VALUE OBJECT (schema
+    /// title) while the interface name embeds the first containing entity.
+    pub ts_name: String,
     pub fields: Vec<UiTypeField>,
     /// The VO's display field for `#lib/format.ts`'s typed renderer
     /// (issue #468 W2): first readable name-ish string scalar, else None
@@ -184,7 +199,10 @@ impl GlobalGenerator for UiTypeGenerator {
                     if !visited_types.insert(schema_title_for_ref.clone()) {
                         continue;
                     }
-                    // Resolve the nested type's TS interface name and fields.
+                    // Keyed on the SCHEMA TITLE (issue #634): the formatter
+                    // identity must match the detail page's
+                    // `fmt.format{title}(...)` call exactly.
+                    let nested_title = schema_title_for_ref.clone();
                     let nested_ts_name = field.ts_type.clone();
                     if let Some(nt_fields) = collect_nested_type_fields(
                         db,
@@ -196,7 +214,8 @@ impl GlobalGenerator for UiTypeGenerator {
                     {
                         let display_field = resolve_vo_display_field(&nt_fields);
                         nested_types.push(UiNestedType {
-                            name: nested_ts_name,
+                            name: nested_title,
+                            ts_name: nested_ts_name,
                             fields: nt_fields,
                             display_field,
                         });
