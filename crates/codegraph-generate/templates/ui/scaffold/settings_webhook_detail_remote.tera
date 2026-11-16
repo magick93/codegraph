@@ -6,7 +6,7 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { rotateSecret, toggleActive, deleteSubscription } from './data.remote';
 {% endraw %}{% if ui_live_queries %}
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { getDeliveriesLive } from './data.remote';
 {% endif %}{% raw %}
 
@@ -68,7 +68,7 @@
   async function handleToggleActive() {
     error = null;
     try {
-      const result = await toggleActive(endpointId, !endpoint.is_active);
+      const result = await toggleActive({ id: endpointId, isActive: !endpoint.is_active });
       if (!result.ok) {
         throw new Error(result.message ?? 'Request failed');
       }
@@ -96,7 +96,7 @@
     if (!confirm('Remove this subscription?')) return;
     error = null;
     try {
-      const result = await deleteSubscription(endpointId, id);
+      const result = await deleteSubscription({ endpointId, subscriptionId: id });
       if (!result.ok) {
         throw new Error(result.message ?? 'Request failed');
       }

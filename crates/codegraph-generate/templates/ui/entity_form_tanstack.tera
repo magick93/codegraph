@@ -164,7 +164,7 @@
 						id="{% endraw %}{{ field.name }}{% raw %}-value"
 						value={field.state.value}
 						onvaluechange={(v: string) => field.handleChange(v)}
-						openEnd={% endraw %}{{ field.open_end }}{% raw %}
+						{% endraw %}openEnd={% raw %}{{% endraw %}{{ field.open_end }}{% raw %}}{% endraw %}{% raw %}
 						{% endraw %}{% if field.required %}required{% endif %}{% raw %}
 						data-testid="{% endraw %}{{ field.name }}{% raw %}-value"
 					/>
@@ -178,15 +178,16 @@
 				<div class="space-y-2">
 					<StructuredWrapperField
 						label={% endraw %}{{ field.label_ts }}{% raw %}
-						required={% endraw %}{{ field.required }}{% raw %}
-						isArray={% endraw %}{{ field.is_array }}{% raw %}
+						{% endraw %}required={% raw %}{{% endraw %}{{ field.required }}{% raw %}}{% endraw %}{% raw %}
+						{% endraw %}isArray={% raw %}{{% endraw %}{{ field.is_array }}{% raw %}}{% endraw %}{% raw %}
 						fieldName="{% endraw %}{{ field.name }}{% raw %}"
 						subFields={[
 							{% endraw %}{% for sf in field.structured_sub_fields %}{% raw %}{ name: '{% endraw %}{{ sf.name }}{% raw %}', label: '{% endraw %}{{ sf.label }}{% raw %}', required: {% endraw %}{{ sf.is_required }}{% raw %}, showByDefault: {% endraw %}{{ sf.show_by_default }}{% raw %}, description: `{% endraw %}{{ sf.description | js_template_literal }}{% raw %}` },
 							{% endraw %}{% endfor %}{% raw %}
 						]}
 						value={field.state.value}
-						onvaluechange={(v: Record<string, unknown>) => field.handleChange(v)}
+						onchange={(v: Record<string, unknown> | Record<string, unknown>[]) =>
+							field.handleChange(v as never)}
 					/>
 				</div>
 			{/snippet}{% endraw %}
@@ -214,7 +215,7 @@
 					label={% endraw %}{{ field.label_ts }}{% raw %}
 					testid="{% endraw %}{{ field.testid }}{% raw %}"
 					{% endraw %}{% if field.kind == "select" %}values={% raw %}{{% endraw %}{{ field.values_ts }}{% raw %}}{% endraw %}
-					{% endif %}{% raw %}required={% endraw %}{{ field.required }}{% raw %}
+					{% endif %}required={% raw %}{{% endraw %}{{ field.required }}{% raw %}}{% endraw %}{% raw %}
 					description={% endraw %}{{ field.description_ts }}{% raw %}
 				/>
 			{/snippet}{% endraw %}

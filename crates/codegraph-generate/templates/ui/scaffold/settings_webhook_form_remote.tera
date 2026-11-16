@@ -48,7 +48,7 @@
 
       const body = { url, description: description || null, headers };
       const result = isEdit
-        ? await updateEndpoint(endpointId, body)
+        ? await updateEndpoint({ id: endpointId as string, ...body })
         : await createEndpoint(body);
 
       if (!result.ok) {

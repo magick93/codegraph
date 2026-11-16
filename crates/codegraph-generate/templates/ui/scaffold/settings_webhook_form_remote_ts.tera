@@ -40,20 +40,23 @@ export const createEndpoint = command(
 	}
 );
 
+// Kit 3 remote functions take ONE input argument — the id rides inside the
+// body object (issue #634).
 export const updateEndpoint = command(
 	'unchecked',
-	async (
-		id: string,
-		body: {
-			url: string;
-			description: string | null;
-			headers: Record<string, string>;
-		}
-	) => {
+	async (body: {
+		id: string;
+		url: string;
+		description: string | null;
+		headers: Record<string, string>;
+	}) => {
+		// `id` keys the route; it must not ride the JSON body (the update
+		// DTO is `deny_unknown_fields` — a stray `id` is a 422).
+		const { id, ...payload } = body;
 		const response = await apiFetch(`/api/v1/webhooks/webhook-endpoints/${id}`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body)
+			body: JSON.stringify(payload)
 		});
 		if (!response.ok) {
 			const res = await response.json().catch(() => null);

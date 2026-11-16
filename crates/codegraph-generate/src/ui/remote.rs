@@ -232,8 +232,12 @@ fn child_queries(ctx: &UiPageContext, api_version: &str) -> String {
         // browser fetch plane). The parent id rides along so the command
         // can key the children query instance for the single-flight
         // refresh (issue #574 S4a).
+        //
+        // Kit 3 remote functions take ONE input argument (`command(validate,
+        // fn: (arg: Input) => …)` — there is no multi-argument overload), so
+        // the pair travels as an object (issue #634).
         s.push_str(&format!(
-            "export const delete{}Child = command('unchecked', async (childId: string, parentId: string) => {{\n",
+            "export const delete{}Child = command('unchecked', async ({{ childId, parentId }}: {{ childId: string; parentId: string }}) => {{\n",
             section.entity_name
         ));
         s.push_str("\tconst response = await apiFetch(`/api/");
@@ -828,9 +832,9 @@ mod tests {
         let children = child_queries(&ctx, "v1");
         assert!(
             children.contains(
-                "export const deleteRequestChild = command('unchecked', async (childId: string, parentId: string) => {"
+                "export const deleteRequestChild = command('unchecked', async ({ childId, parentId }: { childId: string; parentId: string }) => {"
             ),
-            "{children}"
+            "kit 3 takes ONE input argument — the pair rides an object:\n{children}"
         );
         assert!(
             children.contains("void getRequestChildren(parentId).refresh();"),

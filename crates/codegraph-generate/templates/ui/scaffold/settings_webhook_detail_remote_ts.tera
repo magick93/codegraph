@@ -29,9 +29,11 @@ export const getEndpointData = query('unchecked', async (id: string) => {
 	};
 });
 
+// Kit 3 remote functions take ONE input argument — the pair travels as an
+// object (issue #634).
 export const toggleActive = command(
 	'unchecked',
-	async (id: string, isActive: boolean) => {
+	async ({ id, isActive }: { id: string; isActive: boolean }) => {
 		const response = await apiFetch(`/api/v1/webhooks/webhook-endpoints/${id}`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
@@ -74,7 +76,7 @@ export const rotateSecret = command('unchecked', async (id: string) => {
 
 export const deleteSubscription = command(
 	'unchecked',
-	async (endpointId: string, subscriptionId: string) => {
+	async ({ endpointId, subscriptionId }: { endpointId: string; subscriptionId: string }) => {
 		const response = await apiFetch(`/api/v1/webhooks/webhook-subscriptions/${subscriptionId}`, {
 			method: 'DELETE'
 		});

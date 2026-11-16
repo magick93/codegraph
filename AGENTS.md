@@ -1741,8 +1741,9 @@ the proven #573 IFML pattern:
   orgs in the global-setup) and stay the consumer `testkit e2e` lane's
   job — their file paths are still held to the coverage invariant.
 - Gates: `cargo test -p codegraph --test entity_remote_functions_tests`
-  (2, node-free) + `cargo test -p codegraph --test entity_codegen_gate --
-  --ignored` (node; the nightly lane) + the updated
+  (6, node-free) + `cargo test -p codegraph --test entity_codegen_gate --
+  --ignored --test-threads=1` (node; the nightly lane, wired as
+  `.github/workflows/entity-gate.yml` — issue #634) + the updated
   `ifml_remote_functions_tests`/`ux_rules_tests`/`server_contract_tests`
   pins. Byte-identity: flag-off templates byte-untouched (variant
   selection in Rust); the ux canaries + `policy_rls` full-tree snapshot
@@ -1751,6 +1752,99 @@ the proven #573 IFML pattern:
   deleted, `api/client.ts`+`env.ts` key loss, vite experimental options)
   + the review fixture regenerated (incl. the S1-era shell `descriptor.ts`
   moves).
+
+#### The #634 kit sweep: entity plane parity + a gate that can fail
+
+The ws6 fixes lived on the IFML plane (kit 2.x); the entity plane targets
+kit `3.0.0-next.24` and kept its own shapes — the same failure class, and
+worse: the gate that was meant to catch it **could not fail**.
+
+- **The gate was vacuous.** svelte-check prints `path:line:col` on the line
+  BEFORE `Error:`; the old filter looked for lines CONTAINING `Error:` and
+  matched them against a path prefix — always empty. The check's exit
+  status was discarded (`let _ = check_ok;`), `src/lib/forms/**` was not in
+  the asserted set, and no workflow ran it. Repaired: path-attributed
+  diagnostics parsed into (path, line, column, severity), the parsed error
+  count RECONCILED against svelte-check's own summary line + exit status
+  (shape drift is a hard failure, never a silent zero), an unattributed
+  `Error:` line is fatal, attribution is fail-CLOSED (everything under
+  `ui/src` unless listed consumer/gate-owned), consumer diagnostics are
+  printed + written to `target/entity-gate/consumer-diagnostics.txt`, and
+  a shrink-only `KNOWN_DEFECTS` ledger makes pre-existing debt enumerable
+  (an entry matching nothing FAILS, so the ledger cannot rot). Nightly
+  workflow `.github/workflows/entity-gate.yml` (04:00 UTC, supabase
+  postgres, chromium, `--test-threads=1` — both tests regenerate the same
+  fixture in place).
+  **Unfixed tree: 190 generated-path errors** it had been hiding;
+  **after the sweep: 1 documented** (gap G1 below).
+- **Class 1 (`imported-but-unemitted export`)**: `list_page.tera` imported
+  `deleteItem` whenever ux was on; the module emits it only for
+  `ux_delete && has_delete` — an entity with list/read/update and no delete
+  imported a non-existent export (Rollup `MISSING_EXPORT`). Import gates
+  now follow the emission rule; `invalidateAll`/`AlertDialog`/`DropdownMenu`
+  follow their real use sites, and `detail_page_remote` gates `AlertDialog`
+  on `has_delete`.
+- **Class 2 (`kit 3 arity`) — wider than `query.live`**: `query.live`
+  needs the `'unchecked'` first argument for an input-taking stream; a
+  ZERO-arg query must be `query(fn)` (the `'unchecked'` overload's callable
+  requires an argument → `getEndpoints()` was a TS2554); and a remote
+  command/query takes exactly ONE input, so `toggleActive(id, on)`,
+  `deleteSubscription(a, b)`, `updateEndpoint(id, body)` and
+  `delete{X}Child(childId, parentId)` were "No overload matches this call"
+  — all take one object now (`updateEndpoint` strips `id` from the JSON
+  body: the update DTO is `deny_unknown_fields`).
+- **Class 3 (refresh target)**: the detail module's `transitionItem`
+  refreshes `getItem`; it is now emitted whenever something refreshes it
+  (`has_read || has_workflow`).
+- **Class 4 (undeclared prop)**: the webhook form read `data` with NO
+  `$props()` (runes-mode contract break + runtime `ReferenceError`); it
+  declares `Props { data?: { endpoint?: WebhookEndpoint } }`.
+- **Class 5 (error OBJECT)**: all six fail legs read `body?.error ?? …`
+  while the API body is `{ error: { code, message, details? } }` →
+  `[object Object]` in toasts; they read `error?.message`.
+- **Class 6 (built-but-never-registered)**: two instances. (a)
+  `lib/forms/form.ts` is emitted IF-ABSENT (consumer extension point), so a
+  pre-#601 tree keeps a creator without `ResetButton` and
+  `<form.ResetButton>` resolves to undefined — the generated form now
+  renders the reset affordance INLINE against its own form instance (same
+  markup/testid); the registration stays for consumer code. (b)
+  `child_section_component_remote.tera` existed but `page.rs` ALWAYS
+  emitted the non-remote component while the remote page passes
+  `onDelete` — every remote details page with child sections was a type
+  error; selected under the flag now.
+- **Gate-surfaced, fixed here** (enumeration in the PR /
+  `docs/tdd/entity-kit-sweep.tdd.md`): `required=false` / `hasChildren=false`
+  / `openEnd=false` / `isArray=false` were STRING attributes in Svelte
+  markup (every boolean form prop truthy → every field required);
+  TanStack structured fields wired `onvaluechange` while
+  `StructuredWrapperField` declares `onchange`; details pages called
+  `fmt.format{SchemaTitle}(…)` while `format.ts` exported the
+  scoped-name spelling (+ a doubled `…ResponseResponse` type import) — the
+  formatter identity is now the SCHEMA TITLE on both sides; `$app/environment`
+  → `$app/env` (kit 3); `Reroute` from `@sveltejs/kit/hooks` and
+  `resolve({ …event, request })` (kit 3 makes `request` readonly);
+  `m.common_actions()`/`m.common_open()` are always inventoried (the
+  child-section menu used them under `has_ux_rules = false`); the
+  array-of-VO cast names no unimported scoped type.
+- **Gate fidelity (fixed, not skipped)**: the `@crewbase/*` stubs typed
+  components as plain functions (55+5 false diagnostics), and
+  `stub_api_types` scanned only `src/` with one specifier (20 unresolved
+  request-DTO imports in the emitted Playwright suites).
+- Gates: `cargo test -p codegraph --test entity_remote_functions_tests`
+  (6 — incl. the structural **parity pin**: every emitted
+  `./data.remote` named import must be a sibling-module export AND every
+  `.refresh()` target must be a module export) + `cargo test -p codegraph
+  --test entity_codegen_gate` (4 node-free parser/attribution pins) +
+  `-- --ignored --test-threads=1` (nightly, both lane tests) +
+  `entity_form_tests` (3) + `cargo test -p codegraph-generate --lib -- ui::remote ui::page`.
+- Deferred / gaps (`docs/tdd/entity-kit-sweep.tdd.md`): G1
+  `$env/dynamic/private` in the SHARED `server_api.rs` helper (kit 3 moved
+  it to `$app/env/private`; the IFML plane is still kit 2 — a
+  version-aware emit is a two-plane decision), G2 the review fixture's ux
+  plane is OFF although the default profile sets `ux_rules = true` (the
+  regen recipe does not thread the ux plan), G3 the flag-off twin defects
+  in `detail_page.tera`/`child_section_component.tera` (fixing them
+  changes flag-off bytes → own blessed diff).
 
 ### TanStack Form layer + zod validation lowering (issue #580, S3 of #574)
 

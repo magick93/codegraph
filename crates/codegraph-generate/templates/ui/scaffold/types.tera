@@ -3,7 +3,7 @@
 
 {% for nt in nested_types %}
 /** Nested value object. */
-export interface {{ nt.name }} {
+export interface {{ nt.ts_name }} {
 	{% for field in nt.fields %}
 {% if field.is_required %}
 	{% if field.description %}/** {{ field.description }} */
