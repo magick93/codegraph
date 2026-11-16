@@ -80,7 +80,8 @@ impl GrafeoEngine {
              RETURN a.name AS app, d.module AS module, d.class AS class, \
              d.resolved_title AS resolved_title, d.stereotype AS stereotype, \
              d.is_abstract AS is_abstract, d.flags_json AS flags_json, \
-             d.machine_json AS machine_json, d.ordinal AS ordinal",
+             d.machine_json AS machine_json, \
+             d.child_operations_json AS child_operations_json, d.ordinal AS ordinal",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut designs: HashMap<String, Vec<DddDesignNode>> = HashMap::new();
@@ -95,6 +96,9 @@ impl GrafeoEngine {
                 is_abstract: reader.get_bool(row, "is_abstract")?,
                 flags: parse_json(reader.get_opt_string(row, "flags_json")?),
                 machine_json: parse_opt_json(reader.get_opt_string(row, "machine_json")?),
+                // Issue #661: absent on a pre-child-ops node (the format bump
+                // cold-re-ingests those) — default to no child operations.
+                child_operations: parse_json(reader.get_opt_string(row, "child_operations_json")?),
                 ordinal: reader.get_usize(row, "ordinal")?,
             });
         }

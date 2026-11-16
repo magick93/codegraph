@@ -769,6 +769,84 @@ async fn generated_worker_wasm_check_is_in_ci() {
                 is_abstract: false,
                 flags: codegraph_core::types::DddDesignFlags::default(),
                 machine_json: None,
+                // Issue #661: the aggregate's `children PayRun` block — the
+                // child action handlers (create/update/delete through the
+                // child's plane) must compile natively AND on wasm32.
+                child_operations: vec![
+                    codegraph_core::types::DddServiceOperation {
+                        name: "addLine".to_string(),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: vec![codegraph_core::types::DddParam {
+                            name: "line".to_string(),
+                            type_json: serde_json::json!({"dto": "PayRunLineDraft"}),
+                            multiplicity: None,
+                        }],
+                        delegation_target: None,
+                        delegation_operation: None,
+                        capabilities: Vec::new(),
+                        is_protected: false,
+                        condition: None,
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
+                        throws: Vec::new(),
+                        bodies: Default::default(),
+                        body_receiver: None,
+                        transition: None,
+                        child_scope: Some(codegraph_core::types::DddChildRef {
+                            feature: "lines".to_string(),
+                            class: "compilecheck.PayRunLine".to_string(),
+                            action: "add".to_string(),
+                        }),
+                        ordinal: 0,
+                    },
+                    codegraph_core::types::DddServiceOperation {
+                        name: "saveLine".to_string(),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        delegation_target: None,
+                        delegation_operation: None,
+                        capabilities: Vec::new(),
+                        is_protected: false,
+                        condition: None,
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
+                        throws: Vec::new(),
+                        bodies: Default::default(),
+                        body_receiver: None,
+                        transition: None,
+                        child_scope: Some(codegraph_core::types::DddChildRef {
+                            feature: "lines".to_string(),
+                            class: "compilecheck.PayRunLine".to_string(),
+                            action: "save".to_string(),
+                        }),
+                        ordinal: 1,
+                    },
+                    codegraph_core::types::DddServiceOperation {
+                        name: "removeLine".to_string(),
+                        return_type: None,
+                        return_multiplicity: None,
+                        params: Vec::new(),
+                        delegation_target: None,
+                        delegation_operation: None,
+                        capabilities: Vec::new(),
+                        is_protected: false,
+                        condition: None,
+                        emits: Vec::new(),
+                        invokes: Vec::new(),
+                        throws: Vec::new(),
+                        bodies: Default::default(),
+                        body_receiver: None,
+                        transition: None,
+                        child_scope: Some(codegraph_core::types::DddChildRef {
+                            feature: "lines".to_string(),
+                            class: "compilecheck.PayRunLine".to_string(),
+                            action: "remove".to_string(),
+                        }),
+                        ordinal: 2,
+                    },
+                ],
                 ordinal: 0,
             },
             // WS4: the child entity's own design + repository — the child
@@ -782,6 +860,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                 is_abstract: false,
                 flags: codegraph_core::types::DddDesignFlags::default(),
                 machine_json: None,
+                child_operations: Vec::new(),
                 ordinal: 1,
             },
         ],
@@ -949,6 +1028,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                     bodies: Default::default(),
                     body_receiver: None,
                     transition: None,
+                    child_scope: None,
                     ordinal: 0,
                 }],
                 ordinal: 0,
@@ -979,6 +1059,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         bodies: Default::default(),
                         body_receiver: None,
                         transition: None,
+                        child_scope: None,
                         ordinal: 0,
                     },
                     codegraph_core::types::DddServiceOperation {
@@ -997,6 +1078,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         bodies: Default::default(),
                         body_receiver: None,
                         transition: None,
+                        child_scope: None,
                         ordinal: 1,
                     },
                 ],
@@ -1283,6 +1365,23 @@ directions = ["push"]
     assert!(
         child_handler.contains("service_op_adjust"),
         "the child service op handler must emit:\n{child_handler}"
+    );
+    // Issue #661: the aggregate child operations emit into the SAME child
+    // handler — the collection-level `add` (create), the item-level `save`
+    // (update) and `remove` (delete) — and must compile on both targets.
+    for snake in ["add_line", "save_line", "remove_line"] {
+        assert!(
+            child_handler.contains(&format!("service_op_{snake}")),
+            "the child action handler `{snake}` must emit:\n{child_handler}"
+        );
+    }
+    assert!(
+        child_handler.contains("CreatePayRunLineBody"),
+        "the collection-level `add` must ride the create body extractor:\n{child_handler}"
+    );
+    assert!(
+        worker_router.contains("\"/actions/add_line\""),
+        "the worker child router must register the collection-level add:\n{worker_router}"
     );
     for required in [
         "workers/gateway/src/integration_catalog.rs",

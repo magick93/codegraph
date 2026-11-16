@@ -143,7 +143,26 @@ impl DddDesignSurface {
                     continue;
                 };
                 surface.warn_flags(app, design);
-                surface.designs.insert(title, design.clone());
+                // DD3: a `dto` design (a projection or mirror) is a BOUNDARY,
+                // not a second design of its source class — upstream rule 3 is
+                // explicit that a projection "may coexist with its source's
+                // entity design". The boundary carries no entity plane (no
+                // repository, every flag off), so it must never SHADOW the
+                // entity design that maps onto the same schema title (it would
+                // silently empty the operation set and drop the auditable
+                // flag). Keep the boundary in the graph mirror; prefer the
+                // entity/value design here.
+                if let Some(existing) = surface.designs.get(&title)
+                    && existing.stereotype == "dto"
+                    && design.stereotype != "dto"
+                {
+                    surface.designs.insert(title, design.clone());
+                    continue;
+                }
+                surface
+                    .designs
+                    .entry(title)
+                    .or_insert_with(|| design.clone());
             }
             for search in &model.searches {
                 let Some(title) = search.entity_title.clone() else {
@@ -1083,6 +1102,7 @@ mod tests {
             is_abstract: false,
             flags: DddDesignFlags::default(),
             machine_json: None,
+            child_operations: Vec::new(),
             ordinal: 0,
         }
     }
@@ -1132,6 +1152,51 @@ mod tests {
             services: Vec::new(),
             searches,
         }
+    }
+
+    #[test]
+    fn a_projection_dto_never_shadows_the_entity_design_of_its_source() {
+        // DD3: `dto BookSummary from Book` lowers a `dto` design whose class
+        // is Book — a BOUNDARY beside the entity design, with every flag off
+        // and no repository. Indexing it over the entity design would empty
+        // the operation set and drop `auditable` for the whole Book plane.
+        let mut projection = design("Book", Some("BookType"), "dto");
+        projection.ordinal = 1;
+        let surface = DddDesignSurface::from_models(&[model(
+            vec![
+                design("Book", Some("BookType"), "entity"),
+                projection,
+                // ...and the mirror ordering (DTO first, entity second) must
+                // resolve the same way.
+                design("Movie", Some("MovieType"), "dto"),
+                design("Movie", Some("MovieType"), "entity"),
+            ],
+            vec![repository(
+                "BookRepository",
+                "Book",
+                vec![
+                    builtin("findById", "findById", 0),
+                    builtin("save", "save", 1),
+                ],
+            )],
+            vec![],
+        )]);
+        for title in ["BookType", "MovieType"] {
+            let design = surface.design_for(title).expect("the entity design");
+            assert_eq!(
+                design.stereotype, "entity",
+                "the projection DTO must not shadow the entity design for {title}"
+            );
+        }
+        assert_eq!(
+            surface.operations_for("BookType"),
+            Some(vec![
+                "create".to_string(),
+                "update".to_string(),
+                "read".to_string()
+            ]),
+            "the entity design's repository must still map its operations"
+        );
     }
 
     #[test]

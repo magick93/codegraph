@@ -14,9 +14,10 @@ use std::path::{Path, PathBuf};
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    DddApplicationNode, DddDesignFlags, DddDesignNode, DddDocumentField, DddModelGraph,
-    DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
-    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation, DddTransitionRef,
+    DddApplicationNode, DddChildRef, DddDesignFlags, DddDesignNode, DddDocumentField,
+    DddModelGraph, DddModuleNode, DddPagination, DddParam, DddRepositoryNode,
+    DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
+    DddTransitionRef,
 };
 use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_ddd_str};
 
@@ -422,6 +423,16 @@ pub fn ddd_model_graph_from_phero(
                     cache: design.flags.cache,
                 },
                 machine_json: opt_json(design.machine.as_ref()),
+                // Issue #661: the module's `children <Class>` blocks lower
+                // onto the design (`Design::child_operations`); each op
+                // carries its `child_scope`. The list is empty for an
+                // extend-less design, so its node serializes as before.
+                child_operations: design
+                    .child_operations
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, op)| service_operation_node(op, ordinal))
+                    .collect(),
                 ordinal,
             });
             if let Some(repo) = &design.repository {
@@ -471,41 +482,7 @@ pub fn ddd_model_graph_from_phero(
                 .operations
                 .iter()
                 .enumerate()
-                .map(|(ordinal, op)| DddServiceOperation {
-                    name: op.name.clone(),
-                    return_type: opt_json(op.return_type.as_ref()),
-                    return_multiplicity: opt_json(op.return_multiplicity.as_ref()),
-                    params: op
-                        .params
-                        .iter()
-                        .map(|p| DddParam {
-                            name: p.name.clone(),
-                            type_json: to_json(&p.type_),
-                            multiplicity: opt_json(p.multiplicity.as_ref()),
-                        })
-                        .collect(),
-                    delegation_target: op.delegation.as_ref().map(|d| d.target.clone()),
-                    delegation_operation: op.delegation.as_ref().map(|d| d.operation.clone()),
-                    capabilities: op.capabilities.clone(),
-                    is_protected: op.is_protected,
-                    condition: op.condition.clone(),
-                    emits: op.emits.clone(),
-                    invokes: op.invokes.clone(),
-                    // DD7 vocabulary + pherolang#178 bodies (issue #662):
-                    // the `throws` set rides as phero-ir `ErrorRef` JSON and
-                    // the checked body payload stays opaque (canonical
-                    // `StmtBody` JSON under the `"stmt"` target).
-                    throws: op.throws.iter().map(to_json).collect(),
-                    bodies: op.bodies.clone(),
-                    body_receiver: op.body_receiver.clone(),
-                    // Issue #660: the authored transition binding mirrors
-                    // as authored (`TransitionRef { trigger, machine }`).
-                    transition: op.transition.as_ref().map(|t| DddTransitionRef {
-                        trigger: t.trigger.clone(),
-                        machine: t.machine.clone(),
-                    }),
-                    ordinal,
-                })
+                .map(|(ordinal, op)| service_operation_node(op, ordinal))
                 .collect();
             services.push(DddServiceNode {
                 application: app_name.clone(),
@@ -581,6 +558,58 @@ pub fn ddd_model_graph_from_phero(
         repositories,
         services,
         searches,
+    }
+}
+
+/// Convert one phero-ir [`phero_ir::ddd::ServiceOperation`] into its graph
+/// mirror — the ONE conversion both service operations and the design-level
+/// child operations (issue #661) ride, so the two planes cannot drift.
+fn service_operation_node(
+    op: &phero_ir::ddd::ServiceOperation,
+    ordinal: usize,
+) -> DddServiceOperation {
+    DddServiceOperation {
+        name: op.name.clone(),
+        return_type: opt_json(op.return_type.as_ref()),
+        return_multiplicity: opt_json(op.return_multiplicity.as_ref()),
+        params: op
+            .params
+            .iter()
+            .map(|p| DddParam {
+                name: p.name.clone(),
+                type_json: to_json(&p.type_),
+                multiplicity: opt_json(p.multiplicity.as_ref()),
+            })
+            .collect(),
+        delegation_target: op.delegation.as_ref().map(|d| d.target.clone()),
+        delegation_operation: op.delegation.as_ref().map(|d| d.operation.clone()),
+        capabilities: op.capabilities.clone(),
+        is_protected: op.is_protected,
+        condition: op.condition.clone(),
+        emits: op.emits.clone(),
+        invokes: op.invokes.clone(),
+        // DD7 vocabulary + pherolang#178 bodies (issue #662):
+        // the `throws` set rides as phero-ir `ErrorRef` JSON and
+        // the checked body payload stays opaque (canonical
+        // `StmtBody` JSON under the `"stmt"` target).
+        throws: op.throws.iter().map(to_json).collect(),
+        bodies: op.bodies.clone(),
+        body_receiver: op.body_receiver.clone(),
+        // Issue #660: the authored transition binding mirrors
+        // as authored (`TransitionRef { trigger, machine }`).
+        transition: op.transition.as_ref().map(|t| DddTransitionRef {
+            trigger: t.trigger.clone(),
+            machine: t.machine.clone(),
+        }),
+        // Issue #661: a `children <Class>` operation carries the root's
+        // child feature, the resolved child class, and the validated
+        // action (`add`/`remove`/`save`). Absent on every service op.
+        child_scope: op.child_scope.as_ref().map(|scope| DddChildRef {
+            feature: scope.feature.clone(),
+            class: scope.class.clone(),
+            action: scope.action.clone(),
+        }),
+        ordinal,
     }
 }
 

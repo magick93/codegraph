@@ -1824,6 +1824,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
                 bodies: Default::default(),
                 body_receiver: None,
                 transition: None,
+                child_scope: None,
                 ordinal: 0,
             }],
         }],

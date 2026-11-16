@@ -781,13 +781,15 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   **Graph**: `DddServiceOperation.{bodies, body_receiver, throws}`
   (serde-defaulted; the body payload stays opaque — codegraph-core may not
   depend on phero-expr) and **`GRAPH_FORMAT_VERSION` 7** — the bump that
-  introduced the field set (now 8 with #660's `transition`; the artifact kit
-  fixture is `graph_document_v8.md`), because a warm cache written pre-#662
-  deserializes the bodies as EMPTY and would silently degrade every bodied
-  op to the 501 seam. hurl: a body that may answer 4xx emits NO leg
+  introduced the field set (now 10 with #660's `transition`, #668's declared
+  tables/register classes and #661's `child_scope`/`child_operations`; the
+  artifact kit fixture is `graph_document_v10.md`), because a warm cache
+  written pre-#662 deserializes the bodies as EMPTY and would silently
+  degrade every bodied op to the 501 seam. hurl: a body that may answer 4xx
+  emits NO leg
   (no deterministic status — the live gate drives it with a probe); a
   lowerable body leg carries its declared parameters as the action body.
-  Gates: `cargo test -p codegraph --test service_ops_tests` (10) +
+  Gates: `cargo test -p codegraph --test service_ops_tests` (16) +
   `cargo test -p codegraph-generate --lib -- ddd::body_lower` (11) +
   `--test ddd_ingest_tests` (7) + `--test service_ops_compile_gate --
   --ignored --nocapture` (the #551 pin, green) + `--test
@@ -797,8 +799,89 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   exactly the pre-#662 handler (the raise-doc block folds into the seam
   block's `{% endif %}` so it adds no newline) and the actions contract is
   unchanged for parameter-less ops.
+
+### Aggregate child operations (issue #661)
+
+Upstream proposal 004 (`Design.child_operations` + `ServiceOperation.
+child_scope: ChildRef { feature, class, action }`) is now the executable
+child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
+
+- **Ingest** (`ingest/ddd_ingest.rs::service_operation_node`, one
+  conversion shared by service ops and child ops so the planes cannot
+  drift): `DddDesignNode.child_operations` (the `children <Root>` block;
+  `extend` is the deprecated upstream alias) + `DddServiceOperation.
+  child_scope: DddChildRef`. Grafeo: `DddDesign.child_operations_json` (one
+  serde blob, always `[]` for an extend-less design) — and
+  **`GRAPH_FORMAT_VERSION` 9 → 10** (#668 took 8 → 9 first): a pre-#661 warm
+  cache would serve NO child operations (the pre-#661 silent drop), so it
+  cold-re-ingests. Artifact kit fixture renamed `graph_document_v9.md` →
+  `v10.md` (`format_version_too_new` steps to 11).
+- **Lowering** (`ddd/service_ops.rs::routes_for_entity`): a child op is
+  declared on the ROOT's design but ACTS on the child, so `routes_for_entity
+  (CHILD)` collects the ops whose `childScope.class` resolves to it and
+  reuses the WS4 nested shape verbatim — the parent's `.nest(…)` mounts the
+  child routes fn, the scoped `find_by_id_scoped(child_id, parent_id)` load
+  IS the parent ownership contract, and `ExecutionKind::ChildOp { action,
+  feature, child_class, read_back }` drives the CHILD's command plane:
+  `add` → the child's create command (`create(item, parent_id, …)`, i.e.
+  create-and-link; COLLECTION-level route `…/{parent}/{parent_id}/{child}/
+  actions/{op}` because the element does not exist yet), `save` → the
+  child's update command, `remove` → the child's delete command (item-level
+  `…/{child_id}/actions/{op}` per the issue's route). Child ops are
+  ungated upstream (no capability/veto binds them), so no authorize fn
+  emits unless a `when` guard survives lowering.
+- **Fail-closed seams (never a silent write)**: a child action whose child
+  plane lacks the required op (`add`→create, `save`→update,
+  `remove`→delete), a non-object parameter (a scalar cannot be bound; the
+  child id rides the path), an `add` with a `when` guard (no record exists
+  pre-add), and a `when` guard with no `read` plane all answer 501 naming
+  the fix. A child op whose class resolves to no schema, is `protected`, or
+  whose entity is NOT declared a nested child of that root
+  (domains.toml `role = "child"` + `parent` + `parent_ref`) emits NO route
+  and a WARN naming the modeling fix — never a top-level route that drops
+  the parent anchor. Contained children (mox `contains` ⇒ value object,
+  upstream Rule 6 forbids a standalone repository) are out of scope by
+  design.
+- **The retained cross-aggregate refusal** (an op WITHOUT `child_scope`
+  whose delegation targets another class's repository) keeps its 501 and
+  its improved message: it names `children <Root> { … => <feature>.<add|
+  remove|save> }` (and `childScope`) as the construct that WOULD lower it,
+  and keeps "Refusing to patch the parent row silently".
+- **hurl** (`api/hurl_contract.rs::child_action_legs`): the child's actions
+  contract gains, per action, the leg plus its FAILURE leg — `add` posts the
+  entity's create body collection-level, captures `added_{snake}_id`, then a
+  read-back `GET …/{added_id}` (200, `$.data.id` exists) and a bogus-key
+  body pinning the create DTO's `deny_unknown_fields` 422; `save` posts the
+  update body and pins an unknown id's 404; `remove` deletes the captured
+  element (deferred LAST like every delete) and pins the same 404. The
+  parent ownership failure is the zero-uuid-under-this-parent 404.
+- **OpenAPI/POM**: the utoipa path nests (collection-level for `add`) and
+  registers through the child's module; the IFML action plane bills
+  `remove`/`save` as `Ok` legs and leaves `add` unbuilt (the POM action
+  surface is item-addressed; a collection-add POM surface is a recorded
+  follow-up).
+- Gates: `cargo test -p codegraph --test service_ops_tests` (16: ingest
+  scope mirror, nested routes/handlers/hurl, the fail-closed nesting
+  variant, the improved seam) + `--test service_ops_compile_gate --
+  --ignored` (native; the child action handlers compile against the child's
+  DTOs) + `--test worker_wasm_compile_tests -- --ignored` (the same
+  handlers on wasm32 in the cornucopia worker) + `--test
+  service_ops_hurl_gate -- --ignored` (live: create → add 200 → read-back
+  200 → save 200 → remove 200, the 422/404 failure legs, a hand-authored
+  two-parent ownership probe, and a psql proof that A owns exactly the
+  added line while B owns none) + `--test artifact_kit_tests`. Byte
+  identity: a model with no `children` block emits exactly the pre-#661
+  router/handler/actions contract (the canaries hold; every new template
+  branch is `child_op`-gated).
+- **Deferred**: contained-VO child ops (upstream Rule 6 — no standalone
+  repository; `contains` children have no child plane), grandchild
+  generalization beyond the already-emitted depth-2 route, the M:N
+  junction write (`refers T[]` without a back-ref column lowers to a
+  junction table; the action's link is the config child back-ref FK — a
+  junction-only aggregate link is not written), a collection-add POM/
+  action-spec leg, and a modeled child op over a cross-domain child.
 - **Deferred**: delegation breadth beyond delete/findById (save payloads,
-  service-to-service, search); child-entity op routes; api_key capability
+  service-to-service, search); api_key capability
   enforcement (JWT-only policy gates); a live `service_ops_hurl_gate`
   (the compile pin + byte pins cover the emitted contract; the live boot
   is the documented follow-up); IFML action-op e2e spec category +
@@ -870,8 +953,9 @@ the op's name and are demoted to a **no-binding fallback**:
   stay pinned. `tests/fixtures/ifml_gate/refunds.ddd`'s `approve` gains
   `transition Escalate` (resolved pair unchanged: none → escalated), so the
   nightly gate exercises the primary path.
-- **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 (artifact kit
-  `graph_document_v8.md`; `format_version_too_new` now pins 9) — the binding
+- **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 (artifact kit; the current
+  fixture is `graph_document_v10.md`, four bumps later, and
+  `format_version_too_new` always pins the next version) — the binding
   rides the serde-serialized `operations_json` blob, so a warm cache would
   read it as `None` and silently serve the heuristics.
 - **Gates**: `cargo test -p codegraph --test service_ops_tests` (13: mirror,

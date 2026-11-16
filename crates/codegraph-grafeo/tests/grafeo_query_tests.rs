@@ -1549,6 +1549,7 @@ fn ddd_fixture() -> DddModelGraph {
                     ..Default::default()
                 },
                 machine_json: None,
+                child_operations: Vec::new(),
                 ordinal: 0,
             },
             DddDesignNode {
@@ -1560,6 +1561,7 @@ fn ddd_fixture() -> DddModelGraph {
                 is_abstract: false,
                 flags: DddDesignFlags::default(),
                 machine_json: None,
+                child_operations: Vec::new(),
                 ordinal: 1,
             },
             DddDesignNode {
@@ -1576,6 +1578,7 @@ fn ddd_fixture() -> DddModelGraph {
                     ..Default::default()
                 },
                 machine_json: None,
+                child_operations: Vec::new(),
                 ordinal: 2,
             },
             DddDesignNode {
@@ -1590,6 +1593,7 @@ fn ddd_fixture() -> DddModelGraph {
                     ..Default::default()
                 },
                 machine_json: None,
+                child_operations: Vec::new(),
                 ordinal: 0,
             },
         ],
@@ -1753,6 +1757,7 @@ fn ddd_fixture() -> DddModelGraph {
                         bodies: Default::default(),
                         body_receiver: None,
                         transition: None,
+                        child_scope: None,
                     },
                     DddServiceOperation {
                         name: "renew".to_string(),
@@ -1771,6 +1776,7 @@ fn ddd_fixture() -> DddModelGraph {
                         bodies: Default::default(),
                         body_receiver: None,
                         transition: None,
+                        child_scope: None,
                     },
                 ],
                 ordinal: 0,
@@ -1800,6 +1806,7 @@ fn ddd_fixture() -> DddModelGraph {
                     bodies: Default::default(),
                     body_receiver: None,
                     transition: None,
+                    child_scope: None,
                 }],
                 ordinal: 0,
             },

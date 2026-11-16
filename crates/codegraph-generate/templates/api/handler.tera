@@ -1215,11 +1215,28 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
 /// #590): `POST …/{id}/actions/{{ op.snake }}` — the IFML action button's
 /// wire shape (#559) with the actor policy enforced server-side. Child
 /// entities nest the route under the parent and load the record through
-/// the parent-scoped read (WS4).
+/// the parent-scoped read (WS4).{% if op.execution.kind == "child_op" %}
+///
+/// Aggregate child operation (issue #661): declared by the root's
+/// `children {{ op.service }} {{ '{' }} … => {{ op.execution.feature }}.{{ op.execution.action }} }`
+/// block, lowered against the CHILD's command plane through the parent's
+/// aggregate path — `add` creates and links one element (collection route),
+/// `save`/`remove` act on the parent-scoped element.{% endif %}
 #[utoipa::path(
     post,
 {% if role == "child" %}
+{% if op.execution.kind == "child_op" and op.execution.action == "add" %}
 {% if ancestor_path_params >= 2 %}
+    path = "/api/{{ project.api_version }}/{{ grandparent_domain | default(value=domain) }}/{{ grandparent_path_segment }}/{ {{- grandparent_param_name -}} }/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/actions/{{ op.snake }}",
+    params(
+        ("{{ grandparent_param_name }}" = Uuid, Path, description = "Grandparent ID"),
+        ("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID"),
+    ),
+{% else %}
+    path = "/api/{{ project.api_version }}/{{ parent_domain | default(value=domain) }}/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/actions/{{ op.snake }}",
+    params(("{{ parent_param_name }}" = Uuid, Path, description = "{{ parent_entity }} ID")),
+{% endif %}
+{% elif ancestor_path_params >= 2 %}
     path = "/api/{{ project.api_version }}/{{ grandparent_domain | default(value=domain) }}/{{ grandparent_path_segment }}/{ {{- grandparent_param_name -}} }/{{ parent_path_segment }}/{ {{- parent_param_name -}} }/{{ path_segment }}/{ {{- param_name -}} }/actions/{{ op.snake }}",
     params(
         ("{{ grandparent_param_name }}" = Uuid, Path, description = "Grandparent ID"),
@@ -1237,10 +1254,16 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
     path = "/api/{{ project.api_version }}/{{ domain }}/{{ path_segment }}/{ {{- param_name -}} }/actions/{{ op.snake }}",
     params(("{{ param_name }}" = Uuid, Path, description = "{{ entity_name }} ID")),
 {% endif %}
+{% if op.execution.kind == "child_op" and op.execution.action == "add" %}
+    request_body(content = Create{{ entity_name }}Body, description = "The child element to add"),
+{% endif %}
     responses(
         (status = 200, description = "Accepted"),
         (status = 403, description = "Denied by the actor policy"),
         (status = 404, description = "Not found"),
+{% if op.execution.kind == "child_op" %}
+        (status = 422, description = "Invalid child payload"),
+{% endif %}
 {% if op.execution.kind == "update" and (op.execution.state | default(value=false)) %}
         (status = 409, description = "The transition is not allowed from the current state"),
 {% endif %}
@@ -1256,6 +1279,14 @@ pub async fn {{ op.fn_name }}(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
+{% if op.execution.kind == "child_op" and op.execution.action == "add" %}
+{% if ancestor_path_params >= 2 %}
+    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,
+{% else %}
+    Path(parent_id): Path<Uuid>,
+{% endif %}
+    CreateBody(body): CreateBody,
+{% else %}
 {% if role == "child" %}
 {% if ancestor_path_params >= 2 %}
     Path((_grandparent_id, parent_id, {{ param_name }})): Path<(Uuid, Uuid, Uuid)>,
@@ -1266,6 +1297,7 @@ pub async fn {{ op.fn_name }}(
     Path({{ param_name }}): Path<Uuid>,
 {% endif %}
     body: Option<Json<serde_json::Value>>,
+{% endif %}
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
     let correlation_id = extract_correlation_id(&headers);
@@ -1302,6 +1334,104 @@ pub async fn {{ op.fn_name }}(
     // lowered at generation time over the loaded record. A construct outside
     // the documented subset is a generation error, never a silent seam.
 {{ op.execution.plan.block }}
+{% elif op.execution.kind == "child_op" %}
+    // Aggregate child operation (issue #661): the root's
+    // `children {{ op.service }}` block declared this `{{ op.execution.action }}`
+    // over its `{{ op.execution.feature }}` child collection. It runs against the
+    // CHILD's plane, under the parent's aggregate path, so the element can
+    // never land under another parent.
+{% if op.execution.action == "add" %}
+    let item = match body {
+        Create{{ entity_name }}Body::Single(item) => item,
+        Create{{ entity_name }}Body::Bulk(_) => {
+            return Err(AppError::bad_request(
+                "A child action adds one element — send a single JSON object, not an array",
+            )
+            .with_correlation_id(correlation_id));
+        }
+    };
+    if let Err(report) = garde::Validate::validate(&item) {
+        let details: Vec<crate::error::FieldError> = report.into_inner()
+            .into_iter()
+            .map(|(path, error)| crate::error::FieldError {
+                field: path.to_string(),
+                message: error.message().to_string(),
+            })
+            .collect();
+        return Err(AppError::validation("Request validation failed", details)
+            .with_correlation_id(correlation_id));
+    }
+    let created_id = state.{{ domain }}_{{ module_name }}_commands.create(
+        item,
+        parent_id,
+        {{ project.domain_types_crate }}::SourceContext::api(),
+        correlation_id,
+        api_key_info.api_key_id,
+        api_key_info.organization_id,
+        api_key_info.user_id,
+        api_key_info.role.clone(),
+    ).await.map_err(|e: {{ domain | pascal_case }}Error| {
+        AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to add the {{ entity_name }} child")
+            .with_correlation_id(correlation_id)
+    })?;
+    let created = state.{{ domain }}_{{ module_name }}_queries
+        .find_by_id(created_id{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
+        .await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to reload the {{ entity_name }} child")
+                .with_correlation_id(correlation_id)
+        })?
+        .ok_or_else(|| AppError::internal("Created child not found").with_correlation_id(correlation_id))?;
+    Ok(axum::Json(serde_json::json!({
+        "data": created,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })).into_response())
+{% elif op.execution.action == "save" %}
+    // The scoped load above is the parent-ownership contract; the update
+    // itself re-reads the row through the command plane.
+    let _ = &response;
+    let value = body.map(|Json(v)| v).unwrap_or_else(|| serde_json::json!({}));
+    let cmd: crate::domain::{{ domain }}::{{ module_name }}::dto_update::Update{{ entity_name }}Request =
+        serde_json::from_value(value).map_err(|e| {
+            AppError::bad_request(format!("invalid {{ entity_name }} update body: {e}"))
+                .with_correlation_id(correlation_id)
+        })?;
+    state.{{ domain }}_{{ module_name }}_commands.update(
+        {{ param_name }},
+        cmd,
+        {{ project.domain_types_crate }}::SourceContext::api(),
+        correlation_id,
+        api_key_info.api_key_id,
+        api_key_info.organization_id,
+        api_key_info.user_id,
+        api_key_info.role.clone(),
+    ).await.map_err(|e: {{ domain | pascal_case }}Error| {
+        AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to save the {{ entity_name }} child")
+            .with_correlation_id(correlation_id)
+    })?;
+    let saved = state.{{ domain }}_{{ module_name }}_queries
+        .find_by_id({{ param_name }}{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
+        .await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to reload the {{ entity_name }} child")
+                .with_correlation_id(correlation_id)
+        })?
+        .ok_or_else(|| AppError::not_found("{{ entity_name }} not found").with_correlation_id(correlation_id))?;
+    Ok(axum::Json(serde_json::json!({
+        "data": saved,
+        "meta": { "correlation_id": correlation_id.to_string() }
+    })).into_response())
+{% else %}
+    // `remove` deletes the element through the parent-scoped record the
+    // route already loaded — a child of another parent 404s above.
+    let _ = response;
+    state.{{ domain }}_{{ module_name }}_commands.delete({{ param_name }}, {{ project.domain_types_crate }}::SourceContext::api(), correlation_id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to remove the {{ entity_name }} child")
+                .with_correlation_id(correlation_id)
+        })?;
+    Ok(axum::Json(serde_json::json!({ "data": { "ok": true } })).into_response())
+{% endif %}
 {% elif op.execution.kind == "update" %}
     // Executable `save`/`update` delegation (P0): patch the loaded row
     // through the command plane. A machine-bound op resolves its target

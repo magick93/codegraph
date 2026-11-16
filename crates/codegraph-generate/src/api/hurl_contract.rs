@@ -113,13 +113,14 @@ struct EntityContractCtx {
 }
 
 /// One service-op action leg in the actions contract (issue #590).
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct OpLeg {
     op_name: String,
     service: String,
     snake: String,
     /// Expected status: 200 (wired delegation / lowered body), 409 (wrong
-    /// state for a machine transition), or 501 (seam).
+    /// state for a machine transition), 422 (malformed child payload), 404
+    /// (unknown child under the parent), or 501 (seam).
     expect: u16,
     seam: bool,
     seam_reason: String,
@@ -128,6 +129,24 @@ struct OpLeg {
     /// The JSON action body a bodied op's declared parameters need (issue
     /// #662); empty for every other lowering.
     body: String,
+    /// `true` for a COLLECTION-level child action (`add`, issue #661): the
+    /// leg posts to `{item_url_base}/actions/{snake}` — no child id segment,
+    /// because the element does not exist yet.
+    collection: bool,
+    /// Non-empty ⇒ the HTTP method (`GET` for a child `add` read-back leg);
+    /// empty ⇒ `POST`.
+    method: String,
+    /// Non-empty ⇒ a URL SUFFIX appended to `item_url_base` (the child
+    /// `add` read-back and the child failure legs); empty ⇒ the action
+    /// route.
+    url: String,
+    /// Non-empty ⇒ a `[Captures]` entry (`name: jsonpath "$.data.id"`) this
+    /// leg records — the child `add` leg captures the created element.
+    capture: String,
+    /// Extra `[Asserts]` lines (the read-back leg).
+    asserts: Vec<String>,
+    /// A human note rendered after the leg's header (`— <note>`).
+    note: String,
 }
 
 /// The action-body JSON one leg sends: one minimal value per declared
@@ -160,7 +179,15 @@ fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
 /// refuses it); seams pin 501. Finally, replay one exercised non-self
 /// transition from the post-sequence state to GUARANTEE a 409 leg even when
 /// declaration order happens to be valid end to end.
-fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLeg> {
+///
+/// `child_bodies` carries the entity's own create/update payloads: an
+/// aggregate child `add` posts the create body and a child `save` posts the
+/// update body (issue #661) — the same wire shapes the entity contract
+/// exercises, so a DTO change cannot desync the action contract.
+fn state_aware_legs(
+    ops: &[crate::ddd::service_ops::ServiceOpRoute],
+    child_bodies: (&str, &str),
+) -> Vec<OpLeg> {
     use crate::ddd::service_ops::{ExecutionKind, ServiceOpTransition};
 
     let mut current: Option<String> = ops
@@ -185,7 +212,24 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 seam_reason: "wired".to_string(),
                 wrong_state: false,
                 body: String::new(),
+                ..Default::default()
             });
+            continue;
+        }
+        // Aggregate child operations (issue #661). `add` appends a NEW
+        // element (its own capture + read-back) and pins the create DTO's
+        // unknown-field 422 as the failure leg; `save` patches the captured
+        // element and pins an unknown id's 404; `remove` DELETES the
+        // captured element, so it is deferred to the end like every delete.
+        if let ExecutionKind::ChildOp {
+            action, read_back, ..
+        } = &op.execution
+        {
+            let child_legs = child_action_legs(op, *action, *read_back, child_bodies);
+            match action {
+                crate::ddd::service_ops::ChildAction::Remove => delete_legs.extend(child_legs),
+                _ => legs.extend(child_legs),
+            }
             continue;
         }
         // A bodied op that may answer a declared 4xx has NO deterministic
@@ -208,6 +252,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 seam_reason: reason.clone(),
                 wrong_state: false,
                 body: String::new(),
+                ..Default::default()
             },
             ExecutionKind::Update { .. } | ExecutionKind::Body { .. }
                 if op
@@ -240,6 +285,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                             seam_reason: "wired".to_string(),
                             wrong_state: false,
                             body,
+                            ..Default::default()
                         }
                     }
                     None => OpLeg {
@@ -251,6 +297,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                         seam_reason: format!("no transition from the current state `{from}`"),
                         wrong_state: true,
                         body,
+                        ..Default::default()
                     },
                 }
             }
@@ -263,6 +310,7 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
                 seam_reason: "wired".to_string(),
                 wrong_state: false,
                 body: op_body_json(op),
+                ..Default::default()
             },
         };
         legs.push(leg);
@@ -289,10 +337,111 @@ fn state_aware_legs(ops: &[crate::ddd::service_ops::ServiceOpRoute]) -> Vec<OpLe
             ),
             wrong_state: true,
             body: String::new(),
+            ..Default::default()
         });
     }
     legs.extend(delete_legs);
     legs
+}
+
+/// The hurl legs one aggregate child action emits (issue #661):
+///
+/// - `add` → POST the collection action with the entity's create body
+///   (200, capturing the created element), an optional read-back GET by the
+///   captured id (200 — proves the element really landed and is readable
+///   under the parent), then the failure leg: the create DTO denies unknown
+///   fields, so a bogus key pins 422;
+/// - `save` → POST the item action with the entity's update body (200), then
+///   the failure leg: an unknown child id under the parent pins 404;
+/// - `remove` → POST the item action (200, the caller defers it to the end),
+///   then the same unknown-id 404 failure leg.
+fn child_action_legs(
+    op: &crate::ddd::service_ops::ServiceOpRoute,
+    action: crate::ddd::service_ops::ChildAction,
+    read_back: bool,
+    child_bodies: (&str, &str),
+) -> Vec<OpLeg> {
+    use crate::ddd::service_ops::ChildAction;
+
+    let base = &op.service;
+    let mut legs = Vec::new();
+    match action {
+        ChildAction::Add => {
+            let capture = format!("added_{}_id", op.snake);
+            legs.push(OpLeg {
+                op_name: op.op_name.clone(),
+                service: base.clone(),
+                snake: op.snake.clone(),
+                expect: 200,
+                body: child_bodies.0.to_string(),
+                collection: true,
+                capture: capture.clone(),
+                note: "aggregate child `add` — create-and-link under the parent".to_string(),
+                ..Default::default()
+            });
+            if read_back {
+                legs.push(OpLeg {
+                    op_name: format!("{} (read-back)", op.op_name),
+                    service: base.clone(),
+                    snake: op.snake.clone(),
+                    expect: 200,
+                    method: "GET".to_string(),
+                    url: format!("/{{{{{capture}}}}}"),
+                    asserts: vec![r#"jsonpath "$.data.id" exists"#.to_string()],
+                    note: "read-back: the added element is readable under the parent".to_string(),
+                    ..Default::default()
+                });
+            }
+            legs.push(OpLeg {
+                op_name: format!("{} (failure)", op.op_name),
+                service: base.clone(),
+                snake: op.snake.clone(),
+                expect: 422,
+                collection: true,
+                body: "{\n  \"__unknown_field__\": true\n}".to_string(),
+                note: "failure leg: the create body denies unknown fields (422)".to_string(),
+                ..Default::default()
+            });
+        }
+        ChildAction::Save => {
+            legs.push(OpLeg {
+                op_name: op.op_name.clone(),
+                service: base.clone(),
+                snake: op.snake.clone(),
+                expect: 200,
+                body: child_bodies.1.to_string(),
+                note: "aggregate child `save` — update the parent-scoped element".to_string(),
+                ..Default::default()
+            });
+            legs.push(child_failure_leg(op));
+        }
+        ChildAction::Remove => {
+            legs.push(OpLeg {
+                op_name: op.op_name.clone(),
+                service: base.clone(),
+                snake: op.snake.clone(),
+                expect: 200,
+                note: "aggregate child `remove` — delete the parent-scoped element".to_string(),
+                ..Default::default()
+            });
+            legs.push(child_failure_leg(op));
+        }
+    }
+    legs
+}
+
+/// The child action's failure leg: an id the parent does not own (the zero
+/// uuid) must 404 — the scoped read is the route's ownership contract.
+fn child_failure_leg(op: &crate::ddd::service_ops::ServiceOpRoute) -> OpLeg {
+    OpLeg {
+        op_name: format!("{} (failure)", op.op_name),
+        service: op.service.clone(),
+        snake: op.snake.clone(),
+        expect: 404,
+        url: format!("/00000000-0000-0000-0000-000000000000/actions/{}", op.snake),
+        note: "failure leg: an element the parent does not own answers 404".to_string(),
+        ..Default::default()
+    }
 }
 
 /// Context for the per-entity `actions` hurl file (issue #590): a fresh
@@ -494,7 +643,7 @@ impl DomainGenerator for HurlContractGenerator {
             .await
             .map_err(codegraph_core::error::Error::Config)?;
             if !ops.is_empty() {
-                let legs = state_aware_legs(&ops);
+                let legs = state_aware_legs(&ops, (&contract.create_body, &contract.update_body));
                 let ctx = ActionsContractCtx {
                     domain: domain.to_string(),
                     module: schema.pg_table_name.clone(),

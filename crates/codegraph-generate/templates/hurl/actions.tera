@@ -29,10 +29,14 @@ HTTP 201
 [Asserts]
 {{ create_asserts }}
 {% for op in ops %}
-# service op `{{ op.op_name }}` (service `{{ op.service }}`){% if op.seam %} — 501 seam: {{ op.seam_reason }}{% elif op.wrong_state %} — wrong-state guard (409): {{ op.seam_reason }}{% endif %}
-POST {{ item_url_base }}/{{ capture_ref }}/actions/{{ op.snake }}
+# service op `{{ op.op_name }}` (service `{{ op.service }}`){% if op.seam %} — 501 seam: {{ op.seam_reason }}{% elif op.wrong_state %} — wrong-state guard (409): {{ op.seam_reason }}{% elif op.note %} — {{ op.note }}{% endif %}
+{% if op.method == "GET" %}GET {{ item_url_base }}{{ op.url }}{% elif op.collection %}POST {{ item_url_base }}/actions/{{ op.snake }}{% elif op.url %}POST {{ item_url_base }}{{ op.url }}{% else %}POST {{ item_url_base }}/{{ capture_ref }}/actions/{{ op.snake }}{% endif %}
 {{ auth_header }}{% if op.body %}
 {{ op.body }}{% endif %}
 
 HTTP {{ op.expect }}
-{% endfor %}
+{% if op.capture %}[Captures]
+{{ op.capture }}: jsonpath "$.data.id"
+{% endif %}{% if op.asserts | length > 0 %}[Asserts]
+{% for a in op.asserts %}{{ a }}
+{% endfor %}{% endif %}{% endfor %}

@@ -1230,6 +1230,56 @@ async fn unresolvable_authored_bindings_fail_validation_naming_the_machines() {
 
 // ── Issue #661: aggregate child operations (`children <Class>`) ────────
 
+/// The ingest mirror: `Design.child_operations` lands on the design node
+/// with each operation's `child_scope` (feature, resolved child class,
+/// validated action), and SERVICE operations carry none.
+#[tokio::test]
+async fn aggregate_child_operations_ingest_with_their_child_scope() {
+    let fixture = write_child_ops_fixture();
+    let engine = ingest_child_ops(&fixture).await;
+
+    let models = engine.get_ddd_models().await.unwrap();
+    let design = models[0]
+        .designs
+        .iter()
+        .find(|d| d.class == "PayRunType")
+        .expect("the PayRunType design");
+    assert_eq!(
+        design
+            .child_operations
+            .iter()
+            .map(|op| op.name.as_str())
+            .collect::<Vec<_>>(),
+        ["addLine", "saveLine", "removeLine"],
+        "the `children PayRunType` block must lower onto the design in declaration order"
+    );
+    let add = &design.child_operations[0];
+    let scope = add.child_scope.as_ref().expect("the child scope mirrors");
+    assert_eq!(scope.feature, "lines");
+    assert_eq!(scope.class, "payroll.PayRunLineType");
+    assert_eq!(scope.action, "add");
+    assert_eq!(
+        add.params.len(),
+        1,
+        "the declared DTO parameter rides the mirror"
+    );
+    assert!(
+        add.delegation_target.is_none(),
+        "a child operation delegates to nothing — it carries `childScope`"
+    );
+    // Ordinary service operations never carry a child scope.
+    let service_ops: Vec<&codegraph_core::types::DddServiceOperation> = models[0]
+        .services
+        .iter()
+        .flat_map(|s| s.operations.iter())
+        .collect();
+    assert!(!service_ops.is_empty(), "the fixture has a root service");
+    assert!(
+        service_ops.iter().all(|op| op.child_scope.is_none()),
+        "service operations carry no child scope"
+    );
+}
+
 /// Acceptance (1) + (3): a modeled `children PayRunType { boolean
 /// addLine(PayRunLineDraft line) => lines.add }` generates the nested child
 /// action routes — against the CHILD's plane, under the parent's aggregate
