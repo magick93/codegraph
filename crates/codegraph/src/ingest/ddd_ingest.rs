@@ -16,7 +16,7 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     DddApplicationNode, DddDesignFlags, DddDesignNode, DddDocumentField, DddModelGraph,
     DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
-    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
+    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation, DddTransitionRef,
 };
 use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_ddd_str};
 
@@ -498,6 +498,12 @@ pub fn ddd_model_graph_from_phero(
                     throws: op.throws.iter().map(to_json).collect(),
                     bodies: op.bodies.clone(),
                     body_receiver: op.body_receiver.clone(),
+                    // Issue #660: the authored transition binding mirrors
+                    // as authored (`TransitionRef { trigger, machine }`).
+                    transition: op.transition.as_ref().map(|t| DddTransitionRef {
+                        trigger: t.trigger.clone(),
+                        machine: t.machine.clone(),
+                    }),
                     ordinal,
                 })
                 .collect();

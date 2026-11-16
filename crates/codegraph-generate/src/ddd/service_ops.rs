@@ -11,6 +11,10 @@
 //! the loaded record.
 //!
 //! Entity binding resolution (first hit wins, deterministic):
+//! 0. an authored `transition` binding's delegation target (issue #660) —
+//!    the binding names a machine on that repository's designed class, so
+//!    that class is the entity the op acts on (a capability only GATES the
+//!    route, so it cannot outrank it);
 //! 1. capability class binding — an op capability bound (`.actor`
 //!    `capability X for Class`) to a schema title (exact → `+Type`);
 //! 2. delegation to a repository — `op => SomeRepository.op` where the
@@ -27,12 +31,31 @@
 //! Otherwise repository `delete` delegations wire to the entity's command
 //! delete, `findById` delegations return the loaded record, and
 //! `save`/`update` delegations patch the loaded row through the update
-//! command (P0). Where the entity carries a `.ddd` machine, the op binds a
-//! transition (by trigger name, op-level state guard, or the protected
-//! internal op sharing its capability) and the target state is resolved from
-//! the record's current state — a no-transition state change fails closed
-//! with 409. Ops with no executable lowering (abstract bodies,
-//! service-to-service/search/finder delegation) answer 501 naming the gap.
+//! command (P0).
+//!
+//! Machine transitions (issue #660). Where the entity carries a `.ddd`
+//! machine, the operation's transition is selected by, in order:
+//!
+//! 1. **the authored `transition <Trigger>` binding**
+//!    (`name => Repository.save transition <EnumType>.<Trigger>`) — the
+//!    PRIMARY selector. It resolves against the machine bound to the entity
+//!    (the delegation target's designed class): the trigger must be one the
+//!    machine declares (an explicit `via` name or a bare arrow's derived
+//!    lowerCamel name), the optional qualifier must name that machine's
+//!    enum type, and a module with more than one machine-bearing design
+//!    requires it. An unresolvable/ambiguous binding is a generation error
+//!    ([`transition_binding_errors`]) — NEVER a fallback to an inference;
+//! 2. otherwise the pre-#660 heuristics, kept ONLY as the no-binding
+//!    fallback for models that predate the syntax: op-name → trigger
+//!    (exact, then entity-suffix-stripped), the op-level `when` source
+//!    states, and the capability-sharing `protected`-op arm
+//!    (`preparePayRun` → `calculate`). Every op resolved this way reports a
+//!    WARN naming the missing binding ([`transition_binding_warnings`]).
+//!
+//! The target state is then resolved from the record's current state — a
+//! no-transition state change fails closed with 409. Ops with no executable
+//! lowering (abstract bodies, service-to-service/search/finder delegation)
+//! answer 501 naming the gap.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -1338,6 +1361,19 @@ async fn bind_entity(
     db: &dyn GraphQuerier,
     type_suffix: &str,
 ) -> Option<String> {
+    // 0. An authored transition binding names a machine on the DELEGATION
+    //    target's designed class (issue #660), so that class is the entity
+    //    the operation acts on — it wins over a capability binding, whose
+    //    class only GATES the route. Without this an op that both binds a
+    //    capability elsewhere and a transition would route to the wrong
+    //    aggregate and be refused downstream.
+    if op.transition.is_some()
+        && let Some(target) = op.delegation_target.as_deref()
+        && let Some(repo) = model.repositories.iter().find(|r| r.name == target)
+        && let Some(title) = schema_title_for_class(db, &repo.design_class, type_suffix).await
+    {
+        return Some(title);
+    }
     // 1. Capability class binding.
     if !op.capabilities.is_empty()
         && let Ok(capabilities) = db.get_capabilities().await
@@ -1498,13 +1534,232 @@ fn collect_condition_states(
     }
 }
 
-/// The transitions a service op applies, in resolution order:
-/// 1. op-name → trigger (exact, then entity-suffix-stripped);
-/// 2. op-level `when` state equality → the unique outgoing transition(s);
-/// 3. capability fallback: a `protected` internal op (the machine's real
-///    trigger carrier) sharing a capability with the public op
-///    (`preparePayRun` → `calculate`).
-fn op_transitions(
+/// The transitions a service op applies.
+///
+/// **Primary selector (issue #660): the authored `transition` binding.** When
+/// the operation declares one, the machine's transition is resolved from the
+/// binding alone — the trigger must be one the machine declares (an explicit
+/// `via` name or a bare arrow's derived lowerCamel name), the optional
+/// qualifier must name the bound machine's enum type, and a module carrying
+/// more than one machine-bearing design requires that qualifier. Any failure
+/// is a HARD generation error naming the op, the binding, and the machines
+/// involved: an authored binding NEVER falls back to an inference.
+///
+/// **No-binding fallback** — the pre-#660 heuristics, kept ONLY because
+/// consumer models still declare ops without a binding (the upstream syntax
+/// postdates them): op-name → trigger (exact, then entity-suffix-stripped),
+/// op-level `when` state equality → the unique outgoing transition(s), and
+/// the capability-sharing arm (a `protected` internal op carrying the real
+/// trigger, `preparePayRun` → `calculate`). Every op that resolves a
+/// transition this way reports a WARN naming the missing binding
+/// ([`transition_binding_warnings`]).
+fn resolved_transitions(
+    op: &codegraph_core::types::DddServiceOperation,
+    model: &codegraph_core::types::DddModelGraph,
+    machine: &phero_ir::ddd::StateMachine,
+    entity_title: &str,
+    entity_class: &str,
+    entity_table: &str,
+) -> Result<Vec<ServiceOpTransition>, String> {
+    match &op.transition {
+        Some(binding) => resolve_transition_binding(op, binding, model, machine, entity_title),
+        None => Ok(heuristic_transitions(
+            op,
+            model,
+            machine,
+            entity_class,
+            entity_table,
+        )),
+    }
+}
+
+/// The authored spelling of a transition binding for messages:
+/// `SignOff`, or `ReleaseStatus.SignOff` when qualified.
+fn binding_spelling(binding: &codegraph_core::types::DddTransitionRef) -> String {
+    match &binding.machine {
+        Some(qualifier) => format!("{qualifier}.{}", binding.trigger),
+        None => binding.trigger.clone(),
+    }
+}
+
+/// The machine's enum type name — the only machine qualifier an authored
+/// binding can carry (Phero Lang machine declarations are field-named).
+fn machine_enum_type_name(machine: &phero_ir::ddd::StateMachine) -> String {
+    match &machine.enum_type {
+        phero_ir::TypeRef::Enum { name, .. }
+        | phero_ir::TypeRef::Class { name, .. }
+        | phero_ir::TypeRef::Datatype { name, .. }
+        | phero_ir::TypeRef::Interface { name, .. }
+        | phero_ir::TypeRef::Vocabulary { name, .. } => name.clone(),
+        phero_ir::TypeRef::Primitive(_) => String::new(),
+    }
+}
+
+/// Every machine-bearing design of the entity's module, as
+/// `(class, enum type)` — the ambiguity set an unqualified binding cannot
+/// disambiguate (upstream E0352 requires the qualifier there).
+fn module_machines(
+    model: &codegraph_core::types::DddModelGraph,
+    entity_title: &str,
+) -> Vec<(String, String)> {
+    let Some(design) = model
+        .designs
+        .iter()
+        .find(|d| d.resolved_title.as_deref() == Some(entity_title))
+    else {
+        return Vec::new();
+    };
+    model
+        .designs
+        .iter()
+        .filter(|d| {
+            d.application == design.application
+                && d.module == design.module
+                && d.machine_json.is_some()
+        })
+        .filter_map(|d| {
+            let machine: phero_ir::ddd::StateMachine =
+                serde_json::from_value(d.machine_json.clone()?).ok()?;
+            Some((d.class.clone(), machine_enum_type_name(&machine)))
+        })
+        .collect()
+}
+
+fn format_module_machines(machines: &[(String, String)]) -> String {
+    machines
+        .iter()
+        .map(|(class, enum_type)| format!("`{class}`: `{enum_type}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The declared trigger vocabulary of a machine, in declaration order:
+/// explicit `via` names and every bare arrow's derived lowerCamel name.
+fn declared_triggers(machine: &phero_ir::ddd::StateMachine) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for transition in &machine.transitions {
+        let name = match &transition.trigger {
+            Some(trigger) => trigger.clone(),
+            None => transition.to.to_lower_camel_case(),
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// Resolve one authored binding against the entity's machine (issue #660).
+///
+/// The returned transitions are EXACTLY the machine transitions the binding
+/// names — one per `(from, to)` pair carrying that trigger, so a trigger
+/// declared from several states still selects at runtime by the record's
+/// current state, but a trigger the machine does not declare (or a
+/// qualifier that names another machine) can never silently become a
+/// different transition.
+fn resolve_transition_binding(
+    op: &codegraph_core::types::DddServiceOperation,
+    binding: &codegraph_core::types::DddTransitionRef,
+    model: &codegraph_core::types::DddModelGraph,
+    machine: &phero_ir::ddd::StateMachine,
+    entity_title: &str,
+) -> Result<Vec<ServiceOpTransition>, String> {
+    let machines = module_machines(model, entity_title);
+    let spelling = binding_spelling(binding);
+    let entity_machine = machine_enum_type_name(machine);
+    match binding.machine.as_deref() {
+        None if machines.len() > 1 => {
+            return Err(format!(
+                "service op `{}` declares `transition {spelling}`, but the module carries \
+                 more than one machine-bearing design ({}); qualify the binding as \
+                 `<EnumType>.<Trigger>` — the machine bound to `{entity_title}` is \
+                 `{}: {entity_machine}`",
+                op.name,
+                format_module_machines(&machines),
+                machine.field,
+            ));
+        }
+        Some(qualifier) if qualifier != entity_machine => {
+            let others = machines
+                .iter()
+                .filter(|(class, _)| class.as_str() != entity_title)
+                .map(|(class, _)| class.as_str())
+                .collect::<Vec<_>>();
+            let tail = if others.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " (the module's machines are {})",
+                    format_module_machines(&machines)
+                )
+            };
+            return Err(format!(
+                "service op `{}` declares `transition {spelling}`, but the machine bound to \
+                 `{entity_title}` is `{}: {entity_machine}`, not `{qualifier}`{tail}",
+                op.name, machine.field,
+            ));
+        }
+        _ => {}
+    }
+
+    let mut explicit: Vec<&phero_ir::ddd::Transition> = Vec::new();
+    let mut derived: Vec<&phero_ir::ddd::Transition> = Vec::new();
+    for transition in &machine.transitions {
+        match &transition.trigger {
+            Some(trigger) if trigger == &binding.trigger => explicit.push(transition),
+            None if transition.to.to_lower_camel_case() == binding.trigger => {
+                derived.push(transition);
+            }
+            _ => {}
+        }
+    }
+    let chosen: Vec<&phero_ir::ddd::Transition> = match (explicit.is_empty(), derived.is_empty()) {
+        (false, true) => explicit,
+        (true, false) => derived,
+        (true, true) => {
+            let declared = declared_triggers(machine);
+            let vocabulary = if declared.is_empty() {
+                "the machine declares no triggers".to_string()
+            } else {
+                format!("declared triggers: {}", declared.join(", "))
+            };
+            return Err(format!(
+                "service op `{}` declares `transition {spelling}`, but the machine bound to \
+                 `{entity_title}` (`{}: {entity_machine}`) declares no such trigger ({vocabulary})",
+                op.name, machine.field,
+            ));
+        }
+        (false, false) => {
+            return Err(format!(
+                "service op `{}` declares `transition {spelling}`, which is ambiguous: the \
+                 machine bound to `{entity_title}` (`{}: {entity_machine}`) declares it both \
+                 as an explicit `via` trigger and as a bare arrow's derived name",
+                op.name, machine.field,
+            ));
+        }
+    };
+    Ok(pairs_of(&chosen))
+}
+
+fn pairs_of(transitions: &[&phero_ir::ddd::Transition]) -> Vec<ServiceOpTransition> {
+    let mut pairs: Vec<ServiceOpTransition> = transitions
+        .iter()
+        .map(|t| ServiceOpTransition {
+            from: StateName::new(t.from.clone()),
+            to: StateName::new(t.to.clone()),
+        })
+        .collect();
+    pairs.sort_by(|a, b| a.from.cmp(&b.from).then(a.to.cmp(&b.to)));
+    pairs.dedup_by(|a, b| a.from == b.from && a.to == b.to);
+    pairs
+}
+
+/// The pre-#660 inference (the no-binding fallback), kept ONLY for models
+/// that declare no `transition` binding: op-name → trigger (exact, then
+/// entity-suffix-stripped), then the op-level `when` source states, then
+/// the capability-sharing `protected`-op arm. Every op that resolves a
+/// transition here warns ([`transition_binding_warnings`]).
+fn heuristic_transitions(
     op: &codegraph_core::types::DddServiceOperation,
     model: &codegraph_core::types::DddModelGraph,
     machine: &phero_ir::ddd::StateMachine,
@@ -1723,6 +1978,21 @@ fn execution_for(
     if let Some(entity_class) = entity_class
         && target_repo.design_class != entity_class
     {
+        // A binding names a transition on the DELEGATION target's machine;
+        // when the route binds another aggregate that machine is not the one
+        // the route can move — refuse rather than seam silently (issue
+        // #660: an authored binding never degrades).
+        if let Some(binding) = &op.transition {
+            return Err(format!(
+                "service op `{}` declares `transition {}` on repository `{target}` (class \
+                 `{}`), but the operation binds entity `{}` (`{entity_class}`) — the \
+                 binding's machine belongs to another aggregate",
+                op.name,
+                binding_spelling(binding),
+                target_repo.design_class,
+                shape.entity_title
+            ));
+        }
         return Ok(seam(format!(
             "service op `{}` delegates to repository `{target}` for class `{}`, \
              not the route entity `{}` (`{entity_class}`) — child/aggregate \
@@ -1762,8 +2032,14 @@ fn execution_for(
                     else {
                         // The machine binds a field the graph exposes no
                         // property for — a transition cannot be rendered.
-                        let transitions =
-                            op_transitions(op, model, machine, &entity_class, shape.entity_table);
+                        let transitions = resolved_transitions(
+                            op,
+                            model,
+                            machine,
+                            shape.entity_title,
+                            &entity_class,
+                            shape.entity_table,
+                        )?;
                         if transitions.is_empty() {
                             return Ok(ExecutionKind::Update { state: None });
                         }
@@ -1773,8 +2049,14 @@ fn execution_for(
                             op.name, machine.field, shape.entity_title
                         )));
                     };
-                    let transitions =
-                        op_transitions(op, model, machine, &entity_class, shape.entity_table);
+                    let transitions = resolved_transitions(
+                        op,
+                        model,
+                        machine,
+                        shape.entity_title,
+                        &entity_class,
+                        shape.entity_table,
+                    )?;
                     if !state_field_is_dto_updatable(
                         config,
                         shape.domain,
@@ -1804,7 +2086,21 @@ fn execution_for(
                         })
                     }
                 }
-                None => None,
+                None => {
+                    // An authored binding on an entity with no machine has
+                    // nothing to fire — never degrade it to a plain update
+                    // (issue #660).
+                    if let Some(binding) = &op.transition {
+                        return Err(format!(
+                            "service op `{}` declares `transition {}`, but the bound entity \
+                             `{}` carries no lifecycle machine — the binding has nothing to fire",
+                            op.name,
+                            binding_spelling(binding),
+                            shape.entity_title
+                        ));
+                    }
+                    None
+                }
             };
             ExecutionKind::Update { state }
         }
@@ -1884,9 +2180,21 @@ fn body_execution(
     // boundary). No transitions selected ⇒ no patch at all: unlike the
     // deployment `save` leg, a body op never gets the body-driven target
     // whitelist (an action body must not move the machine arbitrarily).
-    let transition = shape
-        .machine
-        .and_then(|machine| body_transition_state(op, model, config, machine, shape));
+    let transition = match shape.machine {
+        Some(machine) => body_transition_state(op, model, config, machine, shape)?,
+        None => {
+            if let Some(binding) = &op.transition {
+                return Err(format!(
+                    "service op `{}` declares `transition {}`, but the bound entity `{}` \
+                     carries no lifecycle machine — the binding has nothing to fire",
+                    op.name,
+                    binding_spelling(binding),
+                    shape.entity_title
+                ));
+            }
+            None
+        }
+    };
     // The declared `throws` vocabulary (authored names from the phero-ir
     // `ErrorRef` JSON) — a raise outside it is a refusal, even though the
     // upstream compiler already proves it.
@@ -1927,23 +2235,48 @@ fn body_execution(
 }
 
 /// The machine transition a bodied op applies when its body leaves the state
-/// field alone. `None` when the entity has no machine, the machine field is
-/// not a property, the field is workflow-managed/immutable, or the op matches
-/// no declared transition (a bodied op gets NO body-driven target whitelist).
+/// field alone. `None` when the machine field is not a property, the field is
+/// workflow-managed/immutable, or the op matches no declared transition (a
+/// bodied op gets NO body-driven target whitelist). An authored binding that
+/// cannot be resolved is a HARD error, never `None` (issue #660: a binding
+/// never degrades silently).
 fn body_transition_state(
     op: &codegraph_core::types::DddServiceOperation,
     model: &codegraph_core::types::DddModelGraph,
     config: &DomainConfig,
     machine: &phero_ir::ddd::StateMachine,
     shape: &RouteShape<'_>,
-) -> Option<ServiceOpState> {
+) -> Result<Option<ServiceOpState>, String> {
     let field_snake = to_snake_case(&machine.field);
-    let field = shape
+    let Some(field) = shape
         .fields
         .get(&machine.field)
-        .or_else(|| shape.fields.get(&field_snake))?;
+        .or_else(|| shape.fields.get(&field_snake))
+    else {
+        if let Some(binding) = &op.transition {
+            return Err(format!(
+                "service op `{}` declares `transition {}`, but the machine field `{}` is \
+                 not a property of `{}` — the binding cannot be rendered",
+                op.name,
+                binding_spelling(binding),
+                machine.field,
+                shape.entity_title
+            ));
+        }
+        return Ok(None);
+    };
     if !state_field_is_dto_updatable(config, shape.domain, shape.entity_title, &field.rust_name) {
-        return None;
+        if let Some(binding) = &op.transition {
+            return Err(format!(
+                "service op `{}` declares `transition {}`, but the machine field `{}` is \
+                 workflow-managed/immutable and excluded from the update DTO — the binding \
+                 cannot be rendered",
+                op.name,
+                binding_spelling(binding),
+                field.rust_name
+            ));
+        }
+        return Ok(None);
     }
     let entity_class = model
         .designs
@@ -1951,17 +2284,24 @@ fn body_transition_state(
         .find(|d| d.resolved_title.as_deref() == Some(shape.entity_title))
         .map(|d| d.class.clone())
         .unwrap_or_else(|| shape.entity_title.to_string());
-    let transitions = op_transitions(op, model, machine, &entity_class, shape.entity_table);
+    let transitions = resolved_transitions(
+        op,
+        model,
+        machine,
+        shape.entity_title,
+        &entity_class,
+        shape.entity_table,
+    )?;
     if transitions.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(ServiceOpState {
+    Ok(Some(ServiceOpState {
         current_expr: current_state_expr(field),
         wire_key: wire_key(&field.rust_name, shape.dto_casing),
         initial: StateName::new(machine.initial.clone()),
         all: machine_transition_pairs(machine),
         op: transitions,
-    })
+    }))
 }
 
 /// The IFML dead-trigger scan (Ask 1): every `.ifml` action whose name
@@ -2032,6 +2372,176 @@ async fn bind_entity_service_scoped(
         .iter()
         .find(|m| m.services.iter().any(|s| s.name == service_name))?;
     bind_entity(model, op, db, type_suffix).await
+}
+
+/// Whether an operation consults the machine at all: a `save`/`update`
+/// delegation (the shapes that patch the loaded row) or a statement body
+/// (whose inferred transition rides the same lowering). Everything else —
+/// delete/read delegations, abstract ops, seams — applies no transition, so
+/// a missing binding on those is not a diagnostic.
+fn consults_the_machine(op: &codegraph_core::types::DddServiceOperation) -> bool {
+    if !op.bodies.is_empty() {
+        return true;
+    }
+    matches!(
+        op.delegation_operation
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("save") | Some("update")
+    )
+}
+
+/// Authored transition bindings that cannot be resolved (issue #660): the
+/// HARD half of the binding diagnostics.
+///
+/// Upstream already validates a binding against the target repository's
+/// designed machine, so on a freshly compiled artifact this list is empty —
+/// it exists for the hand-built/stale-graph class (the same posture as
+/// [`body_refusals`] and DD9's `query_refusals`), where a binding would
+/// otherwise be resolved against the wrong machine, or silently dropped
+/// after the tree was half-written. The run path turns each entry into a
+/// `ValidationPass` ERROR before generation.
+///
+/// Each entry names the op, the binding as authored, and the machines
+/// involved. Empty = every binding resolves.
+pub async fn transition_binding_errors(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Result<Vec<String>, GraphError> {
+    let models = db.get_ddd_models().await?;
+    if models.iter().all(|model| {
+        model
+            .services
+            .iter()
+            .all(|service| service.operations.iter().all(|op| op.transition.is_none()))
+    }) {
+        return Ok(Vec::new());
+    }
+    let surface = match DddDesignSurface::from_graph(db).await {
+        Ok(surface) => surface,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut errors = Vec::new();
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                let Some(binding) = &op.transition else {
+                    continue;
+                };
+                if op.is_protected || !consults_the_machine(op) {
+                    continue;
+                }
+                let Some(title) = bind_entity(model, op, db, &type_suffix).await else {
+                    // Unbound ops emit no route at all; the dead-surface
+                    // warning owns that class.
+                    continue;
+                };
+                let Some(machine) = surface.machine_for(&title) else {
+                    errors.push(format!(
+                        "service op `{}::{}` declares `transition {}`, but the bound entity \
+                         `{title}` carries no lifecycle machine — the binding has nothing to fire",
+                        service.name,
+                        op.name,
+                        binding_spelling(binding)
+                    ));
+                    continue;
+                };
+                if let Err(reason) =
+                    resolve_transition_binding(op, binding, model, &machine, &title)
+                {
+                    // The resolver does not know the owning service; name
+                    // it the same way the no-machine branch does.
+                    errors.push(reason.replacen(
+                        &format!("service op `{}`", op.name),
+                        &format!("service op `{}::{}`", service.name, op.name),
+                        1,
+                    ));
+                }
+            }
+        }
+    }
+    errors.sort();
+    errors.dedup();
+    Ok(errors)
+}
+
+/// One WARN per operation whose machine transition is INFERRED (issue
+/// #660): the no-binding fallback stays for models that predate the
+/// `transition` syntax, but every op it resolves must name the binding it
+/// lacks, so the inference is visible in the run log instead of silently
+/// re-selecting a transition after a rename.
+///
+/// Empty when every machine-bound op declares its binding (and when the
+/// graph carries no machines).
+pub async fn transition_binding_warnings(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Result<Vec<String>, GraphError> {
+    let models = db.get_ddd_models().await?;
+    // No machine ⇒ nothing can be inferred, so the walk (which resolves the
+    // entity binding per op) is skipped entirely: the common model pays no
+    // graph reads here.
+    if !models
+        .iter()
+        .any(|model| model.designs.iter().any(|d| d.machine_json.is_some()))
+    {
+        return Ok(Vec::new());
+    }
+    let surface = match DddDesignSurface::from_graph(db).await {
+        Ok(surface) => surface,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut warnings = Vec::new();
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                if op.transition.is_some() || op.is_protected || !consults_the_machine(op) {
+                    continue;
+                }
+                let Some(title) = bind_entity(model, op, db, &type_suffix).await else {
+                    continue;
+                };
+                let Some(machine) = surface.machine_for(&title) else {
+                    continue;
+                };
+                let entity_class = model
+                    .designs
+                    .iter()
+                    .find(|d| d.resolved_title.as_deref() == Some(title.as_str()))
+                    .map(|d| d.class.clone())
+                    .unwrap_or_else(|| title.clone());
+                let table = db
+                    .get_schema(&title)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|s| s.pg_table_name)
+                    .unwrap_or_else(|| to_snake_case(&title));
+                let inferred = heuristic_transitions(op, model, &machine, &entity_class, &table);
+                if inferred.is_empty() {
+                    continue;
+                }
+                let pairs = inferred
+                    .iter()
+                    .map(|t| format!("{} -> {}", t.from, t.to))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                warnings.push(format!(
+                    "service op `{}::{}` applies the machine transition {pairs} of `{title}` \
+                     by inference: the operation declares no `transition` binding; add \
+                     `transition <Trigger>` (or `transition <EnumType>.<Trigger>` in a \
+                     multi-machine module) to pin it",
+                    service.name, op.name,
+                ));
+            }
+        }
+    }
+    warnings.sort();
+    warnings.dedup();
+    Ok(warnings)
 }
 
 /// Every statically-unlowerable statement body (issue #662): the DD9
@@ -2141,6 +2651,17 @@ mod tests {
         machine: Option<&phero_ir::ddd::StateMachine>,
         fields: &HashMap<String, FieldInfo>,
     ) -> ExecutionKind {
+        try_lower_exec(model, config, surface_ops, op, machine, fields).expect("lowering")
+    }
+
+    fn try_lower_exec(
+        model: &codegraph_core::types::DddModelGraph,
+        config: &DomainConfig,
+        surface_ops: &[String],
+        op: &codegraph_core::types::DddServiceOperation,
+        machine: Option<&phero_ir::ddd::StateMachine>,
+        fields: &HashMap<String, FieldInfo>,
+    ) -> Result<ExecutionKind, String> {
         let raises = crate::ddd::body_lower::RaiseTable::default();
         let shape = RouteShape {
             domain: "payroll",
@@ -2160,7 +2681,7 @@ mod tests {
             params: &[],
             throws: &[],
         };
-        execution_for(op, model, config, "PayRunService", &shape).expect("lowering")
+        execution_for(op, model, config, "PayRunService", &shape)
     }
 
     fn fields(pairs: &[(&str, FieldKind, bool)]) -> HashMap<String, FieldInfo> {
@@ -2574,6 +3095,7 @@ postgres_schema = "payroll"
                 throws: Vec::new(),
                 bodies: Default::default(),
                 body_receiver: None,
+                transition: None,
                 ordinal: 0,
             }
         };
@@ -2670,6 +3192,7 @@ postgres_schema = "payroll"
             throws: Vec::new(),
             bodies: Default::default(),
             body_receiver: None,
+            transition: None,
             ordinal: 0,
         }
     }
@@ -2928,6 +3451,284 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         assert_eq!(state.initial.as_str(), "Draft");
     }
 
+    // ── Issue #660: the authored binding is the primary selector ──
+
+    /// A machine with a trigger the op name does NOT resemble plus one the
+    /// name DOES resemble — so a binding that wins can only have won by
+    /// being authored.
+    fn pay_run_machine_with_abandon() -> phero_ir::ddd::StateMachine {
+        let mut machine = pay_run_machine();
+        machine.transitions.push(phero_ir::ddd::Transition {
+            from: "Draft".to_string(),
+            to: "Abandoned".to_string(),
+            trigger: Some("Abandon".to_string()),
+            guard: None,
+        });
+        machine.terminals.push("Abandoned".to_string());
+        machine
+    }
+
+    /// The same machine carrying a bare arrow (`-> Posted`, no `via`): the
+    /// binding must accept its derived lowerCamel trigger (`posted`).
+    fn pay_run_machine_with_bare_arrow() -> phero_ir::ddd::StateMachine {
+        let mut machine = pay_run_machine();
+        machine.transitions.push(phero_ir::ddd::Transition {
+            from: "Approved".to_string(),
+            to: "Archived".to_string(),
+            trigger: None,
+            guard: None,
+        });
+        machine
+    }
+
+    /// A second machine-bearing design in the SAME module (the qualifier
+    /// gap's ambiguity set).
+    fn second_machine_design() -> codegraph_core::types::DddDesignNode {
+        let mut machine = pay_run_machine();
+        machine.field = "checkStatus".to_string();
+        machine.enum_type = phero_ir::TypeRef::Enum {
+            package: "payroll".to_string(),
+            name: "PayRunCheckStatus".to_string(),
+        };
+        codegraph_core::types::DddDesignNode {
+            application: "App".to_string(),
+            module: "payroll".to_string(),
+            class: "PayRunCheck".to_string(),
+            resolved_title: Some("PayRunCheckType".to_string()),
+            stereotype: "entity".to_string(),
+            is_abstract: false,
+            flags: codegraph_core::types::DddDesignFlags::default(),
+            machine_json: Some(serde_json::to_value(machine).unwrap()),
+            ordinal: 1,
+        }
+    }
+
+    fn bound_op(
+        name: &str,
+        machine: Option<&str>,
+        trigger: &str,
+    ) -> codegraph_core::types::DddServiceOperation {
+        let mut op = service_op(name, &[], false, None);
+        op.transition = Some(codegraph_core::types::DddTransitionRef {
+            trigger: trigger.to_string(),
+            machine: machine.map(str::to_string),
+        });
+        op
+    }
+
+    fn machine_bound_update(lowering: ExecutionKind) -> ServiceOpState {
+        match lowering {
+            ExecutionKind::Update { state: Some(state) } => state,
+            other => panic!("expected a machine-bound update, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn authored_binding_wins_over_a_name_resembling_trigger() {
+        // `abandonPayRun` matches the `Abandon` trigger by name, but the
+        // authored binding selects `Submit` — the binding is the whole
+        // selector, so the heuristic never runs (issue #660).
+        let machine = pay_run_machine_with_abandon();
+        let model = pay_run_model(vec![bound_op("abandonPayRun", None, "Submit")]);
+        let state = machine_bound_update(lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        ));
+        assert_eq!(
+            state.op,
+            vec![ServiceOpTransition {
+                from: StateName::new("Calculating"),
+                to: StateName::new("AwaitingApproval"),
+            }],
+            "the authored trigger must win over the name heuristic"
+        );
+    }
+
+    #[test]
+    fn authored_binding_accepts_a_bare_arrows_derived_trigger() {
+        // A bare arrow's trigger is the lowerCamel of the target state
+        // upstream (`Archived` → `archived`); the binding resolves it.
+        let machine = pay_run_machine_with_bare_arrow();
+        let model = pay_run_model(vec![bound_op("storeRun", None, "archived")]);
+        let state = machine_bound_update(lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        ));
+        assert_eq!(
+            state.op,
+            vec![ServiceOpTransition {
+                from: StateName::new("Approved"),
+                to: StateName::new("Archived"),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_single_machine_module_takes_the_unqualified_binding() {
+        // One machine-bearing design ⇒ the qualifier is optional and the
+        // unqualified spelling resolves against the bound machine.
+        let machine = pay_run_machine();
+        let model = pay_run_model(vec![bound_op("prepareRun", None, "Calculate")]);
+        let state = machine_bound_update(lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        ));
+        assert_eq!(
+            state.op,
+            vec![ServiceOpTransition {
+                from: StateName::new("Draft"),
+                to: StateName::new("Calculating"),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_qualified_binding_resolves_in_a_multi_machine_module() {
+        let machine = pay_run_machine();
+        let mut model = pay_run_model(vec![bound_op(
+            "prepareRun",
+            Some("PayRunStatus"),
+            "Calculate",
+        )]);
+        model.designs[0].machine_json = Some(serde_json::to_value(&machine).unwrap());
+        model.designs.push(second_machine_design());
+        let state = machine_bound_update(lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        ));
+        assert_eq!(
+            state.op,
+            vec![ServiceOpTransition {
+                from: StateName::new("Draft"),
+                to: StateName::new("Calculating"),
+            }]
+        );
+    }
+
+    #[test]
+    fn an_unqualified_binding_in_a_multi_machine_module_names_both_machines() {
+        let machine = pay_run_machine();
+        let mut model = pay_run_model(vec![bound_op("prepareRun", None, "Calculate")]);
+        model.designs[0].machine_json = Some(serde_json::to_value(&machine).unwrap());
+        model.designs.push(second_machine_design());
+        let err = try_lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        )
+        .expect_err("an unqualified binding in a multi-machine module must fail");
+        assert!(err.contains("prepareRun"), "{err}");
+        assert!(err.contains("PayRun"), "{err}");
+        assert!(
+            err.contains("PayRunCheck"),
+            "the error must name both machines: {err}"
+        );
+        assert!(err.contains("PayRunStatus"), "{err}");
+        assert!(err.contains("PayRunCheckStatus"), "{err}");
+    }
+
+    #[test]
+    fn a_qualifier_naming_another_machine_is_refused() {
+        let machine = pay_run_machine();
+        let mut model = pay_run_model(vec![bound_op(
+            "prepareRun",
+            Some("PayRunCheckStatus"),
+            "Calculate",
+        )]);
+        model.designs[0].machine_json = Some(serde_json::to_value(&machine).unwrap());
+        model.designs.push(second_machine_design());
+        let err = try_lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        )
+        .expect_err("a qualifier naming another machine must fail");
+        assert!(err.contains("prepareRun"), "{err}");
+        assert!(err.contains("PayRunCheckStatus"), "{err}");
+        assert!(err.contains("PayRunStatus"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_trigger_names_the_declared_vocabulary() {
+        let machine = pay_run_machine();
+        let model = pay_run_model(vec![bound_op("prepareRun", None, "SignOff")]);
+        let err = try_lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        )
+        .expect_err("an unknown trigger must fail");
+        assert!(err.contains("SignOff"), "{err}");
+        assert!(
+            err.contains("Calculate"),
+            "the error must list the vocabulary: {err}"
+        );
+        assert!(err.contains("Submit"), "{err}");
+    }
+
+    #[test]
+    fn a_binding_on_an_entity_without_a_machine_is_refused() {
+        // Never degrade an authored binding to a plain update.
+        let model = pay_run_model(vec![bound_op("prepareRun", None, "Calculate")]);
+        let err = try_lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            None,
+            &pay_run_fields(),
+        )
+        .expect_err("a binding with no machine must fail");
+        assert!(err.contains("prepareRun"), "{err}");
+        assert!(err.contains("no lifecycle machine"), "{err}");
+    }
+
+    #[test]
+    fn a_binding_on_a_cross_aggregate_delegation_is_refused() {
+        // The binding's machine belongs to the delegation target's class;
+        // a route bound to another aggregate must not seam silently.
+        let machine = pay_run_machine();
+        let mut model = pay_run_model(vec![bound_op("addPayRunItem", None, "Submit")]);
+        model.repositories[0].design_class = "PayRunItem".to_string();
+        let err = try_lower_exec(
+            &model,
+            &empty_config(),
+            &["delete", "read", "update"].map(str::to_string),
+            &model.services[0].operations[0],
+            Some(&machine),
+            &pay_run_fields(),
+        )
+        .expect_err("a binding across aggregates must fail");
+        assert!(err.contains("addPayRunItem"), "{err}");
+        assert!(err.contains("another aggregate"), "{err}");
+        assert!(err.contains("PayRunItem"), "{err}");
+    }
+
     #[test]
     fn capability_shared_op_without_a_trigger_stays_a_plain_update() {
         // Capability sharing is an explicit last-resort heuristic: the
@@ -3038,6 +3839,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             throws: Vec::new(),
             bodies: Default::default(),
             body_receiver: None,
+            transition: None,
             ordinal: 0,
         }
     }

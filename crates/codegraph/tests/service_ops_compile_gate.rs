@@ -165,3 +165,67 @@ async fn generated_app_with_service_ops_compiles() {
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with service ops must pass the compile gate");
 }
+
+/// Issue #660: the AUTHORED-BINDING plane compiles. The same app recipe over
+/// the binding fixture (two machine-bearing designs in one module, every
+/// machine-bound op declaring `transition <EnumType>.<Trigger>`) — the
+/// emitted transition arms must compile against the generated Update DTOs
+/// exactly like the heuristic ones, and the qualifier resolution must not
+/// leave a dangling arm.
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_authored_transition_bindings_compiles() {
+    let fixture = fixture::write_binding_fixture();
+    let _engine = fixture::ingest_binding(&fixture).await;
+
+    let out_dir = tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the binding fixture must succeed");
+
+    for (entity, arm) in [
+        ("release", r#""Held" => Some("SignedOff")"#),
+        ("review", r#""Pending" => Some("Cleared")"#),
+    ] {
+        let handler =
+            fs::read_to_string(output.join(format!("src/api/release/{entity}_handler.rs")))
+                .unwrap();
+        assert!(
+            handler.contains(arm),
+            "the authored transition arm must lower into the handler before the build: {arm}\n{handler}"
+        );
+    }
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with authored transition bindings must compile");
+}

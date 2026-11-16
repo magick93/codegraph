@@ -21,7 +21,7 @@ pub struct ValidationPass;
 impl ValidationPass {
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -35,6 +35,7 @@ impl ValidationPass {
             Self::check_status_bypass(db, config),
             Self::check_repository_queries(db),
             Self::check_service_op_bodies(db, config),
+            Self::check_transition_bindings(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -50,6 +51,7 @@ impl ValidationPass {
         issues.extend(r11);
         issues.extend(r12);
         issues.extend(r13);
+        issues.extend(r14);
         issues
     }
 
@@ -151,6 +153,55 @@ impl ValidationPass {
                     ),
                 });
             }
+        }
+        issues
+    }
+
+    /// Authored machine-transition bindings (issue #660). An op declaring
+    /// `transition <Trigger>` must resolve it against the machine bound to
+    /// its entity — an unresolvable spelling, a qualifier naming another
+    /// machine, or an unqualified binding in a multi-machine module is a
+    /// HARD error naming the op and the machines (the upstream compiler
+    /// validates the binding on a fresh artifact; this pass is what makes a
+    /// hand-built/stale graph fail BEFORE any tree is written, the DD9
+    /// `query_refusals`/`check_service_op_bodies` posture).
+    ///
+    /// An op that resolves its transition through the no-binding heuristic
+    /// is a WARN naming the binding it lacks — the fallback stays for models
+    /// that predate the syntax, but the inference must be visible.
+    async fn check_transition_bindings(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        let errors =
+            match codegraph_generate::ddd::service_ops::transition_binding_errors(db, config).await
+            {
+                Ok(e) => e,
+                Err(_) => return issues,
+            };
+        for e in errors {
+            issues.push(ValidationIssue {
+                severity: Severity::Error,
+                entity: "(service op transition)".into(),
+                check: "service_op_transition_binding",
+                message: e,
+            });
+        }
+        let warnings =
+            match codegraph_generate::ddd::service_ops::transition_binding_warnings(db, config)
+                .await
+            {
+                Ok(w) => w,
+                Err(_) => return issues,
+            };
+        for w in warnings {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(service op transition)".into(),
+                check: "service_op_transition_binding",
+                message: w,
+            });
         }
         issues
     }

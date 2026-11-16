@@ -33,8 +33,11 @@ application Refunds {
             escalate => RefundRequestRepository.save;
             // 200 then 403: the op-level `when` guard denies once the
             // machine field moved (authorize runs before the conflict
-            // check, and API-key sessions still hit it).
-            approve => RefundRequestRepository.save when (escalation == none);
+            // check, and API-key sessions still hit it). The authored
+            // `transition` binding (#660) is the PRIMARY selector: the
+            // transition is the declared one, never an inference from the
+            // guard text.
+            approve => RefundRequestRepository.save transition Escalate when (escalation == none);
         }
     }
 }

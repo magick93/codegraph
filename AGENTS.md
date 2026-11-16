@@ -734,10 +734,11 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   inferred transition.
   **Graph**: `DddServiceOperation.{bodies, body_receiver, throws}`
   (serde-defaulted; the body payload stays opaque — codegraph-core may not
-  depend on phero-expr) and **`GRAPH_FORMAT_VERSION` 7** (a warm cache
-  written pre-#662 deserializes the bodies as EMPTY and would silently
-  degrade every bodied op to the 501 seam; artifact kit
-  `graph_document_v7.md`). hurl: a body that may answer 4xx emits NO leg
+  depend on phero-expr) and **`GRAPH_FORMAT_VERSION` 7** — the bump that
+  introduced the field set (now 8 with #660's `transition`; the artifact kit
+  fixture is `graph_document_v8.md`), because a warm cache written pre-#662
+  deserializes the bodies as EMPTY and would silently degrade every bodied
+  op to the 501 seam. hurl: a body that may answer 4xx emits NO leg
   (no deterministic status — the live gate drives it with a probe); a
   lowerable body leg carries its declared parameters as the action body.
   Gates: `cargo test -p codegraph --test service_ops_tests` (10) +
@@ -763,7 +764,80 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   (refused by name, mox-arena coupling), body-assigned machine state vs the
   designed transitions (`TODO(#662)`), `codegraph doctor --ddd-files` body
   parity (the run path + validation pass own it), class-typed action
-  parameters, and the child-plane body leg in the live gate (unit-pinned).
+  parameters, and the child-plane body leg in the live gate (unit-pinned);
+  #660 — a live hurl leg over the binding fixture (the node-free contract
+  pins + the copy-gate compile pin cover the emitted shape; the live gate
+  keeps driving the unbound payroll fixture), `codegraph doctor
+  --ddd-files` binding parity (needs the graph to bind an op to its
+  entity), and the module ambiguity set's cross-file reach (see below).
+
+### The authored transition binding is the selector (issue #660)
+
+A `save` delegation may declare `name => Repository.save transition
+<Trigger>` (or `transition <EnumType>.<Trigger>`; upstream pherolang#176).
+That binding is now the **PRIMARY** selector for the operation's machine
+transition — the heuristics the plane shipped with infer the same thing from
+the op's name and are demoted to a **no-binding fallback**:
+
+- **Resolution** (`ddd/service_ops.rs::resolved_transitions` →
+  `resolve_transition_binding`): the trigger must be one the machine bound to
+  the entity declares — an explicit `via` name **or** a bare arrow's derived
+  lowerCamel target (`-> Posted` ⇒ `posted`); the optional qualifier is the
+  machine's **enum TYPE** name (`PayRunStatus.Reverse`, never the field) and
+  must match the bound machine. The resolved `(from, to)` pair(s) become
+  `ServiceOpState.op` exactly — no heuristic arm runs alongside, so an op
+  named nothing like its trigger (or named like a *different* trigger) still
+  applies the declared edge.
+- **Hard errors, never a silent fallback**: an unknown trigger (the error
+  lists the declared vocabulary), an explicit+derived ambiguity, an
+  unqualified binding in a module with more than one machine-bearing design,
+  a qualifier naming another machine, and a binding on an entity with no
+  machine are `Error`-severity `service_op_transition_binding` findings from
+  `ValidationPass::check_transition_bindings`
+  (`service_ops::transition_binding_errors`) BEFORE any tree is written —
+  the DD9 `query_refusals` / #662 `check_service_op_bodies` posture. The
+  ambiguity set is the bound entity's module inside its own
+  `DddModelGraph` (one model = one design file); upstream already rejects an
+  unqualified binding there, so this covers the stale/hand-built-artifact
+  class.
+- **The fallback that survives, and why**: the binding is PER OP, so a model
+  can bind `approve` and leave `escalate` unbound (the gate fixture does
+  exactly that) — every unbound machine-touching op still needs the #590
+  heuristics. All three stay: (1) op-name → trigger (exact, then
+  entity-suffix-stripped — consumer ops are still spelled `submitPayRun`),
+  (2) the op-level `when` source states (the `approve => save when
+  (escalation == none)` shape), (3) the capability-sharing `protected`-op
+  arm (`preparePayRun` → `calculate`). They now report **one WARN per op**
+  (`transition_binding_warnings`, same check name) naming the binding the op
+  lacks, so an inference is visible in the run log instead of silently
+  re-selecting after a rename. Nothing became unreachable; nothing was
+  deleted.
+- **hurl contracts** need no change: `state_aware_legs` simulates off
+  `ExecutionKind::transition_state()`, so the authored pairs drive the
+  declaration-order 200s, the guaranteed wrong-state 409 replay and the 501
+  seams identically (`templates/hurl/actions.tera` untouched).
+- **Fixtures**: `tests/service_ops_fixture.rs` gains the mox-first
+  `RELEASE_*` fixture — TWO machine-bearing designs in ONE module (the
+  qualifier-forcing shape) with three bound ops (`prepareRelease`,
+  `finalize`, `prepareReview`) whose names resemble no trigger, plus an
+  unbound read tap and an unbound `findAll` seam tap. PAYROLL_DDD stays **unbound** so the fallback and its WARNs
+  stay pinned. `tests/fixtures/ifml_gate/refunds.ddd`'s `approve` gains
+  `transition Escalate` (resolved pair unchanged: none → escalated), so the
+  nightly gate exercises the primary path.
+- **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 (artifact kit
+  `graph_document_v8.md`; `format_version_too_new` now pins 9) — the binding
+  rides the serde-serialized `operations_json` blob, so a warm cache would
+  read it as `None` and silently serve the heuristics.
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (13: mirror,
+  routes/handlers, the hurl state stream + replay, the per-op WARN, the hard
+  error) + `cargo test -p codegraph-generate --lib -- ddd::service_ops` (35,
+  the resolver KATs incl. both multi-machine errors) +
+  `artifact_kit_tests` (2) + `ddd_ingest_tests` (7) + the standing
+  `service_ops_compile_gate` (2 ignored, the #551 pin) +
+  `service_ops_hurl_gate` (ignored, live) +
+  `cargo test -p codegraph --test pherolang_fixture_sweep` (the `.ddd`
+  fixtures still compile under the pin).
+
 
 ## Events DSL as generator input (issues #454, #455)
 

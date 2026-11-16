@@ -948,6 +948,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                     throws: Vec::new(),
                     bodies: Default::default(),
                     body_receiver: None,
+                    transition: None,
                     ordinal: 0,
                 }],
                 ordinal: 0,
@@ -977,6 +978,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         throws: Vec::new(),
                         bodies: Default::default(),
                         body_receiver: None,
+                        transition: None,
                         ordinal: 0,
                     },
                     codegraph_core::types::DddServiceOperation {
@@ -994,6 +996,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         throws: Vec::new(),
                         bodies: Default::default(),
                         body_receiver: None,
+                        transition: None,
                         ordinal: 1,
                     },
                 ],

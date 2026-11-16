@@ -367,6 +367,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 throws: Vec::new(),
                 bodies: Default::default(),
                 body_receiver: None,
+                transition: None,
             }],
             ordinal: 0,
         }],
