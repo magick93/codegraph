@@ -642,7 +642,15 @@ async fn service_ops_contract_serves_over_http() {
     let fixture = fixture::write_fixture_in("service_ops_hurl_gate", fixture::PAYROLL_DDD);
     let _engine = fixture::ingest(&fixture).await;
 
+    // The gate dir is persistent so the app-side cargo cache (a SEPARATE
+    // `target/`) survives across runs — but the generated SOURCE must not be.
+    // An `_actions.hurl` left by an older generation (the number follows the
+    // entity order) is still discovered by its `_pay_run_actions.hurl` suffix
+    // and then hurl'd against a newer app: a stale contract read as the
+    // current one, which is exactly how a missing required field looked like a
+    // regression on a clean master (#687).
     let output = gate_app_dir();
+    let _ = fs::remove_dir_all(&output);
     fs::create_dir_all(&output).expect("create gate app dir");
     let fixture_root = fixture.config.parent().expect("fixture root").to_path_buf();
     let profiles_path = write_profiles(&fixture_root);
@@ -975,6 +983,9 @@ async fn aggregate_child_actions_serve_over_http() {
 
     let root = child_gate_root();
     let output = root.join("app");
+    // Same stale-source rule as the payroll gate above (the cargo cache lives
+    // in `root/target`, not here).
+    let _ = fs::remove_dir_all(&output);
     fs::create_dir_all(&output).expect("create child gate app dir");
     let fixture_root = fixture.config.parent().expect("fixture root").to_path_buf();
     let profiles_path = write_profiles(&fixture_root);

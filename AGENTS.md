@@ -964,7 +964,12 @@ the op's name and are demoted to a **no-binding fallback**:
   the resolver KATs incl. both multi-machine errors) +
   `artifact_kit_tests` (2) + `ddd_ingest_tests` (7) + the standing
   `service_ops_compile_gate` (2 ignored, the #551 pin) +
-  `service_ops_hurl_gate` (ignored, live) +
+  `service_ops_hurl_gate` (ignored, live; both live tests **delete their
+  generated source tree** before regenerating — the app-side cargo cache
+  lives in a separate `target/`, and a leftover numbered `_actions.hurl`
+  from an older generation is still discovered by its suffix and hurl'd
+  against a newer app, which read as a missing-required-field regression
+  on a clean master, #687) +
   `cargo test -p codegraph --test pherolang_fixture_sweep` (the `.ddd`
   fixtures still compile under the pin).
 
