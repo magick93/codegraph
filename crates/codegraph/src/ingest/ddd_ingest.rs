@@ -445,6 +445,16 @@ pub fn ddd_model_graph_from_phero(
                             .collect(),
                         ordinal,
                         is_protected: op.is_protected,
+                        // DD9 (issue #659): the typed query block rides the
+                        // graph as phero-ir `QuerySpec` JSON; the predicate
+                        // stays verbatim source text (typing is proven
+                        // upstream) and generation lowers it.
+                        query_json: opt_json(op.query.as_ref()),
+                        capabilities: op
+                            .capabilities
+                            .iter()
+                            .map(|capability| capability.name.clone())
+                            .collect(),
                     })
                     .collect();
                 repositories.push(DddRepositoryNode {

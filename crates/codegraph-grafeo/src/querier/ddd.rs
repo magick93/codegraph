@@ -202,7 +202,8 @@ impl GrafeoEngine {
              RETURN r.application AS app, r.name AS repository, o.name AS name, \
              o.builtin AS builtin, o.return_type_json AS return_type_json, \
              o.return_multiplicity AS return_multiplicity, o.params_json AS params_json, \
-             o.ordinal AS ordinal, o.is_protected AS is_protected",
+             o.ordinal AS ordinal, o.is_protected AS is_protected, \
+             o.query_json AS query_json, o.capabilities_json AS capabilities_json",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut operations: HashMap<(String, String), Vec<DddRepositoryOperation>> = HashMap::new();
@@ -231,6 +232,13 @@ impl GrafeoEngine {
                     // Tolerant read: graphs persisted before the protected
                     // modifier (pherolang #47) carry no prop — default false.
                     is_protected: reader.get_bool(row, "is_protected").unwrap_or(false),
+                    // DD9 (issue #659): the typed query block, as phero-ir
+                    // `QuerySpec` JSON. Tolerant read: pre-DD9 graphs carry
+                    // no prop.
+                    query_json: reader
+                        .get_opt_string(row, "query_json")?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    capabilities: parse_json(reader.get_opt_string(row, "capabilities_json")?),
                 });
         }
 

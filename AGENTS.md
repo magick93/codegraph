@@ -477,11 +477,38 @@ docs: `docs/DDD.md` upstream; driver contract `phero_driver::compile_ddd_str`.
   `entity.has_commands` (the query plane exists for every entity; the
   command plane only when a mutating op survives). Value designs and
   no-repository entities are the shapes that expose a non-gated consumer.
-  Declared finders (`findByX(x)` Sculptor semantics: equality
+  **DD9 typed queries (issue #659) — the preferred declared-op shape.** An
+  operation carrying a `query` block (`where`/`sort`/`page`/`capability`)
+  lowers through `ddd/repository_query.rs` into a provider-neutral
+  `QueryPlan` (`EntityTree.design_finders` → `DesignFinder {
+  kind: Query, query: Some(plan) }`): the predicate becomes a
+  **parameterized** store query (SeaORM `Condition` builder / cornucopia
+  named binds), `sort` becomes the ORDER BY with the identity tiebreaker
+  (`, "id" ASC`) so a page is deterministic, and `page limit/max` becomes
+  the runtime `limit`/`offset` parameters (default = `limit`, cap = `max`;
+  out-of-range clamps — the HTTP 400 is a follow-up on the unbuilt route).
+  Predicate bind values are ALWAYS parameters — even literals are bound
+  (`:_lit0`) — so string interpolation is structurally impossible. Closed
+  subset: stored scalar feature refs (`self.x`/bare), operation parameters,
+  string/number/boolean/date literals, `== != < <= > >=`, `&& || !`
+  (negation pushed down to atoms), parentheses, `field == null` /
+  `!= null` → `IS NULL`/`IS NOT NULL`, bare `bool` columns. EVERY other
+  construct is a **named hard rejection** naming the repository, the
+  operation, and the construct (`query Repo.op: arithmetic (+) …
+  cannot be lowered …`) — checked pre-generation by
+  `ValidationPass::check_repository_queries` (`query_refusals`) so no tree
+  is ever half-written, and never a silently broader query. v1 deferrals:
+  `page cursor` lowers LIMIT/OFFSET with a one-time WARN (keyset
+  predicate), class-typed parameter navigation, DTO-boundary returns,
+  runtime `capabilities` enforcement (documented on the method, enforced
+  by the actor/RLS plane), and a generated HTTP route.
+  Declared ops WITHOUT a query block keep the **deprecated equality
+  finder** path (`findByX(x)` Sculptor semantics: equality
   on the snake_cased param, single → `Option<E>`, multiplicity → `Vec<E>`)
-  emit trait (repository.tera, whitespace-controlled design-gated block) +
-  SeaORM impl (`EntityTree.design_finders`) + cornucopia query/adapter;
-  non-lowerable finders warn+skip. Parameter typing (issue #523):
+  — trait (repository.tera, whitespace-controlled design-gated block) +
+  SeaORM impl + cornucopia query/adapter; non-lowerable finders warn+skip
+  (kept because consumer models still declare them; new models should use
+  `where`). Parameter typing (issue #523):
   primitives and the `Uuid`/`DateTime`/`Decimal` named family map
   directly; any other named type (`.mox` wraps datatypes) resolves to its
   **column projection** — the named feature's base `rust_field_type` — so
@@ -4012,7 +4039,7 @@ decision-gated.
   - Rust toolchain: root `rust-toolchain.toml` pins the channel (currently `1.100.0` — issue #627). `dtolnay/rust-toolchain@stable` reads it, so local and CI compilers cannot drift (the PR #626 clippy-lint-drift class is structurally closed). The pin moves MONTHLY alongside the Tier-0 lockfile refresh, never silently: bump the channel AND the `PINNED_CHANNEL` literal in `crates/codegraph/tests/ci_toolchain_contract.rs` in the same commit (the contract test enforces the pairing and the file's presence/shape — components rustfmt+clippy, target wasm32-unknown-unknown for the #517/#550 gates).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
-- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh).
+- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh), `RUSTSEC-2026-0486` (rustix 1.1.5 unsound xattr zero-length buffer — transitive via the file-walking stack; a rustix patch bump rides the monthly lockfile refresh, #678). `RUSTSEC-2026-0308` (salsa 0.23) **cleared** with the pherolang 0.3 pin (salsa 0.28.5 in the tree) — #535 closed on that evidence.
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
 
 ## Pherolang 0.3 upgrade (rebrand + the DDD/IR epic)

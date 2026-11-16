@@ -1,0 +1,23 @@
+// DD9 refusal fixture (issue #659): a query whose predicate is VALID
+// pherolang — `int + int` is typed, and the comparison is boolean — but
+// falls outside the SQL-lowerable subset. codegraph must refuse it with a
+// named generation error rather than emit a broader (partially applied)
+// predicate. Kept OUT of `library.ddd`: that fixture drives the pipeline
+// gates and must generate successfully.
+import "library.mox";
+
+application LibraryQueryRefusal {
+    base nz.example.library
+    module media {
+        entity Movie repository MovieRepository {
+            findById;
+            findAll;
+
+            // Lowerable at the DSL level, not lowerable to a parameterized
+            // predicate: `self.runtimeMinutes + 10` is arithmetic.
+            Movie[] longerThan(int minimumRuntime)
+                where (self.runtimeMinutes + 10 >= minimumRuntime)
+                sort title asc;
+        }
+    }
+}

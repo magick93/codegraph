@@ -21,7 +21,7 @@ pub struct ValidationPass;
 impl ValidationPass {
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -33,6 +33,7 @@ impl ValidationPass {
             Self::check_namespace_domain_conflicts(db, config),
             Self::check_service_op_surface(db, config),
             Self::check_status_bypass(db, config),
+            Self::check_repository_queries(db),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -46,7 +47,29 @@ impl ValidationPass {
         issues.extend(r9);
         issues.extend(r10);
         issues.extend(r11);
+        issues.extend(r12);
         issues
+    }
+
+    /// DD9 typed repository queries (issue #659): every query-carrying
+    /// declared operation must lower to a parameterized store query. A
+    /// construct outside the documented subset is a HARD error naming the
+    /// repository, the operation, and the construct — the upstream consumer
+    /// contract forbids silently broadening the result set, and the
+    /// generator's own error would only surface after files were written.
+    async fn check_repository_queries(db: &dyn GraphQuerier) -> Vec<ValidationIssue> {
+        let Ok(refusals) = codegraph_generate::ddd::design::query_refusals(db).await else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "ddd".to_string(),
+                check: "repository_query",
+                message,
+            })
+            .collect()
     }
 
     /// Scaffold-path transition bypass (issue #590, Ask 3): an entity with

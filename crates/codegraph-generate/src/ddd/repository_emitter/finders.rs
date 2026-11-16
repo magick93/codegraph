@@ -300,8 +300,18 @@ fn eq_arg(param: &str, rust_type: &str) -> String {
 impl super::RepositoryImplEmitter {
     /// Emit every design finder method onto the repository impl. Gated on
     /// `tree.design_finders` being non-empty — flag-off emits nothing.
+    ///
+    /// Two shapes ride this plane: DD9 typed queries (`FinderKind::Query`,
+    /// lowered from the operation's `query` block) and the equality
+    /// finders.
     pub(crate) fn emit_design_finders(&self, tree: &EntityTree, code: &mut CodeWriter) {
         for finder in &tree.design_finders {
+            if finder.kind == FinderKind::Query {
+                if let Some(plan) = &finder.query {
+                    self.emit_query_finder_fn(tree, finder, plan, code);
+                }
+                continue;
+            }
             let Ok(bindings) = finder_columns(finder, &tree.direct_columns, &tree.child_tables)
             else {
                 // Already warned at tree-build time (the trait filters the
@@ -309,6 +319,184 @@ impl super::RepositoryImplEmitter {
                 continue;
             };
             self.emit_design_finder_fn(tree, finder, &bindings, code);
+        }
+    }
+
+    /// Emit one DD9 query method (issue #659): the predicate lowers to a
+    /// parameterized SeaORM `Condition`, the sort keys to `.order_by_*`
+    /// with the identity tiebreaker, and the page to `.limit`/`.offset`.
+    /// Soft-deleted rows stay invisible exactly like the equality finders.
+    fn emit_query_finder_fn(
+        &self,
+        tree: &EntityTree,
+        finder: &DesignFinder,
+        plan: &crate::ddd::repository_query::QueryPlan,
+        code: &mut CodeWriter,
+    ) {
+        wln!(code);
+        wln!(
+            code,
+            "    /// Design query `{}` (declared in the .ddd design): typed predicate, parameterized.",
+            finder.name
+        );
+        if !plan.capabilities.is_empty() {
+            wln!(
+                code,
+                "    /// Read capability: {}.",
+                plan.capabilities.join(", ")
+            );
+        }
+        wln!(
+            code,
+            "    #[tracing::instrument(skip(self, db), fields(db.operation = \"design_query\", db.table = \"{}.{}\"))]",
+            tree.schema_name,
+            tree.table_name
+        );
+        wln!(code, "    async fn {}(", finder.method_name);
+        wln!(code, "        &self,");
+        wln!(code, "        db: &DatabaseTransaction,");
+        for param in &finder.params {
+            wln!(code, "        {}: {},", param.name, param.rust_type);
+        }
+        if plan.has_page() {
+            wln!(code, "        limit: Option<u64>,");
+            wln!(code, "        offset: Option<u64>,");
+        }
+        if finder.returns_many {
+            wln!(
+                code,
+                "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
+                tree.entity_name
+            );
+        } else {
+            wln!(
+                code,
+                "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
+                tree.entity_name
+            );
+        }
+
+        // The predicate: a parameterized `Condition` (sea-query binds every
+        // value — parameter and literal alike).
+        let condition =
+            crate::ddd::repository_query::render_seaorm(plan, &finder.params, &tree.entity_module);
+        wln!(
+            code,
+            "        let query = crate::entity::{}::Entity::find().filter({condition});",
+            tree.entity_module
+        );
+        if tree.is_auditable {
+            // Soft-deleted rows always stay invisible to design queries.
+            wln!(
+                code,
+                "        let query = query.filter(crate::entity::{}::Column::DeletedAt.is_null());",
+                tree.entity_module
+            );
+        }
+        // ORDER BY: declared keys in declaration order, identity last (a
+        // deterministic page needs a total order).
+        for key in &plan.order {
+            wln!(
+                code,
+                "        let query = query.{}(crate::entity::{}::Column::{});",
+                if key.descending {
+                    "order_by_desc"
+                } else {
+                    "order_by_asc"
+                },
+                tree.entity_module,
+                key.column.variant()
+            );
+        }
+        if !plan
+            .order
+            .iter()
+            .any(|key| key.column.pg_column == "id" || key.column.field == "id")
+        {
+            wln!(
+                code,
+                "        let query = query.order_by_asc(crate::entity::{}::Column::Id);",
+                tree.entity_module
+            );
+        }
+        if let Some(page) = &plan.page {
+            wln!(
+                code,
+                "        let page_size = {};",
+                crate::ddd::repository_query::page_size_expr(page)
+            );
+            wln!(code, "        let query = match page_size {{");
+            wln!(
+                code,
+                "            Some(page_size) => query.limit(page_size),"
+            );
+            wln!(code, "            None => query,");
+            wln!(code, "        }};");
+            wln!(
+                code,
+                "        let query = query.offset(offset.unwrap_or(0));"
+            );
+        }
+        self.emit_finder_result(tree, finder, code);
+    }
+
+    /// The shared result tail of every design finder / query: rows →
+    /// `{Entity}Response` (child/junction hydration included).
+    fn emit_finder_result(&self, tree: &EntityTree, finder: &DesignFinder, code: &mut CodeWriter) {
+        if finder.returns_many {
+            wln!(code, "        let rows = query.all(db)");
+            wln!(code, "            .await?;");
+            wln!(code);
+            wln!(
+                code,
+                "        let mut results = Vec::with_capacity(rows.len());"
+            );
+            wln!(code, "        for row in rows {{");
+            emit_child_reads(code, &tree.child_tables, "row.id", 3);
+            emit_junction_reads(code, &tree.junction_tables, "row.id", 3);
+            wln!(
+                code,
+                "            results.push({}Response {{",
+                tree.entity_name
+            );
+            wln!(code, "                id: row.id,");
+            for col in &tree.direct_columns {
+                if col.is_composite_range
+                    || col.field_name == "created_at"
+                    || col.field_name == "updated_at"
+                {
+                    continue;
+                }
+                emit_entity_to_dto_field(code, col, "row", "                ");
+            }
+            emit_child_field_population(code, &tree.child_tables, "                ");
+            emit_junction_field_population(code, &tree.junction_tables, "                ");
+            if tree.has_workflow {
+                wln!(code, "                workflow_state: None,");
+            }
+            wln!(code, "                created_at: row.created_at,");
+            if !tree.append_only {
+                wln!(code, "                updated_at: row.updated_at,");
+            }
+            wln!(code, "                ..Default::default()");
+            wln!(code, "            }});");
+            wln!(code, "        }}");
+            wln!(code);
+            wln!(code, "        Ok(results)");
+            wln!(code, "    }}");
+        } else {
+            wln!(code, "        let row = query.one(db)");
+            wln!(code, "            .await?;");
+            wln!(code);
+            wln!(code, "        let row = match row {{");
+            wln!(code, "            Some(r) => r,");
+            wln!(code, "            None => return Ok(None),");
+            wln!(code, "        }};");
+            // Child reads key on row.id — the `id` variable is not in a
+            // finder's scope (its parameters are the declared ones). The
+            // shared construction helper closes the fn itself (the
+            // `find_by_id` contract) — do not close again.
+            emit_response_construction_for(code, tree, "row.id");
         }
     }
 
@@ -334,6 +522,9 @@ impl super::RepositoryImplEmitter {
                 code,
                 "    /// Design built-in `findByExample`: `None` fields filter out."
             ),
+            // DD9 queries are emitted by their own path — this equality
+            // finder renderer never sees one.
+            FinderKind::Query => {}
         }
         wln!(
             code,
@@ -678,6 +869,7 @@ mod tests {
             returns_many: false,
             return_rust_type: "BookResponse".to_string(),
             kind: FinderKind::Declared,
+            query: None,
         }
     }
 

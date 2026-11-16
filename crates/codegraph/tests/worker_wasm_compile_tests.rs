@@ -204,6 +204,37 @@ pub mod compensation {
             }
         }
 
+        // --! recent_by_name_pay_run (target_name, page_size, offset) : (id, name, notes?, created_at, updated_at)
+        pub struct RecentByNamePayRunStmt;
+
+        pub fn recent_by_name_pay_run() -> RecentByNamePayRunStmt {
+            RecentByNamePayRunStmt
+        }
+
+        pub struct RecentByNamePayRunQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a String, &'s ())>,
+        }
+
+        impl RecentByNamePayRunStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _target_name: &'a String,
+                _page_size: &'a i64,
+                _offset: &'a i64,
+            ) -> RecentByNamePayRunQuery<'c, 'a, 's, C> {
+                RecentByNamePayRunQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> RecentByNamePayRunQuery<'c, 'a, 's, C> {
+            pub async fn all(&self) -> Result<Vec<GetPayRun>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
         // --! count_pay_run : (count)
         pub struct CountPayRunStmt;
 
@@ -768,6 +799,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 0,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     codegraph_core::types::DddRepositoryOperation {
                         name: "findAll".to_string(),
@@ -777,6 +810,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 1,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     codegraph_core::types::DddRepositoryOperation {
                         name: "save".to_string(),
@@ -786,6 +821,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 2,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     codegraph_core::types::DddRepositoryOperation {
                         name: "delete".to_string(),
@@ -795,6 +832,44 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 3,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
+                    },
+                    // DD9 (issue #659): a typed query on the worker fixture —
+                    // the cornucopia SQL + adapter it emits must compile on
+                    // native AND wasm32 (the #550 gate's whole point).
+                    codegraph_core::types::DddRepositoryOperation {
+                        name: "recentByName".to_string(),
+                        builtin: None,
+                        return_type: Some(serde_json::json!({
+                            "type": "class",
+                            "value": {"package": "compilecheck", "name": "PayRun"}
+                        })),
+                        return_multiplicity: Some(serde_json::json!({
+                            "lower": 0,
+                            "upper": "unbounded"
+                        })),
+                        params: vec![codegraph_core::types::DddParam {
+                            name: "targetName".to_string(),
+                            type_json: serde_json::json!({
+                                "type": "primitive",
+                                "value": "string"
+                            }),
+                            multiplicity: None,
+                        }],
+                        ordinal: 4,
+                        is_protected: false,
+                        query_json: Some(serde_json::json!({
+                            "predicate": "self.name == targetName && self.notes != null",
+                            "sort": [{
+                                "field": "name",
+                                "fieldType": {"type": "primitive", "value": "string"},
+                                "direction": "asc",
+                            }],
+                            "pagination": {"limit": 20, "max": 100, "cursor": false},
+                            "readOnly": true,
+                        })),
+                        capabilities: vec!["ReadPayRuns".to_string()],
                     },
                 ],
             },
@@ -811,6 +886,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 0,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     codegraph_core::types::DddRepositoryOperation {
                         name: "findAll".to_string(),
@@ -820,6 +897,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 1,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     codegraph_core::types::DddRepositoryOperation {
                         name: "save".to_string(),
@@ -829,6 +908,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 2,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     codegraph_core::types::DddRepositoryOperation {
                         name: "delete".to_string(),
@@ -838,6 +919,8 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         params: Vec::new(),
                         ordinal: 3,
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                 ],
             },

@@ -1047,9 +1047,14 @@ impl RepositoryImplEmitter {
         let entity_features =
             crate::ddd::design::EntityFeatures::from_graph(db, schema_title).await?;
         let design_finders = design_surface
-            .finders_for(schema_title, &entity_name, &entity_features)
+            .finders_for(schema_title, &entity_name, &entity_features)?
             .into_iter()
             .filter(|finder| {
+                // DD9 queries carry their own resolved plan — the equality
+                // column check does not apply (and must not drop them).
+                if finder.kind == crate::ddd::design::FinderKind::Query {
+                    return true;
+                }
                 match super::finders::finder_columns(finder, &direct_columns, &child_tables) {
                     Ok(_) => true,
                     Err(reason) => {
@@ -1154,6 +1159,16 @@ impl RepositoryImplEmitter {
         sea_orm_items.push("PaginatorTrait");
         sea_orm_items.push("QueryFilter");
         sea_orm_items.push("QueryOrder");
+        // DD9 queries with a declared page call `.limit(…)`/`.offset(…)`
+        // (`QuerySelect`). Gated so a model without queries keeps the
+        // byte-identical import list.
+        if tree
+            .design_finders
+            .iter()
+            .any(|finder| finder.query.as_ref().is_some_and(|plan| plan.has_page()))
+        {
+            sea_orm_items.push("QuerySelect");
+        }
         if needs_active_model {
             sea_orm_items.push("Set");
         }

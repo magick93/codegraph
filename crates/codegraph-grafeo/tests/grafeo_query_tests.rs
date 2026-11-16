@@ -1608,6 +1608,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 0,
 
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     DddRepositoryOperation {
                         name: "findAll".to_string(),
@@ -1618,6 +1620,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 1,
 
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     DddRepositoryOperation {
                         name: "save".to_string(),
@@ -1628,6 +1632,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 2,
 
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     DddRepositoryOperation {
                         name: "delete".to_string(),
@@ -1638,6 +1644,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 3,
 
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     DddRepositoryOperation {
                         name: "findByTitle".to_string(),
@@ -1656,8 +1664,20 @@ fn ddd_fixture() -> DddModelGraph {
                             multiplicity: None,
                         }],
                         ordinal: 4,
-
                         is_protected: false,
+                        // DD9 (issue #659): the query block and the read
+                        // capability must survive the GQL round-trip.
+                        query_json: Some(serde_json::json!({
+                            "predicate": "self.title == title",
+                            "sort": [{
+                                "field": "title",
+                                "fieldType": {"type": "primitive", "value": "String"},
+                                "direction": "asc",
+                            }],
+                            "pagination": {"limit": 10, "max": 50, "cursor": false},
+                            "readOnly": true,
+                        })),
+                        capabilities: vec!["ReadBooks".to_string()],
                     },
                 ],
             },
@@ -1675,6 +1695,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 0,
 
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                     DddRepositoryOperation {
                         name: "renewLoan".to_string(),
@@ -1689,6 +1711,8 @@ fn ddd_fixture() -> DddModelGraph {
                         ordinal: 1,
 
                         is_protected: false,
+                        query_json: None,
+                        capabilities: Vec::new(),
                     },
                 ],
             },

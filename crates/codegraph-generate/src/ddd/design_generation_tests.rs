@@ -99,6 +99,8 @@ fn builtin(name: &str, op: &str, ordinal: usize) -> DddRepositoryOperation {
         params: Vec::new(),
         ordinal,
         is_protected: false,
+        query_json: None,
+        capabilities: Vec::new(),
     }
 }
 
@@ -117,6 +119,8 @@ fn declared(
         params,
         ordinal,
         is_protected: false,
+        query_json: None,
+        capabilities: Vec::new(),
     }
 }
 
@@ -206,17 +210,27 @@ async fn db_with_model(model: Option<DddModelGraph>) -> codegraph_core::mock::Mo
 }
 
 async fn render_trait(db: &codegraph_core::mock::MockEngine, project: &ProjectConfig) -> String {
+    try_render_trait(db, project)
+        .await
+        .expect("repository trait generates")
+}
+
+/// The fallible trait render — the DD9 query plane's refusals surface here
+/// as generation errors.
+async fn try_render_trait(
+    db: &codegraph_core::mock::MockEngine,
+    project: &ProjectConfig,
+) -> codegraph_core::error::Result<String> {
     let dir = TempDir::new().unwrap();
     let generator = RepositoryTraitGenerator::new(dir.path());
     let files = generator
         .generate(db, "BookType", "library", &config(), &tera(), project)
-        .await
-        .expect("repository trait generates");
-    files
+        .await?;
+    Ok(files
         .iter()
         .find(|f| f.path.to_string_lossy().ends_with("repository.rs"))
         .map(|f| f.content.clone())
-        .expect("repository.rs emitted")
+        .unwrap_or_default())
 }
 
 async fn render_impl(db: &codegraph_core::mock::MockEngine) -> String {
@@ -918,6 +932,357 @@ async fn design_auditable_true_forces_audit_tracking() {
     .await;
     let trait_src = render_trait(&db, &ProjectConfig::default()).await;
     assert!(trait_src.contains("include_deleted"));
+}
+
+// ── DD9 typed repository queries (issue #659) ─────────────────────────
+
+fn book_return() -> serde_json::Value {
+    serde_json::json!({"type": "class", "value": {"package": "nz.example.library", "name": "Book"}})
+}
+
+fn query_param(name: &str, type_json: serde_json::Value) -> DddParam {
+    DddParam {
+        name: name.to_string(),
+        type_json,
+        multiplicity: None,
+    }
+}
+
+fn string_query_param(name: &str) -> DddParam {
+    query_param(
+        name,
+        serde_json::json!({"type": "primitive", "value": "string"}),
+    )
+}
+
+/// A DD9 `query` block carrying only the predicate.
+fn query_block(predicate: &str) -> serde_json::Value {
+    serde_json::json!({"predicate": predicate, "readOnly": true})
+}
+
+/// A DD9 `query` block with a sort key and a bounded page.
+fn query_block_sorted(predicate: &str, field: &str, desc: bool) -> serde_json::Value {
+    serde_json::json!({
+        "predicate": predicate,
+        "sort": [{
+            "field": field,
+            "fieldType": {"type": "primitive", "value": "string"},
+            "direction": if desc { "desc" } else { "asc" },
+        }],
+        "pagination": {"limit": 10, "max": 50, "cursor": false},
+        "readOnly": true,
+    })
+}
+
+/// One declared DD9 query operation on `BookRepository`.
+fn declared_query(
+    name: &str,
+    query_json: serde_json::Value,
+    params: Vec<DddParam>,
+    returns_many: bool,
+) -> DddRepositoryOperation {
+    DddRepositoryOperation {
+        name: name.to_string(),
+        builtin: None,
+        return_type: Some(book_return()),
+        return_multiplicity: returns_many
+            .then(|| serde_json::json!({"lower": 0, "upper": "unbounded"})),
+        params,
+        ordinal: 4,
+        is_protected: false,
+        query_json: Some(query_json),
+        capabilities: vec!["ReadBooks".to_string()],
+    }
+}
+
+fn query_model(
+    query_json: serde_json::Value,
+    params: Vec<DddParam>,
+    returns_many: bool,
+) -> DddModelGraph {
+    model(
+        vec![design("Book", Some("BookType"), DddDesignFlags::default())],
+        vec![repository(
+            "BookRepository",
+            "Book",
+            vec![
+                builtin("findById", "findById", 0),
+                builtin("findAll", "findAll", 1),
+                builtin("save", "save", 2),
+                builtin("delete", "delete", 3),
+                declared_query("recent", query_json, params, returns_many),
+            ],
+        )],
+        vec![],
+    )
+}
+
+#[tokio::test]
+async fn query_emitted_in_trait_and_seaorm_impl_with_parameters_order_and_page() {
+    let db = db_with_model(Some(query_model(
+        query_block_sorted(
+            "self.status == target_status || self.title == target_title",
+            "title",
+            true,
+        ),
+        vec![
+            string_query_param("target_status"),
+            string_query_param("target_title"),
+        ],
+        true,
+    )))
+    .await;
+
+    let trait_src = render_trait(&db, &ProjectConfig::default()).await;
+    assert!(
+        trait_src.contains("/// Design query `recent` (declared in the .ddd design): typed"),
+        "the trait documents the query: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("/// Read capability: ReadBooks."),
+        "the resolved read capability is documented: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("Result<Vec<BookResponse>, Box<dyn std::error::Error>>;"),
+        "many-valued query returns Vec: {trait_src}"
+    );
+    assert!(
+        trait_src.contains("        limit: Option<u64>,\n        offset: Option<u64>,"),
+        "a declared page adds the runtime page parameters: {trait_src}"
+    );
+
+    let impl_src = render_impl(&db).await;
+    assert!(
+        impl_src.contains("crate::entity::library_book::Column::Status.eq(target_status.clone())"),
+        "the predicate binds the parameter (parameterized, never interpolated): {impl_src}"
+    );
+    assert!(
+        impl_src.contains("crate::entity::library_book::Column::Title.eq(target_title.clone())"),
+        "{impl_src}"
+    );
+    assert!(
+        impl_src.contains("sea_orm::Condition::any()"),
+        "the OR nests as a Condition::any: {impl_src}"
+    );
+    assert!(
+        impl_src.contains("order_by_desc(crate::entity::library_book::Column::Title)"),
+        "{impl_src}"
+    );
+    assert!(
+        impl_src.contains("order_by_asc(crate::entity::library_book::Column::Id)"),
+        "the identity tiebreaker makes the page deterministic: {impl_src}"
+    );
+    assert!(
+        impl_src.contains(
+            "let page_size = limit.or(Some(10u64)).map(|page_size| page_size.min(50u64));"
+        ),
+        "{impl_src}"
+    );
+    assert!(
+        impl_src.contains("query.offset(offset.unwrap_or(0))"),
+        "{impl_src}"
+    );
+    assert!(impl_src.contains("query.all(db)"), "many rows: {impl_src}");
+
+    // The query never maps CRUD operations onto the API plane.
+    let surface = codegraph_generate_design_surface(&db).await;
+    let ops = surface.operations_for("BookType").expect("design present");
+    assert_eq!(
+        ops,
+        vec![
+            "create".to_string(),
+            "update".to_string(),
+            "read".to_string(),
+            "delete".to_string(),
+            "list".to_string()
+        ],
+        "a query is a repository read, not a CRUD mapping"
+    );
+}
+
+/// The design surface over the test engine (the query plane's own view).
+async fn codegraph_generate_design_surface(
+    db: &codegraph_core::mock::MockEngine,
+) -> crate::ddd::design::DddDesignSurface {
+    crate::ddd::design::DddDesignSurface::from_graph(db)
+        .await
+        .expect("design surface")
+}
+
+#[tokio::test]
+async fn cornucopia_query_literals_bind_through_distinct_temporaries() {
+    // Two distinct string literals used across three atoms: the SQL renderer
+    // dedupes by value (`"A"` binds once), and the adapter must emit one
+    // typed temporary per bind — sharing one name would silently alias the
+    // second value onto the first.
+    let db = db_with_model(Some(query_model(
+        query_block("self.title == \"A\" && self.status == \"B\" || self.title != \"A\""),
+        vec![],
+        true,
+    )))
+    .await;
+    let project = ProjectConfig {
+        database: crate::project_config::DatabaseConfig {
+            persistence_provider: PersistenceProvider::Cornucopia,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dir = TempDir::new().unwrap();
+    let files = crate::db::cornucopia_queries::CornucopiaQueryGenerator::new(dir.path())
+        .generate(&db, "BookType", "library", &config(), &tera(), &project)
+        .await
+        .expect("query SQL generates");
+    let sql: String = files.iter().map(|file| file.content.clone()).collect();
+    assert!(
+        sql.contains("--! recent_book (_lit0, _lit1) : ("),
+        "one bind per distinct literal, in first-occurrence order: {sql}"
+    );
+    assert!(
+        sql.contains("WHERE ((\"title\" = :_lit0::text AND \"status\" = :_lit1::text) OR \"title\" <> :_lit0::text)"),
+        "{sql}"
+    );
+
+    let adapter = crate::ddd::cornucopia_repo::CornucopiaRepoGenerator::new(dir.path())
+        .generate(&db, "BookType", "library", &config(), &tera(), &project)
+        .await
+        .expect("adapter generates");
+    let code: String = adapter.iter().map(|file| file.content.clone()).collect();
+    assert!(
+        code.contains("        let _lit0: String = \"A\".to_string();"),
+        "the first literal binds through its own temporary: {code}"
+    );
+    assert!(
+        code.contains("        let _lit1: String = \"B\".to_string();"),
+        "the second literal binds through its own temporary: {code}"
+    );
+    assert!(
+        code.contains("recent_book().bind(db, &_lit0, &_lit1)"),
+        "the adapter binds the temporaries in placeholder order: {code}"
+    );
+}
+
+#[tokio::test]
+async fn query_without_a_page_has_no_runtime_page_parameters() {
+    let db = db_with_model(Some(query_model(
+        query_block("self.status == target_status"),
+        vec![string_query_param("target_status")],
+        false,
+    )))
+    .await;
+    let trait_src = render_trait(&db, &ProjectConfig::default()).await;
+    assert!(
+        !trait_src.contains("limit: Option<u64>"),
+        "no `page` ⇒ no page parameters: {trait_src}"
+    );
+    let impl_src = render_impl(&db).await;
+    assert!(!impl_src.contains(".limit("), "{impl_src}");
+    assert!(
+        impl_src.contains("query.one(db)"),
+        "0..1 → one row: {impl_src}"
+    );
+    assert!(
+        impl_src.contains("Result<Option<BookResponse>, Box<dyn std::error::Error>>"),
+        "0..1 returns an optional and never throws not-found: {impl_src}"
+    );
+}
+
+#[tokio::test]
+async fn a_construct_outside_the_subset_is_a_named_generation_error() {
+    // `length(…)` is a package-function call — type-correct only if the
+    // domain declares it, but the refusal must fire before any store work.
+    let db = db_with_model(Some(query_model(
+        query_block("self.title == target_title && length(self.title) > 3"),
+        vec![string_query_param("target_title")],
+        true,
+    )))
+    .await;
+    let err = try_render_trait(&db, &ProjectConfig::default())
+        .await
+        .expect_err("the query must be refused");
+    let message = err.to_string();
+    assert!(
+        message.contains("query `BookRepository.recent`"),
+        "the refusal names the repository and operation: {message}"
+    );
+    assert!(
+        message.contains("package-function call"),
+        "the refusal names the construct: {message}"
+    );
+}
+
+#[tokio::test]
+async fn a_query_colliding_with_a_pagination_parameter_is_refused() {
+    let db = db_with_model(Some(query_model(
+        query_block("self.status == limit"),
+        vec![string_query_param("limit")],
+        true,
+    )))
+    .await;
+    let err = try_render_trait(&db, &ProjectConfig::default())
+        .await
+        .expect_err("the collision must be refused");
+    let message = err.to_string();
+    assert!(
+        message.contains("query `BookRepository.recent`") && message.contains("`limit`"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn cornucopia_query_sql_and_adapter_render_the_same_plan() {
+    let db = db_with_model(Some(query_model(
+        query_block_sorted("self.status == target_status", "title", false),
+        vec![string_query_param("target_status")],
+        true,
+    )))
+    .await;
+    let project = ProjectConfig {
+        database: crate::project_config::DatabaseConfig {
+            persistence_provider: PersistenceProvider::Cornucopia,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dir = TempDir::new().unwrap();
+    let files = crate::db::cornucopia_queries::CornucopiaQueryGenerator::new(dir.path())
+        .generate(&db, "BookType", "library", &config(), &tera(), &project)
+        .await
+        .expect("query SQL generates");
+    let sql = files
+        .iter()
+        .map(|file| file.content.clone())
+        .collect::<String>();
+    assert!(
+        sql.contains("--! recent_book (target_status, page_size, offset) : ("),
+        "the query annotation lists the predicate bind then the page: {sql}"
+    );
+    assert!(
+        sql.contains("WHERE \"status\" = :target_status::text"),
+        "the predicate is parameterized with an explicit cast: {sql}"
+    );
+    assert!(
+        sql.contains("ORDER BY \"title\" ASC, \"id\" ASC"),
+        "the sort keys then the identity tiebreaker: {sql}"
+    );
+    assert!(sql.contains("LIMIT :page_size OFFSET :offset"), "{sql}");
+
+    let adapter = crate::ddd::cornucopia_repo::CornucopiaRepoGenerator::new(dir.path())
+        .generate(&db, "BookType", "library", &config(), &tera(), &project)
+        .await
+        .expect("adapter generates");
+    let code = adapter
+        .iter()
+        .map(|file| file.content.clone())
+        .collect::<String>();
+    assert!(
+        code.contains("recent_book().bind(db, &target_status, &page_size, &page_offset)"),
+        "the adapter binds the predicate args then the page: {code}"
+    );
+    assert!(
+        code.contains("let page_size = limit.or(Some(10u64)).map(|page_size| page_size.min(50u64)).unwrap_or(i64::MAX as u64) as i64;"),
+        "{code}"
+    );
 }
 
 // ── byte-identity guard (no designs in the graph) ──────────────────────

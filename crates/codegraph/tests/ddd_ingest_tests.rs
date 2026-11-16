@@ -76,6 +76,32 @@ fn sample_model() -> DddModel {
                 lower: 0,
                 upper: Upper::Finite(5),
             })),
+            // DD9 (issue #659): the typed query block rides the graph as
+            // phero-ir `QuerySpec` JSON, plus the resolved read capability.
+            RepositoryOperation::declared(
+                "recent",
+                Some(DddTypeRef::domain(class_ref("nz.example.library", "Book"))),
+                vec![param(
+                    "minimum",
+                    TypeRef::Primitive(PrimitiveType::Int),
+                    None,
+                )],
+            )
+            .with_return_multiplicity(Some(Multiplicity::MANY))
+            .with_query(Some(
+                phero_ir::ddd::QuerySpec::new("self.title != null && self.title != title")
+                    .with_sort(vec![phero_ir::ddd::QuerySortKey::new(
+                        "title",
+                        TypeRef::Primitive(PrimitiveType::String),
+                        phero_ir::ddd::SortDirection::Desc,
+                    )])
+                    .with_pagination(Some(
+                        phero_ir::ddd::QueryPagination::new()
+                            .with_limit(Some(20))
+                            .with_max(Some(100)),
+                    )),
+            ))
+            .with_capabilities(vec![phero_ir::ddd::CapabilityRef::new("ReadBooks")]),
         ],
     });
 
@@ -294,6 +320,32 @@ fn conversion_maps_module_major_order_and_every_payload() {
                     }],
                     ordinal: 4,
                     is_protected: false,
+                    query_json: None,
+                    capabilities: Vec::new(),
+                },
+                codegraph_core::types::DddRepositoryOperation {
+                    name: "recent".to_string(),
+                    builtin: None,
+                    return_type: Some(type_json(&class_ref("nz.example.library", "Book"))),
+                    return_multiplicity: Some(mult_json(&Multiplicity::MANY)),
+                    params: vec![codegraph_core::types::DddParam {
+                        name: "minimum".to_string(),
+                        type_json: type_json(&TypeRef::Primitive(PrimitiveType::Int)),
+                        multiplicity: None,
+                    }],
+                    ordinal: 5,
+                    is_protected: false,
+                    query_json: Some(serde_json::json!({
+                        "predicate": "self.title != null && self.title != title",
+                        "sort": [{
+                            "field": "title",
+                            "fieldType": {"type": "primitive", "value": "string"},
+                            "direction": "desc",
+                        }],
+                        "pagination": {"limit": 20, "max": 100, "cursor": false},
+                        "readOnly": true,
+                    })),
+                    capabilities: vec!["ReadBooks".to_string()],
                 },
             ],
         }
@@ -397,6 +449,8 @@ fn phero_ir_builtin(
         params: Vec::new(),
         ordinal,
         is_protected: false,
+        query_json: None,
+        capabilities: Vec::new(),
     }
 }
 

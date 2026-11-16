@@ -31,7 +31,13 @@
 /// persisted by a pre-WS6 binary would serve no manifest to the action
 /// plane and silently drop the e2e action surface — cold re-ingest
 /// instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 5;
+///
+/// Bumped to 6 for DD9 typed repository queries (issue #659):
+/// `DddRepositoryOperation.query_json`/`capabilities_json` are new
+/// nullable props, and a cached graph persisted by a pre-DD9 binary
+/// reads them as NULL — a design query would silently degrade to the
+/// equality-finder heuristic it replaces. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 6;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -528,7 +534,9 @@ fn node_type_ddl() -> Vec<&'static str> {
             return_type_json STRING,
             return_multiplicity STRING,
             params_json STRING NOT NULL,
-            ordinal INTEGER NOT NULL
+            ordinal INTEGER NOT NULL,
+            query_json STRING,
+            capabilities_json STRING
         )",
         "CREATE NODE TYPE IF NOT EXISTS DddService (
             application STRING NOT NULL,

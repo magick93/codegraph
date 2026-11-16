@@ -1030,8 +1030,18 @@ fn emit_adapter_tree(tree: &EntityTree, code: &mut CodeWriter) {
 /// Emit every declared `.ddd` design finder (issue #449) as adapter methods
 /// calling the annotated queries generated for the same finders. Gated on
 /// `tree.design_finders` — flag-off emits nothing.
+///
+/// DD9 typed queries (issue #659) ride the same plane: the query SQL is
+/// rendered by `db::cornucopia_queries` and the adapter binds the predicate
+/// arguments (in the SQL's first-occurrence order) plus the page window.
 fn emit_adapter_design_finders(tree: &EntityTree, code: &mut CodeWriter) {
     for finder in &tree.design_finders {
+        if finder.kind == crate::ddd::design::FinderKind::Query {
+            if let Some(plan) = &finder.query {
+                emit_adapter_design_query(tree, finder, plan, code);
+            }
+            continue;
+        }
         // Validate columns exactly like the SeaORM emitter so both
         // providers emit the same finder set (and stay consistent with the
         // shared trait).
@@ -1040,6 +1050,129 @@ fn emit_adapter_design_finders(tree: &EntityTree, code: &mut CodeWriter) {
         }
         emit_adapter_design_finder(tree, finder, code);
     }
+}
+
+/// Emit one DD9 query's adapter method: bind the rendered predicate's
+/// arguments, compute the page window, and map rows to `{Entity}Response`.
+fn emit_adapter_design_query(
+    tree: &EntityTree,
+    finder: &crate::ddd::design::DesignFinder,
+    plan: &crate::ddd::repository_query::QueryPlan,
+    code: &mut CodeWriter,
+) {
+    use crate::ddd::repository_query::{QueryLiteral, QueryOperand};
+
+    let entity_name = &tree.entity_name;
+    let qmod = qmod(tree);
+    let fn_name = format!(
+        "{}_{}",
+        finder.method_name,
+        codegraph_naming::to_snake_case(entity_name)
+    );
+    let rendered = crate::ddd::repository_query::render_sql(plan, &finder.params);
+    wln!(code);
+    wln!(
+        code,
+        "    /// Design query `{}` (declared in the .ddd design): typed predicate, parameterized.",
+        finder.name
+    );
+    if !plan.capabilities.is_empty() {
+        wln!(
+            code,
+            "    /// Read capability: {}.",
+            plan.capabilities.join(", ")
+        );
+    }
+    wln!(code, "    async fn {}(", finder.method_name);
+    wln!(code, "        &self,");
+    wln!(code, "        db: &C,");
+    for param in &finder.params {
+        wln!(code, "        {}: {},", param.name, param.rust_type);
+    }
+    if plan.has_page() {
+        wln!(code, "        limit: Option<u64>,");
+        wln!(code, "        offset: Option<u64>,");
+    }
+    if finder.returns_many {
+        wln!(
+            code,
+            "    ) -> Result<Vec<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+        );
+    } else {
+        wln!(
+            code,
+            "    ) -> Result<Option<{entity_name}Response>, Box<dyn std::error::Error>> {{"
+        );
+    }
+    // Every bind is passed by reference: parameters are the method's own
+    // arguments, literals ride a typed `let` temporary (a `&(expr)`
+    // temporary would be dropped before the builder call completes). The
+    // temporary name is the SQL placeholder name, so two distinct literals
+    // of the same type cannot shadow each other.
+    let mut binds: Vec<String> = Vec::with_capacity(rendered.args.len());
+    for arg in &rendered.args {
+        match &arg.source {
+            QueryOperand::Param(index) => match finder.params.get(*index) {
+                Some(param) => binds.push(format!("&{}", param.name)),
+                // Unreachable: the plan's indices are validated against the
+                // parameter list when it is lowered.
+                None => binds.push("&()".to_string()),
+            },
+            QueryOperand::Literal(literal) => {
+                let (rust_type, value) = match literal {
+                    QueryLiteral::Int(value) => ("i64", format!("{value}i64")),
+                    QueryLiteral::Float(value) => ("f64", format!("{value}f64")),
+                    QueryLiteral::String(text) => ("String", format!("{text:?}.to_string()")),
+                    QueryLiteral::Bool(value) => ("bool", value.to_string()),
+                    QueryLiteral::Date(text) => ("String", format!("{text:?}.to_string()")),
+                };
+                wln!(code, "        let {}: {rust_type} = {value};", arg.name);
+                binds.push(format!("&{}", arg.name));
+            }
+        }
+    }
+    if plan.has_page() {
+        wln!(
+            code,
+            "        let page_size = {};",
+            crate::ddd::repository_query::page_size_i64_expr(&plan.page.unwrap_or_default())
+        );
+        wln!(
+            code,
+            "        let page_offset = offset.unwrap_or(0) as i64;"
+        );
+        binds.push("&page_size".to_string());
+        binds.push("&page_offset".to_string());
+    }
+    let bind_args = if binds.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", binds.join(", "))
+    };
+    if finder.returns_many {
+        wln!(code, "        let mut items = Vec::new();");
+        wln!(
+            code,
+            "        for row in {qmod}::{fn_name}().bind(db{bind_args}).all().await.map_err(|e| e.to_string())? {{"
+        );
+        emit_response_expr(tree, code, "row", "            ", "            let resp = ");
+        wln!(code, "            ;");
+        wln!(code, "            items.push(resp);");
+        wln!(code, "        }}");
+        wln!(code, "        Ok(items)");
+    } else {
+        wln!(
+            code,
+            "        let response = if let Some(row) = {qmod}::{fn_name}().bind(db{bind_args}).opt().await.map_err(|e| e.to_string())? {{"
+        );
+        emit_response_expr(tree, code, "row", "            ", "            Some(");
+        wln!(code, "            )");
+        wln!(code, "        }} else {{");
+        wln!(code, "            None");
+        wln!(code, "        }};");
+        wln!(code, "        Ok(response)");
+    }
+    wln!(code, "    }}");
 }
 
 fn emit_adapter_design_finder(
@@ -1069,6 +1202,9 @@ fn emit_adapter_design_finder(
             code,
             "    /// Design built-in `findByExample`: `None` fields filter out."
         ),
+        // DD9 queries are emitted by their own path — this equality finder
+        // renderer never sees one.
+        crate::ddd::design::FinderKind::Query => {}
     }
     wln!(code, "    async fn {}(", finder.method_name);
     wln!(code, "        &self,");

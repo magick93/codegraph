@@ -132,6 +132,20 @@ pub struct DddRepositoryOperation {
     /// interface (it lowers onto the repository but maps no API operation).
     #[serde(default)]
     pub is_protected: bool,
+    /// The typed read-only query shape (DD9, issue #659), as phero-ir
+    /// `QuerySpec` JSON — predicate source text, resolved sort keys,
+    /// pagination, and `readOnly`. Opaque to codegraph-core (which must not
+    /// depend on phero-ir); `codegraph-generate` rehydrates it and lowers
+    /// the predicate to parameterized SQL. `None` on every non-query
+    /// operation. Serde-defaulted for read-compat with graphs persisted
+    /// before the field existed.
+    #[serde(default)]
+    pub query_json: Option<serde_json::Value>,
+    /// The resolved actor-capability names guarding the query (DD9's read
+    /// authorization), in declaration order. Serde-defaulted for read-compat
+    /// with graphs persisted before the field existed.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 /// One declared parameter: a phero-ir `OperationParam` with the signature
