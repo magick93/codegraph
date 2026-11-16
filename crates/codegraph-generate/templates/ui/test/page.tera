@@ -325,7 +325,29 @@ export class {{ entity_name }}Page extends BasePage {
     await this.page.locator({% if project.testid_module %}`[data-testid="${shared.confirmDialogConfirm}"]`{% else %}'[data-testid="confirm-dialog-confirm"]'{% endif %}).click();
   }
 
-{% if pom.workflow %}
+{% if media_fields %}
+  // ── Media surface (issue #633: one upload/remove pair per media field,
+  // driven through the BasePage helpers — the testid knowledge stays in
+  // the kernel) ──────────────────────────────────────────────────────────
+
+{% for m in media_fields %}
+  /** Upload `filePath` into the `{{ m.field }}` media control. */
+  async upload{{ m.pascal }}(filePath: string): Promise<void> {
+    await this.uploadMedia('{{ m.field }}', filePath);
+  }
+
+  /** Remove the stored `{{ m.field }}` reference and wait for the display
+   * to clear. */
+  async remove{{ m.pascal }}(): Promise<void> {
+    await this.removeMedia('{{ m.field }}');
+  }
+
+  media{{ m.pascal }}Display(): Locator {
+    return this.mediaDisplay('{{ m.field }}');
+  }
+
+{% endfor %}
+{% endif %}{% if pom.workflow %}
   // ── Workflow (pom.workflow: states={{ pom.workflow.states | join(sep=",") }}) ──
 
   workflowPanel(): Locator {

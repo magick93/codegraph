@@ -45,6 +45,22 @@ pub struct ViewTestSpec {
     /// asserting the view renders when permitted or redirects to the denial
     /// target when not.
     pub personas: Vec<PersonaTest>,
+    /// Media file controls the view's forms carry (issue #633): one
+    /// structural test per field asserting the control renders and is NOT
+    /// value-bound (the #633 defect). The live upload leg needs a
+    /// configured provider (503 without one), so the gate lane asserts the
+    /// wired SHAPE — the entity plane's `.media.test.ts` owns the round
+    /// trip.
+    pub media_fields: Vec<MediaFieldTest>,
+}
+
+/// One media file control in a view: the form component + the DSL field.
+#[derive(Debug, Clone)]
+pub struct MediaFieldTest {
+    /// The form component name (`editor`).
+    pub form: String,
+    /// The DSL field name (`receipt`).
+    pub field: String,
 }
 
 /// One actor-persona guard test: seeds `__USER_ROLES__` (and

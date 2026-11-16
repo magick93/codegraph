@@ -35,9 +35,50 @@ pub async fn collect_ui_fields(
     // Query composite range for this schema (if any)
     let composite_range = db.get_composite_range(schema_title).await.ok().flatten();
 
+    // Media references (issue #633): the domain's media plan names the
+    // contained-value features that lower to their own upload route — they
+    // are NOT generic UI fields. The mox path classifies them as
+    // `ValueObject` (a contained value) and the JSON/classifier path as
+    // `MediaWrapper`; both must be skipped here so no text form input and
+    // no test-data key is ever emitted (the create/update DTOs exclude
+    // them, and `deny_unknown_fields` turns a leaked key into a 422).
+    let media_fields: HashSet<String> = match current_domain {
+        Some(domain_name) => match config
+            .domains
+            .get(domain_name)
+            .and_then(|d| d.media.as_ref())
+        {
+            Some(media) => crate::media::plan::build_media_plan_for_domain(
+                db,
+                domain_name,
+                media,
+                &config.defaults.type_suffix,
+                std::slice::from_ref(&schema_title.to_string()),
+            )
+            .await?
+            .fields
+            .into_iter()
+            .map(|f| f.field_snake)
+            .collect(),
+            None => HashSet::new(),
+        },
+        None => HashSet::new(),
+    };
+
     let mut fields = Vec::new();
 
     for prop in &props {
+        // Media references are not form fields (issue #633): the create/
+        // update DTOs EXCLUDE them (the upload lives on its own route,
+        // `media_route.tera`), so a generic UiField here renders a text
+        // input whose value the emitted create body posts as an unknown
+        // key — rejected 422 (`deny_unknown_fields`). The media plan
+        // (`media::plan::media_route_fields`) is the field's real surface.
+        if prop.effective_kind() == Some(RefClassificationKind::MediaWrapper)
+            || media_fields.contains(&prop.rust_field_name)
+        {
+            continue;
+        }
         if prop.effective_kind() == Some(RefClassificationKind::ValueObject) {
             // Resolve the target schema and emit a nested type reference.
             let target_schema = if prop.is_array {

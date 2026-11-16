@@ -52,11 +52,29 @@ pub(super) struct RemoteModuleContext {
     /// queries gain a `query.live` workflow stream (the 5s poll, the
     /// entity plane's `getWorkflowLive` pattern).
     pub(super) live: bool,
+    /// Media upload commands (issue #633) — one per wired file field.
+    pub(super) media: Vec<RemoteMediaCommand>,
+}
+
+/// One media upload command export (issue #633): the DSL `input file`
+/// field lowered onto the entity's media route. The command runs
+/// SERVER-side like every other export here, so the upload posts
+/// multipart FormData through the shared helper and the bytes never ride
+/// a browser credential.
+pub(super) struct RemoteMediaCommand {
+    /// `upload{Field}`.
+    pub export: String,
+    /// The entity collection path (`/api/v1/sales/customer`).
+    pub base_path: String,
+    /// The media field snake (the route's last segment).
+    pub field: String,
+    /// The view's id param name (`id`).
+    pub id_param: String,
 }
 
 impl RemoteModuleContext {
     pub(super) fn is_empty(&self) -> bool {
-        self.queries.is_empty() && self.commands.is_empty()
+        self.queries.is_empty() && self.commands.is_empty() && self.media.is_empty()
     }
 
     /// Collect from a view's load context (the query leg).
@@ -83,6 +101,7 @@ impl RemoteModuleContext {
             queries,
             commands: Vec::new(),
             live: false,
+            media: Vec::new(),
         }
     }
 
@@ -101,7 +120,7 @@ impl RemoteModuleContext {
         s.push_str("// the browser only calls the generated same-origin endpoints, so the API\n");
         s.push_str("// origin and its credentials never reach the client.\n\n");
         let needs_query = !self.queries.is_empty();
-        let needs_command = !self.commands.is_empty();
+        let needs_command = !self.commands.is_empty() || !self.media.is_empty();
         let imports = match (needs_query, needs_command) {
             (true, true) => "import { command, query } from '$app/server';",
             (true, false) => "import { query } from '$app/server';",
@@ -165,6 +184,10 @@ impl RemoteModuleContext {
             .iter()
             .find(|q| !q.by_id && !q.paginate)
             .map(|q| q.export.clone());
+        for m in &self.media {
+            s.push('\n');
+            s.push_str(&render_media_upload(m));
+        }
         for c in &self.commands {
             s.push('\n');
             let (item, list) = match &c.command.kind {
@@ -240,6 +263,37 @@ fn render_query(q: &RemoteQuery) -> String {
         s.push_str("\treturn Array.isArray(data) ? data : data.data ?? [];\n");
     }
     s.push_str("});\n");
+    s
+}
+
+/// The multipart upload command (issue #633): the file arrives server-side
+/// as a kit-serialized `File`, is appended to a FormData, and is posted to
+/// the media route. Fetch sets the multipart boundary itself — the headers
+/// are left alone (a `Content-Type` would truncate the body).
+fn render_media_upload(m: &RemoteMediaCommand) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "export const {export} = command('unchecked', async (args: {{ id: string; file: File }}) => {{\n",
+        export = m.export
+    ));
+    s.push_str("\tconst form = new FormData();\n");
+    s.push_str("\tform.append('file', args.file, args.file.name);\n");
+    s.push_str(&format!(
+        "\tconst response = await apiFetch(`{base}/${{args.id}}/{field}`, {{\n\t\tmethod: 'PUT',\n\t\tbody: form,\n\t}});\n",
+        base = m.base_path,
+        field = m.field
+    ));
+    s.push_str("\tconst body = await response.json().catch(() => null);\n");
+    s.push_str("\tif (!response.ok) {\n");
+    s.push_str(
+        "\t\treturn { ok: false as const, message: body?.error?.message ?? `Upload failed (${response.status})` };\n",
+    );
+    s.push_str("\t}\n");
+    s.push_str(
+        "\treturn { ok: true as const, key: body?.key as string | undefined, url: body?.url as string | undefined };\n",
+    );
+    s.push_str("});\n");
+    let _ = &m.id_param;
     s
 }
 

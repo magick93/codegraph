@@ -99,6 +99,26 @@ pub struct IncludeTestPath {
     pub is_array: bool,
 }
 
+/// One media field with an app-plane route (issue #633) — the media e2e
+/// family's fixtures and the page class's `upload{Field}`/`remove{Field}`
+/// conveniences read it. Resolved from the domain's media plan
+/// (`media::plan::media_route_fields`), so client-direct domains (no
+/// route) never produce one.
+#[derive(Debug, Clone, Serialize)]
+pub struct E2eMediaFieldCtx {
+    /// The contained-value feature (snake) — the testid namespace
+    /// (`media-{field}-{input,busy,error,display,remove}`).
+    pub field: String,
+    /// PascalCase feature name for the page-class method names.
+    pub pascal: String,
+    /// The domain's accepted mime types (config `accept`).
+    pub accept: Vec<String>,
+    /// The first accepted type — the fixture file's declared mime.
+    pub accept_first: String,
+    /// The configured hard byte cap (the oversize fixture's size).
+    pub max_bytes: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct UiE2eTestContext {
     pub entity_name: String,
@@ -112,6 +132,19 @@ pub struct UiE2eTestContext {
     pub has_delete: bool,
     pub has_list: bool,
     pub has_workflow: bool,
+    /// Any domain declares `[media]` (issue #633): the shared POM kernel is
+    /// one file per run, so its upload/remove surface is gated on the
+    /// PROJECT, not on this entity. False ⇒ kernel byte-identical.
+    pub has_media: bool,
+    /// This entity's media fields with an app-plane route (issue #633).
+    /// Empty ⇒ no `{seg}.media.test.ts`, no page-class conveniences.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub media_fields: Vec<E2eMediaFieldCtx>,
+    /// The media spec's fixture body (`build_test_data_json`) — the same
+    /// projection the dependency/parent fixtures come from, so the create
+    /// body can never drift from the entity's required fields.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub media_test_data_json: String,
     pub workflow_states: Vec<String>,
     pub initial_state: String,
     pub terminal_states: Vec<String>,

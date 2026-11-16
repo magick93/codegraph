@@ -63,6 +63,11 @@
 {%- for imp in imports %}
 	import {{ imp.export_name }} from '{{ imp.import_path }}';
 {%- endfor %}
+{%- if remote_api %}
+{%- for imp in file_imports %}
+	import { {{ imp }} } from './data.remote';
+{%- endfor %}
+{%- endif %}
 
 	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
 {%- if remote_awaits %}
@@ -230,6 +235,9 @@
 	}
 {%- endif %}
 {%- endfor %}
+{%- if file_scripts %}
+{{ file_scripts }}
+{%- endif %}
 {%- for comp in components %}
 {%- if comp.workflow %}
 {%- if comp.remote_transition %}
@@ -537,6 +545,8 @@
 		</label>
 		{% endfor %}
 	</fieldset>
+	{% elif field.is_file %}
+	{{ field.file_markup }}
 	{% elif field.is_textarea %}
 	<label>
 		{{ field.name }}

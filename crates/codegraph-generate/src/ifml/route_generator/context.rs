@@ -51,6 +51,18 @@ pub struct PageSvelteContext {
     /// transition posts) — gates the PUBLIC_API_URL/auth-header block
     /// (issue #557).
     pub(super) has_api_surface: bool,
+    /// Media file-field wiring (issue #633): the page-script blocks (state
+    /// + upload handlers) and the `data.remote.ts` command exports the page
+    /// imports. Empty without a wired file field — every other page is
+    /// byte-identical.
+    #[serde(default)]
+    pub(super) file_scripts: String,
+    #[serde(default)]
+    pub(super) file_imports: Vec<String>,
+    /// The media upload commands the page's file slots call (issue #633):
+    /// the colocated `data.remote.ts` module emits one export per entry.
+    #[serde(default)]
+    pub(super) file_media: Vec<RenderFileMedia>,
     /// Remote-functions data plane (issue #557): when true the page's
     /// loads/posts call the view's server-executed `data.remote.ts` exports
     /// instead of client `fetch` — the API origin and its credentials never
@@ -848,6 +860,203 @@ pub struct RenderForm {
     pub(super) fields: Vec<RenderInputField>,
 }
 
+/// The wired file slot for one `input file` form field (issue #633).
+///
+/// The slot is what makes a DSL file field REAL: a single non-value-bound
+/// `<input type="file">` (a value binding would JSON-stringify a `File`
+/// into the submit body — the dead behaviour #633 fixes) plus the
+/// control's testids and the page-script upload handler that posts
+/// multipart FormData through the colocated `data.remote.ts` command (the
+/// media route `PUT …/{id}/{field}`). `upload_command` is empty when the
+/// field does not resolve to a media route (or the remote plane is off):
+/// the markup still renders a plain file input, never a value-bound one.
+#[derive(Debug, Clone, Default)]
+pub(super) struct FileSlot {
+    /// The media field snake — the testid namespace.
+    pub media_field: String,
+    /// The remote command export (`upload{Field}`).
+    pub upload_command: String,
+    /// The page-script handler name (`handleFile{Field}`).
+    pub handler: String,
+    /// `accept` attribute value (comma-joined mimes).
+    pub accept: String,
+}
+
+/// The rendered pieces of one file slot: the markup that replaces the
+/// generic input, the page-script block (state + handler), and the remote
+/// command export the page must import (`None` when unwired).
+#[derive(Debug, Clone, Default)]
+pub(super) struct FileSlotRender {
+    pub markup: String,
+    pub script: String,
+    pub import: Option<String>,
+}
+
+/// Render the file slot for one DSL `input file` field (issue #633).
+///
+/// Svelte block syntax (`{#if}`) is avoided deliberately: the markup uses
+/// the `hidden={!state}` form, so the slot needs only expression braces
+/// (single braces are literal text to Tera) — no `{% raw %}` gymnastics in
+/// the two page templates that render it.
+pub(super) fn render_file_slot(
+    field_name: &str,
+    slot: Option<&FileSlot>,
+    id_param: Option<&str>,
+) -> FileSlotRender {
+    let mut markup = String::new();
+    let mut script = String::new();
+    let mut import = None;
+
+    markup.push_str("<label>\n");
+    markup.push_str(&format!("\t\t\t\t{field_name}\n"));
+    match slot {
+        Some(slot) if !slot.upload_command.is_empty() => {
+            let (url, busy, err) = file_state_vars(&slot.media_field);
+            markup.push_str(&format!(
+                "\t\t\t\t<input type=\"file\" data-testid=\"media-{m}-input\" accept=\"{accept}\" onchange={{{handler}}} />\n",
+                m = slot.media_field,
+                accept = slot.accept,
+                handler = slot.handler,
+            ));
+            markup.push_str(&format!(
+                "\t\t\t\t<img data-testid=\"media-{m}-display\" src={{{url} ?? ''}} alt=\"{field_name}\" hidden={{!{url}}} />\n",
+                m = slot.media_field,
+                url = url,
+            ));
+            markup.push_str(&format!(
+                "\t\t\t\t<span data-testid=\"media-{m}-busy\" hidden={{!{busy}}}>Uploading…</span>\n",
+                m = slot.media_field,
+                busy = busy,
+            ));
+            markup.push_str(&format!(
+                "\t\t\t\t<span data-testid=\"media-{m}-error\" role=\"alert\" hidden={{!{err}}}>{{{err} ?? ''}}</span>\n",
+                m = slot.media_field,
+                err = err,
+            ));
+
+            let id_expr = id_param
+                .map(|p| format!("String(viewParams.{p})"))
+                .unwrap_or_else(|| "String(viewParams.id)".to_string());
+            script.push_str(&format!(
+                "\t// Media file field '{field_name}' (issue #633): the upload posts\n\
+                 \t// multipart FormData through the colocated data.remote.ts command —\n\
+                 \t// the submit payload never carries the File object.\n\
+                 \tlet {url} = $state<string | null>(null);\n\
+                 \tlet {busy} = $state(false);\n\
+                 \tlet {err} = $state<string | null>(null);\n\n\
+                 \tasync function {handler}(event: Event) {{\n\
+                 \t\tconst input = event.currentTarget as HTMLInputElement;\n\
+                 \t\tconst file = input.files?.[0];\n\
+                 \t\tinput.value = '';\n\
+                 \t\tif (!file) return;\n\
+                 \t\t{busy} = true;\n\
+                 \t\t{err} = null;\n\
+                 \t\ttry {{\n\
+                 \t\t\tconst result = await {command}({{ id: {id_expr}, file }});\n\
+                 \t\t\tif (!result.ok) {{\n\
+                 \t\t\t\t{err} = result.message ?? 'Upload failed';\n\
+                 \t\t\t\treturn;\n\
+                 \t\t\t}}\n\
+                 \t\t\t{url} = result.url ?? null;\n\
+                 \t\t}} finally {{\n\
+                 \t\t\t{busy} = false;\n\
+                 \t\t}}\n\
+                 \t}}\n",
+                url = url,
+                busy = busy,
+                err = err,
+                handler = slot.handler,
+                command = slot.upload_command,
+                id_expr = id_expr,
+            ));
+            import = Some(slot.upload_command.clone());
+        }
+        Some(slot) => {
+            // A media field whose route is not reachable from this view
+            // (no id param, or the remote plane is off): a real file input
+            // with no value binding, never the dead value-bound form.
+            markup.push_str(&format!(
+                "\t\t\t\t<input type=\"file\" data-testid=\"media-{m}-input\" accept=\"{accept}\" />\n",
+                m = slot.media_field,
+                accept = slot.accept,
+            ));
+        }
+        None => {
+            markup.push_str("\t\t\t\t<input type=\"file\" />\n");
+        }
+    }
+    markup.push_str("\t\t\t</label>\n");
+    FileSlotRender {
+        markup,
+        script,
+        import,
+    }
+}
+
+/// Resolve every media field the entity carries an upload route for
+/// (issue #633), keyed by the media field snake name.
+///
+/// Resolution: the entity's schema (exact, then `+type_suffix`, the api
+/// resolver's chain) → its domain → that domain's `[media]` plan
+/// (`media_route_fields` — empty for client-direct, which has no app-plane
+/// route) → one [`FileSlot`] per field. Graph or config trouble resolves to
+/// an EMPTY map: the field keeps a plain file input rather than failing a
+/// page over a media wiring detail (the media plan's own validation is the
+/// hard-error authority).
+async fn resolve_entity_file_slots(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    entity: &str,
+) -> HashMap<String, FileSlot> {
+    let schema = match db.get_schema(entity).await.ok().flatten() {
+        Some(schema) => schema,
+        None => {
+            let suffixed = format!("{entity}{}", config.defaults.type_suffix);
+            match db.get_schema(&suffixed).await.ok().flatten() {
+                Some(schema) => schema,
+                None => return HashMap::new(),
+            }
+        }
+    };
+    let Some(domain) = schema.domain.clone() else {
+        return HashMap::new();
+    };
+    let Some(media) = config.domains.get(&domain).and_then(|d| d.media.as_ref()) else {
+        return HashMap::new();
+    };
+    let Ok(fields) =
+        crate::media::plan::media_route_fields(db, config, &domain, &schema.title).await
+    else {
+        return HashMap::new();
+    };
+    let accept = media.accept.join(",");
+    fields
+        .into_iter()
+        .map(|field| {
+            let pascal = codegraph_naming::to_pascal_case(&field);
+            (
+                field.clone(),
+                FileSlot {
+                    upload_command: format!("upload{pascal}"),
+                    handler: format!("handleFile{pascal}"),
+                    accept: accept.clone(),
+                    media_field: field,
+                },
+            )
+        })
+        .collect()
+}
+
+/// The three Svelte state variable names a media field's slot drives.
+pub(super) fn file_state_vars(media_field: &str) -> (String, String, String) {
+    let stem = media_field.replace(['-', '.'], "_");
+    (
+        format!("media_url_{stem}"),
+        format!("media_busy_{stem}"),
+        format!("media_error_{stem}"),
+    )
+}
+
 /// TanStack form render context for a typed form (issue #580): the zod
 /// schema lowered from the DSL validations (source prebuilt in Rust via
 /// [`crate::forms`] + `zod_glue` — never assembled in Tera), the
@@ -869,6 +1078,12 @@ pub struct RenderFormTanstack {
     pub payload: String,
     /// One slot per form field, in declaration order.
     pub fields: Vec<RenderTanstackField>,
+    /// The DSL file fields the value-bound plane skips (issue #633) — the
+    /// page context resolves their slots.
+    pub file_fields: Vec<String>,
+    /// The rendered file-slot markup (filled by the page context; empty
+    /// until then).
+    pub file_markup: String,
     /// The mapped field-component import when the `field`-role mapping
     /// carried `field_props` wiring; `None` keeps the built-in slots.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -884,6 +1099,21 @@ pub struct RenderFormTanstack {
     /// action-control slot, `{comp}-submit` fallback), so the TanStack
     /// page and the page class can never drift.
     pub submit_testid: String,
+}
+
+/// One media upload command wiring (issue #633): the export name the page
+/// script calls, the entity collection path the route hangs off, and the
+/// media field.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderFileMedia {
+    /// `upload{Field}` — the remote module export + the page import.
+    pub export: String,
+    /// The entity collection path (`/api/v1/sales/customer`).
+    pub base_path: String,
+    /// The media field snake (the route's last segment).
+    pub field: String,
+    /// The view's id param name.
+    pub id_param: String,
 }
 
 /// One TanStack field slot: the DSL name (the `<form.AppField name>` slot),
@@ -922,6 +1152,12 @@ pub struct RenderInputField {
     /// Message positionally paired with the first validation; rendered as
     /// `data-validate-message` next to `data-validate`.
     pub(super) message: Option<String>,
+    /// A DSL `input file` field (issue #633): the template renders
+    /// `file_markup` instead of the generic value-bound input.
+    pub(super) is_file: bool,
+    /// The pre-rendered file slot markup (`<label>…</label>`), empty for
+    /// non-file fields.
+    pub(super) file_markup: String,
 }
 
 /// Typed-chart render context derived from a `ComponentSpec::Chart`
@@ -1266,6 +1502,46 @@ pub(super) async fn build_page_context(
     // requires reuse the view gate verbatim (byte-identical).
     let id_param = id_param_from(&vc.params);
     let auth_surface = project.codegen.ifml_e2e_auth;
+    // Media file slots (issue #633): resolved BEFORE the mutable component
+    // loop (async graph reads cannot run inside it). One entity read per
+    // distinct entity; a field that is not a media field keeps `None`
+    // (a plain file input — never a value-bound one).
+    let mut file_slots: HashMap<(String, String), Option<FileSlot>> = HashMap::new();
+    if remote && id_param.is_some() {
+        for comp in groups.iter().flat_map(|g| g.components.iter()) {
+            let entity = comp.entity.as_str();
+            if entity.is_empty() {
+                continue;
+            }
+            let mut names: Vec<String> = Vec::new();
+            if let Some(form) = &comp.form {
+                names.extend(
+                    form.fields
+                        .iter()
+                        .filter(|f| f.is_file)
+                        .map(|f| f.name.clone()),
+                );
+            }
+            if let Some(ts) = &comp.tanstack {
+                names.extend(ts.file_fields.iter().cloned());
+            }
+            names.sort();
+            names.dedup();
+            if names.is_empty() {
+                continue;
+            }
+            let resolved = resolve_entity_file_slots(db, config, entity).await;
+            for name in names {
+                let slot = resolved
+                    .get(&codegraph_naming::to_snake_case(&name))
+                    .cloned();
+                file_slots.insert((entity.to_string(), name), slot);
+            }
+        }
+    }
+    let mut file_scripts = String::new();
+    let mut file_imports: Vec<String> = Vec::new();
+    let mut file_media: Vec<RenderFileMedia> = Vec::new();
     let mut fetch_state = FetchState::default();
     let mut needs_can_import = false;
     let mut needs_denial_helper = false;
@@ -1399,6 +1675,72 @@ pub(super) async fn build_page_context(
                 }
             }
             needs_denial_helper = auth_surface;
+
+            // Media file slots (issue #633): wire the pre-resolved slot
+            // into the form markup + collect the page-script handler. The
+            // slot is rendered HERE (not in `render_form`) because the
+            // upload route needs the view's id param and the remote plane,
+            // both known only at this point.
+            let comp_entity = comp.entity.clone();
+            // The TanStack plane renders the file slots when it is active —
+            // wiring the hand-rolled form as well would emit the script
+            // block twice (the unused copy fails svelte-check).
+            if comp.tanstack.is_none()
+                && let Some(form) = comp.form.as_mut()
+            {
+                for field in form.fields.iter_mut().filter(|f| f.is_file) {
+                    let slot = file_slots
+                        .get(&(comp_entity.clone(), field.name.clone()))
+                        .cloned()
+                        .flatten();
+                    let rendered =
+                        render_file_slot(&field.name, slot.as_ref(), id_param.as_deref());
+                    field.file_markup = rendered.markup;
+                    file_scripts.push_str(&rendered.script);
+                    if let Some(import) = rendered.import
+                        && !file_imports.contains(&import)
+                    {
+                        file_imports.push(import.clone());
+                        if let (Some(api), Some(param), Some(slot)) =
+                            (comp.api.as_ref(), id_param.as_ref(), slot.as_ref())
+                        {
+                            file_media.push(RenderFileMedia {
+                                export: import,
+                                base_path: api.base_path.clone(),
+                                field: slot.media_field.clone(),
+                                id_param: param.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            if let Some(ts) = comp.tanstack.as_mut() {
+                let names = ts.file_fields.clone();
+                for name in names {
+                    let slot = file_slots
+                        .get(&(comp_entity.clone(), name.clone()))
+                        .cloned()
+                        .flatten();
+                    let rendered = render_file_slot(&name, slot.as_ref(), id_param.as_deref());
+                    ts.file_markup.push_str(&rendered.markup);
+                    file_scripts.push_str(&rendered.script);
+                    if let Some(import) = rendered.import
+                        && !file_imports.contains(&import)
+                    {
+                        file_imports.push(import.clone());
+                        if let (Some(api), Some(param), Some(slot)) =
+                            (comp.api.as_ref(), id_param.as_ref(), slot.as_ref())
+                        {
+                            file_media.push(RenderFileMedia {
+                                export: import,
+                                base_path: api.base_path.clone(),
+                                field: slot.media_field.clone(),
+                                id_param: param.clone(),
+                            });
+                        }
+                    }
+                }
+            }
 
             if let Some(workflow) = &comp.workflow {
                 let fetch_backed = match comp.component_type.as_str() {
@@ -1598,6 +1940,9 @@ pub(super) async fn build_page_context(
         view_params_src,
         denial_target: denial_target.to_string(),
         has_action_buttons,
+        file_scripts,
+        file_imports,
+        file_media,
         tanstack_forms: groups
             .iter()
             .flat_map(|group| group.components.iter())

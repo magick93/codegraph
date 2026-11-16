@@ -28,3 +28,13 @@ generate_action_endpoints = true
 [domains.refunds.entity_config.RefundRequestType.workflow.transitions]
 draft = ["submitted"]
 submitted = ["approved", "rejected"]
+
+# Media plane (issue #633): the receipt upload route + its control. The
+# gate asserts the WIRED SHAPE (the route 503s without a configured
+# provider — no storage stack in this lane).
+[domains.refunds.media]
+provider = "supabase"
+upload_mode = "through-app"
+bucket = "refund-receipts"
+max_bytes = 5242880
+accept = ["image/png", "image/jpeg", "application/pdf"]

@@ -30,7 +30,7 @@ export default defineConfig({
     },
     {
       name: 'crud',
-      testMatch: /generated\/\w+\/[\w-]+\.(?!api\.)([\w-]+\.)?(crud|view|team|isolation|validation|workflow)\.test\.ts/,
+      testMatch: /generated\/\w+\/[\w-]+\.(?!api\.)([\w-]+\.)?(crud|view|team|isolation|validation|workflow{% if media_fields %}|media{% endif %})\.test\.ts/,
       fullyParallel: true,
     },
     {

@@ -21,6 +21,7 @@ use codegraph_config::DomainConfig;
 use codegraph_config::ux::{Align, Display};
 
 use super::common::{collect_child_sections, collect_ui_fields};
+use super::form::field_name_to_label;
 use super::store::UiParentInfo;
 
 #[derive(Debug, Serialize)]
@@ -80,6 +81,31 @@ pub struct UiPageContext {
     pub tid: crate::ui::testids::TidMap,
     /// Unprefixed shared testids (`confirm-dialog`, workflow panel).
     pub shared_tid: crate::ui::testids::SharedTids,
+    /// Media fields with an app-plane route (issue #633): the detail page's
+    /// upload control + display slot, rendered only under the entity
+    /// remote-functions plane (the control's transport is a server-side
+    /// command). Empty ⇒ every page stays byte-identical (each block is
+    /// `{% if media_fields %}`-gated).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub media_fields: Vec<UiPageMediaField>,
+}
+
+/// One media field with an app-plane route (issue #633): the detail page's
+/// upload control, its display slot, and the server-side command pair.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiPageMediaField {
+    /// The contained-value feature (snake) — the testid namespace
+    /// (`media-{field}-{input,busy,error,display,remove}`).
+    pub field: String,
+    /// PascalCase feature name — the generated `upload{Field}` /
+    /// `remove{Field}` / `get{Field}Display` handler names.
+    pub pascal: String,
+    /// Human label for the control.
+    pub label: String,
+    /// The accepted mime types (config `[media] accept`).
+    pub accept: Vec<String>,
+    /// The control's pre-flight byte cap (config `[media] max_bytes`).
+    pub max_bytes: u64,
 }
 
 /// One consumer-owned panel mounted on a generated detail page.
@@ -443,6 +469,32 @@ impl EntityGenerator for UiPageGenerator {
             })
             .unwrap_or_default();
 
+        // Media fields with an app-plane route (issue #633): the detail
+        // page's upload control + the colocated data.remote.ts commands.
+        // Only under the remote-functions plane — the control's transport
+        // is a server-side command (the flag-off client plane is a
+        // recorded deferral); empty otherwise, so pages stay byte-identical.
+        let media_fields: Vec<UiPageMediaField> = if project.codegen.entity_remote_functions {
+            match config.domains.get(&domain).and_then(|d| d.media.as_ref()) {
+                Some(media) => {
+                    crate::media::plan::media_route_fields(db, config, &domain, schema_title)
+                        .await?
+                        .into_iter()
+                        .map(|field| UiPageMediaField {
+                            pascal: codegraph_naming::to_pascal_case(&field),
+                            label: field_name_to_label(&field),
+                            accept: media.accept.clone(),
+                            max_bytes: media.max_bytes,
+                            field,
+                        })
+                        .collect()
+                }
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
         let ctx = UiPageContext {
             tid: crate::ui::testids::for_module(&module_name),
             entity_name,
@@ -472,6 +524,7 @@ impl EntityGenerator for UiPageGenerator {
             ux,
             ux_sort,
             shared_tid: crate::ui::testids::shared(),
+            media_fields,
         };
 
         let routes_base = self
@@ -2021,5 +2074,6 @@ pub(crate) fn test_page_context() -> UiPageContext {
         ux: None,
         ux_sort: None,
         shared_tid: testids::shared(),
+        media_fields: Vec::new(),
     }
 }

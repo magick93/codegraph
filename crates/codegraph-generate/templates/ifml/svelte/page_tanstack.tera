@@ -75,6 +75,11 @@
 {%- for imp in imports %}
 	import {{ imp.export_name }} from '{{ imp.import_path }}';
 {%- endfor %}
+{%- if remote_api %}
+{%- for imp in file_imports %}
+	import { {{ imp }} } from './data.remote';
+{%- endfor %}
+{%- endif %}
 
 	let { data, params }: { data: PageData; params: Record<string, string> } = $props();
 {%- if remote_awaits %}
@@ -238,6 +243,9 @@
 	}
 {%- endif %}
 {%- endfor %}
+{%- if file_scripts %}
+{{ file_scripts }}
+{%- endif %}
 {%- for comp in components %}
 {%- if comp.tanstack %}
 
@@ -624,6 +632,9 @@
 		{% raw %}{/snippet}{% endraw %}
 	</{{ comp.js_name }}Form.AppField>
 	{% endfor %}
+{%- if comp.tanstack.file_markup %}
+{{ comp.tanstack.file_markup }}
+{%- endif %}
 {% if comp.submit_handler %}
 	{% raw %}{#if formError}<span class="error"{% endraw %} data-testid="{{ comp.name }}-error"{% raw %}>{formError}</span>{/if}{% endraw %}
 {% endif %}
@@ -674,6 +685,8 @@
 		</label>
 		{% endfor %}
 	</fieldset>
+	{% elif field.is_file %}
+	{{ field.file_markup }}
 	{% elif field.is_textarea %}
 	<label>
 		{{ field.name }}

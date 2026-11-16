@@ -6,6 +6,7 @@ use phero_ifml::{ComponentSpec, FormSpec};
 
 use super::super::api_paths::{ResolvedApi, resolve_entity_api};
 use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};
+use super::super::control_core;
 use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{PropertyNode, resolve_field};
@@ -258,13 +259,28 @@ pub(crate) async fn schema_backed_api(
 /// their per-field `values` supply the first valid value for
 /// codelist/dropdown fields.
 pub(crate) fn fixture_entries(c: &IfmlComponent) -> Vec<(String, String)> {
+    // Media file fields (issue #633) never enter a fixture body: the
+    // create/update DTOs exclude them (the upload owns the reference) and
+    // `deny_unknown_fields` rejects the key — a fixture carrying it 422s.
+    let file_fields: std::collections::HashSet<String> = form_spec(c)
+        .map(|spec| {
+            spec.fields
+                .iter()
+                .filter(|f| control_core::html_input_for_dsl(&f.input).input_type == "file")
+                .map(|f| f.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     let names: Vec<String> = if c.fields.is_empty() {
         form_spec(c)
             .map(|f| f.fields.iter().map(|f| f.name.clone()).collect())
             .unwrap_or_default()
     } else {
         c.fields.clone()
-    };
+    }
+    .into_iter()
+    .filter(|f| !file_fields.contains(f))
+    .collect();
     let types: std::collections::HashMap<&str, &str> = c
         .fields_with_types
         .iter()

@@ -213,6 +213,17 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
         ));
         for field in &form.fields {
             let fill_method = format!("fill{}{}", form.pascal, to_pascal_case(&field.name));
+            if field.kind == PomFieldKind::File {
+                // The file control (issue #633): a real upload input — the
+                // spec asserts it renders and is NOT value-bound (the dead
+                // pre-#633 shape bound the form state's value).
+                s.push_str(&format!(
+                    "  {}{}File(): Locator {{\n    return this.page.getByTestId('media-{}-input');\n  }}\n\n",
+                    form.pascal,
+                    to_pascal_case(&field.name),
+                    field.name
+                ));
+            }
             s.push_str(&format!(
                 "  async {}(value: string): Promise<void> {{\n",
                 fill_method
@@ -224,6 +235,17 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
                 "    const input = this.{}Input('{}');\n",
                 form.name, field.name
             ));
+            if field.kind == PomFieldKind::File {
+                // Media file field (issue #633): the value IS a file path —
+                // the kernel's upload helper drives the control and waits
+                // for the reference to land.
+                s.push_str(&format!(
+                    "    await this.uploadMedia(\"{}\", value);\n",
+                    field.name
+                ));
+                s.push_str("  }\n\n");
+                continue;
+            }
             s.push_str("    await expect(async () => {\n");
             match field.kind {
                 PomFieldKind::Select => {
@@ -250,7 +272,7 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
                         "      await expect(input).toHaveValue(value.replace(/:\\d{2}Z$/, ''));\n",
                     );
                 }
-                PomFieldKind::Textarea | PomFieldKind::Text => {
+                PomFieldKind::File | PomFieldKind::Textarea | PomFieldKind::Text => {
                     s.push_str("      await input.fill(value);\n");
                     s.push_str("      await expect(input).toHaveValue(value);\n");
                 }

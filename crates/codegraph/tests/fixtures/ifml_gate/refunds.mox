@@ -12,9 +12,16 @@ enum RefundEscalation {
     escalated = 1
 }
 
+/// The stored media reference (url + mime) — a contained value.
+class MediaReference {
+    String url
+    String mimeType
+}
+
 class RefundRequest {
     String title
     int amount
     RefundStatus status
     RefundEscalation escalation
+    contains MediaReference[0..1] receipt
 }

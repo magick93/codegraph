@@ -83,6 +83,7 @@ fn modal_click_through_renders_wrapper_and_close_assertions() {
         validations: Vec::new(),
         round_trips: Vec::new(),
         personas: Vec::new(),
+        media_fields: Vec::new(),
     };
 
     let rendered = render_spec(&spec, true, false);
@@ -157,6 +158,7 @@ fn spec_render_includes_all_test_kinds() {
         validations: Vec::new(),
         round_trips: Vec::new(),
         personas: Vec::new(),
+        media_fields: Vec::new(),
     };
 
     let rendered = render_spec(&spec, true, false);
@@ -1181,6 +1183,7 @@ fn detail_auth_specs_are_seeded_or_explicitly_omitted() {
         validations: Vec::new(),
         round_trips: Vec::new(),
         personas: Vec::new(),
+        media_fields: Vec::new(),
     };
     let pom = super::pom::ViewPom {
         denial_target: Some("/".to_string()),
