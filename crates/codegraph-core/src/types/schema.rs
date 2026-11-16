@@ -9,6 +9,17 @@ use super::annotation::Annotation;
 /// rather than inferred by the auto-classifier (issue #229).
 pub const MOX_SOURCE: &str = "mox";
 
+/// `custom_annotations` key carrying a mox class's DECLARED kind when it is
+/// not an ordinary class (issue #668). Today the one value is
+/// [`MOX_CLASS_KIND_REGISTER`]: the class is a `register` declaration and
+/// belongs to the reference-data (codelist/seed-table) plane, not the entity
+/// plane — generation ordering skips it so no entity/CRUD surface is emitted.
+pub const MOX_CLASS_KIND: &str = "mox_class_kind";
+
+/// Value of [`MOX_CLASS_KIND`] for a `register` class (pherolang
+/// `ClassKind::Register`, wire-contract rule 16).
+pub const MOX_CLASS_KIND_REGISTER: &str = "register";
+
 /// Per-definition visibility (issue #279, the Morphir access flag).
 /// `None` = undeclared (unchanged behavior — generation treats the
 /// definition exactly as before).
@@ -68,6 +79,32 @@ pub struct SchemaNode {
     /// `custom_annotations` map. `None`/empty = unchanged behavior.
     #[serde(default)]
     pub annotations: Option<Vec<Annotation>>,
+}
+
+impl SchemaNode {
+    /// `true` for a mox `register` class bridged onto the reference-data
+    /// (codelist/seed-table) plane (issue #668). Register schemas carry the
+    /// [`MOX_CLASS_KIND`] marker; generation ordering skips them so no
+    /// entity module, table or CRUD surface is emitted for the register.
+    pub fn is_register_class(&self) -> bool {
+        self.custom_annotations
+            .get(MOX_CLASS_KIND)
+            .and_then(|value| value.as_str())
+            == Some(MOX_CLASS_KIND_REGISTER)
+    }
+
+    /// The storage table this schema DERIVES from its title (the
+    /// `type_suffix`-stripped, snake_cased title). A `pg_table_name` that
+    /// differs from it was DECLARED (`class X table "…"`, issue #668).
+    pub fn derived_table_name(&self, type_suffix: &str) -> String {
+        codegraph_naming::to_snake_case(&codegraph_naming::strip_suffix(&self.title, type_suffix))
+    }
+
+    /// `true` when the model DECLARED this schema's table name, i.e.
+    /// `pg_table_name` is not the title-derived default (issue #668).
+    pub fn declares_table_name(&self, type_suffix: &str) -> bool {
+        !self.pg_table_name.is_empty() && self.pg_table_name != self.derived_table_name(type_suffix)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

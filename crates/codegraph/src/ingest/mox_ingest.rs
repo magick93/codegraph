@@ -35,6 +35,24 @@
 //! `CachingQuerier` warm path serves properties in insertion order (no
 //! `ORDER BY` in `list_all_properties`), so insertion order IS output field
 //! order and must match the JSON path byte-for-byte (issue #233).
+//!
+//! Storage-name and register mapping (issue #668):
+//! - `class X table "…"` (upstream pherolang#177) carries `ClassDef::table_name`;
+//!   the declared spelling is the effective `pg_table_name` (snake_case
+//!   normalized, a changing normalization warns), so the DDL, SeaORM entity,
+//!   repository SQL, filters and hurl/openapi naming all agree by
+//!   construction. URLs stay title-derived (`api_path_segment`).
+//! - `register X { … }` (upstream pherolang#181, `ClassKind::Register`) is an
+//!   org/role noun space — attributes only, no relations, no `extends`, no
+//!   table annotation — so it bridges onto the REFERENCE-DATA
+//!   (codelist/seed-table) plane: a `CodeList` node plus a codelist-classified
+//!   `SchemaNode` carrying the `mox_class_kind = "register"` marker.
+//!   `codegraph_generate::ordering` skips register schemas, which is what
+//!   keeps them off the entity plane: no entity module, no repository, no
+//!   handlers, no routes — only the `common.{table}` seed migration and the
+//!   codelist Rust enum the codelist generators own. The register's declared
+//!   attributes still ingest as properties (the model graph stays non-lossy;
+//!   projecting them into the seed table is a tracked follow-up).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -50,7 +68,7 @@ use codegraph_core::types::{
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind, TypeExpr};
 use phero_driver::{DomainImports, SchemaImports, compile_files};
-use phero_ir::{DefaultValue, FeatureKind, PrimitiveType, TypeRef};
+use phero_ir::{ClassKind, DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
 use crate::error::{Error, Result};
 use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
@@ -92,6 +110,10 @@ pub struct MoxIngestStats {
     /// (issue #268), including the dotted parent chain. Namespace-less
     /// models (no package line) contribute zero.
     pub namespaces: usize,
+    /// `register` classes bridged to the reference-data (codelist/seed-table)
+    /// plane (issue #668). Counter surfaces only when non-zero, so
+    /// register-free models keep byte-identical output.
+    pub registers: usize,
     /// Structured incompleteness findings (issue #279): unresolvable import
     /// aliases and the like, as `UnresolvedReference { target }` holes.
     /// Empty for fully-resolved models.
@@ -126,6 +148,10 @@ impl std::fmt::Display for MoxIngestStats {
         // Namespace counter only surfaces when namespaces exist (#268).
         if self.namespaces != 0 {
             write!(f, ", {} namespaces", self.namespaces)?;
+        }
+        // Register counter only surfaces when register classes exist (#668).
+        if self.registers != 0 {
+            write!(f, ", {} registers", self.registers)?;
         }
         // Incompleteness counter only surfaces when partial authoring was
         // detected (#279) — fully-resolved models keep byte-identical output.
@@ -588,6 +614,37 @@ pub async fn ingest_mox_files(
         }
     }
 
+    // Register classes → the reference-data (codelist/seed-table) plane
+    // (issue #668). A `register` is a flat org/role noun space: attributes
+    // only, no relations, no `extends`, no table annotation. codegraph's
+    // reference-data plane is the codelist/seed-table one (a
+    // `common.{table}` seed migration + the codelist Rust enum, owned by the
+    // codelist generators, never a transactional aggregate), so a register
+    // gets a `CodeList` node here and a codelist-classified `SchemaNode` in
+    // the bridge pass below. Generation ordering skips register schemas
+    // (`codegraph_generate::ordering`), which is what keeps them off the
+    // entity/CRUD plane — no table module, no repository, no handlers.
+    // Registers declare no literals, so there are no `EnumValue` rows: the
+    // rows are consumer data, seeded by migration/ops (the existing
+    // `empty_enum.tera` shape covers the zero-variant Rust enum).
+    for entry in &class_index {
+        if !entry.is_register() {
+            continue;
+        }
+        let codelist = CodeList {
+            name: entry.class.name.clone(),
+            description: entry.class.description.as_deref().map(sanitize_description),
+            pg_table_name: class_table_name(entry.class, type_suffix),
+            render_as: "codelist".to_string(),
+            check_expression: None,
+        };
+        ingestor
+            .ingest_codelist(&codelist)
+            .await
+            .map_err(Error::Graph)?;
+        stats.registers += 1;
+    }
+
     let mut mox = MoxDomainModel::default();
     let mut unmatched_with_behavior: Vec<String> = Vec::new();
     let mut pending_alias_refs: Vec<PendingAliasRef> = Vec::new();
@@ -686,11 +743,36 @@ pub async fn ingest_mox_files(
     for entry in &class_index {
         let class = entry.class;
         if known_titles.contains(&class.name) {
+            // The JSON node owns this title (the bridge never overrides it),
+            // so a mox-only storage decision on the class cannot take effect.
+            // Say so — a silently ignored declaration is the failure mode
+            // this issue exists to delete.
+            if let Some(declared) = &class.table_name {
+                eprintln!(
+                    "Warning: mox class '{}' declares table \"{declared}\" but the title is \
+                     owned by an ingested JSON schema — the declaration is ignored (the JSON \
+                     node keeps its own table)",
+                    class.name
+                );
+            }
+            if entry.is_register() {
+                eprintln!(
+                    "Warning: mox register '{}' matches an ingested JSON schema — the JSON node \
+                     wins, so the class stays an entity rather than a reference-data table",
+                    class.name
+                );
+            }
             continue;
         }
-        let is_entity =
-            !contains_targets.contains(&class.name) || refers_targets.contains(&class.name);
-        let node = class_schema_node(entry, is_entity, type_suffix);
+        let bridge = if entry.is_register() {
+            ClassBridge::Register
+        } else {
+            ClassBridge::Class {
+                is_entity: !contains_targets.contains(&class.name)
+                    || refers_targets.contains(&class.name),
+            }
+        };
+        let node = class_schema_node(entry, bridge, type_suffix);
         ingestor.ingest_schema(&node).await.map_err(Error::Graph)?;
         bridged.insert(class.name.clone());
         stats.bridged_titles.push(class.name.clone());
@@ -984,6 +1066,14 @@ struct ClassEntry<'a> {
     namespace: Option<String>,
 }
 
+impl ClassEntry<'_> {
+    /// `true` for a `register` declaration (issue #668): a plain class on the
+    /// wire carrying the upstream `ClassKind::Register` marker.
+    fn is_register(&self) -> bool {
+        self.class.kind == ClassKind::Register
+    }
+}
+
 /// One mox enum flattened for ingestion (same shape as [`ClassEntry`]).
 struct EnumEntry<'a> {
     enum_def: &'a phero_ir::EnumDef,
@@ -1085,9 +1175,47 @@ pub(crate) async fn emit_schema_namespace_edge(
         .map_err(Error::Graph)
 }
 
+/// How a bridged mox class lands on the graph (issue #668).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassBridge {
+    /// `class` — an entity or a contained value object (author-declared: a
+    /// class targeted only by `contains` is a VO, `refers` wins).
+    Class { is_entity: bool },
+    /// `register` — the reference-data (codelist/seed-table) plane.
+    Register,
+}
+
+/// The effective storage table of a mox class: a declared `table "…"`
+/// override wins over the derived name (issue #668; upstream pherolang#177
+/// `ClassDef::table_name` — "Some is the authoritative spelling").
+///
+/// The declared spelling is normalized to snake_case: `pg_table_name` is
+/// BOTH the PostgreSQL table and the Rust module/file stem every plane keys
+/// on (`crate::domain::{domain}::{module}`, migration file names), so a
+/// declared `"PayRunRows"`/`"pay-run"` must land on one legal, consistent
+/// identifier. A normalization that changes the spelling warns — never
+/// silently.
+fn class_table_name(class: &phero_ir::ClassDef, type_suffix: &str) -> String {
+    match class.table_name.as_deref() {
+        Some(declared) => {
+            let normalized = to_snake_case(declared);
+            if normalized != declared {
+                eprintln!(
+                    "Warning: mox class '{}' declares table \"{declared}\" — normalized to \
+                     '{normalized}' (the table name doubles as the module/table identifier, \
+                     which is snake_case)",
+                    class.name
+                );
+            }
+            normalized
+        }
+        None => to_snake_case(&strip_suffix(&class.name, type_suffix)),
+    }
+}
+
 /// Build the `SchemaNode` for a mox class, mirroring the JSON path's field
 /// population (`ingest_schema_node` in async_ingest).
-fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str) -> SchemaNode {
+fn class_schema_node(entry: &ClassEntry<'_>, bridge: ClassBridge, type_suffix: &str) -> SchemaNode {
     let class = entry.class;
     let stripped = strip_suffix(&class.name, type_suffix);
     let mut custom_annotations = HashMap::new();
@@ -1095,13 +1223,23 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         "source".to_string(),
         serde_json::Value::String(codegraph_core::types::MOX_SOURCE.to_string()),
     );
+    if bridge == ClassBridge::Register {
+        custom_annotations.insert(
+            codegraph_core::types::MOX_CLASS_KIND.to_string(),
+            serde_json::Value::String(codegraph_core::types::MOX_CLASS_KIND_REGISTER.to_string()),
+        );
+    }
+    let is_entity = matches!(bridge, ClassBridge::Class { is_entity: true });
+    let is_register = bridge == ClassBridge::Register;
     SchemaNode {
         namespace: entry.namespace.clone(),
         schema_id: entry.schema_id.clone(),
         title: class.name.clone(),
         description: class.description.as_deref().map(sanitize_description),
-        schema_type: "object".to_string(),
-        classification: if is_entity {
+        schema_type: if is_register { "string" } else { "object" }.to_string(),
+        classification: if is_register {
+            "codelist".to_string()
+        } else if is_entity {
             "entity_reference".to_string()
         } else {
             "value_object".to_string()
@@ -1112,11 +1250,11 @@ fn class_schema_node(entry: &ClassEntry<'_>, is_entity: bool, type_suffix: &str)
         rust_type: stripped.clone(),
         sea_orm_type: "Uuid".to_string(),
         rust_type_name: sanitize_rust_type_name(&stripped),
-        pg_table_name: to_snake_case(&stripped),
+        pg_table_name: class_table_name(class, type_suffix),
         api_path_segment: to_kebab_case(&stripped),
         parent_schema: None,
         is_entity,
-        is_codelist: false,
+        is_codelist: is_register,
         is_primitive_wrapper: false,
         has_all_of: !class.extends.is_empty(),
         has_one_of: false,
@@ -1642,6 +1780,7 @@ mod tests {
             resolved_aliases: 0,
             unresolved_aliases: 0,
             namespaces: 0,
+            registers: 0,
             incompleteness: Vec::new(),
         };
         assert_eq!(
@@ -1649,6 +1788,22 @@ mod tests {
             "1 vocabularies, 2 operations, 3 derived features, 4 skipped, \
              5 classes, 6 properties, 7 edges, 8 enums, 9 enum schemas"
         );
+    }
+
+    /// Issue #668: register-free models keep byte-identical stats lines —
+    /// the counter is appended only when a register class was ingested.
+    #[test]
+    fn stats_display_appends_the_register_counter_only_when_present() {
+        let with_registers = MoxIngestStats {
+            registers: 2,
+            ..Default::default()
+        };
+        assert!(
+            with_registers.to_string().contains(", 2 registers"),
+            "got: {with_registers}"
+        );
+        let without = MoxIngestStats::default();
+        assert!(!without.to_string().contains("registers"), "got: {without}");
     }
 
     #[test]

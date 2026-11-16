@@ -173,6 +173,16 @@ pub async fn compute_generation_order(
         if schema.parent_schema.is_some() {
             continue;
         }
+        // Register classes (issue #668) belong to the reference-data
+        // (codelist/seed-table) plane: their table is the `common.{table}`
+        // seed migration the codelist generators own, and the codelist Rust
+        // enum. They are NOT entities, so skipping them here is what keeps
+        // them out of the entity generator phase (no entity module, no
+        // repository, no handlers, no UI pages) — "no silent entity
+        // generation" made structural.
+        if schema.is_register_class() {
+            continue;
+        }
         all_entity_titles.insert(schema.title.clone());
         let domain = schema.domain.as_deref().unwrap_or("");
         if domain.is_empty() || !domain_rank.contains_key(domain) {
@@ -498,9 +508,21 @@ pub async fn compute_generation_order(
     // enabled.
     {
         let mut by_domain_module: HashMap<(String, String), Vec<&str>> = HashMap::new();
+        // The real module is `pg_table_name` (issue #668), so a declared
+        // `table "…"` is honored here too; a title with no graph schema keeps
+        // the derived name.
+        let table_by_title: HashMap<&str, &str> = all_schemas
+            .iter()
+            .filter(|s| !s.pg_table_name.is_empty())
+            .map(|s| (s.title.as_str(), s.pg_table_name.as_str()))
+            .collect();
         for e in &sorted_entries {
-            let module =
-                codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&e.schema_title));
+            let module = match table_by_title.get(e.schema_title.as_str()) {
+                Some(table) => (*table).to_string(),
+                None => {
+                    codegraph_naming::to_snake_case(&config.defaults.strip_suffix(&e.schema_title))
+                }
+            };
             by_domain_module
                 .entry((e.domain.clone(), module))
                 .or_default()
