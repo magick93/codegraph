@@ -6,20 +6,20 @@ use codegraph_core::types::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
     NeverBothGroup,
 };
-use rex_driver::{DomainImports, SchemaImports, SigilImports, compile_actors_str};
-use rex_ifml::IfmlModel;
-use rex_ir::ActorModel;
+use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_actors_str};
+use phero_ifml::IfmlModel;
+use phero_ir::ActorModel;
 
 use crate::error::{Error, Result};
-use crate::ingest::rex_imports::collect_domains;
+use crate::ingest::phero_imports::collect_domains;
 
-/// Resolve the IFML model's `import` statements against rexlang actor-policy
+/// Resolve the IFML model's `import` statements against pherolang actor-policy
 /// files and artifacts, ingest the merged policy into the graph, and
 /// validate view `roles`/`requires` against it.
 ///
 /// Each import path is resolved relative to the `.ifml` file's directory and
 /// deduplicated, so the same file imported twice is ingested once. `.json`
-/// imports are standalone rexlang actor artifacts; `.actor` imports are
+/// imports are standalone pherolang actor artifacts; `.actor` imports are
 /// compiled against their own `import "x.mox"` domain files. Import
 /// failures (missing files, compile errors, invalid artifacts) are reported
 /// as warnings and never fail generation. Returns the number of imports
@@ -79,8 +79,8 @@ pub fn resolve_actor_policy(import_paths: &[String], base_dir: &Path) -> Option<
     })
 }
 
-/// The raw rexlang actor models behind the given policy imports — the
-/// checker's input (`rex_ifml::check_ifml_with_actors`, issue #591).
+/// The raw pherolang actor models behind the given policy imports — the
+/// checker's input (`phero_ifml::check_ifml_with_actors`, issue #591).
 /// Deduplicates like `ingest_actor_imports`; per-import failures
 /// (missing files, compile errors, invalid artifacts) warn on stderr and
 /// skip that import — the run path's warn-and-continue contract, where an
@@ -118,7 +118,7 @@ fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
             Ok(model) => Some(model),
             Err(e) => {
                 eprintln!(
-                    "Warning: policy import '{raw}' is not a valid rexlang actor artifact: {e}"
+                    "Warning: policy import '{raw}' is not a valid pherolang actor artifact: {e}"
                 );
                 None
             }
@@ -139,7 +139,7 @@ fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
 
 fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorModel> {
     let domains = collect_domains(dir, source); // Domain files may declare `import schema "<path>"` (issue #230); the
-    // rex compiler errors with `imported schema '…' was not provided`
+    // pherolang compiler errors with `imported schema '…' was not provided`
     // unless their content is provided. Policy imports stay
     // warn-and-continue: an unreadable/invalid import file warns here and
     // the compile reports the unprovided import as a diagnostic.
@@ -191,7 +191,7 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorModel
     }
 }
 
-/// Convert a compiled rexlang actor model into its graph representation.
+/// Convert a compiled pherolang actor model into its graph representation.
 ///
 /// Public so tests (and future policy consumers) can exercise the grant
 /// mapping — including `expr_json` canonicalization — without a database.
@@ -209,8 +209,8 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
             actors.push(ActorNode {
                 name: actor.name.clone(),
                 kind: actor.kind.map(|kind| match kind {
-                    rex_ir::ActorKind::Human => "human".to_string(),
-                    rex_ir::ActorKind::Agent => "agent".to_string(),
+                    phero_ir::ActorKind::Human => "human".to_string(),
+                    phero_ir::ActorKind::Agent => "agent".to_string(),
                 }),
                 extends: actor.extends.clone(),
                 block: Some(block.name.clone()),
@@ -229,8 +229,8 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                     actor: grant.actor.clone(),
                     capability: entry.capability.clone(),
                     effect: match entry.effect {
-                        rex_ir::GrantEffect::Permit => "permit".to_string(),
-                        rex_ir::GrantEffect::Forbid => "forbid".to_string(),
+                        phero_ir::GrantEffect::Permit => "permit".to_string(),
+                        phero_ir::GrantEffect::Forbid => "forbid".to_string(),
                     },
                     when: entry.when.clone(),
                     expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
@@ -257,8 +257,8 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
                         actor: delegation.from.clone(),
                         capability: entry.capability.clone(),
                         effect: match entry.effect {
-                            rex_ir::GrantEffect::Permit => "permit".to_string(),
-                            rex_ir::GrantEffect::Forbid => "forbid".to_string(),
+                            phero_ir::GrantEffect::Permit => "permit".to_string(),
+                            phero_ir::GrantEffect::Forbid => "forbid".to_string(),
                         },
                         when: entry.when.clone(),
                         expr_json: crate::expr_json::when_expr_json(entry.when.as_deref()),
@@ -281,9 +281,9 @@ pub fn actor_policy_from_model(model: &ActorModel) -> ActorPolicyModel {
     }
 }
 
-fn class_name(type_ref: &rex_ir::TypeRef) -> String {
+fn class_name(type_ref: &phero_ir::TypeRef) -> String {
     match type_ref {
-        rex_ir::TypeRef::Primitive(p) => p.to_string(),
+        phero_ir::TypeRef::Primitive(p) => p.to_string(),
         other => other.qualified_name().unwrap_or_default(),
     }
 }

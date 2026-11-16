@@ -17,16 +17,16 @@
 //!    this one constructor.
 //! 3. **The `Resource` arena** (issue #508 R4) — request context plus a
 //!    synchronous arena (`res.get_<class>(id)` / `insert_<class>`), the
-//!    rex-backend-rust navigation contract (plain navigation
+//!    phero-backend-rust navigation contract (plain navigation
 //!    `expect("dangling …")`, `?.` yields `None`).
-//! 4. **Operation impls** on the mirrors, with the rex-backend-rust FIXED
+//! 4. **Operation impls** on the mirrors, with the phero-backend-rust FIXED
 //!    signature `pub fn <snake>(&self, res: &Resource, params) -> Ret`.
 //!    The impls live WITH the type (same file — the mirrors and ops are
-//!    one model surface, mirroring rex-backend-rust's layout); the
+//!    one model surface, mirroring phero-backend-rust's layout); the
 //!    app-side `mox_ops.rs` is retired, so the plane is reachable from
 //!    every band through the domain-types dependency alone.
 //!
-//! Signature types map per the rex contract (issue #517 — every slot
+//! Signature types map per the pherolang contract (issue #517 — every slot
 //! RESOLVES): `int` → `i32`, `string` → `String`, `boolean` → `bool`,
 //! `number` → `f64`; known class refs → `uuid::Uuid` (the `{Class}Id`
 //! slot); codelist/enum refs → `{domain_types}::codelist::{Enum}`;
@@ -110,7 +110,7 @@ fn resolve_slot(
 }
 
 /// The Rust type of an operation signature slot (param or return), per the
-/// rex contract — issue #517: every slot RESOLVES. mox primitives map
+/// pherolang contract — issue #517: every slot RESOLVES. mox primitives map
 /// canonically; known class refs map to their id slot (`uuid::Uuid`); known
 /// codelists map to the generated codelist enum; anything else is refused
 /// (the caller raises a generation error naming the op — never a bare
@@ -508,7 +508,7 @@ fn emit_mox_types(
         code,
         "//! and the operation impls themselves (one model surface, mirroring"
     );
-    wln!(code, "//! the rex-backend-rust layout).");
+    wln!(code, "//! the phero-backend-rust layout).");
     wln!(code, "#![allow(dead_code)]");
     wln!(code);
     wln!(code, "use std::collections::HashMap;");
@@ -653,7 +653,7 @@ fn emit_resource(code: &mut CodeWriter, surfaces: &[ClassSurface]) {
         code,
         "/// (plain navigation then panics with `dangling`, `?.` yields"
     );
-    wln!(code, "/// `None`) — the rex-backend-rust contract.");
+    wln!(code, "/// `None`) — the phero-backend-rust contract.");
     wln!(code, "pub struct Resource {{");
     wln!(code, "    pub organization_id: Uuid,");
     wln!(code, "    pub correlation_id: Uuid,");
@@ -786,7 +786,7 @@ fn emit_operation(
     wln!(code, "    {sig} {{", sig = sig);
 
     if let Some(body) = op.bodies.get("rust") {
-        // Verbatim embedding (the rex-backend-rust Tier 1 contract): the
+        // Verbatim embedding (the phero-backend-rust Tier 1 contract): the
         // body text byte-identical, on its own line between the braces.
         code.push_line(body);
     } else if let Some(expr) = op.bodies.get("expr") {
@@ -798,12 +798,12 @@ fn emit_operation(
             )),
         }
     } else {
-        // Body-less op: the rexlang "abstract hook" gap class. Emit the
+        // Body-less op: the pherolang "abstract hook" gap class. Emit the
         // seam — signature-complete, compiling, never a guessed body.
         // Body-less ops get no route (issue #508 R2).
         wln!(
             code,
-            "    todo!(\"body-less mox op '{}' — implement by hand (rexlang gap class)\")",
+            "    todo!(\"body-less mox op '{}' — implement by hand (pherolang gap class)\")",
             op.name
         );
     }

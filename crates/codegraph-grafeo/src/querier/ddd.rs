@@ -229,7 +229,7 @@ impl GrafeoEngine {
                     params: parse_json(reader.get_opt_string(row, "params_json")?),
                     ordinal,
                     // Tolerant read: graphs persisted before the protected
-                    // modifier (rexlang #47) carry no prop — default false.
+                    // modifier (pherolang #47) carry no prop — default false.
                     is_protected: reader.get_bool(row, "is_protected").unwrap_or(false),
                 });
         }

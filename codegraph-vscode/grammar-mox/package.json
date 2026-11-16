@@ -1,7 +1,7 @@
 {
   "name": "tree-sitter-mox",
   "version": "0.1.0",
-  "description": "Tree-sitter grammar for the rexlang .mox modeling language",
+  "description": "Tree-sitter grammar for the pherolang .mox modeling language",
   "main": "bindings/node/index.js",
   "scripts": {
     "test": "tree-sitter test",

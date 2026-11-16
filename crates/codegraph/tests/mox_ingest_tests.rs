@@ -2,7 +2,7 @@
 //!
 //! Ingest layer: a `.mox` domain source (vocabulary with facets + entries, a
 //! class operation with an `expr` body, derived features) is compiled
-//! in-process via `rex_driver::compile_files` and lands in the graph as
+//! in-process via `phero_driver::compile_files` and lands in the graph as
 //! Vocabulary/Operation/DerivedFeature nodes with BelongsToClass /
 //! VocabularyInPackage edges. Class attachment matches by NAME against
 //! schema-ingested entities; mismatches warn and count as skipped — they
@@ -90,10 +90,10 @@ class GhostType {
 "#;
 
 /// Probe: compile a mox source exercising classes, enums, datatypes,
-/// extends, and every feature kind, and dump the lowered rex_ir model.
-/// Pins what `rex_driver::compile_files` actually populates (issue #229).
+/// extends, and every feature kind, and dump the lowered phero_ir model.
+/// Pins what `phero_driver::compile_files` actually populates (issue #229).
 #[test]
-fn rex_compile_populates_enums_datatypes_and_feature_kinds() {
+fn phero_compile_populates_enums_datatypes_and_feature_kinds() {
     let src = r#"
 package probe.domain
 
@@ -133,9 +133,9 @@ class Part {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("probe.mox");
     fs::write(&path, src).unwrap();
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &[(path.display().to_string(), src.to_string())],
-        &rex_driver::DomainImports::default(),
+        &phero_driver::DomainImports::default(),
     );
     for (p, d) in &compilation.diagnostics {
         eprintln!("diag {p}: {}", d.message);
@@ -191,9 +191,9 @@ class Part {
     let widget = pkg.classes.iter().find(|c| c.name == "Widget").unwrap();
     assert_eq!(widget.extends.len(), 1);
     let kinds: Vec<_> = widget.features.iter().map(|f| f.kind).collect();
-    assert!(kinds.contains(&rex_ir::FeatureKind::Attribute));
-    assert!(kinds.contains(&rex_ir::FeatureKind::Containment));
-    assert!(kinds.contains(&rex_ir::FeatureKind::CrossReference));
+    assert!(kinds.contains(&phero_ir::FeatureKind::Attribute));
+    assert!(kinds.contains(&phero_ir::FeatureKind::Containment));
+    assert!(kinds.contains(&phero_ir::FeatureKind::CrossReference));
 }
 
 /// Broken mox source: syntax error, no model lowered.

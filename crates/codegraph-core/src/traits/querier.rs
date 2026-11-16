@@ -528,7 +528,7 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
-    // ── Deployment plane query methods (rexlang #49) ─────────────────
+    // ── Deployment plane query methods (pherolang #49) ─────────────────
 
     /// Every ingested `.deploy` deployment model, reassembled to the exact
     /// ingest shape: models grouped by `source_path` (sorted
@@ -538,7 +538,7 @@ pub trait GraphQuerier: Send + Sync {
         Ok(Vec::new())
     }
 
-    // ── IFML manifest query method (rexlang #118, WS6) ───────────────
+    // ── IFML manifest query method (pherolang #118, WS6) ───────────────
 
     /// The folded IFML control/route manifest of the run, whole.
     /// `None` when the graph carries no manifest node — every pre-WS6

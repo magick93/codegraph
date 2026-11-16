@@ -1,8 +1,8 @@
-//! Canonical AST JSON (`expr_json`) for rexlang `when` expressions.
+//! Canonical AST JSON (`expr_json`) for pherolang `when` expressions.
 //!
-//! `GrantEdge.when` stores rexlang expression SOURCE text. Issue #278 adds
+//! `GrantEdge.when` stores pherolang expression SOURCE text. Issue #278 adds
 //! `GrantEdge.expr_json`: the same expression as canonical, tagged JSON,
-//! produced ONCE at ingest by parsing the source with `rex-expr`
+//! produced ONCE at ingest by parsing the source with `phero-expr`
 //! (parse-only — no model, no typechecking, mirroring `db/expr_sql.rs`).
 //!
 //! This is the wire contract consumed by lowering backends
@@ -36,14 +36,14 @@
 //! payload that fails to serialize) yields `None` and the carrier keeps its
 //! source string.
 
-use rex_expr::{AlgebraKind, BinOp, Expr, ExprKind, UnOp};
+use phero_expr::{AlgebraKind, BinOp, Expr, ExprKind, UnOp};
 use serde_json::{Value, json};
 
-/// Canonical `expr_json` for a rexlang expression source: `None` when the
+/// Canonical `expr_json` for a pherolang expression source: `None` when the
 /// source is absent, does not parse, or fails to serialize.
 pub fn when_expr_json(source: Option<&str>) -> Option<String> {
     let source = source?;
-    let parsed = rex_expr::parse(source);
+    let parsed = phero_expr::parse(source);
     let ast = parsed.ast.filter(|_| parsed.errors.is_empty())?;
     serde_json::to_string(&expr_value(&ast)).ok()
 }
@@ -159,7 +159,7 @@ fn bin_op(op: &BinOp) -> &'static str {
     }
 }
 
-/// The algebra op name rex-expr reports for `kind`.
+/// The algebra op name phero-expr reports for `kind`.
 #[allow(dead_code)]
 fn algebra_op(kind: &AlgebraKind) -> &'static str {
     match kind {
@@ -167,6 +167,7 @@ fn algebra_op(kind: &AlgebraKind) -> &'static str {
         AlgebraKind::Filter => "filter",
         AlgebraKind::Map => "map",
         AlgebraKind::Any => "any",
+        AlgebraKind::All => "all",
         AlgebraKind::Size => "size",
         AlgebraKind::Sum => "sum",
     }

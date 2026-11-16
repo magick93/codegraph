@@ -1,4 +1,4 @@
-//! The rexlang IFML front door (issue #591): gather a `.ifml` file's
+//! The pherolang IFML front door (issue #591): gather a `.ifml` file's
 //! import closure, compile it (module composition resolved), run the
 //! interaction-reference + authorization checker, and derive the
 //! declaration-backed control/route manifest.
@@ -7,18 +7,18 @@
 //! `action("X")` invocations without a declaration synthesized
 //! indistinguishable `action:X` nodes (the #559 defect class), and
 //! `requires:`/`roles:` gates were never validated against the policy
-//! layer. rexlang #117/#118 moved the proof upstream — E0104–E0109 are
-//! checker errors, and [`rex_ifml::manifest_ifml`] exports the positive
+//! layer. pherolang #117/#118 moved the proof upstream — E0104–E0109 are
+//! checker errors, and [`phero_ifml::manifest_ifml`] exports the positive
 //! artifact for what the model lowers to. This module is the host-side
 //! seam: everything downstream (graph ingest, generators, doctor) works
 //! from a **checked** compilation, so a dangling reference is a hard
 //! error before anything can land in the graph.
 //!
-//! Scope contract (matching `rex_driver::project`'s gather discipline):
+//! Scope contract (matching `phero_driver::project`'s gather discipline):
 //!
 //! - `.ifml` imports feed the resolver bundle (module composition); a
 //!   missing one fails the compile (hard).
-//! - `.actor`/`.json` imports compile to [`rex_ir::ActorModel`]s through
+//! - `.actor`/`.json` imports compile to [`phero_ir::ActorModel`]s through
 //!   [`crate::ifml_actor_import::resolve_actor_models`] — the run path's
 //!   warn-and-continue contract. Policies that resolve feed
 //!   E0107/E0108; an empty slice skips the authorization pass.
@@ -33,9 +33,9 @@
 
 use std::path::{Path, PathBuf};
 
-use rex_driver::project::{IfmlProject, gather_ifml_project};
-use rex_ir::ActorModel;
-use rex_ir::ifml_manifest::IfmlManifest;
+use phero_driver::project::{IfmlProject, gather_ifml_project};
+use phero_ir::ActorModel;
+use phero_ir::ifml_manifest::IfmlManifest;
 
 use crate::error::{Error, Result};
 
@@ -44,10 +44,10 @@ use crate::error::{Error, Result};
 #[derive(Debug)]
 pub struct IfmlCompiled {
     /// The resolved compilation — `model` is artifact-identical to
-    /// `rex_ifml::parse_ifml` for the entry file, with module composition
+    /// `phero_ifml::parse_ifml` for the entry file, with module composition
     /// proven.
-    pub compilation: rex_ifml::IfmlCompilation,
-    /// The declaration-backed control/route manifest (rexlang #118):
+    pub compilation: phero_ifml::IfmlCompilation,
+    /// The declaration-backed control/route manifest (pherolang #118):
     /// routes, expanded controls, proven edges, actions, commands.
     pub manifest: IfmlManifest,
     /// The actor models gathered from the file's policy imports (empty
@@ -56,18 +56,18 @@ pub struct IfmlCompiled {
     /// The policy import paths as written (the graph policy ingest's
     /// input, unchanged).
     pub policy_imports: Vec<String>,
-    /// Warning-severity checker findings (the rexlang lint channel,
+    /// Warning-severity checker findings (the pherolang lint channel,
     /// W0150–W0154 — dead actions, unreachable views, shadowed modules,
     /// components without data, views without domain binding), rendered
     /// one `file:code message` line per finding. Warnings never fail the
-    /// compilation; hosts render them and decide (rexlang
+    /// compilation; hosts render them and decide (pherolang
     /// `check --deny-warnings` is the strict knob). Codegraph renders
     /// them on the run path and counts them in doctor's soft warnings.
     pub lints: Vec<String>,
 }
 
 /// Read one `.ifml` file, gather its import closure
-/// ([`rex_driver::project::gather_ifml_project`]), compile it, run the
+/// ([`phero_driver::project::gather_ifml_project`]), compile it, run the
 /// E0104–E0109 checker, and derive the manifest.
 ///
 /// Hard errors (`Error::IfmlModel`): unreadable file, compile/resolution
@@ -101,7 +101,7 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
     }
 
     let compilation =
-        rex_ifml::compile_ifml_str(&key, &source, &project.imports).map_err(|diags| {
+        phero_ifml::compile_ifml_str(&key, &source, &project.imports).map_err(|diags| {
             Error::IfmlModel {
                 file: key.clone(),
                 reason: render_diags(&diags),
@@ -127,7 +127,7 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
     // follow-up). Error-severity diagnostics hard-fail; the lint channel
     // (W0150–W0154) rides the compiled artifact as warnings — a linty
     // model still ingests.
-    let diags = rex_ifml::check_ifml_with_actors(&compilation, None, &actor_models);
+    let diags = phero_ifml::check_ifml_with_actors(&compilation, None, &actor_models);
     let (errors, lints): (Vec<_>, Vec<_>) =
         diags.into_iter().partition(|diag| diag.severity.is_error());
     if !errors.is_empty() {
@@ -137,7 +137,7 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
         });
     }
 
-    let manifest = rex_ifml::manifest_ifml(&compilation, &project.imports, None);
+    let manifest = phero_ifml::manifest_ifml(&compilation, &project.imports, None);
     Ok(IfmlCompiled {
         compilation,
         manifest,
@@ -179,7 +179,7 @@ fn with_snake_role_aliases(mut models: Vec<ActorModel>) -> Vec<ActorModel> {
             for actor in originals {
                 let snake = to_snake_case(&actor.name);
                 if snake != actor.name && !existing.contains(&snake) {
-                    block.actors.push(rex_ir::ActorDef {
+                    block.actors.push(phero_ir::ActorDef {
                         name: snake,
                         ..actor
                     });
@@ -195,7 +195,7 @@ fn with_snake_role_aliases(mut models: Vec<ActorModel>) -> Vec<ActorModel> {
 /// Warning-severity findings (the lint channel) render identically — the
 /// severity lives in the code's W-band, and the caller decides fatal vs
 /// advisory.
-pub fn render_diags(diags: &[rex_ifml::IfmlDiagnostic]) -> String {
+pub fn render_diags(diags: &[phero_ifml::IfmlDiagnostic]) -> String {
     diags
         .iter()
         .map(|d| format!("  {}:{} {} at byte {}", d.file, d.code, d.message, d.span.0))

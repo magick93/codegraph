@@ -63,21 +63,21 @@ enum Commands {
         /// OpenAPI spec files to ingest.
         #[arg(long = "openapi-files")]
         openapi_files: Vec<PathBuf>,
-        /// rexlang .mox domain model files (primary model source).
+        /// pherolang .mox domain model files (primary model source).
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
         /// Rosetta (Rune DSL) .rosetta model files (primary model source).
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
-        /// rexlang .ddd design files; compiled against their imported
+        /// pherolang .ddd design files; compiled against their imported
         /// .mox domains and ingested as the DDD design plane.
         #[arg(long)]
         ddd_files: Vec<PathBuf>,
-        /// rexlang .evt event-contract files; compiled against their
+        /// pherolang .evt event-contract files; compiled against their
         /// imported .mox domains and ingested as the events plane.
         #[arg(long)]
         evt_files: Vec<PathBuf>,
-        /// rexlang .deploy deployment files; compiled against their
+        /// pherolang .deploy deployment files; compiled against their
         /// imported .ddd designs and .ifml flows and ingested as the
         /// deployment plane.
         #[arg(long)]
@@ -115,7 +115,7 @@ enum Commands {
         /// Only show results for this domain.
         #[arg(long)]
         domain: Option<String>,
-        /// rexlang .mox domain model files (primary model source).
+        /// pherolang .mox domain model files (primary model source).
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
         /// Rosetta (Rune DSL) .rosetta model files (primary model source).
@@ -160,25 +160,25 @@ enum Commands {
         /// profiles.toml path.
         #[arg(long)]
         profiles_config: Option<PathBuf>,
-        /// rexlang .mox domain model files.
+        /// pherolang .mox domain model files.
         #[arg(long = "mox-files")]
         mox_files: Vec<PathBuf>,
         /// Rosetta (Rune DSL) .rosetta model files (sigil-verified).
         #[arg(long = "rosetta-files")]
         rosetta_files: Vec<PathBuf>,
-        /// rexlang .ddd design files (compile-verified against their
+        /// pherolang .ddd design files (compile-verified against their
         /// imported .mox domains).
         #[arg(long)]
         ddd_files: Vec<PathBuf>,
-        /// rexlang .evt event-contract files (compile-verified against
+        /// pherolang .evt event-contract files (compile-verified against
         /// their imported .mox domains).
         #[arg(long)]
         evt_files: Vec<PathBuf>,
-        /// rexlang .deploy deployment files (compile-verified against
+        /// pherolang .deploy deployment files (compile-verified against
         /// their imported .ddd designs and .ifml flows).
         #[arg(long)]
         deploy_files: Vec<PathBuf>,
-        /// rexlang .ifml interaction-model files (parse-verified, policy
+        /// pherolang .ifml interaction-model files (parse-verified, policy
         /// imports resolved).
         #[arg(long)]
         ifml_files: Vec<PathBuf>,

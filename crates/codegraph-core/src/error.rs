@@ -38,7 +38,7 @@ pub enum Error {
     DddModel {
         /// The .ddd file the error came from.
         file: String,
-        /// Failure cause, including the rendered rex diagnostics when the
+        /// Failure cause, including the rendered pherolang diagnostics when the
         /// error comes from compilation (grouped per file).
         reason: String,
     },
@@ -46,7 +46,7 @@ pub enum Error {
     EvtModel {
         /// The .evt file the error came from.
         file: String,
-        /// Failure cause, including the rendered rex diagnostics when the
+        /// Failure cause, including the rendered pherolang diagnostics when the
         /// error comes from compilation (grouped per file).
         reason: String,
     },
@@ -54,7 +54,7 @@ pub enum Error {
     DeployModel {
         /// The .deploy file the error came from.
         file: String,
-        /// Failure cause, including the rendered rex diagnostics when the
+        /// Failure cause, including the rendered pherolang diagnostics when the
         /// error comes from compilation (grouped per file).
         reason: String,
     },

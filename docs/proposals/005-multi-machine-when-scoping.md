@@ -1,7 +1,7 @@
 # Proposal: multi-machine and cross-entity `when` scoping
 
 Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd machines.rs + integrity; rex-ir condition)
+Target: pherolang (phero-driver ddd machines.rs + integrity; phero-ir condition)
 
 ## Problem
 

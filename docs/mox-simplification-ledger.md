@@ -342,7 +342,7 @@ JSON input; mox bypasses the loader.
   range-typed declarations (item 12's pending construct); codelist variants
   are `enum`/`vocabulary`; variant classes are `extends`. `codegraph
   migrate` reports `anyOf` as `needs_review` rather than guessing. An
-  upstream rexlang `union` construct is **not** justified by the real
+  upstream pherolang `union` construct is **not** justified by the real
   corpus: nothing authored needs non-discriminated unions once external
   standards stop being modeled.
 - **Status**: **Deletable** (JSON-input era only) — the flags, the

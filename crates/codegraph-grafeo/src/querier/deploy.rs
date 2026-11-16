@@ -34,7 +34,7 @@ impl GrafeoEngine {
 
 #[cfg(test)]
 mod round_trip_tests {
-    //! rexlang #49: pins the storage contract — one `:DeployModel` node per
+    //! pherolang #49: pins the storage contract — one `:DeployModel` node per
     //! file read back WHOLE (applications/profiles/deployments byte-equal to
     //! what was ingested), models sorted by `source_path` regardless of
     //! ingest order, and a re-ingest of the same source path REPLACING the

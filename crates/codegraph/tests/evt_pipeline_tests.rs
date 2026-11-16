@@ -1,5 +1,5 @@
 //! End-to-end `.evt` event-contract generation (issues #454/#455 Phase 5):
-//! the committed orders fixture (rexlang conformance, verbatim) driven
+//! the committed orders fixture (pherolang conformance, verbatim) driven
 //! through `driver::run` (mox + evt) with assertions on the generated
 //! typed events plane, run-to-run determinism, and the flag-off contract
 //! (no `.evt` input ⇒ no events plane and every common file byte-identical
@@ -155,7 +155,7 @@ async fn evt_input_generates_the_typed_events_plane() {
     assert!(events_mod.contains("pub mod emit;"));
 
     // contracts.rs — one payload struct per declared event with the
-    // mapped field types (rex primitives, the enum-resolved codelist
+    // mapped field types (pherolang primitives, the enum-resolved codelist
     // type) and the pinned version consts.
     let contracts = read_out(&files, "src/events/contracts.rs");
     assert!(
@@ -165,7 +165,7 @@ async fn evt_input_generates_the_typed_events_plane() {
     assert!(contracts.contains("pub order_id: String,"));
     assert!(
         contracts.contains("pub total: i64,"),
-        "rex `int` maps to i64"
+        "pherolang `int` maps to i64"
     );
     assert!(
         contracts.contains("pub status: OrderStatus,"),

@@ -1,7 +1,7 @@
 # Proposal: explicit service-op transition binding
 
 Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd compiler + rex-ir)
+Target: pherolang (phero-driver ddd compiler + phero-ir)
 
 ## Problem
 
@@ -40,7 +40,7 @@ service PayRunService {
 ## Proposed IR
 
 ```rust
-// rex-ir ddd.rs (serde-defaulted — wire back-compat)
+// phero-ir ddd.rs (serde-defaulted — wire back-compat)
 pub struct ServiceOperation {
     // ... existing fields ...
     pub transition: Option<TransitionRef>,   // NEW
@@ -53,7 +53,7 @@ pub struct TransitionRef {
 }
 ```
 
-Compiler checks (rex-driver ddd graph/integrity):
+Compiler checks (phero-driver ddd graph/integrity):
 
 - the trigger must exist on the machine bound to the op's entity (else compile
   error naming trigger + machine);

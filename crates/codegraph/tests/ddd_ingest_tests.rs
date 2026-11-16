@@ -1,4 +1,4 @@
-//! DDD design-plane ingest tests (issue #449 Phase 2): the rex-ir to
+//! DDD design-plane ingest tests (issue #449 Phase 2): the phero-ir to
 //! `DddModelGraph` conversion (module-major ordinals, every payload),
 //! class title resolution (exact, then +type_suffix, then miss), the
 //! end-to-end `ingest_ddd_files` run over a fixture dir (mox import,
@@ -14,14 +14,15 @@ use codegraph_core::types::{
     DddApplicationNode, DddDesignFlags, DddDocumentField, DddModuleNode, DddPagination,
     DddRepositoryNode, DddSearchField, SchemaNode,
 };
-use rex_ir::ddd::{
-    Application, BuiltinRepositoryOp, DddModel, Delegation, Design, DesignFlags, Module,
-    RankingStrategy, Repository, RepositoryOperation, SearchDef, SearchField, SearchFilter,
-    SearchSort, Service, ServiceOperation, Stereotype,
+use phero_ir::ddd::{
+    Application, BuiltinRepositoryOp, DddModel, DddParam, DddTypeRef, Delegation, Design,
+    DesignFlags, DocumentField, Module, Pagination, RankingStrategy, Repository,
+    RepositoryOperation, SearchDef, SearchField, SearchFilter, SearchSort, Service,
+    ServiceOperation, Stereotype,
 };
-use rex_ir::{Multiplicity, OperationParam, PrimitiveType, TypeRef, Upper};
+use phero_ir::{Multiplicity, PrimitiveType, TypeRef, Upper};
 
-// ── rex-ir fixture ─────────────────────────────────────────────────────
+// ── phero-ir fixture ─────────────────────────────────────────────────────
 
 fn class_ref(package: &str, name: &str) -> TypeRef {
     TypeRef::Class {
@@ -30,174 +31,149 @@ fn class_ref(package: &str, name: &str) -> TypeRef {
     }
 }
 
-fn param(name: &str, type_: TypeRef, multiplicity: Option<Multiplicity>) -> OperationParam {
-    OperationParam {
-        name: name.to_string(),
-        type_,
-        multiplicity,
-    }
+/// A `DddParam` (DD3: the signature slot is a `DddTypeRef`).
+fn param(name: &str, type_: TypeRef, multiplicity: Option<Multiplicity>) -> DddParam {
+    DddParam::new(name, DddTypeRef::domain(type_)).with_multiplicity(multiplicity)
 }
 
 /// Two modules: `lending` (entity/value/dto designs — the entity carries
 /// all five flags and a repository with the four builtins plus a declared
 /// finder — and a service with a declared op and a delegation), and
 /// `discovery` (one more entity design plus a fully-loaded search).
+///
+/// Built with the upstream constructors (`Design::new`, `Service::new`,
+/// `ServiceOperation::new`, `RepositoryOperation::builtin/declared`,
+/// `SearchDef::new`) so a new DD-epic field cannot silently unset a
+/// semantic here; the few fields without setters are assigned directly.
 fn sample_model() -> DddModel {
+    let mut book = Design::new("nz.example.library::Book", Stereotype::Entity);
+    book.flags = DesignFlags {
+        scaffold: true,
+        auditable: true,
+        optimistic_locking: true,
+        non_persistent: false,
+        cache: true,
+    };
+    book.repository = Some(Repository {
+        name: "BookRepository".to_string(),
+        operations: vec![
+            RepositoryOperation::builtin("findById", BuiltinRepositoryOp::FindById),
+            RepositoryOperation::builtin("findAll", BuiltinRepositoryOp::FindAll),
+            RepositoryOperation::builtin("save", BuiltinRepositoryOp::Save),
+            RepositoryOperation::builtin("delete", BuiltinRepositoryOp::Delete),
+            RepositoryOperation::declared(
+                "byTitle",
+                Some(DddTypeRef::domain(TypeRef::Primitive(
+                    PrimitiveType::String,
+                ))),
+                vec![param(
+                    "title",
+                    TypeRef::Primitive(PrimitiveType::String),
+                    Some(Multiplicity::MANY),
+                )],
+            )
+            .with_return_multiplicity(Some(Multiplicity {
+                lower: 0,
+                upper: Upper::Finite(5),
+            })),
+        ],
+    });
+
+    let money = Design::new("Money", Stereotype::Value);
+
+    let mut summary = Design::new("shop::reporting::LoanSummary", Stereotype::Dto);
+    summary.is_abstract = true;
+    summary.flags = DesignFlags {
+        non_persistent: true,
+        ..DesignFlags::default()
+    };
+
+    let chapter = Design::new("nz.example.library.Chapter", Stereotype::Entity);
+
+    let mut borrow = ServiceOperation::new("borrow");
+    borrow.return_type = Some(DddTypeRef::domain(TypeRef::Primitive(
+        PrimitiveType::Boolean,
+    )));
+    borrow.params = vec![param("book", class_ref("nz.example.library", "Book"), None)];
+    borrow.capabilities = vec!["BorrowBooks".to_string()];
+
+    let mut renew = ServiceOperation::new("renew");
+    renew.delegation = Some(Delegation {
+        target: "LoanRepository".to_string(),
+        target_ref: None,
+        operation: "save".to_string(),
+    });
+    renew.condition = Some(r#"status == "OnLoan""#.to_string());
+
+    let mut lending = Module::new("lending");
+    lending.designs = vec![book, money, summary];
+    lending.services = vec![Service {
+        name: "LoanService".to_string(),
+        description: Some("Coordinates lending.".to_string()),
+        operations: vec![borrow, renew],
+        dependencies: vec![
+            "LoanRepository".to_string(),
+            "NotificationService".to_string(),
+        ],
+        dependency_refs: Vec::new(),
+        decision_dependencies: Vec::new(),
+        decision_dependency_refs: Vec::new(),
+        decision_dependency_pins: Vec::new(),
+    }];
+
+    let mut book_search = SearchDef::new("BookSearch", "nz.example.library::Book");
+    book_search.description = Some("Full-text catalogue search".to_string());
+    book_search.text = vec![
+        SearchField::new("title")
+            .with_boost(2.5)
+            .with_analyzer("standard"),
+        SearchField::new("synopsis"),
+    ];
+    book_search.filters = vec![SearchFilter::new("category")];
+    book_search.sort = vec![SearchSort::new("title")];
+    book_search.document = vec![DocumentField::new("label", r#"title + " - " + synopsis"#)];
+    book_search.ranking = Some(RankingStrategy::Custom("recency".to_string()));
+    book_search.analyzer = Some("english".to_string());
+    book_search.pagination = Some(Pagination {
+        limit: Some(20),
+        max_limit: Some(100),
+        cursor: true,
+    });
+    book_search.capabilities = vec!["SearchBooks".to_string()];
+
+    let mut discovery = Module::new("discovery");
+    discovery.designs = vec![chapter];
+    discovery.searches = vec![book_search];
+
     DddModel::new()
         .application(Application {
             name: "Library".to_string(),
             base: Some("nz.example.library".to_string()),
         })
-        .module(Module {
-            name: "lending".to_string(),
-            designs: vec![
-                Design {
-                    class: "nz.example.library::Book".to_string(),
-                    stereotype: Stereotype::Entity,
-                    is_abstract: false,
-                    flags: DesignFlags {
-                        scaffold: true,
-                        auditable: true,
-                        optimistic_locking: true,
-                        non_persistent: false,
-                        cache: true,
-                    },
-                    machine: None,
-                    repository: Some(Repository {
-                        name: "BookRepository".to_string(),
-                        operations: vec![
-                            RepositoryOperation::builtin("findById", BuiltinRepositoryOp::FindById),
-                            RepositoryOperation::builtin("findAll", BuiltinRepositoryOp::FindAll),
-                            RepositoryOperation::builtin("save", BuiltinRepositoryOp::Save),
-                            RepositoryOperation::builtin("delete", BuiltinRepositoryOp::Delete),
-                            RepositoryOperation::declared(
-                                "byTitle",
-                                Some(TypeRef::Primitive(PrimitiveType::String)),
-                                vec![param(
-                                    "title",
-                                    TypeRef::Primitive(PrimitiveType::String),
-                                    Some(Multiplicity::MANY),
-                                )],
-                            )
-                            .with_return_multiplicity(Some(
-                                Multiplicity {
-                                    lower: 0,
-                                    upper: Upper::Finite(5),
-                                },
-                            )),
-                        ],
-                    }),
-                },
-                Design {
-                    class: "Money".to_string(),
-                    stereotype: Stereotype::Value,
-                    is_abstract: false,
-                    flags: DesignFlags::default(),
-                    machine: None,
-                    repository: None,
-                },
-                Design {
-                    class: "shop::reporting::LoanSummary".to_string(),
-                    stereotype: Stereotype::Dto,
-                    is_abstract: true,
-                    flags: DesignFlags {
-                        scaffold: false,
-                        auditable: false,
-                        optimistic_locking: false,
-                        non_persistent: true,
-                        cache: false,
-                    },
-                    machine: None,
-                    repository: None,
-                },
-            ],
-            services: vec![Service {
-                name: "LoanService".to_string(),
-                description: Some("Coordinates lending.".to_string()),
-                operations: vec![
-                    ServiceOperation {
-                        name: "borrow".to_string(),
-                        return_type: Some(TypeRef::Primitive(PrimitiveType::Boolean)),
-                        return_multiplicity: None,
-                        params: vec![param("book", class_ref("nz.example.library", "Book"), None)],
-                        delegation: None,
-                        capabilities: vec!["BorrowBooks".to_string()],
-                        is_protected: false,
-                        condition: None,
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                    },
-                    ServiceOperation {
-                        name: "renew".to_string(),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        delegation: Some(Delegation {
-                            target: "LoanRepository".to_string(),
-                            operation: "save".to_string(),
-                        }),
-                        capabilities: Vec::new(),
-                        is_protected: false,
-                        condition: Some(r#"status == "OnLoan""#.to_string()),
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                    },
-                ],
-                dependencies: vec![
-                    "LoanRepository".to_string(),
-                    "NotificationService".to_string(),
-                ],
-                decision_dependencies: Vec::new(),
-            }],
-            searches: Vec::new(),
-        })
-        .module(Module {
-            name: "discovery".to_string(),
-            designs: vec![Design {
-                class: "nz.example.library.Chapter".to_string(),
-                stereotype: Stereotype::Entity,
-                is_abstract: false,
-                flags: DesignFlags::default(),
-                machine: None,
-                repository: None,
-            }],
-            services: Vec::new(),
-            searches: vec![SearchDef {
-                name: "BookSearch".to_string(),
-                description: Some("Full-text catalogue search".to_string()),
-                entity: "nz.example.library::Book".to_string(),
-                text: vec![
-                    SearchField {
-                        property: "title".to_string(),
-                        boost: Some(2.5.into()),
-                        analyzer: Some("standard".to_string()),
-                    },
-                    SearchField {
-                        property: "synopsis".to_string(),
-                        boost: None,
-                        analyzer: None,
-                    },
-                ],
-                filters: vec![SearchFilter {
-                    property: "category".to_string(),
-                }],
-                sort: vec![SearchSort {
-                    property: "title".to_string(),
-                }],
-                document: vec![rex_ir::ddd::DocumentField {
-                    name: "label".to_string(),
-                    expr: r#"title + " - " + synopsis"#.to_string(),
-                }],
-                ranking: Some(RankingStrategy::Custom("recency".to_string())),
-                analyzer: Some("english".to_string()),
-                pagination: Some(rex_ir::ddd::Pagination {
-                    limit: Some(20),
-                    max_limit: Some(100),
-                    cursor: true,
-                }),
-                capabilities: vec!["SearchBooks".to_string()],
-            }],
-        })
+        .module(lending)
+        .module(discovery)
+}
+
+#[test]
+fn standalone_dto_boundary_designs_are_skipped_not_mapped() {
+    // DD3: a `dto` design with no `.mox` source has `class: None` and is
+    // described entirely by `dtoShape`. It is a transport boundary, not a
+    // domain class, so it never becomes a design node — and the skip must
+    // not shift the class-backed design's ordinal off its declaration index.
+    let mut module = Module::new("reporting");
+    module.designs = vec![
+        Design::new("Book", Stereotype::Entity),
+        Design::standalone_dto("CreateBookRequest"),
+    ];
+    let model = DddModel::new().module(module);
+
+    let graph =
+        codegraph::ingest::ddd_ingest::ddd_model_graph_from_phero(&model, "design.ddd", &|_| None);
+
+    assert_eq!(graph.designs.len(), 1, "only class-backed designs map");
+    assert_eq!(graph.designs[0].class, "Book");
+    assert_eq!(graph.designs[0].ordinal, 0);
+    assert_eq!(graph.designs[0].stereotype, "entity");
 }
 
 /// Book resolves via the +`Type` suffix (the mox bridge convention), Money
@@ -223,7 +199,7 @@ fn mult_json(value: &Multiplicity) -> serde_json::Value {
 #[test]
 fn conversion_maps_module_major_order_and_every_payload() {
     let model = sample_model();
-    let graph = codegraph::ingest::ddd_ingest::ddd_model_graph_from_rex(
+    let graph = codegraph::ingest::ddd_ingest::ddd_model_graph_from_phero(
         &model,
         "design.ddd",
         &sample_resolver(),
@@ -299,10 +275,10 @@ fn conversion_maps_module_major_order_and_every_payload() {
             name: "BookRepository".to_string(),
             design_class: "nz.example.library::Book".to_string(),
             operations: vec![
-                rex_ir_builtin("findById", BuiltinRepositoryOp::FindById, 0),
-                rex_ir_builtin("findAll", BuiltinRepositoryOp::FindAll, 1),
-                rex_ir_builtin("save", BuiltinRepositoryOp::Save, 2),
-                rex_ir_builtin("delete", BuiltinRepositoryOp::Delete, 3),
+                phero_ir_builtin("findById", BuiltinRepositoryOp::FindById, 0),
+                phero_ir_builtin("findAll", BuiltinRepositoryOp::FindAll, 1),
+                phero_ir_builtin("save", BuiltinRepositoryOp::Save, 2),
+                phero_ir_builtin("delete", BuiltinRepositoryOp::Delete, 3),
                 codegraph_core::types::DddRepositoryOperation {
                     name: "byTitle".to_string(),
                     builtin: None,
@@ -400,7 +376,7 @@ fn conversion_maps_module_major_order_and_every_payload() {
     assert_eq!(search.capabilities, vec!["SearchBooks".to_string()]);
 }
 
-fn rex_ir_builtin(
+fn phero_ir_builtin(
     name: &str,
     builtin: BuiltinRepositoryOp,
     ordinal: usize,
@@ -437,7 +413,8 @@ fn title_resolution_receives_the_short_name_and_hits_exact_suffix_and_miss() {
     };
 
     let model = sample_model();
-    let graph = codegraph::ingest::ddd_ingest::ddd_model_graph_from_rex(&model, "d.ddd", &resolver);
+    let graph =
+        codegraph::ingest::ddd_ingest::ddd_model_graph_from_phero(&model, "d.ddd", &resolver);
 
     // The resolver saw SHORT names: the `::`-qualified and dot-qualified
     // references were reduced to their last segment.

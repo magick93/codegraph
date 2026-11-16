@@ -7,8 +7,8 @@
 //!
 //! Slices (independently shippable, per the issue):
 //! 1. derived `expr` features → read-only response fields + accessors
-//! 2. `rust`/`expr`-bodied ops → impl methods with the rexlang
-//!    rex-backend-rust fixed signature (`pub fn name(&self, res: &Resource,
+//! 2. `rust`/`expr`-bodied ops → impl methods with the pherolang
+//!    phero-backend-rust fixed signature (`pub fn name(&self, res: &Resource,
 //!    params) -> Ret`; `rust` bodies verbatim, `expr` bodies lowered through
 //!    the supported subset or `TODO(#501)` markers)
 //! 3. body-less ops → a generated, machine-checkable seam (signature-complete
@@ -60,7 +60,7 @@ class CandidateType {
 }
 "#;
 
-/// A body-less op — the rexlang "abstract hook" gap class. Slice 3 makes the
+/// A body-less op — the pherolang "abstract hook" gap class. Slice 3 makes the
 /// seam visible: a signature-complete stub in the generated module plus a
 /// doctor INFO entry.
 const BODYLESS_OP_MOX: &str = r#"
@@ -292,7 +292,7 @@ async fn mox_derived_feature_exposed_in_response() {
         "response must expose the non-stored derived field:\n{response}"
     );
 
-    // Accessor with the rexlang fixed signature, lowered from the expr
+    // Accessor with the pherolang fixed signature, lowered from the expr
     // body (feature ref → self.<field>); the arena is the domain's REAL
     // Resource (issue #508 R4) — no placeholder.
     assert!(
@@ -389,7 +389,7 @@ async fn mox_op_body_emitted_with_fixed_signature() {
 
     let ops_rs = read_mox_ops(&domain_types_dir);
 
-    // The rexlang fixed-signature seam (issues #508 R1, #517): impl on the
+    // The pherolang fixed-signature seam (issues #508 R1, #517): impl on the
     // persistence-agnostic row mirror — NOT the SeaORM Model, in the one
     // model surface (`mox_types.rs`) so the plane compiles under
     // workers-cornucopia on both targets with every type resolved.
@@ -423,7 +423,7 @@ async fn mox_op_body_emitted_with_fixed_signature() {
         "mox_types must carry the real Resource contract:\n{mox_types}"
     );
 
-    // `rust` body: fixed signature with rex type mapping (int → i32, String
+    // `rust` body: fixed signature with pherolang type mapping (int → i32, String
     // param stays owned String) and the body embedded verbatim — byte-equal
     // to the source text between the braces, on its own line.
     assert!(
@@ -589,11 +589,11 @@ async fn mox_bodyless_op_seam_is_visible() {
 #[tokio::test]
 async fn mox_bodyless_op_doctor_names_the_seam() {
     let sources = vec![("model.mox".to_string(), BODYLESS_OP_MOX.to_string())];
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &sources,
-        &rex_driver::DomainImports {
-            schemas: rex_driver::SchemaImports::new(),
-            sigil: rex_driver::SigilImports::new(),
+        &phero_driver::DomainImports {
+            schemas: phero_driver::SchemaImports::new(),
+            sigil: phero_driver::SigilImports::new(),
         },
     );
     let model = compilation.model.expect("fixture mox must compile");
@@ -607,11 +607,11 @@ async fn mox_bodyless_op_doctor_names_the_seam() {
     // A model without body-less ops contributes no seams (the doctor mox
     // matrix stays zero-warning).
     let sources = vec![("model.mox".to_string(), RUST_AND_EXPR_OPS_MOX.to_string())];
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &sources,
-        &rex_driver::DomainImports {
-            schemas: rex_driver::SchemaImports::new(),
-            sigil: rex_driver::SigilImports::new(),
+        &phero_driver::DomainImports {
+            schemas: phero_driver::SchemaImports::new(),
+            sigil: phero_driver::SigilImports::new(),
         },
     );
     let model = compilation.model.expect("fixture mox must compile");

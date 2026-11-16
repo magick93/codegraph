@@ -1,6 +1,6 @@
-//! rexlang `.evt` event-contract ingest (issue #454 Phase 2a): compile each
-//! contract file against its imported `.mox` domains with the rex driver,
-//! convert the resulting `rex_ir::events::EventModel` into the graph-native
+//! pherolang `.evt` event-contract ingest (issue #454 Phase 2a): compile each
+//! contract file against its imported `.mox` domains with the pherolang driver,
+//! convert the resulting `phero_ir::events::EventModel` into the graph-native
 //! [`EvtModelGraph`], resolve payload field types against the ingested
 //! schema titles, and land the model through
 //! [`GraphIngestor::ingest_evt_model`].
@@ -17,11 +17,11 @@ use codegraph_core::types::{
     EvtChannelNode, EvtCloudEventsNode, EvtDeliveryModeNode, EvtDeliveryPolicyNode, EvtEventField,
     EvtEventNode, EvtModelGraph, EvtSubscriptionNode,
 };
-use rex_driver::{DomainImports, SchemaImports, SigilImports, compile_evt_str};
+use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_evt_str};
 
 use crate::error::{Error, Result};
 use crate::ingest::ddd_ingest::{resolve_with_suffix, short_name};
-use crate::ingest::rex_imports::{collect_domains, discover_rosetta_files, scan_sigil_imports};
+use crate::ingest::phero_imports::{collect_domains, discover_rosetta_files, scan_sigil_imports};
 
 /// Counters for one [`ingest_evt_files`] run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -50,11 +50,11 @@ impl std::fmt::Display for EvtIngestStats {
     }
 }
 
-/// Ingest rexlang `.evt` event-contract files into the graph's events plane.
+/// Ingest pherolang `.evt` event-contract files into the graph's events plane.
 ///
 /// Per file: read the source (a missing file is a hard error), collect the
 /// transitively imported `.mox` domains and their `import schema`/`import
-/// sigil` content, compile with `rex_driver::compile_evt_str`, hard-error
+/// sigil` content, compile with `phero_driver::compile_evt_str`, hard-error
 /// on any error-severity diagnostic (rendered per file into the reason),
 /// resolve payload field types against the graph's schema titles
 /// (exact → title + `type_suffix` → warn + count; primitives resolve to
@@ -108,10 +108,10 @@ pub async fn ingest_evt_files(
         // warning, no count).
         let file_path = compiled.path.clone();
         let unresolved = std::cell::Cell::new(0usize);
-        let graph = evt_model_graph_from_rex(model, &file_path, &|ty: &rex_ir::TypeRef| {
+        let graph = evt_model_graph_from_phero(model, &file_path, &|ty: &phero_ir::TypeRef| {
             match resolve_type_title(ty, type_suffix, &titles) {
                 Some(title) => Some(title),
-                None if matches!(ty, rex_ir::TypeRef::Primitive(_)) => None,
+                None if matches!(ty, phero_ir::TypeRef::Primitive(_)) => None,
                 None => {
                     let name = ty.qualified_name().unwrap_or_else(|| "?".to_string());
                     let short = short_name(&name);
@@ -154,13 +154,13 @@ pub struct EvtCompiled {
     /// paths).
     pub sigil_sources: Vec<(String, String)>,
     /// The compile result.
-    pub compilation: rex_driver::EventCompilation,
+    pub compilation: phero_driver::EventCompilation,
 }
 
 impl EvtCompiled {
     /// The source text of the file with the given driver path, if it is
     /// the contract file, an imported domain, or a rosetta source (the
-    /// rex-cli `source_of` shape).
+    /// phero-cli `source_of` shape).
     fn source_of(&self, path: &str) -> Option<&str> {
         if path == self.path {
             return Some(&self.source);
@@ -285,13 +285,13 @@ pub fn read_and_compile_evt(path: &Path) -> Result<EvtCompiled> {
     })
 }
 
-/// Render a compilation's diagnostics per file with the rex renderer:
+/// Render a compilation's diagnostics per file with the pherolang renderer:
 /// diagnostics are grouped by their file path (first-appearance order) and
 /// each group is rendered against its own source text (contract file, mox
 /// domain, or rosetta source). Paths with no retained source fall back to
 /// plain `path: severity: message` lines.
 pub fn render_evt_diagnostics(compiled: &EvtCompiled) -> String {
-    let mut groups: Vec<(String, Vec<&rex_driver::Diagnostic>)> = Vec::new();
+    let mut groups: Vec<(String, Vec<&phero_driver::Diagnostic>)> = Vec::new();
     for (path, diagnostic) in &compiled.compilation.diagnostics {
         match groups.iter_mut().find(|(name, _)| name == path) {
             Some((_, group)) => group.push(diagnostic),
@@ -302,9 +302,9 @@ pub fn render_evt_diagnostics(compiled: &EvtCompiled) -> String {
     for (path, group) in groups {
         match compiled.source_of(&path) {
             Some(source) => {
-                let owned: Vec<rex_driver::Diagnostic> =
+                let owned: Vec<phero_driver::Diagnostic> =
                     group.iter().map(|d| (*d).clone()).collect();
-                blocks.push(rex_driver::render(&path, source, &owned));
+                blocks.push(phero_driver::render(&path, source, &owned));
             }
             None => {
                 for diagnostic in group {
@@ -330,12 +330,12 @@ pub fn render_evt_diagnostics(compiled: &EvtCompiled) -> String {
 /// means the type is not (yet) in the schema graph — the caller warns and
 /// counts.
 pub fn resolve_type_title(
-    ty: &rex_ir::TypeRef,
+    ty: &phero_ir::TypeRef,
     type_suffix: &str,
     titles: &HashSet<String>,
 ) -> Option<String> {
     match ty {
-        rex_ir::TypeRef::Primitive(_) => None,
+        phero_ir::TypeRef::Primitive(_) => None,
         _ => {
             let qualified = ty.qualified_name()?;
             resolve_with_suffix(short_name(&qualified), type_suffix, titles)
@@ -343,22 +343,22 @@ pub fn resolve_type_title(
     }
 }
 
-/// Convert a compiled rexlang event-contract artifact into its
+/// Convert a compiled pherolang event-contract artifact into its
 /// graph-native representation.
 ///
 /// Ordering contract (the [`EvtModelGraph`] flattening the querier's
 /// `get_evt_models` restores): events, channels, and subscriptions keep
 /// declaration order; every node's `ordinal` is its declaration index
 /// within its kind, so the authored order reconstructs per kind.
-/// `title_resolver` receives each payload field's rex-ir `TypeRef` and
+/// `title_resolver` receives each payload field's phero-ir `TypeRef` and
 /// returns the schema title, or `None` for a primitive or a type not in
-/// the schema graph. Field `type_json` carries the rex-ir `TypeRef` wire
+/// the schema graph. Field `type_json` carries the phero-ir `TypeRef` wire
 /// JSON (adjacent tagging under the `"type"` key); `version` is pinned
 /// verbatim.
-pub fn evt_model_graph_from_rex(
-    model: &rex_ir::events::EventModel,
+pub fn evt_model_graph_from_phero(
+    model: &phero_ir::events::EventModel,
     source_path: &str,
-    title_resolver: &dyn Fn(&rex_ir::TypeRef) -> Option<String>,
+    title_resolver: &dyn Fn(&phero_ir::TypeRef) -> Option<String>,
 ) -> EvtModelGraph {
     let events = model
         .events
@@ -416,11 +416,13 @@ pub fn evt_model_graph_from_rex(
                 .as_ref()
                 .map(|policy| EvtDeliveryPolicyNode {
                     mode: match policy.mode {
-                        rex_ir::events::DeliveryMode::AtMostOnce => EvtDeliveryModeNode::AtMostOnce,
-                        rex_ir::events::DeliveryMode::AtLeastOnce => {
+                        phero_ir::events::DeliveryMode::AtMostOnce => {
+                            EvtDeliveryModeNode::AtMostOnce
+                        }
+                        phero_ir::events::DeliveryMode::AtLeastOnce => {
                             EvtDeliveryModeNode::AtLeastOnce
                         }
-                        rex_ir::events::DeliveryMode::EffectivelyOnce => {
+                        phero_ir::events::DeliveryMode::EffectivelyOnce => {
                             EvtDeliveryModeNode::EffectivelyOnce
                         }
                     },
@@ -441,7 +443,7 @@ pub fn evt_model_graph_from_rex(
     }
 }
 
-/// Serialize a rex-ir wire payload (`TypeRef`) to its JSON value; a
+/// Serialize a phero-ir wire payload (`TypeRef`) to its JSON value; a
 /// serialization failure degrades to `Value::Null`, never a panic.
 fn to_json<T: serde::Serialize>(value: &T) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
@@ -462,7 +464,7 @@ mod tests {
         // CALLER separates them via the variant match — never a warning).
         assert_eq!(
             resolve_type_title(
-                &rex_ir::TypeRef::Primitive(rex_ir::PrimitiveType::String),
+                &phero_ir::TypeRef::Primitive(phero_ir::PrimitiveType::String),
                 "Type",
                 &titles
             ),
@@ -471,7 +473,7 @@ mod tests {
         // Exact hit through both qualifier styles.
         assert_eq!(
             resolve_type_title(
-                &rex_ir::TypeRef::Enum {
+                &phero_ir::TypeRef::Enum {
                     package: "nz.example.orders".to_string(),
                     name: "OrderStatus".to_string(),
                 },
@@ -482,7 +484,7 @@ mod tests {
         );
         assert_eq!(
             resolve_type_title(
-                &rex_ir::TypeRef::Class {
+                &phero_ir::TypeRef::Class {
                     package: "shop".to_string(),
                     name: "Widget".to_string(),
                 },
@@ -494,7 +496,7 @@ mod tests {
         // Miss.
         assert_eq!(
             resolve_type_title(
-                &rex_ir::TypeRef::Class {
+                &phero_ir::TypeRef::Class {
                     package: "shop".to_string(),
                     name: "Ghost".to_string(),
                 },

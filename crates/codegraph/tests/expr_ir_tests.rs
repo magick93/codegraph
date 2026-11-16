@@ -13,7 +13,7 @@ use codegraph_core::types::{
 use serde_json::Value;
 
 const DOMAIN_MOX: &str = r#"
-package rex.support.domain
+package pherolang.support.domain
 
 class Ticket {
     id String id
@@ -60,11 +60,11 @@ view "PromoDetail" {
 "#;
 
 fn compiled_grant_policy() -> ActorPolicyModel {
-    let compilation = rex_driver::compile_actors_str(
+    let compilation = phero_driver::compile_actors_str(
         "policy.actor",
         ACTOR,
         &[("domain.mox".to_string(), DOMAIN_MOX.to_string())],
-        &rex_driver::DomainImports::default(),
+        &phero_driver::DomainImports::default(),
     );
     assert!(
         compilation.diagnostics.is_empty(),
@@ -112,7 +112,7 @@ async fn grant_when_expr_persists_expr_json() {
 
 #[tokio::test]
 async fn ifml_conditionals_persist_expr_json() {
-    let model = rex_ifml::parse_ifml(IFML).expect("fixture model must parse");
+    let model = phero_ifml::parse_ifml(IFML).expect("fixture model must parse");
     let engine = MockEngine::new();
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await
@@ -172,7 +172,7 @@ async fn ifml_conditionals_persist_expr_json() {
 
 #[tokio::test]
 async fn unconditional_ifml_nodes_have_no_expr_json() {
-    let model = rex_ifml::parse_ifml(IFML).expect("fixture model must parse");
+    let model = phero_ifml::parse_ifml(IFML).expect("fixture model must parse");
     let engine = MockEngine::new();
     codegraph::ingest::ifml_ingest::ingest_ifml_model(&engine, &model)
         .await

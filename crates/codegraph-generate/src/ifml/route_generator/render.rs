@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use codegraph_config::{IfmlComponentMapping, IfmlComponentMappings, SemanticRole};
 use codegraph_core::types::PropertyNode;
-use rex_ifml::{
+use phero_ifml::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
 
@@ -600,7 +600,7 @@ pub(super) fn render_form(spec: &FormSpec) -> RenderForm {
 /// datetimes — `z.iso.datetime()` would reject the picker's local form —
 /// so they validate as strings and the payload layer keeps the ISO
 /// coercion (the hand-rolled path's semantics).
-fn tanstack_zod_kind(field: &rex_ifml::FieldDef) -> ZodKind {
+fn tanstack_zod_kind(field: &phero_ifml::FieldDef) -> ZodKind {
     let html = control_core::html_input_for_dsl(&field.input);
     if !field.values.is_empty() && (html.is_select || html.is_radio) {
         return ZodKind::Enum(field.values.clone());
@@ -684,7 +684,7 @@ pub(super) fn render_form_tanstack(
             mapping.path.clone(),
         ))
     });
-    let fields: Vec<&rex_ifml::FieldDef> = spec
+    let fields: Vec<&phero_ifml::FieldDef> = spec
         .fields
         .iter()
         .filter(|f| Some(f.name.as_str()) != workflow_status)

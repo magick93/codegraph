@@ -55,49 +55,49 @@ lsp-types = "0.97"
 tree-sitter = "0.25"
 tree-sitter-language = "0.1"
 # salsa: no direct dependency anywhere — 0.22 rides in transitively via
-# auto-lsp 0.6.2 (0.23 via rex-driver). A direct salsa upgrade is gated on
-# the same auto-lsp release as tree-sitter above (issue #423).
-# rex-* @ 1fe0ca9: rexlang PR #174 dedup sweep (12 issues) — internal
-# refactor only (shared Import type replaces the ImportDecl/UcImport/
-# CmmnImport triplicate, rex-strings/rex-dates zero-dep leaf crates,
-# VersionedArtifact default methods + default_format_version!, centralized
-# format-version markers, did_you_mean hoisted to rex-diagnostics). Zero
-# codegraph fallout — full scan found no references to any swept surface,
-# all rex wire FORMAT_VERSIONs stay 1, conformance fixtures untouched, so
-# the committed ddd/evt goldens byte-match. Sigil pin UNCHANGED (upstream
-# still pins 69115a7 — lockstep is a no-op). Historical context of the
-# previous pin follows.
-# rex-* @ 194056b: bumped past the union integrity pass (rexlang #114's
-# merge — rex_driver::check_integrity, the cross-layer doctor stage below)
-# for the declaration-backed control/route manifest (rexlang #118 —
-# rex_ifml::manifest_ifml / rex_ir::ifml_manifest), the workspace-level
-# cross-surface resolution (#117 — E0104–E0108: action/navigate/refresh
-# references resolve against declarations; requires:/roles: resolve
-# against .actor models via check_ifml_with_actors), the .deploy
-# deployment surface (#49), the DDD Sculptor semantics (#47), and the
-# IFML module composition + deep-navigation grammar (#45/#46) — plus the
-# new-in-this-bump surfaces: typed lifecycles (Rule 16, bare-String
-# status fields are design errors), service-op emits/invokes +
-# decision_dependencies, the .evt delivery model (CloudEvents attrs,
-# DeliveryPolicy, channel scope, subscription when), .deploy port/health/
-# cors settings + env blocks, the .dmn decision-model surface (rexlang
-# #78, dsntk-backed), the IFML lint channel (W0150–W0199 — WARNING
-# severity; codegraph's front door hard-fails on Error only), the
-# central diagnostics registry + capability joins (rexlang #128), and
-# the Rune-body statement IR (rex_expr::ExprKind::RuneBody — refused by
-# codegraph's closed-subset lowerers). NOTE the bump also drags in new
-# transitive git deps (rex-diagnostics in-repo; xstate-ir from
-# restingstate.git; dsntk-recognizer/feel from the yestechgroup dsntk-rs
-# fork — all anonymously fetchable).
-rex-ir = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
-rex-driver = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
-rex-expr = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
-rex-ifml = { git = "https://github.com/yestechgroup/rexlang.git", rev = "1fe0ca90006613dfc9bd8ee6c7feee0241f2b4cf" }
-# Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the rexlang
+# auto-lsp 0.6.2, and phero-driver brings 0.28.5 (which clears
+# RUSTSEC-2026-0308). A direct upgrade is still gated on the same auto-lsp
+# release as tree-sitter above (issue #423).
+# phero-* @ 298267e: pherolang is now **Phero Lang**. Every crate is
+# `phero-*`, the repository is yestechgroup/pherolang, the binary and LSP
+# identity are `pherolang`, and the artifacts carry `pheroVersion` with
+# `formatVersion` 2 — the one deliberate pre-1.0 wire break (0.2 artifacts
+# are REJECTED, no dual-accept window). We compile in-process and persist
+# our own graph mirrors, so the break lands on the two committed golden
+# fixtures and the graph-format bump (GRAPH_FORMAT_VERSION 4 → 5), never on
+# generated output.
+# What the bump buys (see docs/pherolang-upgrade.md):
+#   * DDD epic DD1–DD9 — resolved identities/provenance, strict value
+#     semantics, DTO boundaries (`DddTypeRef`, `Design.class` now
+#     `Option<String>` for standalone DTOs), authored aggregate boundaries,
+#     invariants, collection sets, declared error vocabulary + `throws`,
+#     multi-file design applications, and typed repository queries
+#     (`RepositoryOperation.query`).
+#   * `.mox` — `T[] { set }` (`Feature.collection`), `class X table "…"`
+#     (`ClassDef.table_name`), `register` classes (`ClassKind`), session-kind
+#     grants (`SessionKind`), and the public word tables
+#     (`phero_syntax::words`) our `migrate` list duplicates.
+#   * `.ifml` re-platformed Pest → logos + chumsky: artifacts byte-identical,
+#     the `IfmlParser`/`Rule` exports are gone, the parse/compile/check
+#     entry points we use are unchanged.
+#   * Every one of our upstream proposals (docs/proposals/001–006) shipped:
+#     transition binding, explicit table names, executable statement bodies,
+#     aggregate child operations, `condition_paths`, register classes +
+#     session-kind grants.
+# Dependency fallout: salsa 0.23 → 0.28.5 (clears RUSTSEC-2026-0308), tokio
+# 1.54.1 (clears RUSTSEC-2026-0386), pest/pest_derive leave the graph. Sigil
+# stays on 69115a7 — upstream's own pin, so lockstep is a no-op.
+# Previous pin (for the history): phero-* @ 1fe0ca9 — the pherolang PR #174
+# dedup sweep; artifacts carried `rexVersion` with formatVersion 1.
+phero-ir = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+# Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the pherolang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
-# into codegraph-generate / codegraph-core). Pinned to the SAME rev rexlang
+# into codegraph-generate / codegraph-core). Pinned to the SAME rev pherolang
 # itself pins (69115a7) so exactly ONE sigil version exists in the tree —
-# move only in lockstep with rexlang's pin.
+# move only in lockstep with pherolang's pin.
 sigil-model = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
 sigil-resolve = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }
 sigil-syntax = { git = "https://github.com/yestechgroup/sigil.git", rev = "69115a79999e6ff2ce04c039a71edac6d8ba2468" }

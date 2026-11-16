@@ -98,9 +98,9 @@ fn assert_mox_first_layout(project: &Path) {
 fn assert_starter_model_compiles(project: &Path, domain: &str) {
     let path = project.join("model").join(format!("{domain}.mox"));
     let content = fs::read_to_string(&path).unwrap();
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &[(path.display().to_string(), content.clone())],
-        &rex_driver::DomainImports::default(),
+        &phero_driver::DomainImports::default(),
     );
     assert!(
         compilation.model.is_some(),
@@ -829,9 +829,9 @@ fn add_domain_appends_and_creates_mox_starter() {
     let model = dir.path().join("model/billing.mox");
     assert!(model.is_file(), "add domain must create model/billing.mox");
     let content = fs::read_to_string(&model).unwrap();
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &[("model/billing.mox".to_string(), content)],
-        &rex_driver::DomainImports::default(),
+        &phero_driver::DomainImports::default(),
     );
     assert!(
         compilation.model.is_some(),
@@ -877,9 +877,9 @@ fn add_domain_normalizes_name() {
     let model = dir.path().join("model/billing_accounts.mox");
     assert!(model.is_file());
     let content = fs::read_to_string(&model).unwrap();
-    let compilation = rex_driver::compile_files(
+    let compilation = phero_driver::compile_files(
         &[("model/billing_accounts.mox".to_string(), content)],
-        &rex_driver::DomainImports::default(),
+        &phero_driver::DomainImports::default(),
     );
     assert!(
         compilation.model.is_some(),
@@ -1412,7 +1412,7 @@ fn add_domain_rosetta_mode_creates_rosetta_starter() {
     );
 }
 
-// ── doctor --deploy-files (rexlang #49) ────────────────────────────────────
+// ── doctor --deploy-files (pherolang #49) ────────────────────────────────────
 
 /// A self-contained standalone deployment (no imports): compiles clean on
 /// a monolith scaffold — the topology cross-check agrees (standalone
@@ -2184,7 +2184,7 @@ fn doctor_validates_media_matrix_and_template() {
     );
 }
 
-/// The union integrity stage (rexlang #114): a granted-but-uncarried
+/// The union integrity stage (pherolang #114): a granted-but-uncarried
 /// capability is a hard doctor failure, and the same union wired cleanly
 /// passes. Actors arrive through the `.ifml` policy import — the only
 /// actor path doctor has.
@@ -2253,7 +2253,7 @@ view "CustomerList" {
     fs::write(model.join("crm.ddd"), ddd).unwrap();
     fs::write(model.join("crm.actor"), actor).unwrap();
     fs::write(model.join("crm.ifml"), ifml).unwrap();
-    // rexlang #128 downgraded the granted-but-uncarried capability to a
+    // pherolang #128 downgraded the granted-but-uncarried capability to a
     // WARNING (carried-capability tracking is not reliable across every
     // op-emitting surface) — doctor surfaces it as a soft warning, not a
     // hard failure.

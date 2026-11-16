@@ -217,7 +217,7 @@ pub async fn ifml_scaffold(args: IfmlScaffoldArgs<'_>) -> Result<()> {
 
     let content = render_ifml(&headers, &specs);
 
-    if let Err(e) = rex_ifml::parse_ifml(&content) {
+    if let Err(e) = phero_ifml::parse_ifml(&content) {
         return Err(Error::Config(format!(
             "internal error: generated IFML failed to parse: {e}"
         )));
@@ -541,7 +541,7 @@ mod tests {
         }];
         let entities = vec![spec("TodoList", &["name", "description"])];
         let content = render_ifml(&domains, &entities);
-        let model = rex_ifml::parse_ifml(&content).expect("scaffold output must parse");
+        let model = phero_ifml::parse_ifml(&content).expect("scaffold output must parse");
         assert_eq!(model.domains.len(), 1);
         assert_eq!(model.domains[0].name, "todo");
         assert_eq!(model.domains[0].schema_name, "todo");
@@ -568,7 +568,7 @@ mod tests {
             ),
             "unexpected rendering:\n{content}"
         );
-        rex_ifml::parse_ifml(&content).expect("must parse");
+        phero_ifml::parse_ifml(&content).expect("must parse");
     }
 
     #[test]

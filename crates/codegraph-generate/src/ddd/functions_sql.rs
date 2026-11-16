@@ -16,7 +16,7 @@
 //! Closed subset (documented; everything else refuses to a **stub +
 //! completion brief** — the module is the record, never a guess):
 //!
-//! | rexlang                    | SQL                                    |
+//! | pherolang                    | SQL                                    |
 //! |----------------------------|----------------------------------------|
 //! | number / int literal       | verbatim                               |
 //! | string literal             | `'…'` (quotes doubled)                 |

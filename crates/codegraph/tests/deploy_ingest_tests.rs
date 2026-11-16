@@ -1,4 +1,4 @@
-//! Deployment-plane ingest tests (rexlang #49): the end-to-end
+//! Deployment-plane ingest tests (pherolang #49): the end-to-end
 //! `ingest_deploy_files` run over a fixture dir (.deploy importing a .ddd
 //! design with a `#Module` binding), hard-error semantics (compile error,
 //! un-compilable design import, missing file), the MockEngine round trip,

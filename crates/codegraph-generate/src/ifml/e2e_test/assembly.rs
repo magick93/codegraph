@@ -1216,10 +1216,10 @@ impl IfmlE2eTestGenerator {
         manifest: Option<&IfmlManifestNode>,
     ) -> Option<(Vec<super::pom::PomAction>, super::spec_payload::ActionSpec)> {
         use super::spec_payload::{ActionAct, ActionTest};
-        use rex_ir::ifml_manifest::{ManifestEdgeKind, ManifestEdgeSource};
+        use phero_ir::ifml_manifest::{ManifestEdgeKind, ManifestEdgeSource};
 
         let manifest = manifest?;
-        let manifest: rex_ir::ifml_manifest::IfmlManifest =
+        let manifest: phero_ir::ifml_manifest::IfmlManifest =
             serde_json::from_str(&manifest.model_json).ok()?;
         let id_param = id_param_from(&vc.params)?;
 
@@ -1373,7 +1373,7 @@ async fn plan_action_legs(
         machine.terminals.iter().map(String::as_str).collect();
 
     // The op-level `when` guard's source states, read conservatively off
-    // the DSL condition text (the same `field == State` shape the rexlang
+    // the DSL condition text (the same `field == State` shape the pherolang
     // guard typecheck admits): equality comparisons against declared
     // machine states. Anything else refuses to plan.
     let condition = operation_condition(db, entity_title, &route.op_name).await;
@@ -1443,7 +1443,7 @@ fn ok_round_trip_check(route: &ServiceOpRoute) -> Option<(String, String)> {
 async fn machine_for_entity(
     db: &dyn GraphQuerier,
     entity_title: &str,
-) -> Option<rex_ir::ddd::StateMachine> {
+) -> Option<phero_ir::ddd::StateMachine> {
     let surface = crate::ddd::design::DddDesignSurface::from_graph(db)
         .await
         .ok()?;
@@ -1477,7 +1477,7 @@ async fn operation_condition(
 fn machine_condition_source_states(
     condition: &str,
     machine_field: &str,
-    machine: &rex_ir::ddd::StateMachine,
+    machine: &phero_ir::ddd::StateMachine,
 ) -> Vec<String> {
     let mut sources = Vec::new();
     for clause in condition.split("&&").chain(condition.split("||")) {

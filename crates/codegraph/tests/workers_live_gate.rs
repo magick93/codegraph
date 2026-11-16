@@ -272,7 +272,7 @@ fn workers_gate_fixture_manifest_is_complete() {
          seam the generated actions contract pins (capability-class binding \
          needs an ingested `.actor` policy, which the workers run path does \
          not ingest; class-typed signatures don't bind — bind_entity reads a \
-         top-level `name` the rex type JSON nests under `value`)"
+         top-level `name` the pherolang type JSON nests under `value`)"
     );
     let design_without_comments: String = design
         .lines()
@@ -282,7 +282,7 @@ fn workers_gate_fixture_manifest_is_complete() {
     assert!(
         !design_without_comments.contains("machine "),
         "the design must not declare a state machine (bare-String status = \
-         upstream compile error, rexlang Rule 16) — it lives in domains.toml"
+         upstream compile error, pherolang Rule 16) — it lives in domains.toml"
     );
     let domains_toml =
         std::fs::read_to_string(fixture_dir().join("domains.toml")).expect("domains.toml");

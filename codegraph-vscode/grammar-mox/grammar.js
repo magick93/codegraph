@@ -1,8 +1,8 @@
 /**
- * Tree-sitter grammar for the rexlang `.mox` modeling language.
+ * Tree-sitter grammar for the pherolang `.mox` modeling language.
  *
- * Source of truth: rexlang `docs/LANGUAGE.md` and
- * `crates/rex-syntax/src/{parser,lexer}.rs`. Keywords are reserved;
+ * Source of truth: pherolang `docs/LANGUAGE.md` and
+ * `crates/phero-syntax/src/{parser,lexer}.rs`. Keywords are reserved;
  * everything else (`id`, `readonly`, `to`, `format`, `create`, `convert`,
  * constraint keywords, primitive type names such as `String`/`int`) is
  * contextual: they lex as `identifier` except in the grammar position that
@@ -45,7 +45,7 @@
  *       │       └── cedar_entry        `cedar` raw_body (policy text is opaque)
  *       ├── delegation_declaration     `delegation` name `{` from/to/purpose/entries `}`
  *       │   ├── from_clause / to_clause / purpose_clause
- *       │   └── grant_entry            (cedar_entry is rejected by rexlang, tolerated here)
+ *       │   └── grant_entry            (cedar_entry is rejected by pherolang, tolerated here)
  *       └── never_both_declaration     `never_both` `{` name (`,` name)* `}`
  *
  *   Shared leaves: qualified_name (dotted), identifier, escaped_identifier
@@ -204,7 +204,7 @@ module.exports = grammar({
     // An operation/derived body holds one or more per-target blocks:
     // `{ rust { ... } expr { ... } }`. The neutral expression language
     // lives in a single `expr { ... }` block. A bare `{ ... }` body is
-    // rejected by rexlang itself (Tier 1 / Tier 2), so it is a parse
+    // rejected by pherolang itself (Tier 1 / Tier 2), so it is a parse
     // error here too, which keeps the grammar deterministic.
     op_body: $ => seq(
       '{', repeat($.target_body), '}',

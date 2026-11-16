@@ -1,14 +1,14 @@
-//! Lowering of rexlang neutral `expr` bodies to Rust (issues #501/#508).
+//! Lowering of pherolang neutral `expr` bodies to Rust (issues #501/#508).
 //!
 //! Mox derived features and `expr`-bodied operations store the body as
-//! verbatim source text. This module parses that text with `rex-expr`
+//! verbatim source text. This module parses that text with `phero-expr`
 //! (parse only — no model, no typechecking) and lowers a **normative
 //! closed subset** to a Rust expression, targeting parity with what
-//! `rex-backend-rust` lowers (the Tier-2 `expr_lower.rs` contract).
+//! `phero-backend-rust` lowers (the Tier-2 `expr_lower.rs` contract).
 //!
 //! # The normative subset
 //!
-//! | rexlang                              | Rust                                        |
+//! | pherolang                              | Rust                                        |
 //! |--------------------------------------|---------------------------------------------|
 //! | `field` (own-class feature)          | `self.<field>` (`.clone()` on non-Copy)     |
 //! | `123` / `-123`                       | width-suffixed int (`i32`, `i64` in long context) |
@@ -23,7 +23,7 @@
 //! | `if c { t } else { e }`              | Rust if-expression (spec U1)                |
 //! | `let x = init; body`                 | `{ let x = init; body }` (locals clone on use) |
 //! | `[a, b]`                             | `vec![a, b]` (empty list refused)           |
-//! | `xs.first(p)` / `first()` / `filter` / `map` / `any` / `size` / `sum` | A1–A6 collection algebra |
+//! | `xs.first(p)` / `first()` / `filter` / `map` / `any` / `size` / `sum` | A1–A7 collection algebra (`all` added with pherolang 0.3) |
 //! | `x.field` / `x?.field` (class id x)  | `res.get_<class>(x).map(\|o\| ..)` arena navigation |
 //! | `x.op(args)` (class id x)            | `res.get_<class>(x).expect(..).<op>(res, args)` |
 //! | `xs.map(b => b.field)` (class-id xs) | the same arena navigation from the lambda body — params read `(*b)`/`(**b)` per the refs-1/refs-2 convention |
@@ -33,7 +33,7 @@
 //! `res.get_<class>(id) -> Option<&<Mirror>>` over whatever the runner
 //! loaded; a lookup that misses panics on plain navigation
 //! (`expect("dangling .. id")`) and yields `None` under `?.` — the same
-//! contract `rex-backend-rust` emits.
+//! contract `phero-backend-rust` emits.
 //!
 //! # Refusals are generation errors (issue #508 R3)
 //!
@@ -47,7 +47,7 @@
 use std::collections::HashMap;
 
 use codegraph_naming::{escape_rust_keyword, to_snake_case};
-use rex_expr::{BinOp, Expr, ExprKind, UnOp};
+use phero_expr::{BinOp, Expr, ExprKind, UnOp};
 
 /// One in-scope symbol the lowering may emit.
 #[derive(Debug, Clone)]
@@ -141,20 +141,20 @@ impl std::fmt::Display for Unsupported {
     }
 }
 
-/// Lower rexlang expression `source` to a Rust expression.
+/// Lower pherolang expression `source` to a Rust expression.
 pub fn lower_expr_to_rust(
     source: &str,
     fields: &HashMap<String, FieldBinding>,
     arena: &ArenaIndex,
 ) -> Result<String, Unsupported> {
-    let parsed = rex_expr::parse(source);
+    let parsed = phero_expr::parse(source);
     match parsed.ast {
         Some(ast) if parsed.errors.is_empty() => {
             lower(&ast, fields, arena, TyHint::Unknown, &mut Vec::new())
         }
         _ => Err(Unsupported {
             kind: "syntax".to_string(),
-            detail: format!("not valid rexlang expression syntax: {source:?}"),
+            detail: format!("not valid pherolang expression syntax: {source:?}"),
         }),
     }
 }
@@ -350,7 +350,7 @@ fn lower(
         ExprKind::Let { name, init, body } => {
             let init_code = lower(init, fields, arena, TyHint::Unknown, locals)?;
             let let_name = escape_rust_keyword(&to_snake_case(&name.value));
-            // Locals bind by value; uses clone (parity with rex-backend-rust).
+            // Locals bind by value; uses clone (parity with phero-backend-rust).
             locals.push(Local {
                 written: to_snake_case(&name.value),
                 read: format!("{let_name}.clone()"),
@@ -490,7 +490,7 @@ fn binding_of(
     }
 }
 
-/// `date("YYYY-MM-DD")` — format-validated at parse time by the rex
+/// `date("YYYY-MM-DD")` — format-validated at parse time by the pherolang
 /// checker upstream; we still refuse malformed text rather than guess.
 fn lower_date_literal(text: &str) -> Result<String, Unsupported> {
     let parts: Vec<&str> = text.split('-').collect();
@@ -517,7 +517,7 @@ fn symbol_for(
     locals: &Locals,
 ) -> Result<String, Unsupported> {
     // Locals first (shadowing, innermost wins), clone-on-use — parity
-    // with rex-backend-rust.
+    // with phero-backend-rust.
     if let Some(local) = local_of(name, locals) {
         return Ok(local.read.clone());
     }
@@ -554,7 +554,7 @@ fn field_shape(binding: &FieldBinding, obj: &str) -> String {
 }
 
 /// `x.field` / `x?.field` — arena navigation when the receiver carries a
-/// class id; the two idioms from the rex contract (plain `map().expect()`,
+/// class id; the two idioms from the pherolang contract (plain `map().expect()`,
 /// safe `and_then()` chains).
 fn feature_access(
     receiver: &Expr,
@@ -712,7 +712,7 @@ fn call(
     }
 }
 
-/// Date calendar algebra (R5/R8): exactly the three methods the rex
+/// Date calendar algebra (R5/R8): exactly the three methods the pherolang
 /// checker admits.
 fn date_method(
     receiver: &Expr,
@@ -761,20 +761,20 @@ fn date_method(
 }
 
 /// `?.` on an optional date receiver maps over the Option (the
-/// `__rex_date` idiom from the rex contract).
+/// `__phero_date` idiom from the pherolang contract).
 fn wrap_optional_date(recv_is_option: bool, recv_code: &str, body: &str) -> String {
     if recv_is_option {
         // `body` was built from `recv_code`; rebuild as a map over the inner value.
-        let inner = body.replace(recv_code, "__rex_date");
-        format!("({recv_code}.map(|__rex_date| {inner}))")
+        let inner = body.replace(recv_code, "__phero_date");
+        format!("({recv_code}.map(|__phero_date| {inner}))")
     } else {
         body.to_string()
     }
 }
 
-/// A1–A6 collection algebra over to-many features.
+/// A1–A7 collection algebra over to-many features.
 fn algebra(
-    kind: &rex_expr::AlgebraKind,
+    kind: &phero_expr::AlgebraKind,
     receiver: &Expr,
     lambda: Option<(&str, &Expr)>,
     optional_safe: bool,
@@ -782,7 +782,7 @@ fn algebra(
     arena: &ArenaIndex,
     locals: &mut Locals,
 ) -> Result<String, Unsupported> {
-    use rex_expr::AlgebraKind;
+    use phero_expr::AlgebraKind;
     let recv_binding = binding_of(receiver, fields, locals).ok_or_else(|| Unsupported {
         kind: "collection algebra".to_string(),
         detail: format!("`{kind:?}` receiver must be a feature"),
@@ -798,7 +798,7 @@ fn algebra(
     let elem_copy = is_copy_rust_type(&elem_type);
     let adapter = if elem_copy { ".copied()" } else { ".cloned()" };
 
-    // Closure params (the rex refs convention: map/any lend 1 ref,
+    // Closure params (the pherolang refs convention: map/any lend 1 ref,
     // find/filter lend 2). The local keys by the name the closure
     // declares — the normalized identifier (issue #528) — and, when the
     // collection carries an element class, the element's FieldBinding so
@@ -892,6 +892,20 @@ fn algebra(
             let pred = pred?;
             Ok(wrap(format!("({recv_code}.iter().any(|{var}| {pred}))")))
         }
+        AlgebraKind::All => {
+            let Some((param, body)) = lambda else {
+                return Err(Unsupported {
+                    kind: "collection algebra".to_string(),
+                    detail: "`all` requires a lambda".to_string(),
+                });
+            };
+            let var = escape_rust_keyword(&to_snake_case(param));
+            push_local(locals, &var, 1);
+            let pred = lower(body, fields, arena, TyHint::Unknown, locals);
+            locals.pop();
+            let pred = pred?;
+            Ok(wrap(format!("({recv_code}.iter().all(|{var}| {pred}))")))
+        }
         AlgebraKind::Size => Ok(wrap(format!("({recv_code}.len() as i32)"))),
         AlgebraKind::Sum => {
             let elem = recv_binding.element_type().to_string();
@@ -959,7 +973,7 @@ pub fn is_copy_rust_type(rust_type: &str) -> bool {
     )
 }
 
-/// The Rust type for a mox primitive `type_ref` (the rex-backend-rust
+/// The Rust type for a mox primitive `type_ref` (the phero-backend-rust
 /// signature mapping). `None` for anything without a primitive Rust
 /// mapping — the caller raises a generation error instead of a guessed
 /// type.
@@ -1214,6 +1228,17 @@ mod tests {
     }
 
     #[test]
+    fn all_lowers_like_any_with_universal_quantification() {
+        // pherolang 0.3 added `all` to the collection algebra; it shares
+        // `any`'s refs-1 lambda convention and its `?.` wrapping.
+        let (f, arena) = book_fixture("Vec<Uuid>");
+        assert_eq!(
+            lower_expr_to_rust("books.all(b => b.active())", &f, &arena).unwrap(),
+            "(self.books.clone().iter().all(|b| (res.get_book((*b)).expect(\"dangling `Book` id\").active(res))))"
+        );
+    }
+
+    #[test]
     fn option_element_lambda_params_navigate_safely() {
         let (f, arena) = book_fixture("Vec<Option<Uuid>>");
         assert_eq!(
@@ -1252,7 +1277,7 @@ mod tests {
     }
 
     #[test]
-    fn arena_navigation_lowers_like_rex_backend_rust() {
+    fn arena_navigation_lowers_like_phero_backend_rust() {
         let mut f = fields(&[("name", true, "String")]);
         f.insert(
             "book".to_string(),
@@ -1303,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    fn primitive_type_mapping_follows_the_rex_contract() {
+    fn primitive_type_mapping_follows_the_pherolang_contract() {
         assert_eq!(mox_primitive_rust_type("int"), Some("i32"));
         assert_eq!(mox_primitive_rust_type("string"), Some("String"));
         assert_eq!(mox_primitive_rust_type("boolean"), Some("bool"));

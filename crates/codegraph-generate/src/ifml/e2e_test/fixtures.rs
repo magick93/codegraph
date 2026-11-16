@@ -2,7 +2,7 @@
 //! generator (issue #317 module split).
 
 use heck::ToLowerCamelCase;
-use rex_ifml::{ComponentSpec, FormSpec};
+use phero_ifml::{ComponentSpec, FormSpec};
 
 use super::super::api_paths::{ResolvedApi, resolve_entity_api};
 use super::super::context::{IfmlAction, IfmlComponent, IfmlEvent, IfmlViewContainer};

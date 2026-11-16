@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-/// The graph-native mirror of a rexlang `.ddd` design artifact
-/// (`rex_ir::ddd::DddModel`, issue #449): one application with its modules,
+/// The graph-native mirror of a pherolang `.ddd` design artifact
+/// (`phero_ir::ddd::DddModel`, issue #449): one application with its modules,
 /// class designs, repositories, application services, and search
-/// definitions. codegraph-core takes no rex-* deps, so rex-ir signatures
+/// definitions. codegraph-core takes no phero-* deps, so phero-ir signatures
 /// (`TypeRef`, `Multiplicity`) cross this boundary as pre-serialized
 /// `serde_json::Value` payloads (the `GrantEdge::expr_json` precedent) and
 /// class references stay as-authored strings, resolved against the schema
@@ -26,7 +26,7 @@ pub struct DddModelGraph {
     pub searches: Vec<DddSearchNode>,
 }
 
-/// The designed application (rex-ir `Application` plus its source path).
+/// The designed application (phero-ir `Application` plus its source path).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddApplicationNode {
     /// Application name.
@@ -71,8 +71,8 @@ pub struct DddDesignNode {
     /// The design flags.
     pub flags: DddDesignFlags,
     /// The class's lifecycle state machine (`machine <field>: <Enum>`), as
-    /// rex-ir `StateMachine` JSON. Opaque to codegraph-core (which must not
-    /// depend on rex-ir); consumers that need the structured form
+    /// phero-ir `StateMachine` JSON. Opaque to codegraph-core (which must not
+    /// depend on phero-ir); consumers that need the structured form
     /// deserialize it. Serde-defaulted for read-compat with graphs
     /// persisted before the field existed.
     #[serde(default)]
@@ -82,7 +82,7 @@ pub struct DddDesignNode {
 }
 
 /// The design flags of a [`DddDesignNode`], all defaulting to `false`
-/// (rex-ir `DesignFlags`).
+/// (phero-ir `DesignFlags`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DddDesignFlags {
     /// Generate scaffolding for the class.
@@ -97,7 +97,7 @@ pub struct DddDesignFlags {
     pub cache: bool,
 }
 
-/// The repository designed for a class (rex-ir `Repository`).
+/// The repository designed for a class (phero-ir `Repository`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddRepositoryNode {
     /// The owning application name.
@@ -112,7 +112,7 @@ pub struct DddRepositoryNode {
 
 /// An operation of a [`DddRepositoryNode`]: exactly one of a built-in op
 /// (whose signature the consumer knows) or a declared signature. Signature
-/// payloads are rex-ir `TypeRef`/`Multiplicity` JSON.
+/// payloads are phero-ir `TypeRef`/`Multiplicity` JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddRepositoryOperation {
     /// Operation name, unique within its repository.
@@ -120,9 +120,9 @@ pub struct DddRepositoryOperation {
     /// The built-in op when this is one: `"findById" | "findAll" |
     /// "findByExample" | "findByKeys" | "save" | "delete"`.
     pub builtin: Option<String>,
-    /// The declared return type as rex-ir `TypeRef` JSON.
+    /// The declared return type as phero-ir `TypeRef` JSON.
     pub return_type: Option<serde_json::Value>,
-    /// The declared return cardinality as rex-ir `Multiplicity` JSON.
+    /// The declared return cardinality as phero-ir `Multiplicity` JSON.
     pub return_multiplicity: Option<serde_json::Value>,
     /// Declared parameters in declaration order.
     pub params: Vec<DddParam>,
@@ -134,15 +134,15 @@ pub struct DddRepositoryOperation {
     pub is_protected: bool,
 }
 
-/// One declared parameter: a rex-ir `OperationParam` with the signature
+/// One declared parameter: a phero-ir `OperationParam` with the signature
 /// types as JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddParam {
     /// Parameter name.
     pub name: String,
-    /// The parameter type as rex-ir `TypeRef` JSON.
+    /// The parameter type as phero-ir `TypeRef` JSON.
     pub type_json: serde_json::Value,
-    /// The parameter cardinality as rex-ir `Multiplicity` JSON.
+    /// The parameter cardinality as phero-ir `Multiplicity` JSON.
     pub multiplicity: Option<serde_json::Value>,
 }
 
@@ -162,7 +162,7 @@ pub struct DddServiceNode {
     /// services this service delegates to, as authored.
     pub dependencies: Vec<String>,
     /// Declared `inject decision` dependencies: decision-service names
-    /// (`rex_ir::ddd::Service::decision_dependencies`, rexlang #78's
+    /// (`phero_ir::ddd::Service::decision_dependencies`, pherolang #78's
     /// `.dmn` surface) this service pools as decision dependencies, as
     /// authored. Serde-defaulted for read-compat with graphs persisted
     /// before the field existed.
@@ -174,16 +174,16 @@ pub struct DddServiceNode {
     pub ordinal: usize,
 }
 
-/// An operation of a [`DddServiceNode`]. Signature payloads are rex-ir
+/// An operation of a [`DddServiceNode`]. Signature payloads are phero-ir
 /// `TypeRef`/`Multiplicity` JSON.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddServiceOperation {
     /// Operation name, unique within its service.
     pub name: String,
-    /// The resolved return type as rex-ir `TypeRef` JSON; `None` for
+    /// The resolved return type as phero-ir `TypeRef` JSON; `None` for
     /// delegation operations whose signature is copied from the target.
     pub return_type: Option<serde_json::Value>,
-    /// The declared return cardinality as rex-ir `Multiplicity` JSON.
+    /// The declared return cardinality as phero-ir `Multiplicity` JSON.
     pub return_multiplicity: Option<serde_json::Value>,
     /// Parameters in declaration order.
     pub params: Vec<DddParam>,
@@ -204,12 +204,12 @@ pub struct DddServiceOperation {
     /// with graphs persisted before the field existed.
     #[serde(default)]
     pub condition: Option<String>,
-    /// Event names the `emits` clause declares (rexlang #114's emission
+    /// Event names the `emits` clause declares (pherolang #114's emission
     /// bindings): loosely-coupled references into the events plane, not
     /// validated at the wire layer. Serde-defaulted for read-compat.
     #[serde(default)]
     pub emits: Vec<String>,
-    /// Decision-service names the `invokes` clause declares (rexlang #78's
+    /// Decision-service names the `invokes` clause declares (pherolang #78's
     /// `.dmn` surface): loosely-coupled references into the decision
     /// plane, not validated at the wire layer. Serde-defaulted for
     /// read-compat.
@@ -219,7 +219,7 @@ pub struct DddServiceOperation {
     pub ordinal: usize,
 }
 
-/// A search definition designed over one entity (rex-ir `SearchDef`): the
+/// A search definition designed over one entity (phero-ir `SearchDef`): the
 /// indexed full-text fields, the structured filter and sort keys, the
 /// computed document projection, and the ranking/analyzer/pagination knobs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -259,29 +259,29 @@ pub struct DddSearchNode {
     pub ordinal: usize,
 }
 
-/// A full-text field of a [`DddSearchNode`] (rex-ir `SearchField`).
+/// A full-text field of a [`DddSearchNode`] (phero-ir `SearchField`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddSearchField {
     /// The entity property whose text is indexed.
     pub property: String,
-    /// Relevance boost multiplier; ordered comparison only (rex-ir wraps
+    /// Relevance boost multiplier; ordered comparison only (phero-ir wraps
     /// the `f32` in an ordered newtype).
     pub boost: Option<f32>,
     /// Analyzer override for this field.
     pub analyzer: Option<String>,
 }
 
-/// A computed projection entry of a search document (rex-ir
+/// A computed projection entry of a search document (phero-ir
 /// `DocumentField`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddDocumentField {
     /// The entry's name in the search document.
     pub name: String,
-    /// The verbatim rex-expr source computing the value.
+    /// The verbatim phero-expr source computing the value.
     pub expr: String,
 }
 
-/// The pagination knobs of a [`DddSearchNode`] (rex-ir `Pagination`).
+/// The pagination knobs of a [`DddSearchNode`] (phero-ir `Pagination`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DddPagination {
     /// The default page size.

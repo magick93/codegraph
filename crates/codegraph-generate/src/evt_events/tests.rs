@@ -486,7 +486,7 @@ async fn dispatch_template_without_evt_ctx_renders_untyped_only() {
     assert!(!out.contains("is_typed_envelope"));
 }
 
-// ── rexlang #31 delivery model: queue-level fold + drain lowering ──────
+// ── pherolang #31 delivery model: queue-level fold + drain lowering ──────
 
 #[tokio::test]
 async fn declared_delivery_policy_folds_into_the_drain() {
@@ -1347,7 +1347,7 @@ async fn dispatch_instruments_the_delivery_path() {
 
 // ── #614: per-event JSON Schema emission ────────────────────────────────
 
-/// The rex-primitive → JSON Schema type mapping (2020-12).
+/// The phero-primitive → JSON Schema type mapping (2020-12).
 #[test]
 fn event_schema_primitive_type_mapping() {
     use crate::events::docs::json_type_of;

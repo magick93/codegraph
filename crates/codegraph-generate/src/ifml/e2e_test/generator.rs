@@ -202,7 +202,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         let mut specs = Vec::new();
         let mut workflow_specs: Vec<(String, Vec<WorkflowTest>)> = Vec::new();
-        // WS6: the folded IFML manifest (rexlang #118) — the action-op
+        // WS6: the folded IFML manifest (pherolang #118) — the action-op
         // plane's input. `None` degrades every consumer (pre-WS6 graphs,
         // no `--ifml-files`): no action POM surface, no action specs,
         // byte-identical output.

@@ -248,7 +248,7 @@ impl GrafeoEngine {
         Ok(id)
     }
 
-    /// The folded IFML control/route manifest (rexlang #118, WS6): ONE
+    /// The folded IFML control/route manifest (pherolang #118, WS6): ONE
     /// singleton node per run — delete-then-insert, so a re-ingest (a
     /// second driver pass into the same engine) REPLACES it rather than
     /// duplicating it. The props go through the parameterized direct API

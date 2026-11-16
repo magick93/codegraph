@@ -5,7 +5,7 @@ use codegraph_config::ux::UxRules;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
-use rex_ifml::{ColumnDef, ComponentSpec};
+use phero_ifml::{ColumnDef, ComponentSpec};
 
 use crate::error::Result;
 use crate::ifml::context::IfmlComponent;

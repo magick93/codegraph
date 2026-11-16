@@ -11,14 +11,14 @@ pub struct MoxFacet {
 }
 
 /// One vendored entry of an ingested mox vocabulary: the unique key plus its
-/// facet values (JSON-encoded rex primitive values).
+/// facet values (JSON-encoded pherolang primitive values).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MoxEntry {
     pub key: String,
     pub facets: BTreeMap<String, serde_json::Value>,
 }
 
-/// A rexlang vocabulary definition ingested from a `.mox` domain source: a
+/// A pherolang vocabulary definition ingested from a `.mox` domain source: a
 /// fixed, versioned set of enumerated keys vendored from an external
 /// authority, with typed facets per key. Entries are embedded so the graph
 /// stays self-contained (no snapshot files needed downstream).

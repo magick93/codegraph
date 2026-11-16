@@ -1,7 +1,7 @@
 //! `.mox` support in the codegraph LSP (MoxState, epic #228 P4 / #232 E2).
 //!
 //! Startup: `build_mox_state` compiles the `--mox-files` sources via
-//! `rex_driver::compile_files` (import JSON resolved relative to
+//! `phero_driver::compile_files` (import JSON resolved relative to
 //! each file, like the ingest pipeline) into a flat declaration index
 //! ([`MoxState`]). Install it with [`init_mox`](super::init_mox); without it
 //! every mox handler below degrades to quiet (syntax diagnostics still flow
@@ -9,11 +9,11 @@
 //!
 //! Diagnostics on open/change of a `.mox` document: tree-sitter
 //! ERROR/MISSING nodes always; with MoxState and a clean parse: unknown
-//! names in `type:`/`superclass:` positions (rexlang primitives exempt),
+//! names in `type:`/`superclass:` positions (pherolang primitives exempt),
 //! `import schema` paths that do not exist relative to the document, and
 //! ambiguity warnings for names resolving to several declarations (v1 keeps
 //! a flat name index — see `resolve_mox_name`). Actor-block internals are
-//! skipped (grant/capability validation is future rex-lsp territory).
+//! skipped (grant/capability validation is future phero-lsp territory).
 //!
 //! Tree-sitter queries against the stable node inventory documented in
 //! `codegraph-vscode/grammar-mox/grammar.js` drive the type-position walk;
@@ -29,8 +29,8 @@ use auto_lsp::anyhow;
 use auto_lsp::default::db::{BaseDatabase, BaseDb};
 use auto_lsp::lsp_types::*;
 use auto_lsp::tree_sitter::{self, Query, QueryCursor, StreamingIterator};
-use rex_driver::{DomainImports, SchemaImports, compile_files};
-use rex_ir::{FeatureKind, TypeRef};
+use phero_driver::{DomainImports, SchemaImports, compile_files};
+use phero_ir::{FeatureKind, TypeRef};
 
 use super::state::{
     ImportAliasInfo, MoxClassInfo, MoxDatatypeInfo, MoxEnumInfo, MoxFeatureInfo, MoxState,
@@ -39,14 +39,14 @@ use super::state::{
 
 static MOX_LANG: LazyLock<tree_sitter::Language> = LazyLock::new(tree_sitter_mox::language);
 
-/// Rexlang primitive type names — valid in any type position without a
+/// Pherolang primitive type names — valid in any type position without a
 /// declaration.
 pub(crate) const MOX_PRIMITIVES: &[&str] = &[
     "String", "int", "long", "short", "float", "double", "boolean", "byte", "char",
 ];
 
 /// Type positions to validate: the grammar's `type:` fields (capability is
-/// deliberately absent — actor-block internals are rex-lsp territory) plus
+/// deliberately absent — actor-block internals are phero-lsp territory) plus
 /// the actor `superclass:` field.
 static MOX_TYPE_REF_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
@@ -123,7 +123,7 @@ impl<'a> TryFrom<auto_lsp::core::ast::TryFromParams<'a>> for MoxSourceFile {
 ///
 /// `import schema` declarations are scanned per file (the ingest pipeline's
 /// line scanner), resolved against the .mox file's directory, and their JSON
-/// provided to the rex compile — the same `SchemaImports` contract as
+/// provided to the pherolang compile — the same `SchemaImports` contract as
 /// `ingest_mox_files`. Missing/unreadable imports and compile errors degrade
 /// to stderr warnings: the file's declarations are absent from the state
 /// (unknown-type checks then report against what IS loaded) but the LSP
@@ -206,7 +206,7 @@ pub fn build_mox_state(
 
     let imports = DomainImports {
         schemas: schema_imports,
-        sigil: rex_driver::SigilImports::new(),
+        sigil: phero_driver::SigilImports::new(),
     };
     let compilation = compile_files(&sources, &imports);
     for (path, diagnostic) in &compilation.diagnostics {
@@ -445,7 +445,7 @@ pub fn import_missing_diagnostic(
     }
 }
 
-/// Validate every type position's name against the MoxState (or the rexlang
+/// Validate every type position's name against the MoxState (or the pherolang
 /// primitives). Unknown names are ERRORs; names resolving to several
 /// declarations (v1 flat index) get an ambiguity WARNING.
 fn validate_type_refs(

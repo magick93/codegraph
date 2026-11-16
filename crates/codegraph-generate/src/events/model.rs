@@ -63,13 +63,13 @@ pub struct EventDefinition {
 pub struct EventFieldDef {
     /// Field name, as authored.
     pub name: String,
-    /// The mapped Rust type: the rex primitive mapping, the resolved
+    /// The mapped Rust type: the pherolang primitive mapping, the resolved
     /// schema's `rust_type_name`, or `serde_json::Value` when the field's
     /// type neither maps nor resolves (warned once).
     pub rust_type: String,
     /// The schema title the field's type resolved to at ingest.
     pub resolved_title: Option<String>,
-    /// `true` when the field mapped to a scalar (rex primitive / the
+    /// `true` when the field mapped to a scalar (pherolang primitive / the
     /// `Uuid`/`DateTime`/`Decimal`/`Date` datatype family); `false` for
     /// class/enum-typed and unresolved fields.
     pub is_primitive: bool,
@@ -233,7 +233,7 @@ impl DeliveryPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum DeliveryGuarantee {
     AtLeastOnce,
-    /// rexlang #31's `at_most_once` (`DeliveryMode::AtMostOnce`): delivery
+    /// pherolang #31's `at_most_once` (`DeliveryMode::AtMostOnce`): delivery
     /// may drop. The drain deletes a message whose consumer dispatches
     /// failed instead of leaving it for the next visibility window.
     AtMostOnce,
@@ -256,7 +256,7 @@ pub enum DeliveryGuarantee {
 ///
 /// Extensions: `version`, `channel`, `domain`, `correlationid`, `tenantid`
 /// (+ `entity_table`/`entity_id` on triggers) — nothing in the native
-/// envelope is lost. When upstream rexlang #31 adds CloudEvents attribute
+/// envelope is lost. When upstream pherolang #31 adds CloudEvents attribute
 /// *declarations* (`type "com.acme.order.placed"`, `source "/orders"`),
 /// they override these derived defaults — keep the mapping in this one
 /// table.
@@ -346,7 +346,7 @@ pub struct EventArchitecture {
     /// consumers — the workers placement skips them (warned once): the
     /// functions plane is monolith-only this slice.
     pub function_consumers: Vec<FunctionConsumer>,
-    /// The queue-level delivery facts the drains lower (rexlang #31's
+    /// The queue-level delivery facts the drains lower (pherolang #31's
     /// delivery model, folded across every declared subscription's
     /// `delivery` block). Defaults are today's dispatch constants — a
     /// model without declared policies folds to the default and NOTHING
@@ -459,7 +459,7 @@ impl EventArchitecture {
             })
             .collect();
 
-        // Queue-level fold (rexlang #31's delivery model, slice 2): the
+        // Queue-level fold (pherolang #31's delivery model, slice 2): the
         // drain's visibility timeout + failure disposition come from the
         // declared `delivery` blocks. Every subscription's EFFECTIVE
         // policy (declared, or today's default when undeclared) must
@@ -759,19 +759,19 @@ impl EventArchitecture {
         db: &dyn GraphQuerier,
     ) -> EventFieldDef {
         let resolved_title = field.resolved_title.clone();
-        let type_ref: Option<rex_ir::TypeRef> = serde_json::from_value(field.type_json.clone())
+        let type_ref: Option<phero_ir::TypeRef> = serde_json::from_value(field.type_json.clone())
             .map_err(|e| {
                 warn_once(
                     &format!("field-type:{}:{}", evt.name, field.name),
                     &format!(
-                        "event `{}' field `{}` has an unparseable rex type ({e}); mapping to `serde_json::Value`",
+                        "event `{}' field `{}` has an unparseable pherolang type ({e}); mapping to `serde_json::Value`",
                         evt.name, field.name
                     ),
                 );
             })
             .ok();
         if let Some(type_ref) = &type_ref
-            && let Some(rust_type) = crate::ddd::design::rex_type_to_rust(type_ref)
+            && let Some(rust_type) = crate::ddd::design::phero_type_to_rust(type_ref)
         {
             return EventFieldDef {
                 name: field.name.clone(),

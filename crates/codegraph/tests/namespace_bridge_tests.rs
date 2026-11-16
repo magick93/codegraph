@@ -137,7 +137,7 @@ async fn mox_without_package_stays_namespaceless_on_grafeo() {
     assert_mox_packageless(&engine).await;
 }
 
-/// The rex grammar REQUIRES a `package` declaration: a package-less file
+/// The pherolang grammar REQUIRES a `package` declaration: a package-less file
 /// fails to compile, so a namespace-less mox model cannot exist — every
 /// compilable mox model carries package (= namespace) provenance. The
 /// byte-identity pin therefore lives on the JSON surface (schemas without

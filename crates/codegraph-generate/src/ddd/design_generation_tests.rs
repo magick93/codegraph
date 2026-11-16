@@ -261,7 +261,7 @@ async fn repository_trait_design_with_read_only_builtins_has_no_create_delete() 
 
 #[tokio::test]
 async fn builtin_query_finders_lower_with_consumer_signatures() {
-    // findByKeys / findByExample (rexlang #47) lower onto the finder plane
+    // findByKeys / findByExample (pherolang #47) lower onto the finder plane
     // with the consumer-known signatures: the surrogate key for an entity
     // with no explicit id feature, and an Option field per stored scalar.
     let db = db_with_model(Some(model(

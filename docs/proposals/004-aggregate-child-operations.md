@@ -1,7 +1,7 @@
 # Proposal: aggregate/child operation semantics
 
 Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-driver ddd designs + Rule 6; rex-ir ServiceOperation)
+Target: pherolang (phero-driver ddd designs + Rule 6; phero-ir ServiceOperation)
 
 ## Problem
 

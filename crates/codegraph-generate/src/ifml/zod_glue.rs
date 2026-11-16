@@ -29,7 +29,7 @@
 //! Presence checks (`x != null`) are unnecessary by construction: DSL
 //! `required:` maps to plain zod vs `.optional()`.
 
-use rex_ifml::{BinOp, Expression};
+use phero_ifml::{BinOp, Expression};
 
 use crate::forms::{ZodCheck, ZodKind};
 
@@ -240,7 +240,7 @@ fn with_message(check: ZodCheck, message: Option<String>) -> ZodCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rex_ifml::Float;
+    use phero_ifml::Float;
 
     fn num(n: f64) -> Expression {
         Expression::NumLit(Float::new(n))

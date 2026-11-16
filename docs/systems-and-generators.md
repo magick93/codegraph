@@ -166,7 +166,7 @@ a profile section.
 | `seed_provision` | Common | — (when seed enabled) | `src/seed/` | Demo-data seed module + CLI; sink writes through the generated command layer (validation, hooks, RLS). |
 | `ops` | Common | `ops_backend` | `codegraph-ops.toml`, `ops/testkit/` | Ops manifest + testkit crate (api/e2e/ui/smoke/quality/ext suites). |
 | `grpc_scaffold` | Api | `grpc_backend` | `proto/shared.proto`, `src/api/grpc/mod.rs` | Shared proto, gRPC module wiring, common conversion helpers. |
-| `policy_rls` | Common | `rls_from_policy` | `migrations/020000_policy_rls.sql` | RLS policies/roles/grants derived from the rexlang actor policy graph (permit/forbid/when → SQL closed subset). |
+| `policy_rls` | Common | `rls_from_policy` | `migrations/020000_policy_rls.sql` | RLS policies/roles/grants derived from the pherolang actor policy graph (permit/forbid/when → SQL closed subset). |
 | `fern_config` | Api | `fern_sdk` | `fern/` | Fern SDK generator config pointing at the OpenAPI spec. |
 | `emdash_plugin_scaffold` | Ui | `emdash_plugins` | plugins scaffold | EmDash plugin family scaffold (package/tsconfig/index/settings/plugin registration/readme). |
 | `lexicon_scaffold` | Common | `atproto_backend` | lexicons scaffold | Lexicon directory scaffold for the atproto app. |

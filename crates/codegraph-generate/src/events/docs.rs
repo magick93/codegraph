@@ -16,7 +16,7 @@ pub struct DocArtifact {
     pub content: String,
 }
 
-/// The rex-primitive / mapped-Rust-type → JSON Schema type mapping
+/// The phero-primitive / mapped-Rust-type → JSON Schema type mapping
 /// (2020-12). Unmapped types (the `serde_json::Value` fallback and any
 /// unforeseen spelling) stay PERMISSIVE (`{}`) — a document must never
 /// be silently stricter than the wire contract.
@@ -405,11 +405,11 @@ fn pascal(s: &str) -> String {
 /// The event catalogue (issue #616): the whole
 /// event→channel→subscription→consumer graph as a deterministic markdown
 /// document. Governance slots (owner/classification/retention/pii —
-/// upstream rexlang #31 slice 14) render WHEN the artifact carries them
+/// upstream pherolang #31 slice 14) render WHEN the artifact carries them
 /// and stay omitted otherwise; today nothing carries them, so no
 /// placeholder noise is emitted. `ddd_models` supplies the cross-plane
 /// `emits` edges (`.ddd` service operations declaring event emission —
-/// rexlang's loosely-coupled dimension).
+/// pherolang's loosely-coupled dimension).
 pub fn catalogue_markdown(
     arch: &EventArchitecture,
     variant: EnvelopeVariant,
@@ -571,9 +571,9 @@ pub fn catalogue_markdown(
     }
     out.push_str("```\n");
 
-    // Governance slots (upstream rexlang #31 item 14): rendered when the
+    // Governance slots (upstream pherolang #31 item 14): rendered when the
     // artifact carries owner/classification/retention/pii; absent today.
-    out.push_str("\n## Governance\n\nGovernance metadata (owner, classification, retention, PII) rides the upstream artifact when declared (rexlang #31 item 14); this projection renders the sections as soon as the model carries the fields.\n");
+    out.push_str("\n## Governance\n\nGovernance metadata (owner, classification, retention, PII) rides the upstream artifact when declared (pherolang #31 item 14); this projection renders the sections as soon as the model carries the fields.\n");
 
     let _ = &variant;
     DocArtifact {

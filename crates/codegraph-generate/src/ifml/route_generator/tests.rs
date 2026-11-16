@@ -11,9 +11,9 @@ use codegraph_config::{DomainConfig, IfmlComponentMappings, SemanticRole};
 use codegraph_core::mock::MockEngine;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
-use rex_ifml::InputFieldType;
-use rex_ifml::PropertyRef;
-use rex_ifml::{
+use phero_ifml::InputFieldType;
+use phero_ifml::PropertyRef;
+use phero_ifml::{
     BinOp, ChartKind, ChartSpec, ColumnDef, ComponentSpec, Expression, FormSpec, TableSpec, UnaryOp,
 };
 use std::collections::{HashMap, HashSet};
@@ -1609,7 +1609,7 @@ fn form_payload_coerces_by_input_and_rust_types() {
 fn form_spec_maps_input_types_and_validations() {
     let spec = ComponentSpec::Form(FormSpec {
         fields: vec![
-            rex_ifml::FieldDef {
+            phero_ifml::FieldDef {
                 name: "name".to_string(),
                 input: InputFieldType::Text,
                 required: true,
@@ -1624,7 +1624,7 @@ fn form_spec_maps_input_types_and_validations() {
                 values: Vec::new(),
                 messages: vec!["Name too short".to_string()],
             },
-            rex_ifml::FieldDef {
+            phero_ifml::FieldDef {
                 name: "start".to_string(),
                 input: InputFieldType::DateTime,
                 required: false,
@@ -1632,7 +1632,7 @@ fn form_spec_maps_input_types_and_validations() {
                 values: Vec::new(),
                 messages: Vec::new(),
             },
-            rex_ifml::FieldDef {
+            phero_ifml::FieldDef {
                 name: "tier".to_string(),
                 input: InputFieldType::Dropdown,
                 required: false,
@@ -1640,7 +1640,7 @@ fn form_spec_maps_input_types_and_validations() {
                 values: vec!["gold".to_string(), "silver".to_string()],
                 messages: Vec::new(),
             },
-            rex_ifml::FieldDef {
+            phero_ifml::FieldDef {
                 name: "stars".to_string(),
                 input: InputFieldType::Custom("stars".to_string()),
                 required: false,
@@ -1666,7 +1666,7 @@ fn form_spec_maps_input_types_and_validations() {
 fn form_message_renders_validate_message_and_client_check() {
     let tera = create_tera(Path::new(".")).expect("tera");
     let spec = ComponentSpec::Form(FormSpec {
-        fields: vec![rex_ifml::FieldDef {
+        fields: vec![phero_ifml::FieldDef {
             name: "title".to_string(),
             input: InputFieldType::Text,
             required: true,
@@ -1710,7 +1710,7 @@ fn form_message_renders_validate_message_and_client_check() {
     );
 
     let plain = ComponentSpec::Form(FormSpec {
-        fields: vec![rex_ifml::FieldDef {
+        fields: vec![phero_ifml::FieldDef {
             name: "title".to_string(),
             input: InputFieldType::Text,
             required: true,
@@ -2817,8 +2817,8 @@ fn load_context_wires_first_list_with_pagination() {
     assert_eq!(ctx.components[2].id_param.as_deref(), Some("customerId"));
 }
 
-fn field_def(name: &str, input: InputFieldType) -> rex_ifml::FieldDef {
-    rex_ifml::FieldDef {
+fn field_def(name: &str, input: InputFieldType) -> phero_ifml::FieldDef {
+    phero_ifml::FieldDef {
         name: name.to_string(),
         input,
         required: false,
@@ -5435,7 +5435,7 @@ fn shadcn_field_variant_maps_the_text_slots() {
     let pack = built_in_pack("shadcn-svelte").expect("shadcn pack");
     let spec = FormSpec {
         fields: vec![
-            rex_ifml::FieldDef {
+            phero_ifml::FieldDef {
                 name: "title".to_string(),
                 input: InputFieldType::Text,
                 required: true,
@@ -5443,7 +5443,7 @@ fn shadcn_field_variant_maps_the_text_slots() {
                 values: Vec::new(),
                 messages: Vec::new(),
             },
-            rex_ifml::FieldDef {
+            phero_ifml::FieldDef {
                 name: "tier".to_string(),
                 input: InputFieldType::Dropdown,
                 required: false,

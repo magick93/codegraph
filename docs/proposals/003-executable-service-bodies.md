@@ -1,7 +1,7 @@
 # Proposal: executable service/repository bodies (normative statement IR)
 
 Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
-Target: rexlang (rex-expr body module, rex-driver ddd lowering, rex-ir)
+Target: pherolang (phero-expr body module, phero-driver ddd lowering, phero-ir)
 
 ## Problem
 
@@ -9,8 +9,8 @@ Service and repository operations without a matching repository builtin
 delegation are documentation-only: codegraph must emit a `501 NOT_IMPLEMENTED`
 seam naming the gap. The seam classes today are exactly the ones consumers
 need first: `save` payloads (create-vs-update decisioning), service-to-service
-delegation, search, and child mutations. rex-expr already carries a Rune
-statement IR (`RuneBody`, separate from `ExprKind`) from rexlang #114's work,
+delegation, search, and child mutations. phero-expr already carries a Rune
+statement IR (`RuneBody`, separate from `ExprKind`) from pherolang #114's work,
 but there is no normative, typed statement subset for service/repository
 operations — so every consumer invents hand-written Rust behind a trait, and
 the model stops being the source of truth for behavior.
@@ -56,7 +56,7 @@ service PayRunService {
 
 - Conformance fixture per construct (let/guard/navigation/reduction/error/
   return) + refusal fixtures naming unsupported constructs.
-- rex-driver compile checks: navigation targets exist on injected repos,
+- phero-driver compile checks: navigation targets exist on injected repos,
   field paths resolve, types align, every path returns or errors.
 - codegraph lowers the subset end-to-end (op route returns real data; 501
   only for constructs outside the subset) and its compile pins cover the

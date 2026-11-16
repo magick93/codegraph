@@ -48,7 +48,7 @@ pub struct RunArgs<'a> {
     pub template_dir: &'a [PathBuf],
     pub ifml_files: &'a [PathBuf],
     pub openapi_files: &'a [PathBuf],
-    /// rexlang `.mox` domain model files to compile in-process and ingest
+    /// pherolang `.mox` domain model files to compile in-process and ingest
     /// into the graph (vocabularies with facets, class operations, derived
     /// features). Absent/empty = no mox ingest, generators unchanged.
     pub mox_files: &'a [PathBuf],
@@ -56,17 +56,17 @@ pub struct RunArgs<'a> {
     /// data plane (issue #256). Ingested after mox and BEFORE the JSON
     /// schema pass; bridged titles join the schema pass's skip-set.
     pub rosetta_files: &'a [PathBuf],
-    /// rexlang `.ddd` design files (issue #449), compiled against their
+    /// pherolang `.ddd` design files (issue #449), compiled against their
     /// imported `.mox` domains and ingested as the DDD design plane
     /// (designs/repositories/services/searches). Absent/empty = no design
     /// ingest, generators unchanged.
     pub ddd_files: &'a [PathBuf],
-    /// rexlang `.evt` event-contract files (issue #454), compiled against
+    /// pherolang `.evt` event-contract files (issue #454), compiled against
     /// their imported `.mox` domains and ingested as the events plane
     /// (events/channels/subscriptions). Absent/empty = no event ingest,
     /// generators unchanged.
     pub evt_files: &'a [PathBuf],
-    /// rexlang `.deploy` deployment files (rexlang #49), compiled against
+    /// pherolang `.deploy` deployment files (pherolang #49), compiled against
     /// their imported `.ddd` designs and `.ifml` flows and ingested as the
     /// deployment plane (applications/profiles/deployments). Absent/empty =
     /// no deployment ingest, generators unchanged.
@@ -614,7 +614,7 @@ pub async fn run_with_graph_cache(
     // persisted graph (inputs unchanged): the graph already holds the
     // model. Generation and validation still run on the reused graph.
     if !graph_cache_reused {
-        // Pass 1: Ingest rexlang .mox domain sources FIRST (mox-first, issue
+        // Pass 1: Ingest pherolang .mox domain sources FIRST (mox-first, issue
         // #231): vocabularies with facets, class operations, derived features,
         // and schema/property nodes for mox-authored classes and enums. The
         // bridged class titles win schema-title conflicts because the schema
@@ -733,7 +733,7 @@ pub async fn run_with_graph_cache(
         if !ifml_files.is_empty() {
             println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
             let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
-            let mut total_manifest = rex_ir::ifml_manifest::IfmlManifest::new();
+            let mut total_manifest = phero_ir::ifml_manifest::IfmlManifest::new();
             for ifml_path in ifml_files {
                 let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
                 for lint in &compiled.lints {
@@ -769,7 +769,7 @@ pub async fn run_with_graph_cache(
             println!("Pass 1b complete: {total_stats}");
             println!(
                 "Pass 1b manifest: {} routes, {} controls, {} edges, {} actions, {} commands \
-                 (declaration-backed — rexlang #118)",
+                 (declaration-backed — pherolang #118)",
                 total_manifest.views.len(),
                 total_manifest.controls.len(),
                 total_manifest.edges.len(),
@@ -789,7 +789,7 @@ pub async fn run_with_graph_cache(
             .await?;
         }
 
-        // Pass 1c: Ingest rexlang .ddd design files (issue #449): compiled
+        // Pass 1c: Ingest pherolang .ddd design files (issue #449): compiled
         // against their imported .mox domains and landed as the DDD design
         // plane. Runs AFTER the schema passes so design classes resolve
         // against the full ingested title set; a compile error is a hard
@@ -806,7 +806,7 @@ pub async fn run_with_graph_cache(
             println!("Pass 1c complete: {ddd_stats}");
         }
 
-        // Pass 1d: Ingest rexlang .evt event-contract files (issue #454):
+        // Pass 1d: Ingest pherolang .evt event-contract files (issue #454):
         // compiled against their imported .mox domains and landed as the
         // events plane. Runs AFTER the schema passes so payload field types
         // resolve against the full ingested title set; a compile error is a
@@ -823,7 +823,7 @@ pub async fn run_with_graph_cache(
             println!("Pass 1d complete: {evt_stats}");
         }
 
-        // Pass 1e: Ingest rexlang .deploy deployment files (rexlang #49):
+        // Pass 1e: Ingest pherolang .deploy deployment files (pherolang #49):
         // compiled against their imported .ddd designs and .ifml flows and
         // landed as the deployment plane. A compile error is a hard error
         // (the EvtModel precedent).
@@ -1410,7 +1410,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
     // renders as warnings).
     println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
     let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
-    let mut total_manifest = rex_ir::ifml_manifest::IfmlManifest::new();
+    let mut total_manifest = phero_ir::ifml_manifest::IfmlManifest::new();
     for ifml_path in ifml_files {
         let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
         for lint in &compiled.lints {
@@ -1446,7 +1446,7 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
     println!("Pass 1b complete: {total_stats}");
     println!(
         "Pass 1b manifest: {} routes, {} controls, {} edges, {} actions, {} commands \
-         (declaration-backed — rexlang #118)",
+         (declaration-backed — pherolang #118)",
         total_manifest.views.len(),
         total_manifest.controls.len(),
         total_manifest.edges.len(),

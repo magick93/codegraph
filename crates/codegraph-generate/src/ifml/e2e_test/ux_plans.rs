@@ -10,7 +10,7 @@ use codegraph_config::ux::UxRules;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_type_contracts::RefClassificationKind;
-use rex_ifml::ComponentSpec;
+use phero_ifml::ComponentSpec;
 
 use crate::error::Result;
 use crate::ux::plan::{UxPlan, UxPlanInput, build_ux_plan};
@@ -100,9 +100,9 @@ fn ux_plan_field_names(c: &IfmlComponent, props: &HashMap<String, PropertyNode>)
             .columns
             .iter()
             .filter_map(|col| match col {
-                rex_ifml::ColumnDef::Field { field, .. }
-                | rex_ifml::ColumnDef::Lookup { field, .. } => Some(field.property.clone()),
-                rex_ifml::ColumnDef::Expression { .. } => None,
+                phero_ifml::ColumnDef::Field { field, .. }
+                | phero_ifml::ColumnDef::Lookup { field, .. } => Some(field.property.clone()),
+                phero_ifml::ColumnDef::Expression { .. } => None,
             })
             .collect(),
         _ => Vec::new(),

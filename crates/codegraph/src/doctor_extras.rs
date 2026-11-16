@@ -64,7 +64,7 @@ pub fn scan_mox_incompleteness(mox_files: &[PathBuf]) -> Vec<IncompleteFinding> 
         };
         let file = path.display().to_string();
         let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut schema_imports = rex_driver::SchemaImports::new();
+        let mut schema_imports = phero_driver::SchemaImports::new();
         let mut import_broken = false;
         for decl in crate::ingest::mox_ingest::scan_schema_imports(&text) {
             let abs_path = base_dir.join(&decl.path);
@@ -81,11 +81,11 @@ pub fn scan_mox_incompleteness(mox_files: &[PathBuf]) -> Vec<IncompleteFinding> 
         if import_broken {
             continue;
         }
-        let compilation = rex_driver::compile_files(
+        let compilation = phero_driver::compile_files(
             &[(file.clone(), text)],
-            &rex_driver::DomainImports {
+            &phero_driver::DomainImports {
                 schemas: schema_imports,
-                sigil: rex_driver::SigilImports::new(),
+                sigil: phero_driver::SigilImports::new(),
             },
         );
         let Some(model) = compilation.model else {

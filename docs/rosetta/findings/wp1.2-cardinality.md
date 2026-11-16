@@ -52,7 +52,7 @@ Vec<String>` with no length validation of any kind.
   never emitted from `minItems`/`maxItems`.
 - `crates/codegraph/src/ingest/mox_ingest.rs:1225-1228` — the mox bridge
   maps `feature.constraints.{pattern,min_length,max_length,minimum,maximum}`;
-  no array-cardinality constraint exists on the rexlang side either.
+  no array-cardinality constraint exists on the pherolang side either.
 - probe test: `crates/codegraph/tests/rosetta_gap_probes/cardinality_probe.rs::array_cardinality_dropped_from_graph`
   — `members` ingested with `is_array=true`, `is_required=true`,
   `rust_field_type="Vec<String>"`, `pg_column_type="TEXT[]"`; serialized
@@ -81,7 +81,7 @@ generator feature** (NOT derivable from existing fields).
    backward-compatible, mirroring the `min_length`/`max_length` precedent at
    `property.rs:88-91`). Populate from JSON Schema keywords in
    `async_ingest.rs` and from the mox bridge — the latter needs upstream
-   rexlang support first: `FeatureConstraints` has no array-cardinality
+   pherolang support first: `FeatureConstraints` has no array-cardinality
    slot (`mox_ingest.rs:1225-1228`), so Rune `(2..10)` must ride the mox
    type-expression multiplicity (`[2..10]`-style) and be surfaced on
    `feature.constraints` (or a sibling field) upstream.

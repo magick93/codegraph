@@ -1,19 +1,19 @@
 use serde::{Deserialize, Serialize};
 
-/// The graph-native mirror of one compiled rexlang `.deploy` deployment
-/// artifact (`rex_ir::deploy::DeployModel`, rexlang #49): the declared
+/// The graph-native mirror of one compiled pherolang `.deploy` deployment
+/// artifact (`phero_ir::deploy::DeployModel`, pherolang #49): the declared
 /// applications (components + connections), profiles (target + defaults +
-/// policies + mappings), and deployments. codegraph-core takes no rex-*
+/// policies + mappings), and deployments. codegraph-core takes no phero-*
 /// deps, so component kinds and targets cross this boundary as their
 /// authored keywords (`"api"`, `"cloudflareWorkers"`, ...) and settings as
 /// path/value pairs with a tagged value enum (the `EvtEventField::type_json`
-/// payload precedent, minus the rex types — deploy values are plain).
+/// payload precedent, minus the pherolang types — deploy values are plain).
 ///
 /// Deployments are file-scoped: `deployment ... for <application>` and
 /// `use <profile>` are intra-file names kept verbatim (resolved by
 /// consumers against the same model — resolution is never a graph-plane
 /// concern). Everything is as-authored; effective settings are a consumer
-/// computation (rex-ir never serializes the merge).
+/// computation (phero-ir never serializes the merge).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeployModelGraph {
     /// The `.deploy` source file the model was compiled from. Groups the
@@ -27,7 +27,7 @@ pub struct DeployModelGraph {
     pub deployments: Vec<DeployDeploymentNode>,
 }
 
-/// A declared application: the logical architecture (rex-ir
+/// A declared application: the logical architecture (phero-ir
 /// `DeployApplication` plus its source path).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeployApplicationNode {
@@ -42,7 +42,7 @@ pub struct DeployApplicationNode {
     pub connections: Vec<DeployConnectionNode>,
 }
 
-/// A declared component: one runtime piece of an application (rex-ir
+/// A declared component: one runtime piece of an application (phero-ir
 /// `DeployComponent`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeployComponentNode {
@@ -54,11 +54,11 @@ pub struct DeployComponentNode {
     /// "queue" | "objectStore" | "frontend"`.
     pub kind: String,
     /// Declared `requires` capability names, as authored (the closed
-    /// vocabulary is a rex-driver validation concern, not carried here).
+    /// vocabulary is a phero-driver validation concern, not carried here).
     pub requires: Vec<String>,
     /// Baseline settings in declaration order.
     pub settings: Vec<DeploySettingNode>,
-    /// `env { NAME = "value" }` entries in declaration order (rexlang
+    /// `env { NAME = "value" }` entries in declaration order (pherolang
     /// #135's operational vocabulary): opaque verbatim string variables,
     /// deliberately NOT settings — never policy-addressable, never
     /// validated against a kind's vocabulary. Serde-defaulted for
@@ -74,7 +74,7 @@ pub struct DeployComponentNode {
     pub ordinal: usize,
 }
 
-/// A `connects from -> to` edge (rex-ir `DeployConnection`).
+/// A `connects from -> to` edge (phero-ir `DeployConnection`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployConnectionNode {
     /// The owning application name.
@@ -85,7 +85,7 @@ pub struct DeployConnectionNode {
     pub to: String,
 }
 
-/// One setting: a dotted path and its value (rex-ir `DeploySetting`).
+/// One setting: a dotted path and its value (phero-ir `DeploySetting`).
 /// Paths stay exactly as authored: single-segment in component baselines,
 /// `component.setting` two-segment in profile defaults and deployment
 /// configure blocks (splitting/scoping is a consumer concern).
@@ -98,7 +98,7 @@ pub struct DeploySettingNode {
     pub value: DeployValueNode,
 }
 
-/// A tagged setting value (rex-ir `DeployValue`): an integer, a quoted
+/// A tagged setting value (phero-ir `DeployValue`): an integer, a quoted
 /// text, or a bare word.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
@@ -111,7 +111,7 @@ pub enum DeployValueNode {
     Word(String),
 }
 
-/// One `NAME = "value"` entry of a component's `env` block (rex-ir
+/// One `NAME = "value"` entry of a component's `env` block (phero-ir
 /// `DeployEnv`): the authored pair verbatim, in declaration order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployEnvNode {
@@ -121,7 +121,7 @@ pub struct DeployEnvNode {
     pub value: String,
 }
 
-/// A `design`/`flow` binding (rex-ir `DesignBinding`/`FlowBinding`).
+/// A `design`/`flow` binding (phero-ir `DesignBinding`/`FlowBinding`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployBindingNode {
     /// The import path exactly as written.
@@ -131,7 +131,7 @@ pub struct DeployBindingNode {
 }
 
 /// A declared profile: one target plus its defaults, policies, and
-/// resource mappings (rex-ir `DeployProfile`).
+/// resource mappings (phero-ir `DeployProfile`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeployProfileNode {
     /// The `.deploy` source file the profile was declared in.
@@ -150,7 +150,7 @@ pub struct DeployProfileNode {
     pub mappings: Vec<DeployMappingNode>,
 }
 
-/// A `require (...)`/`prohibit (...)` policy (rex-ir `DeployPolicy`). The
+/// A `require (...)`/`prohibit (...)` policy (phero-ir `DeployPolicy`). The
 /// expression is the verbatim source text between the parentheses — the
 /// IR never parses or reformats it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,11 +159,11 @@ pub struct DeployPolicyNode {
     pub profile: String,
     /// `true` for `prohibit (...)`, `false` for `require (...)`.
     pub prohibit: bool,
-    /// The verbatim rex-expr source text.
+    /// The verbatim phero-expr source text.
     pub expression: String,
 }
 
-/// A `kind -> platform.resource` mapping line (rex-ir `DeployMapping`).
+/// A `kind -> platform.resource` mapping line (phero-ir `DeployMapping`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployMappingNode {
     /// The owning profile name.
@@ -176,7 +176,7 @@ pub struct DeployMappingNode {
 }
 
 /// A declared deployment: one application projected through one profile
-/// (rex-ir `DeployDeployment`). All cross-references are intra-file names.
+/// (phero-ir `DeployDeployment`). All cross-references are intra-file names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeployDeploymentNode {
     /// The `.deploy` source file the deployment was declared in.

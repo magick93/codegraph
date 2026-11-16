@@ -7,7 +7,7 @@ use codegraph_core::types::{
     DataBindingResolution, EventNode, NavigationFlowRecord, ViewContainerNode,
     resolve_effective_permits,
 };
-use rex_ifml::ComponentSpec;
+use phero_ifml::ComponentSpec;
 
 use super::context::*;
 use super::dependency_graph;
@@ -285,7 +285,7 @@ impl<'a> IfmlGraphQuerier<'a> {
         let field_names = match comp.fields.clone().unwrap_or_default() {
             fields if !fields.is_empty() => fields,
             _ => match parse_component_spec(comp.spec.as_deref()) {
-                Some(rex_ifml::ComponentSpec::Form(form)) => {
+                Some(phero_ifml::ComponentSpec::Form(form)) => {
                     form.fields.iter().map(|f| f.name.clone()).collect()
                 }
                 _ => Vec::new(),
@@ -523,7 +523,7 @@ mod tests {
     use codegraph_core::types::{
         EdgeProperties, EdgeType, ParameterDefinitionNode, ViewComponentNode, ViewContainerNode,
     };
-    use rex_ifml::{ChartKind, ColumnDef, InputFieldType};
+    use phero_ifml::{ChartKind, ColumnDef, InputFieldType};
 
     async fn ingest_view_container(db: &MockEngine, name: &str, landmark: bool) {
         db.ingest_view_container(&ViewContainerNode {

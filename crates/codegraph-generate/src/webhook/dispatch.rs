@@ -39,7 +39,7 @@ impl GlobalGenerator for WebhookDispatchGenerator {
         // Typed-envelope drain branch (.evt, issues #454/#455): only when
         // the architecture is non-empty does the context carry `evt_events`
         // — an empty architecture keeps the EXACT pre-#455 empty context,
-        // so the rendering is byte-identical. Rexlang #31's delivery model
+        // so the rendering is byte-identical. Pherolang #31's delivery model
         // rides alongside: `evt_delivery` is present ONLY when the folded
         // queue policy differs from today's constants (30s vt,
         // at-least-once) — a model without declared policies (or with

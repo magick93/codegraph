@@ -1,8 +1,8 @@
-//! `codegraph migrate`: convert a JSON Schema directory tree into rexlang
+//! `codegraph migrate`: convert a JSON Schema directory tree into pherolang
 //! `.mox` domain sources plus the shared `codegraph_stdlib` package
 //! (mox-first migration, epic #228 / sub-issue #234).
 //!
-//! Output is parse-verified with `rex_driver::compile_files` before anything
+//! Output is parse-verified with `phero_driver::compile_files` before anything
 //! is written (the `ifml-scaffold` precedent): error-severity diagnostics
 //! abort the run without writing unless `--force` is given. Every mapping
 //! decision that is not confident lands in the needs-review list; anything
@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 
-use rex_driver::{DomainImports, compile_files};
+use phero_driver::{DomainImports, compile_files};
 
 use crate::error::{Error, Result};
 use crate::ingest::schema_loader::{SchemaEntry, SchemaLoader};
@@ -21,7 +21,7 @@ pub const STDLIB_PACKAGE: &str = "codegraph_stdlib";
 pub const STDLIB_FILE_NAME: &str = "codegraph_stdlib.mox";
 pub const STDLIB_SOURCE: &str = include_str!("migrate/stdlib.mox");
 
-/// Hard rexlang keywords: legal identifiers only in escaped `^name` form.
+/// Hard pherolang keywords: legal identifiers only in escaped `^name` form.
 const KEYWORDS: &[&str] = &[
     "package",
     "annotation",
@@ -122,7 +122,7 @@ struct Emitter<'a> {
 }
 
 /// Run the `codegraph migrate` command: convert every top-level schema into
-/// a rexlang class or enum, one `<domain>.mox` package per schema domain.
+/// a pherolang class or enum, one `<domain>.mox` package per schema domain.
 pub fn migrate(args: MigrateArgs<'_>) -> Result<MigrateReport> {
     let loader = SchemaLoader::load(args.schemas)?;
 
@@ -285,7 +285,7 @@ pub fn migrate(args: MigrateArgs<'_>) -> Result<MigrateReport> {
 
     if !report.compile_errors.is_empty() && !args.dry_run && !args.force {
         return Err(Error::Config(format!(
-            "generated .mox failed rex verification, nothing written:\n{}",
+            "generated .mox failed pherolang verification, nothing written:\n{}",
             report.compile_errors.join("\n")
         )));
     }
@@ -317,7 +317,7 @@ pub fn migrate(args: MigrateArgs<'_>) -> Result<MigrateReport> {
         report.files = target_paths;
         if !report.compile_errors.is_empty() {
             eprintln!(
-                "WARNING: --force wrote .mox files that FAILED rex verification (they will not ingest):"
+                "WARNING: --force wrote .mox files that FAILED pherolang verification (they will not ingest):"
             );
             for error in &report.compile_errors {
                 eprintln!("  {error}");
@@ -636,7 +636,7 @@ impl Emitter<'_> {
     /// name. Values are kept verbatim when identifier-safe; otherwise the
     /// sanitized literal carries an `as "<original>"` label. Keyword values
     /// are emitted in escaped `^name` form. Vocabulary was considered and
-    /// rejected: the rex grammar requires `from "source"`.
+    /// rejected: the pherolang grammar requires `from "source"`.
     fn inline_enum(
         &mut self,
         class_name: &str,
@@ -740,7 +740,7 @@ impl Emitter<'_> {
                 }
                 None => {
                     self.needs_review.push(format!(
-                        "property '{class_name}.{prop_name}' has a non-integer numeric default; rex has no float literal default and it was dropped"
+                        "property '{class_name}.{prop_name}' has a non-integer numeric default; pherolang has no float literal default and it was dropped"
                     ));
                     None
                 }
@@ -765,7 +765,7 @@ impl Emitter<'_> {
         rendered.unwrap_or_default()
     }
 
-    /// Renders the `{ ... }` constraint block. Family rules mirror the rex
+    /// Renders the `{ ... }` constraint block. Family rules mirror the pherolang
     /// lowerer, where a family mismatch is an error: string family
     /// (pattern/minLength/maxLength) only on String and stdlib-datatype
     /// attributes, numeric family (minimum/maximum) only on Int/Double, and
@@ -787,7 +787,7 @@ impl Emitter<'_> {
         if !string_family && !numeric_family {
             if constraints.has_any() {
                 self.needs_review.push(format!(
-                    "property '{class_name}.{prop_name}' declares constraints on a {type_expr} attribute; rex admits no constraint families for it and they were dropped"
+                    "property '{class_name}.{prop_name}' declares constraints on a {type_expr} attribute; pherolang admits no constraint families for it and they were dropped"
                 ));
             }
             return String::new();
@@ -963,7 +963,7 @@ fn constraint_values(schema: &serde_json::Value) -> ExtractedConstraints {
                 _ => out.maximum = Some(int),
             },
             None => out.dropped_notes.push(format!(
-                "constraint '{key}' is not an integer, which rex constraints require, and was dropped"
+                "constraint '{key}' is not an integer, which pherolang constraints require, and was dropped"
             )),
         }
     }
@@ -1028,7 +1028,7 @@ fn title_of(entry: &SchemaEntry) -> String {
         .to_string()
 }
 
-/// Sanitize into a rex identifier (letters, digits, `_`, non-digit first).
+/// Sanitize into a pherolang identifier (letters, digits, `_`, non-digit first).
 fn sanitize_identifier(name: &str) -> Option<String> {
     let cleaned: String = name
         .chars()
@@ -1047,7 +1047,7 @@ fn sanitize_identifier(name: &str) -> Option<String> {
     Some(cleaned)
 }
 
-/// The source form of a bare identifier: rex keywords need the `^` escape.
+/// The source form of a bare identifier: pherolang keywords need the `^` escape.
 fn emit_name(bare: &str) -> String {
     if KEYWORDS.contains(&bare) {
         format!("^{bare}")
@@ -1099,7 +1099,7 @@ fn with_doc(doc: Option<String>, line: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rex_driver::{DomainImports, compile_str};
+    use phero_driver::{DomainImports, compile_str};
 
     #[test]
     fn stdlib_compiles_with_seven_datatypes() {

@@ -38,7 +38,7 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_naming::to_snake_case;
 use heck::ToLowerCamelCase;
-use rex_expr::{BinOp, Expr, ExprKind, UnOp};
+use phero_expr::{BinOp, Expr, ExprKind, UnOp};
 
 use crate::ddd::design::DddDesignSurface;
 use crate::project_config::DtoKeyCasing;
@@ -300,7 +300,7 @@ fn fields_for(props: &[PropertyNode]) -> HashMap<String, FieldInfo> {
 
 // ── Rust lowering of `when` conditions ──────────────────────────────────
 
-/// Lower a rexlang `when` condition source to a Rust boolean expression
+/// Lower a pherolang `when` condition source to a Rust boolean expression
 /// over `response` (the loaded `{Entity}Response` record).
 ///
 /// The documented closed subset mirrors `db::expr_sql` (the RLS lowering):
@@ -309,7 +309,7 @@ fn fields_for(props: &[PropertyNode]) -> HashMap<String, FieldInfo> {
 /// fields compare via their `Display` (the codelist code); date fields
 /// compare via their ISO `Display`. EVERYTHING else is refused — what
 /// cannot be lowered faithfully is a hard generation error naming the
-/// capability (the rexlang Cedar-backend philosophy).
+/// capability (the pherolang Cedar-backend philosophy).
 #[cfg(test)]
 pub(crate) fn lower_when_to_rust(
     source: &str,
@@ -321,7 +321,7 @@ pub(crate) fn lower_when_to_rust(
 }
 
 /// [`lower_when_to_rust`] with the entity's designed machine states bound as
-/// enum-valued bare names (the rexlang `check_condition` convention): a
+/// enum-valued bare names (the pherolang `check_condition` convention): a
 /// `when (runStatus == AwaitingApproval)` lowers the bare `AwaitingApproval`
 /// to the string literal the codelist/string comparison path consumes.
 /// Unknown names fail closed with a diagnostic naming both the fields and
@@ -333,12 +333,12 @@ pub(crate) fn lower_when_to_rust_with_states(
     fields: &HashMap<String, FieldInfo>,
     states: &[String],
 ) -> Result<String, String> {
-    let parsed = rex_expr::parse(source);
+    let parsed = phero_expr::parse(source);
     match parsed.ast {
         Some(ast) if parsed.errors.is_empty() => lower(&ast, capability, entity, fields, states),
         _ => Err(format!(
             "capability `{capability}`: `when` condition is not valid \
-             rexlang expression syntax: {source:?}"
+             pherolang expression syntax: {source:?}"
         )),
     }
 }
@@ -1229,20 +1229,15 @@ async fn bind_entity(
     {
         return Some(title);
     }
-    // 3. Signature: first class-typed param, then the return type. The rex
-    //    TypeRef wire shape is ADJACENT-tagged —
-    //    `{"type":"class","value":{"package":…,"name":…}}` (rex-ir types.rs)
-    //    — so both the tag and the nested `value` object must be read.
+    // 3. Signature: first class-typed param, then the return type. The slot is
+    //    a `DddTypeRef` (DD3) — the shared classifier reads the adjacently
+    //    tagged domain `TypeRef` and reports a DTO boundary as "no domain
+    //    class" rather than misreading it.
     let class_of = |json: Option<&serde_json::Value>| -> Option<String> {
-        let value = json?;
-        if value.get("type")?.as_str()? != "class" {
-            return None;
-        }
-        let inner = value.get("value")?;
-        let name = inner.get("name")?.as_str()?;
-        match inner.get("package").and_then(|p| p.as_str()) {
-            Some(package) if !package.is_empty() => Some(format!("{package}::{name}")),
-            _ => Some(name.to_string()),
+        match crate::ddd::signature::signature_type_opt(json)?.as_domain()? {
+            phero_ir::TypeRef::Class { package, name } if package.is_empty() => Some(name.clone()),
+            phero_ir::TypeRef::Class { package, name } => Some(format!("{package}::{name}")),
+            _ => None,
         }
     };
     for param in &op.params {
@@ -1261,7 +1256,7 @@ async fn bind_entity(
 }
 
 /// The machine's transitions as wire `(from, to)` pairs, declaration order.
-fn machine_transition_pairs(machine: &rex_ir::ddd::StateMachine) -> Vec<ServiceOpTransition> {
+fn machine_transition_pairs(machine: &phero_ir::ddd::StateMachine) -> Vec<ServiceOpTransition> {
     machine
         .transitions
         .iter()
@@ -1275,7 +1270,7 @@ fn machine_transition_pairs(machine: &rex_ir::ddd::StateMachine) -> Vec<ServiceO
 /// The transition's trigger normalized for matching: the authored `via`, or
 /// the bare-arrow derivation (the target state's lowerCamel, normalized to
 /// snake_case here).
-fn transition_trigger(t: &rex_ir::ddd::Transition) -> TriggerName {
+fn transition_trigger(t: &phero_ir::ddd::Transition) -> TriggerName {
     TriggerName::new(to_snake_case(t.trigger.as_deref().unwrap_or(&t.to)))
 }
 
@@ -1313,7 +1308,7 @@ fn condition_source_states(
     state_field_snake: &str,
     states: &[String],
 ) -> Vec<String> {
-    let parsed = rex_expr::parse(source);
+    let parsed = phero_expr::parse(source);
     let Some(ast) = parsed.ast.filter(|_| parsed.errors.is_empty()) else {
         return Vec::new();
     };
@@ -1374,7 +1369,7 @@ fn collect_condition_states(
 fn op_transitions(
     op: &codegraph_core::types::DddServiceOperation,
     model: &codegraph_core::types::DddModelGraph,
-    machine: &rex_ir::ddd::StateMachine,
+    machine: &phero_ir::ddd::StateMachine,
     entity_class: &str,
     entity_table: &str,
 ) -> Vec<ServiceOpTransition> {
@@ -1510,7 +1505,7 @@ fn execution_for(
     domain: &str,
     entity_title: &str,
     entity_table: &str,
-    machine: Option<&rex_ir::ddd::StateMachine>,
+    machine: Option<&phero_ir::ddd::StateMachine>,
     fields: &HashMap<String, FieldInfo>,
     dto_casing: DtoKeyCasing,
 ) -> ExecutionKind {
@@ -1633,7 +1628,7 @@ fn execution_for(
 }
 
 /// The IFML dead-trigger scan (Ask 1): every `.ifml` action whose name
-/// binds (ASCII-case-insensitive, the rexlang `check_action_bindings`
+/// binds (ASCII-case-insensitive, the pherolang `check_action_bindings`
 /// convention) a service op that emits no API surface — `protected`, or
 /// entity-unbound — is a dead button. Returns `(action, op, reason)`.
 pub async fn ifml_dead_triggers(
@@ -2191,16 +2186,16 @@ postgres_schema = "payroll"
         }
     }
 
-    fn pay_run_machine() -> rex_ir::ddd::StateMachine {
-        let transition = |from: &str, to: &str, trigger: &str| rex_ir::ddd::Transition {
+    fn pay_run_machine() -> phero_ir::ddd::StateMachine {
+        let transition = |from: &str, to: &str, trigger: &str| phero_ir::ddd::Transition {
             from: from.to_string(),
             to: to.to_string(),
             trigger: Some(trigger.to_string()),
             guard: None,
         };
-        rex_ir::ddd::StateMachine {
+        phero_ir::ddd::StateMachine {
             field: "runStatus".to_string(),
-            enum_type: rex_ir::TypeRef::Enum {
+            enum_type: phero_ir::TypeRef::Enum {
                 package: "payroll".to_string(),
                 name: "PayRunStatus".to_string(),
             },
@@ -2474,7 +2469,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
     fn lower_with_machine(
         op_name: &str,
         capabilities: &[&str],
-        machine: &rex_ir::ddd::StateMachine,
+        machine: &phero_ir::ddd::StateMachine,
         protected: Option<(&str, &[&str])>,
     ) -> ExecutionKind {
         let mut ops = vec![service_op(op_name, capabilities, false, None)];
@@ -2501,7 +2496,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
     #[test]
     fn self_transition_is_a_declared_noop_edge() {
         let mut machine = pay_run_machine();
-        machine.transitions.push(rex_ir::ddd::Transition {
+        machine.transitions.push(phero_ir::ddd::Transition {
             from: "Draft".to_string(),
             to: "Draft".to_string(),
             trigger: Some("Refresh".to_string()),
@@ -2616,8 +2611,8 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         }
     }
 
-    // ── The rex TypeRef JSON shape (bug fix): the class-typed-signature
-    //    binding path must read the ADJACENT-tagged shape rex-ir serializes
+    // ── The pherolang TypeRef JSON shape (bug fix): the class-typed-signature
+    //    binding path must read the ADJACENT-tagged shape phero-ir serializes
     //    (`{"type":"class","value":{"package":…,"name":…}}`), not a flat
     //    top-level `name` that can never match. ───────────────────────────
 
@@ -2641,7 +2636,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
     }
 
     fn class_type_json(package: &str, name: &str) -> serde_json::Value {
-        // The rex-ir TypeRef wire shape (adjacently tagged, camelCase tags).
+        // The phero-ir TypeRef wire shape (adjacently tagged, camelCase tags).
         serde_json::json!({
             "type": "class",
             "value": { "package": package, "name": name }
@@ -2649,7 +2644,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
     }
 
     #[tokio::test]
-    async fn class_typed_signature_binds_the_real_rex_json_shape() {
+    async fn class_typed_signature_binds_the_real_phero_json_shape() {
         let engine = codegraph_core::mock::MockEngine::builder()
             .with_schema(codegraph_core::types::SchemaNode {
                 namespace: None,
@@ -2680,7 +2675,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             })
             .build();
 
-        // The REAL rex shape: `{"type":"class","value":{"package":…,"name":…}}`.
+        // The REAL pherolang shape: `{"type":"class","value":{"package":…,"name":…}}`.
         let bound = bind_entity(
             &pay_run_model(Vec::new()),
             &op_with_type_json(class_type_json("payroll", "PayRun")),
@@ -2691,7 +2686,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         assert_eq!(
             bound.as_deref(),
             Some("PayRunType"),
-            "the class-typed signature path must bind through the nested rex shape"
+            "the class-typed signature path must bind through the nested pherolang shape"
         );
 
         // The qualified name form keeps the `pkg::Name` resolution chain.

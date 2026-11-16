@@ -4,7 +4,7 @@ use codegraph_core::types::{
     ModuleDefinitionNode, ModuleUseRecord, ParameterDefinitionNode, ViewComponentNode,
     ViewContainerNode,
 };
-use rex_ifml::*;
+use phero_ifml::*;
 
 use crate::error::{Error, Result};
 
@@ -104,7 +104,7 @@ pub async fn ingest_ifml_model(
     // Pass 0: ingest module declarations before any view content — the
     // `HasModuleDefinition` edges from view/module `use` statements resolve
     // against these nodes (edge INSERTs silently no-op on missing targets).
-    // Module-internal `use` statements (rexlang module composition) persist
+    // Module-internal `use` statements (pherolang module composition) persist
     // on the module node AND as module→module edges.
     for module in &model.modules {
         let node = ModuleDefinitionNode {
@@ -620,7 +620,7 @@ async fn handle_event(
         }
         EventAction::ActionInvocation { name, body } => {
             // Issue #591: actions are declaration-backed. The manifest
-            // boundary (rexlang #118) guarantees every invocation resolved
+            // boundary (pherolang #118) guarantees every invocation resolved
             // to a declared `action "X" { target: ...; }` — those nodes
             // are ingested from `model.actions` above, so the edge links
             // to the existing node and nothing is fabricated here. A
@@ -736,14 +736,14 @@ impl std::fmt::Display for IfmlIngestStats {
     }
 }
 
-/// Persist the folded IFML control/route manifest (rexlang #118, WS6) as
+/// Persist the folded IFML control/route manifest (pherolang #118, WS6) as
 /// the run's singleton `IfmlManifestNode` — the driver Pass-1b fold lands
 /// in the graph here instead of being dropped after the counts print. The
 /// e2e generator reads it back through `get_ifml_manifest` to plan the POM
 /// action surface and the click-through action specs.
 pub async fn ingest_ifml_manifest(
     ingestor: &dyn GraphIngestor,
-    manifest: &rex_ir::ifml_manifest::IfmlManifest,
+    manifest: &phero_ir::ifml_manifest::IfmlManifest,
     source_paths: &[String],
 ) -> Result<()> {
     let model_json = serde_json::to_string(manifest).map_err(|e| Error::IfmlModel {

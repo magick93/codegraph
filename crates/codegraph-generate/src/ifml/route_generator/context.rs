@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use codegraph_config::ux::{Align, Dimension, Display, ToneMap};
 use codegraph_config::{DomainConfig, IfmlComponentMappings, SemanticRole};
 use codegraph_core::traits::GraphQuerier;
-use rex_ifml::ComponentSpec;
+use phero_ifml::ComponentSpec;
 use serde::Serialize;
 
 use crate::ProjectConfig;
@@ -1029,7 +1029,7 @@ pub struct PageLoadComponentContext {
 /// Gated on the `expr_ir` feature flag: OFF (default) always yields `None`
 /// so generated output stays byte-identical. ON, the guard is lowered from
 /// the persisted expression AST (`expr_json`); a condition outside the
-/// closed subset is a hard error naming the view (rexlang philosophy —
+/// closed subset is a hard error naming the view (pherolang philosophy —
 /// no silent passthrough).
 pub(crate) fn page_guard_expr(
     vc: &IfmlViewContainer,
