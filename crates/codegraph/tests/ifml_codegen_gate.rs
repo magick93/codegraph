@@ -701,6 +701,11 @@ fn assert_categories(titles: &[String]) {
     let action_conflict = has(&|t| t.starts_with("action ") && t.contains("409"));
     let action_forbidden = has(&|t| t.starts_with("action ") && t.contains("403"));
     let action_seam = has(&|t| t.starts_with("action ") && t.contains("501"));
+    // Media plane (issue #633): the modeled `input file` field lowers to a
+    // real, non-value-bound upload control — asserted structurally (the
+    // route 503s without a configured provider, so the round trip is the
+    // entity plane's spec).
+    let media = has(&|t| t.starts_with("media file control renders for "));
 
     let missing: Vec<&str> = [
         ("render", render),
@@ -720,6 +725,7 @@ fn assert_categories(titles: &[String]) {
         ("action conflict", action_conflict),
         ("action forbidden", action_forbidden),
         ("action seam", action_seam),
+        ("media", media),
     ]
     .iter()
     .filter(|(_, present)| !present)

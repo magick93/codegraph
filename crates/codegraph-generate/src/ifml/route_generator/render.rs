@@ -575,6 +575,7 @@ pub(super) fn render_form(spec: &FormSpec) -> RenderForm {
                 } else {
                     field.messages.first().cloned()
                 };
+                let is_file = html.input_type == "file";
                 RenderInputField {
                     name: field.name.clone(),
                     input_role: input_field_role(&html.input_type),
@@ -588,6 +589,10 @@ pub(super) fn render_form(spec: &FormSpec) -> RenderForm {
                     // expressions carry quotes; issue #468 W1b).
                     data_validate: validations.join(" && ").replace('"', "&quot;"),
                     message,
+                    is_file,
+                    // Filled by the page context when the field resolves to
+                    // a media route (the wiring needs the entity id param).
+                    file_markup: String::new(),
                 }
             })
             .collect(),
@@ -684,11 +689,16 @@ pub(super) fn render_form_tanstack(
             mapping.path.clone(),
         ))
     });
-    let fields: Vec<&phero_ifml::FieldDef> = spec
+    // File fields (issue #633) are NOT form-plane fields: the TanStack
+    // AppField slots own value bindings and a File value would be
+    // JSON-stringified into the submit payload. They render through the
+    // wired file slot (`file_markup`) instead, so the value-bound slots
+    // skip them entirely.
+    let (file_fields, fields): (Vec<&phero_ifml::FieldDef>, Vec<&phero_ifml::FieldDef>) = spec
         .fields
         .iter()
         .filter(|f| Some(f.name.as_str()) != workflow_status)
-        .collect();
+        .partition(|f| control_core::html_input_for_dsl(&f.input).input_type == "file");
 
     let mut schema_fields = Vec::new();
     let mut slots = Vec::new();
@@ -886,6 +896,8 @@ pub(super) fn render_form_tanstack(
         defaults: default_lines.join("\n"),
         payload,
         fields: slots,
+        file_fields: file_fields.iter().map(|f| f.name.clone()).collect(),
+        file_markup: String::new(),
         mapped_import,
         mapped_select_import,
         submit_testid: String::new(),

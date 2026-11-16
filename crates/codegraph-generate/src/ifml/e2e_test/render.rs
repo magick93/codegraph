@@ -136,6 +136,31 @@ pub(crate) fn render_spec(spec: &ViewTestSpec, include_personas: bool, tanstack:
         s.push_str("\t});\n\n");
     }
 
+    // Media file controls (issue #633): one structural test per file field
+    // — the control renders and is NOT value-bound (the dead pre-#633
+    // shape bound the form state's value into a `type="file"` input). The
+    // live upload leg needs a configured provider (the route 503s without
+    // one), so the gate lane asserts the wired shape; the entity plane's
+    // `{seg}.media.test.ts` owns the round trip.
+    for media in &spec.media_fields {
+        let form_pascal = to_pascal_case(&media.form);
+        s.push_str(&format!(
+            "\ttest('media file control renders for {}', async ({{ page }}) => {{\n",
+            js_string(&spec.view_name)
+        ));
+        s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
+        s.push_str("\t\tawait ui.open();\n");
+        s.push_str(&format!(
+            "\t\tconst input = ui.{form_pascal}{}File();\n",
+            to_pascal_case(&media.field)
+        ));
+        s.push_str("\t\tawait expect(input).toBeVisible();\n");
+        s.push_str(
+            "\t\tawait expect(input).not.toHaveAttribute('value');\n\t\tawait expect(input).toHaveAttribute('type', 'file');\n",
+        );
+        s.push_str("\t});\n\n");
+    }
+
     if include_personas {
         for persona in &spec.personas {
             let caps_lines = match &persona.capabilities {

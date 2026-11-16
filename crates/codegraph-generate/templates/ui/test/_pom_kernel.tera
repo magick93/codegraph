@@ -39,7 +39,47 @@ export class BasePage {
   async waitForHydration(selector: string, timeout = 20_000): Promise<void> {
     await this.page.waitForSelector('body.hydrated', { timeout });
     await this.page.locator(selector).waitFor({ state: 'visible', timeout });
+  }{% if has_media %}
+  // ── Media upload surface (issue #633) ──────────────────────────────────
+  // The generated media control (`$lib/media/MediaField.svelte`) owns the
+  // testid family: root `media-{field}`, input `media-{field}-input`
+  // (type=file), `media-{field}-busy`, `media-{field}-error`, plus the
+  // detail page's `media-{field}-display` / `media-{field}-remove`. The
+  // upload route rejects an unaccepted mime and an oversize file — both
+  // surface through the control's error element, so the upload helper is
+  // also the rejection assertion.
+
+  /** The rendered reference (`media-{field}-display`) — absent while no
+   * reference is stored. */
+  mediaDisplay(field: string): Locator {
+    return this.page.locator(`[data-testid="media-${field}-display"]`);
   }
+
+  /** Upload `filePath` through the entity's media control: set the file
+   * input, wait out the busy marker, throw with the control's own message
+   * when the reference never lands, then wait for the display. */
+  async uploadMedia(field: string, filePath: string): Promise<void> {
+    const input = this.page.locator(`[data-testid="media-${field}-input"]`);
+    await input.waitFor({ state: 'attached' });
+    await input.setInputFiles(filePath);
+    const busy = this.page.locator(`[data-testid="media-${field}-busy"]`);
+    // An upload can settle before the busy marker renders (local provider,
+    // tiny file): treat "never appeared" as already clear.
+    await busy.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
+    await busy.waitFor({ state: 'detached', timeout: 30_000 }).catch(() => undefined);
+    const error = this.page.locator(`[data-testid="media-${field}-error"]`);
+    if ((await error.count()) > 0) {
+      const message = ((await error.first().textContent()) ?? '').trim();
+      throw new Error(`media upload rejected for '${field}': ${message}`);
+    }
+    await this.mediaDisplay(field).waitFor({ state: 'visible', timeout: 30_000 });
+  }
+
+  /** Remove the stored reference and wait for the display to clear. */
+  async removeMedia(field: string): Promise<void> {
+    await this.page.locator(`[data-testid="media-${field}-remove"]`).click();
+    await expect(this.mediaDisplay(field)).toHaveCount(0, { timeout: 30_000 });
+  }{% endif %}
 }
 
 export interface UxTableConfig {

@@ -114,6 +114,8 @@ view "RefundRequestForm" {
             values: ["Damaged", "WrongItem", "LateDelivery", "Other"];
         }
 
+        field receipt -> input file;
+
         on save -> navigate("RefundRequestDetail", {
             id: params.id
         });

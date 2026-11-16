@@ -35,18 +35,53 @@
 	import { toast } from 'svelte-sonner';
 	import * as m from '#lib/paraglide/messages.js';
 	import * as fmt from '#lib/format.ts';
-	import type { {{ entity_name }}Response{% if has_child_sections %}{% for section in child_sections %}, {{ section.entity_name }}Response{% endfor %}{% endif %} } from '#lib/api/types.ts';
+	import type { {{ entity_name }}Response{% if has_child_sections %}{% for section in child_sections %}, {{ section.entity_name }}Response{% endfor %}{% endif %} } from '#lib/api/types.ts';{% if media_fields %}
+	// Media plane (issue #633): the fallback upload control is
+	// transport-agnostic — the page supplies the server-side commands
+	// (`upload{Field}` / `remove{Field}`) so the bytes never ride a client
+	// credential. The display URL arrives from the load (the media route
+	// 307s to the provider's signed URL, resolvable server-side only).
+	import MediaField from '#lib/media/MediaField.svelte';
+	import { {% for mf in media_fields %}upload{{ mf.pascal }}, remove{{ mf.pascal }}, {% endfor %}} from './data.remote';{% endif %}
 
 	interface Props {
 		data: {
-			item: {{ entity_name }}Response;{% if has_child_sections %}
+			item: {{ entity_name }}Response;{% if media_fields %}
+			media?: Record<string, { url: string | null }>;{% endif %}{% if has_child_sections %}
 			children: Record<string, unknown[]>;{% endif %}
 		};
 	}
 
 	let { data }: Props = $props();
 	let item = $state(data.item);
-{% if parent and parent.grandparent %}
+{% if media_fields %}
+	// Media control inputs (issue #633): the per-field spec mirrors the
+	// domain's `[media]` table, so the browser-side pre-flight rejects the
+	// same mime/size the route does.
+	const mediaSpecs = {
+{% for mf in media_fields %}
+		{{ mf.field }}: { field: '{{ mf.field }}', accept: [{% for a in mf.accept %}'{{ a }}'{% if not loop.last %}, {% endif %}{% endfor %}], maxBytes: {{ mf.max_bytes }} },
+{% endfor %}
+	};
+
+{% for mf in media_fields %}
+	async function uploadMedia{{ mf.pascal }}(id: string, file: File) {
+		const result = await upload{{ mf.pascal }}({ id, file });
+		if (!result.ok) {
+			throw new Error(result.message);
+		}
+		return { key: result.key ?? '', url: result.url };
+	}
+
+	async function removeMedia{{ mf.pascal }}(id: string): Promise<void> {
+		const result = await remove{{ mf.pascal }}({ id });
+		if (!result.ok) {
+			throw new Error(result.message);
+		}
+	}
+
+{% endfor %}
+{% endif %}{% if parent and parent.grandparent %}
 	const grandparentId = $derived(page.params.{{ parent.grandparent.param_name }});
 	const parentId = $derived(page.params.{{ parent.param_name }});
 	const basePath = $derived(`/{{ parent.grandparent.domain }}/{{ parent.grandparent.path_segment }}/${grandparentId}/{{ parent.path_segment }}/${parentId}/{{ path_segment }}`);
@@ -316,7 +351,28 @@
 	<div data-testid="{{ ext.name }}" class="space-y-4">
 		<{{ ext.component }} entityId={item.id} />
 	</div>
-{%- endfor %}
+{%- endfor %}{% if media_fields %}
+	<!-- Media (issue #633): one upload control + display slot per media
+	     field. The control owns the testid family; the display URL comes
+	     from the server-side load (signed provider URL) or the upload
+	     result. -->
+	<Card.Root>
+		<Card.Header>
+			<Card.Title>Media</Card.Title>
+		</Card.Header>
+		<Card.Content class="space-y-4">
+{% for mf in media_fields %}
+			<MediaField
+				spec={mediaSpecs.{{ mf.field }}}
+				upload={uploadMedia{{ mf.pascal }}}
+				remove={removeMedia{{ mf.pascal }}}
+				entityId={item.id}
+				initialUrl={data.media?.['{{ mf.field }}']?.url ?? null}
+				label="{{ mf.label }}"
+			/>
+{% endfor %}
+		</Card.Content>
+	</Card.Root>{% endif %}
 
 {% if has_child_sections %}
 	<!-- Child sections -->

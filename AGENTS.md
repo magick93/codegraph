@@ -2059,6 +2059,33 @@ stays node-free/DB-free. The playwright-ts retirement removed
 `e2e-tests/`; the wired `playwright-entity`/`playwright-global` (Rust
 fixture crate) are untouched.
 
+### Media test surface (issue #633)
+
+The media plane's test surface is POM-driven on both planes (zero raw
+testids in spec bodies). Entity: the kernel `BasePage` carries
+`uploadMedia(field, filePath)` (setInputFiles → busy clears → throw on the
+control's error → wait for the display), `removeMedia` and `mediaDisplay`
+(emitted only when the project declares `[media]`), the per-entity page
+class carries `upload{Field}`/`remove{Field}`, and `{seg}.media.test.ts`
+(upload → reference round-trip across a reload → display → remove, plus the
+wrong-mime/oversize rejections) is emitted only for entities with media
+route fields — the emitted playwright `crud` project matches `media`
+(presence-gated) so the family is never an orphan under
+`entity_specs_run_green`'s coverage invariant. The detail page renders the
+control and the media field never enters `collect_ui_fields` (a text input
+there posted an unknown key the create DTO rejects, `deny_unknown_fields`).
+IFML: a modeled `field x -> input file` lowers onto the entity's media route
+— a non-value-bound control plus a page-script handler calling a
+server-side `upload{Field}` multipart command (`$lib/server/api`; the submit
+payload never carries the File), `PomFieldKind::File` filling via
+`uploadMedia`, and the render spec asserting the control is real
+(`media file control renders for {view}`). Gates:
+`cargo test -p codegraph --test media_e2e_upload_tests`, `--test
+ifml_media_upload_tests`, and the nightly
+`cargo test -p codegraph --test ifml_codegen_gate -- --ignored` (the `media`
+category; the live upload leg needs a configured provider, so the gate
+asserts the wired shape).
+
 ## Compile-pin policy (issue #551)
 
 **Every generator that emits Rust ships a test that COMPILES its output.**

@@ -11,11 +11,13 @@ use codegraph_config::ux::{Display, UxRules};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::IfmlManifestNode;
 use codegraph_naming::{to_kebab_case, to_pascal_case, to_snake_case};
+use phero_ifml::ComponentSpec;
 
 use super::super::api_paths::id_param_from;
 use super::super::context::{
     IfmlAction, IfmlComponent, IfmlModel, IfmlViewContainer, NavigationEdge, PolicyContext,
 };
+use super::super::control_core;
 use super::super::route_generator::{
     RenderWorkflow, mapped_container_testid, modal_wrapper_active, modal_wrapper_testid, shell_nav,
     workflow_for_entity,
@@ -32,10 +34,10 @@ use super::render::{
     ux_chip_checks, ux_column_checks, ux_fixture_entries, ux_menu_event, ux_money_options,
 };
 use super::spec_payload::{
-    ClickThroughTest, JourneyHop, JourneyHopKind, JourneyPath, JourneyStep, ModalCloseAssertions,
-    PersonaTest, RenderTest, RoundTripTest, TransitionStep, UxCopyCheck, UxMenuCheck,
-    UxTimelineCheck, UxViewTest, ValidationTest, ViewJourney, ViewTestSpec, WorkflowTest,
-    pick_transition,
+    ClickThroughTest, JourneyHop, JourneyHopKind, JourneyPath, JourneyStep, MediaFieldTest,
+    ModalCloseAssertions, PersonaTest, RenderTest, RoundTripTest, TransitionStep, UxCopyCheck,
+    UxMenuCheck, UxTimelineCheck, UxViewTest, ValidationTest, ViewJourney, ViewTestSpec,
+    WorkflowTest, pick_transition,
 };
 use crate::ddd::service_ops::{self, ExecutionKind, ServiceOpRoute};
 
@@ -60,6 +62,7 @@ impl IfmlE2eTestGenerator {
             validations: Vec::new(),
             round_trips: Vec::new(),
             personas: Vec::new(),
+            media_fields: Vec::new(),
         };
 
         // Guarded views redirect unauthenticated visitors, so a plain render
@@ -85,6 +88,21 @@ impl IfmlE2eTestGenerator {
         }
 
         for c in vc.components.iter().filter(|c| is_form(c)) {
+            // Media file controls (issue #633): the DSL `input file` field
+            // that names a media field of the bound entity. Structural
+            // coverage (the control renders, never value-bound) — the live
+            // upload needs a configured provider.
+            if let Some(ComponentSpec::Form(form)) = c.spec.as_ref() {
+                for field in &form.fields {
+                    if control_core::html_input_for_dsl(&field.input).input_type != "file" {
+                        continue;
+                    }
+                    spec.media_fields.push(MediaFieldTest {
+                        form: c.name.clone(),
+                        field: field.name.clone(),
+                    });
+                }
+            }
             if let Some(test) = self
                 .build_validation_test(db, config, api_version, vc, c, id_param.as_deref())
                 .await

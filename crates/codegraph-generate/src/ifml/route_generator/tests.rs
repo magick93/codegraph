@@ -2584,6 +2584,9 @@ fn navigate_event_resolves_handler_and_url() {
 
 fn svelte_context(components: Vec<PageComponentContext>) -> PageSvelteContext {
     PageSvelteContext {
+        file_scripts: String::new(),
+        file_imports: Vec::new(),
+        file_media: Vec::new(),
         api_version: "v1".to_string(),
         name: "View".to_string(),
         label: "View".to_string(),

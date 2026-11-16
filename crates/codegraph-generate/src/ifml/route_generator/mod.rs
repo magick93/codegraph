@@ -332,6 +332,16 @@ impl GlobalGenerator for IfmlRouteGenerator {
                     // page context — without it the import dangles and
                     // svelte-check fails).
                     module.live = ctx.components.iter().any(|c| c.workflow_live.is_some());
+                    // Media upload commands (issue #633): one export per
+                    // wired file field — the page imports exactly these.
+                    for media in &ctx.file_media {
+                        module.media.push(remote::RemoteMediaCommand {
+                            export: media.export.clone(),
+                            base_path: media.base_path.clone(),
+                            field: media.field.clone(),
+                            id_param: media.id_param.clone(),
+                        });
+                    }
                     for comp in &ctx.components {
                         if let Some(submit) = comp.submit.as_ref()
                             && let Some(command) = &submit.remote_command

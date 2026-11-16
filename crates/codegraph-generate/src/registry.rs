@@ -108,7 +108,11 @@ pub(crate) fn build_entity_generators(
         ) as Box<dyn EntityGenerator>,
         Box::new(
             ui::e2e_test::UiE2eTestGenerator::new(base("ui-e2e-test"))
-                .with_parent_candidates(parent_candidates.to_vec()),
+                .with_parent_candidates(parent_candidates.to_vec())
+                // The shared POM kernel is one file per run, so its media
+                // upload surface (issue #633) rides a project-level fact:
+                // any domain declaring `[media]`. No media ⇒ byte-identical.
+                .with_media_declared(ctx.config.domains.values().any(|d| d.media.is_some())),
         ) as Box<dyn EntityGenerator>,
         Box::new(playwright::entity_gen::PlaywrightEntityGenerator::new(
             base("playwright-entity"),

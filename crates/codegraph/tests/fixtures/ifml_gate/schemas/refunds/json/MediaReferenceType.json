@@ -1,0 +1,16 @@
+{
+  "$id": "MediaReferenceType.json",
+  "title": "MediaReferenceType",
+  "description": "A stored media reference (the url + mime pair the media route persists)",
+  "type": "object",
+  "properties": {
+    "url": {
+      "type": "string",
+      "description": "The storage key/URL of the uploaded object"
+    },
+    "mimeType": {
+      "type": "string",
+      "description": "The object's content type"
+    }
+  }
+}

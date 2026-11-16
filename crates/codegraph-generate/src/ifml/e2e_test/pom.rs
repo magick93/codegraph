@@ -48,7 +48,7 @@ use super::super::context::{IfmlComponent, IfmlViewContainer};
 use super::super::route_generator::workflow_for_entity;
 use super::super::selectors::{ComponentSelectors, is_collection, is_details, is_form};
 use super::fixtures::{form_spec, url_pattern, view_route};
-use super::kernel::{API_TS, BASE_PAGE_TS, UX_TABLE_TS};
+use super::kernel::{API_TS, UX_TABLE_TS, base_page_ts};
 use super::pom_render::render_pom_page;
 use super::spec_payload::ViewTestSpec;
 
@@ -177,6 +177,9 @@ pub(crate) enum PomFieldKind {
     Select,
     Radio,
     DatetimeLocal,
+    /// A media `input file` field (issue #633): filled through the kernel's
+    /// `uploadMedia` (setInputFiles on the media control's input testid).
+    File,
 }
 
 /// One form component: accessors, typed fills, submit (+ save flow).
@@ -579,6 +582,8 @@ fn typed_form_fields(c: &IfmlComponent) -> Vec<PomFormField> {
                 PomFieldKind::Checkbox
             } else if html.input_type == "datetime-local" {
                 PomFieldKind::DatetimeLocal
+            } else if html.input_type == "file" {
+                PomFieldKind::File
             } else {
                 PomFieldKind::Text
             };
@@ -595,10 +600,18 @@ fn typed_form_fields(c: &IfmlComponent) -> Vec<PomFormField> {
 /// per-view kebab name + plan (built once by the generator, shared with the
 /// auth-spec assembly).
 pub(crate) fn pom_file_set(poms: &[(&str, &ViewPom)]) -> Vec<(PathBuf, String)> {
+    // The media upload surface rides the kernel only when a generated page
+    // actually carries a file slot (issue #633) — a media-less tree keeps
+    // the byte-identical kernel.
+    let has_media = poms.iter().any(|(_, pom)| {
+        pom.forms
+            .iter()
+            .any(|form| form.fields.iter().any(|f| f.kind == PomFieldKind::File))
+    });
     let mut files = vec![
         (
             PathBuf::from("tests/pages/support/base-page.ts"),
-            BASE_PAGE_TS.to_string(),
+            base_page_ts(has_media),
         ),
         (
             PathBuf::from("tests/pages/support/ux-table.ts"),
@@ -861,6 +874,7 @@ received = ["review"]
                 control_testid: None,
                 control_component: None,
             }],
+            media_fields: Vec::new(),
         };
         let full = build_view_pom(
             &config,
@@ -918,6 +932,7 @@ entities = []
             validations: Vec::new(),
             round_trips: Vec::new(),
             personas: Vec::new(),
+            media_fields: Vec::new(),
         };
         let pom = build_view_pom(
             &config,
@@ -1052,6 +1067,7 @@ entities = []
                 control_testid: None,
                 control_component: None,
             }],
+            media_fields: Vec::new(),
         };
         guarded_spec.personas.push(PersonaTest {
             actor: "Admin".to_string(),

@@ -33,6 +33,12 @@ pub struct UiE2eTestGenerator {
     /// e2e generator is Entity-kind, so this is the once-per-run hook —
     /// content is stable and the file is regenerated every run, #316).
     kernel_emitted: AtomicBool,
+    /// Any domain declares `[media]` (issue #633): the kernel (one file per
+    /// run, rendered from the FIRST spec-emitting entity's context) carries
+    /// the shared upload/remove surface only when the project can have a
+    /// media field. Config-derived and synchronous — the per-entity media
+    /// fields are graph-resolved in `generate`.
+    media_declared: bool,
 }
 
 impl UiE2eTestGenerator {
@@ -41,6 +47,7 @@ impl UiE2eTestGenerator {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
             kernel_emitted: AtomicBool::new(false),
+            media_declared: false,
         }
     }
 
@@ -49,6 +56,14 @@ impl UiE2eTestGenerator {
         candidates: Vec<codegraph_core::types::ParentCandidate>,
     ) -> Self {
         self.parent_candidates = candidates;
+        self
+    }
+
+    /// Project-level media presence (issue #633): gates the kernel's shared
+    /// `uploadMedia`/`removeMedia` surface. No `[media]` ⇒ the kernel stays
+    /// byte-identical.
+    pub fn with_media_declared(mut self, declared: bool) -> Self {
+        self.media_declared = declared;
         self
     }
 
@@ -622,6 +637,46 @@ impl EntityGenerator for UiE2eTestGenerator {
             ));
         }
 
+        // Media fields with an app-plane route (issue #633): the entity's
+        // media reference features, resolved through the domain plan. The
+        // upload control lives on the remote-functions detail page, so the
+        // spec family rides that flag (the flag-off client plane has no
+        // control to drive — a recorded deferral).
+        let media_fields: Vec<super::context::E2eMediaFieldCtx> =
+            if project.codegen.entity_remote_functions {
+                let field_names =
+                    crate::media::plan::media_route_fields(db, config, &domain, schema_title)
+                        .await?;
+                let media_cfg = config.domains.get(&domain).and_then(|d| d.media.as_ref());
+                match (field_names.is_empty(), media_cfg) {
+                    (false, Some(media)) => field_names
+                        .into_iter()
+                        .map(|field| super::context::E2eMediaFieldCtx {
+                            pascal: codegraph_naming::to_pascal_case(&field),
+                            field,
+                            accept_first: media
+                                .accept
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| "application/octet-stream".to_string()),
+                            accept: media.accept.clone(),
+                            max_bytes: media.max_bytes,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
+
+        // The media spec's create fixture — the shared test-data projection
+        // (build_test_data_json), so a required field can never drift.
+        let media_test_data_json = if media_fields.is_empty() {
+            String::new()
+        } else {
+            build_test_data_json(db, schema_title, Some(&domain), config).await
+        };
+
         let ctx = UiE2eTestContext {
             entity_name,
             entity_label,
@@ -634,6 +689,9 @@ impl EntityGenerator for UiE2eTestGenerator {
             has_delete,
             has_list,
             has_workflow,
+            has_media: self.media_declared,
+            media_fields,
+            media_test_data_json,
             workflow_states,
             initial_state,
             terminal_states,
@@ -809,6 +867,21 @@ impl EntityGenerator for UiE2eTestGenerator {
                 render_template_with_project(tera, "ui/test/ux.test.tera", &ctx, project)?;
             files.push(GeneratedFile {
                 path: tests_dir.join(format!("{}.ux.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Media round-trip spec (issue #633): emitted ONLY when the entity
+        // has media fields with an app-plane route — upload → reference
+        // round-trip → display → remove, plus the rejection legs. Every
+        // interaction goes through the page class (zero raw testids). The
+        // fixture needs a create op and the control lives on the detail
+        // page, so read too.
+        if !ctx.media_fields.is_empty() && ctx.has_create && ctx.has_read {
+            let content =
+                render_template_with_project(tera, "ui/test/media.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.media.test.ts", path_segment)),
                 content,
             });
         }
