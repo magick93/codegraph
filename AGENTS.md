@@ -1142,9 +1142,9 @@ crate); older docs referencing `crates/codegraph/src/generate/ifml/` are stale.
 
 | Layer | Location | Technology |
 |-------|----------|------------|
-| **DSL Parser** | pherolang `crates/phero-ifml` (git dep, rev-pinned) | Pest (Rust PEG parser), consumed via `use phero_ifml::*` |
+| **DSL Parser** | pherolang `crates/phero-ifml` (git dep, rev-pinned) | logos lexer + chumsky parser (Pest left the graph with pherolang 0.3), consumed via `use phero_ifml::*` |
 | **AST types** | pherolang `crates/phero-ir/src/ifml.rs` (re-exported by `phero-ifml`) | Serde-serializable AST + `render_expression()` (camelCase, type-tagged wire format) |
-| **Grammar** | pherolang `crates/phero-ifml/src/grammar/ifml.pest` | PEG grammar (source of truth) |
+| **Grammar** | pherolang `crates/phero-ifml/src/parser/mod.rs` | Normative EBNF in the parser module docs (the `.pest` file is gone; `docs/IFML.md` stays non-normative) |
 | **Tree-sitter grammar** | `codegraph-vscode/grammar/grammar.js` → `crates/tree-sitter-ifml/src/parser.c` | LSP/editor parsing; regenerate with `npx tree-sitter-cli generate --abi 14` |
 | **Graph model** | `crates/codegraph-core/src/types/ifml.rs` | 7 node types, 16 edge types, `NavigationFlowRecord`, `ModuleUseRecord` |
 | **Grafeo DDL** | `crates/codegraph-grafeo/src/schema_ddl.rs` | GQL CREATE statements |
@@ -3956,7 +3956,10 @@ plain-Postgres portability paths added).
 Upstream asks drafted under `docs/proposals/` (001 transition binding,
 002 module/table uniqueness, 003 executable service bodies, 004 aggregate
 child operations, 005 multi-machine `when` scoping, 006 register properties
-+ session-kind grants — the last contingent on product/security approval).
++ session-kind grants). **All six shipped upstream in pherolang 0.3** — each
+file now records the IR field it became and the codegraph consumer issue
+(#660, #668, #662, #661, #663, #668/#670); Part B of 006 stays
+decision-gated.
 
 ## Branch & PR Workflow
 
@@ -3996,13 +3999,70 @@ child operations, 005 multi-machine `when` scoping, 006 register properties
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - **Previous pin (superseded): `rex-*` @ 1fe0ca9** — the live pin is `phero-*` @ 298267e (see the pin comment in the root `Cargo.toml` and `docs/pherolang-upgrade.md`). This entry records the 0.2-era sweep: internal refactor only: shared `Import` type replacing the `ImportDecl`/`UcImport`/`CmmnImport` triplicate, `phero-strings`/`phero-dates` zero-dep leaf crates, `VersionedArtifact` default methods + `default_format_version!`, centralized format-version markers, `did_you_mean` hoisted to phero-diagnostics; ZERO codegraph fallout — no references to any swept surface, all wire FORMAT_VERSIONs still 1 so the ddd/evt goldens byte-match; sigil 69115a7 unchanged in lockstep. Previously @ 194056b — everything the 0f8518f note carried — the #591 declaration-backed control/route manifest, the #117 cross-surface checker, the DDD Sculptor semantics #47, the `.deploy` surface #49, the IFML module composition grammar, and #139's ifml-quality pass — PLUS this bump's surfaces: typed lifecycles (pherolang #114 Rule 16: bare-String status fields are design errors), service-op `emits`/`invokes` + `inject decision` dependencies, the `.evt` delivery model (CloudEvents attribute passthrough, per-subscription `DeliveryPolicy`, channel `scope` topic templates, subscription `when` filters — pherolang #31 slice 2), `.deploy` port/health/cors settings + `env` blocks (pherolang #135), the `.dmn` decision-model surface (pherolang #78, dsntk-backed; `compile_ddd_str_with_decisions`), the IFML lint channel (W0150–W0154, WARNING severity — codegraph's front door hard-fails on Error only), the central diagnostics registry + capability joins (pherolang #128), and the Rune statement IR (phero-expr `body` module — `ExprKind` is UNCHANGED, `RuneBody` is a separate type; codegraph's closed-subset lowerers are unaffected). The bump drags in new transitive git deps: `phero-diagnostics` (in-repo), `xstate-ir` (yestechgroup/restingstate @ 380580b6), `dsntk-recognizer`/`dsntk-feel` (yestechgroup dsntk-rs fork @ 0826f7e) — all anonymously fetchable) and `sigil-*` @ 69115a7 — pinned to the SAME rev pherolang itself pins so exactly ONE sigil version exists in the tree (move in lockstep with pherolang's pin; purely additive delta over 49a6a27: the `ExprVisitor`/`walk` traversal API, `DocReference.for_path`, the multi-file `sigil_syntax::project` ingestion API) — rev-pinned git deps; move only in coordination with the atproto/rosetta lines.
+  - `phero-*` @ 298267e (yestechgroup/pherolang) — the rexlang → Phero Lang rebrand (0.3) plus the DDD epic DD1–DD9. `phero-ir|driver|expr|ifml` are the four crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). See **Pherolang 0.3 upgrade** below and `docs/pherolang-upgrade.md`. Previous pin: `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
   - Rust toolchain: root `rust-toolchain.toml` pins the channel (currently `1.100.0` — issue #627). `dtolnay/rust-toolchain@stable` reads it, so local and CI compilers cannot drift (the PR #626 clippy-lint-drift class is structurally closed). The pin moves MONTHLY alongside the Tier-0 lockfile refresh, never silently: bump the channel AND the `PINNED_CHANNEL` literal in `crates/codegraph/tests/ci_toolchain_contract.rs` in the same commit (the contract test enforces the pairing and the file's presence/shape — components rustfmt+clippy, target wasm32-unknown-unknown for the #517/#550 gates).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
-- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0308` (salsa 0.23 unsound — via phero-driver; fixed upstream in salsa 0.28.5; moves with the pherolang rev pin, #535), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh).
+- **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh).
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
+
+## Pherolang 0.3 upgrade (rebrand + the DDD/IR epic)
+
+`yestechgroup/rexlang` is now **`yestechgroup/pherolang`**; every crate is
+`phero-*`. We pin `298267e` (default-branch HEAD = `v0.3.0` + the DDD epic
+DD1–DD9). Full review, break inventory and the feature roadmap:
+`docs/pherolang-upgrade.md`; epic #654.
+
+- **Wire break (0.3).** Provenance key `pheroVersion` (was `rexVersion`),
+  instance `"$type":"phero.instance"`, `$id` `urn:phero:model:…`, artifact
+  file convention `.phero.json`, and **every artifact `formatVersion`
+  1 → 2** (`FORMAT_VERSION`, `ACTOR_/DDD_/IFML_/IFML_MANIFEST_/EVENT_/
+  DEPLOY_/USE_CASE_/CMMN_/DMN_/INSTANCE_`). 0.2 artifacts are rejected —
+  no dual-accept window. `GRAPH_MODEL_FORMAT_VERSION`, the `graph query`
+  envelope and the receipt formats stay at 1. **0.3 does not read 0.2
+  artifacts**, so a consumer's committed `.rex.json` must be regenerated.
+- **`GRAPH_FORMAT_VERSION` 4 → 5** moved with the pin: the graph-cache
+  inputs hash covers model/config contents + graph format + storage
+  generation, **not** the compiler rev, so without the bump a warm
+  `.graph-cache/` would silently serve the pre-upgrade graph. The
+  artifact kit fixture is `graph_document_v5.md`.
+- **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
+  byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use
+  (`parse_ifml`, `parse_ifml_file`, `compile_ifml_str`,
+  `check_ifml_with_actors`, `manifest_ifml`) are unchanged. The normative
+  grammar is the EBNF in `phero-ifml`'s `parser/mod.rs`.
+- **The DD epic, consumed incrementally.** DD1 resolved identities, DD2
+  strict value semantics, DD3 DTO boundaries (`Design.class` became
+  `Option<String>` — standalone DTOs; signatures became `DddTypeRef`:
+  `Domain(TypeRef)` | `{"dto": "<Boundary>"}`), DD4 authored aggregate
+  boundaries, DD5 `invariants`, DD6 collection sets, DD7 error vocabulary
+  + `throws`, DD8 multi-file design applications, DD9 typed repository
+  queries. Every consumer of a signature slot goes through
+  `codegraph_generate::ddd::signature` so the split is interpreted once.
+  Ingest skips standalone DTO boundaries with a WARN (they have no `.mox`
+  source); a DTO-typed finder/op slot is a *named* rejection.
+- **All six of our upstream proposals shipped** (transition binding,
+  explicit `table "…"`, executable bodies, aggregate child operations,
+  `condition_paths`, register classes + session-kind grants) — the P5
+  workstreams delete the workarounds those asks existed to replace.
+- **Dependency fallout**: salsa 0.23 → 0.28.5 (clears `RUSTSEC-2026-0308`,
+  closing #535), pest/pest_derive leave the graph, tokio still rides the
+  monthly lockfile refresh (#533). `cargo audit`'s watch list drops salsa.
+- **Migration gate**: `cargo test -p codegraph --test
+  pherolang_fixture_sweep` compiles every fixture through the production
+  front doors (`.mox` as one union per group, `.ddd`/`.evt` via
+  `read_and_compile_*`, `.ifml` via `compile_and_check_ifml`), pinning
+  `ddd/invalid.ddd` as the one expected hard-error fixture. A new upstream
+  compile rule surfaces there instead of as a consumer `run` failure.
+  Goldens: `DDD_GOLDEN_BLESS=1` / `EVT_GOLDEN_BLESS=1`. The DDD golden
+  carries `pheroVersion`, so it doubles as a rev canary.
+
+**Deferred** (epic P5/P6): typed queries, the authored transition binding,
+child operations, executable bodies, injected-scope `when`, collection
+sets, error vocabulary, invariants, DTO boundaries, `table "…"`/register
+classes, the editor grammar, session-kind grants; `.dmn`/`.uc`/`.cmmn`
+surfaces and the upstream semantic-graph analytics. None ride the upgrade.
 
 ## Include Path System (`?include=`)
 

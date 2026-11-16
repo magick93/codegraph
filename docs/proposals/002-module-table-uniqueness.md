@@ -1,6 +1,11 @@
 # Proposal: module/table name uniqueness (compile-time)
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
+Status: **implemented upstream** (pherolang 0.3) — consumer work: #668
+Shipped as: the `class X table "explicit_name"` annotation (`ClassDef.table_name`) plus
+the upstream E0301 duplicate-name rule. codegraph derives its pg table from the title
+and ignores the annotation; #668 honours it and keeps the generation-time collision
+gate as defense-in-depth.
+
 Target: pherolang (phero-driver ddd/graph integrity; mox compiler naming)
 
 ## Problem

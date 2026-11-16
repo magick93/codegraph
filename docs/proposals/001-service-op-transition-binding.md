@@ -1,6 +1,12 @@
 # Proposal: explicit service-op transition binding
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
+Status: **implemented upstream** (pherolang 0.3, issue pherolang#176) — consumer work: #660
+Shipped as: `ServiceOperation.transition` → `TransitionRef { trigger, machine? }`, validated
+by the compiler against the target repository's designed machine (multi-machine modules
+require the qualifier). codegraph still infers the transition from the op name
+(`trigger_candidates`), the `when` state set (`condition_source_states`) and a
+capability-sharing heuristic; #660 replaces all three with the authored binding.
+
 Target: pherolang (phero-driver ddd compiler + phero-ir)
 
 ## Problem

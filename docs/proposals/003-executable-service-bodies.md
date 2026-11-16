@@ -1,6 +1,13 @@
 # Proposal: executable service/repository bodies (normative statement IR)
 
-Status: draft (codegraph lifecycle hardening phase 2, Nov 2026)
+Status: **implemented upstream** (pherolang 0.3, issue pherolang#178) — consumer work: #662
+Shipped as: `ServiceOperation.bodies` / `RepositoryOperation.bodies` (target `"stmt"`
+holds the canonical `phero_expr::stmt::StmtBody` JSON) plus `body_receiver`. The posture
+is orchestration-only (load, guard/bind/branch, feature-path assignment, domain `op`
+calls, declared errors — no loops, no collection mutation, no try/catch, no
+cross-aggregate loads). codegraph still 501s every non-delegation op; #662 lowers the
+body instead of seam-ing.
+
 Target: pherolang (phero-expr body module, phero-driver ddd lowering, phero-ir)
 
 ## Problem
