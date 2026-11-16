@@ -161,11 +161,13 @@ re-blessed in this PR with exactly that enumerated diff (the `policy_rls` snapsh
 insta diff shows precisely those four rows; `api/types.ts` is unchanged — the nested
 interface keeps its scoped spelling via `UiNestedType.ts_name`).
 
-The checked-in review fixture (`crates/review/generated-candidate/`) is a gate artifact:
-`entity_codegen_gate`, `review_api_suite` and `grafeo_candidate_inspect_output` all
-regenerate it in place, and it currently lags master by several PRs. This PR does not
-commit the catch-up regen (~1,278 paths of unrelated churn); the nightly gate
-regenerates it in its own checkout.
+The committed review fixture (`crates/review/generated-candidate/`) is the FLAG-OFF
+tree that `grafeo_candidate_inspect_output` (a `cargo test --workspace` test) regenerates
+in place; its PR delta is exactly the same four files as the canaries and is committed
+here. The `entity_codegen_gate` / `review_api_suite` recipes regenerate it in place with
+the DEFAULT (flags ON) profile — a ~1,278-path tree that is not committed (it differs
+from the committed flag-OFF shape wholesale, by design of those two recipes' plan), so
+the nightly gate regenerates it inside its own checkout.
 
 ## Gap table (documented, NOT fixed here)
 
