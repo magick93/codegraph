@@ -37,7 +37,14 @@
 /// nullable props, and a cached graph persisted by a pre-DD9 binary
 /// reads them as NULL — a design query would silently degrade to the
 /// equality-finder heuristic it replaces. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 6;
+///
+/// Bumped to 7 for executable statement bodies (issue #662):
+/// `DddServiceOperation.bodies`/`body_receiver`/`throws` ride the
+/// serde-serialized `operations_json` blob, so a cached graph persisted by
+/// a pre-#662 binary deserializes them as EMPTY (serde defaults) — every
+/// bodied operation would silently degrade to the 501 seam it replaces,
+/// with no error. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 7;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact

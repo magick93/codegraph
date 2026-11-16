@@ -15,19 +15,23 @@
 //!    `capability X for Class`) to a schema title (exact → `+Type`);
 //! 2. delegation to a repository — `op => SomeRepository.op` where the
 //!    repository's design class resolves to a schema title;
-//! 3. signature — a class-typed parameter or return type.
+//! 3. the statement body's `=> Repository` receiver (issue #662) — a bodied
+//!    op declares no delegation, so its primary repository binds the entity;
+//! 4. signature — a class-typed parameter or return type.
 //!
 //! Ops that bind no entity (or are `protected`) emit no route; they are
 //! reported by [`dead_surface_warnings`] (the Ask 1 diagnostic).
 //!
-//! Execution lowering: repository `delete` delegations wire to the
-//! entity's command delete, `findById` delegations return the loaded
-//! record, and `save`/`update` delegations patch the loaded row through the
-//! update command (P0). Where the entity carries a `.ddd` machine, the op
-//! binds a transition (by trigger name, op-level state guard, or the
-//! protected internal op sharing its capability) and the target state is
-//! resolved from the record's current state — a no-transition state change
-//! fails closed with 409. Ops with no executable lowering (abstract bodies,
+//! Execution lowering: a checked `.ddd` statement body takes PRECEDENCE and
+//! lowers into the handler ([`crate::ddd::body_lower`], issue #662).
+//! Otherwise repository `delete` delegations wire to the entity's command
+//! delete, `findById` delegations return the loaded record, and
+//! `save`/`update` delegations patch the loaded row through the update
+//! command (P0). Where the entity carries a `.ddd` machine, the op binds a
+//! transition (by trigger name, op-level state guard, or the protected
+//! internal op sharing its capability) and the target state is resolved from
+//! the record's current state — a no-transition state change fails closed
+//! with 409. Ops with no executable lowering (abstract bodies,
 //! service-to-service/search/finder delegation) answer 501 naming the gap.
 
 use std::collections::{BTreeMap, HashMap};
@@ -166,6 +170,14 @@ pub enum ExecutionKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         state: Option<ServiceOpState>,
     },
+    /// A checked `.ddd` statement body (issue #662): `plan.block` is the
+    /// pre-rendered executable region (the author's `let`/`guard`/`assign`/
+    /// `if`/`return` statements lowered over the loaded aggregate), and
+    /// `plan.state` carries the inferred machine transition when the body
+    /// leaves the state field alone.
+    Body {
+        plan: Box<crate::ddd::body_lower::BodyPlan>,
+    },
     /// No executable lowering; the route answers 501 naming the gap.
     Seam { reason: String },
 }
@@ -175,6 +187,18 @@ impl ExecutionKind {
     #[must_use]
     pub fn is_seam(&self) -> bool {
         matches!(self, Self::Seam { .. })
+    }
+
+    /// The machine transition this lowering applies, if any — the hurl and
+    /// e2e planners simulate the machine off it (a bodied op that leaves the
+    /// state field alone carries the same shape as the `save`/`update` leg).
+    #[must_use]
+    pub fn transition_state(&self) -> Option<&ServiceOpState> {
+        match self {
+            Self::Update { state } => state.as_ref(),
+            Self::Body { plan } => plan.state.as_ref(),
+            Self::Delete | Self::Read | Self::Seam { .. } => None,
+        }
     }
 }
 
@@ -210,9 +234,10 @@ pub struct ServiceOpRoute {
 
 // ── Field knowledge ────────────────────────────────────────────────────
 
-/// How a record field compares in the Rust lowering.
+/// How a record field compares in the Rust lowering (the `when` guards and,
+/// since issue #662, the statement-body expressions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FieldKind {
+pub enum FieldKind {
     String,
     Bool,
     Integer,
@@ -222,8 +247,9 @@ pub(crate) enum FieldKind {
     Unsupported,
 }
 
+/// One entity property as the Rust lowering sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FieldInfo {
+pub struct FieldInfo {
     pub(crate) rust_name: String,
     pub(crate) kind: FieldKind,
     pub(crate) optional: bool,
@@ -706,7 +732,7 @@ fn float_literal(value: f64) -> String {
 }
 
 /// Render `text` as a Rust string literal.
-fn rust_string_literal(text: &str) -> String {
+pub(crate) fn rust_string_literal(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
     for c in text.chars() {
@@ -1063,6 +1089,62 @@ pub(crate) fn render_authorize_fn_with_states(
 
 // ── Graph resolution ───────────────────────────────────────────────────
 
+/// The project-side render context a body-carrying route needs (issue #662):
+/// the domain-types crate name its command/query calls spell, and the
+/// Update-DTO wire-key casing its patch keys.
+#[derive(Debug, Clone)]
+pub struct BodyRenderContext {
+    /// The generated domain-types crate (`domain_types`).
+    pub domain_types_crate: String,
+    /// The Update-DTO wire-key casing.
+    pub dto_casing: DtoKeyCasing,
+}
+
+impl Default for BodyRenderContext {
+    /// The plane's default names — the fallback for the read-side callers
+    /// (IFML e2e planning, router registration) that never emit the body
+    /// block itself.
+    fn default() -> Self {
+        Self {
+            domain_types_crate: "domain_types".to_string(),
+            dto_casing: DtoKeyCasing::default(),
+        }
+    }
+}
+
+impl BodyRenderContext {
+    /// The context of one project configuration.
+    #[must_use]
+    pub fn from_project(project: &crate::ProjectConfig) -> Self {
+        Self {
+            domain_types_crate: project.identity.domain_types_crate.clone(),
+            dto_casing: project.codegen.dto_key_casing,
+        }
+    }
+}
+
+/// The declared `{Domain}Error` variants a body raise may name (DD7).
+async fn raise_table(
+    db: &dyn GraphQuerier,
+    domain: &str,
+) -> Result<crate::ddd::body_lower::RaiseTable, String> {
+    let declared = crate::ddd::errors::declared_error_defs(db, domain)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut table = crate::ddd::body_lower::RaiseTable::default();
+    for error in declared {
+        table.declared.insert(
+            error.variant_name.clone(),
+            crate::ddd::body_lower::DeclaredError {
+                variant: error.variant_name,
+                code: error.code,
+                status: error.http_status.max(0) as u16,
+            },
+        );
+    }
+    Ok(table)
+}
+
 /// Resolve a class name (possibly `pkg::Name`) to a schema title: exact
 /// first, then the configured type suffix (the `schema_for_class`
 /// convention).
@@ -1082,16 +1164,15 @@ async fn schema_title_for_class(
     None
 }
 
-/// Resolve the service operations bound to one entity (root entities
-/// only — the caller gates on role). Deterministic: models in readback
-/// order, module-major, declaration order; ops binding the same entity
-/// under one snake name dedup keeping the first.
+/// Resolve the service operations bound to one entity. Deterministic: models
+/// in readback order, module-major, declaration order; ops binding the same
+/// entity under one snake name dedup keeping the first.
 pub async fn routes_for_entity(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     domain: &str,
     entity_title: &str,
-    dto_casing: DtoKeyCasing,
+    body: &BodyRenderContext,
 ) -> Result<Vec<ServiceOpRoute>, String> {
     let models = db.get_ddd_models().await.map_err(|e| e.to_string())?;
     if models.iter().all(|m| m.services.is_empty()) {
@@ -1115,6 +1196,22 @@ pub async fn routes_for_entity(
     };
     let response_type = format!("{}Response", schema.rust_type_name);
     let module_name = schema.pg_table_name.clone();
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|entry| entry.get_entity_config(entity_title));
+    // The handler's own names, derived from the SAME inputs the handler
+    // generator uses (`resolve_path_segment` + the path-segment→param-name
+    // rule) so a body plan's command/query calls line up with the route.
+    let id_param = super::super::api::router::param_name_from_path_segment(
+        &super::super::api::api_model::resolve_path_segment(entity_cfg, &schema),
+    );
+    let scoped =
+        (entity_cfg.and_then(|cfg| cfg.role.as_deref()) == Some("child")).then_some("parent_id");
+    let auditable =
+        super::super::api::handler::resolve_is_auditable(db, entity_title, config, domain)
+            .await
+            .map_err(|e| e.to_string())?;
 
     // The design surface gates the execution legs: delegation targets must
     // survive the #449 op-set mapping (delete → commands.delete, findById
@@ -1133,6 +1230,19 @@ pub async fn routes_for_entity(
         .as_ref()
         .map(|m| m.states().into_iter().map(str::to_string).collect())
         .unwrap_or_default();
+    // The declared raise vocabulary a statement body lowers against (issue
+    // #662). Read only when a bodied op exists — a model without bodies pays
+    // no extra graph read.
+    let raises = if models.iter().any(|model| {
+        model
+            .services
+            .iter()
+            .any(|service| service.operations.iter().any(|op| !op.bodies.is_empty()))
+    }) {
+        raise_table(db, domain).await?
+    } else {
+        crate::ddd::body_lower::RaiseTable::default()
+    };
 
     let mut routes: Vec<ServiceOpRoute> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1173,19 +1283,37 @@ pub async fn routes_for_entity(
                     record_load,
                     &machine_states,
                 )?;
-                let execution = execution_for(
-                    op,
-                    model,
-                    &surface_ops,
-                    record_load,
-                    config,
+                let params = if op.bodies.is_empty() {
+                    Vec::new()
+                } else {
+                    crate::ddd::body_lower::body_params(&op.name, &op.params)
+                        .map_err(|refusal| refusal.0)?
+                };
+                let throws: Vec<String> = op
+                    .throws
+                    .iter()
+                    .filter_map(|json| json.get("name").and_then(serde_json::Value::as_str))
+                    .map(str::to_string)
+                    .collect();
+                let shape = RouteShape {
                     domain,
                     entity_title,
-                    &module_name,
-                    machine.as_ref(),
-                    &fields,
-                    dto_casing,
-                );
+                    entity_name: &schema.rust_type_name,
+                    entity_table: &module_name,
+                    id_param: &id_param,
+                    scoped,
+                    auditable,
+                    domain_types_crate: &body.domain_types_crate,
+                    dto_casing: body.dto_casing,
+                    fields: &fields,
+                    surface_ops: &surface_ops,
+                    record_load,
+                    machine: machine.as_ref(),
+                    raises: &raises,
+                    params: &params,
+                    throws: &throws,
+                };
+                let execution = execution_for(op, model, config, &service.name, &shape)?;
                 routes.push(ServiceOpRoute {
                     service: service.name.clone(),
                     op_name: op.name.clone(),
@@ -1225,6 +1353,16 @@ async fn bind_entity(
     // 2. Delegation to a repository of this model.
     if let (Some(target), _) = (&op.delegation_target, &op.delegation_operation)
         && let Some(repo) = model.repositories.iter().find(|r| &r.name == target)
+        && let Some(title) = schema_title_for_class(db, &repo.design_class, type_suffix).await
+    {
+        return Some(title);
+    }
+    // 3. The statement body's `=> <Repository>` receiver (issue #662): a
+    //    bodied op declares no delegation, so the primary repository the
+    //    body orchestrates is its entity binding.
+    if !op.bodies.is_empty()
+        && let Some(receiver) = op.body_receiver.as_deref()
+        && let Some(repo) = model.repositories.iter().find(|r| r.name == receiver)
         && let Some(title) = schema_title_for_class(db, &repo.design_class, type_suffix).await
     {
         return Some(title);
@@ -1445,10 +1583,17 @@ fn current_state_expr(field: &FieldInfo) -> String {
 }
 
 fn wire_key(rust_field: &str, casing: DtoKeyCasing) -> WireKey {
-    WireKey::new(match casing {
+    WireKey::new(dto_wire_key(rust_field, casing))
+}
+
+/// The Update-DTO wire key of one entity field under the project's casing —
+/// the key a `save`-payload op's patch writes (and the machine transition
+/// arm patches).
+pub(crate) fn dto_wire_key(rust_field: &str, casing: DtoKeyCasing) -> String {
+    match casing {
         DtoKeyCasing::Snake => rust_field.to_string(),
         DtoKeyCasing::Camel => rust_field.to_lower_camel_case(),
-    })
+    }
 }
 
 /// Whether the machine state field survives into the Update DTO. Workflow
@@ -1486,43 +1631,82 @@ fn state_field_is_dto_updatable(
     true
 }
 
-/// The execution lowering. Repository `delete`/`findById` builtins wire to
-/// the command/query planes; `save`/`update` wire to the update command with
-/// an optional machine transition applied; everything else seams.
+/// The render context one route needs from the project configuration and
+/// the graph (issue #662: the body lowering renders command/query calls, so
+/// it needs the same names the handler template has).
+pub struct RouteShape<'a> {
+    /// The route's domain.
+    pub domain: &'a str,
+    /// The bound entity's schema title.
+    pub entity_title: &'a str,
+    /// The bound entity's Rust type name (`PayRunType`).
+    pub entity_name: &'a str,
+    /// The bound entity's module name (pg table name).
+    pub entity_table: &'a str,
+    /// The handler's path-parameter binding (`pay_run_id`).
+    pub id_param: &'a str,
+    /// `Some("parent_id")` for a nested child route (the scoped record load).
+    pub scoped: Option<&'a str>,
+    /// The auditable flag the query/command calls carry.
+    pub auditable: bool,
+    /// The generated domain-types crate name (`domain_types`).
+    pub domain_types_crate: &'a str,
+    /// The Update-DTO wire-key casing.
+    pub dto_casing: DtoKeyCasing,
+    /// The entity's properties.
+    pub fields: &'a HashMap<String, FieldInfo>,
+    /// The design-mapped operation set (create/read/update/delete/list).
+    pub surface_ops: &'a [String],
+    /// Whether the route performs the record load.
+    pub record_load: bool,
+    /// The entity's designed machine, when any.
+    pub machine: Option<&'a phero_ir::ddd::StateMachine>,
+    /// The declared error vocabulary a body may raise (DD7).
+    pub raises: &'a crate::ddd::body_lower::RaiseTable,
+    /// The declared action-body parameters.
+    pub params: &'a [crate::ddd::body_lower::BodyParam],
+    /// The operation's declared `throws` set (authored error names).
+    pub throws: &'a [String],
+}
+
+/// The execution lowering. A checked statement body takes precedence
+/// (issue #662); otherwise repository `delete`/`findById` builtins wire to
+/// the command/query planes, `save`/`update` wire to the update command with
+/// an optional machine transition applied, and everything else seams.
 fn seam(reason: impl Into<String>) -> ExecutionKind {
     ExecutionKind::Seam {
         reason: reason.into(),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execution_for(
     op: &codegraph_core::types::DddServiceOperation,
     model: &codegraph_core::types::DddModelGraph,
-    surface_ops: &[String],
-    record_load: bool,
     config: &DomainConfig,
-    domain: &str,
-    entity_title: &str,
-    entity_table: &str,
-    machine: Option<&phero_ir::ddd::StateMachine>,
-    fields: &HashMap<String, FieldInfo>,
-    dto_casing: DtoKeyCasing,
-) -> ExecutionKind {
+    service: &str,
+    shape: &RouteShape<'_>,
+) -> Result<ExecutionKind, String> {
+    // A checked body WINS over the delegation lowering (issue #662). The
+    // upstream compiler attaches a body only to an operation that declares
+    // one, so `bodies` non-empty is the author's explicit intent.
+    if !op.bodies.is_empty() {
+        return body_execution(op, model, config, service, shape);
+    }
     let Some(target) = &op.delegation_target else {
-        return seam(format!(
-            "service op `{}` has no delegation target — abstract service \
-             bodies have no executable lowering yet (recorded follow-up)",
+        return Ok(seam(format!(
+            "service op `{}` has no delegation target and no statement body — \
+             abstract service operations have no executable lowering yet \
+             (recorded follow-up)",
             op.name
-        ));
+        )));
     };
     let Some(target_repo) = model.repositories.iter().find(|r| &r.name == target) else {
-        return seam(format!(
+        return Ok(seam(format!(
             "service op `{}` delegates to `{target}`, which is not a \
              repository — service-to-service and search delegation have \
              no executable lowering yet (recorded follow-up)",
             op.name
-        ));
+        )));
     };
 
     // Fail closed on cross-entity (child/aggregate) delegation. A public op
@@ -1534,18 +1718,18 @@ fn execution_for(
     let entity_class = model
         .designs
         .iter()
-        .find(|d| d.resolved_title.as_deref() == Some(entity_title))
+        .find(|d| d.resolved_title.as_deref() == Some(shape.entity_title))
         .map(|d| d.class.as_str());
     if let Some(entity_class) = entity_class
         && target_repo.design_class != entity_class
     {
-        return seam(format!(
+        return Ok(seam(format!(
             "service op `{}` delegates to repository `{target}` for class `{}`, \
-             not the route entity `{entity_title}` (`{entity_class}`) — \
-             child/aggregate mutation has no executable lowering yet; \
-             refusing to patch the parent row silently",
-            op.name, target_repo.design_class
-        ));
+             not the route entity `{}` (`{entity_class}`) — child/aggregate \
+             mutation has no executable lowering yet; refusing to patch the \
+             parent row silently",
+            op.name, target_repo.design_class, shape.entity_title
+        )));
     }
 
     let operation = op
@@ -1553,62 +1737,67 @@ fn execution_for(
         .as_deref()
         .map(|o| o.to_ascii_lowercase())
         .unwrap_or_default();
-    match operation.as_str() {
-        "delete" if surface_ops.iter().any(|o| o == "delete") => ExecutionKind::Delete,
-        "findbyid" if surface_ops.iter().any(|o| o == "read") => ExecutionKind::Read,
-        "save" | "update" if surface_ops.iter().any(|o| o == "update") => {
-            if !record_load {
-                return seam(format!(
+    Ok(match operation.as_str() {
+        "delete" if shape.surface_ops.iter().any(|o| o == "delete") => ExecutionKind::Delete,
+        "findbyid" if shape.surface_ops.iter().any(|o| o == "read") => ExecutionKind::Read,
+        "save" | "update" if shape.surface_ops.iter().any(|o| o == "update") => {
+            if !shape.record_load {
+                return Ok(seam(format!(
                     "service op `{}` delegates to repository `update`, which \
-                     needs the loaded row, but `{entity_title}` exposes no \
-                     read operation (no record load)",
-                    op.name
-                ));
+                     needs the loaded row, but `{}` exposes no read operation \
+                     (no record load)",
+                    op.name, shape.entity_title
+                )));
             }
-            let state = match machine {
+            let state = match shape.machine {
                 Some(machine) => {
                     let field_snake = to_snake_case(&machine.field);
                     let entity_class = entity_class
                         .map(str::to_string)
-                        .unwrap_or_else(|| entity_title.to_string());
-                    let Some(field) = fields
+                        .unwrap_or_else(|| shape.entity_title.to_string());
+                    let Some(field) = shape
+                        .fields
                         .get(&machine.field)
-                        .or_else(|| fields.get(&field_snake))
+                        .or_else(|| shape.fields.get(&field_snake))
                     else {
                         // The machine binds a field the graph exposes no
                         // property for — a transition cannot be rendered.
                         let transitions =
-                            op_transitions(op, model, machine, &entity_class, entity_table);
+                            op_transitions(op, model, machine, &entity_class, shape.entity_table);
                         if transitions.is_empty() {
-                            return ExecutionKind::Update { state: None };
+                            return Ok(ExecutionKind::Update { state: None });
                         }
-                        return seam(format!(
+                        return Ok(seam(format!(
                             "service op `{}` applies a machine transition, but the \
-                             machine field `{}` is not a property of `{entity_title}`",
-                            op.name, machine.field
-                        ));
+                             machine field `{}` is not a property of `{}`",
+                            op.name, machine.field, shape.entity_title
+                        )));
                     };
                     let transitions =
-                        op_transitions(op, model, machine, &entity_class, entity_table);
-                    if !state_field_is_dto_updatable(config, domain, entity_title, &field.rust_name)
-                    {
+                        op_transitions(op, model, machine, &entity_class, shape.entity_table);
+                    if !state_field_is_dto_updatable(
+                        config,
+                        shape.domain,
+                        shape.entity_title,
+                        &field.rust_name,
+                    ) {
                         // A state-only transition cannot ride the update DTO
                         // (workflow-managed/immutable field). Fail closed
                         // rather than silently no-op the action.
                         if !transitions.is_empty() {
-                            return seam(format!(
+                            return Ok(seam(format!(
                                 "service op `{}` applies a machine transition on \
                                  `{}`, but the field is workflow-managed/immutable \
                                  and excluded from the update DTO (dedicated \
                                  transition lowering pending)",
                                 op.name, field.rust_name
-                            ));
+                            )));
                         }
                         None
                     } else {
                         Some(ServiceOpState {
                             current_expr: current_state_expr(field),
-                            wire_key: wire_key(&field.rust_name, dto_casing),
+                            wire_key: wire_key(&field.rust_name, shape.dto_casing),
                             initial: StateName::new(machine.initial.clone()),
                             all: machine_transition_pairs(machine),
                             op: transitions,
@@ -1624,7 +1813,155 @@ fn execution_for(
              no executable lowering yet (recorded follow-up)",
             op.name
         )),
+    })
+}
+
+/// Lower a checked `.ddd` statement body (issue #662).
+///
+/// Every refusal is a HARD generation error naming the op and the construct
+/// (the DD9 `query_refusals` posture): the body plane never emits a partially
+/// interpreted handler, and never silently answers 501 for a body it cannot
+/// honour.
+fn body_execution(
+    op: &codegraph_core::types::DddServiceOperation,
+    model: &codegraph_core::types::DddModelGraph,
+    config: &DomainConfig,
+    service: &str,
+    shape: &RouteShape<'_>,
+) -> Result<ExecutionKind, String> {
+    let Some(json) = op.bodies.get("stmt") else {
+        let targets: Vec<&str> = op.bodies.keys().map(String::as_str).collect();
+        return Err(format!(
+            "service op `{}`: the operation carries body target(s) `{}`, but the \
+             action plane lowers the `stmt` target only",
+            op.name,
+            targets.join("`, `")
+        ));
+    };
+    let body = crate::ddd::body_lower::parse_body(&op.name, json).map_err(|refusal| refusal.0)?;
+
+    // The body orchestrates ONE aggregate: the route's own. A receiver for
+    // another design class is the cross-aggregate load the upstream checker
+    // refuses, re-checked here against the graph (a hand-built or stale
+    // artifact cannot smuggle one past the plane).
+    let Some(receiver) = op.body_receiver.as_deref() else {
+        return Err(format!(
+            "service op `{}`: the operation carries a statement body but no \
+             `body_receiver` (the `=> <Repository>` the body binds as `self`); \
+             regenerate the graph",
+            op.name
+        ));
+    };
+    let entity_class = model
+        .designs
+        .iter()
+        .find(|d| d.resolved_title.as_deref() == Some(shape.entity_title))
+        .map(|d| d.class.as_str());
+    if let Some(entity_class) = entity_class {
+        match model.repositories.iter().find(|r| r.name == receiver) {
+            Some(repository) if repository.design_class == entity_class => {}
+            Some(repository) => {
+                return Err(format!(
+                    "service op `{}`: the body orchestrates repository `{receiver}` \
+                     for class `{}`, not the route entity `{}` (`{entity_class}`) — \
+                     a body loads one aggregate, the one the action addresses",
+                    op.name, repository.design_class, shape.entity_title
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "service op `{}`: the body receiver `{receiver}` is not a \
+                     repository of the model — the body has no aggregate to \
+                     orchestrate",
+                    op.name
+                ));
+            }
+        }
     }
+
+    // The inferred machine transition survives only when the body leaves the
+    // state field alone (the lowering drops it otherwise — the TODO(#662)
+    // boundary). No transitions selected ⇒ no patch at all: unlike the
+    // deployment `save` leg, a body op never gets the body-driven target
+    // whitelist (an action body must not move the machine arbitrarily).
+    let transition = shape
+        .machine
+        .and_then(|machine| body_transition_state(op, model, config, machine, shape));
+    // The declared `throws` vocabulary (authored names from the phero-ir
+    // `ErrorRef` JSON) — a raise outside it is a refusal, even though the
+    // upstream compiler already proves it.
+    let throws: Vec<String> = op
+        .throws
+        .iter()
+        .filter_map(|json| json.get("name").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect();
+    let scope = crate::ddd::body_lower::BodyScope {
+        op_name: &op.name,
+        service,
+        domain: shape.domain,
+        entity_name: shape.entity_name,
+        module_name: shape.entity_table,
+        id_param: shape.id_param,
+        scoped: shape.scoped,
+        auditable: shape.auditable,
+        domain_types_crate: shape.domain_types_crate,
+        dto_casing: shape.dto_casing,
+        fields: shape.fields,
+        state_field: shape
+            .machine
+            .and_then(|machine| shape.fields.get(&machine.field))
+            .map(|field| field.rust_name.as_str()),
+        transition: transition.as_ref(),
+        raises: shape.raises,
+        params: shape.params,
+        throws: &throws,
+        receiver: Some(receiver),
+        has_update: shape.surface_ops.iter().any(|o| o == "update"),
+        record_load: shape.record_load,
+    };
+    let plan = crate::ddd::body_lower::lower_body(&scope, &body).map_err(|refusal| refusal.0)?;
+    Ok(ExecutionKind::Body {
+        plan: Box::new(plan),
+    })
+}
+
+/// The machine transition a bodied op applies when its body leaves the state
+/// field alone. `None` when the entity has no machine, the machine field is
+/// not a property, the field is workflow-managed/immutable, or the op matches
+/// no declared transition (a bodied op gets NO body-driven target whitelist).
+fn body_transition_state(
+    op: &codegraph_core::types::DddServiceOperation,
+    model: &codegraph_core::types::DddModelGraph,
+    config: &DomainConfig,
+    machine: &phero_ir::ddd::StateMachine,
+    shape: &RouteShape<'_>,
+) -> Option<ServiceOpState> {
+    let field_snake = to_snake_case(&machine.field);
+    let field = shape
+        .fields
+        .get(&machine.field)
+        .or_else(|| shape.fields.get(&field_snake))?;
+    if !state_field_is_dto_updatable(config, shape.domain, shape.entity_title, &field.rust_name) {
+        return None;
+    }
+    let entity_class = model
+        .designs
+        .iter()
+        .find(|d| d.resolved_title.as_deref() == Some(shape.entity_title))
+        .map(|d| d.class.clone())
+        .unwrap_or_else(|| shape.entity_title.to_string());
+    let transitions = op_transitions(op, model, machine, &entity_class, shape.entity_table);
+    if transitions.is_empty() {
+        return None;
+    }
+    Some(ServiceOpState {
+        current_expr: current_state_expr(field),
+        wire_key: wire_key(&field.rust_name, shape.dto_casing),
+        initial: StateName::new(machine.initial.clone()),
+        all: machine_transition_pairs(machine),
+        op: transitions,
+    })
 }
 
 /// The IFML dead-trigger scan (Ask 1): every `.ifml` action whose name
@@ -1697,6 +2034,64 @@ async fn bind_entity_service_scoped(
     bind_entity(model, op, db, type_suffix).await
 }
 
+/// Every statically-unlowerable statement body (issue #662): the DD9
+/// `query_refusals` posture, one plane over. A body construct outside the
+/// documented subset is a HARD generation error — the run path turns these
+/// into `ValidationPass` errors BEFORE any tree is written, because the
+/// domain-generator phase collects its own errors non-fatally (a refusal
+/// surfacing there would half-generate).
+///
+/// Each entry names the service op and the construct. Empty = every bodied
+/// op lowers.
+pub async fn body_refusals(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Result<Vec<String>, GraphError> {
+    let models = db.get_ddd_models().await?;
+    if models.iter().all(|model| {
+        model
+            .services
+            .iter()
+            .all(|service| service.operations.iter().all(|op| op.bodies.is_empty()))
+    }) {
+        return Ok(Vec::new());
+    }
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                if op.bodies.is_empty() || op.is_protected {
+                    continue;
+                }
+                if let Some(title) = bind_entity(model, op, db, &type_suffix).await {
+                    titles.insert(title);
+                }
+            }
+        }
+    }
+    let mut refusals = Vec::new();
+    for title in titles {
+        let Ok(Some(schema)) = db.get_schema(&title).await else {
+            continue;
+        };
+        let Some(domain) = schema.domain.clone() else {
+            continue;
+        };
+        if !config.domains.contains_key(domain.as_str()) {
+            continue;
+        }
+        if let Err(reason) =
+            routes_for_entity(db, config, &domain, &title, &BodyRenderContext::default()).await
+        {
+            refusals.push(reason);
+        }
+    }
+    refusals.sort();
+    refusals.dedup();
+    Ok(refusals)
+}
+
 /// The Ask 1 diagnostic: service operations that emit no API surface —
 /// `protected` ops and ops that bind no entity. Returned strings are
 /// human-readable warnings (empty = clean).
@@ -1736,6 +2131,37 @@ pub async fn dead_surface_warnings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One `execution_for` call with the test fixture's route shape.
+    fn lower_exec(
+        model: &codegraph_core::types::DddModelGraph,
+        config: &DomainConfig,
+        surface_ops: &[String],
+        op: &codegraph_core::types::DddServiceOperation,
+        machine: Option<&phero_ir::ddd::StateMachine>,
+        fields: &HashMap<String, FieldInfo>,
+    ) -> ExecutionKind {
+        let raises = crate::ddd::body_lower::RaiseTable::default();
+        let shape = RouteShape {
+            domain: "payroll",
+            entity_title: "PayRunType",
+            entity_name: "PayRunType",
+            entity_table: "pay_run",
+            id_param: "pay_run_id",
+            scoped: None,
+            auditable: false,
+            domain_types_crate: "domain_types",
+            dto_casing: crate::project_config::DtoKeyCasing::Snake,
+            fields,
+            surface_ops,
+            record_load: true,
+            machine,
+            raises: &raises,
+            params: &[],
+            throws: &[],
+        };
+        execution_for(op, model, config, "PayRunService", &shape).expect("lowering")
+    }
 
     fn fields(pairs: &[(&str, FieldKind, bool)]) -> HashMap<String, FieldInfo> {
         let mut map = HashMap::new();
@@ -2145,23 +2571,14 @@ postgres_schema = "payroll"
                 condition: None,
                 emits: Vec::new(),
                 invokes: Vec::new(),
+                throws: Vec::new(),
+                bodies: Default::default(),
+                body_receiver: None,
                 ordinal: 0,
             }
         };
         let lower = |op: &codegraph_core::types::DddServiceOperation, machine| {
-            execution_for(
-                op,
-                &model,
-                &ops,
-                true,
-                &config,
-                "payroll",
-                "PayRunType",
-                "pay_run",
-                machine,
-                &HashMap::new(),
-                crate::project_config::DtoKeyCasing::Snake,
-            )
+            lower_exec(&model, &config, &ops, op, machine, &HashMap::new())
         };
         let delete = lower(&op(Some("PayRunRepository"), Some("delete")), None);
         assert!(matches!(delete, ExecutionKind::Delete));
@@ -2250,6 +2667,9 @@ postgres_schema = "payroll"
             condition: condition.map(str::to_string),
             emits: Vec::new(),
             invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
             ordinal: 0,
         }
     }
@@ -2307,18 +2727,13 @@ postgres_schema = "payroll"
         )]);
         let config = empty_config();
         let ops = ["delete", "read", "update"].map(str::to_string);
-        let lowering = execution_for(
-            &model.services[0].operations[0],
+        let lowering = lower_exec(
             &model,
-            &ops,
-            true,
             &config,
-            "payroll",
-            "PayRunType",
-            "pay_run",
+            &ops,
+            &model.services[0].operations[0],
             Some(&machine),
             &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
         );
         let state = match lowering {
             ExecutionKind::Update { state: Some(state) } => state,
@@ -2347,18 +2762,13 @@ postgres_schema = "payroll"
         ]);
         let config = empty_config();
         let ops = ["delete", "read", "update"].map(str::to_string);
-        let lowering = execution_for(
-            &model.services[0].operations[0],
+        let lowering = lower_exec(
             &model,
-            &ops,
-            true,
             &config,
-            "payroll",
-            "PayRunType",
-            "pay_run",
+            &ops,
+            &model.services[0].operations[0],
             Some(&machine),
             &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
         );
         let state = match lowering {
             ExecutionKind::Update { state: Some(state) } => state,
@@ -2422,18 +2832,13 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         let ops = ["read", "update"].map(str::to_string);
         // A non-transition delegation still updates the other body fields.
         let model = pay_run_model(vec![service_op("update", &[], false, None)]);
-        let lowering = execution_for(
-            &model.services[0].operations[0],
+        let lowering = lower_exec(
             &model,
-            &ops,
-            true,
             &config,
-            "payroll",
-            "PayRunType",
-            "pay_run",
+            &ops,
+            &model.services[0].operations[0],
             Some(&machine),
             &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
         );
         match lowering {
             ExecutionKind::Update { state } => assert!(
@@ -2445,18 +2850,13 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
 
         // A state transition cannot ride the update DTO — fail closed.
         let model = pay_run_model(vec![service_op("submitPayRun", &[], false, None)]);
-        let lowering = execution_for(
-            &model.services[0].operations[0],
+        let lowering = lower_exec(
             &model,
-            &ops,
-            true,
             &config,
-            "payroll",
-            "PayRunType",
-            "pay_run",
+            &ops,
+            &model.services[0].operations[0],
             Some(&machine),
             &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
         );
         match lowering {
             ExecutionKind::Seam { reason } => {
@@ -2478,18 +2878,13 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         }
         let model = pay_run_model(ops);
         let ops_surface = ["delete", "read", "update"].map(str::to_string);
-        execution_for(
-            &model.services[0].operations[0],
+        lower_exec(
             &model,
-            &ops_surface,
-            true,
             &empty_config(),
-            "payroll",
-            "PayRunType",
-            "pay_run",
+            &ops_surface,
+            &model.services[0].operations[0],
             Some(machine),
             &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
         )
     }
 
@@ -2563,18 +2958,13 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         // drop the child intent.
         model.repositories[0].design_class = "PayRunItem".to_string();
         let ops_surface = ["delete", "read", "update"].map(str::to_string);
-        let lowering = execution_for(
-            &model.services[0].operations[0],
+        let lowering = lower_exec(
             &model,
-            &ops_surface,
-            true,
             &empty_config(),
-            "payroll",
-            "PayRunType",
-            "pay_run",
+            &ops_surface,
+            &model.services[0].operations[0],
             Some(&machine),
             &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
         );
         match lowering {
             ExecutionKind::Seam { reason } => {
@@ -2590,19 +2980,33 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         let machine = pay_run_machine();
         let model = pay_run_model(vec![service_op("submitPayRun", &[], false, None)]);
         let ops_surface = ["delete", "update"].map(str::to_string); // no read
+        let shape_raises = crate::ddd::body_lower::RaiseTable::default();
+        let shape = RouteShape {
+            domain: "payroll",
+            entity_title: "PayRunType",
+            entity_name: "PayRunType",
+            entity_table: "pay_run",
+            id_param: "pay_run_id",
+            scoped: None,
+            auditable: false,
+            domain_types_crate: "domain_types",
+            dto_casing: crate::project_config::DtoKeyCasing::Snake,
+            fields: &pay_run_fields(),
+            surface_ops: &ops_surface,
+            record_load: false,
+            machine: Some(&machine),
+            raises: &shape_raises,
+            params: &[],
+            throws: &[],
+        };
         let lowering = execution_for(
             &model.services[0].operations[0],
             &model,
-            &ops_surface,
-            false,
             &empty_config(),
-            "payroll",
-            "PayRunType",
-            "pay_run",
-            Some(&machine),
-            &pay_run_fields(),
-            crate::project_config::DtoKeyCasing::Snake,
-        );
+            "PayRunService",
+            &shape,
+        )
+        .expect("lowering");
         match lowering {
             ExecutionKind::Seam { reason } => {
                 assert!(reason.contains("no record load"), "{reason}")
@@ -2631,6 +3035,9 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             condition: None,
             emits: Vec::new(),
             invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
             ordinal: 0,
         }
     }

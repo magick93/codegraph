@@ -1,3 +1,4 @@
+pub mod body_lower;
 pub mod command;
 pub mod cornucopia_repo;
 pub mod design;

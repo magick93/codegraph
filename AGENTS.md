@@ -680,6 +680,76 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   (`addTimecardItem`, `punch`, `ingestHours`, assignment/deployment) is
   a 501 seam naming the target repository/class — never a silent parent
   patch.
+- **Executable statement bodies (issue #662, consuming pherolang#178)**:
+  a checked `.ddd` body (`bodies["stmt"]` = canonical `StmtBody` JSON,
+  `body_receiver` = the `=> Repository` bound as `self`, `throws` = the
+  declared raise vocabulary) now LOWERS into the handler instead of
+  answering the 501 seam. `ExecutionKind::Body { plan }` takes PRECEDENCE
+  over the `save`→Update delegation; `plan.block` is pre-rendered
+  (`ddd/body_lower.rs`) and consumed verbatim by `handler.tera`
+  (the #338/#590 pre-rendered-block pattern). A bodied op binds its entity
+  through `bind_entity` step **3** (the `=> Repository`'s design class) —
+  it declares no delegation.
+  **Closed subset** (every expression slot is phero-expr source text,
+  parsed and lowered): `let x = self.findById("current") else error
+  NotFound(..)` → the ROUTE's address-scoped load (the action is addressed
+  by id; any other argument is refused); `let x = <feature path> |
+  <literal> | <param>`; `let x = <optional feature> else error V(..)` →
+  `let Some(x) = … else { return Err(<V>) }`; `guard <bool> else error
+  V(..)` → a real 4xx; `local.field = <value>` → the typed write PLUS the
+  DTO wire-key patch entry; `let y = self.save(local)` → the entity's
+  update command with the accumulated patch, bound to the RELOADED
+  `{Entity}Response` (an assignment no save persists is a REFUSAL, never a
+  silently dropped write); `if`/`else`; `return` → the `{ "data": … }`
+  envelope. The response is `latest.unwrap_or(response)` (fresh after a
+  save/transition). Action parameters extract from the POST body by their
+  AUTHORED name (primitives only; an unread parameter still validates then
+  binds `_`).
+  **Raise vocabulary → the generated error plane** (total, never a silent
+  fallback): prelude `NotFound(resource, key)` → `AppError::not_found`
+  (404), `Conflict(detail)` → `AppError::conflict` (409); a DECLARED error
+  → its own `{Domain}Error` variant's `http_status()`/`code()` (typically
+  422 for validation), via `errors::declared_error_defs` — the SAME
+  derivation the errors generator uses, so the two planes cannot drift.
+  utoipa documents every status via `BodyPlan.responses`.
+  **Refusal class** (the DD9 `query_refusals` posture): arithmetic,
+  collection algebra/literals/lambdas, non-builtin calls
+  (`self.<op>` — a domain-op call needs the mox `Resource` arena,
+  `TODO(#662)`), nested assignment paths, whole-local reassignment,
+  cross-aggregate `self.findById` arguments, non-Option `let … else`,
+  assignment-without-save, codelist/date comparisons, record/collection
+  raises, reserved handler locals, an entity with no `read`/`update`
+  plane, a receiver for another design class, an empty body, a
+  non-canonical payload, and a raise naming no generated variant. Each is
+  `Refusal("service op `X` of service `Y`: the body uses <construct> …")`
+  and is surfaced by **`ValidationPass::check_service_op_bodies`**
+  (`service_ops::body_refusals`) as a HARD pre-generation error — the
+  domain-generator phase collects its own errors non-fatally, so
+  validation is what makes it fail BEFORE any tree is written.
+  **Machine boundary** (`TODO(#662)`): a body that leaves the state field
+  alone keeps the inferred transition (the #590 P0 patch arm, applied
+  first); a body that assigns the state field OWNS the machine — the
+  inferred transition is dropped and a comment names it. Unifying the two
+  is a recorded follow-up; workflow-managed/immutable state fields get no
+  inferred transition.
+  **Graph**: `DddServiceOperation.{bodies, body_receiver, throws}`
+  (serde-defaulted; the body payload stays opaque — codegraph-core may not
+  depend on phero-expr) and **`GRAPH_FORMAT_VERSION` 7** (a warm cache
+  written pre-#662 deserializes the bodies as EMPTY and would silently
+  degrade every bodied op to the 501 seam; artifact kit
+  `graph_document_v7.md`). hurl: a body that may answer 4xx emits NO leg
+  (no deterministic status — the live gate drives it with a probe); a
+  lowerable body leg carries its declared parameters as the action body.
+  Gates: `cargo test -p codegraph --test service_ops_tests` (10) +
+  `cargo test -p codegraph-generate --lib -- ddd::body_lower` (11) +
+  `--test ddd_ingest_tests` (7) + `--test service_ops_compile_gate --
+  --ignored --nocapture` (the #551 pin, green) + `--test
+  service_ops_hurl_gate -- --ignored --nocapture` (live: create 201 →
+  bodied op 200 + psql `total = 150` → guard-denied replay 409 with
+  `$.error.code == "CONFLICT"`). Byte-identity: a body-less model emits
+  exactly the pre-#662 handler (the raise-doc block folds into the seam
+  block's `{% endif %}` so it adds no newline) and the actions contract is
+  unchanged for parameter-less ops.
 - **Deferred**: delegation breadth beyond delete/findById (save payloads,
   service-to-service, search); child-entity op routes; api_key capability
   enforcement (JWT-only policy gates); a live `service_ops_hurl_gate`
@@ -688,7 +758,12 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   POM surface; ddd op-`condition` beyond machine-bearing modules (typed
   lifecycles, pherolang #114); doctor WARN for entity-unbound ops (needs
   the graph; the run path owns it); hurl 403 legs over JWT personas;
-  register-class properties (issue Ask 4, upstream pherolang #83).
+  register-class properties (issue Ask 4, upstream pherolang #83);
+  #662 body plane — domain-op calls (`self.<op>`) + collection mutation
+  (refused by name, mox-arena coupling), body-assigned machine state vs the
+  designed transitions (`TODO(#662)`), `codegraph doctor --ddd-files` body
+  parity (the run path + validation pass own it), class-typed action
+  parameters, and the child-plane body leg in the live gate (unit-pinned).
 
 ## Events DSL as generator input (issues #454, #455)
 

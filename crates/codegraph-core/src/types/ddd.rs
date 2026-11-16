@@ -229,6 +229,24 @@ pub struct DddServiceOperation {
     /// read-compat.
     #[serde(default)]
     pub invokes: Vec<String>,
+    /// The resolved error vocabulary the operation's `throws` clause
+    /// declares (DD7, issue pherolang#304), as phero-ir `ErrorRef` JSON.
+    /// Serde-defaulted for read-compat; a raise outside this set cannot
+    /// occur upstream (the driver typechecks it).
+    #[serde(default)]
+    pub throws: Vec<serde_json::Value>,
+    /// Checked executable bodies keyed by target name (issue pherolang#178):
+    /// the `"stmt"` entry holds the canonical `phero_expr::stmt::StmtBody`
+    /// JSON. The payload stays OPAQUE here (codegraph-core may not depend on
+    /// phero-expr); generation re-parses and lowers it. Serde-defaulted for
+    /// read-compat — an operation without a body omits the map.
+    #[serde(default)]
+    pub bodies: std::collections::BTreeMap<String, String>,
+    /// The `=> <Repository>` receiver a statement body binds as `self`
+    /// (the primary repository the body orchestrates). `None` for every
+    /// operation without a body receiver.
+    #[serde(default)]
+    pub body_receiver: Option<String>,
     /// Declaration order within the service.
     pub ordinal: usize,
 }

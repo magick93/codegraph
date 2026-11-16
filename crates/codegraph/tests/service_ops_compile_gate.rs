@@ -10,6 +10,13 @@
 //! NOWHERE — exactly the #551 silent-emission class the pin policy exists
 //! for.
 //!
+//! Issue #662 extends the same fixture with a checked `.ddd` statement body
+//! (`applyPayRun`): the lowered `let`/`guard`/`assign`/`self.save(..)` body
+//! really compiles against the generated command/query planes — the pin's
+//! teeth are that the body's Update-DTO name, parameter types, and
+//! address-scoped reload are spelled exactly as the rest of the app spells
+//! them.
+//!
 //! Path deps (`dependency_strategy = "path"`, issue #347) keep the gate
 //! network-free. Skips gracefully when `cargo` is absent.
 //!
@@ -142,6 +149,17 @@ async fn generated_app_with_service_ops_compiles() {
             ".nest(\"/{pay_run_line_id}/pay-run-line-adjustment\", pay_run_line_adjustment_routes())"
         ),
         "the child router must nest the grandchild routes fn"
+    );
+
+    // The lowered statement body (issue #662) must be ON DISK before the
+    // build spend, and it must reach the same command/query planes the rest
+    // of the app does (a misspelt Update DTO or read arity is a compile
+    // error, not a silent seam).
+    assert!(
+        handler.contains("statement body for `applyPayRun`")
+            && handler.contains("_commands.update(")
+            && handler.contains("dto_update::UpdatePayRunRequest"),
+        "the statement body must lower into the handler before the build:\n{handler}"
     );
 
     codegraph::driver::check_generated_output(&output)

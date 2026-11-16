@@ -19,6 +19,55 @@ pub struct ErrorDef {
     pub variant_name: String,
 }
 
+/// The declared (graph-seeded) error variants of one domain, exactly as the
+/// generated `{Domain}Error` enum carries them: `domains.toml`-scoped
+/// domains' `common` definitions plus the domain's own, PascalCase-mapped,
+/// with the template's always-emitted built-ins filtered out and
+/// first-wins deduped by variant.
+///
+/// Shared by the emitter below and the #662 statement-body raise lowering —
+/// a raise must name a variant the generated enum actually HAS, so the two
+/// planes cannot drift.
+pub async fn declared_error_defs(db: &dyn GraphQuerier, domain: &str) -> Result<Vec<ErrorDef>> {
+    let all_errors = db.get_error_definitions().await.map_err(|e| {
+        crate::error::Error::Config(format!("failed to query error definitions: {e}"))
+    })?;
+
+    let mut seen_codes: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Variants the template always emits itself — graph-seeded built-ins
+    // (e.g. domain="common" Conflict/NotFound from the metamodel ingest)
+    // must not duplicate them (E0428).
+    const TEMPLATE_BUILTIN_VARIANTS: [&str; 4] =
+        ["Conflict", "NotFound", "Forbidden", "InternalError"];
+    let domain_errors: Vec<ErrorDef> = all_errors
+        .iter()
+        .filter(|e| e.domain.as_deref() == Some(domain) || e.domain.as_deref() == Some("common"))
+        .filter_map(|e| {
+            let normalized = e.code.replace(['-', ' '], "_");
+            let variant_name = codegraph_naming::to_pascal_case(&normalized);
+            if TEMPLATE_BUILTIN_VARIANTS.contains(&variant_name.as_str()) {
+                return None;
+            }
+            if seen_codes.insert(variant_name.clone()) {
+                Some(ErrorDef {
+                    code: e.code.clone(),
+                    description: e.description.clone(),
+                    http_status: e.http_status,
+                    variant_name,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Deterministic output: the graph query's row order is not guaranteed,
+    // so sort after dedup (keeping the first-wins semantics above).
+    let mut domain_errors = domain_errors;
+    domain_errors.sort_by(|a, b| a.code.cmp(&b.code));
+    Ok(domain_errors)
+}
+
 #[derive(Debug, Serialize)]
 pub struct ErrorContext {
     pub domain: String,
@@ -52,44 +101,9 @@ impl DomainGenerator for ErrorGenerator {
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
-        let all_errors = db.get_error_definitions().await.map_err(|e| {
-            crate::error::Error::Config(format!("failed to query error definitions: {e}"))
-        })?;
-
-        let mut seen_codes: std::collections::HashSet<String> = std::collections::HashSet::new();
-        // Variants the template always emits itself — graph-seeded built-ins
-        // (e.g. domain="common" Conflict/NotFound from the metamodel ingest)
-        // must not duplicate them (E0428).
-        const TEMPLATE_BUILTIN_VARIANTS: [&str; 4] =
-            ["Conflict", "NotFound", "Forbidden", "InternalError"];
-        let domain_errors: Vec<ErrorDef> = all_errors
-            .iter()
-            .filter(|e| {
-                e.domain.as_deref() == Some(domain) || e.domain.as_deref() == Some("common")
-            })
-            .filter_map(|e| {
-                let normalized = e.code.replace(['-', ' '], "_");
-                let variant_name = codegraph_naming::to_pascal_case(&normalized);
-                if TEMPLATE_BUILTIN_VARIANTS.contains(&variant_name.as_str()) {
-                    return None;
-                }
-                if seen_codes.insert(variant_name.clone()) {
-                    Some(ErrorDef {
-                        code: e.code.clone(),
-                        description: e.description.clone(),
-                        http_status: e.http_status,
-                        variant_name,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Deterministic output: the graph query's row order is not guaranteed,
-        // so sort after dedup (keeping the first-wins semantics above).
-        let mut domain_errors = domain_errors;
-        domain_errors.sort_by(|a, b| a.code.cmp(&b.code));
+        // One derivation, shared with the #662 statement-body raise lowering
+        // (a raise must name a variant the emitted enum actually carries).
+        let domain_errors = declared_error_defs(db, domain).await?;
 
         // Always emit errors.rs — command/handler templates import the domain
         // error enum unconditionally. With no definitions the enum only

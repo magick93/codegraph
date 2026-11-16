@@ -1246,7 +1246,9 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
 {% endif %}
 {% if op.execution.kind == "seam" %}
         (status = 501, description = "Operation body not lowered"),
-{% endif %}
+{% endif %}{% if op.execution.kind == "body" %}
+{% for raise in op.execution.plan.responses %}        (status = {{ raise.status }}, description = "The operation body raised {{ raise.errors }}"),
+{% endfor %}{% endif %}
     )
 )]
 #[tracing::instrument(skip(state, headers, body), fields(domain = "{{ domain }}", entity = "{{ module_name }}", op = "{{ op.snake }}"))]
@@ -1295,6 +1297,11 @@ pub async fn {{ op.fn_name }}(
         "data": response,
         "meta": { "correlation_id": correlation_id.to_string() }
     })).into_response())
+{% elif op.execution.kind == "body" %}
+    // Checked `.ddd` statement body (issue #662): the statements below were
+    // lowered at generation time over the loaded record. A construct outside
+    // the documented subset is a generation error, never a silent seam.
+{{ op.execution.plan.block }}
 {% elif op.execution.kind == "update" %}
     // Executable `save`/`update` delegation (P0): patch the loaded row
     // through the command plane. A machine-bound op resolves its target

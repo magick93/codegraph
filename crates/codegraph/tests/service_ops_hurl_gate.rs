@@ -11,7 +11,8 @@
 //! `when` transition guard is business semantics applying to every session
 //! → approve 200 → approve replay 409: the machine guard, unconditional
 //! grant → notify 501 → unknown-id read 404) and a DB-level proof that the
-//! submitted row really advanced to `Calculating`. Capability/role policy
+//! submitted row really advanced to `Calculating`, and the lowered
+//! statement body's assignment really persisted. Capability/role policy
 //! gates have NO legs here (API-key sessions bypass them); the emitted
 //! contract pins no 403 either.
 //!
@@ -396,6 +397,35 @@ Authorization: Bearer {{api_key}}
 
 HTTP 409
 
+# issue #662: the checked statement body lowers into the handler — the
+# consumer-critical save-payload shape. The guard reads the LOADED row
+# (created with total = 42), so `total: 150` passes, the assignment persists
+# through the command plane, and the response is the RELOADED record.
+POST @ITEM_BASE@/@CAPTURE@/actions/apply_pay_run
+Authorization: Bearer {{api_key}}
+{
+  "total": 150,
+  "note": "ws662-probe"
+}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.total" == 150
+
+# the SAME body's guard now denies (the row sits at 150 ≥ 100) — a REAL 4xx
+# naming the declared error (`Conflict` → 409, code CONFLICT)
+POST @ITEM_BASE@/@CAPTURE@/actions/apply_pay_run
+Authorization: Bearer {{api_key}}
+{
+  "total": 7,
+  "note": "ws662-probe"
+}
+
+HTTP 409
+[Asserts]
+jsonpath "$.error.code" == "CONFLICT"
+jsonpath "$.error.message" contains "total exceeds the action limit"
+
 # abstract op — the seam answers 501 naming the gap
 POST @ITEM_BASE@/@CAPTURE@/actions/notify
 Authorization: Bearer {{api_key}}
@@ -562,9 +592,10 @@ fn wrong_state_probe_pins_the_live_legs() {
         "{\n  \"pay_run_id\": \"ws1-gate-pay-run\"\n}",
     );
     assert_eq!(probe.matches("HTTP 201").count(), 1, "{probe}");
-    assert_eq!(probe.matches("HTTP 200").count(), 2, "{probe}");
+    assert_eq!(probe.matches("HTTP 200").count(), 3, "{probe}");
     assert_eq!(probe.matches("HTTP 403").count(), 1, "{probe}");
-    assert_eq!(probe.matches("HTTP 409").count(), 1, "{probe}");
+    // The machine guard's 409 plus the bodied op's declared Conflict.
+    assert_eq!(probe.matches("HTTP 409").count(), 2, "{probe}");
     assert_eq!(probe.matches("HTTP 501").count(), 1, "{probe}");
     assert_eq!(probe.matches("HTTP 404").count(), 1, "{probe}");
     // The FIRST submit leg pins 200; the replay pins the grant-`when` 403
@@ -714,7 +745,9 @@ async fn service_ops_contract_serves_over_http() {
         run_hurl(server.port, &api_key, &[actions_path(&output), probe_path])?;
 
         // 6. DB-level proof: the probe row really advanced to Calculating
-        //    (the machine state column stores the enum code directly).
+        //    (the machine state column stores the enum code directly), and
+        //    the bodied op's assignment really persisted through the command
+        //    plane (issue #662).
         let status = codegraph_ops::db::psql_query(
             &scratch,
             "SELECT pay_run_status FROM payroll.pay_run \
@@ -730,6 +763,21 @@ async fn service_ops_contract_serves_over_http() {
              denials in between must have left it untouched)"
         );
         println!("gate: probe row state over psql = {}", status.trim());
+        let total = codegraph_ops::db::psql_query(
+            &scratch,
+            "SELECT total FROM payroll.pay_run \
+             WHERE pay_run_id = 'ws1-gate-pay-run';",
+        )
+        .await
+        .map_err(|e| format!("probe total query failed: {e}"))?;
+        assert_eq!(
+            total.trim(),
+            "150",
+            "the bodied op's assignment must persist through the command \
+             plane (apply_pay_run wrote total = 150; the guard-denied replay \
+             must have left it untouched)"
+        );
+        println!("gate: probe row total over psql = {}", total.trim());
         Ok::<(), String>(())
     }
     .await;
