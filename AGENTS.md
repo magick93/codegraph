@@ -2395,6 +2395,14 @@ cargo test -p codegraph --test profile_smoke_tests
 cargo test -p codegraph --test hurl_contract_tests    # 2, hurl golden + [hurl] manifest coupling
 cargo test -p codegraph --test ifml_auth_setup_tests  # 5, auth.setup/personas/auth specs/journeys/POM
 
+# pherolang pin migration gate (node-free, DB-free, <1s): every fixture
+# compiles through the production front doors (`.mox` as one union per group,
+# `.ddd`/`.evt` via read_and_compile_*, `.ifml` via compile_and_check_ifml).
+# `ddd/invalid.ddd` is the one expected failure (the aggregate-boundary rule).
+# Re-run this FIRST on any `phero-*` rev bump; goldens re-bless with
+# DDD_GOLDEN_BLESS=1 / EVT_GOLDEN_BLESS=1.
+cargo test -p codegraph --test pherolang_fixture_sweep
+
 # Compile-pin policy (#551) — node-free PR-CI pins (scratch-crate cargo check)
 cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native + wasm32 (#517)
 cargo test -p codegraph --test repository_compile_tests  # 3, SeaORM repository impl + design finders
@@ -4057,6 +4065,13 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
   compile rule surfaces there instead of as a consumer `run` failure.
   Goldens: `DDD_GOLDEN_BLESS=1` / `EVT_GOLDEN_BLESS=1`. The DDD golden
   carries `pheroVersion`, so it doubles as a rev canary.
+- **Hardening that fell out of the bump (#675)**: a `.mox` set that
+  compiles to **no model** is now `Error::MoxModel { reason }` with the
+  rendered diagnostics, not a warning + an empty generation. pherolang 0.3
+  rejects more models (E0300 duplicate stripped names, Rule 16, …), so the
+  old warn-and-skip would have turned a compile rejection into a
+  zero-entity app with zero errors. File-level problems that still leave a
+  partial model keep warning.
 
 **Deferred** (epic P5/P6): typed queries, the authored transition binding,
 child operations, executable bodies, injected-scope `when`, collection

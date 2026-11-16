@@ -38,6 +38,14 @@ postgres_schema = "library"
 /// Byte-equality is direct: pherolang's `to_json_pretty` (serde_json pretty,
 /// 2-space) emits NO trailing newline and the committed artifact has none
 /// — no normalization applied.
+///
+/// **The `pheroVersion` line is deliberate.** The artifact stamps the
+/// `phero-ir` version that wrote it, so every `phero-*` rev bump re-blesses
+/// this fixture. That is the point: the golden doubles as a rev canary — a
+/// dependency move is visible in the diff instead of hiding behind a
+/// normalized provenance line. Do not strip or normalize it; re-bless with
+/// `DDD_GOLDEN_BLESS=1` as part of the bump (the same PR), and read the rest
+/// of the diff for shape changes.
 #[test]
 fn library_ddd_compiles_clean_and_byte_matches_the_committed_artifact() {
     let compiled = codegraph::ingest::ddd_ingest::read_and_compile_ddd(&fixture("library.ddd"))

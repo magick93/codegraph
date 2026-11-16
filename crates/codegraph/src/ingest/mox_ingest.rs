@@ -215,6 +215,39 @@ pub struct MoxIngestOutcome {
     pub pending_alias_refs: Vec<PendingAliasRef>,
 }
 
+/// Render the error diagnostics of a compile that produced no model:
+/// one `pherolang render`-ed block per source file (spanned, with the
+/// offending source), falling back to `path: message` for diagnostics
+/// attributed to a file we do not hold the text of (an import).
+fn render_mox_compile_failure(
+    sources: &[(String, String)],
+    diagnostics: &[(String, phero_driver::Diagnostic)],
+) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    for (path, text) in sources {
+        let owned: Vec<phero_driver::Diagnostic> = diagnostics
+            .iter()
+            .filter(|(file, diagnostic)| file == path && diagnostic.is_error())
+            .map(|(_, diagnostic)| diagnostic.clone())
+            .collect();
+        if owned.is_empty() {
+            continue;
+        }
+        blocks.push(phero_driver::render(path, text, &owned));
+    }
+    for (path, diagnostic) in diagnostics {
+        if !diagnostic.is_error() || sources.iter().any(|(known, _)| known == path) {
+            continue;
+        }
+        blocks.push(format!("{path}: {}", diagnostic.message));
+    }
+    if blocks.is_empty() {
+        "compilation produced no model".to_string()
+    } else {
+        blocks.join("\n")
+    }
+}
+
 /// Scan `.mox` source text for `import schema "<path>" (as <Alias>)?`
 /// declarations. A line-oriented scan like the `.actor` import scanner: the
 /// lowered pherolang IR does not carry import declarations, and a full phero-syntax
@@ -406,14 +439,15 @@ pub async fn ingest_mox_files(
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!("Warning: mox diagnostic in {path}: {}", diagnostic.message);
     }
+    // A compile that lowers NO model is a hard error, not a skip: every
+    // class, enum and vocabulary would silently vanish and the run would
+    // happily generate an empty app (the WS5 failure mode). Individual
+    // file-level problems that still leave a partial model keep the warn
+    // path above — this is the total-failure case only.
     let Some(model) = compilation.model else {
-        eprintln!("Warning: mox compilation produced no model — nothing ingested");
+        let reason = render_mox_compile_failure(&sources, &compilation.diagnostics);
         stats.skipped += sources.len();
-        return Ok(MoxIngestOutcome {
-            stats,
-            imported_files,
-            pending_alias_refs: Vec::new(),
-        });
+        return Err(Error::MoxModel { reason });
     };
 
     // Schema entities already in the graph: mox classes attach by NAME

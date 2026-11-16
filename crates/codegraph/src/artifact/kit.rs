@@ -281,7 +281,7 @@ mod tests {
     fn kit_case_rejects_canonical_drift() {
         let md = concat!(
             "## drift\n\n```json canonical\n",
-            "{\"edges\":[],\"formatVersion\":4,\"nodes\":[]}\n",
+            "{\"edges\":[],\"formatVersion\":5,\"nodes\":[]}\n",
             "```\n"
         );
         let err = run_cases(md).expect_err("alphabetical field order must not be canonical");

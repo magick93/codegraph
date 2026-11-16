@@ -26,6 +26,12 @@ pub enum Error {
         /// Failure cause ("could not be read: …" / "is not valid JSON: …").
         reason: String,
     },
+    #[error("mox model error: {reason}")]
+    MoxModel {
+        /// Failure cause, including the rendered pherolang diagnostics
+        /// (grouped per file) when a compile lowered no model at all.
+        reason: String,
+    },
     #[error("rosetta model error in '{file}': {reason}")]
     RosettaModel {
         /// The .rosetta file the error came from.
