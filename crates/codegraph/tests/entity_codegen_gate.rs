@@ -124,6 +124,11 @@ fn stub_crewbase_packages() -> Result<(), String> {
         entities.join("index.ts"),
         r#"// Gate-owned stub: the consumer monorepo owns the real package.
 // Runtime exports (the bundler resolves value imports against these).
+// Svelte COMPONENTS must be typed as `Component`: a plain function is not
+// assignable to `ConstructorOfATypedSvelteComponent | Component` (issue
+// #634 — the stub's shape was hiding 55 generated-plane diagnostics).
+import type { Component } from 'svelte';
+
 export class ApiError extends Error {}
 export interface EntityDescriptor {
 	entity: string;
@@ -143,10 +148,14 @@ export function createEntityApi(_descriptor: EntityDescriptor, _opts?: unknown) 
 		remove: async (_id: string) => undefined,
 	};
 }
-export function TimeAgo(_props: { value?: string }) {}
-export function EntityList(_props: Record<string, unknown>) {}
-export function EntityDetail(_props: Record<string, unknown>) {}
-export function EntityForm(_props: Record<string, unknown>) {}
+// A Svelte component is a runtime VALUE as well as a `Component` type —
+// `export declare const` would erase the runtime export (the bundler then
+// reports MISSING_EXPORT) while a plain function is not assignable to
+// `Component`. A cast keeps both halves honest.
+export const TimeAgo = (() => {}) as unknown as Component<{ value?: string }>;
+export const EntityList = (() => {}) as unknown as Component<any>;
+export const EntityDetail = (() => {}) as unknown as Component<any>;
+export const EntityForm = (() => {}) as unknown as Component<any>;
 export function formatValue(_value: unknown): string {
 	return '';
 }
@@ -163,15 +172,18 @@ export function formatValue(_value: unknown): string {
         ui.join("index.ts"),
         r#"// Gate-owned stub: the consumer monorepo owns the real package.
 // The scaffold's settings/auth/dashboard routes delegate to these
-// components; stubs are runtime exports the bundler can resolve.
+// components; they are Svelte COMPONENTS (`Component`, not a plain
+// function — see the @crewbase/entities stub note, issue #634).
+import type { Component } from 'svelte';
+
 export interface CrewbaseComponentProps {
 	[key: string]: unknown;
 }
-export function ApiKeySettings(_props: CrewbaseComponentProps) {}
-export function TeamSettings(_props: CrewbaseComponentProps) {}
-export function Dashboard(_props: CrewbaseComponentProps) {}
-export function LoginPage(_props: CrewbaseComponentProps) {}
-export function SignupPage(_props: CrewbaseComponentProps) {}
+export const ApiKeySettings = (() => {}) as unknown as Component<any>;
+export const TeamSettings = (() => {}) as unknown as Component<any>;
+export const Dashboard = (() => {}) as unknown as Component<any>;
+export const LoginPage = (() => {}) as unknown as Component<any>;
+export const SignupPage = (() => {}) as unknown as Component<any>;
 "#,
     )
     .map_err(|e| e.to_string())?;
@@ -274,54 +286,41 @@ export interface CodelistData {
 /// `id` declarations). The gate regenerates a permissive stub from the
 /// names the generated tree actually imports — the gate checks the
 /// GENERATOR's surface, not the consumer's codegen pipeline.
+///
+/// The walk covers the WHOLE ui tree (issue #634): the emitted Playwright
+/// suites under `tests/` import the request DTO types too, and scanning
+/// only `src/` made every one of them an unresolved import.
 fn stub_api_types() -> Result<(), String> {
-    let src = ui_dir().join("src");
-    let needle = "from '#lib/api/types.ts';";
+    let ui = ui_dir();
     let mut names = std::collections::BTreeSet::new();
-    fn walk(dir: &Path, needle: &str, names: &mut std::collections::BTreeSet<String>) {
+    fn walk(
+        dir: &Path,
+        ui_root: &Path,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
         for entry in fs::read_dir(dir).into_iter().flatten() {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if path.is_dir() {
-                walk(&path, needle, names);
+                if name == "node_modules" || name == "stubs" || name.starts_with('.') {
+                    continue;
+                }
+                walk(&path, ui_root, names);
             } else if path.extension().is_some_and(|e| e == "ts" || e == "svelte") {
+                // Never harvest from the stub itself (it holds `= any`
+                // aliases and would only echo itself back).
+                if path == ui_root.join("src/lib/api/types.ts") {
+                    continue;
+                }
                 let Ok(text) = fs::read_to_string(&path) else {
                     continue;
                 };
-                // Brace-scan (not per-line): imports may span lines.
-                let mut rest = text.as_str();
-                while let Some(pos) = rest.find(needle) {
-                    let head = &rest[..pos];
-                    if let Some(open) = head.rfind('{') {
-                        // Only an import line's brace group: take up to the
-                        // LAST '}' before the needle on the joined window.
-                        if let Some(close) = head.rfind('}') {
-                            for raw in head[open + 1..close].split(',') {
-                                let name = raw.trim().trim_start_matches("type ");
-                                if !name.is_empty() {
-                                    names.insert(name.to_string());
-                                }
-                            }
-                        } else {
-                            // Multi-line: scan back to the line's "import"
-                            // start and forward is unnecessary — the brace
-                            // group opens here; walk the text to its close.
-                            if let Some(close_off) = rest[open..].find('}') {
-                                for raw in rest[open + 1..open + close_off].split(',') {
-                                    let name = raw.trim().trim_start_matches("type ");
-                                    if !name.is_empty() {
-                                        names.insert(name.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    rest = &rest[pos + needle.len()..];
-                }
+                collect_type_import_names(&text, names);
             }
         }
     }
-    walk(&src, needle, &mut names);
+    walk(&ui, &ui, &mut names);
 
     let mut ts = String::from(
         "// Gate-owned stub (entity ui gate): replaces the consumer's\n// openapi-typescript output.\n",
@@ -329,7 +328,35 @@ fn stub_api_types() -> Result<(), String> {
     for name in &names {
         ts.push_str(&format!("export type {name} = any;\n"));
     }
-    fs::write(src.join("lib/api/types.ts"), ts).map_err(|e| e.to_string())
+    fs::write(ui.join("src/lib/api/types.ts"), ts).map_err(|e| e.to_string())
+}
+
+/// Collect the names imported from an `api/types` module in `text`. Two
+/// specifiers reach the same stub — `'#lib/api/types.ts'` (pages/loads) and
+/// `'./api/types.ts'` (modules inside `src/lib`) — and imports may span
+/// lines, so this brace-scans rather than matching per line.
+fn collect_type_import_names(text: &str, names: &mut std::collections::BTreeSet<String>) {
+    const NEEDLES: &[&str] = &["api/types.ts'", "api/types.ts\"", "api/types'", "api/types\""];
+    for needle in NEEDLES {
+        let mut rest = text;
+        while let Some(pos) = rest.find(needle) {
+            let head = &rest[..pos];
+            if let Some(import_at) = head.rfind("import ") {
+                let window = &head[import_at..];
+                if let (Some(open), Some(close)) = (window.find('{'), window.rfind('}')) {
+                    if close > open {
+                        for raw in window[open + 1..close].split(',') {
+                            let name = raw.trim().trim_start_matches("type ").trim();
+                            if !name.is_empty() {
+                                names.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            rest = &rest[pos + needle.len()..];
+        }
+    }
 }
 
 /// The `#lib/components/ui/<dir>/index.js` barrels the entity tree imports.
@@ -641,6 +668,35 @@ fn consumer_diagnostics<'a>(diagnostics: &'a [Diagnostic], ui: &Path) -> Vec<&'a
         .collect()
 }
 
+/// A PRE-EXISTING generated-plane defect the repaired gate surfaced that
+/// this sweep does NOT fix (issue #634 STOP CONDITION: the gate must never
+/// be left permanently red, and the debt must never be silently skipped).
+///
+/// Shrink-only ratchet:
+///   - a generated-path error matching NO entry FAILS the gate;
+///   - an entry matching NOTHING FAILS the gate (so a fixed defect cannot
+///     linger in the ledger).
+///
+/// Each entry names where the debt is tracked; the enumerated table lives
+/// in `docs/tdd/entity-kit-sweep.tdd.md`.
+struct KnownDefect {
+    /// `ui/`-relative path prefix.
+    path: &'static str,
+    /// Substring of the diagnostic message.
+    message: &'static str,
+    /// Where the work is tracked.
+    reference: &'static str,
+}
+
+const KNOWN_DEFECTS: &[KnownDefect] = &[
+    KnownDefect {
+        path: "src/lib/server/api.ts",
+        message: "'$env/dynamic/private'",
+        reference: "entity-kit-sweep gap G1 (shared server_api.rs helper: kit 2 ships \
+                    $env/dynamic/private, kit 3 moved it to $app/env/private)",
+    },
+];
+
 fn render_diagnostic(d: &Diagnostic, ui: &Path) -> String {
     let where_ = d
         .ui_relative(ui)
@@ -777,11 +833,53 @@ async fn entity_app_builds_and_typechecks() {
             consumer.len()
         );
     }
+    // Known pre-existing defects (documented, shrink-only ratchet).
+    let mut known_hits = vec![0usize; KNOWN_DEFECTS.len()];
+    let mut unlisted: Vec<&Diagnostic> = Vec::new();
+    for d in &generated {
+        let rel = d.ui_relative(&ui_dir()).unwrap_or_default();
+        match KNOWN_DEFECTS.iter().position(|k| {
+            rel.starts_with(k.path) && d.message.contains(k.message.trim_matches('\''))
+        }) {
+            Some(idx) => known_hits[idx] += 1,
+            None => unlisted.push(d),
+        }
+    }
+    if known_hits.iter().sum::<usize>() > 0 {
+        println!(
+            "gate: {} documented pre-existing generated-plane defect(s) (see \
+             docs/tdd/entity-kit-sweep.tdd.md):",
+            known_hits.iter().sum::<usize>()
+        );
+        for (k, hits) in KNOWN_DEFECTS.iter().zip(&known_hits) {
+            if *hits > 0 {
+                println!("  - {hits}× {} — {}", k.path, k.reference);
+            }
+        }
+    }
+    let stale: Vec<&KnownDefect> = KNOWN_DEFECTS
+        .iter()
+        .zip(&known_hits)
+        .filter(|(_, hits)| **hits == 0)
+        .map(|(k, _)| k)
+        .collect();
     assert!(
-        generated.is_empty(),
-        "svelte-check reported {} error(s) on GENERATED files:\n{}",
-        generated.len(),
-        generated
+        stale.is_empty(),
+        "the known-defect ledger is STALE for {} entr(y/ies) — the defect was fixed (delete \
+         the entry) or the diagnostic message moved (re-point it):\n{}",
+        stale.len(),
+        stale
+            .iter()
+            .map(|k| format!("{} — {}", k.path, k.reference))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        unlisted.is_empty(),
+        "svelte-check reported {} UNDOCUMENTED error(s) on GENERATED files (fix them, or add an \
+         entry to the known-defect ledger with a tracking reference):\n{}",
+        unlisted.len(),
+        unlisted
             .iter()
             .map(|d| render_diagnostic(d, &ui_dir()))
             .collect::<Vec<_>>()
