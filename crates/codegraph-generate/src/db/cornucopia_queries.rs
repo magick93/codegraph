@@ -358,6 +358,23 @@ fn write_design_finder_queries(
     let hints = row_hints(row_cols, tree.append_only);
 
     for finder in &tree.design_finders {
+        // DD9 typed queries (issue #659) carry their own resolved plan and
+        // render a parameterized predicate + ORDER BY + page window.
+        if finder.kind == crate::ddd::design::FinderKind::Query {
+            if let Some(plan) = &finder.query {
+                write_design_query_sql(
+                    sql,
+                    table,
+                    entity_name,
+                    finder,
+                    plan,
+                    soft_delete_col,
+                    &cols,
+                    &hints,
+                );
+            }
+            continue;
+        }
         let Ok(bindings) = crate::ddd::repository_emitter::finder_columns(
             finder,
             &tree.direct_columns,
@@ -503,6 +520,59 @@ fn write_design_finder_queries(
             author = finder.name,
         ));
     }
+}
+
+/// One annotated query per DD9 `query`-carrying design operation (issue
+/// #659): the predicate renders parameterized (named binds, in first-
+/// occurrence order), the sort keys become the ORDER BY (with the identity
+/// tiebreaker), and a declared `page` appends `LIMIT`/`OFFSET` binds.
+///
+/// The header parameter list is the bind order the adapter passes to
+/// `bind(…)`: predicate binds first, then `limit`/`offset`.
+#[allow(clippy::too_many_arguments)]
+fn write_design_query_sql(
+    sql: &mut String,
+    table: &str,
+    entity_name: &str,
+    finder: &crate::ddd::design::DesignFinder,
+    plan: &crate::ddd::repository_query::QueryPlan,
+    soft_delete_col: Option<&str>,
+    cols: &str,
+    hints: &str,
+) {
+    let rendered = crate::ddd::repository_query::render_sql(plan, &finder.params);
+    let mut clauses = vec![rendered.predicate.clone()];
+    if let Some(sd) = soft_delete_col {
+        clauses.push(format!("\"{sd}\" IS NULL"));
+    }
+    let mut header_params: Vec<String> = rendered.args.iter().map(|arg| arg.name.clone()).collect();
+    if plan.has_page() {
+        header_params.push(crate::ddd::repository_query::PAGE_SIZE_BIND.to_string());
+        header_params.push(crate::ddd::repository_query::PAGE_OFFSET_BIND.to_string());
+    }
+    let mut statement = format!(
+        "--! {fn_name} ({params}) : ({hints})\n\
+         --- Design query `{author}` (declared in the .ddd design): typed predicate, \
+         parameterized.\n\
+         SELECT {cols}\n\
+         FROM {table}\n\
+         WHERE {where_clause}\n\
+         ORDER BY {order_by}\n",
+        fn_name = design_finder_query_name(finder, entity_name),
+        params = header_params.join(", "),
+        author = finder.name,
+        where_clause = clauses.join("\n    AND "),
+        order_by = rendered.order_by,
+    );
+    if plan.has_page() {
+        statement.push_str(&format!(
+            "LIMIT :{} OFFSET :{}\n",
+            crate::ddd::repository_query::PAGE_SIZE_BIND,
+            crate::ddd::repository_query::PAGE_OFFSET_BIND
+        ));
+    }
+    statement.push_str(";\n\n");
+    sql.push_str(&statement);
 }
 
 /// The cornucopia query function name for a design finder:

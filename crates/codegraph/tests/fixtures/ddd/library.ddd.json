@@ -311,6 +311,102 @@
                     }
                   }
                 ]
+              },
+              {
+                "name": "recentByGenre",
+                "returnType": {
+                  "type": "class",
+                  "value": {
+                    "package": "nz.example.library",
+                    "name": "Movie"
+                  }
+                },
+                "returnMultiplicity": {
+                  "lower": 0,
+                  "upper": "unbounded"
+                },
+                "params": [
+                  {
+                    "name": "targetGenre",
+                    "type": {
+                      "type": "enum",
+                      "value": {
+                        "package": "nz.example.library",
+                        "name": "MovieGenre"
+                      }
+                    }
+                  },
+                  {
+                    "name": "minimumRuntime",
+                    "type": {
+                      "type": "primitive",
+                      "value": "int"
+                    }
+                  }
+                ],
+                "query": {
+                  "predicate": "self.genre == targetGenre && self.runtimeMinutes >= minimumRuntime",
+                  "sort": [
+                    {
+                      "field": "title",
+                      "fieldType": {
+                        "type": "primitive",
+                        "value": "string"
+                      },
+                      "direction": "asc"
+                    }
+                  ],
+                  "pagination": {
+                    "limit": 20,
+                    "max": 100,
+                    "cursor": false
+                  },
+                  "readOnly": true
+                },
+                "capabilities": [
+                  {
+                    "name": "ReadMovies"
+                  }
+                ]
+              },
+              {
+                "name": "longestRuntime",
+                "returnType": {
+                  "type": "class",
+                  "value": {
+                    "package": "nz.example.library",
+                    "name": "Movie"
+                  }
+                },
+                "returnMultiplicity": {
+                  "lower": 0,
+                  "upper": {
+                    "finite": 1
+                  }
+                },
+                "params": [
+                  {
+                    "name": "minimumRuntime",
+                    "type": {
+                      "type": "primitive",
+                      "value": "int"
+                    }
+                  }
+                ],
+                "query": {
+                  "predicate": "self.runtimeMinutes >= minimumRuntime",
+                  "sort": [
+                    {
+                      "field": "runtimeMinutes",
+                      "fieldType": {
+                        "type": "primitive",
+                        "value": "int"
+                      },
+                      "direction": "desc"
+                    }
+                  ],
+                  "readOnly": true
+                }
               }
             ]
           }

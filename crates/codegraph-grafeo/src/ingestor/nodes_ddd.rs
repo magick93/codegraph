@@ -131,11 +131,16 @@ impl GrafeoEngine {
                     .map(json_string)
                     .transpose()?;
                 let params_json = json_string(&op.params)?;
+                // DD9 (issue #659): the typed query block rides as phero-ir
+                // `QuerySpec` JSON (opaque here — codegraph-core carries no
+                // phero-ir dependency), plus the resolved read capabilities.
+                let query_json = op.query_json.as_ref().map(json_string).transpose()?;
+                let capabilities_json = json_string(&op.capabilities)?;
                 let gql = format!(
                     "INSERT (:DddRepositoryOperation {{ application: '{}', repository_name: '{}', \
                      name: '{}', builtin: {}, return_type_json: {}, \
                      return_multiplicity: {}, params_json: '{}', ordinal: {}, \
-                     is_protected: {} }})",
+                     is_protected: {}, query_json: {}, capabilities_json: '{}' }})",
                     escape_gql(&repository.application),
                     escape_gql(&repository.name),
                     escape_gql(&op.name),
@@ -145,6 +150,8 @@ impl GrafeoEngine {
                     escape_gql(&params_json),
                     op.ordinal,
                     op.is_protected,
+                    opt_str(&query_json),
+                    escape_gql(&capabilities_json),
                 );
                 session.execute(&gql).map_err(|e| {
                     GraphError::Ingest(format!("ingest_ddd_model repository operation failed: {e}"))

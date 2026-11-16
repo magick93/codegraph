@@ -31,6 +31,21 @@ application Library {
             save;
             delete;
             Movie findByTitle(String title);
+
+            // DD9 typed query (issue #659): a compound predicate over the
+            // designed class and the operation's parameters, an explicit
+            // ordering, a bounded page, and the read capability.
+            Movie[] recentByGenre(MovieGenre targetGenre, int minimumRuntime)
+                where (self.genre == targetGenre && self.runtimeMinutes >= minimumRuntime)
+                sort title asc
+                page limit 20 max 100
+                capability ReadMovies;
+
+            // The `0..1` optional contract: a single optional row, never a
+            // "not found" error.
+            Movie[0..1] longestRuntime(int minimumRuntime)
+                where (self.runtimeMinutes >= minimumRuntime)
+                sort runtimeMinutes desc;
         }
         entity PhysicalMedia scaffold repository PhysicalMediaRepository {
             findById;

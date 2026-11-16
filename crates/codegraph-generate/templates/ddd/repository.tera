@@ -127,12 +127,17 @@ pub trait {{ entity_name }}Repository<C>: Send + Sync {
 {% endif %}
 {%- for finder in design_finders %}
 
-    /// Design finder `{{ finder.name }}` (declared in the .ddd design):
+{% if finder.kind == "query" %}    /// Design query `{{ finder.name }}` (declared in the .ddd design): typed
+    /// predicate, parameterized.
+{% if finder.query.capabilities %}    /// Read capability: {{ finder.query.capabilities | join(sep=", ") }}.
+{% endif %}{% else %}    /// Design finder `{{ finder.name }}` (declared in the .ddd design):
     /// equality query over the named column(s).
-    async fn {{ finder.method_name }}(
+{% endif %}    async fn {{ finder.method_name }}(
         &self,
         db: &C,
 {% for p in finder.params %}        {{ p.name }}: {% if p.optional %}Option<{{ p.rust_type }}>{% else %}{{ p.rust_type }}{% endif %},
-{% endfor %}    ) -> Result<{% if finder.returns_many %}Vec<{{ finder.return_rust_type }}>{% else %}Option<{{ finder.return_rust_type }}>{% endif %}, Box<dyn std::error::Error>>;
+{% endfor %}{% if finder.kind == "query" %}{% if finder.query.page %}        limit: Option<u64>,
+        offset: Option<u64>,
+{% endif %}{% endif %}    ) -> Result<{% if finder.returns_many %}Vec<{{ finder.return_rust_type }}>{% else %}Option<{{ finder.return_rust_type }}>{% endif %}, Box<dyn std::error::Error>>;
 {%- endfor %}
 }

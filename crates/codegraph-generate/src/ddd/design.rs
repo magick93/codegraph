@@ -12,8 +12,16 @@
 //! - repository built-ins → CRUD operations: `findById→read`, `findAll→list`,
 //!   `save→create`+`update`, `delete→delete`. A design without a repository
 //!   maps to an EMPTY operation set (the entity gets no CRUD).
-//! - declared repository operations → design finders (equality queries) when
-//!   their signature resolves against the designing entity.
+//! - declared repository operations carrying a DD9 `query` block → typed
+//!   queries ([`crate::ddd::repository_query`]): the predicate is lowered to
+//!   a parameterized store query, `sort` to an ORDER BY (identity
+//!   tiebreaker), and `page` to a bounded window. A construct outside the
+//!   documented subset is a HARD, named rejection — never a broader query.
+//! - declared repository operations WITHOUT a `query` block → equality
+//!   finders (the pre-DD9 Sculptor heuristic; still exercised by consumer
+//!   models such as `findByTitle(String title)`). DEPRECATED: new models
+//!   should declare a `where` predicate, which expresses ordering,
+//!   pagination, and compound predicates the equality path cannot.
 //! - search definitions → full-text surface (`has_fts`, filter fields,
 //!   analyzer-driven FTS language).
 
@@ -25,6 +33,7 @@ use codegraph_core::types::{DddDesignNode, DddRepositoryNode, DddSearchNode};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
+use crate::ddd::repository_query::{QueryColumn, QueryColumnKind, QueryPlan};
 use crate::error::Result;
 
 /// One-time stderr warnings (per process). Generators run once per entity,
@@ -59,8 +68,13 @@ pub struct FinderParam {
 #[serde(rename_all = "snake_case")]
 pub enum FinderKind {
     /// A declared `findByX(x, ...)` signature — required equality params
-    /// (the authored signature is the contract).
+    /// (the authored signature is the contract). DEPRECATED in favour of a
+    /// DD9 `query` block, kept for query-less declared operations.
     Declared,
+    /// A DD9 typed query (issue #659): a parameterized predicate, an
+    /// ORDER BY, and a bounded page, lowered from the operation's `query`
+    /// block.
+    Query,
     /// The `findByKeys` repository built-in: equality on every `id` feature
     /// of the designing entity (the natural key), single row.
     FindByKeys,
@@ -69,8 +83,8 @@ pub enum FinderKind {
     FindByExample,
 }
 
-/// A lowered declared repository operation: an equality query over the
-/// designing entity's columns.
+/// A lowered repository operation: either an equality finder or a DD9 typed
+/// query over the designing entity's columns.
 ///
 /// `method_name` is the snake_cased Rust method name both the trait
 /// template and the impl emitters agree on; `return_rust_type` is the
@@ -92,9 +106,14 @@ pub struct DesignFinder {
     pub return_rust_type: String,
     /// The snake_cased Rust method name (e.g. `find_by_title`).
     pub method_name: String,
-    /// Which DSL construct this finder lowers (declared signature,
-    /// `findByKeys`, or `findByExample`).
+    /// Which DSL construct this finder lowers (declared signature, DD9
+    /// query, `findByKeys`, or `findByExample`).
     pub kind: FinderKind,
+    /// The lowered DD9 query plan — `Some` exactly when
+    /// [`DesignFinder::kind`] is [`FinderKind::Query`]. The emitters render
+    /// their store's query from it; the equality finders leave it `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<QueryPlan>,
 }
 
 /// Per-application index of the ingested `.ddd` design models, keyed by
@@ -240,20 +259,25 @@ impl DddDesignSurface {
     /// `entity_name` is the entity's Rust type name; finders are returned
     /// with it patched into `entity_name`/`return_rust_type`.
     ///
-    /// Skipped finders (and the reason) print a one-time stderr warning:
-    /// no params, non-entity return, unresolvable param type, or array
-    /// parameters.
+    /// A DD9 `query`-carrying operation lowers through
+    /// [`crate::ddd::repository_query`]; a construct outside the documented
+    /// subset is a HARD error naming the repository, the operation, and the
+    /// construct — never a silently broader query. Query-less declared
+    /// operations lower through the equality-finder heuristic (deprecated,
+    /// kept for consumer models that predate DD9) and are skipped with a
+    /// one-time warning when their signature does not resolve (no params,
+    /// non-entity return, unresolvable param type, or array parameters).
     pub fn finders_for(
         &self,
         schema_title: &str,
         entity_name: &str,
         features: &EntityFeatures,
-    ) -> Vec<DesignFinder> {
+    ) -> Result<Vec<DesignFinder>> {
         let Some(repo) = self.repository_for(schema_title) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let Some(design) = self.design_for(schema_title) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let design_class_leaf = leaf_name(&design.class);
         let mut finders = Vec::new();
@@ -262,6 +286,18 @@ impl DddDesignSurface {
             // Sculptor semantics). `protected` declared finders still lower:
             // the repository is internal, protection governs the API plane.
             if op.builtin.is_none() {
+                // DD9 (issue #659): a `query` block routes to the typed-query
+                // plane. A lowering failure is a hard, named rejection.
+                if op.query_json.is_some() {
+                    finders.push(lower_query_op(
+                        op,
+                        &repo.name,
+                        design_class_leaf,
+                        entity_name,
+                        features,
+                    )?);
+                    continue;
+                }
                 match lower_finder(op, design_class_leaf, entity_name, features) {
                     Ok(mut finder) => {
                         finder.kind = FinderKind::Declared;
@@ -302,7 +338,7 @@ impl DddDesignSurface {
                 _ => {}
             }
         }
-        finders
+        Ok(finders)
     }
 
     /// The search's text fields ordered by descending boost, mapped to the
@@ -405,6 +441,47 @@ impl DddDesignSurface {
     }
 }
 
+/// Every DD9 query that cannot be lowered, as fully-qualified messages
+/// (`query \`{Repository}.{operation}\`: …`).
+///
+/// This is the run-path validation seam: a design query whose predicate,
+/// sort key, or page falls outside the documented subset must stop a run
+/// BEFORE generation writes a tree — silently skipping the method would let
+/// a caller fall back to a broader read. Entity titles the graph cannot
+/// resolve are skipped here (the ingest already warned).
+pub async fn query_refusals(db: &dyn GraphQuerier) -> Result<Vec<String>> {
+    let models = db.get_ddd_models().await?;
+    let mut refusals = Vec::new();
+    for model in &models {
+        for repo in &model.repositories {
+            let Some(design) = model.designs.iter().find(|design| {
+                design.application == repo.application && design.class == repo.design_class
+            }) else {
+                continue;
+            };
+            let Some(title) = design.resolved_title.as_deref() else {
+                continue;
+            };
+            if !repo.operations.iter().any(|op| op.query_json.is_some()) {
+                continue;
+            }
+            let features = EntityFeatures::from_graph(db, title).await?;
+            let design_class_leaf = leaf_name(&design.class);
+            for op in repo.operations.iter().filter(|op| op.query_json.is_some()) {
+                if let Err(error) =
+                    lower_query_op(op, &repo.name, design_class_leaf, title, &features)
+                {
+                    refusals.push(match error {
+                        crate::error::Error::Config(message) => message,
+                        other => other.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(refusals)
+}
+
 /// The last segment of an authored (possibly package-qualified) class name.
 fn leaf_name(class: &str) -> &str {
     class.rsplit(['.', ':']).next().unwrap_or(class)
@@ -458,13 +535,22 @@ pub async fn design_filter_fields(
     Ok(fields)
 }
 
-/// Lower one declared repository operation into a [`DesignFinder`].
-fn lower_finder(
+/// The designing entity's resolved signature shape shared by the equality
+/// finders and the DD9 query plane: the declared return cardinality and the
+/// mapped parameters.
+struct FinderSignature {
+    params: Vec<FinderParam>,
+    returns_many: bool,
+}
+
+/// Resolve a declared operation's return type (the designing entity) and
+/// parameters (the finder/query bind surface).
+fn resolve_finder_signature(
     op: &codegraph_core::types::DddRepositoryOperation,
     design_class_leaf: &str,
-    entity_name: &str,
     features: &EntityFeatures,
-) -> std::result::Result<DesignFinder, String> {
+    signature_word: &str,
+) -> std::result::Result<FinderSignature, String> {
     // The return type must resolve to the designing entity.
     let Some(return_json) = &op.return_type else {
         return Err("no return type declared".to_string());
@@ -473,7 +559,7 @@ fn lower_finder(
     let return_slot = crate::ddd::signature::signature_type(return_json);
     let Some(return_type) = return_slot.as_domain() else {
         return Err(format!(
-            "return type is a {} — a finder must return the designing entity",
+            "return type is a {} — a {signature_word} must return the designing entity",
             return_slot.describe()
         ));
     };
@@ -500,10 +586,6 @@ fn lower_finder(
         .map_err(|e| format!("unresolvable return multiplicity ({e})"))?
         .unwrap_or(false);
 
-    if op.params.is_empty() {
-        return Err("no parameters declared".to_string());
-    }
-
     let mut params = Vec::with_capacity(op.params.len());
     for param in &op.params {
         if param.multiplicity.is_some() {
@@ -515,7 +597,7 @@ fn lower_finder(
         let slot = crate::ddd::signature::signature_type(&param.type_json);
         let Some(type_ref) = slot.as_domain() else {
             return Err(format!(
-                "parameter `{}` is a {} — a finder parameter must be a domain type",
+                "parameter `{}` is a {} — a {signature_word} parameter must be a domain type",
                 param.name,
                 slot.describe()
             ));
@@ -554,14 +636,89 @@ fn lower_finder(
         });
     }
 
+    Ok(FinderSignature {
+        params,
+        returns_many,
+    })
+}
+
+/// Lower one declared repository operation into a [`DesignFinder`].
+///
+/// DEPRECATED path (kept for query-less declared operations): every
+/// parameter lowers to an equality predicate on the column it names. New
+/// models should declare a DD9 `query` block instead — only that path can
+/// express ordering, pagination, and compound predicates.
+fn lower_finder(
+    op: &codegraph_core::types::DddRepositoryOperation,
+    design_class_leaf: &str,
+    entity_name: &str,
+    features: &EntityFeatures,
+) -> std::result::Result<DesignFinder, String> {
+    let signature = resolve_finder_signature(op, design_class_leaf, features, "finder")?;
+    if signature.params.is_empty() {
+        return Err("no parameters declared".to_string());
+    }
+
     Ok(DesignFinder {
         method_name: codegraph_naming::to_snake_case(&op.name),
         name: op.name.clone(),
         entity_name: entity_name.to_string(),
-        params,
-        returns_many,
+        params: signature.params,
+        returns_many: signature.returns_many,
         return_rust_type: format!("{entity_name}Response"),
         kind: FinderKind::Declared,
+        query: None,
+    })
+}
+
+/// Lower one DD9 `query`-carrying repository operation into a
+/// [`DesignFinder`]. Every refusal is a hard, fully-qualified message
+/// (`query \`{Repository}.{operation}\`: …`) — the caller propagates it as a
+/// generation error rather than skipping the method, because a skipped query
+/// is indistinguishable from a broader one at the call site.
+fn lower_query_op(
+    op: &codegraph_core::types::DddRepositoryOperation,
+    repository: &str,
+    design_class_leaf: &str,
+    entity_name: &str,
+    features: &EntityFeatures,
+) -> Result<DesignFinder> {
+    let label = format!("query `{repository}.{}`", op.name);
+    let fail = |reason: String| crate::error::Error::Config(format!("{label}: {reason}"));
+    let Some(query_json) = op.query_json.as_ref() else {
+        return Err(fail("the operation carries no query block".to_string()));
+    };
+    // The graph stores the spec as phero-ir `QuerySpec` JSON (codegraph-core
+    // carries no phero-ir dependency); rehydrate it here.
+    let spec: phero_ir::ddd::QuerySpec = serde_json::from_value(query_json.clone())
+        .map_err(|e| fail(format!("the query block is not a valid QuerySpec ({e})")))?;
+    let signature =
+        resolve_finder_signature(op, design_class_leaf, features, "query").map_err(&fail)?;
+    for reserved in ["limit", "offset"] {
+        if signature.params.iter().any(|param| param.name == reserved) {
+            return Err(fail(format!(
+                "the operation declares a parameter `{reserved}`, which collides with the \
+                 generated pagination parameter — rename it"
+            )));
+        }
+    }
+    let plan = crate::ddd::repository_query::lower_query_spec(
+        &spec,
+        &label,
+        &op.capabilities,
+        &signature.params,
+        &features.query_columns,
+    )
+    .map_err(crate::error::Error::Config)?;
+    Ok(DesignFinder {
+        method_name: codegraph_naming::to_snake_case(&op.name),
+        name: op.name.clone(),
+        entity_name: entity_name.to_string(),
+        params: signature.params,
+        returns_many: signature.returns_many,
+        return_rust_type: format!("{entity_name}Response"),
+        kind: FinderKind::Query,
+        query: Some(plan),
     })
 }
 
@@ -582,6 +739,13 @@ pub struct EntityFeatures {
     /// (child + grandchild tables), bare column names in walk order — the
     /// typing view of the emitter's `ChildTableInfo`/`ChildColumn` universe.
     pub contained_features: Vec<(String, String)>,
+    /// The DD9 query column universe (issue #659): every modeled feature the
+    /// predicate or a sort key may reference, resolved to its PostgreSQL
+    /// column, with unsupported kinds recorded so a refusal can name what it
+    /// found. Built from the graph's property set — the same source the
+    /// repository emitter derives its tree columns from — plus the identity
+    /// column when the entity models none.
+    pub query_columns: Vec<QueryColumn>,
 }
 
 impl EntityFeatures {
@@ -651,8 +815,73 @@ impl EntityFeatures {
             collect_contained_features(db, &target.title, 1, &mut features.contained_features)
                 .await;
         }
+        // DD9 (issue #659): the query column universe. The predicate may
+        // only typecheck against MODELED features, so the modeled property
+        // set is exactly the universe — audit columns codegraph synthesizes
+        // are not properties and are correctly absent.
+        features.query_columns = query_columns_from_properties(&props);
         Ok(features)
     }
+}
+
+/// Build the DD9 query column universe from an entity's graph properties.
+///
+/// The caller passes the same property slice the repository emitter derives
+/// its tree columns from, so predicate resolution and emission agree. Class
+/// references, collections, contains-targets, and structured wrappers are
+/// recorded with their kind (a refusal names what it found) but are never
+/// comparable.
+fn query_columns_from_properties(
+    props: &[codegraph_core::types::PropertyNode],
+) -> Vec<QueryColumn> {
+    let mut columns: Vec<QueryColumn> = Vec::with_capacity(props.len() + 1);
+    let mut has_identity = false;
+    for prop in props {
+        let field = codegraph_core::types::resolve_field(prop);
+        let kind = match prop.effective_kind() {
+            Some(RefClassificationKind::ValueObject) => QueryColumnKind::Contained,
+            Some(RefClassificationKind::EntityReference) => QueryColumnKind::ClassReference,
+            // Codelists are stored TEXT codes; primitives map directly.
+            Some(RefClassificationKind::CodelistReference)
+            | Some(RefClassificationKind::InlineEnum) => QueryColumnKind::Scalar,
+            _ => QueryColumnKind::Scalar,
+        };
+        let kind = if prop.is_array {
+            QueryColumnKind::Collection
+        } else {
+            kind
+        };
+        if prop.is_id {
+            has_identity = true;
+        }
+        columns.push(QueryColumn {
+            feature: prop.name.clone(),
+            field: field.rust_field_name.clone(),
+            pg_column: field.column_name.clone(),
+            // Class references expose their FK column (`x_id`, a UUID); the
+            // storage type is the column's, not the referenced class's.
+            rust_type: if prop.is_id {
+                "Uuid".to_string()
+            } else {
+                prop.rust_field_type.clone()
+            },
+            is_nullable: prop.is_nullable || !prop.is_required,
+            kind,
+        });
+    }
+    // Surrogate identity: the DDL always carries the `id UUID` primary key,
+    // even when the model declares no `id` feature (the common mox shape).
+    if !has_identity {
+        columns.push(QueryColumn {
+            feature: "id".to_string(),
+            field: "id".to_string(),
+            pg_column: "id".to_string(),
+            rust_type: "Uuid".to_string(),
+            is_nullable: false,
+            kind: QueryColumnKind::Scalar,
+        });
+    }
+    columns
 }
 
 /// Recursively collect scalar columns of contained value children
@@ -728,6 +957,7 @@ fn keys_finder(
         returns_many: false,
         return_rust_type: format!("{entity_name}Response"),
         kind: FinderKind::FindByKeys,
+        query: None,
     })
 }
 
@@ -759,6 +989,7 @@ fn example_finder(
         returns_many: true,
         return_rust_type: format!("{entity_name}Response"),
         kind: FinderKind::FindByExample,
+        query: None,
     })
 }
 
@@ -874,6 +1105,8 @@ mod tests {
             params: Vec::new(),
             ordinal,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         }
     }
 
@@ -1008,6 +1241,8 @@ mod tests {
             params: vec![param("status", enum_json("BookStatus"))],
             ordinal: 4,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
@@ -1018,7 +1253,9 @@ mod tests {
             )],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book", &features("Book"));
+        let finders = surface
+            .finders_for("BookType", "Book", &features("Book"))
+            .expect("finders lower");
         assert_eq!(finders.len(), 1);
         assert_eq!(finders[0].params[0].rust_type, "String");
     }
@@ -1033,6 +1270,8 @@ mod tests {
             params: vec![param("title", string_json())],
             ordinal: 4,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
@@ -1043,7 +1282,9 @@ mod tests {
             )],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book", &features("Book"));
+        let finders = surface
+            .finders_for("BookType", "Book", &features("Book"))
+            .expect("finders lower");
         assert_eq!(finders.len(), 1);
         let finder = &finders[0];
         assert_eq!(finder.name, "findByTitle");
@@ -1066,13 +1307,17 @@ mod tests {
             params: vec![param("status", string_json())],
             ordinal: 4,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
             vec![repository("BookRepository", "Book", vec![op])],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book", &features("Book"));
+        let finders = surface
+            .finders_for("BookType", "Book", &features("Book"))
+            .expect("finders lower");
         assert!(finders[0].returns_many);
     }
 
@@ -1096,13 +1341,17 @@ mod tests {
             ],
             ordinal: 4,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
             vec![repository("BookRepository", "Book", vec![op])],
             vec![],
         )]);
-        let finders = surface.finders_for("BookType", "Book", &features("Book"));
+        let finders = surface
+            .finders_for("BookType", "Book", &features("Book"))
+            .expect("finders lower");
         assert_eq!(finders[0].params.len(), 3);
         assert_eq!(finders[0].params[0].name, "author_name");
         assert_eq!(finders[0].params[0].rust_type, "String");
@@ -1123,6 +1372,8 @@ mod tests {
             params: vec![],
             ordinal: 4,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let non_entity = DddRepositoryOperation {
             name: "countBooks".to_string(),
@@ -1137,6 +1388,8 @@ mod tests {
             )],
             ordinal: 5,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let unresolvable = DddRepositoryOperation {
             name: "findByAuthor".to_string(),
@@ -1146,6 +1399,8 @@ mod tests {
             params: vec![param("author", class_json("Author"))],
             ordinal: 6,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let wrong_entity = DddRepositoryOperation {
             name: "findMovieByTitle".to_string(),
@@ -1155,6 +1410,8 @@ mod tests {
             params: vec![param("title", string_json())],
             ordinal: 7,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let surface = DddDesignSurface::from_models(&[model(
             vec![design("Book", Some("BookType"), "entity")],
@@ -1168,6 +1425,7 @@ mod tests {
         assert!(
             surface
                 .finders_for("BookType", "Book", &features("Book"))
+                .expect("finders lower")
                 .is_empty()
         );
     }
@@ -1187,6 +1445,8 @@ mod tests {
             params: vec![param("title", string_json())],
             ordinal: 8,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let reason = lower_finder(&dto_return, "Book", "Book", &features("Book"))
             .expect_err("a DTO return type cannot lower to a finder");
@@ -1203,6 +1463,8 @@ mod tests {
             params: vec![param("request", dto())],
             ordinal: 9,
             is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
         };
         let reason = lower_finder(&dto_param, "Book", "Book", &features("Book"))
             .expect_err("a DTO parameter cannot lower to a finder");

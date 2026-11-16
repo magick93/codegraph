@@ -466,7 +466,9 @@ async fn seaorm_repository_impl_with_junction_compiles() {
 
 /// Design-finders variant (issue #449): the `.ddd` design's finders emit
 /// trait methods + SeaORM impl blocks (EXISTS subqueries, `eq_arg`
-/// binding) — compile them too.
+/// binding) — compile them too. Since DD9 (issue #659) the same fixture
+/// carries `query`-carrying operations, so the parameterized query plane
+/// (Condition builder, ORDER BY, page window) is under the same pin.
 #[tokio::test]
 async fn design_finder_emission_compiles() {
     let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ddd");
@@ -498,6 +500,28 @@ async fn design_finder_emission_compiles() {
     assert!(
         impl_src.contains("fn find_by_"),
         "the design finders must lower into the SeaORM impl:\n{impl_src}"
+    );
+
+    // DD9: the library design's query operations emit onto the same impl —
+    // a parameterized Condition, the sort keys, and the bounded page.
+    let movie_impl =
+        fs::read_to_string(app_dir.join("src/domain/library/movie/repository_impl.rs"))
+            .expect("movie's repository impl");
+    assert!(
+        movie_impl.contains("async fn recent_by_genre("),
+        "the declared query lowers onto the impl:\n{movie_impl}"
+    );
+    assert!(
+        movie_impl.contains("let page_size = limit.or(Some(20u64))"),
+        "the declared page becomes the bounded window:\n{movie_impl}"
+    );
+    assert!(
+        movie_impl.contains("order_by_asc(crate::entity::library_movie::Column::Id)"),
+        "the identity tiebreaker is emitted:\n{movie_impl}"
+    );
+    assert!(
+        movie_impl.contains("async fn find_by_title("),
+        "the equality finder path is retained for query-less ops:\n{movie_impl}"
     );
 
     let ws = tree_root("finders").join("ws");

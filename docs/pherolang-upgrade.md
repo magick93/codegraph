@@ -249,10 +249,33 @@ became; `docs/rosetta*.md`, `docs/ux-rules.md`, `docs/systems-and-generators.md`
 
 Each item **deletes** a heuristic or seam we wrote as a workaround.
 
-1. **DD9 typed queries** — replace `ddd/design.rs::lower_finder`'s
-   `findByX`/contained-column EXISTS heuristics with `QuerySpec`; parameterized
-   SeaORM + cornucopia; `sort`/`pagination` onto the `?sort=` allow-list plane;
-   named rejection when a predicate construct cannot be lowered.
+1. **DD9 typed queries — LANDED (#659).** A `query`-carrying declared
+   operation now lowers through `ddd/repository_query.rs`: the predicate is
+   a **parameterized** SeaORM `Condition` / cornucopia named-bind set
+   (literals bound too — `:_lit0`), `sort` becomes the ORDER BY with the
+   `, "id" ASC` identity tiebreaker, and `page limit/max` the runtime
+   `limit`/`offset` window (default = `limit`, cap = `max`; `page cursor`
+   lowers LIMIT/OFFSET with a one-time WARN — keyset is recorded, not
+   silently dropped). The closed subset is `self.x`/bare stored scalars,
+   parameters, string/number/boolean/date literals, `== != < <= > >=`,
+   `&& || !` (negation pushed down), parentheses, and null comparisons;
+   EVERY other construct — arithmetic, calls, `?.`, `?:`, `let`, lambdas,
+   collection algebra, `if`, class-typed parameter navigation,
+   column-to-column comparisons — is a **named hard rejection**
+   (`query \`Repo.op\`: … cannot be lowered …`) raised by
+   `ValidationPass::check_repository_queries` BEFORE generation, never a
+   broader query. Gate: `cargo test -p codegraph --test ddd_query_tests`
+   + the in-crate `ddd::repository_query` predicate matrix + the extended
+   `repository_compile_tests` / `worker_wasm_compile_tests` compile pins.
+   The equality-finder heuristic (`lower_finder` + the contained-column
+   EXISTS machinery) is **retained only for query-less declared
+   operations** — consumer models still declare `findByX(x)` — and is
+   marked deprecated in the module docs. Remaining: a generated HTTP route
+   carrying the query's page (the repository plane first, by design),
+   runtime `capabilities` enforcement (needs that route), the keyset
+   predicate, class-typed parameter navigation, DTO-boundary returns, and
+   lexicographic `spec.sort` ordering (the `?sort=` allow-list plane is
+   unrelated — a design query's ORDER BY is generation-time, fixed).
 2. **001 transition binding** — `ServiceOperation.transition` replaces the
    op-name→trigger / suffix-stripping / capability-sharing /
    `condition_source_states` heuristics in `ddd/service_ops.rs` and the hurl

@@ -477,11 +477,38 @@ docs: `docs/DDD.md` upstream; driver contract `phero_driver::compile_ddd_str`.
   `entity.has_commands` (the query plane exists for every entity; the
   command plane only when a mutating op survives). Value designs and
   no-repository entities are the shapes that expose a non-gated consumer.
-  Declared finders (`findByX(x)` Sculptor semantics: equality
+  **DD9 typed queries (issue #659) — the preferred declared-op shape.** An
+  operation carrying a `query` block (`where`/`sort`/`page`/`capability`)
+  lowers through `ddd/repository_query.rs` into a provider-neutral
+  `QueryPlan` (`EntityTree.design_finders` → `DesignFinder {
+  kind: Query, query: Some(plan) }`): the predicate becomes a
+  **parameterized** store query (SeaORM `Condition` builder / cornucopia
+  named binds), `sort` becomes the ORDER BY with the identity tiebreaker
+  (`, "id" ASC`) so a page is deterministic, and `page limit/max` becomes
+  the runtime `limit`/`offset` parameters (default = `limit`, cap = `max`;
+  out-of-range clamps — the HTTP 400 is a follow-up on the unbuilt route).
+  Predicate bind values are ALWAYS parameters — even literals are bound
+  (`:_lit0`) — so string interpolation is structurally impossible. Closed
+  subset: stored scalar feature refs (`self.x`/bare), operation parameters,
+  string/number/boolean/date literals, `== != < <= > >=`, `&& || !`
+  (negation pushed down to atoms), parentheses, `field == null` /
+  `!= null` → `IS NULL`/`IS NOT NULL`, bare `bool` columns. EVERY other
+  construct is a **named hard rejection** naming the repository, the
+  operation, and the construct (`query \`Repo.op\`: arithmetic (`+`) …
+  cannot be lowered …`) — checked pre-generation by
+  `ValidationPass::check_repository_queries` (`query_refusals`) so no tree
+  is ever half-written, and never a silently broader query. v1 deferrals:
+  `page cursor` lowers LIMIT/OFFSET with a one-time WARN (keyset
+  predicate), class-typed parameter navigation, DTO-boundary returns,
+  runtime `capabilities` enforcement (documented on the method, enforced
+  by the actor/RLS plane), and a generated HTTP route.
+  Declared ops WITHOUT a query block keep the **deprecated equality
+  finder** path (`findByX(x)` Sculptor semantics: equality
   on the snake_cased param, single → `Option<E>`, multiplicity → `Vec<E>`)
-  emit trait (repository.tera, whitespace-controlled design-gated block) +
-  SeaORM impl (`EntityTree.design_finders`) + cornucopia query/adapter;
-  non-lowerable finders warn+skip. Parameter typing (issue #523):
+  — trait (repository.tera, whitespace-controlled design-gated block) +
+  SeaORM impl + cornucopia query/adapter; non-lowerable finders warn+skip
+  (kept because consumer models still declare them; new models should use
+  `where`). Parameter typing (issue #523):
   primitives and the `Uuid`/`DateTime`/`Decimal` named family map
   directly; any other named type (`.mox` wraps datatypes) resolves to its
   **column projection** — the named feature's base `rust_field_type` — so

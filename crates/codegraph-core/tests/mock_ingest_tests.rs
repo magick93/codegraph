@@ -318,6 +318,8 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                     params: vec![],
                     ordinal: 0,
                     is_protected: false,
+                    query_json: None,
+                    capabilities: Vec::new(),
                 },
                 DddRepositoryOperation {
                     name: "findByTitle".to_string(),
@@ -337,6 +339,8 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                     }],
                     ordinal: 1,
                     is_protected: false,
+                    query_json: None,
+                    capabilities: Vec::new(),
                 },
             ],
         }],
