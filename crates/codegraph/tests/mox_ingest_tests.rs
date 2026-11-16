@@ -893,3 +893,278 @@ async fn reclassify_pass_leaves_mox_value_object_containment_intact() {
     let customer = engine.get_schema("CustomerType").await.unwrap().unwrap();
     assert!(customer.is_entity);
 }
+
+// ── Issue #668: explicit table names, register classes, description and
+// constraint fidelity ────────────────────────────────────────────────────
+
+/// `class X table "…"` (upstream pherolang#177 `ClassDef::table_name`): the
+/// declared spelling is the effective storage table on EVERY plane, because
+/// the bridge writes it straight into `SchemaNode.pg_table_name` — the field
+/// the DDL, SeaORM entity, repository SQL, filter and hurl/openapi naming all
+/// read. URLs are unaffected (`api_path_segment` still derives from the
+/// title).
+const TABLE_NAME_MOX: &str = r#"
+package compensation
+
+class PayRunRows {
+    String reference
+    String status
+}
+"#;
+
+const TABLE_NAME_DECLARED_MOX: &str = r#"
+package compensation
+
+class PayRunType table "pay_run_rows" {
+    String reference
+    String status
+}
+"#;
+
+#[tokio::test]
+async fn class_table_override_becomes_the_effective_table_everywhere() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let config = load_fixture_config();
+
+    let dir = tempfile::tempdir().unwrap();
+    let mox = write_mox_fixture(dir.path(), "model.mox", TABLE_NAME_DECLARED_MOX);
+    let stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(stats.classes, 1);
+
+    let schema = engine
+        .get_schema("PayRunType")
+        .await
+        .unwrap()
+        .expect("the class must bridge");
+    // The declared table wins over the title-derived `pay_run`.
+    assert_eq!(schema.pg_table_name, "pay_run_rows");
+    assert!(schema.declares_table_name(&config.defaults.type_suffix));
+    // The URL segment still derives from the TITLE — table overrides never
+    // move an API path.
+    assert_eq!(schema.api_path_segment, "pay-run");
+    assert_eq!(schema.rust_type_name, "PayRun");
+}
+
+#[tokio::test]
+async fn class_without_a_table_override_keeps_the_derived_name() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let config = load_fixture_config();
+
+    let dir = tempfile::tempdir().unwrap();
+    let mox = write_mox_fixture(dir.path(), "model.mox", TABLE_NAME_MOX);
+    codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    let schema = engine
+        .get_schema("PayRunRows")
+        .await
+        .unwrap()
+        .expect("the class must bridge");
+    assert_eq!(schema.pg_table_name, "pay_run_rows");
+    assert!(!schema.declares_table_name(&config.defaults.type_suffix));
+}
+
+/// A `register` declaration (upstream pherolang#181 / `ClassKind::Register`)
+/// is an org/role noun space, not a transactional aggregate: it bridges onto
+/// the reference-data (codelist/seed-table) plane — a `common.{table}` seed
+/// migration plus the codelist Rust enum — and never onto the entity plane.
+/// The graph is the contract: `is_codelist`, `classification = "codelist"`,
+/// the `is_register_class` marker, and a `CodeList` node the codelist
+/// generators own.
+const REGISTER_MOX: &str = r#"
+package compensation
+
+register Role {
+    String display_name
+    String[0..1] badge = "none"
+    String code { pattern "[A-Z]{2,8}" minLength 2 }
+}
+
+class PayRunType {
+    String reference
+    refers Role[0..1] role
+}
+"#;
+
+#[tokio::test]
+async fn register_class_bridges_to_the_reference_data_plane() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let config = load_fixture_config();
+
+    let dir = tempfile::tempdir().unwrap();
+    let mox = write_mox_fixture(dir.path(), "model.mox", REGISTER_MOX);
+    let stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(stats.registers, 1, "the register must be counted");
+    assert_eq!(stats.enums, 0, "a register is not an enum literal set");
+
+    let role = engine
+        .get_schema("Role")
+        .await
+        .unwrap()
+        .expect("the register must bridge");
+    assert!(role.is_register_class());
+    assert!(role.is_codelist, "registers live on the codelist plane");
+    assert!(!role.is_entity, "a register must never become an entity");
+    assert_eq!(role.classification, "codelist");
+    assert_eq!(role.pg_table_name, "role");
+
+    // The codelist node is what the seed-migration generator keys on, so the
+    // register has a real reference table (`common.role`) with no entity
+    // module, repository or handler of its own.
+    let codelists = engine.list_codelists().await.unwrap();
+    let role_list = codelists
+        .iter()
+        .find(|c| c.name == "Role")
+        .expect("a CodeList node must exist for the register");
+    assert_eq!(role_list.pg_table_name, "role");
+    assert_eq!(role_list.render_as, "codelist");
+
+    // The register's attributes are still ingested (non-lossy model graph;
+    // the reference-table projection is a documented follow-up).
+    let props = engine.get_properties("Role").await.unwrap();
+    let names: Vec<&str> = props.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"display_name"), "props: {names:?}");
+    assert!(names.contains(&"code"), "props: {names:?}");
+}
+
+#[tokio::test]
+async fn register_refs_lower_like_any_class_reference() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let config = load_fixture_config();
+
+    let dir = tempfile::tempdir().unwrap();
+    let mox = write_mox_fixture(dir.path(), "model.mox", REGISTER_MOX);
+    codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    // `refers Role[0..1] role` stays an entity-reference property: the REGISTER's
+    // own plane is the codelist one, but referring rows store the register
+    // row's id (`role_id UUID`), exactly as any other class reference.
+    let props = engine.get_properties("PayRunType").await.unwrap();
+    let role = props.iter().find(|p| p.name == "role").unwrap();
+    assert_eq!(
+        role.classification_kind,
+        Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+    );
+    assert_eq!(role.ref_target.as_deref(), Some("Role"));
+    assert_eq!(role.pg_column_name, "role_id");
+}
+
+/// Issue #668 (d): doc-comment descriptions and the value-constraint block
+/// must survive ingest non-lossily at every level — class, feature, enum and
+/// (via the label) the literal, plus all five value constraints.
+const AUDIT_MOX: &str = r#"
+package compensation
+
+/// A pay run groups the rows of one payroll cycle.
+class AuditRun {
+    /// The pay run's human reference.
+    String reference { pattern "[A-Z]{2,8}" minLength 2 maxLength 24 }
+    int cycles { minimum 1 maximum 12 }
+    /// The run's lifecycle state.
+    AuditRunStatus status
+}
+
+/// The lifecycle states of a pay run.
+enum AuditRunStatus {
+    /// The run is being prepared.
+    Draft as "Draft" = 0
+    /// The run has been approved.
+    Approved as "Approved" = 1
+}
+"#;
+
+#[tokio::test]
+async fn descriptions_and_value_constraints_ingest_without_loss() {
+    let engine = GrafeoEngine::in_memory().unwrap();
+    let config = load_fixture_config();
+
+    let dir = tempfile::tempdir().unwrap();
+    let mox = write_mox_fixture(dir.path(), "model.mox", AUDIT_MOX);
+    codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap();
+
+    // Class description.
+    let schema = engine
+        .get_schema("AuditRun")
+        .await
+        .unwrap()
+        .expect("class bridges");
+    assert_eq!(
+        schema.description.as_deref(),
+        Some("A pay run groups the rows of one payroll cycle.")
+    );
+
+    // Feature description + all five value constraints.
+    let props = engine.get_properties("AuditRun").await.unwrap();
+    let reference = props.iter().find(|p| p.name == "reference").unwrap();
+    assert_eq!(
+        reference.description.as_deref(),
+        Some("The pay run's human reference.")
+    );
+    assert_eq!(reference.pattern.as_deref(), Some("[A-Z]{2,8}"));
+    assert_eq!(reference.min_length, Some(2));
+    assert_eq!(reference.max_length, Some(24));
+    let cycles = props.iter().find(|p| p.name == "cycles").unwrap();
+    assert_eq!(cycles.minimum, Some(rust_decimal::Decimal::from(1)));
+    assert_eq!(cycles.maximum, Some(rust_decimal::Decimal::from(12)));
+
+    // Enum description (CodeList + codelist schema) and literal labels.
+    let codelists = engine.list_codelists().await.unwrap();
+    let status = codelists
+        .iter()
+        .find(|c| c.name == "AuditRunStatus")
+        .expect("enum codelist node");
+    assert_eq!(
+        status.description.as_deref(),
+        Some("The lifecycle states of a pay run.")
+    );
+    let literals = engine.get_enum_values("AuditRunStatus").await.unwrap();
+    let labels: Vec<_> = literals
+        .iter()
+        .map(|v| (v.value.as_str(), v.display_name.as_deref()))
+        .collect();
+    assert_eq!(
+        labels,
+        vec![("Draft", Some("Draft")), ("Approved", Some("Approved"))]
+    );
+}

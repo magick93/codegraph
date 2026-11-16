@@ -402,3 +402,93 @@ fn unsupported_constructs_are_reported_not_fatal() {
         report.needs_review
     );
 }
+
+/// Issue #668 (c): the emitted identifier table comes from the COMPILER
+/// (`phero_syntax::words`), not a local copy — the hand-maintained list had
+/// drifted (missing `event`, `channel`, `publishes`, `subscription`, …), so
+/// `migrate` could emit identifiers the compiler rejects.
+///
+/// The round-trip is the test: a schema whose titles, properties and enum
+/// values spell EVERY documented word must emit a `.mox` package the
+/// compiler accepts. `migrate` verifies with `compile_files` before writing,
+/// so `compile_errors` being empty IS the round-trip.
+#[test]
+fn keyword_heavy_schema_round_trips_through_the_compiler() {
+    use phero_syntax::words;
+
+    let fixture = TempDir::new().expect("tempdir");
+    let schemas = fixture.path().join("schemas");
+    fs::create_dir_all(schemas.join("kw")).expect("schemas dir");
+
+    let all_words: Vec<&str> = words::KEYWORDS
+        .iter()
+        .chain(words::MOX_CONTEXTUAL.iter())
+        .copied()
+        .collect();
+
+    // One String property per documented word, plus an inline enum whose
+    // literals spell the same words.
+    let mut properties = serde_json::Map::new();
+    for word in &all_words {
+        properties.insert((*word).to_string(), serde_json::json!({ "type": "string" }));
+    }
+    properties.insert(
+        "severity".to_string(),
+        serde_json::json!({ "type": "string", "enum": all_words }),
+    );
+    let keyword_class = serde_json::json!({
+        // The title is a real keyword: the class name must be emitted escaped.
+        "title": "event",
+        "type": "object",
+        "properties": properties,
+        "required": ["event"],
+    });
+    fs::write(
+        schemas.join("kw/event.json"),
+        serde_json::to_string_pretty(&keyword_class).unwrap(),
+    )
+    .expect("write keyword schema");
+
+    let output = TempDir::new().expect("tempdir");
+    let report = migrate(MigrateArgs {
+        schemas: &schemas,
+        output: output.path(),
+        dry_run: false,
+        force: false,
+    })
+    .expect("keyword-heavy migration must succeed");
+
+    assert!(
+        report.compile_errors.is_empty(),
+        "every emitted identifier must survive the compile round-trip: {:?}",
+        report.compile_errors
+    );
+    assert!(
+        report.unsupported.is_empty(),
+        "no keyword may be dropped as an unsupported identifier: {:?}",
+        report.unsupported
+    );
+
+    let source = fs::read_to_string(output.path().join("kw.mox")).expect("read kw.mox");
+    assert!(source.contains("class ^event {"), "class line: {source}");
+    for word in words::KEYWORDS {
+        assert!(
+            source.contains(&format!("^ {word}"))
+                || source.contains(&format!("^{word} "))
+                || source.contains(&format!("^{word} =")),
+            "the real keyword `{word}` must be emitted escaped: {source}"
+        );
+    }
+    // Contextual words are ordinary identifiers: `register` in particular is
+    // a declaration word only at the top-level item position, never escaped.
+    for word in words::MOX_CONTEXTUAL {
+        assert!(
+            !source.contains(&format!("^{word}")),
+            "contextual word `{word}` must stay unescaped: {source}"
+        );
+    }
+    assert!(
+        source.contains(" register\n"),
+        "a property named `register` stays a plain identifier: {source}"
+    );
+}
