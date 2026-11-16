@@ -251,6 +251,131 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     assert!(actions.contains("bypass the policy gates"), "{actions}");
 }
 
+/// Issue #662: a checked `.ddd` statement body lowers INTO the handler
+/// (the `Body` execution kind), replacing the 501 seam for that op. The
+/// fixture's `applyPayRun` is the consumer-critical `save`-payload shape:
+/// `let … else NotFound` binds the addressed aggregate, `guard … else
+/// Conflict` answers a REAL 4xx naming the declared error, the feature-path
+/// assignment records the DTO wire key, and `self.save(..)` flushes it
+/// through the command plane.
+#[tokio::test]
+async fn statement_bodies_lower_into_the_action_handler() {
+    let fixture = write_fixture_in("service_ops_stmt_bodies", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    let handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));
+    // The pre-rendered body block exists and names the op.
+    assert!(
+        handler.contains("statement body for `applyPayRun`"),
+        "the body must lower into the handler:\n{handler}"
+    );
+    // Action-body parameter extraction (the declared primitive parameters).
+    assert!(
+        handler.contains("let total: i32 = body.as_ref()"),
+        "the body's `int` parameter must bind as i32:\n{handler}"
+    );
+    // A parameter the body never reads still validates its presence, then
+    // binds `_` (no dead-name warning in the handler).
+    assert!(
+        handler.contains("let _: String = body.as_ref()"),
+        "an unread parameter must bind `_` after validating presence:\n{handler}"
+    );
+    assert!(
+        handler.contains("missing or invalid parameter `note`"),
+        "the required parameters must 400 when absent:\n{handler}"
+    );
+    // `let … else NotFound` binds the route's loaded aggregate.
+    assert!(
+        handler.contains("let mut run = response.clone();"),
+        "the aggregate local must bind the loaded record (mut: it is assigned):\n{handler}"
+    );
+    // `guard … else Conflict` is a REAL 4xx naming the declared error.
+    assert!(
+        handler.contains("if !((run.total < 100))"),
+        "the guard must lower as a negated condition:\n{handler}"
+    );
+    assert!(
+        handler.contains(
+            "AppError::conflict(format!(\"Conflict: {}\", \"total exceeds the action limit\"))"
+        ) || handler.contains("total exceeds the action limit"),
+        "the guard's raise must name the declared error and its payload:\n{handler}"
+    );
+    // Feature-path assignment: the typed write + the DTO wire key.
+    assert!(
+        handler.contains("run.total = total;"),
+        "the assignment must write the loaded record:\n{handler}"
+    );
+    assert!(
+        handler.contains("patch.insert(\"total\".to_string(), serde_json::json!(&run.total));"),
+        "the assignment must record the DTO wire key:\n{handler}"
+    );
+    // `self.save(..)` flushes the patch through the command plane and the
+    // response is the RELOADED record.
+    assert!(
+        handler.contains("_commands.update("),
+        "the save must ride the update command:\n{handler}"
+    );
+    assert!(
+        handler.contains("UpdatePayRunRequest"),
+        "the save must build the entity's Update DTO:\n{handler}"
+    );
+    assert!(
+        handler.contains("let data = latest.unwrap_or(response);"),
+        "the response must be the RELOADED record (a save happened):\n{handler}"
+    );
+    assert!(
+        handler.contains("state.payroll_pay_run_queries.find_by_id(pay_run_id, false"),
+        "the save must reload through the addressed read:\n{handler}"
+    );
+    // The bodied op is no longer a seam.
+    assert!(
+        !handler.contains("`applyPayRun` has no delegation target"),
+        "a bodied op must not answer the abstract seam:\n{handler}"
+    );
+    // utoipa documents the declared raises.
+    assert!(
+        handler.contains("description = \"The operation body raised Conflict\""),
+        "the 409 response must document the declared raise:\n{handler}"
+    );
+    assert!(
+        handler.contains("description = \"The operation body raised NotFound\""),
+        "the 404 response must document the declared raise:\n{handler}"
+    );
+
+    // hurl: the action leg carries the declared parameters as its body and
+    // pins 200 (the body has no 4xx-raising path... its guard DOES raise, so
+    // the deterministic leg is omitted — the live gate drives it).
+    let actions = read(&out.path().join("hurl/12_payroll_pay_run_actions.hurl"));
+    assert!(
+        actions.contains("A lowered `.ddd` statement body (issue #662)"),
+        "a body-carrying entity documents the body plane in its contract:\n{actions}"
+    );
+    assert!(
+        !actions.contains("/actions/apply_pay_run"),
+        "a guard-carrying body has no deterministic expected status, so the \
+         emitted contract must not pin one:\n{actions}"
+    );
+
+    // The router still mounts the route.
+    let router = read(&out.path().join("src/api/payroll/router.rs"));
+    assert!(
+        router.contains("/actions/apply_pay_run\""),
+        "the bodied op's route must mount:\n{router}"
+    );
+}
+
 /// WS4: a service op bound to a refers-linked CHILD entity (`role = "child"`
 /// with parent/parent_ref) emits a NESTED action route under the parent's
 /// router — `POST /api/v1/{dom}/{parent}/{parent_id}/{child}/{child_id}/
@@ -649,6 +774,36 @@ async fn non_common_mox_codelists_are_common_and_deterministic() {
 // phero-driver typechecker already rejects most of the out-of-subset
 // surface before the graph, so the graph-side refusal is defense-in-depth
 // for `.json` actor artifacts.
+
+/// Issue #662: a body construct outside the closed subset is a HARD
+/// pre-generation error naming the op and the construct (the DD9
+/// `query_refusals` posture) — never a 501 seam, never a partially
+/// interpreted handler.
+#[tokio::test]
+async fn unlowerable_body_constructs_fail_validation_naming_the_op() {
+    let source = fixture::payroll_ddd_with_refused_body();
+    let fixture = write_fixture_in("service_ops_body_refusal", &source);
+    let engine = ingest(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let refusal = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_body"
+        })
+        .unwrap_or_else(|| panic!("expected a hard body refusal, got: {issues:?}"));
+    assert!(
+        refusal.message.contains("applyPayRun"),
+        "the refusal must name the op: {refusal:?}"
+    );
+    assert!(
+        refusal
+            .message
+            .contains("binary expression in a value slot"),
+        "the refusal must name the construct: {refusal:?}"
+    );
+}
 
 #[tokio::test]
 async fn dead_surface_warnings_report_protected_and_unbound_ops() {

@@ -15,10 +15,12 @@ use tempfile::TempDir;
 pub const PAY_RUN_SCHEMA: &str = r#"{
   "title": "PayRunType",
   "type": "object",
-  "required": ["payRunId", "payRunStatus"],
+  "required": ["payRunId", "payRunStatus", "total"],
   "properties": {
     "payRunId": { "type": "string" },
-    "payRunStatus": { "type": "string" }
+    "payRunStatus": { "type": "string" },
+    "total": { "type": "integer" },
+    "note": { "type": "string" }
   }
 }"#;
 
@@ -64,6 +66,8 @@ enum PayRunStatus {
 class PayRunType {
     String payRunId
     PayRunStatus payRunStatus
+    int total
+    String [0..1] note
 }
 
 class PayRunLineType {
@@ -112,6 +116,12 @@ application Payroll {
             approve => PayRunRepository.save capability ApprovePayRun;
             boolean notify(String note) capability SubmitPayRun;
             protected String internalAdjust();
+            applyPayRun(int total, String note) throws NotFound, Conflict => PayRunRepository {
+                let run = self.findById("current") else error NotFound("PayRun", "current");
+                guard run.total < 100 else error Conflict("total exceeds the action limit");
+                run.total = total;
+                let saved = self.save(run);
+            }
         }
         entity PayRunLineType scaffold repository PayRunLineRepository {
             findById;
@@ -140,6 +150,17 @@ application Payroll {
     }
 }
 "#;
+
+/// The same design with ONE unlowerable statement body (issue #662): the
+/// `let` initializer uses arithmetic, which the closed body subset refuses.
+/// The run-path validation pass must surface it as a HARD error naming the
+/// op and the construct — never a 501, never a partial interpretation.
+pub fn payroll_ddd_with_refused_body() -> String {
+    PAYROLL_DDD.replace(
+        "                run.total = total;",
+        "                let doubled = run.total * 2;\n                run.total = total;",
+    )
+}
 
 /// Manager holds InspectPayRun unconditionally, plus the CHILD entity's
 /// `AdjustPayRunLine` (unconditional — child grant-`when` typing is
