@@ -2620,20 +2620,23 @@ The findings the gate produced, all worth remembering:
 - **A template-level tenant-predicate break is NOT observable through the
   app**: with `SET LOCAL ROLE app_user` the parent table's FORCE-RLS policies
   already filter to the session org, so removing `AND tenant = $2` from
-  `parent_exists` changes no answer (verified by teeth run). The SQL predicate
-  is belt-and-braces; RLS is the load-bearing fence. Teeth for the gate
-  therefore come from the guards that ARE app-visible (dropping the
-  `max_bytes` check makes the 413 leg fail; the pre-fix `%2F` canonical URI
-  fails leg 1).
+  `parent_exists` changes no answer for a normal parent (verified by teeth
+  run). Two caveats worth knowing: the parent policies still tolerate the
+  zero tenant (a legacy zero-tenant parent row is fenced ONLY by the explicit
+  predicate), and the migration owner has `BYPASSRLS` — so RLS is a fence
+  only while `begin_scoped` installs the bundle. The gate's scope-denial leg
+  (an API key whose scopes exclude the entity must answer 403) is what fails
+  if that bundle is dropped; the other teeth are the app-visible guards
+  (dropping the `max_bytes` check fails the 413 leg; the pre-fix `%2F`
+  canonical URI failed leg 1). Coverage boundaries, stated so nobody reads
+  more into a green run than it proves: the gate drives
+  `upload_mode = "through-app"`, the default org-first key template and the
+  legacy connection pool — the presign-upload route, non-org-first templates
+  and `APP_DATABASE_URL` pool mode are compile-/string-pinned only.
 
-Known gap, pre-#707 (PR #717): org B's OWN reference row naming an object key
-under org A's prefix. Master's `display`/`remove` sign/delete ANY stored key
-(307 / 204-and-A's-bytes-deleted — measured by this gate), so the leg asserts
-the 404 contract only when the emitted route module carries the
-`KEY_PREFIX_FORMAT` guard and otherwise PRINTS the observed leak loudly. When
-#717 lands the strict arm takes over with no test edit.
 
 
+### Child-table tenancy (#700 — the zero-tenant hole)
 
 `platform_organization_id` defaults to zeros and **no writer of a child row
 bound it**: the SeaORM `child_insert_sql`

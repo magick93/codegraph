@@ -24,16 +24,16 @@
 //!   so R2's default `auto` fails signature validation on every request and
 //!   the failure reads as "the store is broken" (Stage 0, issue #695).
 //!
-//! **RustFS** runs as a throwaway container: anonymous `/data` + `/logs`
-//! volumes (the image declares both, so no host bind mount — whose ownership
-//! must be `10001:10001` — is needed), S3 API only (`:9000`; the console is
+//! **RustFS** runs as a throwaway container: an anonymous `/data` volume (the
+//! image declares it, so no host bind mount — whose ownership must be
+//! `10001:10001` — is needed), S3 API only (`:9000`; the console is
 //! opt-in), default credentials `rustfsadmin`/`rustfsadmin`, region
 //! `us-east-1`. The bucket is created by a signed `PUT /{bucket}` (the app
 //! has no bucket-create path by design — #625 OQ2), and that same signed
 //! request IS the preflight: it proves reachability, credentials AND the
 //! region before a single byte of app code runs.
 //!
-//! Needs: `docker` (with `rustfs/rustfs:latest` pulled — the nightly workflow
+//! Needs: `docker` (with the pinned `rustfs/rustfs` image pulled — the nightly workflow
 //! pulls it), `curl` ≥ 8.0 (`--aws-sigv4`), `psql`, and the **Supabase
 //! postgres image** (`public.ecr.aws/supabase/postgres:17.6.1.132`) at
 //! `DATABASE_URL` or via the gate container fallback (#640: a plain
@@ -90,7 +90,11 @@ const ENTITY_PATH: &str = "/api/v1/assets/asset";
 const ROUTE_MODULE: &str = "src/api/assets/media_asset_photo.rs";
 
 /// RustFS: one container, S3 API on 9000, default credentials, `us-east-1`.
-const RUSTFS_IMAGE: &str = "rustfs/rustfs:latest";
+/// Pinned by DIGEST, not a mutable tag: a nightly gate must exercise the
+/// store that was actually validated (the digest below is the image this
+/// lane was written and run against).
+const RUSTFS_IMAGE: &str =
+    "rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a";
 const RUSTFS_ACCESS_KEY: &str = "rustfsadmin";
 const RUSTFS_SECRET_KEY: &str = "rustfsadmin";
 const RUSTFS_REGION: &str = "us-east-1";
@@ -241,8 +245,8 @@ impl RustFs {
         }
         let port = process::free_port();
         let name = format!("ws695-rustfs-{port}");
-        // Anonymous volumes only: the image declares /data + /logs, so a host
-        // bind mount (which must be owned 10001:10001) is unnecessary.
+        // Anonymous volumes only: the image declares /data, so a host bind
+        // mount (which must be owned 10001:10001) is unnecessary.
         docker(&[
             "run",
             "-d",
@@ -616,6 +620,26 @@ async fn create_api_key(target: &PgTarget, org: &str, name: &str) -> String {
         .unwrap_or_else(|| panic!("create_api_key returned no key: {out}"))
 }
 
+/// An API key whose scopes do NOT cover the media entity: the generated
+/// `scope_enforced_*` RESTRICTIVE policies must deny it at the parent gate
+/// (P0403 → 403). This is the leg that fails if the media handlers stop
+/// riding the #169 session bundle (#690's own defect class).
+async fn create_scoped_api_key(target: &PgTarget, org: &str, name: &str, scopes: &str) -> String {
+    let out = psql_query(
+        target,
+        &format!("SELECT public.create_api_key('{org}'::uuid, '{name}', '{scopes}'::jsonb)::text;"),
+    )
+    .await
+    .expect("create_api_key (scoped)");
+    let value: Value = serde_json::from_str(out.trim())
+        .unwrap_or_else(|e| panic!("create_api_key returned non-JSON ({e}): {out}"));
+    value
+        .get("key")
+        .and_then(|k| k.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| panic!("create_api_key returned no key: {out}"))
+}
+
 // ── The gate ────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -717,7 +741,17 @@ async fn media_plane_end_to_end_over_rustfs() {
     let base = format!("http://127.0.0.1:{}", server.port);
     println!("gate: app booted on {base}");
 
-    run_legs(&base, &target, &rustfs, &key_a, &key_b).await;
+    // #690's own defect class, as an app-visible tooth: a key whose scopes
+    // exclude the entity must be denied AT THE PARENT GATE. If the handlers
+    // ever stop riding the #169 session bundle, this leg is what notices.
+    let key_scoped_out = create_scoped_api_key(
+        &target,
+        ORG_A,
+        "scoped-out",
+        r#"[{"entity_type": "not_asset", "entity_id": "*", "action": "*"}]"#,
+    )
+    .await;
+    run_legs(&base, &target, &rustfs, &key_a, &key_b, &key_scoped_out).await;
 
     // ── Cleanup (explicit; ScratchDb/RustFs also guard the panic path) ──
     drop(server);
@@ -737,7 +771,14 @@ async fn media_plane_end_to_end_over_rustfs() {
 }
 
 /// The legs. Kept out of the test body so setup/teardown stay readable.
-async fn run_legs(base: &str, target: &PgTarget, rustfs: &RustFs, key_a: &str, key_b: &str) {
+async fn run_legs(
+    base: &str,
+    target: &PgTarget,
+    rustfs: &RustFs,
+    key_a: &str,
+    key_b: &str,
+    key_scoped_out: &str,
+) {
     // Payloads: distinct bytes so "the object is the NEW bytes" is provable.
     let payload_a = b"\x89PNG\r\n\x1a\nmedia-runtime gate payload A".to_vec();
     let payload_b = b"\x89PNG\r\n\x1a\nmedia-runtime gate payload B (overwrite)".to_vec();
@@ -1041,4 +1082,43 @@ async fn run_legs(base: &str, target: &PgTarget, rustfs: &RustFs, key_a: &str, k
     assert_eq!(status, 200);
     assert_eq!(bytes, payload_a, "413/415 must not rewrite the object");
     println!("leg 6 413/415: correct statuses + error envelopes; nothing written");
+
+    // ── LEG 7 — the session bundle itself (#690's defect class) ─────────
+    //
+    // An API key scoped to a DIFFERENT entity must be refused at the parent
+    // gate by the generated RESTRICTIVE `scope_enforced_*` policies (P0403 →
+    // 403). This is the only leg that observes `begin_scoped`/`SET LOCAL ROLE
+    // app_user`: every other leg is reproduced by the explicit `AND tenant =
+    // $2` predicates alone, so a handler that stopped riding the bundle would
+    // still pass them — exactly the hole #690 was opened for.
+    let r = upload(
+        base,
+        PARENT_A,
+        key_scoped_out,
+        &file_a,
+        "image/png",
+        "scoped-upload",
+    );
+    assert_eq!(
+        r.status,
+        403,
+        "an out-of-scope key must be refused by the parent gate (403), not served: {}",
+        r.text()
+    );
+    let r = display(base, PARENT_A, key_scoped_out, "scoped-display");
+    assert_eq!(r.status, 403, "display is scope-gated too: {}", r.text());
+    let r = remove(base, PARENT_A, key_scoped_out, "scoped-remove");
+    assert_eq!(r.status, 403, "remove is scope-gated too: {}", r.text());
+    // All three were refused BEFORE any work: org A's row and object are
+    // exactly as leg 1..6 left them.
+    let rows = media_rows(target, PARENT_A).await;
+    assert_rows(
+        &rows,
+        &format!("1|{key_a_obj}|image/png|{ORG_A}"),
+        "the denied calls must not touch the stored reference",
+    );
+    let (status, bytes) = rustfs.get_object(&key_a_obj).expect("bucket read");
+    assert_eq!(status, 200, "org A's object survives the denied calls");
+    assert_eq!(bytes, payload_a, "org A's bytes are unchanged");
+    println!("leg 7 scope denial: upload/display/remove 403; row + object intact");
 }
