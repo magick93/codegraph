@@ -250,14 +250,19 @@ mod tests {
     #[test]
     fn ensure_port_available_free_port() {
         let dir = tempfile::tempdir().unwrap();
-        let port = {
-            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-            listener.local_addr().unwrap().port()
-        };
-        assert_eq!(
-            ensure_port_available(dir.path(), port, false).unwrap(),
-            PortOutcome::Free
-        );
+        // Same release→recheck race as `ensure_port_free_accepts_a_free_port`
+        // (issue #687): a parallel test binary can take the ephemeral port
+        // between the drop and the probe, so retry until one survives.
+        for _ in 0..20 {
+            let port = {
+                let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                listener.local_addr().unwrap().port()
+            };
+            if ensure_port_available(dir.path(), port, false).unwrap() == PortOutcome::Free {
+                return;
+            }
+        }
+        panic!("no free port found for the check");
     }
 
     #[test]
