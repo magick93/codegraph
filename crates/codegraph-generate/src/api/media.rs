@@ -90,6 +90,9 @@ impl EntityGenerator for MediaRouteGenerator {
         let Some(media_cfg) = entry.media.as_ref() else {
             return Ok(Vec::new());
         };
+        // Schema source (issue #702): `postgres_schema` is the grants/RLS
+        // plane's spelling, but the DDL keys tables off the DOMAIN name — a
+        // divergence here is silent today (nothing cross-checks the two).
         let postgres_schema = entry.postgres_schema.clone();
         let titles = [schema_title.to_string()];
         let media_plan = plan::build_media_plan_for_domain(

@@ -9,21 +9,24 @@
 //! object keys render from the domain's key template (R7 — overwrite in
 //! place, org-scoped from the session bundle).
 //!
-//! Issue #690: every handler opens ONE transaction carrying the #169
-//! session bundle (`set_config(..., true)` + `SET LOCAL ROLE app_user`) and
-//! resolves the owning {{ entity_name }} row under the session organization
-//! BEFORE any storage or child-row work. A foreign or missing parent id is
-//! a 404 — never a 403 (the cross-tenant convention) — and that parent gate
-//! runs BEFORE the storage-slot capability check, so the answer is the same
-//! on a deployment with no provider configured. Parent and child tables are
-//! schema-qualified (`app_user`'s search_path is `public, extensions`) and
-//! every child statement carries the tenant predicate; ids travel as bound
-//! parameters, never as SQL string literals. A GLOBAL owning table (the DDL's
-//! own tenancy rule) is deliberately unscoped — every organization may see a
-//! global row by definition; the const below says which case applies.
-//! `upload` deliberately holds the scoped transaction across the provider
-//! `put` so a foreign parent can never leave bytes behind; the hold is
-//! bounded by the configured `max_bytes`.
+//! Issue #690: every handler opens a transaction carrying the #169 session
+//! bundle (`set_config(..., true)` + `SET LOCAL ROLE app_user`) and resolves
+//! the owning {{ entity_name }} row under the session organization BEFORE any
+//! storage or child-row work. A foreign or missing parent id is a 404 —
+//! never a 403 (the cross-tenant convention) — and that parent gate runs
+//! BEFORE the storage-slot capability check, so the answer is the same on a
+//! deployment with no provider configured. Parent and child tables are
+//! schema-qualified (`app_user`'s search_path is `public, extensions`); ids
+//! travel as bound parameters, never as SQL string literals. A GLOBAL owning
+//! table (the DDL's own tenancy rule) is deliberately unscoped — every
+//! organization may see a global row by definition; the const below says
+//! which case applies.
+//! `upload` uses TWO short transactions — the gate is re-run on the second
+//! (the FK is the backstop if the parent vanished between them) — so the
+//! multipart body read and the provider `put` hold no pooled connection.
+//! Child predicates tolerate the legacy zeros tenant (issue #700): the parent
+//! gate has already proven ownership, so the zeros branch can only expose
+//! rows under a parent the caller owns.
 use axum::{
     extract::{Extension, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
@@ -47,17 +50,32 @@ const ACCEPTED_MIME_TYPES: &[&str] = &[
 /// domain's Postgres schema, while `app_user`'s search_path is
 /// `public, extensions` — an unqualified name is not the table the DDL
 /// created (every media statement used to 500 on a non-public schema).
+/// Schema source is `postgres_schema` (the grants/RLS plane); the DDL keys
+/// tables off the domain name — the divergence is silent today (issue #702).
 const PARENT_TABLE: &str = "{{ schema }}.{{ entity_snake }}";
 /// The contained-value child table (the media reference), schema-qualified.
 const CHILD_TABLE: &str = "{{ schema }}.{{ child_table }}";
-/// The owning table's tenancy column, resolved through the DDL's own rule
-/// (`is_global_entity`) so the gate and the created table cannot disagree.
+/// The owning table's tenancy column, resolved through `is_global_entity` —
+/// the tenancy rule is currently THREE separate copies (`db/entity.rs`,
+/// `db/ddl/query.rs`, `persistence.rs`) that MUST move together; unifying
+/// them is issue #700. A `None` value means a GLOBAL owning table.
 {% if parent_tenant_column %}const PARENT_TENANT_COLUMN: Option<&str> = Some("{{ parent_tenant_column }}");
 {% else %}/// `None` only for a GLOBAL owning table: such a table is visible to every
 /// organization by definition, so the parent gate and the child statements
 /// are deliberately unscoped.
 const PARENT_TENANT_COLUMN: Option<&str> = None;
 {% endif %}
+{% if parent_tenant_column %}/// The "unassigned tenant" sentinel the DDL defaults `platform_organization_id`
+/// to. The CRUD child-table writer (`ddd/repository_emitter/child.rs::
+/// child_insert_sql`) still omits the tenant column, so every reference row it
+/// writes — the presigned-mode path included — carries zeros; the child tables
+/// get the same org-isolation RLS, whose predicate accepts zeros. Child
+/// statements therefore tolerate the zeros tenant UNDER A PARENT THE GATE HAS
+/// ALREADY PROVEN the caller owns; issue #700 fixes the writer class-wide
+/// (trigger + backfill) and this branch then goes away.
+const LEGACY_ZERO_TENANT: &str = "00000000-0000-0000-0000-000000000000";
+{% endif %}
+
 /// The domain's key template lowered to a Rust format string (R7): `org`
 /// and `id` are the runtime slots, everything else is baked.
 fn render_key(org: &str, id: Uuid) -> String {
@@ -87,15 +105,40 @@ fn storage_unavailable() -> AppError {
     }
 }
 
+/// Classify a database error exactly the way `errors::{{ domain | pascal_case }}Error::from_repo_err`
+/// does (#169): the RESTRICTIVE `scope_enforced_*` policies raise P0403 with
+/// an INSUFFICIENT_SCOPE / ROLE_FORBIDDEN payload, and org-isolation writes
+/// surface Postgres' canonical "violates row-level security policy" text.
+/// Those are authorization denials → 403 (never a 500, and never with the raw
+/// DB text echoed as the outcome); everything else stays internal.
+fn db_err(context: &str, e: sea_orm::DbErr) -> AppError {
+    let msg = e.to_string();
+    if msg.contains("INSUFFICIENT_SCOPE")
+        || msg.contains("ROLE_FORBIDDEN")
+        || msg.contains("violates row-level security policy")
+    {
+        AppError::forbidden(format!("{context}: {msg}"))
+    } else {
+        AppError::internal(format!("{context}: {msg}"))
+    }
+}
+
 /// Resolve the owning row under the #169 session bundle: open a
 /// transaction, install the session context, and require the parent to
 /// exist AND belong to the session organization. A miss is 404 — never 403:
-/// a foreign id must be indistinguishable from a missing one.
+/// a foreign id must be indistinguishable from a missing one. A nil session
+/// organization is 404 too — it would otherwise match the legacy zeros
+/// tenant branch in the child predicates.
 async fn scoped_tx(
     state: &AppState,
     api_key_info: &ApiKeyInfo,
     id: Uuid,
 ) -> Result<DatabaseTransaction, AppError> {
+    if api_key_info.organization_id.is_nil() {
+        return Err(AppError::not_found(format!(
+            "{{ entity_name }} {id} not found"
+        )));
+    }
     let tx = crate::media::session::begin_scoped(
         &state.db,
         api_key_info.api_key_id,
@@ -104,7 +147,7 @@ async fn scoped_tx(
         &api_key_info.role,
     )
     .await
-    .map_err(|e| AppError::internal(format!("failed to open the media session: {e}")))?;
+    .map_err(|e| db_err("failed to open the media session", e))?;
     let exists = crate::media::session::parent_exists(
         &tx,
         PARENT_TABLE,
@@ -113,7 +156,7 @@ async fn scoped_tx(
         api_key_info.organization_id,
     )
     .await
-    .map_err(|e| AppError::internal(format!("failed to resolve the media parent: {e}")))?;
+    .map_err(|e| db_err("failed to resolve the media parent", e))?;
     if !exists {
         return Err(AppError::not_found(format!(
             "{{ entity_name }} {id} not found"
@@ -123,6 +166,14 @@ async fn scoped_tx(
 }
 
 {% if mode_presigned %}
+/// The presign request body. `request_body = PresignRequest` needs the
+/// utoipa schema derive; the presigned branch had no compile pin, so it
+/// shipped without it.
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
+pub struct PresignRequest {
+    pub mime_type: String,
+}
+
 /// Presign issuance (issue #625 PR-C): the app mints a short-lived PUT; the
 /// browser uploads DIRECTLY to the provider (no byte hop through the app);
 /// the reference is persisted afterwards through the normal update path.
@@ -137,15 +188,11 @@ async fn scoped_tx(
     request_body = PresignRequest,
     responses(
         (status = 200, description = "Presigned upload URL"),
+        (status = 404, description = "The owning record does not exist in this organization"),
         (status = 415, description = "Mime type not accepted"),
         (status = 503, description = "Media storage not configured"),
     )
 )]
-#[derive(Debug, serde::Deserialize)]
-pub struct PresignRequest {
-    pub mime_type: String,
-}
-
 #[tracing::instrument(skip(state, _headers, api_key_info, body), fields(domain = "{{ domain }}", entity = "{{ entity_module }}"))]
 pub async fn presign(
     State(state): State<AppState>,
@@ -187,7 +234,7 @@ pub async fn presign(
 {% else %}
 /// Through-app upload (issue #625 PR-C): bytes flow through the generated
 /// route; the app authorizes (middleware + the session-bundle parent gate)
-/// and writes the CHILD row on the same transaction.
+/// and writes the CHILD row on a second, short scoped transaction.
 #[utoipa::path(
     put,
     path = "/api/{version}/{{ domain }}/{{ entity_snake }}/{id}/{{ media_field_name }}",
@@ -198,6 +245,7 @@ pub async fn presign(
     ),
     responses(
         (status = 200, description = "Uploaded; the reference row is persisted"),
+        (status = 404, description = "The owning record does not exist in this organization"),
         (status = 413, description = "File exceeds max_bytes"),
         (status = 415, description = "Mime type not accepted"),
         (status = 503, description = "Media storage not configured"),
@@ -212,9 +260,12 @@ pub async fn upload(
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let _ = headers;
-    // The tenant/ownership gate runs BEFORE the storage-slot availability
-    // check: a foreign id must 404 even where no provider is configured.
-    let tx = scoped_tx(&state, &api_key_info, id).await?;
+    // Transaction 1 (SHORT): the tenant/ownership gate runs BEFORE the
+    // storage-slot check and BEFORE any byte is read — a foreign id must 404
+    // even where no provider is configured, and it must not cost a body read.
+    {
+        let _gate = scoped_tx(&state, &api_key_info, id).await?;
+    }
     let storage = state
         .{{ domain }}_media_storage
         .as_ref()
@@ -251,12 +302,21 @@ pub async fn upload(
         .await
         .map_err(|e| AppError::internal(format!("media upload failed: {e}")))?;
 
+    // Transaction 2 (SHORT): RE-RUN the gate — the parent may have vanished
+    // while the body was read and the object written; the child FK is the
+    // backstop. A miss here 404s and leaves the just-written object for the
+    // `testkit storage --gc` sweep. Both transactions are short: no pooled
+    // connection is held across the body read or the provider round trip.
+    let tx = scoped_tx(&state, &api_key_info, id).await?;
+
     // Overwrite-in-place semantics: one reference row per (parent, field) —
     // replace any existing row on the SAME transaction that installed the
-    // session bundle. Every value is a bound parameter.
+    // session bundle. The DELETE also clears a legacy zeros-tenant row left
+    // by the CRUD child writer (#700); the INSERT always writes the real
+    // session organization. Every value is a bound parameter.
     let delete = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
+        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -264,7 +324,7 @@ pub async fn upload(
     );
     tx.execute_raw(delete)
         .await
-        .map_err(|e| AppError::internal(format!("failed to clear the media reference: {e}")))?;
+        .map_err(|e| db_err("failed to clear the media reference", e))?;
     let insert = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         format!("INSERT INTO {CHILD_TABLE} ({{ parent_fk_column }}{% if parent_tenant_column %}, {{ parent_tenant_column }}{% endif %}, {{ url_column }}, {{ mime_column }}) VALUES ($1{% if parent_tenant_column %}, $2, $3, $4{% else %}, $2, $3{% endif %})"),
@@ -277,10 +337,10 @@ pub async fn upload(
     );
     tx.execute_raw(insert)
         .await
-        .map_err(|e| AppError::internal(format!("failed to persist media reference: {e}")))?;
+        .map_err(|e| db_err("failed to persist media reference", e))?;
     tx.commit()
         .await
-        .map_err(|e| AppError::internal(format!("failed to commit the media reference: {e}")))?;
+        .map_err(|e| db_err("failed to commit the media reference", e))?;
 
     Ok(Json(serde_json::json!({
         "key": stored.key,
@@ -321,7 +381,7 @@ pub async fn display(
     let tx = scoped_tx(&state, &api_key_info, id).await?;
     let select = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %} ORDER BY id DESC LIMIT 1"),
+        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %} ORDER BY id DESC LIMIT 1"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -330,13 +390,13 @@ pub async fn display(
     let row = tx
         .query_one_raw(select)
         .await
-        .map_err(|e| AppError::internal(format!("failed to load media reference: {e}")))?;
+        .map_err(|e| db_err("failed to load media reference", e))?;
     // Release the transaction before the provider round trip: the
     // transaction-local session context is no longer needed and the read is
     // complete.
     tx.commit()
         .await
-        .map_err(|e| AppError::internal(format!("failed to close the media session: {e}")))?;
+        .map_err(|e| db_err("failed to close the media session", e))?;
     let storage = state
         .{{ domain }}_media_storage
         .as_ref()
@@ -392,7 +452,7 @@ pub async fn remove(
         .ok_or_else(storage_unavailable)?;
     let select = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
+        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -401,7 +461,7 @@ pub async fn remove(
     let row = tx
         .query_one_raw(select)
         .await
-        .map_err(|e| AppError::internal(format!("failed to load media reference: {e}")))?;
+        .map_err(|e| db_err("failed to load media reference", e))?;
     let key = row
         .and_then(|r| r.try_get::<String>("", "url").ok())
         .filter(|k| !k.is_empty())
@@ -410,7 +470,7 @@ pub async fn remove(
         })?;
     let delete = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
+        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -418,10 +478,10 @@ pub async fn remove(
     );
     tx.execute_raw(delete)
         .await
-        .map_err(|e| AppError::internal(format!("failed to remove media reference: {e}")))?;
+        .map_err(|e| db_err("failed to remove media reference", e))?;
     tx.commit()
         .await
-        .map_err(|e| AppError::internal(format!("failed to commit the media removal: {e}")))?;
+        .map_err(|e| db_err("failed to commit the media removal", e))?;
     // Best-effort byte removal AFTER the row commit: an orphaned object is
     // collected by the `testkit storage --gc` sweep.
     let _ = storage.delete(&key).await;

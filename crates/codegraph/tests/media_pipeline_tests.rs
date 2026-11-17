@@ -530,6 +530,244 @@ async fn media_module_doc_claim_matches_the_emitted_code() {
         module.contains("crate::media::session::begin_scoped"),
         "the documented contract must be the implemented one:\n{module}"
     );
+    // The round-2 claims: two short upload transactions, the legacy zeros
+    // tolerance, and the #700 reference that retires it.
+    for claim in ["TWO short transactions", "legacy zeros tenant", "#700"] {
+        assert!(doc.contains(claim), "the doc must state `{claim}`:\n{doc}");
+    }
+}
+
+// ── Issue #690 round 2 — reviewer findings ─────────────────────────────
+
+/// The CRUD child-table writer (`child_insert_sql`) omits the tenant column,
+/// so every reference row it persists (the presigned-mode path included)
+/// carries the DDL's zero default. Child statements must tolerate that
+/// legacy tenant UNDER an already-proven parent — and must never filter on
+/// the parent FK alone.
+#[tokio::test]
+async fn media_child_statements_tolerate_the_legacy_zero_tenant() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module
+            .contains("const LEGACY_ZERO_TENANT: &str = \"00000000-0000-0000-0000-000000000000\";"),
+        "the zeros sentinel is named once:\n{module}"
+    );
+    // Upload DELETE, display SELECT, remove SELECT, remove DELETE.
+    assert_eq!(
+        module
+            .matches(
+                "platform_organization_id = $2 OR platform_organization_id = \
+                 '{LEGACY_ZERO_TENANT}'::uuid"
+            )
+            .count(),
+        4,
+        "all four child statements tolerate the legacy zeros tenant:\n{module}"
+    );
+    // No child statement filters on the parent FK alone.
+    assert_eq!(
+        module.matches("WHERE person_id = $1 AND (").count(),
+        4,
+        "every child WHERE keeps the tenant predicate:\n{module}"
+    );
+    // #700 is the named retirement path.
+    assert!(
+        module.contains("#700"),
+        "the zeros branch names the issue that retires it:\n{module}"
+    );
+    // The tenancy rule is three copies that must move together (not "one
+    // rule the gate and the table cannot disagree about"), and the schema
+    // source divergence is #702.
+    for copy in ["db/entity.rs", "db/ddl/query.rs", "persistence.rs"] {
+        assert!(
+            module.contains(copy),
+            "the const doc names `{copy}` as a copy that must move together:\n{module}"
+        );
+    }
+    assert!(
+        !module.contains("cannot disagree"),
+        "the old overclaim is gone:\n{module}"
+    );
+    assert!(
+        module.contains("#702"),
+        "the schema-source divergence names its issue:\n{module}"
+    );
+}
+
+/// The upload handler must not hold a pooled connection across the multipart
+/// body read and the provider PUT: a short gate transaction, the network
+/// work, then a second short scoped transaction that RE-RUNS the gate and
+/// writes the row.
+#[tokio::test]
+async fn media_upload_uses_two_short_scoped_transactions() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    // upload has 2, display 1, remove 1.
+    assert_eq!(
+        module
+            .matches("scoped_tx(&state, &api_key_info, id)")
+            .count(),
+        4,
+        "upload opens TWO scoped transactions (gate + write):\n{module}"
+    );
+
+    let start = media_route_module_key(module, "pub async fn upload(");
+    let body = &module[start..];
+    let first_gate = body
+        .find("scoped_tx(&state, &api_key_info, id)")
+        .expect("first gate");
+    let next_field = body.find("next_field").expect("body read");
+    let put = body.find(".put(").expect("provider put");
+    let second_gate = body[first_gate + 1..]
+        .find("scoped_tx(&state, &api_key_info, id)")
+        .expect("second gate")
+        + first_gate
+        + 1;
+    let delete = body.find("let delete = Statement::").expect("row write");
+    assert!(
+        first_gate < next_field && next_field < put && put < second_gate && second_gate < delete,
+        "gate -> body/provider work -> re-gate -> row write:\n{body}"
+    );
+}
+
+/// DB-tier denials (the RESTRICTIVE `scope_enforced_*` P0403 payloads and
+/// org-isolation write violations) are authorization failures: 403, never a
+/// 500 with the DB text echoed. Mirrors `errors.tera::from_repo_err`.
+#[tokio::test]
+async fn media_db_denials_map_to_forbidden_not_internal() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(module.contains("fn db_err("), "{module}");
+    for marker in [
+        "INSUFFICIENT_SCOPE",
+        "ROLE_FORBIDDEN",
+        "violates row-level security policy",
+    ] {
+        assert!(
+            module.contains(marker),
+            "the classifier names `{marker}`:\n{module}"
+        );
+    }
+    assert!(
+        module.contains("AppError::forbidden("),
+        "denials map to 403:\n{module}"
+    );
+    // Every DB map_err goes through the classifier (storage/multipart errors
+    // keep their own envelopes).
+    assert!(
+        !module.contains("AppError::internal(format!(\"failed to"),
+        "no DB failure bypasses db_err:\n{module}"
+    );
+}
+
+/// The INSERT's bound-value ORDER is part of the contract: swapping the org
+/// bind for the user id would keep every other pin green.
+#[tokio::test]
+async fn media_upload_insert_binds_the_tenant_second() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    let start = media_route_module_key(module, "let insert = Statement::from_sql_and_values(");
+    let rest = &module[start..];
+    let end = rest.find("\n    );").expect("insert statement end") + start;
+    let insert = &module[start..end];
+    assert!(
+        insert.contains("VALUES ($1, $2, $3, $4)"),
+        "tenant-scoped INSERT arity:\n{insert}"
+    );
+    assert!(
+        insert.contains("(person_id, platform_organization_id, url, mime_type)"),
+        "the INSERT names the inherited tenant column:\n{insert}"
+    );
+    let mut cursor = 0;
+    for (idx, needle) in [
+        "Value::from(id)",
+        "Value::from(api_key_info.organization_id)",
+        "Value::from(stored.key.clone())",
+        "Value::from(mime_type.clone())",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let pos = insert[cursor..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("bind {idx} (`{needle}`) missing:\n{insert}"))
+            + cursor;
+        cursor = pos + needle.len();
+    }
+}
+
+/// A GLOBAL owning table renders the unscoped variant — the branch had no
+/// render pin at all, so a typo in the template's `{% else %}` shipped
+/// silently. Rendered directly so no graph fixture is needed.
+#[tokio::test]
+async fn global_parent_media_route_renders_the_unscoped_variant() {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let project = ProjectConfig::default();
+    let ctx = serde_json::json!({
+        "entity_name": "OrgType",
+        "entity_snake": "org",
+        "entity_module": "core_org",
+        "domain": "core",
+        "media_field_name": "logo",
+        "media_accept": ["image/png"],
+        "schema": "core",
+        "child_table": "org_logo",
+        "parent_fk_column": "org_id",
+        "parent_tenant_column": serde_json::Value::Null,
+        "url_column": "url",
+        "mime_column": "mime_type",
+        "mode_presigned": false,
+        "max_bytes": 5242880u64,
+        "key_format": "{org}/core/org/{id}/logo",
+        "display_ttl_secs": 300u64,
+        "presign_ttl_secs": 900u64,
+    });
+    let rendered = codegraph_generate::render_template_with_project(
+        &tera,
+        "api/media_route.tera",
+        &ctx,
+        &project,
+    )
+    .expect("global-parent render");
+
+    assert!(
+        rendered.contains("const PARENT_TENANT_COLUMN: Option<&str> = None;"),
+        "the global branch declares None:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("GLOBAL owning table") && rendered.contains("deliberately unscoped"),
+        "the unscoped variant carries its safety comment:\n{rendered}"
+    );
+    // No tenant predicate and no zeros branch on a global parent.
+    assert!(
+        !rendered.contains("platform_organization_id"),
+        "a global parent emits no tenant column at all:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("LEGACY_ZERO_TENANT"),
+        "the zeros tolerance is tenant-scoped only:\n{rendered}"
+    );
+    // The gate still runs, with the None tenancy.
+    assert!(
+        rendered.contains("PARENT_TENANT_COLUMN,"),
+        "the parent gate passes None:\n{rendered}"
+    );
 }
 
 // ── PR-B AppState wiring (#630) ─────────────────────────────────────────
