@@ -16,9 +16,18 @@
 //!   extracted VERBATIM into a scratch binary and EXECUTED against the
 //!   AWS-published S3 GET example (the #518 event-signature precedent) —
 //!   string pins cannot prove a signature algorithm.
+//! - **route-handler leg** (issue #683 part b): `templates/api/
+//!   media_route.tera` — the plane where #686's three defects lived
+//!   (missing `sea_orm::ConnectionTrait`, the wrong sea-orm 2 statement
+//!   API, the bin-crate module declaration) — compiles in isolation
+//!   against the REAL storage trait + `scaffold/error.tera`. Only the two
+//!   trivial AppState/middleware slots are hand-stubbed.
 //!
 //! Teeth are validated per repo discipline (à la #550): break the trait
 //! signature in `templates/media/mod.tera`, this pin must fail; revert.
+//! The route-handler pin's teeth were validated the same way (delete the
+//! `ConnectionTrait` import from the emitted module in the scratch tree →
+//! `cargo check` fails with the #686 class error; revert).
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -30,7 +39,7 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
 use codegraph_generate::ProjectConfig;
 use codegraph_generate::media::MediaStorageGenerator;
-use codegraph_generate::traits::GlobalGenerator;
+use codegraph_generate::traits::{EntityGenerator, GlobalGenerator};
 use codegraph_grafeo::GrafeoEngine;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -220,17 +229,17 @@ fn scratch_target_dir() -> std::path::PathBuf {
     std::env::temp_dir().join("codegraph-media-pin-target")
 }
 
-/// Write a scratch crate and run `cargo` in it.
-fn run_cargo(
+/// Write a scratch crate from an arbitrary (relative path, content) tree and
+/// run `cargo` in it. The media-plane pins use `run_cargo` below; the
+/// route-handler pin needs the app-side module layout instead.
+fn run_cargo_tree(
     name: &str,
     deps: &str,
-    media_files: &BTreeMap<String, String>,
-    extra_src: Option<(&str, &str)>,
+    files: &[(String, String)],
     args: &[&str],
 ) -> (bool, String, String) {
     let scratch = tempfile::tempdir().expect("scratch crate dir");
     let root = scratch.path();
-    fs::create_dir_all(root.join("src").join("media")).expect("src/media");
     fs::write(
         root.join("Cargo.toml"),
         format!(
@@ -238,18 +247,10 @@ fn run_cargo(
         ),
     )
     .expect("scratch Cargo.toml");
-    fs::write(root.join("src").join("lib.rs"), "pub mod media;\n").expect("lib.rs");
-    for (stem, content) in media_files {
-        fs::write(
-            root.join("src").join("media").join(format!("{stem}.rs")),
-            content,
-        )
-        .expect("media module");
-    }
-    if let Some((path, content)) = extra_src {
+    for (path, content) in files {
         let full = root.join(path);
         fs::create_dir_all(full.parent().expect("parent")).expect("src dir");
-        fs::write(full, content).expect("extra source");
+        fs::write(&full, content).expect("scratch source");
     }
     let out = Command::new("cargo")
         .current_dir(root)
@@ -262,6 +263,24 @@ fn run_cargo(
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
     )
+}
+
+/// Write a scratch crate and run `cargo` in it.
+fn run_cargo(
+    name: &str,
+    deps: &str,
+    media_files: &BTreeMap<String, String>,
+    extra_src: Option<(&str, &str)>,
+    args: &[&str],
+) -> (bool, String, String) {
+    let mut files = vec![("src/lib.rs".to_string(), "pub mod media;\n".to_string())];
+    for (stem, content) in media_files {
+        files.push((format!("src/media/{stem}.rs"), content.clone()));
+    }
+    if let Some((path, content)) = extra_src {
+        files.push((path.to_string(), content.to_string()));
+    }
+    run_cargo_tree(name, deps, &files, args)
 }
 
 const CORE_DEPS: &str = "async-trait = \"0.1\"\nthiserror = \"2\"";
@@ -486,5 +505,154 @@ async fn emitted_plane_carries_the_full_trait_contract() {
     assert!(
         http_rs.contains("target_arch = \"wasm32\""),
         "native transport stays cfg-gated — the wasm leg links the plane bare"
+    );
+}
+
+// ── Route-handler pin (issue #683 part b) ──────────────────────────────
+
+/// PIN STUB (issue #683): the emitted route handler reaches exactly two
+/// AppState slots — the DB pool and the domain media slot. The real module
+/// is `scaffold/app_state.tera`; the rest of that struct is not this
+/// plane's business, so the pin carries only what the handler type-checks
+/// against.
+const PIN_APP_STATE_RS: &str = r#"//! PIN STUB (issue #683) — see scaffold/app_state.tera for the real module.
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: sea_orm::DatabaseConnection,
+    pub core_media_storage: Option<std::sync::Arc<dyn crate::media::MediaStorage>>,
+}
+"#;
+
+/// PIN STUB (issue #683): the auth extension object the handler reads the
+/// org scope from. The real module is `scaffold/middleware.tera`.
+const PIN_MIDDLEWARE_RS: &str = r#"//! PIN STUB (issue #683) — see scaffold/middleware.tera for the real module.
+
+#[derive(Clone)]
+pub struct ApiKeyInfo {
+    pub organization_id: uuid::Uuid,
+}
+"#;
+
+/// The app-side module tree the emitted files expect: the media plane, the
+/// error envelope, the two pin stubs, and the route module under
+/// `api::{domain}::…`.
+const PIN_LIB_RS: &str = r#"pub mod api {
+    pub mod core {
+        pub mod media_person_avatar;
+    }
+}
+pub mod app_state;
+pub mod error;
+pub mod media;
+pub mod middleware;
+"#;
+
+/// #551 pin for the media ROUTE handler (issue #683 part b): the #686
+/// defects (missing `sea_orm::ConnectionTrait`, the pre-2.0 statement API)
+/// lived in `templates/api/media_route.tera`, which no PR-CI pin compiled —
+/// only the nightly gate booted the app. This pin renders the through-app
+/// r2 module, the REAL storage plane (never a stub trait), and the REAL
+/// error envelope, then `cargo check`s them together.
+///
+/// Scope note: the third #686 defect (the bin crate re-declaring `mod
+/// media;`) lives in `scaffold/main.tera`, not this plane — it stays with
+/// the nightly gate's T0 boot. This pin adds a `lib` root only.
+///
+/// Teeth (validated manually, the #550 discipline): deleting the
+/// `ConnectionTrait` import from the emitted module in the scratch tree
+/// makes this pin fail with "no method named `execute_raw`" — the exact
+/// #686 class. Reverted; see the test file header.
+#[tokio::test]
+async fn emitted_media_route_handler_compiles_in_isolation() {
+    let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])
+        .expect("template engine");
+    let project = ProjectConfig::default();
+    let out = tempfile::tempdir().expect("emission dir");
+    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
+    let routes = generator
+        .generate(&engine, "PersonType", "core", &config, &tera, &project)
+        .await
+        .expect("media route generation");
+    assert_eq!(
+        routes.len(),
+        1,
+        "one route module per media field (through-app r2)"
+    );
+    let route_path = routes[0].path.to_string_lossy().to_string();
+    assert!(
+        route_path.ends_with("src/api/core/media_person_avatar.rs"),
+        "route module path: {route_path}"
+    );
+    let route_rs = routes[0].content.clone();
+
+    // Fail-fast presence guard (the same pattern as
+    // `emitted_plane_carries_the_full_trait_contract`): template drift must
+    // fail BEFORE the cargo run.
+    for needle in [
+        "pub async fn upload",
+        "pub async fn display",
+        "pub async fn remove",
+        "crate::app_state::AppState",
+        "crate::error::AppError",
+        "crate::middleware::ApiKeyInfo",
+        // The #686 class itself: the sea-orm 2 trait method pair needs the
+        // trait in scope, and the pre-2.0 `execute`/`query_one` shapes do
+        // not accept a bound Statement.
+        "use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};",
+        "execute_raw",
+        "query_one_raw",
+    ] {
+        assert!(
+            route_rs.contains(needle),
+            "emitted media route module missing `{needle}`:\n{route_rs}"
+        );
+    }
+
+    // The real storage plane (trait + noop + native transport + r2 adapter)
+    // and the real error envelope — only AppState/middleware are stubbed.
+    let media_files = emit_media_plane(&config).await;
+    let empty: BTreeMap<String, String> = BTreeMap::new();
+    let error_rs = codegraph_generate::render_template_with_project(
+        &tera,
+        "scaffold/error.tera",
+        &empty,
+        &project,
+    )
+    .expect("scaffold/error.tera");
+
+    let mut files: Vec<(String, String)> = vec![
+        ("src/lib.rs".to_string(), PIN_LIB_RS.to_string()),
+        ("src/app_state.rs".to_string(), PIN_APP_STATE_RS.to_string()),
+        (
+            "src/middleware.rs".to_string(),
+            PIN_MIDDLEWARE_RS.to_string(),
+        ),
+        ("src/error.rs".to_string(), error_rs),
+        ("src/api/core/media_person_avatar.rs".to_string(), route_rs),
+    ];
+    for (stem, content) in &media_files {
+        files.push((format!("src/media/{stem}.rs"), content.clone()));
+    }
+
+    let deps = format!(
+        "{CORE_DEPS}\n{SIG_DEPS}\n\
+         serde_json = \"1\"\n\
+         serde = {{ version = \"1\", features = [\"derive\"] }}\n\
+         axum = {{ version = \"0.8\", features = [\"multipart\", \"macros\"] }}\n\
+         sea-orm = {{ version = \"2\", features = [\"sqlx-postgres\", \"runtime-tokio-rustls\"] }}\n\
+         uuid = {{ version = \"1\", features = [\"v4\", \"serde\"] }}\n\
+         tokio = {{ version = \"1\", features = [\"full\"] }}\n\
+         tracing = \"0.1\"\n\
+         utoipa = {{ version = \"6\", features = [\"axum_extras\", \"uuid\"] }}\n\
+         reqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
+    );
+    let (ok, stdout, stderr) = run_cargo_tree("media_route_pin", &deps, &files, &["check"]);
+    assert!(
+        ok,
+        "the emitted media route handler must compile standalone:\n{stdout}\n{stderr}"
     );
 }
