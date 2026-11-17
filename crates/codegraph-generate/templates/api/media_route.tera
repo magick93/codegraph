@@ -28,7 +28,16 @@
 //! child tables carry the parent's `set_org_id_from_session` trigger and
 //! their RLS policies stopped tolerating the DDL's zero default (issue #700),
 //! so no branch here needs to widen the predicate.
-//!
+{% if nesting_depth > 0 %}//!
+//! Issue #722: this entity's routes are mounted NESTED
+//! (`.nest("/{parent_id}/{segment}", …)`), so every handler extracts the
+//! ancestor ids alongside `id` and the parent gate additionally requires the
+//! addressed row's `PARENT_LINK_COLUMN` to equal the URL parent id — without
+//! that predicate a caller could pair its own parent id with another record's
+//! child id (an IDOR). The predicate is on the IMMEDIATE parent only: a
+//! depth-2 grandparent id addresses the route and is not re-verified here,
+//! mirroring `find_by_id_scoped(id, parent_id)`.
+{% endif %}//!
 //! Issue #707: a stored key must belong to the SESSION ORGANIZATION.
 //! `display` and `remove` hand the key to the provider with the SERVICE
 //! credential, and the column was client-writable while the create/update
@@ -90,6 +99,11 @@ const CHILD_TABLE: &str = "{{ schema }}.{{ child_table }}";
 /// organization by definition, so the parent gate and the child statements
 /// are deliberately unscoped.
 const PARENT_TENANT_COLUMN: Option<&str> = None;
+{% endif %}{% if parent_link_column %}
+/// Issue #722 — the column linking this row to its URL parent. A nested media
+/// route is addressed by `(parent_id, id)`, so the parent gate requires the
+/// addressed row to carry this FK equal to the URL parent (never a wider gate).
+const PARENT_LINK_COLUMN: &str = "{{ parent_link_column }}";
 {% endif %}
 /// The domain's key template lowered to a Rust format string (R7): `org`
 /// and `id` are the runtime slots, everything else is baked.
@@ -156,7 +170,8 @@ async fn scoped_tx(
     state: &AppState,
     api_key_info: &ApiKeyInfo,
     id: Uuid,
-) -> Result<DatabaseTransaction, AppError> {
+{% if nesting_depth > 0 %}    parent_id: Uuid,
+{% endif %}) -> Result<DatabaseTransaction, AppError> {
     if api_key_info.organization_id.is_nil() {
         return Err(AppError::not_found(format!(
             "{{ entity_name }} {id} not found"
@@ -171,13 +186,24 @@ async fn scoped_tx(
     )
     .await
     .map_err(|e| db_err("failed to open the media session", e))?;
-    let exists = crate::media::session::parent_exists(
+{% if nesting_depth > 0 %}    // Issue #722: prove the addressed row exists AND belongs to the URL parent
+    // (the IMMEDIATE parent only — a depth-2 grandparent id addresses the route
+    // and is not re-verified here, mirroring `find_by_id_scoped(id, parent_id)`).
+    let exists = crate::media::session::parent_exists_linked(
+        &tx,
+        PARENT_TABLE,
+        PARENT_TENANT_COLUMN,
+        PARENT_LINK_COLUMN,
+        id,
+        parent_id,
+        api_key_info.organization_id,
+    ){% else %}    let exists = crate::media::session::parent_exists(
         &tx,
         PARENT_TABLE,
         PARENT_TENANT_COLUMN,
         id,
         api_key_info.organization_id,
-    )
+    ){% endif %}
     .await
     .map_err(|e| db_err("failed to resolve the media parent", e))?;
     if !exists {
@@ -224,7 +250,7 @@ pub async fn presign(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     _headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    {{ path_extractor }}
     Json(body): Json<PresignRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // The tenant/ownership gate runs BEFORE the storage-slot availability
@@ -232,7 +258,7 @@ pub async fn presign(
     {
         // The gate is a read-only existence check; release the transaction
         // before the provider round trip.
-        let _tx = scoped_tx(&state, &api_key_info, id).await?;
+        let _tx = {{ scoped_tx_call }}.await?;
     }
     let storage = state
         .{{ domain }}_media_storage
@@ -285,7 +311,7 @@ pub async fn upload(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    {{ path_extractor }}
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, AppError> {
     let _ = headers;
@@ -293,7 +319,7 @@ pub async fn upload(
     // storage-slot check and BEFORE any byte is read — a foreign id must 404
     // even where no provider is configured, and it must not cost a body read.
     {
-        let _gate = scoped_tx(&state, &api_key_info, id).await?;
+        let _gate = {{ scoped_tx_call }}.await?;
     }
     let storage = state
         .{{ domain }}_media_storage
@@ -355,7 +381,7 @@ pub async fn upload(
     // backstop. A miss here 404s and leaves the just-written object for the
     // `testkit storage --gc` sweep. Both transactions are short: no pooled
     // connection is held across the body read or the provider round trip.
-    let tx = scoped_tx(&state, &api_key_info, id).await?;
+    let tx = {{ scoped_tx_call }}.await?;
 
     // Overwrite-in-place semantics: one reference row per (parent, field) —
     // replace any existing row on the SAME transaction that installed the
@@ -426,12 +452,12 @@ pub async fn display(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    {{ path_extractor }}
 ) -> Result<impl IntoResponse, AppError> {
     let _ = headers;
     // The tenant/ownership gate runs BEFORE the storage-slot availability
     // check: a foreign id must 404 even where no provider is configured.
-    let tx = scoped_tx(&state, &api_key_info, id).await?;
+    let tx = {{ scoped_tx_call }}.await?;
     let select = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %} ORDER BY id DESC LIMIT 1"),
@@ -523,12 +549,12 @@ pub async fn remove(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    {{ path_extractor }}
 ) -> Result<StatusCode, AppError> {
     let _ = headers;
     // The tenant/ownership gate runs BEFORE the storage-slot availability
     // check: a foreign id must 404 even where no provider is configured.
-    let tx = scoped_tx(&state, &api_key_info, id).await?;
+    let tx = {{ scoped_tx_call }}.await?;
     let storage = state
         .{{ domain }}_media_storage
         .as_ref()

@@ -41,6 +41,21 @@ struct MediaRouteContext {
     /// `{param_name}`), so the utoipa `params` block documents every path
     /// parameter the route template carries.
     route_parents: Vec<MediaRouteParent>,
+    /// How many ancestor ids the route carries (issue #722): 0 = root (flat
+    /// extractor), 1 = child, 2+ = grandchild. Mirrors the CRUD handler's
+    /// `ancestor_path_params` depth rule.
+    nesting_depth: usize,
+    /// The pre-rendered `Path(...)` extractor argument (issue #722) — flat for
+    /// a root entity (byte-identical to pre-#722 output), the ancestor tuple
+    /// for a nested one. Outermost-anchor-first, matching `route_parents`.
+    path_extractor: String,
+    /// The pre-rendered parent-gate call (issue #722): the root form is the
+    /// pre-#722 byte-identical `scoped_tx(&state, &api_key_info, id)`; a
+    /// nested field adds the URL parent id.
+    scoped_tx_call: String,
+    /// The owning table's FK column to its URL parent (issue #722) — emitted
+    /// as `PARENT_LINK_COLUMN` for a nested field, `None` for a root entity.
+    parent_link_column: Option<String>,
     entity_module: String,
     domain: String,
     media_field_name: String,
@@ -154,6 +169,14 @@ impl EntityGenerator for MediaRouteGenerator {
                 // — never re-derived here, and never the table name.
                 route_prefix: field.route_prefix(&project.identity.api_version, domain),
                 route_parents: field.route_parents.clone(),
+                // Issue #722: a nested route carries its ancestor ids, so the
+                // extractor must mirror `api/handler.tera`'s `ancestor_path_params`
+                // shape — a single `Path<Uuid>` answers 400 when axum's
+                // `PathDeserializer` sees more than one url param.
+                nesting_depth: field.route_parents.len(),
+                path_extractor: path_extractor_for(field.route_parents.len()).to_string(),
+                scoped_tx_call: scoped_tx_call_for(field.route_parents.len()).to_string(),
+                parent_link_column: field.parent_link_column.clone(),
                 entity_module: entity_module.clone(),
                 domain: domain.to_string(),
                 media_field_name: field.field_snake.clone(),
@@ -191,5 +214,31 @@ impl EntityGenerator for MediaRouteGenerator {
         }
 
         Ok(files)
+    }
+}
+
+/// The `Path(...)` extractor argument for a media handler (issue #722), the
+/// CRUD handler's `ancestor_path_params` rule (`api/handler.tera`): a root
+/// entity keeps the single-id extractor, depth 1 binds the URL parent, depth
+/// 2+ binds the grandparent as `_grandparent_id` (unused — the parent gate
+/// checks the IMMEDIATE parent only, mirroring `find_by_id_scoped`). A single
+/// `Path<Uuid>` on a nested route is the #722 defect: axum's
+/// `PathDeserializer` rejects it with 400 whenever the route carries more than
+/// one url param.
+fn path_extractor_for(nesting_depth: usize) -> &'static str {
+    match nesting_depth {
+        0 => "Path(id): Path<Uuid>,",
+        1 => "Path((parent_id, id)): Path<(Uuid, Uuid)>,",
+        _ => "Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,",
+    }
+}
+
+/// The rendered parent-gate call (issue #722). A nested route passes the URL
+/// parent id; a root route's call is byte-identical to the pre-#722 shape.
+fn scoped_tx_call_for(nesting_depth: usize) -> &'static str {
+    if nesting_depth == 0 {
+        "scoped_tx(&state, &api_key_info, id)"
+    } else {
+        "scoped_tx(&state, &api_key_info, id, parent_id)"
     }
 }

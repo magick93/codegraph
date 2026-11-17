@@ -13,3 +13,19 @@ class Asset {
     String name
     contains MediaReference[0..1] photo
 }
+
+/// A root record — the parent of `Contact` below. Media on a root entity is
+/// the flat shape the Asset legs above already cover; Person exists to be the
+/// NESTED anchor (issue #722).
+class Person {
+    String name
+}
+
+/// A CHILD record with its own media field: `router.tera` mounts its routes
+/// under `/{person_id}/contacts`, so the media handler must extract the
+/// ancestor tuple and prove the row belongs to the URL parent (issue #722).
+class Contact {
+    String name
+    refers Person person
+    contains MediaReference[0..1] avatar
+}

@@ -75,4 +75,58 @@ pub async fn parent_exists<C: ConnectionTrait>(
         ),
     };
     Ok(conn.query_one_raw(statement).await?.is_some())
-}
+}{% if has_nested_media %}
+
+/// Whether the owning row exists, belongs to the URL PARENT, AND belongs to
+/// the session organization (issue #722).
+///
+/// A child entity's media routes are mounted nested
+/// (`.nest("/{parent_id}/{child_segment}", …)`), so the route is addressed by
+/// `(parent_id, id)`. The plain [`parent_exists`] gate only proves the row
+/// exists, which would let any caller pass its OWN parent id with another
+/// record's child id — an IDOR. This gate adds the ownership predicate:
+/// `id` must be the row whose `link_column` equals `parent_id`.
+///
+/// `table`, `tenant_column` and `link_column` are GENERATOR CONSTANTS (never
+/// request data); only `id`, `parent_id` and `organization_id` arrive at
+/// runtime, and all three are BOUND parameters — no SQL string interpolation.
+/// A `None` tenant column is legal only for a GLOBAL parent (the DDL's own
+/// tenancy rule); the statement is then deliberately unscoped.
+///
+/// Depth rule: the predicate is on the IMMEDIATE parent only. A depth-2 route
+/// (`/grandparent/{_grandparent_id}/parent/{parent_id}/child/{id}`) resolves
+/// the row by `(id, parent_id)`, mirroring the CRUD plane's
+/// `find_by_id_scoped(id, parent_id)` — the grandparent id addresses the route
+/// and is not re-verified here.
+pub async fn parent_exists_linked<C: ConnectionTrait>(
+    conn: &C,
+    table: &str,
+    tenant_column: Option<&str>,
+    link_column: &str,
+    id: Uuid,
+    parent_id: Uuid,
+    organization_id: Uuid,
+) -> Result<bool, DbErr> {
+    let statement = match tenant_column {
+        Some(column) => Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            format!(
+                "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 AND {column} = $3 LIMIT 1"
+            ),
+            [
+                sea_orm::Value::from(id),
+                sea_orm::Value::from(parent_id),
+                sea_orm::Value::from(organization_id),
+            ],
+        ),
+        None => Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            format!("SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 LIMIT 1"),
+            [
+                sea_orm::Value::from(id),
+                sea_orm::Value::from(parent_id),
+            ],
+        ),
+    };
+    Ok(conn.query_one_raw(statement).await?.is_some())
+}{% endif %}

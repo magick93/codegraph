@@ -2610,9 +2610,9 @@ in it), naming the configured parent and/or the candidate considered — never
 a silent flat contract, and never a nested path under a parent the router
 never mounted. A child media field emits
 `/api/{version}/{domain}/{parent_segment}/{parent_id}/{child_segment}/{id}/{field}`
-and the utoipa `params(...)` documents the ancestor ids. Nested contracts are
-NOT live until #722 (the handlers extract `Path<Uuid>`; a two-param route
-answers 400 — the emitted file says so). Pins:
+and the utoipa `params(...)` documents the ancestor ids. A nested contract is
+LIVE since #722 — the handlers extract the ancestor tuple and gate ownership
+(see "#722: nested media handlers" below). Pins:
 `child_media_field_contract_nests_under_the_parent_route` (ROOT + CHILD, the
 CHILD's title sorting FIRST so the contract anchors on it; hurl == router ==
 utoipa, including the concrete parent sentinel),
@@ -2624,6 +2624,84 @@ both prefix renderings), `graph_parent_candidate_is_the_nesting_fallback`,
 `graph_parent_candidates_skip_unmountable_parents`,
 `child_media_field_without_a_parent_is_config_error`. Existing root pins stay
 green; no `[media]` ⇒ byte-identical (ux/forms canaries, no re-bless).
+
+### #722: nested media handlers (the extractor + the ownership predicate)
+
+The #713 contract fix left the **extractor** flat: `router.tera` has always
+mounted a child's media routes nested
+(`.nest("/{person_id}/contacts", contact_routes())`, whose `contact_routes()`
+mounts `/{id}/avatar`), but every handler in `api/media_route.tera` extracted
+`Path(id): Path<Uuid>`. axum 0.8's `PathDeserializer` rejects a single value
+when `url_params.len() != 1` (`parse_single_value!`), so **every child media
+route answered 400** — no gate covered it because `media_runtime_tests` drove
+a root entity only. #722 fixes both halves:
+
+- **Extractor mirrors CRUD** (`templates/api/handler.tera`'s
+  `ancestor_path_params` rule, computed from `route_parents.len()`):
+  depth 1 → `Path((parent_id, id)): Path<(Uuid, Uuid)>`; depth 2 →
+  `Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>`.
+  `route_parents` is outermost-first, so the IMMEDIATE parent is the LAST hop
+  and earlier hops are `_`-prefixed (unused). Ancestors bind as extractors,
+  i.e. before the handler body/gate; the utoipa `params(...)` block stays in
+  the same order (grandparent → parent → `id`).
+- **Ownership predicate (an extractor without it is an IDOR)**: the nested
+  gate proves the row `id` exists AND its link column equals the URL
+  `parent_id` AND it belongs to the session org.
+  `templates/media/session.tera` gains a SECOND function,
+  `parent_exists_linked(conn, table, tenant_column, link_column, id,
+  parent_id, organization_id)` (`WHERE id = $1 AND {link_column} = $2 [AND
+  tenant = $3] LIMIT 1`; `table`/`tenant_column`/`link_column` are generator
+  constants, only the ids/org are BOUND parameters). The root-only session
+  module stays byte-identical: the function is emitted only when SOME field
+  has a non-empty `route_parents` (`has_nested_media` on the
+  `MediaStorageGenerator` context), and the existing `parent_exists` keeps its
+  `(id, organization_id)` ordering. **Depth 2 checks the IMMEDIATE parent
+  only** (mirrors `find_by_id_scoped(id, parent_id)` — the grandparent id
+  addresses the route and is not re-verified), said so in the emitted
+  comment.
+- **Link column from the canonical resolver, never a new rule**:
+  `MediaFieldPlan.parent_link_column` (`codegraph-core/src/types/media.rs`,
+  `#[serde(default)]` — plan IR, NOT a graph node, so NO
+  `GRAPH_FORMAT_VERSION` bump) is resolved in `media/plan.rs` through
+  `fk::resolve_parent_fk_column_same_domain` (config `parent_ref` → config
+  child+parent (`{parent}_id`) → graph parent candidate). A non-empty
+  `route_parents` with no resolvable column is a HARD `Error::Config` naming
+  the entity, the domain and the fix (`parent_ref`) — fail closed, never a
+  wider gate. The branch is defensive (the nesting resolver's parent
+  predicate is narrower than the FK resolver's), so it is pinned by a
+  direct unit test (`media::plan` tests) plus the
+  `media_pipeline_tests::nested_media_field_without_a_link_column_is_config_error`
+  pin over the same resolver.
+- **Depth cap (review)**: the emitted extractor binds at most
+  grandparent → parent → id — the CRUD plane's `ancestor_path_params` limit.
+  `router.tera` nests recursively, so a depth-3 media entity would be mounted
+  with four url params and every request would 400; it is a HARD
+  `Error::Config` at plan build instead (naming the entity, the depth and the
+  chain), never an advertised dead route. Depth 2 itself compiles: the
+  `media_compile_tests` depth-2 leg renders `AddressType` and checks the
+  three-id tuple against the nested `session.rs`.
+- **hurl**: the `#722` "not live" paragraph is gone; the emitted
+  `09_media.hurl` describes nested contracts as live (the handlers they
+  address now exist).
+- **Gates**: `media_pipeline_tests` (depth-1 extractor tuple + position
+  before the gate; the gate carrying `parent_id`/`PARENT_LINK_COLUMN`;
+  depth-2 `(Uuid, Uuid, Uuid)` with `_grandparent_id` + the recursive
+  `.nest` router pin; the hard link-column error; the depth-3 config error;
+  `nested_session_pins_the_linked_gate_sql_and_bind_order` — the SQL body
+  and the `(id, parent_id, organization_id)` bind order, because the call-site
+  pins alone left the predicate unpinned; the root module's flat shape;
+  utoipa params order == extractor order) + `media_compile_tests`
+  (`nested_media_route_handler_compiles_in_isolation` AND
+  `depth_two_media_route_handler_compiles_in_isolation` — the #551 policy:
+  both branches COMPILED with the nested `session.rs`, not just
+  string-pinned) + `media_plan_tests` (`parent_link_column`) +
+  `media_runtime_tests` (nested upload/display/remove, cross-tenant 404s,
+  and the link-mismatch 404 — see the runtime gate section).
+- **Byte-identity**: a root-only media app is unchanged (the new session
+  function is gated on `has_nested_media`; the extractor/gate are
+  pre-rendered from `nesting_depth == 0`). No `[media]` in the review fixture
+  ⇒ zero movement (the media e2e/runtime fixtures carry media and are
+  regenerated, not byte-goldened).
 
 ### Media runtime gate against a real S3 server (#695 Stage 1)
 
@@ -2638,7 +2716,10 @@ bucket-create path by design — #625 OQ2; that signed request is also the
 preflight: a 403 there means credentials/region, not a broken store), then
 generates a `[media]` app with the CURRENT generators (`driver::run`, the
 `tests/fixtures/media_runtime/` mox fixture: `class Asset` +
-`contains MediaReference[0..1] photo`, `provider = "r2"`,
+`contains MediaReference[0..1] photo`, plus — since #722 — a root `Person`
+and a CHILD `Contact` (`refers Person person`,
+`contains MediaReference[0..1] avatar`, `role = "child"`, `parent_ref =
+"person_id"`, `path_segment = "contacts"`), `provider = "r2"`,
 `upload_mode = "through-app"`, `max_bytes = 1024` so the 413 leg stays under
 axum's 2 MiB `DefaultBodyLimit`), builds + boots it
 (`test_framework::axum_server`, app `CARGO_TARGET_DIR` isolated under
