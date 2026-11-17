@@ -2484,9 +2484,11 @@ methods are the correct pair), and `scaffold/main.tera` declares
 `mod media;` beside `lib.rs`'s declaration (the binary re-declares the module
 tree, so a lib-only declaration left `crate::media` unresolved from
 `app_state.rs`/`server.rs`). Both are presence-gated on `has_media`;
-flag-off output is unchanged. The compile coverage for this plane is the
-nightly gate's T0 boot — a PR-CI #551 compile pin for the media handler is
-tracked in #683.
+flag-off output is unchanged. A PR-CI #551 compile pin now covers the handler
+(`media_compile_tests::emitted_media_route_handler_compiles_in_isolation`,
+landed in PR #697 as #683 part (b)) beside the nightly gate's T0 boot; #683
+stays open for part (a) alone — the tracked `crates/codegraph/target/**`
+cleanup — so nothing about the handler is outstanding.
 
 ### Media plane session scoping (#690)
 
