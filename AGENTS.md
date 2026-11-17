@@ -670,8 +670,10 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   `ServiceOperation.condition` (trunk pin 194056b) →
   `DddServiceOperation.condition` (`#[serde(default)]`, inside the
   `:DddService.operations_json` blob — **`GRAPH_FORMAT_VERSION` bumped
-  1→2** so cached graphs cold-re-ingest; the artifact-kit canonical
-  fixtures moved to v2) → lowered into the authorize fn BEFORE the
+  1→2** (historical: the constant is 10 today — see "Format bump
+  discipline + doctor signal") so cached graphs cold-re-ingest; the
+  artifact-kit canonical fixtures moved to v2) → lowered into the
+  authorize fn BEFORE the
   api_key bypass (business semantics apply to every session). Upstream
   note: the pherolang compiler only admits an op-level `when` on modules with
   exactly one machine-bearing design (typed lifecycles) — grant `when`s
@@ -781,11 +783,15 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   **Graph**: `DddServiceOperation.{bodies, body_receiver, throws}`
   (serde-defaulted; the body payload stays opaque — codegraph-core may not
   depend on phero-expr) and **`GRAPH_FORMAT_VERSION` 7** — the bump that
-  introduced the field set (now 10 with #660's `transition`, #668's declared
-  tables/register classes and #661's `child_scope`/`child_operations`; the
-  artifact kit fixture is `graph_document_v10.md`), because a warm cache
-  written pre-#662 deserializes the bodies as EMPTY and would silently
-  degrade every bodied op to the 501 seam. hurl: a body that may answer 4xx
+  introduced the field set AT THAT MOMENT (it stood at 7 then; later bumps
+  took it to 10 — #660's `transition`, #668's declared tables/register
+  classes and #661's `child_scope`/`child_operations` — renaming the
+  artifact kit fixture along the way to `graph_document_v10.md`; for the
+  CURRENT constant and fixture see the "Format bump discipline + doctor
+  signal" bullet under "Consumer Performance & Persisted-Graph Cache"),
+  because a warm cache written pre-#662 deserializes the bodies as EMPTY
+  and would silently degrade every bodied op to the 501 seam. hurl: a body
+  that may answer 4xx
   emits NO leg
   (no deterministic status — the live gate drives it with a probe); a
   lowerable body leg carries its declared parameters as the action body.
@@ -814,8 +820,11 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   serde blob, always `[]` for an extend-less design) — and
   **`GRAPH_FORMAT_VERSION` 9 → 10** (#668 took 8 → 9 first): a pre-#661 warm
   cache would serve NO child operations (the pre-#661 silent drop), so it
-  cold-re-ingests. Artifact kit fixture renamed `graph_document_v9.md` →
-  `v10.md` (`format_version_too_new` steps to 11).
+  cold-re-ingests. At that bump the artifact kit fixture was renamed
+  `graph_document_v9.md` → `v10.md` (`format_version_too_new` stepped to the
+  literal 11 there); that rename produced the fixture name that is CURRENT
+  today — for the live constant and fixture see "Format bump discipline +
+  doctor signal".
 - **Lowering** (`ddd/service_ops.rs::routes_for_entity`): a child op is
   declared on the ROOT's design but ACTS on the child, so `routes_for_entity
   (CHILD)` collects the ops whose `childScope.class` resolves to it and
@@ -953,9 +962,11 @@ the op's name and are demoted to a **no-binding fallback**:
   stay pinned. `tests/fixtures/ifml_gate/refunds.ddd`'s `approve` gains
   `transition Escalate` (resolved pair unchanged: none → escalated), so the
   nightly gate exercises the primary path.
-- **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 (artifact kit; the current
-  fixture is `graph_document_v10.md`, four bumps later, and
-  `format_version_too_new` always pins the next version) — the binding
+- **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 at that bump (the artifact
+  kit fixture was renamed `graph_document_v7.md` → `v8.md` then; it is
+  `graph_document_v10.md` now, and the `format_version_too_new` case pins a
+  LITERAL next version that every bump must move by hand — see "Format bump
+  discipline + doctor signal" for the current constant) — the binding
   rides the serde-serialized `operations_json` blob, so a warm cache would
   read it as `None` and silently serve the heuristics.
 - **Gates**: `cargo test -p codegraph --test service_ops_tests` (13: mirror,
@@ -3175,18 +3186,45 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Generator-only changes don't invalidate the hash** (inputs are the
   model/config files): when iterating on generators against a consumer
   model, a warm cache makes each edit→generate→check cycle ~1 min.
-- **Format bump discipline + doctor signal (P2)**: `GRAPH_FORMAT_VERSION`
-  (codegraph-grafeo `schema_ddl.rs`) versions codegraph's graph
-  artifact schema; bump it whenever the node/edge/property shape changes
-  (v3 carries `DddDesignNode.machine_json`). `GRAFEO_STORAGE_GENERATION`
+- **Format bump discipline + doctor signal (P2) — the canonical
+  "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
+  `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
+  `10` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v10.md`.
+  Bump it whenever the node/edge/property shape changes. The constant and
+  the fixture move TOGETHER in ONE change: bump the constant, rename the
+  fixture, update its canonical + `accepted` bodies, and move its
+  `format_version_too_new` rejection value. The fixture FILENAME is spelled
+  LITERALLY in five Rust sites — two compile-coupled `include_str!`
+  (`crates/codegraph/tests/artifact_kit_tests.rs:8`,
+  `crates/codegraph/src/artifact/kit.rs:251`) and three doc comments
+  (`crates/codegraph/src/artifact/kit.rs:10`,
+  `crates/codegraph/src/artifact/mod.rs:16`,
+  `crates/codegraph-grafeo/src/artifact.rs:9`) — nothing derives the name,
+  so the bump checklist must list all five (a missed `include_str!` is a
+  compile error; a missed doc comment goes stale silently). The
+  `format_version_too_new` value is also a LITERAL in the fixture
+  (`formatVersion 11` while the constant is 10), NOT derived from
+  `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
+  derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
+  forgets the fixture turns that rejection case into an ACCEPTED document
+  (and the kit case then fails).
+  Every other `GRAPH_FORMAT_VERSION` mention in this file is HISTORICAL —
+  the record of the bump at that moment (`X → Y`, or a bare "the bump that
+  introduced …"), never the current value (the recorded lineage: 1→2
+  op-level `when`, 3→4 WS6 manifest, 4→5 pherolang 0.3, 6→7 service
+  bodies, 7→8 transition binding, 8→9 mox tables/register classes, 9→10
+  aggregate child ops — the 2→3 and 5→6 steps were never written up, so
+  the lineage is only partially recorded). `GRAFEO_STORAGE_GENERATION`
   versions the engine's on-disk format; bump it on every grafeo minor
-  that changes the file format. Both terms ride the inputs hash, so a
-  bump forces a cold re-ingest instead of migrating `.graph-cache/`
-  in place. `codegraph doctor` now prints the cache state explicitly:
-  `PASS graph-cache — warm (inputs hash …, N nodes; graph format v3 /
-  storage gen 2)` when the marker matches the current inputs, or
-  `INFO graph-cache — cold: inputs changed …` / `absent …` when the next
-  run will re-ingest.
+  that changes the file
+  format. Both terms ride the inputs hash, so a bump forces a cold
+  re-ingest instead of migrating `.graph-cache/` in place. `codegraph
+  doctor` prints the cache state explicitly: `PASS graph-cache — warm
+  (inputs hash …, N nodes; graph format v10 / storage gen 2)` when the
+  marker matches the current inputs (the numbers are the live constants,
+  not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
+  when the next run will re-ingest.
 
 ## Template Overrides
 
@@ -4380,9 +4418,10 @@ plain-Postgres portability paths added).
   `source_paths` + `model_json`) with `ingest_ifml_manifest`/`get_ifml_manifest`
   on the trait surface (Mock store; Grafeo parameterized `create_node_with_props`
   upsert — the blob carries quotes a GQL literal would corrupt; CachingQuerier
-  first-read-wins INCLUDING absence); **`GRAPH_FORMAT_VERSION` 3→4** (a
-  pre-WS6 cached graph would serve no manifest and silently drop the action
-  surface, so it cold-re-ingests instead); both driver Pass-1b sites store.
+  first-read-wins INCLUDING absence); **`GRAPH_FORMAT_VERSION` 3→4** at
+  that point in the lineage (a pre-WS6 cached graph would serve no manifest
+  and silently drop the action surface, so it cold-re-ingests instead);
+  both driver Pass-1b sites store.
   Consumers: `ViewPom.actions` + `render_actions_section` (POM action methods,
   `{comp}Action{Op}` + error-locator/expect helpers), `ActionTest` payloads
   with sound-by-construction leg planners (501 seam / 200 read+delete /
@@ -4478,8 +4517,10 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
 - **`GRAPH_FORMAT_VERSION` 4 → 5** moved with the pin: the graph-cache
   inputs hash covers model/config contents + graph format + storage
   generation, **not** the compiler rev, so without the bump a warm
-  `.graph-cache/` would silently serve the pre-upgrade graph. The
-  artifact kit fixture is `graph_document_v5.md`.
+  `.graph-cache/` would silently serve the pre-upgrade graph. At that
+  upgrade the artifact kit fixture was `graph_document_v5.md` (five bumps
+  older than the current `graph_document_v10.md` — see "Format bump
+  discipline + doctor signal" for the live constant).
 - **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
   byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use
   (`parse_ifml`, `parse_ifml_file`, `compile_ifml_str`,
