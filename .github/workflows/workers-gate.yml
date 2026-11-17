@@ -33,10 +33,13 @@ env:
 
 jobs:
   workers-gate:
-    # Pinned: ubuntu-latest moved to 26.04 (resolute), whose archive no longer
-    # ships the `libxml2` the hurl .deb depends on ("not installable") — the
-    # proven recipe in ci.yml's `test-ops-integration` job runs on 24.04
-    # (noble) for exactly this reason. Nothing else here is runner-specific.
+    # Pinned off the rolling tag: `ubuntu-latest` is moving to 26.04
+    # (resolute), whose archive does not ship the `libxml2` the hurl .deb
+    # depends on ("not installable") — the reason ci.yml's
+    # `test-ops-integration` job runs on 24.04 (noble). The exit-127 defect
+    # observed here was the tarball's `bin/` nesting (see the hurl step), so
+    # the .deb is the load-bearing fix and this pin keeps the lane off a tag
+    # mid-rollout. Nothing else here is runner-specific.
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:

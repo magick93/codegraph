@@ -31,9 +31,10 @@ jobs:
           # POSTGRES_USER=postgres the container exits 2 with FATAL: role
           # "supabase_admin" does not exist). The generated apps still connect
           # as `postgres` (DATABASE_URL unchanged): the image creates that role
-          # with rolsuper=f, and app queries run under `SET LOCAL ROLE
-          # app_user` (NOBYPASSRLS) — so the RLS gates keep exercising the
-          # non-bypassing role, not the migration owner.
+          # with rolsuper=f and rolbypassrls=t — a BYPASSING session role, so
+          # RLS honesty rests entirely on the app plane's `SET LOCAL ROLE
+          # app_user` (NOBYPASSRLS), which every generated query/command handler
+          # issues, not on the role the pool connects as.
           POSTGRES_USER: supabase_admin
         ports:
           - 5432:5432
