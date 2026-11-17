@@ -38,6 +38,18 @@ const GIB: u64 = 1024 * 1024 * 1024;
 /// not be spawned or exited non-zero.
 pub type VersionProbe<'a> = &'a dyn Fn(&str, &[&str], Option<&Path>) -> Option<String>;
 
+/// Injectable port probe: is `port` bindable? Production answers with
+/// [`real_port_probe`]; tests that assert VERDICT ASSEMBLY (not socket
+/// state) stub it.
+///
+/// Issue #687: the fast-doctor subsets assert ports the test allocates by
+/// binding `:0` and dropping the listener. Between the drop and this probe,
+/// any of the workspace's parallel test binaries can bind the same ephemeral
+/// port — a real race, not a leaked service. The port assertion is the
+/// suite's job (`preflight::ensure_port_available`); the stage-0 subset's
+/// contract is the marker + verdict assembly, so the seam lives here.
+pub type PortProbe<'a> = &'a dyn Fn(u16) -> bool;
+
 /// Outcome of comparing a binary's mtime against the newest `.rs` file under
 /// a source tree.
 #[derive(Debug, PartialEq, Eq)]
@@ -421,6 +433,13 @@ pub fn real_version_probe(bin: &str, args: &[&str], cwd: Option<&Path>) -> Optio
         .map(str::to_string)
 }
 
+/// The real port probe: bind-and-drop, the same check the suite preflight
+/// runs ([`crate::preflight::ensure_port_free`]). Injectable — tests that
+/// assert verdict assembly pass a stub (issue #687).
+pub fn real_port_probe(port: u16) -> bool {
+    crate::preflight::ensure_port_free(port).is_ok()
+}
+
 /// One tool check: `ok "{label}: {version}"` / warn-or-fail with `hint`.
 /// Returns the blocking problems added (1 only when `blocking` and missing).
 fn check_tool(
@@ -546,14 +565,15 @@ fn playwright_default_workers(ui_dir: &Path) -> Option<u32> {
 /// hints, before the suite burns minutes on generate/build/supabase. The
 /// section title carries [`FAST_DOCTOR_MARKER`].
 pub async fn run_fast_doctor(config: &OpsConfig, suite: FastDoctorSuite) -> OpsResult<()> {
-    run_fast_doctor_with(config, suite, &real_version_probe).await
+    run_fast_doctor_with(config, suite, &real_version_probe, &real_port_probe).await
 }
 
-/// [`run_fast_doctor`] with an injectable version probe (tests).
+/// [`run_fast_doctor`] with injectable version and port probes (tests).
 async fn run_fast_doctor_with(
     config: &OpsConfig,
     suite: FastDoctorSuite,
     probe: VersionProbe<'_>,
+    port_probe: PortProbe<'_>,
 ) -> OpsResult<()> {
     let title = match suite {
         FastDoctorSuite::Api => format!("0. {FAST_DOCTOR_MARKER} (api subset)"),
@@ -565,9 +585,19 @@ async fn run_fast_doctor_with(
     // Ports — registry-aware: a `--keep` leak recorded in services.json is
     // the suite preflight's job (reuse/takeover), not a fast-doctor failure;
     // an UNKNOWN occupant fails here with the actionable hint.
-    problems += check_port_ready(&config.root_dir, config.manifest.servers.api_port, "api");
+    problems += check_port_ready_with(
+        &config.root_dir,
+        config.manifest.servers.api_port,
+        "api",
+        port_probe,
+    );
     if suite == FastDoctorSuite::E2e {
-        problems += check_port_ready(&config.root_dir, config.manifest.servers.ui_port, "ui");
+        problems += check_port_ready_with(
+            &config.root_dir,
+            config.manifest.servers.ui_port,
+            "ui",
+            port_probe,
+        );
     }
 
     // Disk: filesystem stat only — the motivating #358 incident was an
@@ -666,9 +696,11 @@ async fn run_fast_doctor_with(
 /// Registry-aware fast port check. Free → ok; occupied by a REGISTRY-KNOWN,
 /// live prior server → informational (the suite preflight will reuse or take
 /// it over, #356); anything else → blocking problem with the actionable
-/// hint. Returns problems added.
-fn check_port_ready(root_dir: &Path, port: u16, label: &str) -> usize {
-    if crate::preflight::ensure_port_free(port).is_ok() {
+/// hint. Returns problems added. The probe is injectable (issue #687): the
+/// registry/verdict logic is what tests pin, not socket state — production
+/// passes [`real_port_probe`].
+fn check_port_ready_with(root_dir: &Path, port: u16, label: &str, probe: PortProbe<'_>) -> usize {
+    if probe(port) {
         output::ok(format!("{label} port {port} free"));
         return 0;
     }
@@ -819,6 +851,12 @@ mod tests {
         move |_bin, _args, _cwd| found.then(|| "9.9.9 stub".to_string())
     }
 
+    /// Stubbed port probe (issue #687): the subset tests assert marker +
+    /// verdict assembly, not socket state.
+    fn stub_port_probe(free: bool) -> impl Fn(u16) -> bool {
+        move |_port| free
+    }
+
     #[test]
     fn real_version_probe_captures_output_and_failure() {
         assert_eq!(
@@ -914,7 +952,7 @@ mod tests {
         let mut free_ok = false;
         for _ in 0..20 {
             let port = free_port();
-            if check_port_ready(dir.path(), port, "api") == 0 {
+            if check_port_ready_with(dir.path(), port, "api", &real_port_probe) == 0 {
                 free_ok = true;
                 break;
             }
@@ -938,11 +976,17 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(check_port_ready(dir.path(), held, "api"), 0);
+        assert_eq!(
+            check_port_ready_with(dir.path(), held, "api", &real_port_probe),
+            0
+        );
 
         // Unknown occupant (fresh root: empty registry) → blocking problem.
         let other = tempfile::tempdir().unwrap();
-        assert_eq!(check_port_ready(other.path(), held, "api"), 1);
+        assert_eq!(
+            check_port_ready_with(other.path(), held, "api", &real_port_probe),
+            1
+        );
     }
 
     #[tokio::test]
@@ -950,9 +994,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_for(manifest_for(), dir.path());
         // hurl missing → blocking, regardless of the (real) DB probe outcome.
-        let err = run_fast_doctor_with(&cfg, FastDoctorSuite::Api, &stub_probe(false))
-            .await
-            .unwrap_err();
+        // The port probe is stubbed so this test owns exactly one variable.
+        let err = run_fast_doctor_with(
+            &cfg,
+            FastDoctorSuite::Api,
+            &stub_probe(false),
+            &stub_port_probe(true),
+        )
+        .await
+        .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("fast doctor"), "{msg}");
         assert!(msg.contains("blocking problem"), "{msg}");
@@ -962,12 +1012,48 @@ mod tests {
     async fn fast_doctor_e2e_subset_passes_with_stubbed_tools() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_for(manifest_for(), dir.path());
-        // Stubbed tools all present, ports ephemeral-free, disk real (warn at
+        // Stubbed tools all present, ports stubbed free, disk real (warn at
         // worst): the subset must pass — proving the marker section + verdict
         // assembly end to end without npx/pnpm/supabase on the machine.
-        run_fast_doctor_with(&cfg, FastDoctorSuite::E2e, &stub_probe(true))
-            .await
-            .unwrap();
+        //
+        // Issue #687: the ports are STUBBED, not real. `manifest_for()`
+        // allocates them by binding :0 and dropping the listener, and any of
+        // the workspace's parallel test binaries can then bind the same
+        // ephemeral port before a real probe reaches it (which is what made a
+        // full `cargo test --workspace` red at ~1 run in N). `check_port_ready_verdicts`
+        // keeps the REAL probe + registry verdicts; the deliberate-collision
+        // pin below proves this subset never touches a socket.
+        run_fast_doctor_with(
+            &cfg,
+            FastDoctorSuite::E2e,
+            &stub_probe(true),
+            &stub_port_probe(true),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn fast_doctor_e2e_subset_ignores_a_held_port_when_stubbed() {
+        // Deliberate-collision pin (issue #687): a listener is HELD on the
+        // api port while the stubbed probe reports it free. If the subset
+        // ever regresses to a real socket probe this test fails with
+        // "✗ api port N in use", so the seam cannot silently disappear.
+        let dir = tempfile::tempdir().unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let held = listener.local_addr().unwrap().port();
+        let mut manifest = manifest_for();
+        manifest.servers.api_port = held;
+        manifest.servers.ui_port = held;
+        let cfg = config_for(manifest, dir.path());
+        run_fast_doctor_with(
+            &cfg,
+            FastDoctorSuite::E2e,
+            &stub_probe(true),
+            &stub_port_probe(true),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -978,7 +1064,11 @@ mod tests {
         let mut manifest = manifest_for();
         manifest.servers.api_port = held;
         let cfg = config_for(manifest, dir.path());
-        let err = run_fast_doctor_with(&cfg, FastDoctorSuite::E2e, &stub_probe(true))
+        // Deterministic probe: ONLY the deliberately-held port reports busy,
+        // so the sibling ui port (allocated by `manifest_for`) cannot flake
+        // this test — its subject is the unknown-occupant VERDICT.
+        let probe = move |port: u16| port != held;
+        let err = run_fast_doctor_with(&cfg, FastDoctorSuite::E2e, &stub_probe(true), &probe)
             .await
             .unwrap_err();
         // The error names the stage; the failing port appears in the ✗ line
