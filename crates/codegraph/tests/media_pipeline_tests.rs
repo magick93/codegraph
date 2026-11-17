@@ -925,6 +925,10 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
         "entity_snake": "org",
         "route_prefix": "/api/v1/core/org",
         "route_parents": [],
+        "nesting_depth": 0,
+        "path_extractor": "Path(id): Path<Uuid>,",
+        "scoped_tx_call": "scoped_tx(&state, &api_key_info, id)",
+        "parent_link_column": serde_json::Value::Null,
         "entity_module": "core_org",
         "domain": "core",
         "media_field_name": "logo",
@@ -1857,12 +1861,11 @@ async fn child_media_field_contract_nests_under_the_parent_route() {
             "both the parent anchor and the entity id are concrete: {line}"
         );
     }
-    // N1: a nested contract is NOT a live leg until #722 lands (the handlers
-    // extract a single `Path<Uuid>` while the route carries two ids) — the
-    // emitted file must say so.
+    // #722: the emitted file must no longer claim the nested route is dead —
+    // the handlers now extract the ancestor tuple and prove ownership.
     assert!(
-        hurl.content.contains("#722"),
-        "the child contract names the #722 handler gap: {}",
+        !hurl.content.contains("not live"),
+        "the child contract no longer claims the route is dead: {}",
         hurl.content
     );
 
@@ -1882,6 +1885,270 @@ async fn child_media_field_contract_nests_under_the_parent_route() {
         !module.contains(r#"path = "/api/v1/core/contacts/{id}/avatar""#),
         "never the flat child path: {module}"
     );
+}
+
+// ── #722: a nested media handler extracts its ancestors and gates ownership ─
+//
+// The #713 contract fix left the EXTRACTOR flat: `Path(id): Path<Uuid>` on a
+// route mounted as `.nest("/{person_id}/contacts", …)` — axum's
+// `PathDeserializer` rejects a single value when the route carries more than
+// one url param, so every child media route answered 400. And the extractor
+// alone is an IDOR: the parent gate only proves the row exists.
+
+#[tokio::test]
+async fn nested_media_handler_extracts_the_ancestor_tuple_before_the_gate() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+
+    let modules = run_media_route_generator_for(&engine, &config, "ContactType").await;
+    assert_eq!(modules.len(), 1, "one module per media field");
+    let module = &modules[0];
+
+    // (a) The extractor mirrors the CRUD plane's `ancestor_path_params`:
+    // depth 1 → `(parent_id, id)`.
+    assert!(
+        module.contains("Path((parent_id, id)): Path<(Uuid, Uuid)>,"),
+        "the child handler must extract the URL parent alongside id: {module}"
+    );
+    assert!(
+        !module.contains("Path(id): Path<Uuid>,"),
+        "the flat extractor is the #722 400 defect: {module}"
+    );
+    for handler in [
+        "pub async fn upload(",
+        "pub async fn display(",
+        "pub async fn remove(",
+    ] {
+        let start = media_route_module_key(module, handler);
+        let body = &module[start..];
+        let extractor = body
+            .find("Path((parent_id, id)): Path<(Uuid, Uuid)>,")
+            .unwrap_or_else(|| panic!("{handler} must bind the ancestor tuple: {module}"));
+        let gate = body
+            .find("scoped_tx(&state, &api_key_info, id, parent_id)")
+            .unwrap_or_else(|| {
+                panic!("{handler} must pass the URL parent to the ownership gate: {module}")
+            });
+        // Extractors are function parameters: they lexically precede the body
+        // (and therefore the gate call). Pinned positionally, not by wording.
+        assert!(
+            extractor < gate,
+            "{handler}: the ancestor extractor precedes the parent gate: {module}"
+        );
+    }
+
+    // (b) The gate carries the parent id AND the link column — the ownership
+    // predicate (`id` must belong to `parent_id`), never a wider existence
+    // check.
+    assert!(
+        module.contains(r#"const PARENT_LINK_COLUMN: &str = "person_id";"#),
+        "the child's configured `parent_ref` is the gate's link column: {module}"
+    );
+    media_route_module_key(module, "crate::media::session::parent_exists_linked(");
+    assert!(
+        !module.contains("crate::media::session::parent_exists("),
+        "a nested route must never fall back to the existence-only gate: {module}"
+    );
+    let gate_call = module
+        .split("session::parent_exists_linked(")
+        .nth(1)
+        .expect("parent_exists_linked call");
+    let args = gate_call.split(')').next().unwrap_or_default();
+    let lines: Vec<&str> = args
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            "&tx,",
+            "PARENT_TABLE,",
+            "PARENT_TENANT_COLUMN,",
+            "PARENT_LINK_COLUMN,",
+            "id,",
+            "parent_id,",
+            "api_key_info.organization_id,",
+        ],
+        "parent_exists_linked(conn, table, tenant, link, id, parent_id, session_org): {module}"
+    );
+
+    // (f) The utoipa `params` block documents the SAME order the extractor
+    // binds: the ancestor first, the owning id last.
+    let ancestor = media_route_module_key(module, r#"("person_id" = Uuid, Path"#);
+    let owning = media_route_module_key(module, r#"("id" = Uuid, Path"#);
+    assert!(
+        ancestor < owning,
+        "utoipa documents the ancestor before the owning id, as the extractor binds: {module}"
+    );
+    // …and the documented path is still the router's nested route.
+    assert!(
+        module.contains(r#"path = "/api/v1/core/persons/{person_id}/contacts/{id}/avatar""#),
+        "the documented path is the nested route: {module}"
+    );
+}
+
+/// A grandchild beneath `ContactType` — the depth-2 shape (issue #722, the
+/// router's recursive `.nest`).
+async fn ingest_grandchild(db: &(impl GraphIngestor + GraphQuerier)) {
+    ingest_parent_and_child(db).await;
+    db.ingest_schema(&schema(
+        "AddressType",
+        "AddressType",
+        "entity",
+        "address",
+        true,
+    ))
+    .await
+    .expect("address schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("AddressType", "AddressType", &p)
+            .await
+            .expect("address property");
+    }
+    db.ingest_edge(
+        "avatar::AddressType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("address references edge");
+}
+
+fn media_toml_with_nested_grandchild() -> String {
+    format!(
+        "{}\n\
+         [domains.core.entity_config.AddressType]\n\
+         role = \"child\"\n\
+         parent = \"ContactType\"\n\
+         parent_ref = \"contact_id\"\n\
+         path_segment = \"addresses\"\n",
+        media_toml_with_nested_child("through-app")
+    )
+}
+
+#[tokio::test]
+async fn depth_two_media_handler_extracts_the_grandparent_tuple() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_grandchild(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_nested_grandchild()).expect("toml");
+    let titles = [
+        "PersonType".to_string(),
+        "ContactType".to_string(),
+        "AddressType".to_string(),
+    ];
+
+    // The router's recursive `.nest` mounts the depth-2 route — the pin the
+    // brief asks for even though no consumer uses it today.
+    let router = rendered_router_media_block_for(&engine, &config, &titles).await;
+    assert!(
+        router.contains(r#".nest("/{person_id}/contacts", contact_routes())"#),
+        "the child router nests under the root: {router}"
+    );
+    assert!(
+        router.contains(r#".nest("/{contact_id}/addresses", address_routes())"#),
+        "the grandchild nests under the child (depth 2): {router}"
+    );
+
+    let modules = run_media_route_generator_for(&engine, &config, "AddressType").await;
+    let module = &modules[0];
+    assert!(
+        module.contains("Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,"),
+        "depth 2 binds the grandparent (unused, `_`-prefixed) then the parent: {module}"
+    );
+    assert!(
+        module.contains(r#"const PARENT_LINK_COLUMN: &str = "contact_id";"#),
+        "the IMMEDIATE parent's FK is the ownership predicate: {module}"
+    );
+    // Depth 2 checks the immediate parent only — the grandparent id addresses
+    // the route and is not re-verified (mirrors `find_by_id_scoped`).
+    assert!(
+        module.contains("scoped_tx(&state, &api_key_info, id, parent_id)"),
+        "the gate receives the immediate parent id, never the grandparent: {module}"
+    );
+    let ancestor = media_route_module_key(module, r#"("contact_id" = Uuid, Path"#);
+    let grandparent = media_route_module_key(module, r#"("person_id" = Uuid, Path"#);
+    let owning = media_route_module_key(module, r#"("id" = Uuid, Path"#);
+    assert!(
+        grandparent < ancestor && ancestor < owning,
+        "utoipa documents grandparent → parent → id, the extractor's order: {module}"
+    );
+}
+
+#[tokio::test]
+async fn nested_media_field_without_a_link_column_is_config_error() {
+    // Fail closed: the ancestor extractor without the ownership predicate is
+    // an IDOR, so a nested route whose link column cannot be resolved is a
+    // hard config error naming the entity, the domain and the fix.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{}\n[domains.core.entity_config.ContactType]\nrole = \"value_object\"\npath_segment = \"contacts\"\n",
+        media_toml("supabase", "through-app")
+    ))
+    .expect("toml");
+    let route_parents = vec![codegraph_core::types::MediaRouteParent {
+        entity_title: "PersonType".into(),
+        path_segment: "persons".into(),
+        param_name: "person_id".into(),
+    }];
+    let mut candidates = None;
+    let err = codegraph_generate::media::plan::resolve_media_parent_link_column(
+        &engine,
+        &config,
+        "core",
+        "ContactType",
+        &route_parents,
+        &mut candidates,
+    )
+    .await
+    .expect_err("no link column ⇒ hard error");
+    let Error::Config(msg) = err else {
+        panic!("expected Error::Config, got {err:?}");
+    };
+    assert!(msg.contains("ContactType"), "{msg}");
+    assert!(msg.contains("core"), "{msg}");
+    assert!(msg.contains("parent_ref"), "the fix is named: {msg}");
+}
+
+#[tokio::test]
+async fn root_media_handler_keeps_the_flat_extractor_and_gate() {
+    // Byte-identity shape: a root entity's module must keep the pre-#722
+    // single-id extractor and the existence-only parent gate.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator_for(&engine, &config, "PersonType").await;
+    let module = &modules[0];
+    assert!(
+        module.contains("Path(id): Path<Uuid>,"),
+        "a root media handler keeps its flat extractor: {module}"
+    );
+    assert!(
+        module.contains("crate::media::session::parent_exists("),
+        "a root media handler keeps the existence-only gate: {module}"
+    );
+    for needle in [
+        "parent_exists_linked",
+        "PARENT_LINK_COLUMN",
+        "parent_id: Uuid",
+        "Path((parent_id, id))",
+    ] {
+        assert!(
+            !module.contains(needle),
+            "root output must not carry the nesting surface `{needle}`: {module}"
+        );
+    }
 }
 
 /// A modeled scalar ref from the child to a candidate parent — the router's

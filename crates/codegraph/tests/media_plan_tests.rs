@@ -449,12 +449,21 @@ async fn media_fields_carry_the_route_path_they_are_mounted_under() {
         child.route_prefix_with_ids("v2", "core", "abc"),
         "/api/v2/core/persons/abc/contacts"
     );
+    assert_eq!(
+        child.parent_link_column.as_deref(),
+        Some("person_id"),
+        "issue #722: the nested route's ownership predicate column, from config `parent_ref`"
+    );
 
     let root = &fields[1];
     assert_eq!(root.entity_title, "PersonType");
     assert_eq!(root.entity_path_segment, "persons");
     assert!(root.route_parents.is_empty(), "a root has no parent hops");
     assert_eq!(root.route_prefix("v2", "core"), "/api/v2/core/persons");
+    assert!(
+        root.parent_link_column.is_none(),
+        "a root media field carries no ownership link column"
+    );
 }
 
 /// A modeled scalar ref from the media-owning child to a candidate parent —

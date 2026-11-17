@@ -7,9 +7,10 @@
 # (issue #625 OQ8 → #695 Stage 1).
 # The URL is pinned to the router's own path shape by `media_pipeline_tests`
 # (issues #691/#713): {{ prefix }}/{id}/{field} — the entity's path segment
-# plus the nesting chain `router.tera` mounts a child entity under.
-# A NESTED (child) contract is not live until #722 lands: the handlers extract
-# `Path<Uuid>` while that route carries two params — axum answers 400.
+# plus the nesting chain `router.tera` mounts a child entity under. A NESTED
+# (child) contract addresses the route the handlers actually serve: they
+# extract the ancestor tuple and prove the addressed row belongs to the URL
+# parent (issue #722), so the legs below are live.
 
 # authn — no credentials, rejected by the shared middleware before the
 # handler (and therefore before any extractor) runs.
@@ -36,9 +37,10 @@ jsonpath "$.error.code" == "NOT_FOUND"
 # OQ8 → #695 Stage 1).
 # The URL is pinned to the router's own path shape by `media_pipeline_tests`
 # (issues #691/#713): {{ prefix }}/{id}/{field}/presign — the entity's path
-# segment plus the nesting chain `router.tera` mounts a child entity under.
-# A NESTED (child) contract is not live until #722 lands: the handlers extract
-# `Path<Uuid>` while that route carries two params — axum answers 400.
+# segment plus the nesting chain `router.tera` mounts a child entity under. A
+# NESTED (child) contract addresses the route the handlers actually serve:
+# they extract the ancestor tuple and prove the addressed row belongs to the
+# URL parent (issue #722), so the legs below are live.
 
 # authn — no credentials, rejected before the handler runs.
 POST {{ presign_url }}

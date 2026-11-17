@@ -439,6 +439,17 @@ pub struct MediaFieldPlan {
     /// scan would return `None` for every real model and silently emit
     /// unscoped SQL. Child tables inherit the parent's tenant column.
     pub parent_tenant_column: Option<String>,
+    /// For a NESTED media field (issue #722): the column on the owning table
+    /// that links a row to its URL parent (e.g. `person_id` on `contact`).
+    /// `Some` exactly when `route_parents` is non-empty; the parent gate uses
+    /// it to prove the addressed row belongs to the parent id in the URL
+    /// (without it a nested media route is an IDOR). Resolved through the
+    /// canonical `fk::resolve_parent_fk_column_same_domain` chain — config
+    /// `parent_ref` → config child+parent → graph parent candidate — never a
+    /// new rule. This is plan IR, not a graph node, so it carries no graph
+    /// format bump.
+    #[serde(default)]
+    pub parent_link_column: Option<String>,
 }
 
 impl MediaFieldPlan {
