@@ -16,7 +16,7 @@ mod types;
 
 pub use types::{
     CheckConstraint, ChildTableDef, ColumnComment, ColumnDef, DdlContext, EmbeddingContext,
-    ForeignKeyDef, FtsColumnWeight, FtsContext, IndexDef, RoleMinimum,
+    ForeignKeyDef, FtsColumnWeight, FtsContext, IndexDef, RoleMinimum, TenantBackfill,
 };
 
 pub(crate) use query::{child_parent_fk_column, column_info_to_ddl};
@@ -97,6 +97,14 @@ pub(crate) fn child_table_rls_context(parent: &DdlContext, child: &ChildTableDef
         is_codelist: false,
         has_demo_flag: false,
         append_only: parent.append_only,
+        // #700: every child row is a candidate for a legacy zero tenant —
+        // the writers never bound the column. The backfill joins the parent
+        // through the child's own FK.
+        tenant_backfill: Some(TenantBackfill {
+            parent_schema: child.parent_schema.clone(),
+            parent_table: child.parent_table.clone(),
+            parent_fk_column: child.parent_fk_column.clone(),
+        }),
     }
 }
 

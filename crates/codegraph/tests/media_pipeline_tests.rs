@@ -530,22 +530,33 @@ async fn media_module_doc_claim_matches_the_emitted_code() {
         module.contains("crate::media::session::begin_scoped"),
         "the documented contract must be the implemented one:\n{module}"
     );
-    // The round-2 claims: two short upload transactions, the legacy zeros
-    // tolerance, and the #700 reference that retires it.
-    for claim in ["TWO short transactions", "legacy zeros tenant", "#700"] {
+    // The round-2 claims: two short upload transactions, and — since #700
+    // retired the zeros tolerance — the exact-org child predicate it now
+    // implements, with the issue that fixed the writers named.
+    for claim in [
+        "TWO short transactions",
+        "filters on the session organization exactly",
+        "#700",
+    ] {
         assert!(doc.contains(claim), "the doc must state `{claim}`:\n{doc}");
     }
+    assert!(
+        !doc.contains("tolerate the legacy zeros tenant"),
+        "the retired tolerance is still claimed:\n{doc}"
+    );
 }
 
-// ── Issue #690 round 2 — reviewer findings ─────────────────────────────
+// ── Issue #690 round 2 → retired by #700 ──────────────────────────────
 
-/// The CRUD child-table writer (`child_insert_sql`) omits the tenant column,
-/// so every reference row it persists (the presigned-mode path included)
-/// carries the DDL's zero default. Child statements must tolerate that
-/// legacy tenant UNDER an already-proven parent — and must never filter on
-/// the parent FK alone.
+/// #690 tolerated the DDL's zero tenant in the child statements because no
+/// writer of a child row bound the tenant column. **#700 fixed the writers**
+/// (the child tables now carry the parent's `set_org_id_from_session`
+/// trigger, and each child's RLS migration backfills the legacy rows and
+/// stops tolerating zeros), so the workaround is gone: every child statement
+/// filters on the session organization EXACTLY, and still never on the
+/// parent FK alone.
 #[tokio::test]
-async fn media_child_statements_tolerate_the_legacy_zero_tenant() {
+async fn media_child_statements_filter_on_the_exact_session_tenant() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
     let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
@@ -553,31 +564,33 @@ async fn media_child_statements_tolerate_the_legacy_zero_tenant() {
     let module = &modules[0];
 
     assert!(
-        module
-            .contains("const LEGACY_ZERO_TENANT: &str = \"00000000-0000-0000-0000-000000000000\";"),
-        "the zeros sentinel is named once:\n{module}"
+        !module.contains("LEGACY_ZERO_TENANT"),
+        "the #700 workaround is retired:\n{module}"
     );
-    // Upload DELETE, display SELECT, remove SELECT, remove DELETE.
+    assert!(
+        !module.contains("00000000-0000-0000-0000-000000000000"),
+        "no media statement names the zero tenant:\n{module}"
+    );
+    // Upload DELETE, display SELECT, remove SELECT, remove DELETE — all four
+    // carry the exact-org predicate.
     assert_eq!(
-        module
-            .matches(
-                "platform_organization_id = $2 OR platform_organization_id = \
-                 '{LEGACY_ZERO_TENANT}'::uuid"
-            )
-            .count(),
+        module.matches("platform_organization_id = $2").count(),
         4,
-        "all four child statements tolerate the legacy zeros tenant:\n{module}"
+        "all four child statements filter on the session tenant:\n{module}"
     );
     // No child statement filters on the parent FK alone.
     assert_eq!(
-        module.matches("WHERE person_id = $1 AND (").count(),
+        module
+            .matches("WHERE person_id = $1 AND platform_organization_id = $2")
+            .count(),
         4,
         "every child WHERE keeps the tenant predicate:\n{module}"
     );
-    // #700 is the named retirement path.
+    // The parent gate is what makes an unscoped child statement safe, and it
+    // is unchanged by #700.
     assert!(
-        module.contains("#700"),
-        "the zeros branch names the issue that retires it:\n{module}"
+        module.contains("crate::media::session::parent_exists("),
+        "the parent gate stays:\n{module}"
     );
     // The tenancy rule is three copies that must move together (not "one
     // rule the gate and the table cannot disagree about"), and the schema

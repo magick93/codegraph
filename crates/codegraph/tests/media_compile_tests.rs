@@ -721,10 +721,9 @@ async fn emitted_media_route_handler_compiles_in_isolation() {
             // bundle + tenant-scoped parent gate, not a bare WHERE.
             "crate::media::session::begin_scoped(",
             "crate::media::session::parent_exists(",
-            // Issue #690 round 2: the DB-error classifier and the legacy
-            // zeros tolerance are part of the emitted contract.
+            // Issue #690 round 2 / #700: the DB-error classifier is part of
+            // the emitted contract; the zeros tolerance is retired.
             "fn db_err(",
-            "LEGACY_ZERO_TENANT",
         ],
         &["pub async fn presign"],
     )
@@ -751,7 +750,6 @@ async fn presigned_media_route_handler_compiles_in_isolation() {
             "crate::media::session::begin_scoped(",
             "crate::media::session::parent_exists(",
             "fn db_err(",
-            "LEGACY_ZERO_TENANT",
         ],
         &["pub async fn upload"],
     )

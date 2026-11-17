@@ -44,6 +44,13 @@ jobs:
         run: npx --yes playwright@1.62.0 install --with-deps chromium
       - name: Run IFML codegen gate
         run: cargo test -p codegraph --test ifml_codegen_gate -- --ignored --nocapture
+      # Issue #700: child-table tenancy at the DB tier. It generates its own
+      # migration set with the current generators (never a committed fixture —
+      # that is how the defect survived review), so it runs here, where the
+      # service is the supported Supabase image, rather than in the ops lane's
+      # plain postgres service (#708 moves that lane onto this image).
+      - name: Child-table tenancy gate (#700)
+        run: cargo test -p codegraph --test child_tenant_contract_tests -- --ignored --nocapture
       - name: Upload gate logs on failure
         if: failure()
         uses: actions/upload-artifact@v7

@@ -65,6 +65,29 @@ pub struct DdlContext {
     /// grants use). Gates the updated_at column, audit band, BEFORE UPDATE
     /// trigger, and SELECT/INSERT-only grants; child tables inherit.
     pub append_only: bool,
+    /// Parent-side coordinates for a CHILD table's tenant backfill (issue
+    /// #700). `None` on a parent table (or any non-child context): the
+    /// parent's own INSERT trigger always stamps the session org, so it has
+    /// no legacy rows to repair and keeps the zero tolerance in its policies.
+    pub tenant_backfill: Option<TenantBackfill>,
+}
+
+/// A child table's backfill source (issue #700). Every writer of a child row
+/// — the SeaORM `child_insert_sql`, the cornucopia `insert_{entity}_{child}`
+/// and `link_{junction}` queries, and the media handler until #690 — omitted
+/// `platform_organization_id`, so the DDL's zero default was persisted and
+/// the zero-tolerant RLS predicate exposed those rows to every organization.
+/// Children now carry the parent's `set_org_id_from_session` trigger, and
+/// each child's RLS migration backfills the rows written before it existed
+/// from the parent column named here, then drops the tolerance.
+#[derive(Debug, Clone, Serialize)]
+pub struct TenantBackfill {
+    /// Schema of the parent table.
+    pub parent_schema: String,
+    /// Table name of the parent (the backfill's `FROM`).
+    pub parent_table: String,
+    /// The child's parent FK column (the backfill's join).
+    pub parent_fk_column: String,
 }
 
 /// Full-text search context for DDL generation.

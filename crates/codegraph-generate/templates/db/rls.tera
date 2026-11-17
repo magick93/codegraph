@@ -3,9 +3,34 @@
 --
 -- Uses get_current_org_id() which reads app.organization_id session var.
 -- This is set by the Axum middleware for BOTH API key and JWT auth,
--- so one policy set works for all auth modes.
+-- so one policy set works for all auth modes.{% if tenant_backfill %}
+--
+-- Child tenancy (issue #700): every writer of a child row — the SeaORM
+-- `child_insert_sql`, the cornucopia `insert_{entity}_{child}` /
+-- `link_{junction}` queries, and the media handler until #690 — omitted
+-- `platform_organization_id`, so the DDL's zero default was persisted and
+-- the zero-tolerant predicate below exposed those rows to EVERY
+-- organization. The child now carries the parent's
+-- set_org_id_from_session trigger (see the parent's trigger migration), and
+-- this file repairs the rows written before it existed — then stops
+-- tolerating zeros. The backfill rides a NO FORCE window so the migration
+-- owner can see (and rewrite) rows the PREVIOUS policy would otherwise
+-- reject when no session org is set; it is idempotent, so every run of this
+-- migration is also the upgrade migration. Deliberately unguarded and
+-- unindexed: after the first run the predicate matches nothing, and a
+-- permanent index on the tenant column to serve a one-time repair is the
+-- worse trade — the cost is one sequential scan per child table per
+-- `migrate` run.{% endif %}
 
-ALTER TABLE {{ schema_name }}.{{ table_name | quote_pg }} ENABLE ROW LEVEL SECURITY;
+ALTER TABLE {{ schema_name }}.{{ table_name | quote_pg }} ENABLE ROW LEVEL SECURITY;{% if tenant_backfill %}
+ALTER TABLE {{ schema_name }}.{{ table_name | quote_pg }} NO FORCE ROW LEVEL SECURITY;
+
+UPDATE {{ schema_name }}.{{ table_name | quote_pg }} AS c
+   SET platform_organization_id = p.platform_organization_id
+  FROM {{ tenant_backfill.parent_schema }}.{{ tenant_backfill.parent_table | quote_pg }} AS p
+ WHERE c.{{ tenant_backfill.parent_fk_column | quote_pg }} = p.id
+   AND c.platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid;
+{% endif %}
 ALTER TABLE {{ schema_name }}.{{ table_name | quote_pg }} FORCE ROW LEVEL SECURITY;
 
 -- Drop all existing policies (clean slate on regeneration)
@@ -20,28 +45,28 @@ END $$;
 -- Org isolation: SELECT
 CREATE POLICY "org_isolation_select" ON {{ schema_name }}.{{ table_name | quote_pg }}
   FOR SELECT
-  USING ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  USING ((platform_organization_id = public.get_current_org_id(){% if tenant_backfill %}));{% else %}
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));{% endif %}
 
 -- Org isolation: INSERT
 CREATE POLICY "org_isolation_insert" ON {{ schema_name }}.{{ table_name | quote_pg }}
   FOR INSERT
-  WITH CHECK ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  WITH CHECK ((platform_organization_id = public.get_current_org_id(){% if tenant_backfill %}));{% else %}
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));{% endif %}
 
 -- Org isolation: UPDATE
 CREATE POLICY "org_isolation_update" ON {{ schema_name }}.{{ table_name | quote_pg }}
   FOR UPDATE
-  USING ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid))
-  WITH CHECK ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  USING ((platform_organization_id = public.get_current_org_id(){% if tenant_backfill %})){% else %}
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid)){% endif %}
+  WITH CHECK ((platform_organization_id = public.get_current_org_id(){% if tenant_backfill %}));{% else %}
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));{% endif %}
 
 -- Org isolation: DELETE
 CREATE POLICY "org_isolation_delete" ON {{ schema_name }}.{{ table_name | quote_pg }}
   FOR DELETE
-  USING ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  USING ((platform_organization_id = public.get_current_org_id(){% if tenant_backfill %}));{% else %}
+    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));{% endif %}
 {% if is_auditable %}
 -- Scope enforcement (#169): RESTRICTIVE policies AND-combine with the
 -- org-isolation policies above for app_user AND api_key sessions, in both
