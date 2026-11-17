@@ -383,6 +383,7 @@ mod tests {
             children: vec![],
             cross_refs: vec![],
             media_fields: vec![],
+            media_max_bytes: None,
             media_mode_presigned: false,
             hierarchy_field: None,
             pipeline_middleware: vec![],

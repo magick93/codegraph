@@ -114,6 +114,15 @@ pub struct RouterEntity {
     pub children: Vec<ChildInfo>,
     pub cross_refs: Vec<CrossRefInfo>,
     pub media_fields: Vec<String>,
+    /// The domain's `[media]` upload ceiling in bytes (issue #710), read from
+    /// the SAME `MediaPlan` as the handler — the router scopes an axum
+    /// `DefaultBodyLimit` to the upload method route so a configured limit
+    /// above axum's 2 MiB default is reachable (with 64 KiB of multipart
+    /// slack in the layer; the handler's `max_bytes` check stays the file
+    /// cap). `None` when the entity has no app-plane media route (an empty
+    /// `media_fields`), never `Some` without a route.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_max_bytes: Option<u64>,
     /// The domain's media upload mode needs presign issuance (issue #625
     /// PR-C): the router mounts `presign` instead of the multipart upload.
     /// False when no media routes exist or the mode is through-app.
@@ -302,9 +311,10 @@ impl DomainGenerator for RouterGenerator {
                 // Media route fields (issue #625 PR-C): plan-driven, mode-
                 // gated (through-app | presigned). The driver's pre-generation
                 // pass already hard-failed a broken media config, so a plan
-                // error here cannot silently drop routes.
-                let media_fields: Vec<String> =
-                    crate::media::plan::media_route_fields(db, config, domain, title)
+                // error here cannot silently drop routes. The surface carries
+                // the SAME `max_bytes` the handler checks (issue #710).
+                let media_surface =
+                    crate::media::plan::media_route_surface(db, config, domain, title)
                         .await
                         .unwrap_or_default();
 
@@ -364,7 +374,8 @@ impl DomainGenerator for RouterGenerator {
                     parent: None,
                     children: vec![],
                     cross_refs: vec![],
-                    media_fields,
+                    media_fields: media_surface.fields,
+                    media_max_bytes: media_surface.max_bytes,
                     media_mode_presigned: crate::media::plan::media_upload_mode(config, domain)
                         .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
                     hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
@@ -667,11 +678,11 @@ pub async fn build_router_context(
 
             // Media route fields (issue #625 PR-C) — the SAME helper as the
             // sibling build_router_context site so the api contract cannot
-            // drift (#590 precedent).
-            let media_fields: Vec<String> =
-                crate::media::plan::media_route_fields(db, config, domain, title)
-                    .await
-                    .unwrap_or_default();
+            // drift (#590 precedent). The surface also carries the configured
+            // `max_bytes` the handler checks (issue #710).
+            let media_surface = crate::media::plan::media_route_surface(db, config, domain, title)
+                .await
+                .unwrap_or_default();
 
             let permissions = entity_cfg
                 .map(|ec| ec.permissions.clone())
@@ -727,7 +738,8 @@ pub async fn build_router_context(
                 parent: None,
                 children: vec![],
                 cross_refs: vec![],
-                media_fields,
+                media_fields: media_surface.fields,
+                media_max_bytes: media_surface.max_bytes,
                 media_mode_presigned: crate::media::plan::media_upload_mode(config, domain)
                     .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
                 hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
@@ -1143,6 +1155,7 @@ mod tests {
                 children: vec![],
                 cross_refs: vec![],
                 media_fields: vec![],
+                media_max_bytes: None,
                 media_mode_presigned: false,
                 hierarchy_field: None,
                 pipeline_middleware: vec![],

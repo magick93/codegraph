@@ -145,6 +145,15 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
         .route(
             "/{id}/{{ mf }}",
             axum::routing::put(media_{{ entity.module_name }}_{{ mf }}::upload).guard("{{ domain }}:{{ entity.path_segment }}", "update")
+                // The CONFIGURED ceiling, not axum's global 2 MiB default
+                // (issue #710): the default was too low for a larger
+                // `max_bytes`, so the configured limit was unreachable. The
+                // 64 KiB slack keeps the HANDLER (`data.len() > max_bytes`)
+                // authoritative — the layer is a memory bound around the
+                // multipart envelope, not the file cap itself. Scoped to this
+                // upload METHOD route (never the entity router), from the same
+                // `MediaPlan.max_bytes` the handler compares against.
+                .layer(axum::extract::DefaultBodyLimit::max({{ entity.media_max_bytes }} + 64 * 1024))
                 .merge(axum::routing::get(media_{{ entity.module_name }}_{{ mf }}::display).guard("{{ domain }}:{{ entity.path_segment }}", "read"))
                 .merge(axum::routing::delete(media_{{ entity.module_name }}_{{ mf }}::remove).guard("{{ domain }}:{{ entity.path_segment }}", "delete")),
         )

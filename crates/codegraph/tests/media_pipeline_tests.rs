@@ -338,6 +338,175 @@ async fn through_app_mode_emits_child_row_upload_routes() {
     );
 }
 
+/// Parse the integer literal after `marker` in an emitted source string
+/// (digits and `_` separators only) — the shared reader both sides of the
+/// #710 pin go through, so neither expectation is an independent hardcode.
+fn literal_after(source: &str, marker: &str) -> u64 {
+    let start = source
+        .find(marker)
+        .unwrap_or_else(|| panic!("`{marker}` missing from: {source}"))
+        + marker.len();
+    let rest = &source[start..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '_'))
+        .unwrap_or(rest.len());
+    rest[..end]
+        .replace('_', "")
+        .parse()
+        .unwrap_or_else(|e| panic!("`{}` is not an integer literal: {e}", &rest[..end]))
+}
+
+/// The expression (up to the first `)`) after `marker` — used to read the
+/// layer's `max_bytes + 64 * 1024` arithmetic verbatim, not just its head.
+fn expression_after<'a>(source: &'a str, marker: &str) -> &'a str {
+    let start = source
+        .find(marker)
+        .unwrap_or_else(|| panic!("`{marker}` missing from: {source}"))
+        + marker.len();
+    let rest = &source[start..];
+    let end = rest
+        .find(')')
+        .unwrap_or_else(|| panic!("`{marker}` is not closed: {rest}"));
+    rest[..end].trim()
+}
+
+/// Split a rendered router into its `.route(...)` blocks (each block runs to
+/// the next top-level `.route(` or the end), so a pin can assert WHERE a
+/// layer sits instead of merely that the text exists somewhere.
+fn route_blocks(router: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel) = router[cursor..].find(".route(") {
+        let start = cursor + rel;
+        let after = start + ".route(".len();
+        let end = router[after..]
+            .find("\n        .route(")
+            .map(|i| after + i)
+            .unwrap_or(router.len());
+        blocks.push(&router[start..end]);
+        if end == router.len() {
+            break;
+        }
+        cursor = end;
+    }
+    blocks
+}
+
+/// Issue #710 — the configured `max_bytes` must be REACHABLE: axum's global
+/// `DefaultBodyLimit` (2 MiB) was too low, so a larger configured limit was
+/// unreachable. The router scopes a layer to every upload METHOD route, with
+/// `max_bytes + 64 KiB` of multipart slack so the handler's `max_bytes` check
+/// (the FILE cap, matching utoipa and the UI pre-check) stays the boundary.
+#[tokio::test]
+async fn upload_route_scopes_the_body_limit_to_the_configured_max_bytes() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    // A SECOND media field so the pin covers EVERY emitted route, not just
+    // the first occurrence.
+    db_ingest_second_media_field(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let configured = config
+        .domains
+        .get("core")
+        .and_then(|d| d.media.as_ref())
+        .expect("media config")
+        .max_bytes;
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert_eq!(modules.len(), 2, "one module per media field");
+
+    // Handler side: every emitted handler compares the file size against the
+    // configured `max_bytes`.
+    let handler_limits: Vec<u64> = modules
+        .iter()
+        .map(|m| literal_after(m, "if data.len() as u64 > "))
+        .collect();
+    assert_eq!(
+        handler_limits,
+        vec![configured, configured],
+        "every handler checks the configured max_bytes"
+    );
+
+    let router = rendered_router_media_block(&engine, &config).await;
+    let upload_blocks: Vec<&str> = route_blocks(&router)
+        .into_iter()
+        .filter(|b| b.contains("::upload"))
+        .collect();
+    assert_eq!(
+        upload_blocks.len(),
+        2,
+        "one upload route per media field: {router}"
+    );
+    for block in &upload_blocks {
+        // Attached to the upload method router BEFORE the get/delete merges:
+        // moving it after `.merge(` (or onto the entity router) would widen
+        // or lose the scoping.
+        let layer_at = block
+            .find(".layer(axum::extract::DefaultBodyLimit::max(")
+            .unwrap_or_else(|| panic!("the upload method carries the layer: {block}"));
+        let first_merge = block
+            .find(".merge(")
+            .unwrap_or_else(|| panic!("the upload route merges display/remove: {block}"));
+        assert!(
+            layer_at < first_merge,
+            "the layer is on the upload method BEFORE the merges: {block}"
+        );
+        // The layer is the file cap PLUS the multipart envelope slack, so a
+        // file of exactly `max_bytes` is not rejected by the layer (B2).
+        assert_eq!(
+            expression_after(block, "axum::extract::DefaultBodyLimit::max("),
+            format!("{configured} + 64 * 1024"),
+            "the layer is max_bytes + the envelope slack: {block}"
+        );
+    }
+
+    // Above axum's 2 MiB default (else the layer is inert).
+    let layer_limit = configured + 64 * 1024;
+    assert!(
+        layer_limit > 2 * 1024 * 1024,
+        "the layered ceiling must exceed axum's 2 MiB default: {layer_limit}"
+    );
+
+    // Scoping, structurally: every `DefaultBodyLimit` lives inside an upload
+    // route block — a `Router::layer`, a `route_layer`, or a sibling route's
+    // layer fails this.
+    let total = router.matches("DefaultBodyLimit").count();
+    let inside_upload_routes: usize = upload_blocks
+        .iter()
+        .map(|b| b.matches("DefaultBodyLimit").count())
+        .sum();
+    assert_eq!(
+        total, inside_upload_routes,
+        "every DefaultBodyLimit sits inside an upload route: {router}"
+    );
+    assert!(
+        !router.contains("route_layer(axum::extract::DefaultBodyLimit"),
+        "never a router-wide layer: {router}"
+    );
+}
+
+async fn db_ingest_second_media_field(db: &(impl GraphIngestor + GraphQuerier)) {
+    db.ingest_property(
+        "PersonType",
+        "PersonType",
+        &prop(
+            "photo",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    )
+    .await
+    .expect("second media property");
+    db.ingest_edge(
+        "photo::PersonType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("second references edge");
+}
+
 #[tokio::test]
 async fn presigned_mode_emits_the_presign_issuance_route() {
     let engine = GrafeoEngine::in_memory().expect("engine");
@@ -1829,11 +1998,44 @@ async fn media_rejections_answer_413_and_415_not_400() {
         module.contains(r#"AppError::bad_request("multipart body carries no file field")"#),
         "malformed body stays 400: {module}"
     );
-    // A body-limit trip INSIDE the extractor (axum's 2 MiB default) is the
-    // same 413, never a 400 read failure.
+    // The body limit is LAZY, so it can trip on EITHER multipart read — the
+    // envelope's first frame (`next_field()`) or the file body
+    // (`field.bytes()`). Both must answer the 413 envelope, never a 400 read
+    // failure (issue #710).
+    let next_field_block = {
+        let start = module
+            .find(".next_field()")
+            .unwrap_or_else(|| panic!("multipart read: {module}"));
+        let end = module[start..]
+            .find("let mime_type")
+            .map(|i| start + i)
+            .unwrap_or_else(|| panic!("the next_field block is bounded: {module}"));
+        &module[start..end]
+    };
     assert!(
-        module.contains("e.status() == StatusCode::PAYLOAD_TOO_LARGE"),
-        "the extractor's limit error maps to 413: {module}"
+        next_field_block.contains("AppError::payload_too_large("),
+        "a limit trip on next_field() maps to 413: {module}"
+    );
+    let bytes_block = {
+        let start = module
+            .find("field.bytes().await")
+            .unwrap_or_else(|| panic!("file read: {module}"));
+        let end = module[start..]
+            .find("if data.len() as u64 > ")
+            .map(|i| start + i)
+            .unwrap_or_else(|| panic!("the bytes block is bounded: {module}"));
+        &module[start..end]
+    };
+    assert!(
+        bytes_block.contains("AppError::payload_too_large("),
+        "a limit trip on field.bytes() maps to 413: {module}"
+    );
+    assert_eq!(
+        module
+            .matches("e.status() == StatusCode::PAYLOAD_TOO_LARGE")
+            .count(),
+        2,
+        "BOTH lazy limit read sites map the 413: {module}"
     );
 
     // The presign branch answers 415 too (it was the unpinned half).

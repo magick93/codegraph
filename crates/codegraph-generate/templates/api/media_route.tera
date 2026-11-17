@@ -303,7 +303,18 @@ pub async fn upload(
     let field = multipart
         .next_field()
         .await
-        .map_err(|e| AppError::bad_request(format!("invalid multipart body: {e}")))?
+        .map_err(|e| {
+            // The body limit is LAZY: axum's `DefaultBodyLimit` surfaces its
+            // 413 from whichever read crosses it, and the whole envelope often
+            // arrives in the FIRST read — so the trip can land here, not only
+            // in `field.bytes()` below. Both reads answer the generated 413
+            // envelope (issue #710).
+            if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                AppError::payload_too_large(format!("upload exceeds {{ max_bytes }} bytes"))
+            } else {
+                AppError::bad_request(format!("invalid multipart body: {e}"))
+            }
+        })?
         .ok_or_else(|| AppError::bad_request("multipart body carries no file field"))?;
     let mime_type = field
         .content_type()
@@ -315,10 +326,11 @@ pub async fn upload(
         )));
     }
     let data = field.bytes().await.map_err(|e| {
-        // axum's `DefaultBodyLimit` (2 MiB unless the route sets one) trips
-        // INSIDE the extractor, before the `max_bytes` comparison below — map
-        // it to the same 413 the contract publishes instead of leaking a 400
-        // for an oversize body (issue #691; raising the limit is #710).
+        // The same lazy limit can trip on the FIELD read instead of
+        // `next_field()` above, and this arm is also the defense-in-depth
+        // fallback if a caller mounts the handler without the router's layer.
+        // Both paths answer the generated 413 envelope: the pre-#710 defect
+        // was the too-low 2 MiB CEILING, not the response shape.
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
             AppError::payload_too_large(format!("upload exceeds {{ max_bytes }} bytes"))
         } else {
