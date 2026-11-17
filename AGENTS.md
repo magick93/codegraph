@@ -2484,9 +2484,36 @@ methods are the correct pair), and `scaffold/main.tera` declares
 `mod media;` beside `lib.rs`'s declaration (the binary re-declares the module
 tree, so a lib-only declaration left `crate::media` unresolved from
 `app_state.rs`/`server.rs`). Both are presence-gated on `has_media`;
-flag-off output is unchanged. The compile coverage for this plane is the
-nightly gate's T0 boot — a PR-CI #551 compile pin for the media handler is
-tracked in #683.
+flag-off output is unchanged. A PR-CI #551 compile pin now covers the handler
+(`media_compile_tests::emitted_media_route_handler_compiles_in_isolation`,
+landed in PR #697 as #683 part (b)) beside the nightly gate's T0 boot; #683
+stays open for part (a) alone — the tracked `crates/codegraph/target/**`
+cleanup — so nothing about the handler is outstanding.
+
+### Media plane session scoping (#690)
+
+Every media handler rides ONE scoped transaction (`upload`: two short ones)
+carrying the #169 bundle — the five `app.*` GUCs + `SET LOCAL ROLE app_user` —
+via `templates/media/session.tera` → `src/media/session.rs` (`begin_scoped`,
+`parent_exists`); emitted only when `[media]` exists and declared
+`#[cfg(not(target_arch = "wasm32"))]` (SeaORM cannot link wasm32 — the wasm32
+leg of `media_compile_tests` proves the plane stays sea-orm-free). The parent
+gate — `SELECT 1 FROM {schema}.{parent} WHERE id = $1 AND {tenant} = $2`, BOUND
+parameters — runs BEFORE the storage-slot 503; a miss is **404, never 403**
+(the cross-tenant convention) and a nil session org is 404. Child statements
+carry `parent_fk = $1 AND (tenant = $2 OR tenant = '000…'::uuid)`: the zeros
+tolerance covers rows the CRUD child writer (`child_insert_sql`) still writes
+with the DDL default, safe because the parent gate already proved ownership;
+issue #700 retires it (trigger + backfill). DB errors classify through the
+`from_repo_err` markers → **403** (INSUFFICIENT_SCOPE / ROLE_FORBIDDEN /
+row-level-security violation). Tables are schema-qualified because `app_user`'s
+search_path is `public, extensions` (the unqualified SQL the plane shipped
+500'd on every non-public schema); issue #702 tracks the `postgres_schema` vs
+DDL-domain divergence. Gates: `media_pipeline_tests`
+(bundle/predicate/ordering/zeros/doc pins), `media_plan_tests`
+(`parent_tenant_column` via `is_global_entity`), `media_compile_tests` (native
+route + session, presigned leg, wasm32 sea-orm-free), nightly
+`ifml_codegen_gate` T0 boot.
 
 ## Compile-pin policy (issue #551)
 
@@ -2507,6 +2534,7 @@ their runtime substitute.
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
+| media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg) |
 | full app (every generator the default plan emits) | `grafeo_e2e_tests -- grafeo_generated_code_compiles` | the whole-tree backstop; failures are not plane-attributable |
 | wrapper binary | `wrapper_compile_tests -- --ignored` | #348 |
 | runtime substitutes for live-DB planes | `hooks_cornucopia_runtime_tests` (cornucopia hooks over real Postgres, #518), `review_api_suite` (real HTTP) | compile pins for these shapes ride the stubs above |
