@@ -793,6 +793,11 @@ mod tests {
 
     use codegraph_config::{OpsCapabilities, OpsDatabase, OpsDbTarget, OpsManifest};
 
+    /// A manifest with two EPHEMERAL ports. Note (issue #687) that no test
+    /// asserts them through a real socket probe any more — the fast-doctor
+    /// tests stub the port probe — so the bind-and-drop here is only to keep
+    /// the fixture plausible. A test that wants the REAL probe must hold its
+    /// own listener (see `check_port_ready_verdicts`).
     fn manifest_for() -> OpsManifest {
         OpsManifest {
             app_name: "demo-app".into(),
@@ -994,7 +999,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_for(manifest_for(), dir.path());
         // hurl missing → blocking, regardless of the (real) DB probe outcome.
-        // The port probe is stubbed so this test owns exactly one variable.
+        // The port probe is stubbed so the port verdict cannot decide this
+        // test (the `SELECT 1` DB probe is still real and is itself robust:
+        // a missing DB only ADDS a blocking problem).
         let err = run_fast_doctor_with(
             &cfg,
             FastDoctorSuite::Api,
@@ -1012,9 +1019,11 @@ mod tests {
     async fn fast_doctor_e2e_subset_passes_with_stubbed_tools() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config_for(manifest_for(), dir.path());
-        // Stubbed tools all present, ports stubbed free, disk real (warn at
-        // worst): the subset must pass — proving the marker section + verdict
-        // assembly end to end without npx/pnpm/supabase on the machine.
+        // Stubbed tools all present, ports stubbed free: the subset must pass
+        // — proving the marker section + verdict assembly end to end without
+        // npx/pnpm/supabase on the machine. The disk check stays REAL: it
+        // warns below `warn_free_gb` and blocks below `min_free_gb` (default
+        // 2 GiB), which is a deliberate environment floor, not a race.
         //
         // Issue #687: the ports are STUBBED, not real. `manifest_for()`
         // allocates them by binding :0 and dropping the listener, and any of
@@ -1022,7 +1031,7 @@ mod tests {
         // ephemeral port before a real probe reaches it (which is what made a
         // full `cargo test --workspace` red at ~1 run in N). `check_port_ready_verdicts`
         // keeps the REAL probe + registry verdicts; the deliberate-collision
-        // pin below proves this subset never touches a socket.
+        // pin below proves the PORT CHECK consults no socket.
         run_fast_doctor_with(
             &cfg,
             FastDoctorSuite::E2e,
@@ -1042,6 +1051,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let held = listener.local_addr().unwrap().port();
+        // Assert the pin's OWN premise: the listener really does occupy the
+        // port as far as the production probe is concerned. Without this the
+        // pin could silently degrade into a duplicate of the passing case on
+        // a platform where a wildcard bind coexists with a loopback listener.
+        assert!(
+            crate::preflight::ensure_port_free(held).is_err(),
+            "the held listener must actually occupy port {held}"
+        );
         let mut manifest = manifest_for();
         manifest.servers.api_port = held;
         manifest.servers.ui_port = held;
