@@ -565,6 +565,27 @@ pub async fn resolve_media_parent_link_column(
     if route_parents.is_empty() {
         return Ok(None);
     }
+    // Depth cap (issue #722 review): the emitted extractor binds at most
+    // grandparent → parent → id — the SAME limit the CRUD plane's
+    // `ancestor_path_params` arm has. `router.tera` nests recursively, so a
+    // deeper entity WOULD be mounted with more url params and every media
+    // request would answer 400 (axum rejects a tuple whose arity differs from
+    // the route's param count). Fail closed at generation time instead of
+    // advertising a route the handler can never serve.
+    if route_parents.len() > 2 {
+        let chain: Vec<&str> = route_parents
+            .iter()
+            .map(|hop| hop.entity_title.as_str())
+            .collect();
+        return Err(Error::Config(format!(
+            "domain \"{domain_name}\" media: \"{title}\" is mounted {} levels deep ({}), but a \
+             media handler binds at most grandparent → parent → id (the CRUD plane's \
+             `ancestor_path_params` limit) — a deeper route would answer 400 on every request. \
+             Flatten the nesting or extend both planes together.",
+            route_parents.len(),
+            chain.join(" > "),
+        )));
+    }
     // Loaded lazily by the route-path resolver for Source-2 nesting; a
     // config-declared nesting may not have needed it yet, so ensure it exists
     // (the resolver's graph fallback reads it).
@@ -934,5 +955,68 @@ mod tests {
         .await
         .expect("a root field needs no link column");
         assert!(link.is_none());
+    }
+
+    /// Issue #722 review: `router.tera` nests recursively, but the emitted
+    /// extractor (like the CRUD plane's `ancestor_path_params`) binds at most
+    /// three ids. A depth-3 media route would carry four url params and the
+    /// handler could never serve it (axum rejects an arity mismatch with 400),
+    /// so it must fail at generation time — never as an advertised dead route.
+    #[tokio::test]
+    async fn depth_three_media_nesting_is_config_error() {
+        let config = parse_domain_config_str(
+            "[defaults]\n\
+             type_suffix = \"Type\"\n\n\
+             [domains.core]\n\
+             label = \"Core\"\n\
+             schema_dir = \"core\"\n\
+             postgres_schema = \"core\"\n\n\
+             [domains.core.entity_config.AddressType]\n\
+             role = \"child\"\n\
+             parent = \"ContactType\"\n\
+             parent_ref = \"contact_id\"\n\n\
+             [domains.core.media]\n\
+             provider = \"supabase\"\n\
+             upload_mode = \"through-app\"\n\
+             bucket = \"person-media\"\n\
+             max_bytes = 100\n\
+             accept = [\"image/png\"]\n",
+        )
+        .expect("domains.toml");
+        let db = MockEngine::new();
+        let route_parents = [
+            ("CountryType", "countries", "country_id"),
+            ("PersonType", "persons", "person_id"),
+            ("ContactType", "contacts", "contact_id"),
+        ]
+        .into_iter()
+        .map(|(title, segment, param)| MediaRouteParent {
+            entity_title: title.into(),
+            path_segment: segment.into(),
+            param_name: param.into(),
+        })
+        .collect::<Vec<_>>();
+        let mut candidates = None;
+        let err = resolve_media_parent_link_column(
+            &db,
+            &config,
+            "core",
+            "AddressType",
+            &route_parents,
+            &mut candidates,
+        )
+        .await
+        .expect_err("depth 3 cannot be served by the emitted extractor");
+
+        let Error::Config(msg) = err else {
+            panic!("expected Error::Config, got {err:?}");
+        };
+        assert!(msg.contains("AddressType"), "{msg}");
+        assert!(msg.contains("3 levels deep"), "{msg}");
+        assert!(msg.contains("grandparent"), "{msg}");
+        assert!(
+            msg.contains("CountryType > PersonType > ContactType"),
+            "the diagnostic names the chain: {msg}"
+        );
     }
 }

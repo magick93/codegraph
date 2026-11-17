@@ -1590,6 +1590,129 @@ async fn media_plane_emits_the_session_bundle_and_a_bound_parent_lookup() {
 }
 
 #[tokio::test]
+async fn nested_session_pins_the_linked_gate_sql_and_bind_order() {
+    // Issue #722 review: the (a)-(f) pins cover the CALL of
+    // `parent_exists_linked`, but nothing pinned its BODY — weakening the SQL
+    // to an existence-only predicate (`id = $1 AND tenant = $2`) left all 56
+    // node-free pins green and only the nightly runtime gate caught it. Pin
+    // the predicate and the bind order here so PR CI sees the ownership
+    // contract too.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let session_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("src/media/session.rs"))
+        .expect("the session module")
+        .content;
+
+    // Both tenancy variants: the linked predicate is `id AND link AND org`.
+    for sql in [
+        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 AND {column} = $3 LIMIT 1",
+        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 LIMIT 1",
+    ] {
+        assert!(
+            session_rs.contains(sql),
+            "the linked gate must carry the ownership predicate `{sql}`: {session_rs}"
+        );
+    }
+    // …and never degrade to the existence-only shape. (The plain
+    // `parent_exists` in the same file legitimately carries it — the check is
+    // scoped to the linked function below.)
+    let body = session_rs
+        .split("pub async fn parent_exists_linked<")
+        .nth(1)
+        .expect("the linked gate function");
+    assert!(
+        !body.contains("SELECT 1 FROM {table} WHERE id = $1 AND {column} = $2 LIMIT 1"),
+        "the linked gate must not collapse to `id + org` (an IDOR): {body}"
+    );
+    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains(
+            "Value::from(id), sea_orm::Value::from(parent_id), \
+             sea_orm::Value::from(organization_id),"
+        ),
+        "the binds are (id, parent_id, organization_id) in that order — a swap would \
+         still compile: {normalized}"
+    );
+    assert!(
+        normalized.contains("Value::from(id), sea_orm::Value::from(parent_id), ],"),
+        "the GLOBAL arm binds (id, parent_id) — no org predicate for a global parent: \
+         {normalized}"
+    );
+    assert_eq!(
+        body.matches("Value::from(").count(),
+        5,
+        "tenant arm (id, parent_id, org) + global arm (id, parent_id): {body}"
+    );
+}
+
+/// Issue #722 review: a depth-3 media entity is refused at generation time —
+/// the emitted extractor binds at most three ids (the CRUD plane's limit), so
+/// a deeper route could never be served (always 400).
+#[tokio::test]
+async fn depth_three_media_nesting_is_a_config_error() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_grandchild(&engine).await;
+    // A child of the grandchild: `AddressType` under `ContactType` under
+    // `PersonType`.
+    db_ingest_depth_three(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{}\n[domains.core.entity_config.RegionType]\nrole = \"child\"\nparent = \"AddressType\"\nparent_ref = \"address_id\"\npath_segment = \"regions\"\n",
+        media_toml_with_nested_grandchild()
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let err = run_generator(&engine, &config, out.path())
+        .await
+        .expect_err("depth 3 must fail closed");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("RegionType") && msg.contains("3 levels deep"),
+        "the config error names the entity and the depth: {msg}"
+    );
+}
+
+/// A depth-3 entity with a media field (`RegionType` under `AddressType`).
+async fn db_ingest_depth_three(db: &(impl GraphIngestor + GraphQuerier)) {
+    db.ingest_schema(&schema(
+        "RegionType",
+        "RegionType",
+        "entity",
+        "region",
+        true,
+    ))
+    .await
+    .expect("region schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("RegionType", "RegionType", &p)
+            .await
+            .expect("region property");
+    }
+    db.ingest_edge(
+        "avatar::RegionType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("region references edge");
+}
+
+#[tokio::test]
 async fn broken_media_config_is_a_config_error_not_silent_emission() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;

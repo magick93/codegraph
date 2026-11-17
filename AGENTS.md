@@ -2672,16 +2672,28 @@ a root entity only. #722 fixes both halves:
   direct unit test (`media::plan` tests) plus the
   `media_pipeline_tests::nested_media_field_without_a_link_column_is_config_error`
   pin over the same resolver.
+- **Depth cap (review)**: the emitted extractor binds at most
+  grandparent → parent → id — the CRUD plane's `ancestor_path_params` limit.
+  `router.tera` nests recursively, so a depth-3 media entity would be mounted
+  with four url params and every request would 400; it is a HARD
+  `Error::Config` at plan build instead (naming the entity, the depth and the
+  chain), never an advertised dead route. Depth 2 itself compiles: the
+  `media_compile_tests` depth-2 leg renders `AddressType` and checks the
+  three-id tuple against the nested `session.rs`.
 - **hurl**: the `#722` "not live" paragraph is gone; the emitted
   `09_media.hurl` describes nested contracts as live (the handlers they
   address now exist).
 - **Gates**: `media_pipeline_tests` (depth-1 extractor tuple + position
   before the gate; the gate carrying `parent_id`/`PARENT_LINK_COLUMN`;
   depth-2 `(Uuid, Uuid, Uuid)` with `_grandparent_id` + the recursive
-  `.nest` router pin; the hard config error; the root module's flat shape;
+  `.nest` router pin; the hard link-column error; the depth-3 config error;
+  `nested_session_pins_the_linked_gate_sql_and_bind_order` — the SQL body
+  and the `(id, parent_id, organization_id)` bind order, because the call-site
+  pins alone left the predicate unpinned; the root module's flat shape;
   utoipa params order == extractor order) + `media_compile_tests`
-  (`nested_media_route_handler_compiles_in_isolation` — the #551 policy: the
-  new branch is COMPILED with the nested `session.rs`, not just
+  (`nested_media_route_handler_compiles_in_isolation` AND
+  `depth_two_media_route_handler_compiles_in_isolation` — the #551 policy:
+  both branches COMPILED with the nested `session.rs`, not just
   string-pinned) + `media_plan_tests` (`parent_link_column`) +
   `media_runtime_tests` (nested upload/display/remove, cross-tenant 404s,
   and the link-mismatch 404 — see the runtime gate section).
