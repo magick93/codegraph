@@ -19,7 +19,7 @@ use codegraph_core::types::{
     DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
     DddTransitionRef,
 };
-use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_ddd_str};
+use phero_driver::{CompileInputs, DomainImports, SchemaImports, SigilImports, compile_ddd_str};
 
 use crate::error::{Error, Result};
 use crate::ingest::phero_imports::{collect_domains, discover_rosetta_files, scan_sigil_imports};
@@ -282,7 +282,8 @@ pub fn read_and_compile_ddd(path: &Path) -> Result<DddCompiled> {
         schemas: schema_imports,
         sigil,
     };
-    let compilation = compile_ddd_str(&ddd_path, &source, &domain_pairs, &imports);
+    let inputs = CompileInputs::from_domains(&domain_pairs).with_imports(imports);
+    let compilation = compile_ddd_str(&ddd_path, &source, &inputs);
     Ok(DddCompiled {
         path: ddd_path,
         source,

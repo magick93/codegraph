@@ -128,8 +128,9 @@ pub fn compile_and_check_ifml(path: &Path) -> Result<IfmlCompiled> {
     // (W0150–W0154) rides the compiled artifact as warnings — a linty
     // model still ingests.
     let diags = phero_ifml::check_ifml_with_actors(&compilation, None, &actor_models);
-    let (errors, lints): (Vec<_>, Vec<_>) =
-        diags.into_iter().partition(|diag| diag.severity.is_error());
+    let (errors, lints): (Vec<_>, Vec<_>) = diags
+        .into_iter()
+        .partition(|diag| diag.1.severity.is_error());
     if !errors.is_empty() {
         return Err(Error::IfmlModel {
             file: key.clone(),
@@ -190,15 +191,21 @@ fn with_snake_role_aliases(mut models: Vec<ActorModel>) -> Vec<ActorModel> {
     models
 }
 
-/// One `file: code message` line per diagnostic (checker codes E0104–E0109
-/// name the exact token; spans are byte offsets into the keyed file).
-/// Warning-severity findings (the lint channel) render identically — the
-/// severity lives in the code's W-band, and the caller decides fatal vs
-/// advisory.
-pub fn render_diags(diags: &[phero_ifml::IfmlDiagnostic]) -> String {
+/// One `file: code message at byte N` line per diagnostic (checker codes
+/// E0104–E0109 name the exact token; spans are byte offsets into the keyed
+/// file).  Warning-severity findings (the lint channel) render identically —
+/// the severity lives in the code's W-band, and the caller decides fatal vs
+/// advisory.  Diagnostics are the workspace's shared `(path, record)` shape
+/// (SK2 of pherolang#328): the file is the tag and the code/span are record
+/// fields.
+pub fn render_diags(diags: &[(String, phero_ifml::Diagnostic<&'static str>)]) -> String {
     diags
         .iter()
-        .map(|d| format!("  {}:{} {} at byte {}", d.file, d.code, d.message, d.span.0))
+        .map(|(file, diagnostic)| {
+            let code = diagnostic.code.unwrap_or("");
+            let byte = diagnostic.span.map_or(0, |span| span.start);
+            format!("  {file}:{code} {} at byte {byte}", diagnostic.message)
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }

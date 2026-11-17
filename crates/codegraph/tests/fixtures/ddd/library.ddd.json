@@ -1,6 +1,6 @@
 {
   "formatVersion": 2,
-  "pheroVersion": "0.3.0",
+  "pheroVersion": "0.4.0",
   "application": {
     "name": "Library",
     "base": "nz.example.library"

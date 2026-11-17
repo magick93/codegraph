@@ -4589,7 +4589,7 @@ One integration branch, one PR; workstreams ws0–ws6, red-first TDD, all new
 live gates **Supabase-flavoured Postgres only** by product decision (no
 plain-Postgres portability paths added).
 
-- **WS0 — `rex-*` @ 1fe0ca9** (historical; the live pin is `phero-*` @ 298267e): rev-only bump to the 0.2-era dedup
+- **WS0 — `rex-*` @ 1fe0ca9** (historical; the live pin is `phero-*` @ 4f497e1): rev-only bump to the 0.2-era dedup
   sweep; see the dependency-policy pin for the fallout scan.
 - **WS1 — live `service_ops_hurl_gate`**
   (`cargo test -p codegraph --test service_ops_hurl_gate -- --ignored
@@ -4754,13 +4754,36 @@ decision-gated.
 - **Deliberate pins** (bump only with their stated gate green):
   - `sqlglot-rust =0.10.30` — exact pin for the SQLite parse gate (a sqlglot regression must never reach a migration file).
   - `grafeo`/`grafeo-*` exact `=x.y.z` pins — the graph engine moves as reviewed patch bumps (#420 shape); the #389 query-count pin must not move up. Currently `=0.6.0` (0.6 replaced the on-disk format; WAL durability moved from the default features into the opt-in `storage` feature, which codegraph-grafeo enables; `GRAFEO_STORAGE_GENERATION` in `schema_ddl.rs` versions the engine's on-disk format inside the persisted-graph cache inputs hash — bump it on every grafeo minor that changes the file format so consumers cold-re-ingest instead of migrating `.graph-cache/graph.grafeo` in place). MSRV moved to 1.99.0 with 0.6.0.
-  - `phero-*` @ 298267e (yestechgroup/pherolang) — the rexlang → Phero Lang rebrand (0.3) plus the DDD epic DD1–DD9. `phero-ir|driver|expr|ifml` are the four crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). See **Pherolang 0.3 upgrade** below and `docs/pherolang-upgrade.md`. Previous pin: `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
+  - `phero-*` @ 4f497e1 (yestechgroup/pherolang) — v0.4.0 plus the shared surface kernel (epic pherolang#328, SK1–SK6 via PRs #336/#337). `phero-ir|driver|expr|ifml` are the four crates we consume; sigil stays on 69115a7 (upstream's own pin, so lockstep is a no-op). This bump is API-only for us: one `CompileInputs` bundle on the `compile_*_str` entry points and the shared diagnostic record; see **Pherolang 0.4 pin** below. Previous pins: `phero-*` @ 298267e (the 0.3 rebrand + DDD epic DD1–DD9, `docs/pherolang-upgrade.md`) and `rex-*` @ 1fe0ca9 (the 0.2-era PR #174 dedup sweep — artifacts then carried `rexVersion` with `formatVersion` 1).
   - `tree-sitter = "0.25"` and (no direct) `salsa` — **gated on an auto-lsp release > 0.6.2**: `links = "tree-sitter"` forbids version coexistence and auto-lsp re-exports 0.25 / pins salsa 0.22 internally (documented next to the workspace pins, #422/#423).
   - Rust toolchain: root `rust-toolchain.toml` pins the channel (currently `1.100.0` — issue #627). `dtolnay/rust-toolchain@stable` reads it, so local and CI compilers cannot drift (the PR #626 clippy-lint-drift class is structurally closed). The pin moves MONTHLY alongside the Tier-0 lockfile refresh, never silently: bump the channel AND the `PINNED_CHANNEL` literal in `crates/codegraph/tests/ci_toolchain_contract.rs` in the same commit (the contract test enforces the pairing and the file's presence/shape — components rustfmt+clippy, target wasm32-unknown-unknown for the #517/#550 gates).
 - **Emitted-contract majors** (sea-orm, utoipa, and friends pinned inside generated `Cargo.toml`s) ship with: review-fixture regeneration, re-blessed byte-identity baselines, an enumerated diff, and a consumer migration note in the PR (#424/#425 shape). Generated apps link `codegraph-workflow` — the workspace crate and the emitted app must stay on ONE sea-orm major.
 - **Byte-identity discipline**: any template commit that changes generated output MUST re-bless the canaries (`ux_rules_pre_feature_tree.sha256`, `policy_rls` snapshot, review fixture) in the SAME PR with an enumerated diff. Master has shipped un-blessed template changes before (#433 catch-up) — don't repeat it.
 - **cargo-audit**: runs in CI on every PR (the `audit` job). Known accepted warnings (non-fatal, watch list — each tracked by an issue; delete the entry there when cleared): `RUSTSEC-2025-0141` (bincode unmaintained — transitive via grafeo, #534), `RUSTSEC-2026-0386` (tokio 1.53.1 unsound `AsyncFd` — rides the monthly lockfile refresh, #533), and `RUSTSEC-2026-0442` (arrow-data 60 unsound — transitive via grafeo; pre-dates the pherolang 194056b bump, rides the monthly lockfile refresh), `RUSTSEC-2026-0486` (rustix 1.1.5 unsound xattr zero-length buffer — transitive via the file-walking stack; a rustix patch bump rides the monthly lockfile refresh, #678). `RUSTSEC-2026-0308` (salsa 0.23) **cleared** with the pherolang 0.3 pin (salsa 0.28.5 in the tree) — #535 closed on that evidence.
 - **dependabot**: scoped to GitHub Actions only (`.github/dependabot.yml`); Cargo automation is consciously declined for the reasons above.
+
+## Pherolang 0.4 pin (shared surface kernel, epic pherolang#328)
+
+The live pin is `phero-*` @ `4f497e1` (v0.4.0 + SK1–SK6, PRs #336/#337).
+The move is **API-only for our ingest path**:
+
+- The public `compile_*_str` entry points take one inert
+  `phero_driver::CompileInputs` instead of parallel `(path, payload)` slices.
+  Build it with `CompileInputs::from_domains` plus
+  `with_imports`/`with_designs`/`with_flows`/`with_actors`/`with_decisions`;
+  `compile_str`/`compile_files`, the gatherers and every result type are
+  unchanged.
+- `.ifml` diagnostics are the workspace's shared `(path, Diagnostic<&'static
+  str>)` record (SK2). `IfmlDiagnostic` is gone: the file is the tuple tag,
+  and `severity`/`code`/`span` are record fields (code and span are
+  `Option`s). `compile_ifml_str`, `check_ifml*` and `manifest_ifml`
+  signatures are unchanged.
+- One surface identity (`phero_parser::Surface`) and one import walker
+  (SK3/SK5). No artifact shape moved.
+- The one committed-fixture change is the provenance stamp:
+  `tests/fixtures/ddd/library.ddd.json` re-blessed `pheroVersion` 0.3.0 →
+  0.4.0 — the documented rev-canary re-bless in `ddd_golden_tests.rs`, not a
+  shape change. `formatVersion` stays 2.
 
 ## Pherolang 0.3 upgrade (rebrand + the DDD/IR epic)
 

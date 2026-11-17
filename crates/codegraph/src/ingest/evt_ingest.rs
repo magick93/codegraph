@@ -17,7 +17,7 @@ use codegraph_core::types::{
     EvtChannelNode, EvtCloudEventsNode, EvtDeliveryModeNode, EvtDeliveryPolicyNode, EvtEventField,
     EvtEventNode, EvtModelGraph, EvtSubscriptionNode,
 };
-use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_evt_str};
+use phero_driver::{CompileInputs, DomainImports, SchemaImports, SigilImports, compile_evt_str};
 
 use crate::error::{Error, Result};
 use crate::ingest::ddd_ingest::{resolve_with_suffix, short_name};
@@ -275,7 +275,8 @@ pub fn read_and_compile_evt(path: &Path) -> Result<EvtCompiled> {
         schemas: schema_imports,
         sigil,
     };
-    let compilation = compile_evt_str(&evt_path, &source, &domain_pairs, &imports);
+    let inputs = CompileInputs::from_domains(&domain_pairs).with_imports(imports);
+    let compilation = compile_evt_str(&evt_path, &source, &inputs);
     Ok(EvtCompiled {
         path: evt_path,
         source,
