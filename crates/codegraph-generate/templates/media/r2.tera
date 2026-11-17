@@ -3,7 +3,9 @@
 //! hand-rolled AWS SigV4 — no SDK, so the module compiles natively AND on
 //! wasm32 with only `hmac`/`sha2`/`hex` (the compile pin legs). Endpoint is
 //! R2's S3 gateway (`https://{account}.r2.cloudflarestorage.com`, override
-//! with `R2_S3_ENDPOINT` for any S3-compatible store); credentials ride the
+//! with `R2_S3_ENDPOINT` for any S3-compatible store, and `R2_S3_REGION` for
+//! its SigV4 credential region — default `auto`, which is R2's value and NOT
+//! what a store that verifies the scope expects); credentials ride the
 //! environment. The wrangler `[[r2_buckets]]` binding is the workers-native
 //! data path; THIS adapter is the env-credentialed path shared by monolith
 //! and worker deployments.
@@ -11,8 +13,11 @@ use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// SigV4 region for R2 (AWS SigV4 requires the token; R2 answers to
-/// region "auto" regardless of location).
+/// DEFAULT SigV4 region. AWS SigV4 requires the token, and R2 answers to
+/// `auto` regardless of location — but a generic S3-compatible store
+/// (RustFS, MinIO, Ceph, real S3) VERIFIES the credential scope's region, so
+/// `R2_S3_REGION` overrides it (issue #695: without this, Stage 1 fails on
+/// the signature scope and the failure looks like "the store is broken").
 const SIGV4_REGION: &str = "auto";
 const SIGV4_SERVICE: &str = "s3";
 
@@ -29,6 +34,10 @@ pub struct R2Storage {
     /// Public base (r2.dev / custom domain) used for display when
     /// `public_read` — private buckets mint presigned GETs instead.
     public_base: Option<String>,
+    /// SigV4 region for the credential scope: `R2_S3_REGION`, defaulting to
+    /// [`SIGV4_REGION`] (`auto`, R2's value). An S3-compatible endpoint that
+    /// verifies the scope needs its real region here.
+    region: String,
     display_ttl_secs: u64,
 }
 
@@ -69,6 +78,12 @@ impl R2Storage {
             .ok()
             .filter(|v| !v.is_empty())
             .map(|v| v.trim_end_matches('/').to_string());
+        // R2 answers to `auto`; any other S3-compatible store verifies the
+        // region in the credential scope, so it is configurable (issue #695).
+        let region = std::env::var("R2_S3_REGION")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| SIGV4_REGION.to_string());
         Ok(Self {
             http,
             endpoint,
@@ -78,6 +93,7 @@ impl R2Storage {
             secret_access_key,
             public_read,
             public_base,
+            region,
             display_ttl_secs,
         })
     }
@@ -264,7 +280,7 @@ impl R2Storage {
             payload_hash: payload_hash.to_string(),
             date_stamp,
             amz_date,
-            region: SIGV4_REGION.to_string(),
+            region: self.region.clone(),
             service: SIGV4_SERVICE.to_string(),
         };
         let mut send_headers = BTreeMap::new();
@@ -283,7 +299,7 @@ impl R2Storage {
         let (amz_date, date_stamp) = amz_dates(now_unix_secs());
         let scope = format!(
             "{}/{}/{}/aws4_request",
-            date_stamp, SIGV4_REGION, SIGV4_SERVICE
+            date_stamp, self.region, SIGV4_SERVICE
         );
         let mut query: Vec<(String, String)> = vec![
             (
@@ -315,7 +331,7 @@ impl R2Storage {
             payload_hash: "UNSIGNED-PAYLOAD".to_string(),
             date_stamp,
             amz_date,
-            region: SIGV4_REGION.to_string(),
+            region: self.region.clone(),
             service: SIGV4_SERVICE.to_string(),
         };
         let signature = req.signature(&self.secret_access_key);

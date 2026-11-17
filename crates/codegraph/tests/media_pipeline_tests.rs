@@ -1153,6 +1153,29 @@ async fn r2_plan_emits_the_r2_adapter_with_sigv4() {
     ] {
         assert!(r2_rs.contains(fragment), "r2 adapter pin: {fragment}");
     }
+    // SigV4 region is CONFIGURABLE (issue #695 Stage 0): R2 answers to "auto"
+    // but any other S3-compatible store verifies the credential scope's
+    // region, so `R2_S3_REGION` must reach every scope construction — the
+    // header-signed request, the presigned PUT, the string-to-sign and the
+    // signing key. A hardcoded `const SIGV4_REGION` in any of those is the
+    // failure mode this pins against.
+    assert!(
+        r2_rs.contains(r#"std::env::var("R2_S3_REGION")"#),
+        "the region is read from the environment: {r2_rs}"
+    );
+    assert!(
+        r2_rs.contains(r#".unwrap_or_else(|| SIGV4_REGION.to_string())"#),
+        "with R2's \"auto\" as the documented default: {r2_rs}"
+    );
+    assert_eq!(
+        r2_rs.matches("region: SIGV4_REGION.to_string()").count(),
+        0,
+        "no signing site hardcodes the region: {r2_rs}"
+    );
+    assert!(
+        r2_rs.contains("date_stamp, self.region, SIGV4_SERVICE"),
+        "the presign credential scope uses the instance region: {r2_rs}"
+    );
     assert!(
         r2_rs.contains("MediaHttp"),
         "adapters speak through the MediaHttp seam"
