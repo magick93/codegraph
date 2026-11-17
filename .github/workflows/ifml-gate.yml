@@ -25,7 +25,16 @@ jobs:
         image: public.ecr.aws/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
+          # The image's /docker-entrypoint-initdb.d/migrate.sh runs `psql -U
+          # supabase_admin` BEFORE that role exists, so the bootstrap only
+          # completes when supabase_admin is the init user (with
+          # POSTGRES_USER=postgres the container exits 2 with FATAL: role
+          # "supabase_admin" does not exist). The generated apps still connect
+          # as `postgres` (DATABASE_URL unchanged): the image creates that role
+          # with rolsuper=f, and app queries run under `SET LOCAL ROLE
+          # app_user` (NOBYPASSRLS) — so the RLS gates keep exercising the
+          # non-bypassing role, not the migration owner.
+          POSTGRES_USER: supabase_admin
         ports:
           - 5432:5432
         options: >-
