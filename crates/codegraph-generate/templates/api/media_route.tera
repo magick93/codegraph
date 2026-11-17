@@ -21,6 +21,9 @@
 //! parameters, never as SQL string literals. A GLOBAL owning table (the DDL's
 //! own tenancy rule) is deliberately unscoped — every organization may see a
 //! global row by definition; the const below says which case applies.
+//! `upload` deliberately holds the scoped transaction across the provider
+//! `put` so a foreign parent can never leave bytes behind; the hold is
+//! bounded by the configured `max_bytes`.
 use axum::{
     extract::{Extension, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
