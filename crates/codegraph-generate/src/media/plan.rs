@@ -17,7 +17,12 @@ use codegraph_core::types::{
 use codegraph_naming::{child_parent_fk_column, child_table_name, to_snake_case};
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::db::entity::is_global_entity;
 use crate::error::Error;
+
+/// The tenant column the DDL injects on every non-global table (and on its
+/// child tables). Mirrors `db/ddl/query.rs` + `persistence.rs`.
+const TENANT_COLUMN: &str = "platform_organization_id";
 
 /// Build the media plan for every domain that declares `[media]`, keyed by
 /// domain name (BTreeMap — deterministic iteration, the charts precedent).
@@ -45,8 +50,15 @@ pub async fn build_media_plans(
         titles.sort();
         plans.insert(
             name.clone(),
-            build_media_plan_for_domain(db, name, media, &config.defaults.type_suffix, &titles)
-                .await?,
+            build_media_plan_for_domain(
+                db,
+                config,
+                name,
+                media,
+                &config.defaults.type_suffix,
+                &titles,
+            )
+            .await?,
         );
     }
     Ok(plans)
@@ -148,6 +160,7 @@ pub async fn media_route_fields(
     let titles = [entity_title.to_string()];
     let plan = build_media_plan_for_domain(
         db,
+        config,
         domain_name,
         media,
         &config.defaults.type_suffix,
@@ -176,6 +189,7 @@ pub fn media_upload_mode(config: &DomainConfig, domain_name: &str) -> Option<Upl
 /// from the graph).
 pub async fn build_media_plan_for_domain(
     db: &dyn GraphQuerier,
+    config: &DomainConfig,
     domain_name: &str,
     media: &MediaConfig,
     type_suffix: &str,
@@ -242,6 +256,19 @@ pub async fn build_media_plan_for_domain(
                 "domain \"{domain_name}\" media: entity \"{title}\" resolves to no schema"
             ))
         })?;
+        // Tenancy of the owning table follows the DDL's own rule — NEVER a
+        // property scan: mox entity schemas never declare the tenant column
+        // (the DDL injects it), so a scan would return `None` for every real
+        // model and silently emit unscoped media SQL (issue #690).
+        // `is_global_entity` is a constant-false stub today; when it grows
+        // real logic the media plane follows it. The DDL
+        // (`db/ddl/query.rs`) and `persistence.rs` carry the same function;
+        // all three must move together.
+        let parent_tenant_column = if is_global_entity(&schema.pg_table_name, config) {
+            None
+        } else {
+            Some(TENANT_COLUMN.to_string())
+        };
         for prop in db.get_properties(title).await? {
             match prop.effective_kind() {
                 Some(RefClassificationKind::ValueObject) => {
@@ -286,6 +313,7 @@ pub async fn build_media_plan_for_domain(
                             parent_fk_column: child_parent_fk_column(&schema.pg_table_name),
                             url_column,
                             mime_column,
+                            parent_tenant_column: parent_tenant_column.clone(),
                         });
                     }
                 }

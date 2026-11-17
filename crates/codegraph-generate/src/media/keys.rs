@@ -160,6 +160,7 @@ mod tests {
                     parent_fk_column: "person_id".to_string(),
                     url_column: "url".to_string(),
                     mime_column: "mime_type".to_string(),
+                    parent_tenant_column: Some("platform_organization_id".to_string()),
                 },
                 MediaFieldPlan {
                     entity_title: "OtherType".to_string(),
@@ -170,6 +171,7 @@ mod tests {
                     parent_fk_column: "other_id".to_string(),
                     url_column: "url".to_string(),
                     mime_column: "mime_type".to_string(),
+                    parent_tenant_column: Some("platform_organization_id".to_string()),
                 },
                 MediaFieldPlan {
                     entity_title: "PersonType".to_string(),
@@ -180,6 +182,7 @@ mod tests {
                     parent_fk_column: "person_id".to_string(),
                     url_column: "url".to_string(),
                     mime_column: "mime_type".to_string(),
+                    parent_tenant_column: Some("platform_organization_id".to_string()),
                 },
             ],
             provider_settings: MediaProviderSettings::Supabase,

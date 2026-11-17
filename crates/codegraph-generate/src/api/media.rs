@@ -35,8 +35,13 @@ struct MediaRouteContext {
     domain: String,
     media_field_name: String,
     media_accept: Vec<String>,
+    /// The domain's Postgres schema — generated tables are schema-qualified
+    /// (`{schema}.{table}`); `app_user`'s search_path is `public, extensions`.
+    schema: String,
     child_table: String,
     parent_fk_column: String,
+    /// The owning table's tenant column (`None` for a global parent).
+    parent_tenant_column: Option<String>,
     url_column: String,
     mime_column: String,
     /// Presigned mode ⇒ presign issuance route (no multipart upload).
@@ -79,12 +84,17 @@ impl EntityGenerator for MediaRouteGenerator {
         if fields.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(media_cfg) = config.domains.get(domain).and_then(|d| d.media.as_ref()) else {
+        let Some(entry) = config.domains.get(domain) else {
             return Ok(Vec::new());
         };
+        let Some(media_cfg) = entry.media.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let postgres_schema = entry.postgres_schema.clone();
         let titles = [schema_title.to_string()];
         let media_plan = plan::build_media_plan_for_domain(
             db,
+            config,
             domain,
             media_cfg,
             &config.defaults.type_suffix,
@@ -118,8 +128,10 @@ impl EntityGenerator for MediaRouteGenerator {
                 domain: domain.to_string(),
                 media_field_name: field.field_snake.clone(),
                 media_accept: media_cfg.accept.clone(),
+                schema: postgres_schema.clone(),
                 child_table: field.child_table.clone(),
                 parent_fk_column: field.parent_fk_column.clone(),
+                parent_tenant_column: field.parent_tenant_column.clone(),
                 url_column: field.url_column.clone(),
                 mime_column: field.mime_column.clone(),
                 mode_presigned: media_plan.upload_mode

@@ -134,6 +134,13 @@ impl GlobalGenerator for MediaStorageGenerator {
                 path: self.output_dir.join("src").join("media").join("http.rs"),
                 content: render_template_with_project(tera, "media/http.tera", &ctx, project)?,
             },
+            // The #169 session bundle + tenant-scoped parent gate (issue
+            // #690) the media routes ride. Emitted with the plane; the
+            // module declaration is native-only (SeaORM cannot link wasm32).
+            GeneratedFile {
+                path: self.output_dir.join("src").join("media").join("session.rs"),
+                content: render_template_with_project(tera, "media/session.tera", &ctx, project)?,
+            },
             GeneratedFile {
                 path: self
                     .output_dir

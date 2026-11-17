@@ -179,6 +179,7 @@ impl GlobalGenerator for UiScaffoldGenerator {
             titles.sort();
             if let Ok(plan) = crate::media::plan::build_media_plan_for_domain(
                 db,
+                config,
                 domain_name,
                 media,
                 &config.defaults.type_suffix,
