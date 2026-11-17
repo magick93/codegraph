@@ -64,6 +64,32 @@ fn main() {
         walk_templates(&templates_dir, &templates_dir, &mut templates);
         templates.sort();
 
+        // Issue #718: watch every template FILE, not just the `templates/`
+        // directory. A directory watch tracks the directory entry, and an
+        // in-place content rewrite of an existing `.tera` does not move the
+        // parent directory's mtime on every filesystem — so the embed could
+        // keep serving the previous bytes on a local run. One directive per
+        // file comes from the SAME walk that embeds them, so a template can
+        // never be embedded without being watched; the directory line stays
+        // for ADDED/REMOVED files.
+        let watched: Vec<String> = templates
+            .iter()
+            .map(|(name, _)| format!("templates/{name}"))
+            .collect();
+        for path in &watched {
+            println!("cargo:rerun-if-changed={path}");
+        }
+        // The pin (`template_engine::tests::
+        // every_embedded_template_is_watched_for_content_changes`) reads this
+        // manifest and compares it against the on-disk tree: cargo gives a
+        // build script no way to be asked "what did you print?", so the
+        // manifest IS the directive set, rendered by the loop above. Absent ⇒
+        // the pin fails with the issue number and the workaround.
+        println!(
+            "cargo:rustc-env=CODEGRAPH_TEMPLATE_WATCH={}",
+            watched.join(",")
+        );
+
         // Template rev (issue #348): a content hash over the `project/`
         // category (what `codegraph init` renders), embedded in the binary
         // via `project_template_rev()` and stamped into every scaffold so

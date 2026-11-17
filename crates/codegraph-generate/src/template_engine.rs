@@ -309,6 +309,134 @@ fn js_template_literal_filter(
 mod tests {
     use super::*;
 
+    /// Issue #718: the templates the build script actually embeds, as
+    /// repo-relative paths — the same walk `build.rs` performs, restricted to
+    /// `.tera` files and EXCLUDING `templates/ifml/packs/` (design-system
+    /// packs are resolved from disk on demand, never embedded).
+    fn template_files_on_disk() -> Vec<String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+        let packs = std::path::Path::new("ifml").join("packs");
+        let mut out: Vec<String> = walkdir::WalkDir::new(&root)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file())
+            .filter(|entry| entry.path().extension().and_then(|e| e.to_str()) == Some("tera"))
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .strip_prefix(&root)
+                    .ok()
+                    .map(std::path::Path::to_path_buf)
+            })
+            .filter(|relative| !relative.starts_with(&packs))
+            .map(|relative| {
+                format!(
+                    "templates/{}",
+                    relative.to_string_lossy().replace('\\', "/")
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The #718 acceptance pin: cargo is told to re-run the embed for every
+    /// template FILE, so an in-place content edit of an existing `.tera`
+    /// invalidates the crate. Before the fix the build script watched only
+    /// `templates/`, which on some filesystems does not move when a file's
+    /// CONTENT changes (the parent directory's mtime is untouched by an
+    /// in-place rewrite) — and a stale embed turns every local mutation
+    /// experiment into a false green.
+    ///
+    /// This pin fails without the fix: the build script emits no manifest, so
+    /// `CODEGRAPH_TEMPLATE_WATCH` is absent. It also fails if a template is
+    /// added to the tree without being watched.
+    #[test]
+    fn every_embedded_template_is_watched_for_content_changes() {
+        let raw = option_env!("CODEGRAPH_TEMPLATE_WATCH").unwrap_or_else(|| {
+            panic!(
+                "the build script must emit a per-file `cargo:rerun-if-changed` manifest \
+                 (issue #718): without it an in-place `.tera` content edit can leave the \
+                 embedded template bytes stale on a local run. On a pre-#718 checkout, \
+                 `touch crates/codegraph-generate/build.rs` forces the re-embed."
+            )
+        });
+        let watched: Vec<&str> = raw.split(',').filter(|path| !path.is_empty()).collect();
+
+        let mut duplicates: Vec<&str> = Vec::new();
+        for (index, path) in watched.iter().enumerate() {
+            if watched[..index].contains(path) {
+                duplicates.push(path);
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            "the rerun-if-changed manifest repeats {duplicates:?}"
+        );
+
+        for path in &watched {
+            assert!(
+                path.starts_with("templates/"),
+                "every directive is package-relative (`build.rs` cwd is the crate root): {path}"
+            );
+            let absolute = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+            assert!(
+                absolute.is_file(),
+                "the manifest names a template that is not on disk: {path}"
+            );
+            assert!(
+                !path.starts_with("templates/ifml/packs/"),
+                "design-system packs resolve from disk and must not be watched as embeds: {path}"
+            );
+        }
+
+        let disk = template_files_on_disk();
+        let watched: Vec<String> = watched.into_iter().map(str::to_string).collect();
+        let missing: Vec<&String> = disk.iter().filter(|p| !watched.contains(p)).collect();
+        let extra: Vec<&String> = watched.iter().filter(|p| !disk.contains(p)).collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "every `.tera` on disk must be watched for content changes (issue #718) — \
+             a template missing here can be embedded stale; an extra entry names a \
+             file the embed does not carry.\n\
+             unwatched templates: {missing:?}\n\
+             watch entries with no file: {extra:?}"
+        );
+        assert!(
+            !disk.is_empty(),
+            "the walk found no templates — the pin would be vacuous"
+        );
+    }
+
+    /// Companion pin for the one link the coverage test cannot see: the
+    /// manifest is *built* from the walked set, so deleting the
+    /// `cargo:rerun-if-changed` loop while keeping the manifest would still
+    /// pass [`every_embedded_template_is_watched_for_content_changes`]. Cargo
+    /// gives a build script no way to be asked what it printed, so this check
+    /// is source-level: the per-file directive must still be emitted from the
+    /// list the manifest publishes. Deleting either the loop or the manifest
+    /// line fails here; changing the directive spelling fails at the coverage
+    /// test above.
+    #[test]
+    fn the_build_script_emits_the_watch_manifest_it_publishes() {
+        let build_rs = include_str!("../build.rs");
+        assert!(
+            build_rs.contains("for path in &watched"),
+            "build.rs must emit one directive per watched path (issue #718) — the \
+             manifest alone does not tell cargo anything"
+        );
+        assert!(
+            build_rs.contains("cargo:rerun-if-changed={path}"),
+            "build.rs must print a per-file `cargo:rerun-if-changed` directive \
+             (issue #718)"
+        );
+        assert!(
+            build_rs.contains("cargo:rustc-env=CODEGRAPH_TEMPLATE_WATCH"),
+            "build.rs must publish the manifest the coverage pin reads (issue #718)"
+        );
+    }
+
     #[test]
     fn js_template_literal_filter_escapes_backtick_dollar_and_backslash() {
         let mut tera = Tera::default();

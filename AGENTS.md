@@ -3086,6 +3086,10 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 
 ## Testing
 
+Template mutation experiments need a fresh embed — on a pre-#718 checkout run
+`touch crates/codegraph-generate/build.rs` before trusting a red or green
+result (see "Template Overrides → Embedding watch").
+
 ```bash
 # Rust tests
 cargo test --workspace                    # all tests (969+)
@@ -3509,6 +3513,21 @@ Implemented in `crates/codegraph-generate/src/template_engine.rs`:
 2. It then iterates override directories in order, calling `merge_tera_dir()` for each
 3. **`merge_tera_dir()`** walks each directory, reading `.tera` files and registering them by their relative path name
 4. A template with the same relative path from a later directory **shadows** the earlier one — no merging, full replacement
+
+**Embedding watch (issue #718).** `build.rs` embeds every `templates/**/*.tera`
+and emits one `cargo:rerun-if-changed` directive **per file**, from the same
+walk that produces the embed list, plus one for the `templates/` directory
+(which is what catches added/removed files). The per-file set is pinned by
+`template_engine::tests::every_embedded_template_is_watched_for_content_changes`
+(manifest `CODEGRAPH_TEMPLATE_WATCH` vs the on-disk tree, naming any unwatched
+template) and `the_build_script_emits_the_watch_manifest_it_publishes` (the
+directive loop itself, which a manifest-only check cannot see). On a
+**pre-#718 checkout** only the directory was watched, and a false green after
+an in-place `.tera` edit was reported twice (#718) — the exact cause is
+toolchain/filesystem dependent (cargo ≥ 1.100 also re-embeds through rustc
+dep-info, so it did NOT reproduce on the machine that landed the fix). Force
+the re-embed before trusting a mutation result:
+`touch crates/codegraph-generate/build.rs`.
 
 ### Available Tera custom filters
 
