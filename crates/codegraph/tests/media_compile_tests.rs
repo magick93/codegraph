@@ -72,6 +72,15 @@ fn r2_toml() -> String {
     )
 }
 
+/// Issue #690 round 2: the presigned branch of `api/media_route.tera` was
+/// never compiled by any pin. Same provider/plane, different upload mode.
+fn r2_presigned_toml() -> String {
+    r2_toml().replace(
+        "upload_mode = \"through-app\"",
+        "upload_mode = \"presigned\"",
+    )
+}
+
 /// The AWS-published S3 SigV4 GET example (AWS docs "Authenticating
 /// Requests: Using the Authorization Header"). The canonical request below
 /// was verified against the published signature before being pinned.
@@ -576,21 +585,28 @@ pub mod middleware;
 /// #551 pin for the media ROUTE handler (issue #683 part b): the #686
 /// defects (missing `sea_orm::ConnectionTrait`, the pre-2.0 statement API)
 /// lived in `templates/api/media_route.tera`, which no PR-CI pin compiled —
-/// only the nightly gate booted the app. This pin renders the through-app
-/// r2 module, the REAL storage plane (never a stub trait), and the REAL
-/// error envelope, then `cargo check`s them together.
+/// only the nightly gate booted the app. This pin renders the route module,
+/// the REAL storage plane (never a stub trait), and the REAL error envelope,
+/// then `cargo check`s them together.
 ///
 /// Scope note: the third #686 defect (the bin crate re-declaring `mod
 /// media;`) lives in `scaffold/main.tera`, not this plane — it stays with
 /// the nightly gate's T0 boot. This pin adds a `lib` root only.
 ///
+/// Both branches are compiled (issue #690 round 2): the through-app module
+/// and the presigned module — the latter was never rendered by any pin.
+///
 /// Teeth (validated manually, the #550 discipline): deleting the
-/// `ConnectionTrait` import from the emitted module in the scratch tree
-/// makes this pin fail with "no method named `execute_raw`" — the exact
-/// #686 class. Reverted; see the test file header.
-#[tokio::test]
-async fn emitted_media_route_handler_compiles_in_isolation() {
-    let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
+/// `ConnectionTrait` import from the emitted module fails the presence guard;
+/// replacing `tx.execute_raw(delete)` with the pre-2.0 `tx.execute(…)` reaches
+/// the compiler and fails with `error[E0308]` on `StatementBuilder` — the
+/// exact #686 class. Reverted; see the test file header.
+async fn check_media_route_handler(
+    config: &DomainConfig,
+    label: &str,
+    required: &[&str],
+    forbidden: &[&str],
+) {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])
@@ -599,13 +615,13 @@ async fn emitted_media_route_handler_compiles_in_isolation() {
     let out = tempfile::tempdir().expect("emission dir");
     let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
     let routes = generator
-        .generate(&engine, "PersonType", "core", &config, &tera, &project)
+        .generate(&engine, "PersonType", "core", config, &tera, &project)
         .await
         .expect("media route generation");
     assert_eq!(
         routes.len(),
         1,
-        "one route module per media field (through-app r2)"
+        "one route module per media field ({label})"
     );
     let route_path = routes[0].path.to_string_lossy().to_string();
     assert!(
@@ -617,34 +633,23 @@ async fn emitted_media_route_handler_compiles_in_isolation() {
     // Fail-fast presence guard (the same pattern as
     // `emitted_plane_carries_the_full_trait_contract`): template drift must
     // fail BEFORE the cargo run.
-    for needle in [
-        "pub async fn upload",
-        "pub async fn display",
-        "pub async fn remove",
-        "crate::app_state::AppState",
-        "crate::error::AppError",
-        "crate::middleware::ApiKeyInfo",
-        // The #686 class itself: the sea-orm 2 trait method pair needs the
-        // trait in scope, and the pre-2.0 `execute`/`query_one` shapes do
-        // not accept a bound Statement. The raw pair now runs on the scoped
-        // transaction (issue #690).
-        "use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, Statement, Value};",
-        "execute_raw",
-        "query_one_raw",
-        // Issue #690: the route is coupled to the session rewrite — the
-        // bundle + tenant-scoped parent gate, not a bare WHERE.
-        "crate::media::session::begin_scoped(",
-        "crate::media::session::parent_exists(",
-    ] {
+    for needle in required {
         assert!(
             route_rs.contains(needle),
-            "emitted media route module missing `{needle}`:\n{route_rs}"
+            "{label}: emitted media route module missing `{needle}`:\n{route_rs}"
+        );
+    }
+    for needle in forbidden {
+        assert!(
+            !route_rs.contains(needle),
+            "{label}: emitted media route module must not carry `{needle}`:\n{route_rs}"
         );
     }
 
-    // The real storage plane (trait + noop + native transport + r2 adapter)
-    // and the real error envelope — only AppState/middleware are stubbed.
-    let media_files = emit_media_plane(&config).await;
+    // The real storage plane (trait + noop + native transport + session +
+    // r2 adapter) and the real error envelope — only AppState/middleware are
+    // stubbed.
+    let media_files = emit_media_plane(config).await;
     let empty: BTreeMap<String, String> = BTreeMap::new();
     let error_rs = codegraph_generate::render_template_with_project(
         &tera,
@@ -680,9 +685,75 @@ async fn emitted_media_route_handler_compiles_in_isolation() {
          utoipa = {{ version = \"6\", features = [\"axum_extras\", \"uuid\"] }}\n\
          reqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
     );
-    let (ok, stdout, stderr) = run_cargo_tree("media_route_pin", &deps, &files, &["check"]);
+    let (ok, stdout, stderr) = run_cargo_tree(
+        &format!("media_route_pin_{label}"),
+        &deps,
+        &files,
+        &["check"],
+    );
     assert!(
         ok,
-        "the emitted media route handler must compile standalone:\n{stdout}\n{stderr}"
+        "{label}: the emitted media route handler must compile standalone:\n{stdout}\n{stderr}"
     );
+}
+
+#[tokio::test]
+async fn emitted_media_route_handler_compiles_in_isolation() {
+    let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
+    check_media_route_handler(
+        &config,
+        "through_app",
+        &[
+            "pub async fn upload",
+            "pub async fn display",
+            "pub async fn remove",
+            "crate::app_state::AppState",
+            "crate::error::AppError",
+            "crate::middleware::ApiKeyInfo",
+            // The #686 class itself: the sea-orm 2 trait method pair needs
+            // the trait in scope, and the pre-2.0 `execute`/`query_one`
+            // shapes do not accept a bound Statement. The raw pair now runs
+            // on the scoped transaction (issue #690).
+            "use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, Statement, Value};",
+            "execute_raw",
+            "query_one_raw",
+            // Issue #690: the route is coupled to the session rewrite — the
+            // bundle + tenant-scoped parent gate, not a bare WHERE.
+            "crate::media::session::begin_scoped(",
+            "crate::media::session::parent_exists(",
+            // Issue #690 round 2: the DB-error classifier and the legacy
+            // zeros tolerance are part of the emitted contract.
+            "fn db_err(",
+            "LEGACY_ZERO_TENANT",
+        ],
+        &["pub async fn presign"],
+    )
+    .await;
+}
+
+/// Issue #690 round 2: the PRESIGNED branch (`presign` + display/remove) was
+/// never compiled by any pin — `r2_toml()` is through-app only. Same scratch
+/// dep set and stubs; only the rendered branch differs.
+#[tokio::test]
+async fn presigned_media_route_handler_compiles_in_isolation() {
+    let config: DomainConfig = parse_domain_config_str(&r2_presigned_toml()).expect("domains.toml");
+    check_media_route_handler(
+        &config,
+        "presigned",
+        &[
+            "pub async fn presign",
+            "pub async fn display",
+            "pub async fn remove",
+            "crate::app_state::AppState",
+            "crate::error::AppError",
+            "crate::middleware::ApiKeyInfo",
+            "use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, Statement, Value};",
+            "crate::media::session::begin_scoped(",
+            "crate::media::session::parent_exists(",
+            "fn db_err(",
+            "LEGACY_ZERO_TENANT",
+        ],
+        &["pub async fn upload"],
+    )
+    .await;
 }
