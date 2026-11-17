@@ -16,6 +16,12 @@ pub mod plan;
 /// config default; supabase presign expiry comes from the caller).
 pub const DEFAULT_PRESIGN_TTL_SECS: u64 = 900;
 
+/// A well-formed id no row can carry: the hurl contract addresses it to pin
+/// the PROVIDER-FREE 404 (the #690 parent gate answers before the storage
+/// slot, so the leg needs no bucket). Deterministic, so the emitted file is
+/// byte-stable across runs.
+pub const MEDIA_CONTRACT_MISSING_ID: &str = "11111111-1111-4111-8111-111111111111";
+
 /// The domain's configured accept list — the hurl context's mime sample.
 fn media_cfg_accept(config: &DomainConfig, domain_name: &str) -> String {
     config
@@ -35,6 +41,7 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{MediaPlan, MediaProvider, UploadMode};
 use serde_json::json;
 
+use crate::api::api_model;
 use crate::error::Result;
 use crate::output::render_template_with_project;
 use crate::project_config::{GenerationEntry, ProjectConfig};
@@ -180,26 +187,58 @@ impl GlobalGenerator for MediaStorageGenerator {
         // The media hurl contract (issue #630): one file per run, anchored to
         // the FIRST route-mode domain's first media field. Client-direct runs
         // emit nothing (no media surface to contract).
-        if let Some((domain_name, mode, plan)) = plans.values().find_map(|p| {
-            let mode = plan::media_upload_mode(config, &p.domain)?;
-            Some((p.domain.clone(), mode, p.clone()))
-        }) && let Some(field) = plan.fields.first()
+        let contract = plans
+            .values()
+            .find_map(|p| plan::media_upload_mode(config, &p.domain).map(|mode| (p, mode)));
+        if let Some((plan, mode)) = contract
+            && let Some(field) = plan.fields.first()
         {
+            let domain_name = plan.domain.clone();
             let kind = if mode == UploadMode::Presigned {
                 "presigned"
             } else {
                 "through_app"
             };
+            // The URL must be the one the ROUTER serves: `/api/v1/{domain}/
+            // {path_segment}/{id}/{field}`. The path segment comes from the
+            // same resolver `router.tera` nests under (config `path_segment`
+            // → `api_path_segment` → lowercased title) — `pg_table_name` is
+            // NOT it (title-derived segments drop the underscores), and the
+            // old builder additionally repeated the field segment where the
+            // id belongs. Both defects made the emitted file address a route
+            // that does not exist (issue #691).
+            let schema = db
+                .get_schema_in_domain(&field.entity_title, &domain_name)
+                .await?
+                .ok_or_else(|| {
+                    crate::error::Error::Config(format!(
+                        "media hurl contract: entity {} (domain {domain_name}) is in the media \
+                         plan but not in the graph",
+                        field.entity_title
+                    ))
+                })?;
+            let path_segment = api_model::resolve_path_segment_with_config(None, &schema, config);
+            // `{{base_url}}` + the CONFIGURED api version: a scheme-less path
+            // is not a valid hurl URL (`error: Invalid URL … Missing scheme`),
+            // and every sibling contract (`hurl_contract.rs`) is built the
+            // same way.
             let base = format!(
-                "/api/v1/{domain_name}/{}/{}/{{id}}/{}",
-                field.entity_table, field.field_snake, field.field_snake
+                "{{{{base_url}}}}/api/{}/{domain_name}/{path_segment}/{MEDIA_CONTRACT_MISSING_ID}/{}",
+                config.defaults.api_version, field.field_snake
             );
             let ctx = json!({
                 "kind": kind,
                 "domain": domain_name,
+                // The ops api suite supplies `{{api_key}}`; the contract's
+                // authenticated legs reference the same var the entity
+                // contracts use (hurl_contract.rs).
+                "auth_header": "Authorization: Bearer {{api_key}}",
                 "field": field.field_snake,
                 "mime": media_cfg_accept(config, &domain_name),
                 "upload_url": base,
+                // Display is the GET on the SAME path (both modes mount it),
+                // so the ownership leg needs no body extractor.
+                "display_url": base,
                 "presign_url": format!("{base}/presign"),
             });
             files.push(GeneratedFile {

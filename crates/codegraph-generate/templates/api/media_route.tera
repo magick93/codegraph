@@ -179,7 +179,7 @@ pub struct PresignRequest {
 /// the reference is persisted afterwards through the normal update path.
 #[utoipa::path(
     post,
-    path = "/api/{version}/{{ domain }}/{{ entity_snake }}/{id}/{{ media_field_name }}/presign",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}/presign",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_presign",
     params(
@@ -213,7 +213,7 @@ pub async fn presign(
         .as_ref()
         .ok_or_else(storage_unavailable)?;
     if !mime_matches(&body.mime_type, ACCEPTED_MIME_TYPES) {
-        return Err(AppError::bad_request(format!(
+        return Err(AppError::unsupported_media_type(format!(
             "mime type {} is not accepted (allowed: {:?})",
             body.mime_type, ACCEPTED_MIME_TYPES
         )));
@@ -237,7 +237,7 @@ pub async fn presign(
 /// and writes the CHILD row on a second, short scoped transaction.
 #[utoipa::path(
     put,
-    path = "/api/{version}/{{ domain }}/{{ entity_snake }}/{id}/{{ media_field_name }}",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_upload",
     params(
@@ -281,16 +281,23 @@ pub async fn upload(
         .unwrap_or("application/octet-stream")
         .to_string();
     if !mime_matches(&mime_type, ACCEPTED_MIME_TYPES) {
-        return Err(AppError::bad_request(format!(
+        return Err(AppError::unsupported_media_type(format!(
             "mime type {mime_type} is not accepted (allowed: {ACCEPTED_MIME_TYPES:?})"
         )));
     }
-    let data = field
-        .bytes()
-        .await
-        .map_err(|e| AppError::bad_request(format!("failed to read upload: {e}")))?;
+    let data = field.bytes().await.map_err(|e| {
+        // axum's `DefaultBodyLimit` (2 MiB unless the route sets one) trips
+        // INSIDE the extractor, before the `max_bytes` comparison below — map
+        // it to the same 413 the contract publishes instead of leaking a 400
+        // for an oversize body (issue #691; raising the limit is #710).
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AppError::payload_too_large(format!("upload exceeds {{ max_bytes }} bytes"))
+        } else {
+            AppError::bad_request(format!("failed to read upload: {e}"))
+        }
+    })?;
     if data.len() as u64 > {{ max_bytes }} {
-        return Err(AppError::bad_request(format!(
+        return Err(AppError::payload_too_large(format!(
             "upload exceeds {{ max_bytes }} bytes"
         )));
     }
@@ -356,7 +363,7 @@ pub async fn upload(
 /// through the app.
 #[utoipa::path(
     get,
-    path = "/api/{version}/{{ domain }}/{{ entity_snake }}/{id}/{{ media_field_name }}",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_display",
     params(
@@ -423,7 +430,7 @@ pub async fn display(
 /// leave a row pointing at a deleted object (a broken UI state).
 #[utoipa::path(
     delete,
-    path = "/api/{version}/{{ domain }}/{{ entity_snake }}/{id}/{{ media_field_name }}",
+    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_delete",
     params(

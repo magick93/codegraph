@@ -31,6 +31,13 @@ use codegraph_config::DomainConfig;
 struct MediaRouteContext {
     entity_name: String,
     entity_snake: String,
+    /// The entity's URL path segment — the SAME value `router.tera` nests the
+    /// routes under (`resolve_path_segment`: config `path_segment` →
+    /// `api_path_segment` → lowercased title). It is NOT always
+    /// `pg_table_name`: a title-derived segment drops the underscores
+    /// (`refundrequest` vs `refund_request`), so deriving the documented URL
+    /// from the table name emitted a path the router never served (issue #691).
+    entity_path_segment: String,
     entity_module: String,
     domain: String,
     media_field_name: String,
@@ -111,6 +118,8 @@ impl EntityGenerator for MediaRouteGenerator {
         };
         let entity_name = schema.rust_type_name.clone();
         let entity_snake = schema.pg_table_name.clone();
+        let entity_path_segment =
+            super::api_model::resolve_path_segment_with_config(None, &schema, config);
         let entity_module = format!("{}_{}", domain, entity_snake);
         if entity_snake.is_empty() {
             return Ok(Vec::new());
@@ -127,6 +136,7 @@ impl EntityGenerator for MediaRouteGenerator {
             let ctx = MediaRouteContext {
                 entity_name: entity_name.clone(),
                 entity_snake: entity_snake.clone(),
+                entity_path_segment: entity_path_segment.clone(),
                 entity_module: entity_module.clone(),
                 domain: domain.to_string(),
                 media_field_name: field.field_snake.clone(),

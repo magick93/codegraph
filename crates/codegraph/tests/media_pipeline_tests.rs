@@ -722,6 +722,7 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
     let ctx = serde_json::json!({
         "entity_name": "OrgType",
         "entity_snake": "org",
+        "entity_path_segment": "org",
         "entity_module": "core_org",
         "domain": "core",
         "media_field_name": "logo",
@@ -1374,4 +1375,273 @@ async fn broken_media_config_is_a_config_error_not_silent_emission() {
     };
     assert!(err.contains("client-direct"), "{err}");
     assert!(!out.path().join("src/media").exists(), "never half-emits");
+}
+
+// ── #691: the media contract addresses the route the router serves ───────
+
+/// The fixture with a config-declared path segment that differs from BOTH
+/// the table name (`person`) and the title fallback (`persontype`). A pin
+/// whose fixture used `person` for all three would pass on the broken
+/// builder — this is the discriminating shape (issue #691).
+fn media_toml_with_path_segment(mode: &str) -> String {
+    // `api_version = "v2"` proves the contract reads the CONFIG rather than a
+    // hardcoded `v1` (the sibling contracts all honour `defaults.api_version`).
+    let base = media_toml("supabase", mode).replace(
+        "type_suffix = \"Type\"",
+        "type_suffix = \"Type\"\napi_version = \"v2\"",
+    );
+    format!("{base}\n[domains.core.entity_config.PersonType]\npath_segment = \"people\"\n")
+}
+
+#[tokio::test]
+async fn media_hurl_contract_url_matches_the_router_route() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_path_segment("through-app")).expect("toml");
+
+    // The authority: the segment `router.tera` nests the entity routes under,
+    // and the media route shape inside it.
+    let router = rendered_router_media_block(&engine, &config).await;
+    assert!(
+        router.contains(r#".nest("/people", person_routes())"#),
+        "the router nests the entity under the CONFIG segment: {router}"
+    );
+    assert!(
+        router.contains(r#""/{id}/avatar""#),
+        "the media route shape is the id then the field: {router}"
+    );
+
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("media generation");
+    let hurl = files
+        .iter()
+        .find(|f| f.path.ends_with("09_media.hurl"))
+        .expect("the media hurl contract is emitted");
+
+    // A valid hurl URL needs a scheme: every sibling contract is
+    // `{{base_url}}/api/...` (hurl rejects a scheme-less path outright).
+    let expected = format!(
+        "{{{{base_url}}}}/api/v2/core/people/{}/avatar",
+        codegraph_generate::media::MEDIA_CONTRACT_MISSING_ID
+    );
+    assert!(
+        hurl.content.contains(&format!("PUT {expected}")),
+        "the contract addresses the router's route ({expected}): {}",
+        hurl.content
+    );
+    assert!(
+        !hurl
+            .content
+            .lines()
+            .any(|l| l.starts_with("PUT /") || l.starts_with("GET /") || l.starts_with("POST /")),
+        "no scheme-less request line (hurl: Invalid URL — Missing scheme): {}",
+        hurl.content
+    );
+    // The three defects #691 names, each pinned so none can come back:
+    assert!(
+        !hurl.content.contains("/core/person/"),
+        "no `pg_table_name` segment (the title-derived segment drops the underscore): {}",
+        hurl.content
+    );
+    assert!(
+        !hurl.content.contains("/avatar/"),
+        "the field segment must not appear where the id belongs: {}",
+        hurl.content
+    );
+    // Every REQUEST line carries the concrete sentinel — a bare `{id}`
+    // placeholder is not a parseable uuid at the route (`Path<Uuid>`).
+    for line in hurl
+        .content
+        .lines()
+        .filter(|l| l.starts_with("PUT ") || l.starts_with("POST ") || l.starts_with("GET "))
+    {
+        assert!(
+            !line.contains("{id}"),
+            "a request line must carry the sentinel, not a placeholder: {line}"
+        );
+        assert!(
+            line.contains(&codegraph_generate::media::MEDIA_CONTRACT_MISSING_ID.to_string()),
+            "every request addresses the sentinel id: {line}"
+        );
+    }
+    // Both legs are provider-free (#690 gates the parent before the storage
+    // slot): the authn 401 and the ownership 404.
+    assert!(
+        hurl.content.contains("HTTP 401") && hurl.content.contains("UNAUTHORIZED"),
+        "{}",
+        hurl.content
+    );
+    assert!(
+        hurl.content.contains("Authorization: Bearer {{api_key}}")
+            && hurl.content.contains("HTTP 404"),
+        "the ownership leg carries credentials and expects 404, never 403: {}",
+        hurl.content
+    );
+
+    // The utoipa contract must document the same path the router serves.
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+    assert!(
+        module.contains(r#"path = "/api/v1/core/people/{id}/avatar""#),
+        "the documented path is the router's, on the project's api version: {module}"
+    );
+    assert!(
+        !module.contains(r#"path = "/api/v1/core/person/"#),
+        "never the table name: {module}"
+    );
+    assert!(
+        !module.contains("/api/{version}/"),
+        "no literal `{{version}}` placeholder in the annotation: {module}"
+    );
+}
+
+#[tokio::test]
+async fn media_rejections_answer_413_and_415_not_400() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+    // The utoipa block has promised 413/415 since PR-C while the handlers
+    // answered 400 (issue #691) — the two planes must agree.
+    assert!(
+        module.contains("(status = 413,") && module.contains("(status = 415,"),
+        "documented: {module}"
+    );
+    assert!(
+        module.contains("AppError::payload_too_large("),
+        "oversize → 413: {module}"
+    );
+    assert!(
+        module.contains("AppError::unsupported_media_type("),
+        "mime miss → 415: {module}"
+    );
+    // A malformed multipart body stays 400 (it is not a media-type or a
+    // size problem): the class is preserved deliberately.
+    assert!(
+        module.contains(r#"AppError::bad_request("multipart body carries no file field")"#),
+        "malformed body stays 400: {module}"
+    );
+    // A body-limit trip INSIDE the extractor (axum's 2 MiB default) is the
+    // same 413, never a 400 read failure.
+    assert!(
+        module.contains("e.status() == StatusCode::PAYLOAD_TOO_LARGE"),
+        "the extractor's limit error maps to 413: {module}"
+    );
+
+    // The presign branch answers 415 too (it was the unpinned half).
+    let presigned = parse_domain_config_str(&format!(
+        "{}\n[domains.core.media.r2]\nbinding = \"MEDIA\"\n",
+        media_toml("r2", "presigned")
+    ))
+    .expect("toml");
+    let presign_modules = run_media_route_generator(&engine, &presigned).await;
+    let presign_module = &presign_modules[0];
+    assert!(
+        presign_module.contains("AppError::unsupported_media_type("),
+        "presign mime miss → 415: {presign_module}"
+    );
+    assert!(
+        presign_module.contains("(status = 415,"),
+        "presign documents 415: {presign_module}"
+    );
+}
+
+#[tokio::test]
+async fn media_child_sql_rides_the_scoped_transaction_and_the_gate_gets_the_session_org() {
+    // The two runtime properties the #690 fix depends on, pinned so a
+    // refactor cannot silently unwind them: every child statement runs on
+    // the SAME transaction that installed the session bundle (never the
+    // pool), and the gate is handed the SESSION org — swapping the two Uuid
+    // arguments would still compile and still 404/200 the wrong way.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module.contains("tx.execute_raw(") && module.contains(".query_one_raw("),
+        "child statements ride the transaction: {module}"
+    );
+    assert_eq!(
+        module.matches("tx.execute_raw(").count(),
+        3,
+        "exactly upload's two writes (DELETE + INSERT) and remove's DELETE ride it: {module}"
+    );
+    assert!(
+        !module.contains("state.db.execute_raw(") && !module.contains("state.db.query_one_raw("),
+        "no media statement escapes to the pool: {module}"
+    );
+    assert!(
+        module.contains("crate::media::session::parent_exists(\n        &tx,"),
+        "the gate runs ON the transaction: {module}"
+    );
+    // Argument order: the owning id first, the SESSION org second — asserted
+    // as an exact adjacent pair, so neither a reindent nor a new `…id,`
+    // parameter can satisfy it by accident.
+    let gate_call = module
+        .split("session::parent_exists(")
+        .nth(1)
+        .expect("parent_exists call");
+    let args = gate_call.split(')').next().unwrap_or_default();
+    let pair: Vec<&str> = args
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let id_pos = pair.iter().position(|l| *l == "id,");
+    let org_pos = pair
+        .iter()
+        .position(|l| *l == "api_key_info.organization_id,");
+    assert_eq!(
+        (id_pos, org_pos),
+        (Some(pair.len() - 2), Some(pair.len() - 1)),
+        "parent_exists(id, session_org) — the last two arguments, in that order: {pair:?}"
+    );
+}
+
+#[tokio::test]
+async fn presigned_hurl_contract_url_matches_the_router_route() {
+    // Same discrimination as the through-app pin: the config segment differs
+    // from the table name, and the presign URL keeps its `/presign` suffix on
+    // the router's path (issue #691).
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{}\n[domains.core.entity_config.PersonType]\npath_segment = \"people\"\n\n[domains.core.media.r2]\nbinding = \"MEDIA\"\n",
+        media_toml("r2", "presigned")
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("media generation");
+    let hurl = files
+        .iter()
+        .find(|f| f.path.ends_with("09_media.hurl"))
+        .expect("the media hurl contract is emitted");
+    let expected = format!(
+        "{{{{base_url}}}}/api/v1/core/people/{}/avatar/presign",
+        codegraph_generate::media::MEDIA_CONTRACT_MISSING_ID
+    );
+    assert!(
+        hurl.content.contains(&format!("POST {expected}")),
+        "the presign contract addresses the router's route ({expected}): {}",
+        hurl.content
+    );
+    assert!(
+        !hurl.content.contains("/core/person/"),
+        "never the table name: {}",
+        hurl.content
+    );
+    assert!(
+        hurl.content.contains("HTTP 404") && hurl.content.contains("NOT_FOUND"),
+        "the ownership leg is provider-free: {}",
+        hurl.content
+    );
 }
