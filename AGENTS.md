@@ -2570,6 +2570,30 @@ Rejections cover the extractor's own limit trip as well: axum's
 `DefaultBodyLimit` (2 MiB unless the route sets one) rejects inside
 `Multipart`, and that error now maps to the same 413 rather than a 400 read
 failure — raising the limit per route is #710.
+
+**The media contract is NESTING-aware (issue #713)**: the path data is
+resolved ONCE at plan-build time onto `MediaFieldPlan`
+(`entity_path_segment` + `route_parents: Vec<MediaRouteParent>` —
+`path_segment`/`param_name` per ancestor, resolved with the router's own
+`resolve_path_segment_with_config` + `param_name_from_path_segment`), and
+`MediaFieldPlan::{route_prefix, route_prefix_with_ids}` is the one assembly
+BOTH planes read — the hurl builder and `api/media.rs` no longer re-resolve
+the schema (the old `get_schema_in_domain` + hard `Error::Config` shape is
+gone). Nesting mirrors `api/router.rs`: only `role = "child"` entities nest,
+under the configured `parent` (Source 1) or the graph parent candidate
+(Source 2 — `get_parent_candidates`, loaded lazily and only for that shape),
+so a child media field emits
+`/api/{version}/{domain}/{parent_segment}/{parent_id}/{child_segment}/{id}/{field}`
+and the utoipa `params(...)` documents the ancestor ids. A `role = "child"`
+entity with no derivable parent is a HARD `Error::Config` (the router mounts
+no route for it at all) — never a silent flat contract. Pins:
+`child_media_field_contract_nests_under_the_parent_route` (ROOT + CHILD, the
+CHILD's title sorting FIRST so the contract anchors on it; hurl == router ==
+utoipa, including the concrete parent sentinel),
+`media_fields_carry_the_route_path_they_are_mounted_under` (the plan field +
+both prefix renderings), `graph_parent_candidate_is_the_nesting_fallback`,
+`child_media_field_without_a_parent_is_config_error`. Existing root pins stay
+green; no `[media]` ⇒ byte-identical (ux/forms canaries, no re-bless).
 Byte identity: the two `AppError` constructors are the ONLY non-media
 output change — THREE whole-tree canaries were re-blessed
 (`ux_rules_pre_feature_tree.sha256`, `forms_pre_feature_tree.sha256`, and

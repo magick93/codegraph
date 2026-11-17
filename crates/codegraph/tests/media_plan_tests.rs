@@ -9,7 +9,7 @@
 use codegraph_config::DomainConfig;
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
-use codegraph_core::types::{EdgeType, PropertyNode, SchemaNode};
+use codegraph_core::types::{EdgeType, MediaRouteParent, PropertyNode, SchemaNode};
 use codegraph_generate::error::Error;
 use codegraph_generate::media::build_media_plans;
 use codegraph_grafeo::GrafeoEngine;
@@ -350,6 +350,181 @@ async fn bare_media_class_resolves_via_type_suffix() {
         vec!["MediaReferenceType".to_string()],
         "MediaReference resolves to MediaReferenceType via the Type suffix"
     );
+}
+
+// ── #713: the route path is carried on the plan ─────────────────────────
+
+fn contact_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "ContactType".into(),
+        title: "ContactType".into(),
+        description: None,
+        schema_type: "object".into(),
+        classification: "entity".into(),
+        domain: Some("core".into()),
+        namespace: None,
+        rel_path: "core/contact.json".into(),
+        pg_type: "uuid".into(),
+        rust_type: "Uuid".into(),
+        sea_orm_type: "Uuid".into(),
+        rust_type_name: "Contact".into(),
+        pg_table_name: "contact".into(),
+        api_path_segment: "contact".into(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
+/// A ROOT (`PersonType`) + a CHILD (`ContactType`, title sorting FIRST) with
+/// a media field on each — the #713 shape.
+async fn ingest_parent_and_child(db: &(impl GraphIngestor + GraphQuerier)) {
+    ingest_model(db).await;
+    db.ingest_schema(&contact_schema())
+        .await
+        .expect("contact schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None, false),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+            false,
+        ),
+    ] {
+        db.ingest_property("ContactType", "ContactType", &p)
+            .await
+            .expect("contact property");
+    }
+    db.ingest_edge(
+        "avatar::ContactType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("contact references edge");
+}
+
+#[tokio::test]
+async fn media_fields_carry_the_route_path_they_are_mounted_under() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config = parse(&format!(
+        "{}\n[domains.core.entity_config.PersonType]\npath_segment = \"persons\"\n\n\
+         [domains.core.entity_config.ContactType]\nrole = \"child\"\nparent = \"PersonType\"\n\
+         parent_ref = \"person_id\"\npath_segment = \"contacts\"\n",
+        media_toml("supabase", "through-app")
+    ));
+    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    let fields = &plans["core"].fields;
+    assert_eq!(fields.len(), 2, "{fields:?}");
+
+    // `ContactType` sorts before `PersonType` — the contract anchors here.
+    let child = &fields[0];
+    assert_eq!(child.entity_title, "ContactType");
+    assert_eq!(child.entity_path_segment, "contacts");
+    assert_eq!(
+        child.route_parents,
+        vec![MediaRouteParent {
+            entity_title: "PersonType".into(),
+            path_segment: "persons".into(),
+            param_name: "person_id".into(),
+        }],
+        "the child's hop is the router's `.nest` shape"
+    );
+    assert_eq!(
+        child.route_prefix("v2", "core"),
+        "/api/v2/core/persons/{person_id}/contacts"
+    );
+    assert_eq!(
+        child.route_prefix_with_ids("v2", "core", "abc"),
+        "/api/v2/core/persons/abc/contacts"
+    );
+
+    let root = &fields[1];
+    assert_eq!(root.entity_title, "PersonType");
+    assert_eq!(root.entity_path_segment, "persons");
+    assert!(root.route_parents.is_empty(), "a root has no parent hops");
+    assert_eq!(root.route_prefix("v2", "core"), "/api/v2/core/persons");
+}
+
+#[tokio::test]
+async fn graph_parent_candidate_is_the_nesting_fallback() {
+    // The router's Source 2: `role = "child"` with no configured `parent`
+    // resolves the anchor from a modeled scalar ref to the parent entity, so
+    // the media path must honour it rather than emit a flat route.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let person_ref = prop(
+        "person",
+        RefClassificationKind::EntityReference,
+        Some("PersonType"),
+        false,
+    );
+    engine
+        .ingest_property("ContactType", "ContactType", &person_ref)
+        .await
+        .expect("person ref property");
+    engine
+        .ingest_edge(
+            "person::ContactType",
+            "PersonType",
+            EdgeType::ReferencesSchema,
+            None,
+        )
+        .await
+        .expect("person references edge");
+
+    let config = parse(&format!(
+        "{}\n[domains.core.entity_config.ContactType]\nrole = \"child\"\n\
+         parent_ref = \"person_id\"\npath_segment = \"contacts\"\n",
+        media_toml("supabase", "through-app")
+    ));
+    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    let child = plans["core"]
+        .fields
+        .iter()
+        .find(|f| f.entity_title == "ContactType")
+        .expect("the child's media field");
+    assert_eq!(
+        child.route_parents,
+        vec![MediaRouteParent {
+            entity_title: "PersonType".into(),
+            // The parent's config-free segment is its `api_path_segment`
+            // ("person"), and the param derives from it (`person_id`).
+            path_segment: "person".into(),
+            param_name: "person_id".into(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn child_media_field_without_a_parent_is_config_error() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    // `role = "child"` with neither a configured `parent` nor a graph parent
+    // candidate: the route is unmountable, so a flat contract would be a lie.
+    let config = parse(&format!(
+        "{}\n[domains.core.entity_config.ContactType]\nrole = \"child\"\n\
+         path_segment = \"contacts\"\n",
+        media_toml("supabase", "through-app")
+    ));
+    let err = match build_media_plans(&engine, &config).await {
+        Err(Error::Config(msg)) => msg,
+        other => panic!("expected Error::Config, got {other:?}"),
+    };
+    assert!(err.contains("ContactType"), "{err}");
+    assert!(err.contains("parent"), "{err}");
+    assert!(err.contains("child"), "{err}");
 }
 
 // ── validation contract ─────────────────────────────────────────────────
