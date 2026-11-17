@@ -202,10 +202,13 @@ pub struct PresignRequest {
 /// the reference is persisted afterwards through the normal update path.
 #[utoipa::path(
     post,
-    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}/presign",
+    path = "{{ route_prefix }}/{id}/{{ media_field_name }}/presign",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_presign",
     params(
+{% for p in route_parents %}
+        ("{{ p.param_name }}" = Uuid, Path, description = "The parent {{ p.entity_title }} id"),
+{% endfor %}
         ("id" = Uuid, Path, description = "The owning {{ entity_name }} id"),
     ),
     request_body = PresignRequest,
@@ -260,10 +263,13 @@ pub async fn presign(
 /// and writes the CHILD row on a second, short scoped transaction.
 #[utoipa::path(
     put,
-    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}",
+    path = "{{ route_prefix }}/{id}/{{ media_field_name }}",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_upload",
     params(
+{% for p in route_parents %}
+        ("{{ p.param_name }}" = Uuid, Path, description = "The parent {{ p.entity_title }} id"),
+{% endfor %}
         ("id" = Uuid, Path, description = "The owning {{ entity_name }} id"),
     ),
     responses(
@@ -388,10 +394,13 @@ pub async fn upload(
 /// through the app.
 #[utoipa::path(
     get,
-    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}",
+    path = "{{ route_prefix }}/{id}/{{ media_field_name }}",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_display",
     params(
+{% for p in route_parents %}
+        ("{{ p.param_name }}" = Uuid, Path, description = "The parent {{ p.entity_title }} id"),
+{% endfor %}
         ("id" = Uuid, Path, description = "The owning {{ entity_name }} id"),
     ),
     responses(
@@ -482,10 +491,13 @@ pub async fn display(
 /// leave a row pointing at a deleted object (a broken UI state).
 #[utoipa::path(
     delete,
-    path = "/api/{{ project.api_version }}/{{ domain }}/{{ entity_path_segment }}/{id}/{{ media_field_name }}",
+    path = "{{ route_prefix }}/{id}/{{ media_field_name }}",
     tag = "{{ domain }}",
     operation_id = "{{ domain }}_{{ entity_module }}_{{ media_field_name }}_delete",
     params(
+{% for p in route_parents %}
+        ("{{ p.param_name }}" = Uuid, Path, description = "The parent {{ p.entity_title }} id"),
+{% endfor %}
         ("id" = Uuid, Path, description = "The owning {{ entity_name }} id"),
     ),
     responses(

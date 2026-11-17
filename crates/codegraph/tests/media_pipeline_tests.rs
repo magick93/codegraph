@@ -236,13 +236,21 @@ async fn no_media_emits_no_ui_media_module() {
 // ── PR-C route revival-lite (#632): mode-gated media routes ────────────
 
 async fn run_media_route_generator(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<String> {
+    run_media_route_generator_for(db, config, "PersonType").await
+}
+
+async fn run_media_route_generator_for(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    title: &str,
+) -> Vec<String> {
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
     let project = ProjectConfig::default();
     let out = tempfile::tempdir().expect("out dir");
     let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
     use codegraph_generate::traits::EntityGenerator;
     generator
-        .generate(db, "PersonType", "core", config, &tera, &project)
+        .generate(db, title, "core", config, &tera, &project)
         .await
         .expect("media route generation")
         .iter()
@@ -251,15 +259,26 @@ async fn run_media_route_generator(db: &dyn GraphQuerier, config: &DomainConfig)
 }
 
 async fn rendered_router_media_block(db: &dyn GraphQuerier, config: &DomainConfig) -> String {
+    rendered_router_media_block_for(db, config, &["PersonType".to_string()]).await
+}
+
+async fn rendered_router_media_block_for(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    titles: &[String],
+) -> String {
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
     let project = ProjectConfig::default();
     let out = tempfile::tempdir().expect("out dir");
+    // The router's Source-2 nesting (the graph parent candidates) — the real
+    // pipeline passes them, so the rendered authority must too.
+    let parent_candidates = db.get_parent_candidates().await.expect("parent candidates");
     let ctx = codegraph_generate::api::router::build_router_context(
         db,
         "core",
-        &["PersonType".to_string()],
+        titles,
         config,
-        &[],
+        &parent_candidates,
         &project,
     )
     .await
@@ -735,7 +754,8 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
     let ctx = serde_json::json!({
         "entity_name": "OrgType",
         "entity_snake": "org",
-        "entity_path_segment": "org",
+        "route_prefix": "/api/v1/core/org",
+        "route_parents": [],
         "entity_module": "core_org",
         "domain": "core",
         "media_field_name": "logo",
@@ -1533,6 +1553,251 @@ async fn media_hurl_contract_url_matches_the_router_route() {
     assert!(
         !module.contains("/api/{version}/"),
         "no literal `{{version}}` placeholder in the annotation: {module}"
+    );
+}
+
+// ── #713: a child entity's media field nests under its parent route ──────
+
+/// The fixture #713 names: a ROOT (`PersonType`) and a CHILD
+/// (`ContactType`) whose title sorts FIRST — so the contract's anchor,
+/// `plan.fields.first()`, is the child's field — plus a media field on the
+/// child. The configured segments differ from both the table names and the
+/// title fallbacks, so a table-derived or role-blind builder cannot pass.
+async fn ingest_parent_and_child(db: &(impl GraphIngestor + GraphQuerier)) {
+    ingest_model(db).await;
+    db.ingest_schema(&schema(
+        "ContactType",
+        "ContactType",
+        "entity",
+        "contact",
+        true,
+    ))
+    .await
+    .expect("contact schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("ContactType", "ContactType", &p)
+            .await
+            .expect("contact property");
+    }
+    db.ingest_edge(
+        "avatar::ContactType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("contact references edge");
+}
+
+fn media_toml_with_nested_child(mode: &str) -> String {
+    let base = media_toml("supabase", mode).replace(
+        "type_suffix = \"Type\"",
+        "type_suffix = \"Type\"\napi_version = \"v2\"",
+    );
+    format!(
+        "{base}\n\
+         [domains.core.entity_config.PersonType]\n\
+         path_segment = \"persons\"\n\n\
+         [domains.core.entity_config.ContactType]\n\
+         role = \"child\"\n\
+         parent = \"PersonType\"\n\
+         parent_ref = \"person_id\"\n\
+         path_segment = \"contacts\"\n"
+    )
+}
+
+#[tokio::test]
+async fn child_media_field_contract_nests_under_the_parent_route() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+
+    // The authority: what `router.tera` actually mounts. The root nests at
+    // the domain level; the child nests INSIDE the root's router under
+    // `/{parent_param}/{child_segment}` (issue #713).
+    let router = rendered_router_media_block_for(
+        &engine,
+        &config,
+        &["PersonType".into(), "ContactType".into()],
+    )
+    .await;
+    assert!(
+        router.contains(r#".nest("/persons", person_routes())"#),
+        "the root nests under its CONFIG segment: {router}"
+    );
+    assert!(
+        router.contains(r#".nest("/{person_id}/contacts", contact_routes())"#),
+        "the child nests under the parent's named id and its own segment: {router}"
+    );
+    assert!(
+        router.contains("media_contact_avatar::upload"),
+        "the child's media handler is mounted inside the child's router: {router}"
+    );
+
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("media generation");
+    let hurl = files
+        .iter()
+        .find(|f| f.path.ends_with("09_media.hurl"))
+        .expect("the media hurl contract is emitted");
+
+    // `ContactType` sorts before `PersonType`, so the contract anchors on the
+    // CHILD's field — and must address the NESTED route the router serves.
+    let sentinel = codegraph_generate::media::MEDIA_CONTRACT_MISSING_ID;
+    let expected =
+        format!("{{{{base_url}}}}/api/v2/core/persons/{sentinel}/contacts/{sentinel}/avatar");
+    assert!(
+        hurl.content.contains(&format!("PUT {expected}")),
+        "the contract addresses the router's nested route ({expected}): {}",
+        hurl.content
+    );
+    // The pre-#713 flat shape (the child at the domain level) must be gone.
+    assert!(
+        !hurl
+            .content
+            .contains(&format!("/core/contacts/{sentinel}/avatar")),
+        "no flat child path — the router nests it: {}",
+        hurl.content
+    );
+    // Every request line is a CONCRETE URL: no `{parent_id}`/`{id}`
+    // placeholder survives into the contract (hurl does not template paths).
+    let request_lines: Vec<&str> = hurl
+        .content
+        .lines()
+        .filter(|l| l.starts_with("PUT ") || l.starts_with("POST ") || l.starts_with("GET "))
+        .collect();
+    assert_eq!(
+        request_lines.len(),
+        2,
+        "the through-app contract's two provider-free legs: {:?}",
+        request_lines
+    );
+    for line in &request_lines {
+        assert!(
+            line.matches(sentinel).count() == 2,
+            "both the parent anchor and the entity id are concrete: {line}"
+        );
+    }
+    // N1: a nested contract is NOT a live leg until #722 lands (the handlers
+    // extract a single `Path<Uuid>` while the route carries two ids) — the
+    // emitted file must say so.
+    assert!(
+        hurl.content.contains("#722"),
+        "the child contract names the #722 handler gap: {}",
+        hurl.content
+    );
+
+    // The utoipa contract documents the SAME nested path (the plan's one
+    // derivation), and names the parent path parameter it introduces.
+    let modules = run_media_route_generator_for(&engine, &config, "ContactType").await;
+    let module = &modules[0];
+    assert!(
+        module.contains(r#"path = "/api/v1/core/persons/{person_id}/contacts/{id}/avatar""#),
+        "the documented path is the router's nested route: {module}"
+    );
+    assert!(
+        module.contains(r#"("person_id" = Uuid, Path"#),
+        "the parent path parameter is documented: {module}"
+    );
+    assert!(
+        !module.contains(r#"path = "/api/v1/core/contacts/{id}/avatar""#),
+        "never the flat child path: {module}"
+    );
+}
+
+/// A modeled scalar ref from the child to a candidate parent — the router's
+/// Source-2 nesting trigger.
+async fn ingest_contact_ref_candidate(
+    db: &(impl GraphIngestor + GraphQuerier),
+    property: &str,
+    parent_title: &str,
+) {
+    let p = prop(
+        property,
+        RefClassificationKind::EntityReference,
+        Some(parent_title),
+    );
+    db.ingest_property("ContactType", "ContactType", &p)
+        .await
+        .expect("candidate property");
+    db.ingest_edge(
+        &format!("{property}::ContactType"),
+        parent_title,
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("candidate references edge");
+}
+
+fn media_toml_with_value_object_role() -> String {
+    let base = media_toml("supabase", "through-app").replace(
+        "type_suffix = \"Type\"",
+        "type_suffix = \"Type\"\napi_version = \"v2\"",
+    );
+    format!(
+        "{base}\n[domains.core.entity_config.ContactType]\n\
+         role = \"value_object\"\npath_segment = \"contacts\"\n"
+    )
+}
+
+#[tokio::test]
+async fn value_object_role_still_nests_like_the_router() {
+    // #713 blocker: `role` is `"root" | "child" | "value_object"` and the
+    // router nests EVERY explicit non-root role (its Source-2 gate is
+    // `role != "root"`), so the media contract must not go flat here.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    ingest_contact_ref_candidate(&engine, "person", "PersonType").await;
+    let config = parse_domain_config_str(&media_toml_with_value_object_role()).expect("toml");
+
+    let router = rendered_router_media_block_for(
+        &engine,
+        &config,
+        &["PersonType".into(), "ContactType".into()],
+    )
+    .await;
+    assert!(
+        router.contains(r#".nest("/person", person_routes())"#),
+        "the root nests at the domain level: {router}"
+    );
+    assert!(
+        router.contains(r#".nest("/{person_id}/contacts", contact_routes())"#),
+        "a non-root role nests under the graph candidate: {router}"
+    );
+
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("media generation");
+    let hurl = files
+        .iter()
+        .find(|f| f.path.ends_with("09_media.hurl"))
+        .expect("the media hurl contract is emitted");
+    let sentinel = codegraph_generate::media::MEDIA_CONTRACT_MISSING_ID;
+    let expected =
+        format!("{{{{base_url}}}}/api/v2/core/person/{sentinel}/contacts/{sentinel}/avatar");
+    assert!(
+        hurl.content.contains(&format!("PUT {expected}")),
+        "the contract addresses the router's nested route ({expected}): {}",
+        hurl.content
+    );
+    assert!(
+        !hurl
+            .content
+            .contains(&format!("/core/contacts/{sentinel}/avatar")),
+        "never the flat path for a routed non-root role: {}",
+        hurl.content
     );
 }
 

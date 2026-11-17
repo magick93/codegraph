@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use codegraph_core::traits::GraphQuerier;
+use codegraph_core::types::MediaRouteParent;
 use serde::Serialize;
 
 use crate::error::Result;
@@ -31,13 +32,15 @@ use codegraph_config::DomainConfig;
 struct MediaRouteContext {
     entity_name: String,
     entity_snake: String,
-    /// The entity's URL path segment — the SAME value `router.tera` nests the
-    /// routes under (`resolve_path_segment`: config `path_segment` →
-    /// `api_path_segment` → lowercased title). It is NOT always
-    /// `pg_table_name`: a title-derived segment drops the underscores
-    /// (`refundrequest` vs `refund_request`), so deriving the documented URL
-    /// from the table name emitted a path the router never served (issue #691).
-    entity_path_segment: String,
+    /// The API route prefix the handlers are mounted at — the ONE derivation
+    /// carried on the plan (issue #713): the entity's own path segment plus
+    /// the nesting chain `router.tera` mounts a child under
+    /// (`/{parent_segment}/{parent_param}/…`).
+    route_prefix: String,
+    /// The ancestor hops behind `route_prefix` (`{path_segment}` +
+    /// `{param_name}`), so the utoipa `params` block documents every path
+    /// parameter the route template carries.
+    route_parents: Vec<MediaRouteParent>,
     entity_module: String,
     domain: String,
     media_field_name: String,
@@ -130,8 +133,6 @@ impl EntityGenerator for MediaRouteGenerator {
         };
         let entity_name = schema.rust_type_name.clone();
         let entity_snake = schema.pg_table_name.clone();
-        let entity_path_segment =
-            super::api_model::resolve_path_segment_with_config(None, &schema, config);
         let entity_module = format!("{}_{}", domain, entity_snake);
         if entity_snake.is_empty() {
             return Ok(Vec::new());
@@ -148,7 +149,11 @@ impl EntityGenerator for MediaRouteGenerator {
             let ctx = MediaRouteContext {
                 entity_name: entity_name.clone(),
                 entity_snake: entity_snake.clone(),
-                entity_path_segment: entity_path_segment.clone(),
+                // Issue #713: the documented path is the plan's ONE derivation
+                // (the entity's segment + the nesting chain the router mounts)
+                // — never re-derived here, and never the table name.
+                route_prefix: field.route_prefix(&project.identity.api_version, domain),
+                route_parents: field.route_parents.clone(),
                 entity_module: entity_module.clone(),
                 domain: domain.to_string(),
                 media_field_name: field.field_snake.clone(),

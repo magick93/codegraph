@@ -6,7 +6,10 @@
 # rejections) needs a configured provider and lives in the runtime lane
 # (issue #625 OQ8 → #695 Stage 1).
 # The URL is pinned to the router's own path shape by `media_pipeline_tests`
-# (issue #691): /api/v1/{domain}/{path_segment}/{id}/{field}.
+# (issues #691/#713): {{ prefix }}/{id}/{field} — the entity's path segment
+# plus the nesting chain `router.tera` mounts a child entity under.
+# A NESTED (child) contract is not live until #722 lands: the handlers extract
+# `Path<Uuid>` while that route carries two params — axum answers 400.
 
 # authn — no credentials, rejected by the shared middleware before the
 # handler (and therefore before any extractor) runs.
@@ -32,7 +35,10 @@ jsonpath "$.error.code" == "NOT_FOUND"
 # path needs a configured provider — the runtime lane owns it (issue #625
 # OQ8 → #695 Stage 1).
 # The URL is pinned to the router's own path shape by `media_pipeline_tests`
-# (issue #691): /api/v1/{domain}/{path_segment}/{id}/{field}/presign.
+# (issues #691/#713): {{ prefix }}/{id}/{field}/presign — the entity's path
+# segment plus the nesting chain `router.tera` mounts a child entity under.
+# A NESTED (child) contract is not live until #722 lands: the handlers extract
+# `Path<Uuid>` while that route carries two params — axum answers 400.
 
 # authn — no credentials, rejected before the handler runs.
 POST {{ presign_url }}

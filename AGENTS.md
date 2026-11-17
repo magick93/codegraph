@@ -2570,12 +2570,58 @@ Rejections cover the extractor's own limit trip as well: axum's
 `DefaultBodyLimit` (2 MiB unless the route sets one) rejects inside
 `Multipart`, and that error now maps to the same 413 rather than a 400 read
 failure — raising the limit per route is #710.
+
 Byte identity: the two `AppError` constructors are the ONLY non-media
 output change — THREE whole-tree canaries were re-blessed
 (`ux_rules_pre_feature_tree.sha256`, `forms_pre_feature_tree.sha256`, and
 `policy_rls_tests__flag_off_full_output_hashes.snap`), and each diff is
 exactly one `src/error.rs` hash: the monolith app, each worker, and the
 gateway crate (`scaffold/worker.rs` renders it too). No other file moves.
+
+**The media contract is NESTING-aware (issue #713)**: the path data is
+resolved ONCE at plan-build time onto `MediaFieldPlan`
+(`entity_path_segment` + `route_parents: Vec<MediaRouteParent>` —
+`path_segment`/`param_name` per ancestor, resolved with the router's own
+`resolve_path_segment_with_config` + `param_name_from_path_segment`), and
+`MediaFieldPlan::{route_prefix, route_prefix_with_ids}` is the one assembly
+BOTH planes read — the hurl builder and `api/media.rs` no longer re-resolve
+the schema (the old `get_schema_in_domain` + hard `Error::Config` shape is
+gone). The hop resolver (`media/plan.rs::resolve_parent_hop`) is an exact
+mirror of `api/router.rs`, INCLUDING its fall-throughs:
+
+- **Source 1** — a `role = "child"` entity's configured `parent`, but only
+  when it is a ROUTABLE entity of this domain (`title_to_entity_idx`
+  membership: `is_entity`, a `pg_table_name`, not `handler_only`/`ddd_only`).
+  A `parent` naming a renamed/absent class (the realistic upgrade shape)
+  therefore FALLS THROUGH to Source 2 instead of aborting — as the router
+  does, and as the pre-#713 flat contract degraded non-fatally.
+- **Source 2** — every explicit NON-ROOT role (the router's gate is
+  `role != "root"`: `role = "value_object"` nests too), using the graph parent
+  candidates (`get_parent_candidates`, loaded lazily and only for this shape)
+  TRIED IN ORDER with unmountable parents skipped — a candidate in another
+  domain loses to a local routable one.
+- **`role = "root"`** (or no role) mounts at the domain level.
+
+A non-root entity that resolves through NEITHER source is a HARD
+`Error::Config` (the router mounts no route for it — nor for anything nested
+in it), naming the configured parent and/or the candidate considered — never
+a silent flat contract, and never a nested path under a parent the router
+never mounted. A child media field emits
+`/api/{version}/{domain}/{parent_segment}/{parent_id}/{child_segment}/{id}/{field}`
+and the utoipa `params(...)` documents the ancestor ids. Nested contracts are
+NOT live until #722 (the handlers extract `Path<Uuid>`; a two-param route
+answers 400 — the emitted file says so). Pins:
+`child_media_field_contract_nests_under_the_parent_route` (ROOT + CHILD, the
+CHILD's title sorting FIRST so the contract anchors on it; hurl == router ==
+utoipa, including the concrete parent sentinel),
+`media_fields_carry_the_route_path_they_are_mounted_under` (the plan field +
+both prefix renderings), `graph_parent_candidate_is_the_nesting_fallback`,
+`unresolvable_config_parent_falls_through_to_the_graph_candidate`,
+`value_object_role_still_nests_like_the_router` (end-to-end hurl == router),
+`a_non_routable_parent_never_yields_a_nested_path`,
+`graph_parent_candidates_skip_unmountable_parents`,
+`child_media_field_without_a_parent_is_config_error`. Existing root pins stay
+green; no `[media]` ⇒ byte-identical (ux/forms canaries, no re-bless).
 
 ### Media runtime gate against a real S3 server (#695 Stage 1)
 

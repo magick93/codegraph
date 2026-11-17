@@ -41,7 +41,6 @@ use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::{MediaPlan, MediaProvider, UploadMode};
 use serde_json::json;
 
-use crate::api::api_model;
 use crate::error::Result;
 use crate::output::render_template_with_project;
 use crate::project_config::{GenerationEntry, ProjectConfig};
@@ -199,32 +198,26 @@ impl GlobalGenerator for MediaStorageGenerator {
             } else {
                 "through_app"
             };
-            // The URL must be the one the ROUTER serves: `/api/v1/{domain}/
-            // {path_segment}/{id}/{field}`. The path segment comes from the
-            // same resolver `router.tera` nests under (config `path_segment`
-            // → `api_path_segment` → lowercased title) — `pg_table_name` is
-            // NOT it (title-derived segments drop the underscores), and the
-            // old builder additionally repeated the field segment where the
-            // id belongs. Both defects made the emitted file address a route
-            // that does not exist (issue #691).
-            let schema = db
-                .get_schema_in_domain(&field.entity_title, &domain_name)
-                .await?
-                .ok_or_else(|| {
-                    crate::error::Error::Config(format!(
-                        "media hurl contract: entity {} (domain {domain_name}) is in the media \
-                         plan but not in the graph",
-                        field.entity_title
-                    ))
-                })?;
-            let path_segment = api_model::resolve_path_segment_with_config(None, &schema, config);
+            // The URL must be the one the ROUTER serves. The prefix is carried
+            // on the plan (issue #713): the entity's own path segment — config
+            // `path_segment` → `api_path_segment` → lowercased title, NOT
+            // `pg_table_name` (title-derived segments drop the underscores) —
+            // plus the nesting chain `router.tera` mounts a child under
+            // (`/{parent_segment}/{parent_id}/…/{child_segment}`). Both were
+            // previously re-derived here, and a child media field emitted a
+            // flat path no router mounts (#691, #713).
+            let prefix = field.route_prefix_with_ids(
+                &config.defaults.api_version,
+                &domain_name,
+                MEDIA_CONTRACT_MISSING_ID,
+            );
             // `{{base_url}}` + the CONFIGURED api version: a scheme-less path
             // is not a valid hurl URL (`error: Invalid URL … Missing scheme`),
             // and every sibling contract (`hurl_contract.rs`) is built the
             // same way.
             let base = format!(
-                "{{{{base_url}}}}/api/{}/{domain_name}/{path_segment}/{MEDIA_CONTRACT_MISSING_ID}/{}",
-                config.defaults.api_version, field.field_snake
+                "{{{{base_url}}}}{prefix}/{MEDIA_CONTRACT_MISSING_ID}/{}",
+                field.field_snake
             );
             let ctx = json!({
                 "kind": kind,
@@ -235,6 +228,7 @@ impl GlobalGenerator for MediaStorageGenerator {
                 "auth_header": "Authorization: Bearer {{api_key}}",
                 "field": field.field_snake,
                 "mime": media_cfg_accept(config, &domain_name),
+                "prefix": prefix,
                 "upload_url": base,
                 // Display is the GET on the SAME path (both modes mount it),
                 // so the ownership leg needs no body extractor.

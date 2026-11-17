@@ -234,6 +234,8 @@ mod tests {
                 MediaFieldPlan {
                     entity_title: "PersonType".to_string(),
                     entity_table: "person".to_string(),
+                    entity_path_segment: "person".to_string(),
+                    route_parents: vec![],
                     field_name: "bannerImage".to_string(),
                     field_snake: "banner_image".to_string(),
                     child_table: "person_banner_image".to_string(),
@@ -245,6 +247,8 @@ mod tests {
                 MediaFieldPlan {
                     entity_title: "OtherType".to_string(),
                     entity_table: "other".to_string(),
+                    entity_path_segment: "other".to_string(),
+                    route_parents: vec![],
                     field_name: "avatar".to_string(),
                     field_snake: "avatar".to_string(),
                     child_table: "other_avatar".to_string(),
@@ -256,6 +260,8 @@ mod tests {
                 MediaFieldPlan {
                     entity_title: "PersonType".to_string(),
                     entity_table: "person".to_string(),
+                    entity_path_segment: "person".to_string(),
+                    route_parents: vec![],
                     field_name: "avatar".to_string(),
                     field_snake: "avatar".to_string(),
                     child_table: "person_avatar".to_string(),

@@ -11,12 +11,14 @@ use codegraph_config::{DomainConfig, MediaConfig};
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::PropertyNode;
 use codegraph_core::types::{
-    KeyTemplate, MediaFieldPlan, MediaPlan, MediaProvider, MediaProviderSettings, MediaVisibility,
-    UploadMode, provider_capabilities,
+    KeyTemplate, MediaFieldPlan, MediaPlan, MediaProvider, MediaProviderSettings, MediaRouteParent,
+    MediaVisibility, ParentCandidate, SchemaNode, UploadMode, provider_capabilities,
 };
 use codegraph_naming::{child_parent_fk_column, child_table_name, to_snake_case};
 use codegraph_type_contracts::RefClassificationKind;
 
+use crate::api::api_model::resolve_path_segment_with_config;
+use crate::api::router::param_name_from_path_segment;
 use crate::db::entity::is_global_entity;
 use crate::error::Error;
 
@@ -307,12 +309,20 @@ pub async fn build_media_plan_for_domain(
     // case — the target has no child table, so media cannot lower there.
     let mut fields = Vec::new();
     let mut seen = BTreeSet::new();
+    // The graph parent candidates are the router's Source-2 nesting fallback;
+    // loaded ONCE per plan and only when a `role = "child"` entity declares no
+    // configured `parent` (the common shapes never pay for the query).
+    let mut parent_candidates: Option<Vec<ParentCandidate>> = None;
     for title in entity_titles {
         let schema = db.get_schema(title).await?.ok_or_else(|| {
             Error::Config(format!(
                 "domain \"{domain_name}\" media: entity \"{title}\" resolves to no schema"
             ))
         })?;
+        // Resolved lazily: only an entity that actually carries a media field
+        // needs its route path, so an unrelated child with broken nesting
+        // cannot fail this domain's plan.
+        let mut route_path: Option<(String, Vec<MediaRouteParent>)> = None;
         // Tenancy of the owning table follows the DDL's own rule — NEVER a
         // property scan: mox entity schemas never declare the tenant column
         // (the DDL injects it), so a scan would return `None` for every real
@@ -361,9 +371,27 @@ pub async fn build_media_plan_for_domain(
                     let field_snake = to_snake_case(&prop.name);
                     let child_table = child_table_name(&schema.pg_table_name, &field_snake);
                     if seen.insert((title.clone(), field_snake.clone())) {
+                        let (entity_path_segment, route_parents) = match &route_path {
+                            Some(path) => path.clone(),
+                            None => {
+                                let path = resolve_media_route_path(
+                                    db,
+                                    config,
+                                    domain_name,
+                                    title,
+                                    &schema,
+                                    &mut parent_candidates,
+                                )
+                                .await?;
+                                route_path = Some(path.clone());
+                                path
+                            }
+                        };
                         fields.push(MediaFieldPlan {
                             entity_title: title.clone(),
                             entity_table: schema.pg_table_name.clone(),
+                            entity_path_segment,
+                            route_parents,
                             field_name: prop.name.clone(),
                             field_snake,
                             child_table,
@@ -446,4 +474,243 @@ fn find_column(props: &[PropertyNode], expected: &str, class_title: &str) -> Res
                  model or point url_field/mime_field at the column the class carries"
             ))
         })
+}
+
+/// The route path a media field is addressed under (issue #713): the owning
+/// entity's segment plus the nesting chain, resolved ONCE here so the hurl
+/// contract and the utoipa path read one value and neither re-resolves the
+/// schema.
+///
+/// The nesting rule is `api/router.rs`'s, hop by hop (`router.tera` mounts a
+/// child as `.nest("/{parent.param_name}/{child.path_segment}", …)`):
+///
+/// - **Source 1** — a `role = "child"` entity nests under its CONFIGURED
+///   `parent`, but only when that parent is a routable entity of THIS domain
+///   (the router's `title_to_entity_idx` membership); otherwise the router
+///   falls through to Source 2, and so does this resolver.
+/// - **Source 2** — every other EXPLICIT non-root role (the router's gate is
+///   `role != "root"`, not `role == "child"`) nests under the first graph
+///   parent candidate whose parent is routable in this domain; the router
+///   iterates candidates in order and skips the unmountable ones.
+/// - **`role = "root"`** (or no role) mounts at the domain level.
+///
+/// A non-root entity that resolves through NEITHER source is a MODELING error:
+/// the router mounts no route for it at all (its routes fn is nested nowhere),
+/// so a flat contract would address a path that does not exist. The diagnostic
+/// names the configured parent and/or the candidate that was considered.
+async fn resolve_media_route_path(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    title: &str,
+    schema: &SchemaNode,
+    parent_candidates: &mut Option<Vec<ParentCandidate>>,
+) -> Result<(String, Vec<MediaRouteParent>), Error> {
+    let domain_cfg = config.domains.get(domain_name);
+    let entity_cfg = domain_cfg.and_then(|d| d.get_entity_config(title));
+    let entity_path_segment = resolve_path_segment_with_config(entity_cfg, schema, config);
+
+    let mut route_parents: Vec<MediaRouteParent> = Vec::new();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    visited.insert(title.to_string());
+    let mut current_title = title.to_string();
+    let mut current_cfg = entity_cfg;
+    loop {
+        let role = current_cfg
+            .and_then(|c| c.role.as_deref())
+            .unwrap_or("root");
+        let configured_parent = current_cfg.and_then(|c| c.parent.clone());
+        match resolve_parent_hop(
+            db,
+            config,
+            domain_name,
+            &current_title,
+            role,
+            configured_parent.as_deref(),
+            parent_candidates,
+        )
+        .await?
+        {
+            ParentHop::Root => break,
+            ParentHop::Hop {
+                title: parent_title,
+                schema: parent_schema,
+            } => {
+                if !visited.insert(parent_title.clone()) {
+                    return Err(Error::Config(format!(
+                        "domain \"{domain_name}\" media: the parent chain of \"{title}\" \
+                         cycles at \"{parent_title}\""
+                    )));
+                }
+                let parent_cfg = domain_cfg.and_then(|d| d.get_entity_config(&parent_title));
+                let parent_segment =
+                    resolve_path_segment_with_config(parent_cfg, &parent_schema, config);
+                route_parents.insert(
+                    0,
+                    MediaRouteParent {
+                        entity_title: parent_title.clone(),
+                        param_name: param_name_from_path_segment(&parent_segment),
+                        path_segment: parent_segment,
+                    },
+                );
+                current_title = parent_title;
+                current_cfg = parent_cfg;
+            }
+            ParentHop::Unresolvable {
+                role,
+                configured,
+                candidate,
+            } => {
+                let subject = if current_title == title {
+                    format!("entity \"{current_title}\"")
+                } else {
+                    format!("ancestor \"{current_title}\" of \"{title}\"")
+                };
+                return Err(Error::Config(format!(
+                    "domain \"{domain_name}\" media: {subject} is role = \"{role}\" but has no \
+                     mountable parent — the router mounts no route for it, so a media contract \
+                     would address a path that does not exist. {}",
+                    unresolvable_parent_reason(
+                        configured.as_deref(),
+                        candidate.as_deref(),
+                        domain_name
+                    )
+                )));
+            }
+        }
+    }
+    Ok((entity_path_segment, route_parents))
+}
+
+/// One entity's parent resolution — the router's two sources, per hop.
+enum ParentHop {
+    /// The effective role is `"root"`: the entity mounts at the domain level.
+    Root,
+    /// A mountable ancestor (a routable entity of this domain). The schema is
+    /// boxed — it dwarfs the diagnostic variants and is consumed immediately.
+    Hop {
+        title: String,
+        schema: Box<SchemaNode>,
+    },
+    /// An explicit non-root role with no mountable ancestor: the router mounts
+    /// no route for the entity, nor for anything nested inside it.
+    Unresolvable {
+        role: String,
+        configured: Option<String>,
+        candidate: Option<String>,
+    },
+}
+
+/// Resolve ONE hop of the nesting chain, exactly as `api/router.rs` does.
+async fn resolve_parent_hop(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    title: &str,
+    role: &str,
+    configured_parent: Option<&str>,
+    parent_candidates: &mut Option<Vec<ParentCandidate>>,
+) -> Result<ParentHop, Error> {
+    // A root mounts at the domain level. Every EXPLICIT non-root role nests —
+    // the router's Source-2 gate is `role != "root"` (`api/router.rs`), and
+    // UI-plane parity encodes the same rule (`ui/page.rs`).
+    if role == "root" {
+        return Ok(ParentHop::Root);
+    }
+
+    // Source 1: a `role = "child"` entity's CONFIGURED parent. The router only
+    // honours it when the title is in `title_to_entity_idx` (a routable entity
+    // of this domain) and otherwise FALLS THROUGH to Source 2 — a stale
+    // `parent` naming a renamed/absent class must not abort generation.
+    if role == "child"
+        && let Some(parent) = configured_parent
+        && let Some(schema) = routable_parent_schema(db, config, domain_name, parent).await?
+    {
+        return Ok(ParentHop::Hop {
+            title: parent.to_string(),
+            schema: Box::new(schema),
+        });
+    }
+
+    // Source 2: the graph parent candidates, tried IN ORDER (the router skips
+    // candidates whose parent it cannot mount). The first candidate seen is
+    // remembered so the diagnostic can name it when nothing resolves.
+    if parent_candidates.is_none() {
+        *parent_candidates = Some(db.get_parent_candidates().await?);
+    }
+    let candidates = parent_candidates.as_deref().unwrap_or_default();
+    let mut named_candidate: Option<String> = None;
+    for candidate in candidates.iter().filter(|c| c.child_title == title) {
+        let parent_title = candidate.parent_title.clone();
+        if let Some(schema) = routable_parent_schema(db, config, domain_name, &parent_title).await?
+        {
+            return Ok(ParentHop::Hop {
+                title: parent_title,
+                schema: Box::new(schema),
+            });
+        }
+        named_candidate.get_or_insert(parent_title);
+    }
+
+    Ok(ParentHop::Unresolvable {
+        role: role.to_string(),
+        configured: configured_parent.map(str::to_string),
+        candidate: named_candidate,
+    })
+}
+
+/// A parent the router can actually mount: a schema of THIS domain that emits
+/// a table (`is_entity` + a `pg_table_name`) and is not generation-skipped —
+/// the router's `title_to_entity_idx` membership (`api/router.rs` pass 1).
+async fn routable_parent_schema(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    title: &str,
+) -> Result<Option<SchemaNode>, Error> {
+    let Some(schema) = db.get_schema_in_domain(title, domain_name).await? else {
+        return Ok(None);
+    };
+    if !schema.is_entity || schema.pg_table_name.is_empty() {
+        return Ok(None);
+    }
+    let generation_mode = config
+        .domains
+        .get(domain_name)
+        .and_then(|d| d.get_entity_config(title))
+        .and_then(|ec| ec.generation_mode.as_deref())
+        .unwrap_or(&config.defaults.generation_mode);
+    if generation_mode == "handler_only" || generation_mode == "ddd_only" {
+        return Ok(None);
+    }
+    Ok(Some(schema))
+}
+
+/// Why no mountable ancestor was found, naming whatever the model declared.
+fn unresolvable_parent_reason(
+    configured: Option<&str>,
+    candidate: Option<&str>,
+    domain_name: &str,
+) -> String {
+    match (configured, candidate) {
+        (Some(parent), Some(candidate)) => format!(
+            "Configured parent \"{parent}\" is not a routable entity in domain \
+             \"{domain_name}\" (a parent must be a generated entity with a table), and the \
+             graph parent candidate \"{candidate}\" is not routable either — point \
+             `parent`/`parent_ref` at a generated entity."
+        ),
+        (Some(parent), None) => format!(
+            "Configured parent \"{parent}\" is not a routable entity in domain \
+             \"{domain_name}\" (a parent must be a generated entity with a table) and no graph \
+             parent candidate exists — point `parent`/`parent_ref` at a generated entity."
+        ),
+        (None, Some(candidate)) => format!(
+            "The graph parent candidate \"{candidate}\" is not a routable entity in domain \
+             \"{domain_name}\" (a parent must be a generated entity with a table) — point \
+             `parent`/`parent_ref` at a generated entity."
+        ),
+        (None, None) => "Declare `parent`/`parent_ref` naming a generated entity of this domain \
+                         (or model a parent candidate)."
+            .to_string(),
+    }
 }

@@ -381,6 +381,22 @@ impl MediaProviderSettings {
     }
 }
 
+/// One ancestor hop on a media field's route path (issue #713): a nested
+/// entity's routes are mounted by `api/router.tera` as
+/// `.nest("/{parent.param_name}/{child.path_segment}", child_routes())`, so
+/// every hop renders `{path_segment}/{param_name}` in the contract URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaRouteParent {
+    /// Schema title of the ancestor (e.g. "PersonType") — diagnostics only.
+    pub entity_title: String,
+    /// The ancestor's URL segment (`resolve_path_segment`: config
+    /// `path_segment` → `api_path_segment` → lowercased title).
+    pub path_segment: String,
+    /// The ancestor's named id parameter (`{person_id}`) — the same value the
+    /// router's `.nest` binds (`param_name_from_path_segment`).
+    pub param_name: String,
+}
+
 /// One contained-value media field resolved against the graph: the child
 /// table + columns the media surface reads and writes. All names go through
 /// the `codegraph-naming` single-source helpers (#460).
@@ -390,6 +406,20 @@ pub struct MediaFieldPlan {
     pub entity_title: String,
     /// Postgres table of the owning entity (e.g. "person").
     pub entity_table: String,
+    /// The owning entity's URL path segment — resolved at plan-build time
+    /// through the router's own resolver (`resolve_path_segment_with_config`:
+    /// config `path_segment` → `api_path_segment` → lowercased title), never
+    /// re-derived from the table name (issue #691/#713).
+    pub entity_path_segment: String,
+    /// The nesting chain the entity's routes are mounted under, OUTERMOST
+    /// ancestor first (empty for a root entity). Resolved with the router's
+    /// own rule (`api/router.rs`): a `role = "child"` entity nests under its
+    /// configured `parent` when that parent is a routable entity of the
+    /// domain, and every other explicit non-root role nests under the graph
+    /// parent candidate — each hop at `{parent_segment}/{parent_param}`, the
+    /// shape `api/router.tera` mounts. One derivation, read by both the hurl
+    /// contract and the utoipa path (issue #713).
+    pub route_parents: Vec<MediaRouteParent>,
     /// The contained-value feature name as authored (e.g. "avatar").
     pub field_name: String,
     /// snake_case of the feature (e.g. "avatar").
@@ -409,6 +439,45 @@ pub struct MediaFieldPlan {
     /// scan would return `None` for every real model and silently emit
     /// unscoped SQL. Child tables inherit the parent's tenant column.
     pub parent_tenant_column: Option<String>,
+}
+
+impl MediaFieldPlan {
+    /// The API route prefix the media field's handlers are mounted at —
+    /// `/api/{version}/{domain}/{entity_segment}` for a root entity,
+    /// `/api/{version}/{domain}/{parent_segment}/{parent_param}/…/{entity_segment}`
+    /// for a nested one, matching `api/router.tera`'s `.nest` chain.
+    ///
+    /// The ONE derivation the hurl contract and the utoipa path both read
+    /// (issue #713): the ancestor ids stay as `{param}` placeholders here,
+    /// which is what an OpenAPI path template wants.
+    pub fn route_prefix(&self, api_version: &str, domain: &str) -> String {
+        self.route_prefix_inner(api_version, domain, |hop| format!("{{{}}}", hop.param_name))
+    }
+
+    /// [`Self::route_prefix`] with every ancestor id placeholder rendered as
+    /// `id` — a hurl request line addresses CONCRETE records (`{person_id}`
+    /// is not a parseable uuid, and hurl does not template a URL path).
+    pub fn route_prefix_with_ids(&self, api_version: &str, domain: &str, id: &str) -> String {
+        self.route_prefix_inner(api_version, domain, |_| id.to_string())
+    }
+
+    fn route_prefix_inner(
+        &self,
+        api_version: &str,
+        domain: &str,
+        render_ancestor_id: impl Fn(&MediaRouteParent) -> String,
+    ) -> String {
+        let mut out = format!("/api/{api_version}/{domain}");
+        for hop in &self.route_parents {
+            out.push('/');
+            out.push_str(&hop.path_segment);
+            out.push('/');
+            out.push_str(&render_ancestor_id(hop));
+        }
+        out.push('/');
+        out.push_str(&self.entity_path_segment);
+        out
+    }
 }
 
 /// One domain's resolved media plane (issue #625 §3b L2): built
