@@ -2581,8 +2581,9 @@ gateway crate (`scaffold/worker.rs` renders it too). No other file moves.
 
 `media_runtime_tests` (`--ignored`, nightly `ifml-gate.yml`) is the media
 plane's BEHAVIOURAL gate — the first one. It boots **RustFS**
-(`rustfs/rustfs:latest`, anonymous `/data` + `/logs` volumes so no
-`10001:10001` bind mount is needed, S3 API only, default
+(pinned by DIGEST in both the gate and the workflow — a mutable tag on a
+nightly gate can shift under the validated lane — with an anonymous `/data`
+volume so no `10001:10001` bind mount is needed, S3 API only, default
 `rustfsadmin`/`rustfsadmin`, region `us-east-1`), creates the bucket with a
 signed `curl --aws-sigv4 "aws:amz:us-east-1:s3"` `PUT` (the app has no
 bucket-create path by design — #625 OQ2; that signed request is also the
