@@ -24,9 +24,10 @@
 //! `upload` uses TWO short transactions — the gate is re-run on the second
 //! (the FK is the backstop if the parent vanished between them) — so the
 //! multipart body read and the provider `put` hold no pooled connection.
-//! Child predicates tolerate the legacy zeros tenant (issue #700): the parent
-//! gate has already proven ownership, so the zeros branch can only expose
-//! rows under a parent the caller owns.
+//! Every child statement filters on the session organization exactly: the
+//! child tables carry the parent's `set_org_id_from_session` trigger and
+//! their RLS policies stopped tolerating the DDL's zero default (issue #700),
+//! so no branch here needs to widen the predicate.
 use axum::{
     extract::{Extension, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
@@ -58,24 +59,15 @@ const CHILD_TABLE: &str = "{{ schema }}.{{ child_table }}";
 /// The owning table's tenancy column, resolved through `is_global_entity` —
 /// the tenancy rule is currently THREE separate copies (`db/entity.rs`,
 /// `db/ddl/query.rs`, `persistence.rs`) that MUST move together; unifying
-/// them is issue #700. A `None` value means a GLOBAL owning table.
+/// them is a recorded follow-up with no issue yet (#702 tracks the
+/// neighbouring schema-source divergence). A `None` value means a GLOBAL
+/// owning table.
 {% if parent_tenant_column %}const PARENT_TENANT_COLUMN: Option<&str> = Some("{{ parent_tenant_column }}");
 {% else %}/// `None` only for a GLOBAL owning table: such a table is visible to every
 /// organization by definition, so the parent gate and the child statements
 /// are deliberately unscoped.
 const PARENT_TENANT_COLUMN: Option<&str> = None;
 {% endif %}
-{% if parent_tenant_column %}/// The "unassigned tenant" sentinel the DDL defaults `platform_organization_id`
-/// to. The CRUD child-table writer (`ddd/repository_emitter/child.rs::
-/// child_insert_sql`) still omits the tenant column, so every reference row it
-/// writes — the presigned-mode path included — carries zeros; the child tables
-/// get the same org-isolation RLS, whose predicate accepts zeros. Child
-/// statements therefore tolerate the zeros tenant UNDER A PARENT THE GATE HAS
-/// ALREADY PROVEN the caller owns; issue #700 fixes the writer class-wide
-/// (trigger + backfill) and this branch then goes away.
-const LEGACY_ZERO_TENANT: &str = "00000000-0000-0000-0000-000000000000";
-{% endif %}
-
 /// The domain's key template lowered to a Rust format string (R7): `org`
 /// and `id` are the runtime slots, everything else is baked.
 fn render_key(org: &str, id: Uuid) -> String {
@@ -127,8 +119,8 @@ fn db_err(context: &str, e: sea_orm::DbErr) -> AppError {
 /// transaction, install the session context, and require the parent to
 /// exist AND belong to the session organization. A miss is 404 — never 403:
 /// a foreign id must be indistinguishable from a missing one. A nil session
-/// organization is 404 too — it would otherwise match the legacy zeros
-/// tenant branch in the child predicates.
+/// organization is 404 unconditionally: the child predicates are exact-org
+/// since #700, so a nil org can never match a row.
 async fn scoped_tx(
     state: &AppState,
     api_key_info: &ApiKeyInfo,
@@ -318,12 +310,14 @@ pub async fn upload(
 
     // Overwrite-in-place semantics: one reference row per (parent, field) —
     // replace any existing row on the SAME transaction that installed the
-    // session bundle. The DELETE also clears a legacy zeros-tenant row left
-    // by the CRUD child writer (#700); the INSERT always writes the real
-    // session organization. Every value is a bound parameter.
+    // session bundle. Both statements are exact-org (#700): the child's
+    // INSERT trigger stamps the session organization, so a legacy
+    // zeros-tenant row can only have been repaired by the child migration's
+    // backfill, never by a wider predicate here. Every value is a bound
+    // parameter.
     let delete = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %}"),
+        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -388,7 +382,7 @@ pub async fn display(
     let tx = scoped_tx(&state, &api_key_info, id).await?;
     let select = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %} ORDER BY id DESC LIMIT 1"),
+        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %} ORDER BY id DESC LIMIT 1"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -459,7 +453,7 @@ pub async fn remove(
         .ok_or_else(storage_unavailable)?;
     let select = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %}"),
+        format!("SELECT {{ url_column }} AS url FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),
@@ -477,7 +471,7 @@ pub async fn remove(
         })?;
     let delete = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND ({{ parent_tenant_column }} = $2 OR {{ parent_tenant_column }} = '{LEGACY_ZERO_TENANT}'::uuid){% endif %}"),
+        format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),
         [
             Value::from(id),
 {% if parent_tenant_column %}            Value::from(api_key_info.organization_id),

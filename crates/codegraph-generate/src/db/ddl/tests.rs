@@ -165,13 +165,10 @@ fn child_table_parent_fk_single_suffix_for_id_named_parent() {
     );
 }
 
-#[test]
-fn rls_template_renders_org_isolation_for_child_table() {
-    let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = crate::template_engine::create_tera(&template_dir).unwrap();
-    let project = crate::ProjectConfig::default();
-
-    let parent = DdlContext {
+/// A tenant-scoped parent with one junction child — the #700 shape (a
+/// contained VO renders identically; the backfill only needs the parent FK).
+fn trust_parent_context() -> DdlContext {
+    DdlContext {
         schema_name: "core".to_string(),
         table_name: "trust".to_string(),
         display_name: "Trust".to_string(),
@@ -199,9 +196,12 @@ fn rls_template_renders_org_isolation_for_child_table() {
         is_codelist: false,
         has_demo_flag: false,
         append_only: false,
-    };
+        tenant_backfill: None,
+    }
+}
 
-    let junction = ChildTableDef {
+fn trust_junction_child() -> ChildTableDef {
+    ChildTableDef {
         schema_name: "core".to_string(),
         table_name: "trust_settlor_ids".to_string(),
         parent_fk_column: "trust_id".to_string(),
@@ -230,16 +230,160 @@ fn rls_template_renders_org_isolation_for_child_table() {
         foreign_keys: vec![],
         check_constraints: vec![],
         child_tables: vec![],
-    };
+    }
+}
 
-    let child_ctx = child_table_rls_context(&parent, &junction);
-    let sql = render_template_with_project(&tera, "db/rls.tera", &child_ctx, &project).unwrap();
+fn render_ddl_template(template: &str, ctx: &DdlContext) -> String {
+    let template_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = crate::template_engine::create_tera(&template_dir).unwrap();
+    let project = crate::ProjectConfig::default();
+    render_template_with_project(&tera, template, ctx, &project).unwrap()
+}
+
+#[test]
+fn rls_template_renders_org_isolation_for_child_table() {
+    let parent = trust_parent_context();
+    let junction = trust_junction_child();
+    let sql = render_ddl_template("db/rls.tera", &child_table_rls_context(&parent, &junction));
 
     assert!(sql.contains("ALTER TABLE core.trust_settlor_ids ENABLE ROW LEVEL SECURITY"));
     assert!(sql.contains("CREATE POLICY \"org_isolation_select\""));
     assert!(sql.contains("CREATE POLICY \"org_isolation_delete\""));
     // Children are not api-key-scoped resources.
     assert!(!sql.contains("api_key_scoped_"));
+}
+
+/// Issue #700: child rows were written with the DDL's zero tenant by every
+/// writer, so every child policy tolerated `tenant = '000…'` — which exposed
+/// those rows to EVERY organization. The tolerance is the hole; the backfill
+/// is what lets it go. Both must be in the child's own migration, in this
+/// order: enable → let the owner backfill → backfill → force → policies.
+#[test]
+fn child_rls_backfills_the_legacy_zero_tenant_then_drops_the_tolerance() {
+    const ZERO: &str = "'00000000-0000-0000-0000-000000000000'::uuid";
+    let parent = trust_parent_context();
+    let junction = trust_junction_child();
+    let sql = render_ddl_template("db/rls.tera", &child_table_rls_context(&parent, &junction));
+
+    // The backfill: child rows repair from the parent through the child FK.
+    assert!(
+        sql.contains(
+            "UPDATE core.trust_settlor_ids AS c\n   SET platform_organization_id = p.platform_organization_id\n  FROM core.trust AS p\n WHERE c.trust_id = p.id\n   AND c.platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid;"
+        ),
+        "the child migration must backfill legacy zero-tenant rows from the parent:\n{sql}"
+    );
+    // The owner can actually repair on a re-run: the previous policy's
+    // WITH CHECK would reject the rewritten tenant when no session org is
+    // set, so the backfill rides a NO FORCE window.
+    let no_force = sql
+        .find("NO FORCE ROW LEVEL SECURITY")
+        .expect("NO FORCE window");
+    let backfill = sql.find("UPDATE core.trust_settlor_ids").expect("backfill");
+    let force = sql
+        .find("ALTER TABLE core.trust_settlor_ids FORCE ROW LEVEL SECURITY")
+        .expect("FORCE re-enable");
+    assert!(
+        no_force < backfill && backfill < force,
+        "enable → NO FORCE → backfill → FORCE:\n{sql}"
+    );
+
+    // The tolerance is gone from every child policy — this is the fix. The
+    // literal survives exactly ONCE: as the backfill's own predicate.
+    assert_eq!(
+        sql.matches(ZERO).count(),
+        1,
+        "only the backfill may name the zero tenant:\n{sql}"
+    );
+    assert!(
+        !sql.contains("OR platform_organization_id ="),
+        "no child policy may tolerate the zero tenant after #700:\n{sql}"
+    );
+    assert_eq!(
+        sql.matches("USING ((platform_organization_id = public.get_current_org_id()))")
+            .count(),
+        3,
+        "select, update and delete USING are exact-org only:\n{sql}"
+    );
+    assert_eq!(
+        sql.matches("WITH CHECK ((platform_organization_id = public.get_current_org_id()))")
+            .count(),
+        2,
+        "insert + update WITH CHECK are exact-org only:\n{sql}"
+    );
+    // The tenancy is set at write time instead: the child INSERT trigger.
+    assert!(
+        sql.contains("#700"),
+        "the child tenancy block names its issue:\n{sql}"
+    );
+}
+
+/// Characterization: #700 is scoped to CHILD tables. A parent's INSERT
+/// trigger has always stamped the session org, so its policies keep the
+/// legacy tolerance byte-for-byte (flipping parents would hide pre-trigger
+/// rows in existing deployments for no security gain).
+#[test]
+fn parent_rls_policies_keep_the_legacy_zero_tolerance() {
+    let parent = trust_parent_context();
+    let sql = render_ddl_template("db/rls.tera", &parent);
+
+    assert_eq!(
+        sql.matches("OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid")
+            .count(),
+        5,
+        "select, insert, update (using + check) and delete keep the tolerance:\n{sql}"
+    );
+    assert!(
+        !sql.contains("NO FORCE ROW LEVEL SECURITY"),
+        "a parent has no backfill and therefore no NO FORCE window:\n{sql}"
+    );
+}
+
+/// Issue #700: no writer binds `platform_organization_id` on a child INSERT
+/// (SeaORM `child_insert_sql`, cornucopia `insert_*`/`link_*`, the media
+/// handler), so the ONLY writer-agnostic fix is the same BEFORE INSERT
+/// trigger the parent carries. The function lives in the parent's schema
+/// (it is emitted by the parent's own trigger file).
+#[test]
+fn child_tables_get_the_org_assignment_trigger() {
+    let mut parent = trust_parent_context();
+    parent.child_tables = vec![trust_junction_child()];
+    let sql = render_ddl_template("db/trigger.tera", &parent);
+
+    assert!(
+        sql.contains(
+            "DROP TRIGGER IF EXISTS trg_trust_settlor_ids_set_org_id ON core.trust_settlor_ids;"
+        ),
+        "the child gets the org trigger:\n{sql}"
+    );
+    assert!(
+        sql.contains(
+            "CREATE TRIGGER trg_trust_settlor_ids_set_org_id\n    BEFORE INSERT ON core.trust_settlor_ids\n    FOR EACH ROW\n    EXECUTE FUNCTION core.set_org_id_from_session();"
+        ),
+        "the child trigger reuses the parent's function:\n{sql}"
+    );
+    // The parent keeps its own trigger (unchanged bytes).
+    assert!(sql.contains("CREATE TRIGGER trg_trust_set_org_id\n    BEFORE INSERT ON core.trust\n"));
+}
+
+/// An append-only parent has no `updated_at` column — its child loop used to
+/// be gated on `has_updated_at`, which would have skipped the tenant trigger
+/// too (the #700 bug in one shape).
+#[test]
+fn child_org_trigger_is_independent_of_the_updated_at_gate() {
+    let mut parent = trust_parent_context();
+    parent.has_updated_at = false;
+    parent.append_only = true;
+    parent.child_tables = vec![trust_junction_child()];
+    let sql = render_ddl_template("db/trigger.tera", &parent);
+
+    assert!(
+        !sql.contains("set_updated_at()"),
+        "no timestamp trigger:\n{sql}"
+    );
+    assert!(
+        sql.contains("CREATE TRIGGER trg_trust_settlor_ids_set_org_id"),
+        "the tenant trigger is not gated on updated_at:\n{sql}"
+    );
 }
 
 /// #169: role_enforced_* policies rank the caller's role against the
@@ -308,6 +452,7 @@ fn rls_role_enforced_policies_use_configured_minima() {
         is_codelist: false,
         has_demo_flag: false,
         append_only: false,
+        tenant_backfill: None,
     };
     let sql = render_template_with_project(&tera, "db/rls.tera", &ctx, &project).unwrap();
 
@@ -388,6 +533,7 @@ fn test_context() -> DdlContext {
         is_codelist: false,
         has_demo_flag: false,
         append_only: false,
+        tenant_backfill: None,
     }
 }
 

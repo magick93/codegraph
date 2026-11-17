@@ -2506,16 +2506,18 @@ leg of `media_compile_tests` proves the plane stays sea-orm-free). The parent
 gate — `SELECT 1 FROM {schema}.{parent} WHERE id = $1 AND {tenant} = $2`, BOUND
 parameters — runs BEFORE the storage-slot 503; a miss is **404, never 403**
 (the cross-tenant convention) and a nil session org is 404. Child statements
-carry `parent_fk = $1 AND (tenant = $2 OR tenant = '000…'::uuid)`: the zeros
-tolerance covers rows the CRUD child writer (`child_insert_sql`) still writes
-with the DDL default, safe because the parent gate already proved ownership;
-issue #700 retires it (trigger + backfill). DB errors classify through the
+carry `parent_fk = $1 AND tenant = $2` — the exact session organization, with
+no legacy-zero tolerance: **#700 retired it** by fixing the writers instead
+(every child table now carries the parent's `set_org_id_from_session` trigger,
+and each child's RLS migration backfills the rows written before it existed
+and then drops the zero branch — so the tolerance had nothing left to cover;
+see "Child-table tenancy (#700)" below). DB errors classify through the
 `from_repo_err` markers → **403** (INSUFFICIENT_SCOPE / ROLE_FORBIDDEN /
 row-level-security violation). Tables are schema-qualified because `app_user`'s
 search_path is `public, extensions` (the unqualified SQL the plane shipped
 500'd on every non-public schema); issue #702 tracks the `postgres_schema` vs
 DDL-domain divergence. Gates: `media_pipeline_tests`
-(bundle/predicate/ordering/zeros/doc pins), `media_plan_tests`
+(bundle/predicate/ordering/exact-org/doc pins), `media_plan_tests`
 (`parent_tenant_column` via `is_global_entity`), `media_compile_tests` (native
 route + session, presigned leg, wasm32 sea-orm-free), nightly
 `ifml_codegen_gate` T0 boot.
@@ -2557,6 +2559,56 @@ output change — THREE whole-tree canaries were re-blessed
 `policy_rls_tests__flag_off_full_output_hashes.snap`), and each diff is
 exactly one `src/error.rs` hash: the monolith app, each worker, and the
 gateway crate (`scaffold/worker.rs` renders it too). No other file moves.
+
+### Child-table tenancy (#700 — the zero-tenant hole)
+
+`platform_organization_id` defaults to zeros and **no writer of a child row
+bound it**: the SeaORM `child_insert_sql`
+(`ddd/repository_emitter/child.rs`), the cornucopia
+`insert_{entity}_{child}` / `link_{junction}` queries
+(`db/cornucopia_queries.rs`) and the media handler (before #690) all omitted
+the column, so the DDL default was persisted. Every child policy then
+tolerated zeros, which made those rows readable AND writable by **every**
+organization at the DB tier — and any consumer that added a tenant predicate
+to a child statement stopped seeing them.
+
+Three parts, all in `templates/db/{trigger,rls}.tera` + the DDL context
+(`DdlContext.tenant_backfill: Option<TenantBackfill>`, `Some` only for a
+child via `child_table_rls_context`):
+
+1. **The writers**: the trigger template emits the parent's
+   `set_org_id_from_session` BEFORE INSERT trigger for every child, keyed on
+   `is_tenant_scoped` (NOT on `has_updated_at` — an append-only parent has no
+   timestamp column and its children still need stamping). This is the only
+   writer-agnostic fix; it covers SeaORM, cornucopia and junction links at
+   once, so no writer changed.
+2. **The backfill**: each child's `_rls.sql` re-applies an idempotent
+   `UPDATE child SET tenant = parent.tenant FROM parent WHERE child.fk =
+   parent.id AND child.tenant = '000…'` between `NO FORCE` and `FORCE`. `NO
+   FORCE` is load-bearing: on a *re-run* the previous policy's WITH CHECK
+   would reject the rewritten tenant when no session org is set. Because
+   `migrate` re-applies every file on every run, that file **is** the upgrade
+   migration — no new file, no renumbering, and the backfill necessarily runs
+   before the policy that depends on it.
+3. **The policy**: child policies drop the `OR tenant = '000…'` branch.
+   Parent policies KEEP it (their INSERT trigger always stamped, so there is
+   nothing to tolerate but also nothing to gain by flipping them — and
+   pre-trigger rows in existing deployments must stay visible).
+
+Media's #690 workaround (`LEGACY_ZERO_TENANT`) is retired in the same change;
+its parent gate stays. Gates:
+`cargo test -p codegraph --test child_tenant_contract_tests -- --ignored`
+(the live lane — generates a migration set with the current generators, never
+a committed fixture, then proves at the DB tier that the child trigger exists
+in `pg_trigger`, that a legacy zero row is repaired by re-applying the child
+migration, that `pg_policy` records no zero tolerance, and that org B reads
+none of org A's child rows) + the in-crate `db::ddl::tests` pins (child
+trigger, backfill ordering, exact-org predicates, and the parent
+characterization) + `media_pipeline_tests` +
+`media_child_statements_filter_on_the_exact_session_tenant`. Byte identity:
+the childless-parent trigger render is unchanged (proven by the fixture A/B
+and the `policy_rls` snapshot), so the re-bless is confined to child
+`_rls.sql` files and the parents that own children.
 
 ## Compile-pin policy (issue #551)
 

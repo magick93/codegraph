@@ -1119,6 +1119,9 @@ impl DdlGenerator {
             has_demo_flag: is_auditable,
             is_codelist: schema.is_codelist,
             append_only,
+            // Parent tables have no legacy zero-tenant rows to repair: their
+            // own INSERT trigger has always stamped the session org (#700).
+            tenant_backfill: None,
         })
     }
 }
