@@ -181,6 +181,21 @@ async fn child_rows_carry_the_session_org_and_evict_the_zero_tenant() {
     .await
     .map(|v| v.trim() != "0")
     .unwrap_or(false);
+    // Fail LOUD when the target cannot serve the generated set. The product
+    // decision is Supabase-only (#640): the generated `0003_pgmq_setup.sql`
+    // installs an `emit_domain_event` that calls `pgmq.send`, so on a plain
+    // `postgres:<n>` service every tenant-table INSERT raises and this gate
+    // would report a #700 regression that is really a fixture environment.
+    // Not a skip — a named requirement.
+    assert!(
+        supabase_image,
+        "this gate needs the Supabase postgres image (the `auth` schema and the \
+         pgmq functions the generated migrations install): the target at \
+         {}:{} has no `auth` schema. Plain `postgres:<n>` is not a supported \
+         target (#640); the supported image is \
+         public.ecr.aws/supabase/postgres:17.6.1.132.",
+        base.host, base.port
+    );
     let db = GateDb::create(base)
         .await
         .expect("create the per-run database");
