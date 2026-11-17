@@ -29,14 +29,28 @@
 //! their RLS policies stopped tolerating the DDL's zero default (issue #700),
 //! so no branch here needs to widen the predicate.
 //!
-//! Issue #707: a stored key must start with the SESSION ORGANIZATION's
-//! prefix (`{org}/…` — what `render_key` renders). `display` and `remove`
-//! hand the key to the provider with the SERVICE credential, and the column
-//! was client-writable while the create/update DTOs nested the media
-//! reference, so a foreign key is refused with a 404 BEFORE any storage call
-//! (never a 403 — a cross-tenant object is indistinguishable from a missing
-//! one). Defense in depth: the request DTOs no longer carry the reference at
-//! all, so the upload handler is its only writer.
+//! Issue #707: a stored key must belong to the SESSION ORGANIZATION.
+//! `display` and `remove` hand the key to the provider with the SERVICE
+//! credential, and the column was client-writable while the create/update
+//! DTOs nested the media reference, so a foreign key is refused with a 404
+//! BEFORE any storage call (never a 403 — a cross-tenant object is
+//! indistinguishable from a missing one).
+//!
+//! The guard is DERIVED from the domain's own `key_template` (a user-facing
+//! config field; `{org}` is optional and may sit anywhere), never assumed:
+//! - org-first template (first segment is `{org}` — the same predicate the
+//!   bucket-RLS migration uses, `media/keys.rs::key_template_is_org_first`):
+//!   the stored key must start with `KEY_PREFIX_FORMAT` rendered for the
+//!   session org. The const is a PLAIN string used with `.replace` — never
+//!   `format!` on a runtime string.
+//! - otherwise (`media/{org}/…`, `media-{org}/…`, no `{org}` at all): there
+//!   is no segment a prefix test can compare, so the guard is the full
+//!   invariant this plane already relies on — the key is a pure function of
+//!   (org, domain, entity, id, field), and `render_key` computes it, so the
+//!   stored key must EQUAL `render_key(&org, id)`. That is the stronger
+//!   form; anything else answers the same 404.
+//! Defense in depth: in `through-app` domains the request DTOs no longer
+//! carry the reference at all, so the upload handler is its only writer.
 use axum::{
     extract::{Extension, Multipart, Path, State},
     http::{HeaderMap, StatusCode},
@@ -82,6 +96,14 @@ const PARENT_TENANT_COLUMN: Option<&str> = None;
 fn render_key(org: &str, id: Uuid) -> String {
     format!("{{ key_format }}")
 }
+{% if key_org_first %}
+/// Issue #707: the org-first PREFIX of the domain's own key template, as a
+/// PLAIN string with `{org}` as the runtime slot (it is `.replace`d, never
+/// `format!`ed — a literal `{` in the template would otherwise open a
+/// format hole). `media/keys.rs::key_prefix_format_for` derives it from the
+/// same `key_template_is_org_first` predicate the bucket-RLS migration uses.
+const KEY_PREFIX_FORMAT: &str = "{{ key_prefix_format }}";
+{% endif %}
 
 fn mime_matches(mime: &str, patterns: &[&str]) -> bool {
     patterns.iter().any(|pattern| {
@@ -417,19 +439,33 @@ pub async fn display(
         .ok_or_else(|| {
             AppError::not_found(format!("{{ entity_name }} {id} carries no {{ media_field_name }} reference"))
         })?;
-    // Issue #707: the DURABLE invariant is that a stored key starts with the
-    // session organization's prefix — `render_key` always renders
-    // `{org}/…`. The row is client-writable (the legacy create/update DTOs
-    // nested this reference), so a key that points elsewhere must never reach
-    // the provider with the SERVICE credential: `display_urls` signs ANY key.
-    // A foreign key answers 404, never 403 — a cross-tenant object must be
-    // indistinguishable from a missing one. (Defense in depth: the request
-    // DTOs no longer carry the reference at all.)
-    if !key.starts_with(&format!("{}/", api_key_info.organization_id)) {
+    // Issue #707: the row is client-writable (the legacy create/update DTOs
+    // nested this reference), so a key that does not belong to the session
+    // organization must never reach the provider with the SERVICE
+    // credential: `display_urls` signs ANY key. Both shapes below answer 404,
+    // never 403 — a cross-tenant object must be indistinguishable from a
+    // missing one. (Defense in depth: `through-app` request DTOs no longer
+    // carry the reference at all.)
+    let org = api_key_info.organization_id.to_string();
+{% if key_org_first %}
+    // Org-first key template: the org occupies the whole first path segment,
+    // so the stored key must START WITH that segment's rendering.
+    if !key.starts_with(&KEY_PREFIX_FORMAT.replace("{org}", &org)) {
         return Err(AppError::not_found(format!(
             "{{ entity_name }} {id} carries no {{ media_field_name }} reference"
         )));
     }
+{% else %}
+    // Non-org-first key template (`{org}` elsewhere or absent): no segment
+    // can be prefix-checked, so enforce the full invariant — the key is a
+    // pure function of (org, domain, entity, id, field) and `render_key`
+    // computes it exactly.
+    if key != render_key(&org, id) {
+        return Err(AppError::not_found(format!(
+            "{{ entity_name }} {id} carries no {{ media_field_name }} reference"
+        )));
+    }
+{% endif %}
     let urls = storage
         .display_urls(std::slice::from_ref(&key))
         .await
@@ -491,19 +527,33 @@ pub async fn remove(
         .ok_or_else(|| {
             AppError::not_found(format!("{{ entity_name }} {id} carries no {{ media_field_name }} reference"))
         })?;
-    // Issue #707: the DURABLE invariant is that a stored key starts with the
-    // session organization's prefix — `render_key` always renders `{org}/…`.
-    // The row is client-writable (the legacy create/update DTOs nested this
-    // reference), so a key that points elsewhere must never reach the
-    // provider with the SERVICE credential: `delete` deletes ANY key. A
-    // foreign key answers 404, never 403 — a cross-tenant object must be
-    // indistinguishable from a missing one. Checking here is also what keeps
-    // the CHILD ROW from being deleted for a key this org does not own.
-    if !key.starts_with(&format!("{}/", api_key_info.organization_id)) {
+    // Issue #707: the row is client-writable (the legacy create/update DTOs
+    // nested this reference), so a key that does not belong to the session
+    // organization must never reach the provider with the SERVICE
+    // credential: `delete` deletes ANY key. Both shapes below answer 404,
+    // never 403 — a cross-tenant object must be indistinguishable from a
+    // missing one. Checking here is also what keeps the CHILD ROW from being
+    // deleted for a key this org does not own.
+    let org = api_key_info.organization_id.to_string();
+{% if key_org_first %}
+    // Org-first key template: the org occupies the whole first path segment,
+    // so the stored key must START WITH that segment's rendering.
+    if !key.starts_with(&KEY_PREFIX_FORMAT.replace("{org}", &org)) {
         return Err(AppError::not_found(format!(
             "{{ entity_name }} {id} carries no {{ media_field_name }} reference"
         )));
     }
+{% else %}
+    // Non-org-first key template (`{org}` elsewhere or absent): no segment
+    // can be prefix-checked, so enforce the full invariant — the key is a
+    // pure function of (org, domain, entity, id, field) and `render_key`
+    // computes it exactly.
+    if key != render_key(&org, id) {
+        return Err(AppError::not_found(format!(
+            "{{ entity_name }} {id} carries no {{ media_field_name }} reference"
+        )));
+    }
+{% endif %}
     let delete = Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         format!("DELETE FROM {CHILD_TABLE} WHERE {{ parent_fk_column }} = $1{% if parent_tenant_column %} AND {{ parent_tenant_column }} = $2{% endif %}"),

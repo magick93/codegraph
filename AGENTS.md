@@ -2470,16 +2470,21 @@ control and the media field never enters `collect_ui_fields` — it is not a
 generic form input, it has its own upload control/route, and in
 `through-app` domains the reference is now **upload-handler-owned**
 (issue #707): the create/update DTOs omit it entirely, so a client can never
-name the object key; the response DTO keeps it. (`presigned` — whose route
-only mints a PUT URL, so the client persists the reference through the
-normal update path (#701) — and client-direct, which has no app-plane route,
-keep the reference in the DTO: stripping it there would make the field
-unwritable.) The pre-#707 claim that `deny_unknown_fields` rejects a leaked
+name the object key; the response DTO keeps it. `presigned` (whose route only
+mints a PUT URL, so the client persists the reference through the normal
+update path (#701)) and client-direct (no app-plane route) keep the reference
+in the DTO — stripping it there would make the field unwritable — so in those
+two modes **the stored reference stays client-writable**, and the read-path
+guard is the control. That guard is derived from the domain's own
+`key_template` (a user-facing config field; `{org}` is optional and may sit
+anywhere — the shared `media/keys.rs::key_template_is_org_first` predicate,
+the same one the bucket-RLS migration uses): an org-first template
+(`{org}/…`) checks that the stored key starts with the session org's rendered
+first segment; any other shape has no checkable prefix, so `display`/`remove`
+require `key == render_key(org, id)`. Both answer 404 (never 403) before any
+storage call. The pre-#707 claim that `deny_unknown_fields` rejects a leaked
 key was false — the DTO nested `{ mime_type, url }` verbatim, which is
-exactly the writable-key defect #707 closed. Defense in depth (every mode):
-`display`/`remove` also refuse a stored key outside the session
-organization's `{org}/…` prefix with a 404 (never a 403) before any storage
-call.
+exactly the writable-key defect #707 closed.
 IFML: a modeled `field x -> input file` lowers onto the entity's media route
 — a non-value-bound control plus a page-script handler calling a
 server-side `upload{Field}` multipart command (`$lib/server/api`; the submit

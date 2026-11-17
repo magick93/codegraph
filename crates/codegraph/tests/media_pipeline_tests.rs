@@ -749,6 +749,8 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
         "mode_presigned": false,
         "max_bytes": 5242880u64,
         "key_format": "{org}/core/org/{id}/logo",
+        "key_org_first": true,
+        "key_prefix_format": "{org}/",
         "display_ttl_secs": 300u64,
         "presign_ttl_secs": 900u64,
     });
@@ -1688,24 +1690,34 @@ async fn presigned_hurl_contract_url_matches_the_router_route() {
 // the SERVICE credential, and that column was client-writable (the
 // create/update DTO nested the media reference). Org B could point its own
 // record at `<orgA>/…` and sign or DELETE org A's object. Two fixes:
-//   1. the read path refuses a key outside the session org's prefix (404,
-//      never 403 — a foreign object is indistinguishable from a missing
-//      one), BEFORE any storage call;
+//   1. the read path refuses a key that does not belong to the session org
+//      (404, never 403 — a foreign object is indistinguishable from a
+//      missing one), BEFORE any storage call. The guard is DERIVED from the
+//      domain's own `key_template` (see the two shapes below);
 //   2. in `through-app` domains the request DTOs no longer carry the
 //      reference, so the upload handler is its only writer. `presigned`
 //      (presign only mints a URL — the client persists the reference
 //      through the update path, #701) and client-direct (no app-plane
 //      route) keep it: the CRUD body IS the client's writer there.
 
-/// The emitted prefix check, verbatim: the session org plus a `/` separator
-/// is the ONLY accepted key prefix (`render_key` always renders `{org}/…`).
+/// The emitted org-first guard, VERBATIM: the domain's own first key segment
+/// (`KEY_PREFIX_FORMAT`, derived from the key template) rendered for the
+/// session org. A plain-string `.replace` — never `format!` on runtime text.
 const MEDIA_KEY_PREFIX_CHECK: &str =
-    "if !key.starts_with(&format!(\"{}/\", api_key_info.organization_id)) {";
+    "if !key.starts_with(&KEY_PREFIX_FORMAT.replace(\"{org}\", &org)) {";
+
+/// The emitted NON-org-first guard, VERBATIM: the full invariant — the key is
+/// a pure function of (org, domain, entity, id, field).
+const MEDIA_KEY_EXACT_CHECK: &str = "if key != render_key(&org, id) {";
 
 fn assert_key_prefix_guard(module: &str, handler: &str, storage_call: &str) {
+    assert_key_guard(module, handler, storage_call, MEDIA_KEY_PREFIX_CHECK)
+}
+
+fn assert_key_guard(module: &str, handler: &str, storage_call: &str, expected: &str) {
     let start = media_route_module_key(module, handler);
     let body = &module[start..];
-    let check = body.find(MEDIA_KEY_PREFIX_CHECK).unwrap_or_else(|| {
+    let check = body.find(expected).unwrap_or_else(|| {
         panic!(
             "{handler} must refuse a stored key outside the session org's prefix \
              before touching the provider (issue #707):\n{module}"
@@ -1717,6 +1729,16 @@ fn assert_key_prefix_guard(module: &str, handler: &str, storage_call: &str) {
     assert!(
         check < call,
         "{handler} must check the key prefix BEFORE `{storage_call}`:\n{module}"
+    );
+    // The guard compares against the SESSION org, so the handler must bind it.
+    let org_bind = body
+        .find("let org = api_key_info.organization_id.to_string();")
+        .unwrap_or_else(|| {
+            panic!("{handler} must bind the session org for the key guard:\n{module}")
+        });
+    assert!(
+        org_bind < check,
+        "{handler} must bind the session org BEFORE the key guard:\n{module}"
     );
     let guarded = &body[check..call];
     assert!(
@@ -1745,6 +1767,20 @@ async fn media_display_and_remove_reject_keys_outside_the_session_org() {
     );
     assert_key_prefix_guard(module, "pub async fn display(", ".display_urls(");
     assert_key_prefix_guard(module, "pub async fn remove(", ".delete(&key)");
+    // The prefix is DERIVED from the domain's key template (the default first
+    // segment is `{org}`), and it is a plain string, not a `format!` literal.
+    assert!(
+        module.contains("const KEY_PREFIX_FORMAT: &str = \"{org}/\";"),
+        "the default template's first segment lowers to the org slot:\n{module}"
+    );
+    assert!(
+        !module.contains("if !key.starts_with(&format!(\"{}/\""),
+        "no hardcoded `{{org}}/` prefix survives (issue #707):\n{module}"
+    );
+    assert!(
+        !module.contains(MEDIA_KEY_EXACT_CHECK),
+        "an org-first template needs no full-key fallback:\n{module}"
+    );
 }
 
 #[tokio::test]
@@ -1778,6 +1814,104 @@ async fn presigned_media_display_and_remove_guard_the_key_prefix_too() {
     assert!(
         presign.contains("let key = render_key(&org, id);"),
         "presign mints from the session org:\n{presign}"
+    );
+}
+
+/// A domain whose key template puts `{org}` somewhere OTHER than the leading
+/// segment — explicitly legal (`KeyTemplate::parse` requires only `{id}` and
+/// `{field}`; `{org}` may sit anywhere, `media/keys.rs`).
+fn media_toml_with_key_template(mode: &str, template: &str) -> String {
+    format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"supabase\"\nupload_mode = \"{mode}\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\nkey_template = \"{template}\"\n"
+    )
+}
+
+/// Issue #707 review blocker: `key_template` is user-facing config and `{org}`
+/// is optional/positional, so the guard must be DERIVED from it. A hardcoded
+/// `{org}/` prefix would 404 every legitimate key for
+/// `media/{org}/{domain}/{entity}/{id}/{field}` — a full media outage in a
+/// security fix. With no segment a prefix test can compare, the guard is the
+/// full invariant: the key must EQUAL `render_key(org, id)`.
+#[tokio::test]
+async fn non_org_first_key_template_guards_with_the_full_key_equality() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_key_template(
+        "through-app",
+        "media/{org}/{domain}/{entity}/{id}/{field}",
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    // The configured template IS the rendered key (not the default).
+    assert!(
+        module.contains("format!(\"media/{org}/core/person/{id}/avatar\")"),
+        "the key renders from the configured template:\n{module}"
+    );
+    // No prefix machinery at all, and no outage-prone hardcoded prefix.
+    assert!(
+        !module.contains("const KEY_PREFIX_FORMAT"),
+        "a non-org-first template emits no org prefix const:\n{module}"
+    );
+    assert!(
+        !module.contains("if !key.starts_with(&format!(\"{}/\""),
+        "no hardcoded `{{org}}/` prefix survives (issue #707):\n{module}"
+    );
+    assert_eq!(
+        module.matches(MEDIA_KEY_EXACT_CHECK).count(),
+        2,
+        "display AND remove guard the full key:\n{module}"
+    );
+    assert_key_guard(
+        module,
+        "pub async fn display(",
+        ".display_urls(",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+    assert_key_guard(
+        module,
+        "pub async fn remove(",
+        ".delete(&key)",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+}
+
+/// A MIXED first segment (`media-{org}`) is still not org-first for either
+/// consumer: a prefix test cannot express it as a segment, and the bucket-RLS
+/// predicate (`split_part(name, '/', 1) = org`) cannot compare it. Both read
+/// the ONE predicate (`keys::key_template_is_org_first`), so the route falls
+/// back to the (stronger) full-key equality instead of inventing its own rule.
+#[tokio::test]
+async fn mixed_first_segment_org_template_uses_the_full_key_equality() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_key_template(
+        "through-app",
+        "media-{org}/{domain}/{entity}/{id}/{field}",
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module.contains("format!(\"media-{org}/core/person/{id}/avatar\")"),
+        "the configured template is the rendered key:\n{module}"
+    );
+    assert!(
+        !module.contains("const KEY_PREFIX_FORMAT"),
+        "`media-{{org}}` is not a checkable segment prefix:\n{module}"
+    );
+    assert_eq!(
+        module.matches(MEDIA_KEY_EXACT_CHECK).count(),
+        2,
+        "display AND remove guard the full key:\n{module}"
+    );
+    assert_key_guard(
+        module,
+        "pub async fn display(",
+        ".display_urls(",
+        MEDIA_KEY_EXACT_CHECK,
     );
 }
 
