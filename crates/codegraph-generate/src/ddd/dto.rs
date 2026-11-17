@@ -95,6 +95,14 @@ pub struct ChildDtoContext {
     pub is_array: bool,
     /// Nested child DTOs (ValueObject properties within this child DTO)
     pub child_dtos: Vec<ChildDtoContext>,
+    /// A MEDIA reference (issue #707) whose row the app's `through-app`
+    /// upload handler writes (`media::plan::media_upload_owned_fields`) — so
+    /// that handler is the reference's only writer and the request DTOs
+    /// (create/update) omit it entirely; the response DTO keeps it (the UI
+    /// renders it). Always `false` without `[media]`, and for `presigned` /
+    /// client-direct (no handler writes the row there) — byte-identical.
+    #[serde(default)]
+    pub is_media: bool,
 }
 
 /// Maximum nesting depth for recursive child DTO building.
@@ -305,6 +313,7 @@ async fn build_child_dto(
                         }],
                         is_array: true,
                         child_dtos: vec![],
+                        is_media: false,
                     });
                 } else {
                     let fd = codegraph_core::types::resolve_field(c);
@@ -395,6 +404,9 @@ async fn build_child_dto(
         fields: child_fields,
         is_array: prop.is_array,
         child_dtos: nested_child_dtos,
+        // The top-level caller knows whether this property is a media field
+        // (the plan is per entity/domain); nested children are never media.
+        is_media: false,
     })
 }
 
@@ -490,6 +502,35 @@ pub async fn build_dto_context(
     // For codelist entities with no graph properties (enum-only JSON schema),
     // inject the three columns created by the codelist DDL template.
     codegraph_core::types::inject_codelist_properties(&mut props, schema.is_codelist, &domain);
+
+    // Media fields (issue #707): the RESOLVED media plan is the source of
+    // truth — the `MediaWrapper` classification below is RETIRED (mox-first
+    // consumers could never produce it, which is why the generated create/
+    // update DTO still nested `{ mime_type, url }` and let a client name the
+    // object key). `through-app` mode's upload handler is the reference's
+    // ONLY writer (it INSERTs the child row on its own route), so the request
+    // DTOs must not carry it.
+    // `presigned` (its route only MINTS a URL — the client persists the
+    // reference through the normal update path, #701) and `client-direct` (no
+    // app-plane route) keep it in the DTO: stripping it there would make the
+    // field unwritable. Empty without `[media]` — byte-identical.
+    // The driver's pre-generation pass already hard-failed a broken media
+    // config. A residual failure is logged rather than swallowed: falling
+    // back to an empty set would quietly put the reference back in the
+    // create/update DTOs.
+    let media_fields: std::collections::HashSet<String> =
+        match crate::media::plan::media_upload_owned_fields(db, config, &domain, schema_title).await
+        {
+            Ok(fields) => fields.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!(
+                    domain = %domain,
+                    entity = schema_title,
+                    "media plan unavailable ({e}) — the create/update DTOs will carry the media reference"
+                );
+                std::collections::HashSet::new()
+            }
+        };
 
     // Media fields are excluded from Create/Update DTOs — uploads happen via
     // separate media endpoints, not the JSON CRUD body.
@@ -606,7 +647,7 @@ pub async fn build_dto_context(
             } else {
                 let mut visited = std::collections::HashSet::new();
                 visited.insert(schema_title.to_string());
-                if let Some(child_dto) = Box::pin(build_child_dto(
+                if let Some(mut child_dto) = Box::pin(build_child_dto(
                     db,
                     prop,
                     schema_title,
@@ -616,9 +657,16 @@ pub async fn build_dto_context(
                     &config.defaults.type_suffix,
                 ))
                 .await
-                    && seen_child_structs.insert(child_dto.struct_name.clone())
                 {
-                    child_dtos.push(child_dto);
+                    // Issue #707: a media reference stays in the tree (the
+                    // response DTO renders it; the media handlers address
+                    // the child row) but the create/update templates omit
+                    // it, so the upload handler is its only writer.
+                    child_dto.is_media = media_fields.contains(&child_dto.field_name)
+                        || media_fields.contains(&prop.rust_field_name);
+                    if seen_child_structs.insert(child_dto.struct_name.clone()) {
+                        child_dtos.push(child_dto);
+                    }
                 }
             }
             continue;
@@ -716,6 +764,7 @@ pub async fn build_dto_context(
                     }],
                     is_array: true,
                     child_dtos: vec![],
+                    is_media: false,
                 });
             }
             continue;

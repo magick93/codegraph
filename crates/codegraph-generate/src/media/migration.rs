@@ -18,7 +18,9 @@
 
 use std::collections::BTreeMap;
 
-use codegraph_core::types::{KeyPlaceholder, KeySegment, MediaPlan, MediaVisibility};
+use codegraph_core::types::{MediaPlan, MediaVisibility};
+
+use super::keys::key_template_is_org_first;
 
 /// The static migration band (after `022000_functions.sql`).
 pub const MEDIA_MIGRATION_BAND: u32 = 23_000;
@@ -42,12 +44,10 @@ fn render_sql(plan: &MediaPlan) -> String {
         .join(", ");
     // Org-scoped policy only when the template's FIRST segment is {org} —
     // the expressible-subset rule. Otherwise the app gate stands alone and
-    // the migration records that decision.
-    let org_first = plan
-        .key_template
-        .segments()
-        .first()
-        .is_some_and(|s| matches!(s, KeySegment::Placeholder(KeyPlaceholder::Org)));
+    // the migration records that decision. The predicate is SHARED with the
+    // generated route's key guard (issue #707): `split_part(...) = <org>` and
+    // a rendered `{org}/` prefix test need the exact same key shape.
+    let org_first = key_template_is_org_first(&plan.key_template);
 
     let mut sql = String::new();
     sql.push_str(&format!(
@@ -120,7 +120,8 @@ fn render_sql(plan: &MediaPlan) -> String {
 mod tests {
     use super::*;
     use codegraph_core::types::{
-        KeySegment, KeyTemplate, MediaProvider, MediaProviderSettings, MediaVisibility, UploadMode,
+        KeyPlaceholder, KeySegment, KeyTemplate, MediaProvider, MediaProviderSettings,
+        MediaVisibility, UploadMode,
     };
 
     fn plan(org_first: bool) -> MediaPlan {

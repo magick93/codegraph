@@ -55,6 +55,18 @@ struct MediaRouteContext {
     mode_presigned: bool,
     max_bytes: u64,
     key_format: String,
+    /// Issue #707: the domain's key template is configurable, so the
+    /// stored-key guard is DERIVED from it, never assumed. `true` when the
+    /// template's first path segment is `{org}` (`keys::key_template_is_org_first`
+    /// — the same predicate the bucket-RLS migration uses) ⇒ the guard is a
+    /// prefix check on that segment's rendering; otherwise the guard is the
+    /// full `render_key` equality (a non-org-first template has no checkable
+    /// prefix, and equality is the stronger form).
+    key_org_first: bool,
+    /// The org-first prefix as a PLAIN string with `{org}` as the runtime
+    /// slot (`{org}/`) — the emitted `KEY_PREFIX_FORMAT` const. Empty for a
+    /// non-org-first template (the const is not emitted at all there).
+    key_prefix_format: String,
     display_ttl_secs: u64,
     presign_ttl_secs: u64,
 }
@@ -151,6 +163,9 @@ impl EntityGenerator for MediaRouteGenerator {
                     == codegraph_core::types::UploadMode::Presigned,
                 max_bytes: media_plan.max_bytes,
                 key_format: key_format.clone(),
+                key_org_first: keys::key_template_is_org_first(&media_plan.key_template),
+                key_prefix_format: keys::key_prefix_format_for(&media_plan.key_template)
+                    .unwrap_or_default(),
                 display_ttl_secs: media_plan.display_ttl_secs,
                 presign_ttl_secs: media_plan
                     .provider_settings

@@ -174,6 +174,7 @@ async fn build_child_table_info(
                         }],
                         child_tables: vec![],
                         is_back_ref: false,
+                        is_media: false,
                     });
                 } else {
                     child_columns.push(ChildColumn {
@@ -325,6 +326,9 @@ async fn build_child_table_info(
         columns: child_columns,
         child_tables: nested_child_tables,
         is_back_ref: table_name_override.is_some(),
+        // The top-level caller knows whether this property is a media field
+        // (the plan is per entity/domain); nested children are never media.
+        is_media: false,
     })
 }
 
@@ -340,6 +344,11 @@ pub(crate) struct ClassificationContext<'a> {
     pub(crate) all_field_names: &'a std::collections::HashSet<String>,
     pub(crate) entity_titles: &'a std::collections::HashSet<String>,
     pub(crate) workflow_managed: &'a std::collections::HashSet<String>,
+    /// Media fields of THIS entity the APP writes the row for (issue #707)
+    /// — the resolved `media::plan::media_upload_owned_fields`, empty
+    /// without `[media]` and for `presigned`/client-direct. Such a child is
+    /// write-excluded, read-included.
+    pub(crate) media_fields: &'a std::collections::HashSet<String>,
     pub(crate) suffix: &'a str,
 }
 
@@ -486,6 +495,7 @@ pub(crate) async fn build_columns_and_children(
                         }],
                         child_tables: vec![],
                         is_back_ref: false,
+                        is_media: false,
                     });
                 }
             } else {
@@ -650,7 +660,7 @@ pub(crate) async fn build_columns_and_children(
             } else {
                 let mut visited = std::collections::HashSet::new();
                 visited.insert(schema_title.to_string());
-                if let Some(child_info) = Box::pin(build_child_table_info(
+                if let Some(mut child_info) = Box::pin(build_child_table_info(
                     db,
                     prop,
                     schema_title,
@@ -663,9 +673,15 @@ pub(crate) async fn build_columns_and_children(
                     None,
                 ))
                 .await
-                    && seen_child_structs.insert(child_info.struct_name.clone())
                 {
-                    child_tables.push(child_info);
+                    // Issue #707: the RESOLVED media plan marks this child as
+                    // upload-handler-owned. It stays in the tree (the read
+                    // path hydrates it) but every write path skips it.
+                    child_info.is_media = ctx.media_fields.contains(&child_info.field_name)
+                        || ctx.media_fields.contains(&prop.rust_field_name);
+                    if seen_child_structs.insert(child_info.struct_name.clone()) {
+                        child_tables.push(child_info);
+                    }
                 }
             }
         }

@@ -749,6 +749,8 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
         "mode_presigned": false,
         "max_bytes": 5242880u64,
         "key_format": "{org}/core/org/{id}/logo",
+        "key_org_first": true,
+        "key_prefix_format": "{org}/",
         "display_ttl_secs": 300u64,
         "presign_ttl_secs": 900u64,
     });
@@ -1680,4 +1682,465 @@ async fn presigned_hurl_contract_url_matches_the_router_route() {
         "the ownership leg is provider-free: {}",
         hurl.content
     );
+}
+
+// ── Issue #707 — the stored object key must stay inside the session org ──
+//
+// `display`/`remove` handed the `url` column straight to the provider with
+// the SERVICE credential, and that column was client-writable (the
+// create/update DTO nested the media reference). Org B could point its own
+// record at `<orgA>/…` and sign or DELETE org A's object. Two fixes:
+//   1. the read path refuses a key that does not belong to the session org
+//      (404, never 403 — a foreign object is indistinguishable from a
+//      missing one), BEFORE any storage call. The guard is DERIVED from the
+//      domain's own `key_template` (see the two shapes below);
+//   2. in `through-app` domains the request DTOs no longer carry the
+//      reference, so the upload handler is its only writer. `presigned`
+//      (presign only mints a URL — the client persists the reference
+//      through the update path, #701) and client-direct (no app-plane
+//      route) keep it: the CRUD body IS the client's writer there.
+
+/// The emitted org-first guard, VERBATIM: the domain's own first key segment
+/// (`KEY_PREFIX_FORMAT`, derived from the key template) rendered for the
+/// session org. A plain-string `.replace` — never `format!` on runtime text.
+const MEDIA_KEY_PREFIX_CHECK: &str =
+    "if !key.starts_with(&KEY_PREFIX_FORMAT.replace(\"{org}\", &org)) {";
+
+/// The emitted NON-org-first guard, VERBATIM: the full invariant — the key is
+/// a pure function of (org, domain, entity, id, field).
+const MEDIA_KEY_EXACT_CHECK: &str = "if key != render_key(&org, id) {";
+
+fn assert_key_prefix_guard(module: &str, handler: &str, storage_call: &str) {
+    assert_key_guard(module, handler, storage_call, MEDIA_KEY_PREFIX_CHECK)
+}
+
+fn assert_key_guard(module: &str, handler: &str, storage_call: &str, expected: &str) {
+    let start = media_route_module_key(module, handler);
+    let body = &module[start..];
+    let check = body.find(expected).unwrap_or_else(|| {
+        panic!(
+            "{handler} must refuse a stored key outside the session org's prefix \
+             before touching the provider (issue #707):\n{module}"
+        )
+    });
+    let call = body
+        .find(storage_call)
+        .unwrap_or_else(|| panic!("{handler} must call `{storage_call}`:\n{module}"));
+    assert!(
+        check < call,
+        "{handler} must check the key prefix BEFORE `{storage_call}`:\n{module}"
+    );
+    // The guard compares against the SESSION org, so the handler must bind it.
+    let org_bind = body
+        .find("let org = api_key_info.organization_id.to_string();")
+        .unwrap_or_else(|| {
+            panic!("{handler} must bind the session org for the key guard:\n{module}")
+        });
+    assert!(
+        org_bind < check,
+        "{handler} must bind the session org BEFORE the key guard:\n{module}"
+    );
+    let guarded = &body[check..call];
+    assert!(
+        guarded.contains("AppError::not_found("),
+        "{handler}'s prefix refusal is a 404 — never 403 (a foreign key must be \
+         indistinguishable from a missing one):\n{module}"
+    );
+    assert!(
+        !guarded.contains("AppError::forbidden("),
+        "{handler}'s prefix refusal must not leak a 403:\n{module}"
+    );
+}
+
+#[tokio::test]
+async fn media_display_and_remove_reject_keys_outside_the_session_org() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert_eq!(
+        module.matches(MEDIA_KEY_PREFIX_CHECK).count(),
+        2,
+        "display AND remove guard the key prefix:\n{module}"
+    );
+    assert_key_prefix_guard(module, "pub async fn display(", ".display_urls(");
+    assert_key_prefix_guard(module, "pub async fn remove(", ".delete(&key)");
+    // The prefix is DERIVED from the domain's key template (the default first
+    // segment is `{org}`), and it is a plain string, not a `format!` literal.
+    assert!(
+        module.contains("const KEY_PREFIX_FORMAT: &str = \"{org}/\";"),
+        "the default template's first segment lowers to the org slot:\n{module}"
+    );
+    assert!(
+        !module.contains("if !key.starts_with(&format!(\"{}/\""),
+        "no hardcoded `{{org}}/` prefix survives (issue #707):\n{module}"
+    );
+    assert!(
+        !module.contains(MEDIA_KEY_EXACT_CHECK),
+        "an org-first template needs no full-key fallback:\n{module}"
+    );
+}
+
+#[tokio::test]
+async fn presigned_media_display_and_remove_guard_the_key_prefix_too() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert_eq!(
+        module.matches(MEDIA_KEY_PREFIX_CHECK).count(),
+        2,
+        "the display/remove pair is shared by both mode legs:\n{module}"
+    );
+    assert_key_prefix_guard(module, "pub async fn display(", ".display_urls(");
+    assert_key_prefix_guard(module, "pub async fn remove(", ".delete(&key)");
+
+    // `presign` MINTS the key from the session org (`render_key`) — there is
+    // no stored-key trust in it, so it carries no prefix check.
+    let start = media_route_module_key(module, "pub async fn presign(");
+    let end = media_route_module_key(module, "pub async fn display(");
+    let presign = &module[start..end];
+    assert!(
+        !presign.contains(MEDIA_KEY_PREFIX_CHECK),
+        "presign renders its own key — no stored-key guard applies:\n{presign}"
+    );
+    assert!(
+        presign.contains("let key = render_key(&org, id);"),
+        "presign mints from the session org:\n{presign}"
+    );
+}
+
+/// A domain whose key template puts `{org}` somewhere OTHER than the leading
+/// segment — explicitly legal (`KeyTemplate::parse` requires only `{id}` and
+/// `{field}`; `{org}` may sit anywhere, `media/keys.rs`).
+fn media_toml_with_key_template(mode: &str, template: &str) -> String {
+    format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"supabase\"\nupload_mode = \"{mode}\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\nkey_template = \"{template}\"\n"
+    )
+}
+
+/// Issue #707 review blocker: `key_template` is user-facing config and `{org}`
+/// is optional/positional, so the guard must be DERIVED from it. A hardcoded
+/// `{org}/` prefix would 404 every legitimate key for
+/// `media/{org}/{domain}/{entity}/{id}/{field}` — a full media outage in a
+/// security fix. With no segment a prefix test can compare, the guard is the
+/// full invariant: the key must EQUAL `render_key(org, id)`.
+#[tokio::test]
+async fn non_org_first_key_template_guards_with_the_full_key_equality() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_key_template(
+        "through-app",
+        "media/{org}/{domain}/{entity}/{id}/{field}",
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    // The configured template IS the rendered key (not the default).
+    assert!(
+        module.contains("format!(\"media/{org}/core/person/{id}/avatar\")"),
+        "the key renders from the configured template:\n{module}"
+    );
+    // No prefix machinery at all, and no outage-prone hardcoded prefix.
+    assert!(
+        !module.contains("const KEY_PREFIX_FORMAT"),
+        "a non-org-first template emits no org prefix const:\n{module}"
+    );
+    assert!(
+        !module.contains("if !key.starts_with(&format!(\"{}/\""),
+        "no hardcoded `{{org}}/` prefix survives (issue #707):\n{module}"
+    );
+    assert_eq!(
+        module.matches(MEDIA_KEY_EXACT_CHECK).count(),
+        2,
+        "display AND remove guard the full key:\n{module}"
+    );
+    assert_key_guard(
+        module,
+        "pub async fn display(",
+        ".display_urls(",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+    assert_key_guard(
+        module,
+        "pub async fn remove(",
+        ".delete(&key)",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+}
+
+/// A MIXED first segment (`media-{org}`) is still not org-first for either
+/// consumer: a prefix test cannot express it as a segment, and the bucket-RLS
+/// predicate (`split_part(name, '/', 1) = org`) cannot compare it. Both read
+/// the ONE predicate (`keys::key_template_is_org_first`), so the route falls
+/// back to the (stronger) full-key equality instead of inventing its own rule.
+#[tokio::test]
+async fn mixed_first_segment_org_template_uses_the_full_key_equality() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_key_template(
+        "through-app",
+        "media-{org}/{domain}/{entity}/{id}/{field}",
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module.contains("format!(\"media-{org}/core/person/{id}/avatar\")"),
+        "the configured template is the rendered key:\n{module}"
+    );
+    assert!(
+        !module.contains("const KEY_PREFIX_FORMAT"),
+        "`media-{{org}}` is not a checkable segment prefix:\n{module}"
+    );
+    assert_eq!(
+        module.matches(MEDIA_KEY_EXACT_CHECK).count(),
+        2,
+        "display AND remove guard the full key:\n{module}"
+    );
+    assert_key_guard(
+        module,
+        "pub async fn display(",
+        ".display_urls(",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+}
+
+/// A first segment that JOINS the org to another placeholder
+/// (`{org}-{domain}/…`) is the case that a lexeme-only predicate gets wrong:
+/// `KeyTemplate::parse` yields `[Org, "-", Domain, "/", …]`, so the first
+/// LEXEME is the org while the first SEGMENT is `{org}-{domain}`. Claiming
+/// org-first there emitted the `"{org}/"` prefix guard, which can never match
+/// the rendered key `<org>-<domain>/…` — every legitimate display/remove
+/// would 404. The template must take the full-key equality branch (found in
+/// review of #707).
+#[tokio::test]
+async fn joined_first_segment_org_template_uses_the_full_key_equality() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_key_template(
+        "through-app",
+        "{org}-{domain}/{entity}/{id}/{field}",
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module.contains("format!(\"{org}-core/person/{id}/avatar\")"),
+        "the configured template is the rendered key:\n{module}"
+    );
+    assert!(
+        !module.contains("const KEY_PREFIX_FORMAT"),
+        "`{{org}}-{{domain}}` is not a checkable segment prefix — a `\"{{org}}/\"` \
+         guard would 404 every legitimate key:\n{module}"
+    );
+    assert_eq!(
+        module.matches(MEDIA_KEY_EXACT_CHECK).count(),
+        2,
+        "display AND remove guard the full key:\n{module}"
+    );
+    assert_key_guard(
+        module,
+        "pub async fn display(",
+        ".display_urls(",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+    assert_key_guard(
+        module,
+        "pub async fn remove(",
+        ".delete(&key)",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+}
+
+async fn run_domain_types_dto(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<GeneratedFile> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let out = tempfile::tempdir().expect("out dir");
+    let generator = codegraph_generate::domain_types::dto::DomainTypesDtoGenerator::new_with_base(
+        out.path().to_path_buf(),
+    );
+    use codegraph_generate::traits::EntityGenerator;
+    generator
+        .generate(
+            db,
+            "PersonType",
+            "core",
+            config,
+            &tera,
+            &ProjectConfig::default(),
+        )
+        .await
+        .expect("domain-types dto generation")
+}
+
+fn dto_file<'a>(files: &'a [GeneratedFile], name: &str) -> &'a str {
+    files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with(name))
+        .map(|f| f.content.as_str())
+        .unwrap_or_else(|| panic!("the DTO plane must emit {name}"))
+}
+
+#[tokio::test]
+async fn media_reference_is_not_client_writable_but_stays_in_the_response() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let files = run_domain_types_dto(&engine, &config).await;
+
+    let create = dto_file(&files, "dto_create.rs");
+    let update = dto_file(&files, "dto_update.rs");
+    let response = dto_file(&files, "dto_response.rs");
+
+    // The upload handler is the ONLY writer: a client must not be able to
+    // name the object key.
+    for (name, dto) in [("create", create), ("update", update)] {
+        assert!(
+            !dto.contains("avatar"),
+            "the {name} DTO must not carry the media reference (issue #707):\n{dto}"
+        );
+        assert!(
+            !dto.contains("MediaReference"),
+            "the {name} DTO must not emit the media child struct either:\n{dto}"
+        );
+    }
+
+    // The response keeps it — the UI renders the reference and the media
+    // handlers address the child row.
+    assert!(
+        response.contains("avatar: Option<PersonTypeMediaReferenceResponse>"),
+        "the response DTO keeps the media reference:\n{response}"
+    );
+    assert!(
+        response.contains("pub struct PersonTypeMediaReferenceResponse"),
+        "the response keeps the child struct:\n{response}"
+    );
+    assert!(
+        response.contains("url"),
+        "the response child carries the key/url:\n{response}"
+    );
+}
+
+#[tokio::test]
+async fn modes_without_an_app_side_row_writer_keep_the_media_reference() {
+    // The DTO exclusion is scoped to `through-app` — the ONE mode whose
+    // upload handler writes the child row. Client-direct has no app-plane
+    // route (the browser speaks to the provider with its session) and
+    // `presigned` only MINTS a PUT URL ("the reference is persisted
+    // afterwards through the normal update path", `media_route.tera`), so in
+    // both the JSON CRUD body IS the client's writer. Stripping the field
+    // there would make the reference unwritable.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+
+    let client_direct =
+        parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let create = dto_file(
+        &run_domain_types_dto(&engine, &client_direct).await,
+        "dto_create.rs",
+    )
+    .to_string();
+    assert!(
+        create.contains("avatar: Option<CreatePersonTypeMediaReferenceRequest>"),
+        "client-direct keeps the reference writable:\n{create}"
+    );
+
+    let presigned = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+    let create = dto_file(
+        &run_domain_types_dto(&engine, &presigned).await,
+        "dto_create.rs",
+    )
+    .to_string();
+    assert!(
+        create.contains("avatar: Option<CreatePersonTypeMediaReferenceRequest>"),
+        "presigned keeps the reference writable — presign only mints the URL:\n{create}"
+    );
+}
+
+async fn run_repository_impl(db: &dyn GraphQuerier, config: &DomainConfig) -> String {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let out = tempfile::tempdir().expect("out dir");
+    let generator = codegraph_generate::ddd::repository::RepositoryTraitGenerator::new(out.path());
+    use codegraph_generate::traits::EntityGenerator;
+    generator
+        .generate(
+            db,
+            "PersonType",
+            "core",
+            config,
+            &tera,
+            &ProjectConfig::default(),
+        )
+        .await
+        .expect("repository generation")
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("repository_impl.rs"))
+        .map(|f| f.content.clone())
+        .expect("the SeaORM repository impl")
+}
+
+/// THE TRAP (issue #707): the update path deletes ALL child rows and
+/// re-inserts them from the DTO. Skipping the media child only on INSERT
+/// would make an ordinary `PUT` DELETE the uploaded reference — the object
+/// row must survive an update that carries no media field at all.
+#[tokio::test]
+async fn repository_plane_never_writes_the_media_child_row() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let impl_src = run_repository_impl(&engine, &config).await;
+
+    // The READ path keeps the child (the response tree and the media
+    // handlers address the row).
+    assert!(
+        impl_src.contains("person_avatar"),
+        "the read path keeps the media child table:\n{impl_src}"
+    );
+    // The WRITE paths do not: create's INSERT, update's delete-then-reinsert.
+    assert!(
+        !impl_src.contains("INSERT INTO core.person_avatar"),
+        "the create path must not insert the media child row:\n{impl_src}"
+    );
+    assert!(
+        !impl_src.contains("DELETE FROM core.person_avatar"),
+        "the update path must NOT delete the media child row (the #707 trap — \
+         delete-then-reinsert would wipe the uploaded reference on every PUT):\n{impl_src}"
+    );
+
+    // The exclusion is scoped to `through-app`. Client-direct and presigned
+    // have NO app-side row writer (the client is the writer), so the
+    // repository MUST keep writing the child row there.
+    for (label, toml) in [
+        ("client-direct", media_toml("supabase", "client-direct")),
+        (
+            "presigned",
+            format!(
+                "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+            ),
+        ),
+    ] {
+        let config = parse_domain_config_str(&toml).expect("toml");
+        let naive_impl = run_repository_impl(&engine, &config).await;
+        assert!(
+            naive_impl.contains("INSERT INTO core.person_avatar"),
+            "{label} keeps the CRUD writer — the plane would be unwritable otherwise:\n{naive_impl}"
+        );
+        assert!(
+            naive_impl.contains("DELETE FROM core.person_avatar"),
+            "{label} keeps the replace-on-update path:\n{naive_impl}"
+        );
+    }
 }

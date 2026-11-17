@@ -8,6 +8,50 @@
 
 use codegraph_core::types::{KeyPlaceholder, KeySegment, KeyTemplate};
 
+/// Whether the template's FIRST path segment is exactly the `{org}`
+/// placeholder — the org-first shape.
+///
+/// This is the ONE derivation of "the org is checkable as a key prefix",
+/// shared by the generated media route's guard (issue #707) and the bucket
+/// RLS bootstrap (`media/migration.rs`, issue #625), so the request-plane
+/// check and the bucket policy cannot disagree. Both consumers need the SAME
+/// thing: the org id occupying the whole first segment — a prefix check can
+/// render it, and `split_part(name, '/', 1) = <org>` can compare it.
+///
+/// A template that carries `{org}` somewhere else (`media/{org}/…`, mixed
+/// into the first segment as `media-{org}`, or joined to another placeholder
+/// as `{org}-{domain}`) is deliberately NOT org-first: the route then guards
+/// with the full `render_key` equality (strictly stronger than any prefix
+/// test) and the migration records that bucket RLS cannot scope objects by
+/// tenant (#625).
+///
+/// The separator check is load-bearing. `KeyTemplate::parse` splits on `/`
+/// but pushes placeholders WITHIN a chunk before appending the separator, so
+/// `{org}-{domain}/…` yields `[Org, "-", Domain, "/", …]` — its first
+/// LEXEME is the org placeholder while its first SEGMENT is `{org}-{domain}`.
+/// Matching only `segments[0]` claimed org-first for that template and
+/// emitted the `"{org}/"` prefix guard, which can never match the rendered
+/// key `<org>-<domain>/…` — every legitimate display/remove would 404.
+pub fn key_template_is_org_first(template: &KeyTemplate) -> bool {
+    let segments = template.segments();
+    matches!(
+        segments.first(),
+        Some(KeySegment::Placeholder(KeyPlaceholder::Org))
+    ) && matches!(segments.get(1), Some(KeySegment::Literal(l)) if l == "/")
+}
+
+/// The org-first key PREFIX as a plain string with `{org}` left as a runtime
+/// slot — `"{org}/"` — or `None` for a non-org-first template.
+///
+/// The const is a PLAIN string (the emitted guard `.replace`s `{org}`, it
+/// never runs `format!` on runtime text), so nothing here is format-escaped.
+/// It is derived from [`key_template_is_org_first`] rather than hardcoded:
+/// that predicate guarantees the first segment is the bare `{org}`
+/// placeholder, which is exactly what this renders.
+pub fn key_prefix_format_for(template: &KeyTemplate) -> Option<String> {
+    key_template_is_org_first(template).then(|| "{org}/".to_string())
+}
+
 /// One entity field's deletion-cleanup lowering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaCleanupField {
@@ -113,6 +157,42 @@ mod tests {
 
     fn template() -> KeyTemplate {
         KeyTemplate::parse("{org}/{domain}/{entity}/{id}/{field}").expect("template")
+    }
+
+    #[test]
+    fn org_first_predicate_matches_only_a_leading_bare_org_segment() {
+        let org_first = |t: &str| key_template_is_org_first(&KeyTemplate::parse(t).expect("t"));
+        // The default and any template whose FIRST segment is exactly {org}.
+        assert!(org_first("{org}/{domain}/{entity}/{id}/{field}"));
+        assert!(org_first("{org}/media/{id}/{field}"));
+        // `{org}` elsewhere, mixed into the first segment, or absent — all
+        // NOT org-first (no segment a prefix test can compare, and the
+        // bucket-RLS `split_part` predicate cannot express them either).
+        assert!(!org_first("media/{org}/{domain}/{entity}/{id}/{field}"));
+        assert!(!org_first("media-{org}/{domain}/{entity}/{id}/{field}"));
+        assert!(!org_first("{domain}/{entity}/{id}/{field}"));
+        // Joined to another placeholder: the first LEXEME is the org but the
+        // first SEGMENT is `{org}-{domain}`, so a `"{org}/"` prefix test can
+        // never match the rendered key `<org>-<domain>/…`. Treating this as
+        // org-first 404'd every legitimate display/remove (#707 review).
+        assert!(!org_first("{org}-{domain}/{entity}/{id}/{field}"));
+        assert!(!org_first("{org}{domain}/{entity}/{id}/{field}"));
+        assert!(!org_first("{org}.{domain}/{entity}/{id}/{field}"));
+    }
+
+    #[test]
+    fn key_prefix_format_is_derived_from_the_predicate() {
+        let t = template();
+        assert_eq!(key_prefix_format_for(&t).as_deref(), Some("{org}/"));
+        // A non-org-first template gets NO prefix const — the route falls back
+        // to the full `render_key` equality (issue #707 review).
+        let non_org_first =
+            KeyTemplate::parse("media/{org}/{domain}/{entity}/{id}/{field}").expect("template");
+        assert_eq!(key_prefix_format_for(&non_org_first), None);
+        let mixed = KeyTemplate::parse("media-{org}/{domain}/{entity}/{id}/{field}").expect("t");
+        assert_eq!(key_prefix_format_for(&mixed), None);
+        let joined = KeyTemplate::parse("{org}-{domain}/{entity}/{id}/{field}").expect("t");
+        assert_eq!(key_prefix_format_for(&joined), None);
     }
 
     #[test]

@@ -40,8 +40,10 @@ pub async fn collect_ui_fields(
     // are NOT generic UI fields. The mox path classifies them as
     // `ValueObject` (a contained value) and the JSON/classifier path as
     // `MediaWrapper`; both must be skipped here so no text form input and
-    // no test-data key is ever emitted (the create/update DTOs exclude
-    // them, and `deny_unknown_fields` turns a leaked key into a 422).
+    // no test-data key is ever emitted. The field's real surface is the
+    // upload control/route; in `through-app` domains the reference is
+    // upload-handler-owned (issue #707 — the request DTOs omit it, so the
+    // only acceptable writer is the upload handler).
     let media_fields: HashSet<String> = match current_domain {
         Some(domain_name) => match config
             .domains
@@ -69,12 +71,17 @@ pub async fn collect_ui_fields(
     let mut fields = Vec::new();
 
     for prop in &props {
-        // Media references are not form fields (issue #633): the create/
-        // update DTOs EXCLUDE them (the upload lives on its own route,
-        // `media_route.tera`), so a generic UiField here renders a text
-        // input whose value the emitted create body posts as an unknown
-        // key — rejected 422 (`deny_unknown_fields`). The media plan
-        // (`media::plan::media_route_fields`) is the field's real surface.
+        // Media references are not form fields (issue #633): the upload lives
+        // on its own route (`media_route.tera`), so a generic UiField here
+        // would render a text input for a key the client must never name.
+        // For `through-app` domains the create/update DTOs omit the
+        // reference entirely (issue #707 — the upload handler is its only
+        // writer); `presigned`/client-direct keep it in the DTO (the client
+        // is the writer there), where the text input is still the wrong
+        // affordance. The field's real surface is the resolved domain plan
+        // (`media::plan::build_media_plan_for_domain`, called just above) —
+        // not `media_route_fields`, which deliberately excludes client-direct
+        // and would therefore NOT skip the field in that mode.
         if prop.effective_kind() == Some(RefClassificationKind::MediaWrapper)
             || media_fields.contains(&prop.rust_field_name)
         {

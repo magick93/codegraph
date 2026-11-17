@@ -673,6 +673,14 @@ impl RepositoryImplEmitter {
 
         // Update child tables: delete existing + re-insert when field is present
         for child in &tree.child_tables {
+            // Issue #707 — THE TRAP: this loop DELETEs every child row and
+            // re-inserts it from the DTO. A media reference is written only by
+            // the upload handler and is absent from the request DTO, so
+            // skipping it on INSERT alone would make an ordinary `PUT` DELETE
+            // the uploaded row. Skip the whole replace (delete AND insert).
+            if child.is_media {
+                continue;
+            }
             // Skip child tables with no data columns and no nested children.
             if child.columns.is_empty() && child.child_tables.is_empty() {
                 continue;

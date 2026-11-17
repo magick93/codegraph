@@ -170,6 +170,63 @@ pub async fn media_route_fields(
     Ok(plan.fields.iter().map(|f| f.field_snake.clone()).collect())
 }
 
+/// The media fields the APP writes the reference row for (issue #707):
+/// `through-app` mode emits an upload handler that INSERTs the child row on
+/// its own route, so that handler is the reference's ONLY writer and the
+/// request DTOs (create/update) must omit it — otherwise a client can name
+/// any object key it likes, and `display`/`remove` would sign or delete
+/// another organization's object with the service credential.
+///
+/// Deliberately NOT `media_route_fields`: that set also covers `presigned`,
+/// whose route only MINTS a PUT URL — its reference is "persisted afterwards
+/// through the normal update path" (`media_route.tera`), i.e. the client IS
+/// the writer there (presigned overwrite semantics are #701's), and
+/// client-direct has no app-plane route at all. Stripping the DTO in those
+/// modes would make the field unwritable; they keep it, byte-identical.
+pub async fn media_upload_owned_fields(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    entity_title: &str,
+) -> Result<Vec<String>, Error> {
+    let Some(media) = config
+        .domains
+        .get(domain_name)
+        .and_then(|d| d.media.as_ref())
+    else {
+        return Ok(Vec::new());
+    };
+    if media.upload_mode != codegraph_config::MediaUploadMode::ThroughApp {
+        return Ok(Vec::new());
+    }
+    let titles = [entity_title.to_string()];
+    let plan = build_media_plan_for_domain(
+        db,
+        config,
+        domain_name,
+        media,
+        &config.defaults.type_suffix,
+        &titles,
+    )
+    .await?;
+    // BOTH spellings, because the consumers match against different ones: the
+    // DTO/repository trees carry the INGESTED `rust_field_name` (mox strips
+    // `@`/`-`, JSON escapes keywords) while the plan keys on the authored
+    // name and its snake form. Returning only the snake form made a media
+    // feature named `avatar-image` (or `type`) silently skip the exclusion —
+    // still guarded on the read path, but the defense-in-depth would be off.
+    let mut out: Vec<String> = Vec::with_capacity(plan.fields.len() * 2);
+    for field in &plan.fields {
+        out.push(field.field_snake.clone());
+        if field.field_name != field.field_snake {
+            out.push(field.field_name.clone());
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// The domain's configured upload mode when it needs routes (`Some`).
 /// The router template branches on it (presign issuance vs multipart).
 pub fn media_upload_mode(config: &DomainConfig, domain_name: &str) -> Option<UploadMode> {
