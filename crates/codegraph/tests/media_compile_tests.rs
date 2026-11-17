@@ -1,17 +1,21 @@
 //! Compile pin for the media plane (issue #625 PR-B/PR-C — the #551 policy:
 //! every generator that emits Rust ships a test that COMPILES its output).
 //!
-//! The emitted `src/media/{mod,noop,http,supabase|r2}.rs` must compile in a
-//! scratch crate carrying ONLY the plane's dependency set. Provider purity
-//! is enforced here structurally:
+//! The emitted `src/media/{mod,noop,http,session,supabase|r2}.rs` must
+//! compile in a scratch crate carrying ONLY the plane's dependency set.
+//! Provider purity is enforced here structurally:
 //!
-//! - **native leg**: the plane (trait + noop + native transport + adapter)
-//!   compiles with `async-trait` + `thiserror` + `serde_json` (supabase
-//!   response parsing) + `hmac`/`sha2`/`hex` (SigV4) — and `reqwest` is
-//!   needed ONLY by the cfg-gated `http.rs` native module.
+//! - **native leg**: the plane (trait + noop + native transport + session +
+//!   adapter) compiles with `async-trait` + `thiserror` + `serde_json`
+//!   (supabase response parsing) + `hmac`/`sha2`/`hex` (SigV4) +
+//!   `sea-orm`/`uuid` (issue #690: `session.rs` is declared natively by
+//!   `mod.rs` and carries the #169 bundle + parent lookup) — and `reqwest`
+//!   is needed ONLY by the cfg-gated `http.rs` native module.
 //! - **wasm32 leg** (issue #632): the SAME plane compiles for
 //!   `wasm32-unknown-unknown` with NO reqwest at all — the `http` module
-//!   cfg-folds to empty and adapters speak the `MediaHttp` seam.
+//!   cfg-folds to empty and adapters speak the `MediaHttp` seam. The
+//!   `session` module is `#[cfg(not(target_arch = "wasm32"))]`, so this leg
+//!   deliberately carries NO sea-orm: that is the claim being pinned.
 //! - **SigV4 known-answer vector**: the R2 adapter's signing core is
 //!   extracted VERBATIM into a scratch binary and EXECUTED against the
 //!   AWS-published S3 GET example (the #518 event-signature precedent) —
@@ -205,9 +209,10 @@ async fn emit_media_plane(config: &DomainConfig) -> BTreeMap<String, String> {
         .await
         .expect("generation");
     assert!(
-        files.len() == 4 || files.len() == 5,
-        "the plane is trait + noop + native transport + one adapter (+ the \
-         supabase storage bootstrap migration when the provider carries SQL)"
+        files.len() == 5 || files.len() == 6,
+        "the plane is trait + noop + native transport + session + one adapter \
+         (+ the supabase storage bootstrap migration when the provider carries \
+         SQL)"
     );
     let mut map = BTreeMap::new();
     for f in &files {
@@ -286,6 +291,10 @@ fn run_cargo(
 const CORE_DEPS: &str = "async-trait = \"0.1\"\nthiserror = \"2\"";
 const SIG_DEPS: &str = "hmac = \"0.12\"\nsha2 = \"0.10\"\nhex = \"0.4\"";
 const SUPABASE_DEPS: &str = "serde_json = \"1\"";
+/// Issue #690: `session.rs` (native-only, `#[cfg(not(target_arch = "wasm32"))]`)
+/// carries the #169 bundle + the bound parent lookup. Native plane legs need
+/// sea-orm; the wasm32 leg must NOT (that is its claim).
+const SEA_ORM_DEPS: &str = "sea-orm = { version = \"2\", features = [\"sqlx-postgres\", \"runtime-tokio-rustls\"] }\nuuid = { version = \"1\", features = [\"v4\"] }";
 
 /// #551 pin (native): the supabase plane compiles standalone — adapter is
 /// provider-pure (no reqwest); the cfg-gated native transport carries it.
@@ -294,7 +303,7 @@ async fn supabase_plane_compiles_native() {
     let config: DomainConfig = parse_domain_config_str(BASE_TOML).expect("domains.toml");
     let files = emit_media_plane(&config).await;
     let deps = format!(
-        "{CORE_DEPS}\n{SUPABASE_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
+        "{CORE_DEPS}\n{SUPABASE_DEPS}\n{SEA_ORM_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
     );
     let (ok, stdout, stderr) = run_cargo(
         "media_supabase_pin",
@@ -316,7 +325,7 @@ async fn r2_plane_compiles_native() {
     let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
     let files = emit_media_plane(&config).await;
     let deps = format!(
-        "{CORE_DEPS}\n{SIG_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
+        "{CORE_DEPS}\n{SIG_DEPS}\n{SEA_ORM_DEPS}\nreqwest = {{ version = \"0.12\", default-features = false, features = [\"rustls-tls\"] }}\n"
     );
     let (ok, stdout, stderr) = run_cargo(
         "media_r2_pin",
@@ -340,6 +349,9 @@ async fn media_plane_compiles_on_wasm32_without_an_http_dependency() {
     for (label, config_str) in [("supabase", BASE_TOML.to_string()), ("r2", r2_toml())] {
         let config: DomainConfig = parse_domain_config_str(&config_str).expect("domains.toml");
         let files = emit_media_plane(&config).await;
+        // Deliberately NO `SEA_ORM_DEPS` here: `mod.rs` declares the session
+        // module only on non-wasm targets, so this leg proves the plane is
+        // still SeaORM-free for `wasm32-unknown-unknown`.
         let deps = match label {
             "supabase" => format!("{CORE_DEPS}\n{SUPABASE_DEPS}\n{SIG_DEPS}\n"),
             _ => format!("{CORE_DEPS}\n{SIG_DEPS}\n"),
@@ -371,12 +383,18 @@ async fn r2_sigv4_matches_the_published_aws_vector() {
     // The KAT crate mirrors the compile-pin layout (lib + module tree) so
     // the adapter's `crate::media::…` paths resolve naturally. The `http`
     // module is dropped (the KAT exercises the signing core, not the
-    // transport) — its declaration goes with it.
+    // transport) — its declaration goes with it. So does the native-only
+    // `session` module (issue #690): the KAT crate carries no sea-orm, and
+    // its cfg + doc lines would otherwise demand the file.
     let kat_mod_rs: String = mod_rs
         .lines()
         .filter(|l| {
             let t = l.trim_start();
-            !(t.starts_with("pub mod http;") || t.starts_with("//!"))
+            !(t.starts_with("pub mod http;")
+                || t.starts_with("pub mod session;")
+                || t.starts_with("#[cfg(not(target_arch = \"wasm32\"))]")
+                || t.starts_with("///")
+                || t.starts_with("//!"))
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -466,7 +484,7 @@ async fn the_pin_rejects_a_drifted_trait_signature() {
         "fixture sanity: the trait carries presign_put"
     );
     *mod_rs = mod_rs.replace("async fn presign_put", "async fn presigned_put");
-    let deps = format!("{CORE_DEPS}\n{SUPABASE_DEPS}\n{SIG_DEPS}\n");
+    let deps = format!("{CORE_DEPS}\n{SUPABASE_DEPS}\n{SIG_DEPS}\n{SEA_ORM_DEPS}\n");
     let (ok, _stdout, stderr) = run_cargo(
         "media_teeth",
         &deps,
@@ -497,6 +515,7 @@ async fn emitted_plane_carries_the_full_trait_contract() {
         "async fn presign_put",
         "pub mod noop;",
         "pub mod http;",
+        "pub mod session;",
         "pub mod supabase;",
     ] {
         assert!(mod_rs.contains(needle), "emitted mod.rs missing {needle}");
@@ -524,13 +543,19 @@ pub struct AppState {
 }
 "#;
 
-/// PIN STUB (issue #683): the auth extension object the handler reads the
-/// org scope from. The real module is `scaffold/middleware.tera`.
-const PIN_MIDDLEWARE_RS: &str = r#"//! PIN STUB (issue #683) — see scaffold/middleware.tera for the real module.
+/// PIN STUB (issue #683, extended for #690): the auth extension object the
+/// handler reads the session bundle from — the real module is
+/// `scaffold/middleware.tera` and `ApiKeyInfo = AuthInfo` carries these four
+/// values. The media plane now installs all of them on its transaction
+/// (`api_key_id`, `organization_id`, `user_id`, `role`).
+const PIN_MIDDLEWARE_RS: &str = r#"//! PIN STUB (issue #683/#690) — see scaffold/middleware.tera for the real module.
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ApiKeyInfo {
+    pub api_key_id: uuid::Uuid,
     pub organization_id: uuid::Uuid,
+    pub user_id: uuid::Uuid,
+    pub role: String,
 }
 "#;
 
@@ -601,10 +626,15 @@ async fn emitted_media_route_handler_compiles_in_isolation() {
         "crate::middleware::ApiKeyInfo",
         // The #686 class itself: the sea-orm 2 trait method pair needs the
         // trait in scope, and the pre-2.0 `execute`/`query_one` shapes do
-        // not accept a bound Statement.
-        "use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};",
+        // not accept a bound Statement. The raw pair now runs on the scoped
+        // transaction (issue #690).
+        "use sea_orm::{ConnectionTrait, DatabaseBackend, DatabaseTransaction, Statement, Value};",
         "execute_raw",
         "query_one_raw",
+        // Issue #690: the route is coupled to the session rewrite — the
+        // bundle + tenant-scoped parent gate, not a bare WHERE.
+        "crate::media::session::begin_scoped(",
+        "crate::media::session::parent_exists(",
     ] {
         assert!(
             route_rs.contains(needle),
