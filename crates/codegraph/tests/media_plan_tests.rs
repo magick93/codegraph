@@ -457,6 +457,106 @@ async fn media_fields_carry_the_route_path_they_are_mounted_under() {
     assert_eq!(root.route_prefix("v2", "core"), "/api/v2/core/persons");
 }
 
+/// A modeled scalar ref from the media-owning child to a candidate parent —
+/// the router's Source-2 trigger
+/// (`(child:Schema)-[:HasProperty]->(p)-[:ReferencesSchema]->(parent)`).
+async fn ingest_contact_ref_candidate(
+    db: &(impl GraphIngestor + GraphQuerier),
+    property: &str,
+    parent_title: &str,
+) {
+    let p = prop(
+        property,
+        RefClassificationKind::EntityReference,
+        Some(parent_title),
+        false,
+    );
+    db.ingest_property("ContactType", "ContactType", &p)
+        .await
+        .expect("candidate property");
+    db.ingest_edge(
+        &format!("{property}::ContactType"),
+        parent_title,
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("candidate references edge");
+}
+
+/// A same-domain schema with NO table and no routes — a parent the router can
+/// never nest under.
+fn billing_addr_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "BillingAddrType".into(),
+        title: "BillingAddrType".into(),
+        description: None,
+        schema_type: "object".into(),
+        classification: "value_object".into(),
+        domain: Some("core".into()),
+        namespace: None,
+        rel_path: "core/billing_addr.json".into(),
+        pg_type: "text".into(),
+        rust_type: "String".into(),
+        sea_orm_type: "String".into(),
+        rust_type_name: "BillingAddr".into(),
+        pg_table_name: "billing_addr".into(),
+        api_path_segment: "billing_addr".into(),
+        parent_schema: None,
+        is_entity: false,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
+/// An entity in ANOTHER domain — a candidate the router skips (its
+/// `title_to_entity_idx` only holds this domain's generated entities).
+fn foreign_entity_schema() -> SchemaNode {
+    SchemaNode {
+        schema_id: "AaaType".into(),
+        title: "AaaType".into(),
+        description: None,
+        schema_type: "object".into(),
+        classification: "entity".into(),
+        domain: Some("other".into()),
+        namespace: None,
+        rel_path: "other/aaa.json".into(),
+        pg_type: "uuid".into(),
+        rust_type: "Uuid".into(),
+        sea_orm_type: "Uuid".into(),
+        rust_type_name: "Aaa".into(),
+        pg_table_name: "aaa".into(),
+        api_path_segment: "aaa".into(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
+fn nested_child_config(extra: &str) -> DomainConfig {
+    // The parent's config-free segment is its `api_path_segment` ("person"),
+    // and the param derives from it (`person_id`).
+    parse(&format!(
+        "{}\n[domains.core.entity_config.ContactType]\npath_segment = \"contacts\"\n{extra}",
+        media_toml("supabase", "through-app")
+    ))
+}
+
 #[tokio::test]
 async fn graph_parent_candidate_is_the_nesting_fallback() {
     // The router's Source 2: `role = "child"` with no configured `parent`
@@ -464,31 +564,9 @@ async fn graph_parent_candidate_is_the_nesting_fallback() {
     // the media path must honour it rather than emit a flat route.
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_parent_and_child(&engine).await;
-    let person_ref = prop(
-        "person",
-        RefClassificationKind::EntityReference,
-        Some("PersonType"),
-        false,
-    );
-    engine
-        .ingest_property("ContactType", "ContactType", &person_ref)
-        .await
-        .expect("person ref property");
-    engine
-        .ingest_edge(
-            "person::ContactType",
-            "PersonType",
-            EdgeType::ReferencesSchema,
-            None,
-        )
-        .await
-        .expect("person references edge");
+    ingest_contact_ref_candidate(&engine, "person", "PersonType").await;
 
-    let config = parse(&format!(
-        "{}\n[domains.core.entity_config.ContactType]\nrole = \"child\"\n\
-         parent_ref = \"person_id\"\npath_segment = \"contacts\"\n",
-        media_toml("supabase", "through-app")
-    ));
+    let config = nested_child_config("role = \"child\"\nparent_ref = \"person_id\"\n");
     let plans = build_media_plans(&engine, &config).await.expect("plans");
     let child = plans["core"]
         .fields
@@ -499,11 +577,114 @@ async fn graph_parent_candidate_is_the_nesting_fallback() {
         child.route_parents,
         vec![MediaRouteParent {
             entity_title: "PersonType".into(),
-            // The parent's config-free segment is its `api_path_segment`
-            // ("person"), and the param derives from it (`person_id`).
             path_segment: "person".into(),
             param_name: "person_id".into(),
         }]
+    );
+}
+
+#[tokio::test]
+async fn unresolvable_config_parent_falls_through_to_the_graph_candidate() {
+    // B1: a `parent` naming a class that no longer exists is the realistic
+    // upgrade shape. The router's Source 1 requires the parent in
+    // `title_to_entity_idx` and FALLS THROUGH to Source 2 when it is not —
+    // so the media plan must too, instead of aborting the whole run.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    ingest_contact_ref_candidate(&engine, "person", "PersonType").await;
+
+    let config = nested_child_config(
+        "role = \"child\"\nparent = \"GhostType\"\nparent_ref = \"person_id\"\n",
+    );
+    let plans = build_media_plans(&engine, &config)
+        .await
+        .expect("a stale configured parent must fall through to the graph candidate");
+    let child = plans["core"]
+        .fields
+        .iter()
+        .find(|f| f.entity_title == "ContactType")
+        .expect("the child's media field");
+    assert_eq!(
+        child.route_parents,
+        vec![MediaRouteParent {
+            entity_title: "PersonType".into(),
+            path_segment: "person".into(),
+            param_name: "person_id".into(),
+        }],
+        "the graph candidate is the anchor the router mounts"
+    );
+}
+
+#[tokio::test]
+async fn a_non_routable_parent_never_yields_a_nested_path() {
+    // B3: `parent` naming a value object (no table, no routes) is not
+    // mountable — the router nests nothing for the child, so the plan must
+    // fail closed rather than document `/billing_addr/{id}/contacts/...`.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    engine
+        .ingest_schema(&billing_addr_schema())
+        .await
+        .expect("billing addr schema");
+
+    let config = nested_child_config(
+        "role = \"child\"\nparent = \"BillingAddrType\"\nparent_ref = \"person_id\"\n",
+    );
+    let err = match build_media_plans(&engine, &config).await {
+        Err(Error::Config(msg)) => msg,
+        Err(other) => panic!("expected Error::Config, got {other:?}"),
+        Ok(plans) => panic!(
+            "a non-routable parent must not yield a nested path: {:?}",
+            plans["core"].fields
+        ),
+    };
+    assert!(err.contains("BillingAddrType"), "{err}");
+    assert!(err.contains("not a routable entity"), "{err}");
+    assert!(err.contains("ContactType"), "{err}");
+}
+
+#[tokio::test]
+async fn graph_parent_candidates_skip_unmountable_parents() {
+    // The router iterates candidates IN ORDER and skips the ones it cannot
+    // mount. `AaaType` (another domain) sorts FIRST here — the exact shape
+    // that used to win and abort the run.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    engine
+        .ingest_schema(&foreign_entity_schema())
+        .await
+        .expect("foreign entity schema");
+    ingest_contact_ref_candidate(&engine, "aaa", "AaaType").await;
+    ingest_contact_ref_candidate(&engine, "person", "PersonType").await;
+
+    // Precondition: the unmountable candidate really is tried first.
+    let candidates = engine.get_parent_candidates().await.expect("candidates");
+    let contact_candidates: Vec<&str> = candidates
+        .iter()
+        .filter(|c| c.child_title == "ContactType")
+        .map(|c| c.parent_title.as_str())
+        .collect();
+    assert_eq!(
+        contact_candidates,
+        vec!["AaaType", "PersonType"],
+        "candidate order is (child, parent, field)"
+    );
+
+    let config = nested_child_config("role = \"child\"\nparent_ref = \"person_id\"\n");
+    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    let child = plans["core"]
+        .fields
+        .iter()
+        .find(|f| f.entity_title == "ContactType")
+        .expect("the child's media field");
+    assert_eq!(
+        child.route_parents,
+        vec![MediaRouteParent {
+            entity_title: "PersonType".into(),
+            path_segment: "person".into(),
+            param_name: "person_id".into(),
+        }],
+        "the first MOUNTABLE candidate wins, as in the router"
     );
 }
 
@@ -513,11 +694,7 @@ async fn child_media_field_without_a_parent_is_config_error() {
     ingest_parent_and_child(&engine).await;
     // `role = "child"` with neither a configured `parent` nor a graph parent
     // candidate: the route is unmountable, so a flat contract would be a lie.
-    let config = parse(&format!(
-        "{}\n[domains.core.entity_config.ContactType]\nrole = \"child\"\n\
-         path_segment = \"contacts\"\n",
-        media_toml("supabase", "through-app")
-    ));
+    let config = nested_child_config("role = \"child\"\n");
     let err = match build_media_plans(&engine, &config).await {
         Err(Error::Config(msg)) => msg,
         other => panic!("expected Error::Config, got {other:?}"),

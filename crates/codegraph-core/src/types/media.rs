@@ -413,11 +413,12 @@ pub struct MediaFieldPlan {
     pub entity_path_segment: String,
     /// The nesting chain the entity's routes are mounted under, OUTERMOST
     /// ancestor first (empty for a root entity). Resolved with the router's
-    /// own rule: `role = "child"` entities nest under their configured
-    /// `parent` (or the graph parent candidate), each hop at
-    /// `{parent_segment}/{parent_param}` — the shape `api/router.tera`
-    /// mounts. One derivation, read by both the hurl contract and the
-    /// utoipa path (issue #713).
+    /// own rule (`api/router.rs`): a `role = "child"` entity nests under its
+    /// configured `parent` when that parent is a routable entity of the
+    /// domain, and every other explicit non-root role nests under the graph
+    /// parent candidate — each hop at `{parent_segment}/{parent_param}`, the
+    /// shape `api/router.tera` mounts. One derivation, read by both the hurl
+    /// contract and the utoipa path (issue #713).
     pub route_parents: Vec<MediaRouteParent>,
     /// The contained-value feature name as authored (e.g. "avatar").
     pub field_name: String,
