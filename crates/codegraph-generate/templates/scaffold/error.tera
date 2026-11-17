@@ -47,6 +47,19 @@ impl AppError {
         Self { status: StatusCode::NOT_FOUND, code: "NOT_FOUND", message: message.into(), details: None, correlation_id: None }
     }
 
+    /// 413 — a body/upload larger than the endpoint accepts. Contract-level
+    /// (RFC 9110 §15.5.14): clients branch on this, so it must not be folded
+    /// into 400 (issue #691).
+    pub fn payload_too_large(message: impl Into<String>) -> Self {
+        Self { status: StatusCode::PAYLOAD_TOO_LARGE, code: "PAYLOAD_TOO_LARGE", message: message.into(), details: None, correlation_id: None }
+    }
+
+    /// 415 — the media type of the request payload is not supported
+    /// (RFC 9110 §15.5.16). Same contract argument as 413 (issue #691).
+    pub fn unsupported_media_type(message: impl Into<String>) -> Self {
+        Self { status: StatusCode::UNSUPPORTED_MEDIA_TYPE, code: "UNSUPPORTED_MEDIA_TYPE", message: message.into(), details: None, correlation_id: None }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self { status: StatusCode::INTERNAL_SERVER_ERROR, code: "INTERNAL_ERROR", message: message.into(), details: None, correlation_id: None }
     }

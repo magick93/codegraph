@@ -1,19 +1,40 @@
 {% if kind == "through_app" %}# hurl_contract: media surface (issue #625 PR-B) — {{ domain }}.{{ field }}.
-# Deterministic legs only: the authn surface (the shared middleware runs
-# BEFORE the handler). The happy-path upload/display legs need the storage
-# provider configured (and 2xx under it, 503 without) — those live in the
-# runtime lane (issue #625 open question 8), not this static contract.
+# PROVIDER-FREE legs only. Since #690 every media handler resolves the owning
+# row under the session organization BEFORE the storage-slot check, so the
+# authn leg and the missing-parent leg are deterministic with NO bucket
+# configured. The happy path (upload → display → remove, and the 413/415
+# rejections) needs a configured provider and lives in the runtime lane
+# (issue #625 OQ8 → #695 Stage 1).
+# The URL is pinned to the router's own path shape by `media_pipeline_tests`
+# (issue #691): /api/v1/{domain}/{path_segment}/{id}/{field}.
 
+# authn — no credentials, rejected by the shared middleware before the
+# handler (and therefore before any extractor) runs.
 PUT {{ upload_url }}
 
 HTTP 401
 [Asserts]
 jsonpath "$.error.code" == "UNAUTHORIZED"
-{% endif %}{% if kind == "presigned" %}# hurl_contract: media surface (issue #625 PR-C) — {{ domain }}.{{ field }}.
-# Deterministic legs only: the authn surface of the presign issuance op.
-# The presign happy path needs the storage provider configured (and 2xx
-# under it, 503 without) — the runtime lane owns that (issue #625 OQ8).
 
+# ownership — a VALID key against an id no row carries must be 404, never
+# 403: a foreign or missing parent is indistinguishable by design. Addressed
+# through the GET display route (same path, no body extractor), so the
+# answer comes from the handler and not from multipart parsing.
+GET {{ display_url }}
+{{ auth_header }}
+
+HTTP 404
+[Asserts]
+jsonpath "$.error.code" == "NOT_FOUND"
+{% endif %}{% if kind == "presigned" %}# hurl_contract: media surface (issue #625 PR-C) — {{ domain }}.{{ field }}.
+# PROVIDER-FREE legs only: the #690 parent gate answers before the storage
+# slot, so presign issuance is testable without a bucket. The presign happy
+# path needs a configured provider — the runtime lane owns it (issue #625
+# OQ8 → #695 Stage 1).
+# The URL is pinned to the router's own path shape by `media_pipeline_tests`
+# (issue #691): /api/v1/{domain}/{path_segment}/{id}/{field}/presign.
+
+# authn — no credentials, rejected before the handler runs.
 POST {{ presign_url }}
 Content-Type: application/json
 {"mime_type": "{{ mime }}"}
@@ -21,4 +42,14 @@ Content-Type: application/json
 HTTP 401
 [Asserts]
 jsonpath "$.error.code" == "UNAUTHORIZED"
+
+# ownership — a valid key against an id no row carries → 404, never 403.
+POST {{ presign_url }}
+{{ auth_header }}
+Content-Type: application/json
+{"mime_type": "{{ mime }}"}
+
+HTTP 404
+[Asserts]
+jsonpath "$.error.code" == "NOT_FOUND"
 {% endif %}

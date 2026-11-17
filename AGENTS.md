@@ -2515,6 +2515,31 @@ DDL-domain divergence. Gates: `media_pipeline_tests`
 route + session, presigned leg, wasm32 sea-orm-free), nightly
 `ifml_codegen_gate` T0 boot.
 
+**The media contract addresses the route the router serves (issue #691)**:
+the emitted utoipa path and `hurl/09_media.hurl` derive the entity segment
+from the ROUTER's own resolver (`resolve_path_segment`: config
+`path_segment` → `api_path_segment` → lowercased title), never
+`pg_table_name` — a title-derived segment drops the underscores
+(`refundrequest` vs `refund_request`), so both planes used to document a
+path axum never mounted, and the hurl builder additionally repeated the
+field segment where the id belongs. The hurl file carries a concrete
+sentinel id (`MEDIA_CONTRACT_MISSING_ID`) and two PROVIDER-FREE legs: no
+credentials → 401, valid key + a missing parent → 404 (never 403, and
+addressed through the GET display route so no multipart extractor answers
+first). Rejections answer the statuses the utoipa block already published —
+413 (`AppError::payload_too_large`) and 415
+(`AppError::unsupported_media_type`); a malformed multipart body stays 400.
+Pins: `media_hurl_contract_url_matches_the_router_route` /
+`presigned_hurl_contract_url_matches_the_router_route` (hurl == utoipa ==
+router, over a fixture whose config segment differs from the table),
+`media_rejections_answer_413_and_415_not_400`, and
+`media_child_sql_rides_the_scoped_transaction_and_the_gate_gets_the_session_org`
+(the two runtime properties #690 depends on: every child statement on the
+bundle transaction, and `parent_exists(id, session_org)` in that order).
+Byte identity: the two `AppError` constructors are the ONLY non-media
+output change — the ux/forms whole-tree canaries were re-blessed, and the
+enumerated diff is one `src/error.rs` per generated crate (no other file).
+
 ## Compile-pin policy (issue #551)
 
 **Every generator that emits Rust ships a test that COMPILES its output.**
