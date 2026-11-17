@@ -406,7 +406,9 @@ For aggregation:
 - `--results FILE` (api, e2e, workers) carries pass/fail counts, failing
   titles, per-stage durations, and the exit code — see section 5.
 
-CI wiring: run the api suite with a Postgres service and metrics export:
+CI wiring: run the api suite against the **Supabase postgres image** (the
+`auth` schema is load-bearing; a plain `postgres:<n>` service cannot serve
+this suite — issue #640), with metrics export:
 
 ```bash
 cargo run -p testkit -- api --metrics ci.tsv

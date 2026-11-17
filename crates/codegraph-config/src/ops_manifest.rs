@@ -220,7 +220,13 @@ pub struct OpsDbTarget {
 /// Database targets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpsDatabase {
-    /// Plain-Postgres target used by the `api` suite.
+    /// Supabase-postgres target used by the `api` suite — the same
+    /// Supabase-provisioned database `e2e` runs against
+    /// (`suites/api/mod.rs::run_api`). The suite starts the stack through
+    /// `[supabase]` before any DB-touching stage and fails fast when that
+    /// section is missing, and the generated migrations depend on the image's
+    /// `auth` schema, so a plain `postgres:<n>` service is NOT a supported
+    /// target (issue #640).
     pub api: OpsDbTarget,
     /// Supabase postgres target (port 54322) used by the `e2e` suite.
     #[serde(default)]
