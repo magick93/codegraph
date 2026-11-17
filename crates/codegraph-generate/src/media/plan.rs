@@ -149,15 +149,40 @@ pub async fn media_route_fields(
     domain_name: &str,
     entity_title: &str,
 ) -> Result<Vec<String>, Error> {
+    Ok(media_route_surface(db, config, domain_name, entity_title)
+        .await?
+        .fields)
+}
+
+/// The router-facing media surface for ONE entity (issue #710): the
+/// plan-driven fields PLUS the domain's configured `max_bytes`, resolved
+/// from the SAME `MediaPlan` the route generator renders the handler from
+/// — so the axum `DefaultBodyLimit` ceiling and the handler's
+/// `data.len() > max_bytes` check cannot drift. Empty/`None` when the
+/// domain declares no `[media]`, or is `client-direct` (no app-plane route).
+#[derive(Debug, Clone, Default)]
+pub struct MediaRouteSurface {
+    pub fields: Vec<String>,
+    /// `Some` exactly when `fields` is non-empty: an entity with no
+    /// app-plane media route carries no body limit.
+    pub max_bytes: Option<u64>,
+}
+
+pub async fn media_route_surface(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    entity_title: &str,
+) -> Result<MediaRouteSurface, Error> {
     let Some(media) = config
         .domains
         .get(domain_name)
         .and_then(|d| d.media.as_ref())
     else {
-        return Ok(Vec::new());
+        return Ok(MediaRouteSurface::default());
     };
     if media.upload_mode == codegraph_config::MediaUploadMode::ClientDirect {
-        return Ok(Vec::new());
+        return Ok(MediaRouteSurface::default());
     }
     let titles = [entity_title.to_string()];
     let plan = build_media_plan_for_domain(
@@ -169,7 +194,11 @@ pub async fn media_route_fields(
         &titles,
     )
     .await?;
-    Ok(plan.fields.iter().map(|f| f.field_snake.clone()).collect())
+    let fields: Vec<String> = plan.fields.iter().map(|f| f.field_snake.clone()).collect();
+    Ok(MediaRouteSurface {
+        max_bytes: (!fields.is_empty()).then_some(plan.max_bytes),
+        fields,
+    })
 }
 
 /// The media fields the APP writes the reference row for (issue #707):

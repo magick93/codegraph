@@ -22,9 +22,9 @@ force_value_objects = ["MediaReference"]
 provider = "r2"
 upload_mode = "through-app"
 bucket = "media-runtime"
-# 1 KiB keeps the 413 leg well under axum's 2 MiB `DefaultBodyLimit`
-# (issue #710 is the follow-up that raises it — an oversize body trips the
-# extractor's limit and the handler maps it to the same 413).
+# 1 KiB keeps the 413 leg under axum's 2 MiB `DefaultBodyLimit`: the router
+# scopes `DefaultBodyLimit::max(1 KiB + 64 KiB)` to the upload route (issue
+# #710), leaving the handler's file check as the boundary.
 max_bytes = 1024
 accept = ["image/png"]
 

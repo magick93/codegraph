@@ -1044,9 +1044,11 @@ async fn run_legs(
 
     // ── LEG 6 — 413 / 415 against the corrected contract (#691) ────────
     //
-    // `max_bytes = 1024` in the fixture keeps the oversize body under axum's
-    // 2 MiB `DefaultBodyLimit` (#710 raises it), so this exercises the
-    // handler's own limit, and the error is the generated envelope.
+    // `max_bytes = 1024` in the fixture: the router scopes the upload layer
+    // to `max_bytes + 64 KiB` (issue #710), so a 2048-byte file fits under
+    // the layer's slack and the HANDLER's own `max_bytes` check is the
+    // boundary — the generated envelope 413 asserted below. A body beyond
+    // the layer maps its lazy extractor 413 to the same envelope.
     let oversize = write_bytes("oversize.png", &vec![0u8; 2048]);
     let r = upload(base, PARENT_A, key_a, &oversize, "image/png", "oversize");
     assert_eq!(r.status, 413, "an oversize body answers 413: {}", r.text());

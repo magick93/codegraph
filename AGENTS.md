@@ -2566,11 +2566,13 @@ router, over a fixture whose config segment differs from the table),
 `media_child_sql_rides_the_scoped_transaction_and_the_gate_gets_the_session_org`
 (the two runtime properties #690 depends on: every child statement on the
 bundle transaction, and `parent_exists(id, session_org)` in that order).
-Rejections cover the extractor's own limit trip as well: axum's
-`DefaultBodyLimit` (2 MiB unless the route sets one) rejects inside
-`Multipart`, and that error now maps to the same 413 rather than a 400 read
-failure — raising the limit per route is #710.
-
+Rejections cover both lazy `DefaultBodyLimit` read sites (`next_field()` and
+`field.bytes()`): the upload route layers `DefaultBodyLimit::max(max_bytes +
+64 KiB)` (issue #710) so the configured ceiling is reachable while the
+handler's `data.len() > max_bytes` check stays the FILE boundary — the layer
+carries envelope slack precisely so a file of exactly `max_bytes` still
+uploads — and any residue past that slack answers the same generated 413
+envelope rather than a 400.
 Byte identity: the two `AppError` constructors are the ONLY non-media
 output change — THREE whole-tree canaries were re-blessed
 (`ux_rules_pre_feature_tree.sha256`, `forms_pre_feature_tree.sha256`, and
