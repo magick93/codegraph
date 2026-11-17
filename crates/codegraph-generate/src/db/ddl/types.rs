@@ -74,7 +74,7 @@ pub struct DdlContext {
 
 /// A child table's backfill source (issue #700). Every writer of a child row
 /// — the SeaORM `child_insert_sql`, the cornucopia `insert_{entity}_{child}`
-/// and `link_{junction}` queries, the media handler — omitted
+/// and `link_{junction}` queries, and the media handler until #690 — omitted
 /// `platform_organization_id`, so the DDL's zero default was persisted and
 /// the zero-tolerant RLS predicate exposed those rows to every organization.
 /// Children now carry the parent's `set_org_id_from_session` trigger, and

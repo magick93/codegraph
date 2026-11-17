@@ -21,11 +21,20 @@
 //! 3. **The fix itself**: afterwards the child policies are exact-org. Org A
 //!    reads its rows; org B reads NONE of them (before #700 both read them).
 //!
-//! Both child shapes are covered: a contained VO (`contains`) and a junction
-//! (`refers T[]`).
+//! The fixture child under test (`common.event_base_personbasetype`) is a
+//! contained-VO child. A junction child (`refers T[]`) renders through the
+//! same `child_table_rls_context` and therefore the same file — the in-crate
+//! `db::ddl::tests` pins cover that shape structurally.
 //!
-//! Needs Postgres reachable at `DATABASE_URL` (or the gate container
-//! fallback) and `psql` on PATH:
+//! **Scope of the evidence.** This gate connects as the migration owner, which
+//! on the Supabase image has `BYPASSRLS` — so it cannot prove that the
+//! `NO FORCE` window is load-bearing for a non-bypassing owner. The in-crate
+//! `db::ddl::tests::child_rls_backfills_…` pin owns that claim (it pins the
+//! enable → NO FORCE → backfill → FORCE ordering); this gate owns the
+//! behavioural result.
+//!
+//! Needs the **Supabase postgres image** reachable at `DATABASE_URL` (or the
+//! gate container fallback) and `psql` on PATH:
 //!
 //! ```text
 //! DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54350/postgres \
@@ -148,16 +157,18 @@ fn migration_by_suffix(dir: &Path, suffix: &str) -> PathBuf {
     hits.remove(0)
 }
 
-/// The junction child of `common.event_base` (a `refers PersonBaseType[]`).
-/// The contained-VO shape renders the SAME child file — same template, same
-/// trigger, same policy block — which the DDL unit pins cover structurally;
-/// this gate spends its time on the database behaviour instead.
+/// The contained-VO child of `common.event_base` (a `contains` of a person
+/// name — the columns it carries are that VO's, not a referenced entity's).
+/// A junction child (`refers T[]`) renders through the SAME
+/// `child_table_rls_context`, i.e. the same file shape; the in-crate
+/// `db::ddl::tests` pins cover it structurally, so this gate spends its time
+/// on the database behaviour.
 const CHILD_SCHEMA: &str = "common";
 const CHILD: &str = "event_base_personbasetype";
 const CHILD_FK: &str = "event_base_id";
 
 #[tokio::test]
-#[ignore = "generates + migrates a fixture and needs Postgres (set DATABASE_URL)"]
+#[ignore = "generates + migrates a fixture; needs the Supabase postgres image (set DATABASE_URL)"]
 async fn child_rows_carry_the_session_org_and_evict_the_zero_tenant() {
     let out = tempfile::tempdir().expect("temp output dir");
     generate_migrations(out.path()).await;
@@ -170,10 +181,7 @@ async fn child_rows_carry_the_session_org_and_evict_the_zero_tenant() {
     let base = resolve_base_target()
         .await
         .expect("a Postgres base target (DATABASE_URL or the gate container)");
-    // The prelude is the PLAIN-postgres shim (Supabase roles, pgcrypto, the
-    // pgmq schema). The Supabase image — the supported target (#640) —
-    // already provides all of it, and re-creating its reserved roles errors,
-    // so the marker (`auth` schema) decides whether it runs at all.
+    // The supported target is the Supabase image (#640); `auth` is its marker.
     let supabase_image = psql_query(
         &base,
         "SELECT count(*) FROM pg_namespace WHERE nspname = 'auth';",
@@ -199,14 +207,13 @@ async fn child_rows_carry_the_session_org_and_evict_the_zero_tenant() {
     let db = GateDb::create(base)
         .await
         .expect("create the per-run database");
-    if !supabase_image {
-        db.apply_prelude()
-            .await
-            .expect("apply the plain-postgres prelude");
-    }
     db.apply_migrations(&migrations)
         .await
-        .expect("the generated migration set must apply cleanly");
+        // `run_api_migrations` WARNS on per-file phase errors and still
+        // returns Ok, so this only proves the run completed — the assertions
+        // below (the table, the trigger, the policies) are what prove the set
+        // is sound.
+        .expect("the generated migration set must run");
 
     // A target for owner-side statements (GateDb connects as the owner
     // superuser, which bypasses RLS and can disable the trigger).

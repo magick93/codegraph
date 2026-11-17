@@ -49,7 +49,8 @@ CREATE TRIGGER trg_{{ child.table_name }}_updated_at
 
 -- Auto-set platform_organization_id from the session on child INSERT (issue #700).
 -- No writer binds the column (SeaORM child inserts, cornucopia VO/junction
--- inserts, the media handler), so before this trigger the DDL default leaked
+-- inserts, the media handler until #690), so before this trigger the DDL
+-- default leaked
 -- a zeros tenant that every organization's RLS predicate tolerated. The
 -- parent's function is reused; child tables live in the parent's schema.
 DROP TRIGGER IF EXISTS trg_{{ child.table_name }}_set_org_id ON {{ child.schema_name }}.{{ child.table_name | quote_pg }};

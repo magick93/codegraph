@@ -2585,15 +2585,21 @@ child via `child_table_rls_context`):
 2. **The backfill**: each child's `_rls.sql` re-applies an idempotent
    `UPDATE child SET tenant = parent.tenant FROM parent WHERE child.fk =
    parent.id AND child.tenant = '000…'` between `NO FORCE` and `FORCE`. `NO
-   FORCE` is load-bearing: on a *re-run* the previous policy's WITH CHECK
-   would reject the rewritten tenant when no session org is set. Because
+   FORCE` is load-bearing on ANY run where the table is already FORCE-enabled
+   — the upgrade run included, not just the second one — because the previous
+   (zero-tolerant) policy's WITH CHECK rejects the rewritten non-zero tenant
+   when no session org is set. The backfill is unguarded and unindexed on
+   purpose: it matches nothing after the first run, and a permanent index on
+   the tenant column to serve a one-time repair is the worse trade. Because
    `migrate` re-applies every file on every run, that file **is** the upgrade
    migration — no new file, no renumbering, and the backfill necessarily runs
    before the policy that depends on it.
 3. **The policy**: child policies drop the `OR tenant = '000…'` branch.
-   Parent policies KEEP it (their INSERT trigger always stamped, so there is
-   nothing to tolerate but also nothing to gain by flipping them — and
-   pre-trigger rows in existing deployments must stay visible).
+   Parent policies KEEP it, deliberately: parents have always been stamped by
+   their own trigger, so the branch is vestigial for them — flipping it would
+   be a SECOND behavioural change riding a security fix, and it would hide any
+   pre-trigger legacy parent row in an existing deployment. The child branch
+   is the hole; the parent branch is not.
 
 Media's #690 workaround (`LEGACY_ZERO_TENANT`) is retired in the same change;
 its parent gate stays. Gates:
@@ -2605,7 +2611,11 @@ migration, that `pg_policy` records no zero tolerance, and that org B reads
 none of org A's child rows) + the in-crate `db::ddl::tests` pins (child
 trigger, backfill ordering, exact-org predicates, and the parent
 characterization) + `media_pipeline_tests` +
-`media_child_statements_filter_on_the_exact_session_tenant`. Byte identity:
+`media_child_statements_filter_on_the_exact_session_tenant`. Consumer-visible
+migration note: a hand-written `seed_sql`/`reset_sql` that inserts CHILD rows
+must now set `app.organization_id` (or bind the tenant) — the stamp is the
+session org and the column is NOT NULL. Parents already behaved this way; no
+generated in-tree seed inserts child rows. Byte identity:
 the childless-parent trigger render is unchanged (proven by the fixture A/B
 and the `policy_rls` snapshot), so the re-bless is confined to child
 `_rls.sql` files and the parents that own children.
