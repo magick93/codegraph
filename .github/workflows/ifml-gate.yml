@@ -51,10 +51,23 @@ jobs:
       # plain postgres service (#708 moves that lane onto this image).
       - name: Child-table tenancy gate (#700)
         run: cargo test -p codegraph --test child_tenant_contract_tests -- --ignored --nocapture
+      # Issue #695 Stage 1: the media plane's behavioural gate. It boots
+      # RustFS (a real S3-compatible server) in docker and drives upload /
+      # display / overwrite / remove plus the cross-tenant denials against a
+      # generated + booted axum app, so it belongs here (Supabase image, no
+      # PR cost) rather than in the ops lane: the whole generated app is
+      # compiled from scratch (~10 min) and the ops lane's service is plain
+      # postgres (#708 moves it to this image).
+      - name: Pull RustFS (media runtime gate's S3 store)
+        run: docker pull rustfs/rustfs:latest
+      - name: Media runtime gate (#695 Stage 1 — RustFS)
+        run: cargo test -p codegraph --test media_runtime_tests -- --ignored --nocapture
       - name: Upload gate logs on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: ifml-gate-logs
-          path: target/ifml-gate/logs/
+          path: |
+            target/ifml-gate/logs/
+            /tmp/opencode/ws695-media-runtime/logs/
           if-no-files-found: ignore

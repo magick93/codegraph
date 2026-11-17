@@ -1,0 +1,32 @@
+# Media runtime gate fixture (issue #695 Stage 1).
+#
+# `provider = "r2"` is deliberate: the R2 adapter IS the S3 adapter
+# (`R2_S3_ENDPOINT` + `R2_S3_REGION`), so Stage 1 proves the plane against a
+# real S3 server BEFORE a `provider = "s3"` variant exists. The generated app
+# is booted with `R2_S3_ENDPOINT=http://127.0.0.1:<rustfs port>` and
+# `R2_S3_REGION=us-east-1` (RustFS verifies the SigV4 credential scope; R2's
+# default `auto` is rejected there).
+[defaults]
+api_version = "v1"
+
+[domains.assets]
+label = "Assets"
+schema_dir = "assets"
+postgres_schema = "assets"
+# The media reference is a contained value: force the VO so the classifier
+# never scaffolds a CRUD surface for the upload target (the ifml-gate
+# fixture's rule — without it MediaReference gets its own table + routes).
+force_value_objects = ["MediaReference"]
+
+[domains.assets.media]
+provider = "r2"
+upload_mode = "through-app"
+bucket = "media-runtime"
+# 1 KiB keeps the 413 leg well under axum's 2 MiB `DefaultBodyLimit`
+# (issue #710 is the follow-up that raises it — an oversize body trips the
+# extractor's limit and the handler maps it to the same 413).
+max_bytes = 1024
+accept = ["image/png"]
+
+[domains.assets.media.r2]
+binding = "MEDIA_BUCKET"

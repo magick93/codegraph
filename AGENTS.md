@@ -2577,7 +2577,63 @@ output change — THREE whole-tree canaries were re-blessed
 exactly one `src/error.rs` hash: the monolith app, each worker, and the
 gateway crate (`scaffold/worker.rs` renders it too). No other file moves.
 
-### Child-table tenancy (#700 — the zero-tenant hole)
+### Media runtime gate against a real S3 server (#695 Stage 1)
+
+`media_runtime_tests` (`--ignored`, nightly `ifml-gate.yml`) is the media
+plane's BEHAVIOURAL gate — the first one. It boots **RustFS**
+(`rustfs/rustfs:latest`, anonymous `/data` + `/logs` volumes so no
+`10001:10001` bind mount is needed, S3 API only, default
+`rustfsadmin`/`rustfsadmin`, region `us-east-1`), creates the bucket with a
+signed `curl --aws-sigv4 "aws:amz:us-east-1:s3"` `PUT` (the app has no
+bucket-create path by design — #625 OQ2; that signed request is also the
+preflight: a 403 there means credentials/region, not a broken store), then
+generates a `[media]` app with the CURRENT generators (`driver::run`, the
+`tests/fixtures/media_runtime/` mox fixture: `class Asset` +
+`contains MediaReference[0..1] photo`, `provider = "r2"`,
+`upload_mode = "through-app"`, `max_bytes = 1024` so the 413 leg stays under
+axum's 2 MiB `DefaultBodyLimit`), builds + boots it
+(`test_framework::axum_server`, app `CARGO_TARGET_DIR` isolated under
+`/tmp/opencode/ws695-target`) and drives every leg against Postgres AND the
+bucket: upload (child row carries the session org; bytes in the bucket),
+display (307 → the signed URL really serves the bytes), overwrite in place
+(one row, new bytes), remove (row + object gone), the cross-tenant denials
+(a foreign/other-org parent id answers 404 on upload/display/remove and
+leaves the owner's row + object untouched; org B's own upload lands under
+its own key and cannot touch org A's), and 413/415 with the generated error
+envelope. `provider = "r2"` is deliberate: that adapter IS the S3 adapter
+(`R2_S3_ENDPOINT` + `R2_S3_REGION`), so the generic-store path is proven
+before a `provider = "s3"` variant exists.
+
+The findings the gate produced, all worth remembering:
+
+- **`R2_S3_REGION` is mandatory against a store that verifies the scope**
+  (Stage 0 made it configurable). Without `us-east-1` every request is a
+  `SignatureDoesNotMatch`, which reads as "the store is broken".
+- **The SigV4 canonical URI must keep object-key `/` literal.** The adapter
+  built it with `uri_encode(key, true)` (`%2F`), which R2 tolerates and a
+  scope-verifying server rejects — every put/get/presign failed 403. Fixed in
+  `media/r2.tera` to `crate::media::encode_key(key)` (both the header-signed
+  and the presigned path), pinned node-free by
+  `media_compile_tests::r2_adapter_keeps_object_key_separators_in_the_canonical_uri`
+  (the SigV4 KAT's single-segment path cannot see this class; the runtime gate
+  owns the behaviour).
+- **A template-level tenant-predicate break is NOT observable through the
+  app**: with `SET LOCAL ROLE app_user` the parent table's FORCE-RLS policies
+  already filter to the session org, so removing `AND tenant = $2` from
+  `parent_exists` changes no answer (verified by teeth run). The SQL predicate
+  is belt-and-braces; RLS is the load-bearing fence. Teeth for the gate
+  therefore come from the guards that ARE app-visible (dropping the
+  `max_bytes` check makes the 413 leg fail; the pre-fix `%2F` canonical URI
+  fails leg 1).
+
+Known gap, pre-#707 (PR #717): org B's OWN reference row naming an object key
+under org A's prefix. Master's `display`/`remove` sign/delete ANY stored key
+(307 / 204-and-A's-bytes-deleted — measured by this gate), so the leg asserts
+the 404 contract only when the emitted route module carries the
+`KEY_PREFIX_FORMAT` guard and otherwise PRINTS the observed leak loudly. When
+#717 lands the strict arm takes over with no test edit.
+
+
 
 `platform_organization_id` defaults to zeros and **no writer of a child row
 bound it**: the SeaORM `child_insert_sql`
@@ -2659,7 +2715,7 @@ their runtime substitute.
 | media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg) |
 | full app (every generator the default plan emits) | `grafeo_e2e_tests -- grafeo_generated_code_compiles` | the whole-tree backstop; failures are not plane-attributable |
 | wrapper binary | `wrapper_compile_tests -- --ignored` | #348 |
-| runtime substitutes for live-DB planes | `hooks_cornucopia_runtime_tests` (cornucopia hooks over real Postgres, #518), `review_api_suite` (real HTTP) | compile pins for these shapes ride the stubs above |
+| runtime substitutes for live-DB planes | `hooks_cornucopia_runtime_tests` (cornucopia hooks over real Postgres, #518), `review_api_suite` (real HTTP), `media_runtime_tests` (the media data path over RustFS, #695) | compile pins for these shapes ride the stubs above |
 
 Adding a new Rust-emitting generator: add its compile pin in the SAME PR
 (follow `crates/codegraph/tests/README.md`); the full-app gate is a
@@ -3000,6 +3056,11 @@ cargo test -p codegraph --test profile_smoke_tests
 # Generated integration testing (#463) — node-free PR-CI pins
 cargo test -p codegraph --test hurl_contract_tests    # 2, hurl golden + [hurl] manifest coupling
 cargo test -p codegraph --test ifml_auth_setup_tests  # 5, auth.setup/personas/auth specs/journeys/POM
+
+# Media plane runtime gate (#695 Stage 1) — boots RustFS in docker + builds and
+# boots the generated app; needs docker (image pulled), curl >= 8, psql, and the
+# Supabase postgres image. Nightly `ifml-gate.yml`.
+cargo test -p codegraph --test media_runtime_tests -- --ignored --nocapture
 
 # pherolang pin migration gate (node-free, DB-free, <1s): every fixture
 # compiles through the production front doors (`.mox` as one union per group,

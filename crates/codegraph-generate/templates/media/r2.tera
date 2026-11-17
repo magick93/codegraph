@@ -205,6 +205,11 @@ impl SigV4Request {
 
 /// URI-encode per RFC 3986 (AWS SigV2-style strictness: unreserved set
 /// passes, everything else `%XX`; `/` is NOT special here — callers split).
+///
+/// Used for QUERY values only (`X-Amz-Credential` carries slashes and must be
+/// encoded). Object keys are PATH segments and go through
+/// [`crate::media::encode_key`], which keeps `/` literal — the S3 canonical
+/// URI must not encode key separators (issue #695 Stage 1).
 pub fn uri_encode(value: &str, encode_slash: bool) -> String {
     let mut out = String::with_capacity(value.len());
     for b in value.bytes() {
@@ -274,7 +279,15 @@ impl R2Storage {
         headers.sort();
         let req = SigV4Request {
             method,
-            canonical_uri: format!("/{}/{}", self.bucket, uri_encode(key, true)),
+            // Path-style canonical URI. Object keys are SLASH-SEPARATED path
+            // segments, and the separators stay literal: `crate::media::
+            // encode_key` encodes everything else but `/`. Encoding the
+            // separators (`%2F`, what `uri_encode(key, true)` produced) makes
+            // a generic S3 server compute the signature over the DECODED path
+            // and answer 403 `SignatureDoesNotMatch` — R2 tolerates it, real
+            // S3 / RustFS do not (issue #695 Stage 1's first finding; the
+            // runtime gate is the proof).
+            canonical_uri: format!("/{}/{}", self.bucket, crate::media::encode_key(key)),
             canonical_query: String::new(),
             headers,
             payload_hash: payload_hash.to_string(),
@@ -325,7 +338,10 @@ impl R2Storage {
             .join("&");
         let req = SigV4Request {
             method,
-            canonical_uri: format!("/{}/{}", self.bucket, uri_encode(key, true)),
+            // The SAME path-style URI the header-signed path builds: key
+            // separators stay literal (see `s3_request`; a `%2F` canonical
+            // URI is rejected by a server that verifies the scope).
+            canonical_uri: format!("/{}/{}", self.bucket, crate::media::encode_key(key)),
             canonical_query,
             headers: vec![("host".to_string(), self.host.clone())],
             payload_hash: "UNSIGNED-PAYLOAD".to_string(),
