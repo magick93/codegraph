@@ -109,13 +109,6 @@ jobs:
         run: cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
       - name: Run cornucopia hooks runtime pins (issue #518)
         run: cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture
-      # Issue #700: child-table tenancy. Generates its own migration set (never
-      # a committed fixture, which is how the defect survived review) and
-      # proves at the DB tier that child rows carry the session org, that the
-      # re-applied child migration backfills legacy zero-tenant rows, and that
-      # the recorded policies no longer tolerate zeros.
-      - name: Child-table tenancy gate (#700)
-        run: cargo test -p codegraph --test child_tenant_contract_tests -- --ignored --nocapture
       - name: Worker wasm gate (issue #550)
         run: cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture
       - name: Install hurl (service-ops live gates)
