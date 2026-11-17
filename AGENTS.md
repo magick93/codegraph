@@ -656,11 +656,15 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   handlers call only the queries/commands API, so the plane rides BOTH
   topologies — pinned compiling natively AND on wasm32 by
   `worker_wasm_compile_tests`, whose PayRun fixture now carries a
-  capability-gated op). Execution lowering v1: repository `delete`
-  delegations wire to the command plane, `findById` delegations return
-  the record; every other op (save, service-to-service, search,
-  abstract) answers **501 NOT_IMPLEMENTED naming the gap** (the
-  functions-plane seam precedent — enforcement is the deliverable).
+  capability-gated op). Execution lowering (v1 + the #661/#662 slices):
+  repository `delete` delegations wire to the command plane, `findById`
+  delegations return the record, a checked `.ddd` body lowers into the
+  handler (#662), a declared `transition`/`when` selects a machine edge
+  (#660), and a `child_operations` op drives the child plane (#661).
+  What still answers **501 NOT_IMPLEMENTED naming the gap** is exactly
+  the unbindable remainder: service-to-service and `search` delegation,
+  an `abstract` op, and a body outside the #662 lowering subset (each
+  refusal is named at generation time, never a silent no-op).
   OpenAPI registers the paths via `PerDomainOpenApiContext.service_ops`
   (NO skip_serializing_if); hurl gains a per-entity
   `{nn}_{domain}_{module}_actions.hurl` contract (fresh CREATE fixture
@@ -889,15 +893,16 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   junction table; the action's link is the config child back-ref FK — a
   junction-only aggregate link is not written), a collection-add POM/
   action-spec leg, and a modeled child op over a cross-domain child.
-- **Deferred**: delegation breadth beyond delete/findById (save payloads,
-  service-to-service, search); api_key capability
-  enforcement (JWT-only policy gates); a live `service_ops_hurl_gate`
-  (the compile pin + byte pins cover the emitted contract; the live boot
-  is the documented follow-up); IFML action-op e2e spec category +
-  POM surface; ddd op-`condition` beyond machine-bearing modules (typed
-  lifecycles, pherolang #114); doctor WARN for entity-unbound ops (needs
-  the graph; the run path owns it); hurl 403 legs over JWT personas;
-  register-class properties (issue Ask 4, upstream pherolang #83);
+- **Deferred**: delegation breadth beyond the lowered set
+  (service-to-service, `search`); api_key capability enforcement
+  (JWT-only policy gates); ddd op-`condition` beyond machine-bearing
+  modules (typed lifecycles, pherolang #114); hurl 403 legs over JWT
+  personas; register-class properties (issue Ask 4, upstream pherolang
+  #83); a collection-add POM/action-spec leg. **Landed, no longer
+  deferred** (the ledger drifted): the live `service_ops_hurl_gate`
+  (WS1, state-aware contract + psql proofs), the IFML action-op e2e spec
+  category + POM surface (WS6 via the #591 manifest), and the doctor
+  WARN for entity-unbound ops (WS5, `codegraph doctor --ddd-files`).
   #662 body plane — domain-op calls (`self.<op>`) + collection mutation
   (refused by name, mox-arena coupling), body-assigned machine state vs the
   designed transitions (`TODO(#662)`), `codegraph doctor --ddd-files` body
@@ -4587,11 +4592,22 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
   zero-entity app with zero errors. File-level problems that still leave a
   partial model keep warning.
 
-**Deferred** (epic P5/P6): typed queries, the authored transition binding,
-child operations, executable bodies, injected-scope `when`, collection
-sets, error vocabulary, invariants, DTO boundaries, `table "…"`/register
-classes, the editor grammar, session-kind grants; `.dmn`/`.uc`/`.cmmn`
-surfaces and the upstream semantic-graph analytics. None ride the upgrade.
+**Landed from the epic's P5/P6 list** (each has its own section above and
+its gates green): typed repository queries **#659**, the authored
+`transition` binding **#660**, aggregate child operations **#661**,
+executable statement bodies **#662**, and explicit `table "…"` names +
+`register` classes + the compiler word tables **#668**. The upgrade PR
+itself carried none of them — they landed as their own slices, which is
+what the "never ride the upgrade PR" rule was for.
+
+**Still deferred** from that list: injected-scope `when` beyond
+machine-bearing modules (#663's `condition_paths` consumer), collection
+sets (#664), the declared error vocabulary + `throws` (#665), invariants +
+authored aggregate boundaries (#666), modeled DTO boundaries (#667), the
+tree-sitter `.mox` grammar + LSP for the new syntax (#669), session-kind
+grants in `policy_rls` (#670, decision-gated); plus the `.dmn` plane
+(#671), the `.uc`/`.cmmn` assessment (#672), the upstream semantic-graph
+analytics (#673) and the `artifact check`/`verify` receipts (#674).
 
 ## Include Path System (`?include=`)
 
