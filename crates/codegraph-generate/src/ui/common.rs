@@ -50,6 +50,7 @@ pub async fn collect_ui_fields(
         {
             Some(media) => crate::media::plan::build_media_plan_for_domain(
                 db,
+                config,
                 domain_name,
                 media,
                 &config.defaults.type_suffix,

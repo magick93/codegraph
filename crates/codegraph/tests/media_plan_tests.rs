@@ -308,6 +308,16 @@ async fn plan_resolves_child_table_and_columns() {
     assert_eq!(f.parent_fk_column, "person_id");
     assert_eq!(f.url_column, "url");
     assert_eq!(f.mime_column, "mime_type");
+    // Issue #690: the owning table's tenancy rides the DDL's own rule
+    // (`is_global_entity`), never a property scan — mox entity schemas never
+    // declare `platform_organization_id` (the DDL injects it), so a property
+    // scan would return None for every real model and silently emit
+    // unscoped SQL.
+    assert_eq!(
+        f.parent_tenant_column,
+        Some("platform_organization_id".to_string()),
+        "a tenant-scoped parent must carry the tenant column"
+    );
 }
 
 #[tokio::test]

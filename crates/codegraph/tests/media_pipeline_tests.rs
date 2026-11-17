@@ -373,6 +373,403 @@ async fn client_direct_emits_no_media_routes_at_all() {
     );
 }
 
+// ── Issue #690 — media routes ride the #169 session bundle ─────────────
+//
+// The pre-fix template talked to the database outside the bundle: no
+// `set_config` context, no `SET LOCAL ROLE app_user`, unqualified table
+// names, and display/remove filtered only `WHERE {parent_fk} = '<uuid>'`
+// (an IDOR). These pins are the red-first evidence for the rewrite.
+
+fn media_route_module_key(module: &str, needle: &str) -> usize {
+    module
+        .find(needle)
+        .unwrap_or_else(|| panic!("the emitted media module must carry `{needle}`:\n{module}"))
+}
+
+#[tokio::test]
+async fn media_routes_ride_the_session_bundle_and_a_tenant_scoped_parent_gate() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    assert_eq!(modules.len(), 1, "one module per media field");
+    let module = &modules[0];
+
+    // The #169 session entry point (issue #690): every statement runs on a
+    // transaction that installed the request scope bundle.
+    for needle in [
+        "crate::media::session::begin_scoped(",
+        "crate::media::session::parent_exists(",
+    ] {
+        media_route_module_key(module, needle);
+    }
+
+    // EVERY handler reads the session bundle — display/remove historically
+    // did not even take the extractor, which is how the IDOR survived.
+    assert_eq!(
+        module
+            .matches("Extension(api_key_info): Extension<ApiKeyInfo>")
+            .count(),
+        3,
+        "upload/display/remove all extract the session bundle:\n{module}"
+    );
+
+    // Schema-qualified identifiers: generated tables live under the
+    // domain's Postgres schema, `app_user`'s search_path is
+    // `public, extensions` — an unqualified name is not the table the DDL
+    // created.
+    media_route_module_key(module, "const PARENT_TABLE: &str = \"core.person\";");
+    media_route_module_key(module, "const CHILD_TABLE: &str = \"core.person_avatar\";");
+    media_route_module_key(
+        module,
+        "const PARENT_TENANT_COLUMN: Option<&str> = Some(\"platform_organization_id\");",
+    );
+
+    // Every child statement carries the tenant predicate (the child table
+    // inherits the parent's tenant column): upload DELETE + INSERT column,
+    // display SELECT, remove SELECT + DELETE.
+    assert_eq!(
+        module.matches("platform_organization_id = $2").count(),
+        4,
+        "the child statements must carry the tenant predicate:\n{module}"
+    );
+    assert!(
+        module.contains("(person_id, platform_organization_id, url, mime_type)"),
+        "the INSERT must set the inherited tenant column:\n{module}"
+    );
+
+    // No bare SQL interpolation of the parent id survives.
+    assert!(
+        !module.contains("WHERE person_id = '"),
+        "the parent predicate must be a bound parameter:\n{module}"
+    );
+    assert!(
+        !module.contains("= '{}'"),
+        "no quoted-literal SQL interpolation remains:\n{module}"
+    );
+}
+
+#[tokio::test]
+async fn every_media_handler_gates_the_parent_before_the_storage_slot() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+    for handler in [
+        "pub async fn upload(",
+        "pub async fn display(",
+        "pub async fn remove(",
+    ] {
+        let start = media_route_module_key(module, handler);
+        let body = &module[start..];
+        let gate = body
+            .find("scoped_tx(&state, &api_key_info, id)")
+            .unwrap_or_else(|| {
+                panic!("{handler} must resolve the parent under the session bundle:\n{module}")
+            });
+        let slot = body
+            .find("_media_storage")
+            .unwrap_or_else(|| panic!("{handler} must consult the storage slot:\n{module}"));
+        assert!(
+            gate < slot,
+            "{handler} must gate the parent BEFORE the storage-slot 503 — a foreign id \
+             must 404 even where no provider is configured:\n{module}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn presigned_media_route_gates_the_parent_before_minting() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    ))
+    .expect("toml");
+
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+    let start = media_route_module_key(module, "pub async fn presign(");
+    let body = &module[start..];
+    let gate = body
+        .find("scoped_tx(&state, &api_key_info, id)")
+        .unwrap_or_else(|| {
+            panic!("presign must gate the parent under the session bundle:\n{module}")
+        });
+    let slot = body
+        .find("_media_storage")
+        .unwrap_or_else(|| panic!("presign must consult the storage slot:\n{module}"));
+    assert!(gate < slot, "presign gates before minting:\n{module}");
+}
+
+#[tokio::test]
+async fn media_module_doc_claim_matches_the_emitted_code() {
+    // The #690 defect class: the module doc claimed "org-scoped from the
+    // session bundle" while the code did not implement it. Pin the claim
+    // AND the code together so a doc-only pass cannot recur.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    let doc_end = media_route_module_key(module, "use axum::");
+    let doc = &module[..doc_end];
+    assert!(
+        doc.contains("session bundle"),
+        "the doc must state the session-bundle contract it implements:\n{doc}"
+    );
+    assert!(
+        doc.contains("404"),
+        "the doc must state the 404-on-foreign-parent rule:\n{doc}"
+    );
+    assert!(
+        module.contains("crate::media::session::begin_scoped"),
+        "the documented contract must be the implemented one:\n{module}"
+    );
+    // The round-2 claims: two short upload transactions, the legacy zeros
+    // tolerance, and the #700 reference that retires it.
+    for claim in ["TWO short transactions", "legacy zeros tenant", "#700"] {
+        assert!(doc.contains(claim), "the doc must state `{claim}`:\n{doc}");
+    }
+}
+
+// ── Issue #690 round 2 — reviewer findings ─────────────────────────────
+
+/// The CRUD child-table writer (`child_insert_sql`) omits the tenant column,
+/// so every reference row it persists (the presigned-mode path included)
+/// carries the DDL's zero default. Child statements must tolerate that
+/// legacy tenant UNDER an already-proven parent — and must never filter on
+/// the parent FK alone.
+#[tokio::test]
+async fn media_child_statements_tolerate_the_legacy_zero_tenant() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module
+            .contains("const LEGACY_ZERO_TENANT: &str = \"00000000-0000-0000-0000-000000000000\";"),
+        "the zeros sentinel is named once:\n{module}"
+    );
+    // Upload DELETE, display SELECT, remove SELECT, remove DELETE.
+    assert_eq!(
+        module
+            .matches(
+                "platform_organization_id = $2 OR platform_organization_id = \
+                 '{LEGACY_ZERO_TENANT}'::uuid"
+            )
+            .count(),
+        4,
+        "all four child statements tolerate the legacy zeros tenant:\n{module}"
+    );
+    // No child statement filters on the parent FK alone.
+    assert_eq!(
+        module.matches("WHERE person_id = $1 AND (").count(),
+        4,
+        "every child WHERE keeps the tenant predicate:\n{module}"
+    );
+    // #700 is the named retirement path.
+    assert!(
+        module.contains("#700"),
+        "the zeros branch names the issue that retires it:\n{module}"
+    );
+    // The tenancy rule is three copies that must move together (not "one
+    // rule the gate and the table cannot disagree about"), and the schema
+    // source divergence is #702.
+    for copy in ["db/entity.rs", "db/ddl/query.rs", "persistence.rs"] {
+        assert!(
+            module.contains(copy),
+            "the const doc names `{copy}` as a copy that must move together:\n{module}"
+        );
+    }
+    assert!(
+        !module.contains("cannot disagree"),
+        "the old overclaim is gone:\n{module}"
+    );
+    assert!(
+        module.contains("#702"),
+        "the schema-source divergence names its issue:\n{module}"
+    );
+}
+
+/// The upload handler must not hold a pooled connection across the multipart
+/// body read and the provider PUT: a short gate transaction, the network
+/// work, then a second short scoped transaction that RE-RUNS the gate and
+/// writes the row.
+#[tokio::test]
+async fn media_upload_uses_two_short_scoped_transactions() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    // upload has 2, display 1, remove 1.
+    assert_eq!(
+        module
+            .matches("scoped_tx(&state, &api_key_info, id)")
+            .count(),
+        4,
+        "upload opens TWO scoped transactions (gate + write):\n{module}"
+    );
+
+    let start = media_route_module_key(module, "pub async fn upload(");
+    let body = &module[start..];
+    let first_gate = body
+        .find("scoped_tx(&state, &api_key_info, id)")
+        .expect("first gate");
+    let next_field = body.find("next_field").expect("body read");
+    let put = body.find(".put(").expect("provider put");
+    let second_gate = body[first_gate + 1..]
+        .find("scoped_tx(&state, &api_key_info, id)")
+        .expect("second gate")
+        + first_gate
+        + 1;
+    let delete = body.find("let delete = Statement::").expect("row write");
+    assert!(
+        first_gate < next_field && next_field < put && put < second_gate && second_gate < delete,
+        "gate -> body/provider work -> re-gate -> row write:\n{body}"
+    );
+}
+
+/// DB-tier denials (the RESTRICTIVE `scope_enforced_*` P0403 payloads and
+/// org-isolation write violations) are authorization failures: 403, never a
+/// 500 with the DB text echoed. Mirrors `errors.tera::from_repo_err`.
+#[tokio::test]
+async fn media_db_denials_map_to_forbidden_not_internal() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(module.contains("fn db_err("), "{module}");
+    for marker in [
+        "INSUFFICIENT_SCOPE",
+        "ROLE_FORBIDDEN",
+        "violates row-level security policy",
+    ] {
+        assert!(
+            module.contains(marker),
+            "the classifier names `{marker}`:\n{module}"
+        );
+    }
+    assert!(
+        module.contains("AppError::forbidden("),
+        "denials map to 403:\n{module}"
+    );
+    // Every DB map_err goes through the classifier (storage/multipart errors
+    // keep their own envelopes).
+    assert!(
+        !module.contains("AppError::internal(format!(\"failed to"),
+        "no DB failure bypasses db_err:\n{module}"
+    );
+}
+
+/// The INSERT's bound-value ORDER is part of the contract: swapping the org
+/// bind for the user id would keep every other pin green.
+#[tokio::test]
+async fn media_upload_insert_binds_the_tenant_second() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    let start = media_route_module_key(module, "let insert = Statement::from_sql_and_values(");
+    let rest = &module[start..];
+    let end = rest.find("\n    );").expect("insert statement end") + start;
+    let insert = &module[start..end];
+    assert!(
+        insert.contains("VALUES ($1, $2, $3, $4)"),
+        "tenant-scoped INSERT arity:\n{insert}"
+    );
+    assert!(
+        insert.contains("(person_id, platform_organization_id, url, mime_type)"),
+        "the INSERT names the inherited tenant column:\n{insert}"
+    );
+    let mut cursor = 0;
+    for (idx, needle) in [
+        "Value::from(id)",
+        "Value::from(api_key_info.organization_id)",
+        "Value::from(stored.key.clone())",
+        "Value::from(mime_type.clone())",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let pos = insert[cursor..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("bind {idx} (`{needle}`) missing:\n{insert}"))
+            + cursor;
+        cursor = pos + needle.len();
+    }
+}
+
+/// A GLOBAL owning table renders the unscoped variant — the branch had no
+/// render pin at all, so a typo in the template's `{% else %}` shipped
+/// silently. Rendered directly so no graph fixture is needed.
+#[tokio::test]
+async fn global_parent_media_route_renders_the_unscoped_variant() {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let project = ProjectConfig::default();
+    let ctx = serde_json::json!({
+        "entity_name": "OrgType",
+        "entity_snake": "org",
+        "entity_module": "core_org",
+        "domain": "core",
+        "media_field_name": "logo",
+        "media_accept": ["image/png"],
+        "schema": "core",
+        "child_table": "org_logo",
+        "parent_fk_column": "org_id",
+        "parent_tenant_column": serde_json::Value::Null,
+        "url_column": "url",
+        "mime_column": "mime_type",
+        "mode_presigned": false,
+        "max_bytes": 5242880u64,
+        "key_format": "{org}/core/org/{id}/logo",
+        "display_ttl_secs": 300u64,
+        "presign_ttl_secs": 900u64,
+    });
+    let rendered = codegraph_generate::render_template_with_project(
+        &tera,
+        "api/media_route.tera",
+        &ctx,
+        &project,
+    )
+    .expect("global-parent render");
+
+    assert!(
+        rendered.contains("const PARENT_TENANT_COLUMN: Option<&str> = None;"),
+        "the global branch declares None:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("GLOBAL owning table") && rendered.contains("deliberately unscoped"),
+        "the unscoped variant carries its safety comment:\n{rendered}"
+    );
+    // No tenant predicate and no zeros branch on a global parent.
+    assert!(
+        !rendered.contains("platform_organization_id"),
+        "a global parent emits no tenant column at all:\n{rendered}"
+    );
+    assert!(
+        !rendered.contains("LEGACY_ZERO_TENANT"),
+        "the zeros tolerance is tenant-scoped only:\n{rendered}"
+    );
+    // The gate still runs, with the None tenancy.
+    assert!(
+        rendered.contains("PARENT_TENANT_COLUMN,"),
+        "the parent gate passes None:\n{rendered}"
+    );
+}
+
 // ── PR-B AppState wiring (#630) ─────────────────────────────────────────
 async fn run_scaffold(
     db: &dyn codegraph_core::traits::GraphQuerier,
@@ -633,9 +1030,10 @@ async fn supabase_plan_emits_adapter_http_seam_and_noop() {
             "src/media/http.rs",
             "src/media/mod.rs",
             "src/media/noop.rs",
+            "src/media/session.rs",
             "src/media/supabase.rs",
         ],
-        "exact file set: trait + noop + adapter + transport + storage bootstrap"
+        "exact file set: trait + noop + adapter + transport + session + storage bootstrap"
     );
 
     let supabase_rs = &files
@@ -727,8 +1125,9 @@ async fn r2_plan_emits_the_r2_adapter_with_sigv4() {
             "src/media/mod.rs",
             "src/media/noop.rs",
             "src/media/r2.rs",
+            "src/media/session.rs",
         ],
-        "r2 plan emits the r2 adapter + transport + hurl contract (no supabase module, no migration)"
+        "r2 plan emits the r2 adapter + transport + session + hurl contract (no supabase module, no migration)"
     );
 
     let r2_rs = &files
@@ -804,9 +1203,10 @@ async fn media_config_emits_media_module_and_noop() {
             "src/media/http.rs",
             "src/media/mod.rs",
             "src/media/noop.rs",
+            "src/media/session.rs",
             "src/media/supabase.rs",
         ],
-        "exact file set: trait + noop + provider adapter + native transport + storage bootstrap"
+        "exact file set: trait + noop + provider adapter + native transport + session + storage bootstrap"
     );
 
     let mod_rs = &files
@@ -831,6 +1231,12 @@ async fn media_config_emits_media_module_and_noop() {
         assert!(flat.contains(m), "trait method pin missing: {m}");
     }
     assert!(mod_rs.contains("pub mod noop;"), "noop re-exported");
+    // Issue #690: the session module the routes ride is declared with the
+    // plane (native-only — SeaORM cannot link wasm32).
+    assert!(
+        mod_rs.contains("#[cfg(not(target_arch = \"wasm32\"))]\npub mod session;"),
+        "the session module is declared (native-only): {mod_rs}"
+    );
     // PR-B (#630): the supabase plan emits its adapter + the transport seam.
     assert!(
         mod_rs.contains("pub mod supabase;"),
@@ -857,7 +1263,7 @@ async fn media_config_emits_media_module_and_noop() {
     );
 
     // The emitted tree is real on disk (written by the pipeline).
-    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 5);
+    assert!(out.path().join("src/media/mod.rs").exists() || files.len() == 6);
     let _ = fs::read_to_string(out.path().join("src/media/mod.rs"));
 }
 
@@ -899,6 +1305,56 @@ async fn no_media_config_emits_nothing() {
         .expect("files");
     assert!(files.is_empty(), "byte-identity: no [media] ⇒ zero files");
     assert!(!out.path().join("src/media").exists());
+    assert!(
+        !out.path().join("src/media/session.rs").exists(),
+        "byte-identity: a media-less tree must not grow the session helper"
+    );
+}
+
+#[tokio::test]
+async fn media_plane_emits_the_session_bundle_and_a_bound_parent_lookup() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let session_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("src/media/session.rs"))
+        .expect("the session module")
+        .content;
+    // The query plane's five keys + the role flip, one simple-query payload.
+    for key in [
+        "app.current_api_key",
+        "app.current_api_key_id",
+        "app.organization_id",
+        "app.user_id",
+        "app.role",
+        "SET LOCAL ROLE app_user",
+        "execute_unprepared",
+        "db.begin()",
+    ] {
+        assert!(
+            session_rs.contains(key),
+            "session bundle pin `{key}`: {session_rs}"
+        );
+    }
+    // Bound parameters only: the parent lookup and org are $1/$2 values.
+    assert!(
+        session_rs.contains("SELECT 1 FROM {table} WHERE id = $1 AND {column} = $2 LIMIT 1"),
+        "tenant-scoped parent lookup: {session_rs}"
+    );
+    assert!(
+        session_rs.contains("SELECT 1 FROM {table} WHERE id = $1 LIMIT 1"),
+        "global-parent lookup: {session_rs}"
+    );
+    assert!(
+        session_rs.contains("Statement::from_sql_and_values")
+            && session_rs.contains("Value::from(id)"),
+        "the id/org travel as bound parameters: {session_rs}"
+    );
 }
 
 #[tokio::test]

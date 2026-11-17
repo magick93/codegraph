@@ -1536,7 +1536,12 @@ fn build_codelist_child_entity(
     }])
 }
 
-fn is_global_entity(_table_name: &str, _config: &DomainConfig) -> bool {
+/// Whether a table is GLOBAL (visible to every organization, so it carries
+/// no tenant column). The single tenancy rule the entity/child-table
+/// emission consults (the DDL copy lives in `db/ddl/query.rs`; the media
+/// plan calls THIS one — issue #690 — so a media field can never emit an
+/// unscoped statement for a tenant-scoped parent).
+pub(crate) fn is_global_entity(_table_name: &str, _config: &DomainConfig) -> bool {
     // TODO: check tenancy config for global tables
     false
 }

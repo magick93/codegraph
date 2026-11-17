@@ -59,6 +59,12 @@ pub trait MediaStorage: Send + Sync {
 }
 
 pub mod noop;
+/// The #169 session bundle + tenant-scoped parent gate (issue #690) the
+/// media route handlers ride. SeaORM cannot link wasm32 and the media
+/// routes are a monolith surface (`state.db`), so this module is
+/// native-only (the worker crates never compile this tree).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod session;
 /// Transport seam: adapters speak HTTP through this object so the media
 /// plane compiles on wasm32 with NO HTTP dependency (issue #632 — the
 /// worker compile pin links the plane bare). The native leg lives in

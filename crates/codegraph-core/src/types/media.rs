@@ -402,6 +402,13 @@ pub struct MediaFieldPlan {
     pub url_column: String,
     /// The mime-type column on the child table (e.g. "mime_type").
     pub mime_column: String,
+    /// The owning table's tenant column (`platform_organization_id`), or
+    /// `None` for a GLOBAL entity. Resolved through the DDL's own tenancy
+    /// rule (issue #690), never by scanning schema properties: mox entity
+    /// schemas never declare the column (the DDL injects it), so a property
+    /// scan would return `None` for every real model and silently emit
+    /// unscoped SQL. Child tables inherit the parent's tenant column.
+    pub parent_tenant_column: Option<String>,
 }
 
 /// One domain's resolved media plane (issue #625 §3b L2): built
