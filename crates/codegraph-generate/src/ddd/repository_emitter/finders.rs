@@ -850,6 +850,7 @@ mod tests {
             columns,
             child_tables: Vec::new(),
             is_back_ref: false,
+            is_media: false,
         }
     }
 

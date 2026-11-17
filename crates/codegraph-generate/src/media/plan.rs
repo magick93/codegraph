@@ -170,6 +170,31 @@ pub async fn media_route_fields(
     Ok(plan.fields.iter().map(|f| f.field_snake.clone()).collect())
 }
 
+/// The media fields the APP writes the reference row for (issue #707):
+/// `through-app` mode emits an upload handler that INSERTs the child row on
+/// its own route, so that handler is the reference's ONLY writer and the
+/// request DTOs (create/update) must omit it — otherwise a client can name
+/// any object key it likes, and `display`/`remove` would sign or delete
+/// another organization's object with the service credential.
+///
+/// Deliberately NOT `media_route_fields`: that set also covers `presigned`,
+/// whose route only MINTS a PUT URL — its reference is "persisted afterwards
+/// through the normal update path" (`media_route.tera`), i.e. the client IS
+/// the writer there (presigned overwrite semantics are #701's), and
+/// client-direct has no app-plane route at all. Stripping the DTO in those
+/// modes would make the field unwritable; they keep it, byte-identical.
+pub async fn media_upload_owned_fields(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    entity_title: &str,
+) -> Result<Vec<String>, Error> {
+    if media_upload_mode(config, domain_name) != Some(UploadMode::ThroughApp) {
+        return Ok(Vec::new());
+    }
+    media_route_fields(db, config, domain_name, entity_title).await
+}
+
 /// The domain's configured upload mode when it needs routes (`Some`).
 /// The router template branches on it (presign issuance vs multipart).
 pub fn media_upload_mode(config: &DomainConfig, domain_name: &str) -> Option<UploadMode> {

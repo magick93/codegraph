@@ -169,6 +169,16 @@ pub struct ChildTableInfo {
     /// that table) linked by the synthetic `parent_fk_column` the DDL puts
     /// on it — never in a `{parent}_{feature}` child table.
     pub is_back_ref: bool,
+    /// A MEDIA reference whose row the app writes (issue #707):
+    /// `media::plan::media_upload_owned_fields` names this child's field for
+    /// `through-app` domains, where the dedicated upload handler is the
+    /// row's only writer. The READ path keeps the child (the response tree
+    /// and the media handlers address the row) but every WRITE path —
+    /// create's insert and update's delete-then-reinsert — must skip it, or
+    /// an ordinary `PUT` would wipe the uploaded reference. Always `false`
+    /// without `[media]`, and for `presigned` / client-direct (the client IS
+    /// the writer there) — byte-identical.
+    pub is_media: bool,
 }
 
 /// Tracks a junction (many-to-many) table persisted and read via raw SQL.

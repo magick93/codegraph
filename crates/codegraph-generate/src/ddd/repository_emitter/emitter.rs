@@ -868,6 +868,21 @@ impl RepositoryImplEmitter {
         let entity_titles: std::collections::HashSet<String> =
             db.get_entity_names().await?.into_iter().collect();
 
+        // Media fields the APP writes the reference row for (issue #707):
+        // `through-app` mode's upload handler is the child row's only writer,
+        // so the repository must not write it back from the (now field-less)
+        // request DTO. Empty without `[media]`, for `presigned` (its route
+        // only mints a URL — the client persists the reference through the
+        // update path, #701) and for client-direct — byte-identical. The
+        // driver's pre-generation pass already hard-failed a broken media
+        // config, so a plan error here cannot silently drop the exclusion.
+        let media_fields: std::collections::HashSet<String> =
+            crate::media::plan::media_upload_owned_fields(db, config, domain, schema_title)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+
         let cls_ctx = ClassificationContext {
             schema_title,
             module_name: &module_name,
@@ -878,6 +893,7 @@ impl RepositoryImplEmitter {
             all_field_names: &all_field_names,
             entity_titles: &entity_titles,
             workflow_managed: &workflow_managed,
+            media_fields: &media_fields,
             suffix: &config.defaults.type_suffix,
         };
         let (mut direct_columns, child_tables, junction_tables) =

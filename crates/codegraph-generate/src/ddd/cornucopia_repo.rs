@@ -282,6 +282,11 @@ fn emit_adapter_create(tree: &EntityTree, code: &mut CodeWriter) {
 
     // Child table inserts.
     for child in &tree.child_tables {
+        // Issue #707: a media reference is upload-handler-owned — the request
+        // DTO omits it, so there is nothing to bind.
+        if child.is_media {
+            continue;
+        }
         if child.columns.is_empty() && child.child_tables.is_empty() {
             continue;
         }
@@ -1556,6 +1561,14 @@ fn emit_child_replace(tree: &EntityTree, code: &mut CodeWriter) {
     let qmod = qmod(tree);
     let snake = &tree.table_name;
     for child in &tree.child_tables {
+        // Issue #707 — THE TRAP: this path deletes every child row and
+        // re-inserts it from the DTO. A media reference is written only by
+        // the upload handler and is absent from the request DTO, so skipping
+        // it on INSERT alone would make an ordinary `PUT` delete the uploaded
+        // row. Skip the whole replace (delete AND insert).
+        if child.is_media {
+            continue;
+        }
         if child.columns.is_empty() && child.child_tables.is_empty() {
             continue;
         }

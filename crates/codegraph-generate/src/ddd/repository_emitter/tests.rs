@@ -158,6 +158,7 @@ fn child_population_array() {
         columns: vec![],
         child_tables: vec![],
         is_back_ref: false,
+        is_media: false,
     }];
     let mut code = CodeWriter::new();
     emit_child_field_population(&mut code, &children, "    ");
@@ -176,6 +177,7 @@ fn child_population_single() {
         columns: vec![],
         child_tables: vec![],
         is_back_ref: false,
+        is_media: false,
     }];
     let mut code = CodeWriter::new();
     emit_child_field_population(&mut code, &children, "    ");

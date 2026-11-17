@@ -2466,8 +2466,20 @@ wrong-mime/oversize rejections) is emitted only for entities with media
 route fields — the emitted playwright `crud` project matches `media`
 (presence-gated) so the family is never an orphan under
 `entity_specs_run_green`'s coverage invariant. The detail page renders the
-control and the media field never enters `collect_ui_fields` (a text input
-there posted an unknown key the create DTO rejects, `deny_unknown_fields`).
+control and the media field never enters `collect_ui_fields` — it is not a
+generic form input, it has its own upload control/route, and in
+`through-app` domains the reference is now **upload-handler-owned**
+(issue #707): the create/update DTOs omit it entirely, so a client can never
+name the object key; the response DTO keeps it. (`presigned` — whose route
+only mints a PUT URL, so the client persists the reference through the
+normal update path (#701) — and client-direct, which has no app-plane route,
+keep the reference in the DTO: stripping it there would make the field
+unwritable.) The pre-#707 claim that `deny_unknown_fields` rejects a leaked
+key was false — the DTO nested `{ mime_type, url }` verbatim, which is
+exactly the writable-key defect #707 closed. Defense in depth (every mode):
+`display`/`remove` also refuse a stored key outside the session
+organization's `{org}/…` prefix with a 404 (never a 403) before any storage
+call.
 IFML: a modeled `field x -> input file` lowers onto the entity's media route
 — a non-value-bound control plus a page-script handler calling a
 server-side `upload{Field}` multipart command (`$lib/server/api`; the submit

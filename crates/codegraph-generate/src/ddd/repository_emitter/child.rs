@@ -175,6 +175,12 @@ pub(crate) fn emit_child_inserts(
 ) {
     let pad = "    ".repeat(indent);
     for child in children {
+        // Issue #707: a media reference is owned by the dedicated upload
+        // handler — the repository must never write it (the request DTOs omit
+        // it, so there is nothing to bind).
+        if child.is_media {
+            continue;
+        }
         // Skip child tables with no data columns — nothing meaningful to insert
         if child.columns.is_empty() && child.child_tables.is_empty() {
             continue;

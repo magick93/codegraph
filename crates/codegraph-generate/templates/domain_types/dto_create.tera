@@ -83,6 +83,7 @@ pub struct Create{{ entity_name }}Request {
 {%- endif %}
 {%- endfor %}
 {%- for child in child_dtos %}
+{%- if child.is_media %}{% continue %}{%- endif %}
 {%- if child.is_array %}
 {%- if has_validate %}
     #[garde(skip)]
@@ -99,6 +100,7 @@ pub struct Create{{ entity_name }}Request {
 {%- endfor %}
 }
 {%- for child in all_child_dtos %}
+{%- if child.is_media %}{% continue %}{%- endif %}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if has_validate %}, garde::Validate{% endif %})]
 {% if project.dto_key_casing == "camel" %}#[serde(rename_all = "camelCase")]{% endif %}

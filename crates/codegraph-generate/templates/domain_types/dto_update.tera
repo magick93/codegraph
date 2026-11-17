@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 pub use crate::codelist::{{ import }};
 {%- endfor %}
 {%- for child in all_child_dtos %}
+{%- if child.is_media %}{% continue %}{%- endif %}
 use super::dto_create::Create{{ child.struct_name }}Request;
 {%- endfor %}
 
@@ -56,6 +57,7 @@ pub struct Update{{ entity_name }}Request {
 {%- endif %}
 {%- endfor %}
 {%- for child in child_dtos %}
+{%- if child.is_media %}{% continue %}{%- endif %}
 {%- if child.is_array %}
 {%- if has_validate %}
     #[garde(skip)]
