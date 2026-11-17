@@ -2522,11 +2522,17 @@ from the ROUTER's own resolver (`resolve_path_segment`: config
 `pg_table_name` — a title-derived segment drops the underscores
 (`refundrequest` vs `refund_request`), so both planes used to document a
 path axum never mounted, and the hurl builder additionally repeated the
-field segment where the id belongs. The hurl file carries a concrete
-sentinel id (`MEDIA_CONTRACT_MISSING_ID`) and two PROVIDER-FREE legs: no
-credentials → 401, valid key + a missing parent → 404 (never 403, and
-addressed through the GET display route so no multipart extractor answers
-first). Rejections answer the statuses the utoipa block already published —
+field segment where the id belongs — it also emitted a SCHEME-LESS path
+(hurl: `Invalid URL … Missing scheme`) and a literal `{id}` placeholder
+that cannot parse as `Path<Uuid>`. The contract is now
+`{{base_url}}/api/{defaults.api_version}/…` (the sibling
+`hurl_contract.rs` shape), carries a concrete sentinel id
+(`MEDIA_CONTRACT_MISSING_ID`) and two PROVIDER-FREE legs: no credentials →
+401, valid key + a missing parent → 404 (never 403, and addressed through
+the GET display route so no multipart extractor answers first). The utoipa
+`path` uses `project.api_version` too, but media handlers are still NOT
+registered in any OpenAPI `paths(...)` — the annotation is inert today
+(#704). Rejections answer the statuses the utoipa block already published —
 413 (`AppError::payload_too_large`) and 415
 (`AppError::unsupported_media_type`); a malformed multipart body stays 400.
 Pins: `media_hurl_contract_url_matches_the_router_route` /
@@ -2536,9 +2542,16 @@ router, over a fixture whose config segment differs from the table),
 `media_child_sql_rides_the_scoped_transaction_and_the_gate_gets_the_session_org`
 (the two runtime properties #690 depends on: every child statement on the
 bundle transaction, and `parent_exists(id, session_org)` in that order).
+Rejections cover the extractor's own limit trip as well: axum's
+`DefaultBodyLimit` (2 MiB unless the route sets one) rejects inside
+`Multipart`, and that error now maps to the same 413 rather than a 400 read
+failure — raising the limit per route is #710.
 Byte identity: the two `AppError` constructors are the ONLY non-media
-output change — the ux/forms whole-tree canaries were re-blessed, and the
-enumerated diff is one `src/error.rs` per generated crate (no other file).
+output change — THREE whole-tree canaries were re-blessed
+(`ux_rules_pre_feature_tree.sha256`, `forms_pre_feature_tree.sha256`, and
+`policy_rls_tests__flag_off_full_output_hashes.snap`), and each diff is
+exactly one `src/error.rs` hash: the monolith app, each worker, and the
+gateway crate (`scaffold/worker.rs` renders it too). No other file moves.
 
 ## Compile-pin policy (issue #551)
 

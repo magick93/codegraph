@@ -218,9 +218,13 @@ impl GlobalGenerator for MediaStorageGenerator {
                     ))
                 })?;
             let path_segment = api_model::resolve_path_segment_with_config(None, &schema, config);
+            // `{{base_url}}` + the CONFIGURED api version: a scheme-less path
+            // is not a valid hurl URL (`error: Invalid URL … Missing scheme`),
+            // and every sibling contract (`hurl_contract.rs`) is built the
+            // same way.
             let base = format!(
-                "/api/v1/{domain_name}/{path_segment}/{MEDIA_CONTRACT_MISSING_ID}/{}",
-                field.field_snake
+                "{{{{base_url}}}}/api/{}/{domain_name}/{path_segment}/{MEDIA_CONTRACT_MISSING_ID}/{}",
+                config.defaults.api_version, field.field_snake
             );
             let ctx = json!({
                 "kind": kind,
