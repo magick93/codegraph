@@ -30,3 +30,15 @@ accept = ["image/png"]
 
 [domains.assets.media.r2]
 binding = "MEDIA_BUCKET"
+
+# Issue #722: a root `Person` and a CHILD `Contact` with its own media field.
+# The router nests the child's routes under `/{person_id}/contacts`; the media
+# handlers extract the ancestor tuple and gate ownership through `person_id`.
+[domains.assets.entity_config.Person]
+path_segment = "persons"
+
+[domains.assets.entity_config.Contact]
+role = "child"
+parent = "Person"
+parent_ref = "person_id"
+path_segment = "contacts"
