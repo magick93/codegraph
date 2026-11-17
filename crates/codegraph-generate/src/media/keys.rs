@@ -18,16 +18,26 @@ use codegraph_core::types::{KeyPlaceholder, KeySegment, KeyTemplate};
 /// thing: the org id occupying the whole first segment — a prefix check can
 /// render it, and `split_part(name, '/', 1) = <org>` can compare it.
 ///
-/// A template that carries `{org}` somewhere else (`media/{org}/…`, or mixed
-/// into the first segment as `media-{org}`) is deliberately NOT org-first:
-/// the route then guards with the full `render_key` equality (strictly
-/// stronger than any prefix test) and the migration records that bucket RLS
-/// cannot scope objects by tenant (#625).
+/// A template that carries `{org}` somewhere else (`media/{org}/…`, mixed
+/// into the first segment as `media-{org}`, or joined to another placeholder
+/// as `{org}-{domain}`) is deliberately NOT org-first: the route then guards
+/// with the full `render_key` equality (strictly stronger than any prefix
+/// test) and the migration records that bucket RLS cannot scope objects by
+/// tenant (#625).
+///
+/// The separator check is load-bearing. `KeyTemplate::parse` splits on `/`
+/// but pushes placeholders WITHIN a chunk before appending the separator, so
+/// `{org}-{domain}/…` yields `[Org, "-", Domain, "/", …]` — its first
+/// LEXEME is the org placeholder while its first SEGMENT is `{org}-{domain}`.
+/// Matching only `segments[0]` claimed org-first for that template and
+/// emitted the `"{org}/"` prefix guard, which can never match the rendered
+/// key `<org>-<domain>/…` — every legitimate display/remove would 404.
 pub fn key_template_is_org_first(template: &KeyTemplate) -> bool {
-    template
-        .segments()
-        .first()
-        .is_some_and(|s| matches!(s, KeySegment::Placeholder(KeyPlaceholder::Org)))
+    let segments = template.segments();
+    matches!(
+        segments.first(),
+        Some(KeySegment::Placeholder(KeyPlaceholder::Org))
+    ) && matches!(segments.get(1), Some(KeySegment::Literal(l)) if l == "/")
 }
 
 /// The org-first key PREFIX as a plain string with `{org}` left as a runtime
@@ -161,6 +171,13 @@ mod tests {
         assert!(!org_first("media/{org}/{domain}/{entity}/{id}/{field}"));
         assert!(!org_first("media-{org}/{domain}/{entity}/{id}/{field}"));
         assert!(!org_first("{domain}/{entity}/{id}/{field}"));
+        // Joined to another placeholder: the first LEXEME is the org but the
+        // first SEGMENT is `{org}-{domain}`, so a `"{org}/"` prefix test can
+        // never match the rendered key `<org>-<domain>/…`. Treating this as
+        // org-first 404'd every legitimate display/remove (#707 review).
+        assert!(!org_first("{org}-{domain}/{entity}/{id}/{field}"));
+        assert!(!org_first("{org}{domain}/{entity}/{id}/{field}"));
+        assert!(!org_first("{org}.{domain}/{entity}/{id}/{field}"));
     }
 
     #[test]
@@ -174,6 +191,8 @@ mod tests {
         assert_eq!(key_prefix_format_for(&non_org_first), None);
         let mixed = KeyTemplate::parse("media-{org}/{domain}/{entity}/{id}/{field}").expect("t");
         assert_eq!(key_prefix_format_for(&mixed), None);
+        let joined = KeyTemplate::parse("{org}-{domain}/{entity}/{id}/{field}").expect("t");
+        assert_eq!(key_prefix_format_for(&joined), None);
     }
 
     #[test]

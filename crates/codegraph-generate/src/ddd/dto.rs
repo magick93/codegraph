@@ -515,13 +515,22 @@ pub async fn build_dto_context(
     // app-plane route) keep it in the DTO: stripping it there would make the
     // field unwritable. Empty without `[media]` — byte-identical.
     // The driver's pre-generation pass already hard-failed a broken media
-    // config, so a plan error here cannot silently drop the field.
+    // config. A residual failure is logged rather than swallowed: falling
+    // back to an empty set would quietly put the reference back in the
+    // create/update DTOs.
     let media_fields: std::collections::HashSet<String> =
-        crate::media::plan::media_upload_owned_fields(db, config, &domain, schema_title)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        match crate::media::plan::media_upload_owned_fields(db, config, &domain, schema_title).await
+        {
+            Ok(fields) => fields.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!(
+                    domain = %domain,
+                    entity = schema_title,
+                    "media plan unavailable ({e}) — the create/update DTOs will carry the media reference"
+                );
+                std::collections::HashSet::new()
+            }
+        };
 
     // Media fields are excluded from Create/Update DTOs — uploads happen via
     // separate media endpoints, not the JSON CRUD body.

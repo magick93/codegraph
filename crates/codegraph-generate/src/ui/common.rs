@@ -78,8 +78,10 @@ pub async fn collect_ui_fields(
         // reference entirely (issue #707 — the upload handler is its only
         // writer); `presigned`/client-direct keep it in the DTO (the client
         // is the writer there), where the text input is still the wrong
-        // affordance. The media plan
-        // (`media::plan::media_route_fields`) is the field's real surface.
+        // affordance. The field's real surface is the resolved domain plan
+        // (`media::plan::build_media_plan_for_domain`, called just above) —
+        // not `media_route_fields`, which deliberately excludes client-direct
+        // and would therefore NOT skip the field in that mode.
         if prop.effective_kind() == Some(RefClassificationKind::MediaWrapper)
             || media_fields.contains(&prop.rust_field_name)
         {

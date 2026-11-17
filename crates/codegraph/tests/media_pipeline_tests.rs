@@ -1915,6 +1915,54 @@ async fn mixed_first_segment_org_template_uses_the_full_key_equality() {
     );
 }
 
+/// A first segment that JOINS the org to another placeholder
+/// (`{org}-{domain}/…`) is the case that a lexeme-only predicate gets wrong:
+/// `KeyTemplate::parse` yields `[Org, "-", Domain, "/", …]`, so the first
+/// LEXEME is the org while the first SEGMENT is `{org}-{domain}`. Claiming
+/// org-first there emitted the `"{org}/"` prefix guard, which can never match
+/// the rendered key `<org>-<domain>/…` — every legitimate display/remove
+/// would 404. The template must take the full-key equality branch (found in
+/// review of #707).
+#[tokio::test]
+async fn joined_first_segment_org_template_uses_the_full_key_equality() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_key_template(
+        "through-app",
+        "{org}-{domain}/{entity}/{id}/{field}",
+    ))
+    .expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module.contains("format!(\"{org}-core/person/{id}/avatar\")"),
+        "the configured template is the rendered key:\n{module}"
+    );
+    assert!(
+        !module.contains("const KEY_PREFIX_FORMAT"),
+        "`{{org}}-{{domain}}` is not a checkable segment prefix — a `\"{{org}}/\"` \
+         guard would 404 every legitimate key:\n{module}"
+    );
+    assert_eq!(
+        module.matches(MEDIA_KEY_EXACT_CHECK).count(),
+        2,
+        "display AND remove guard the full key:\n{module}"
+    );
+    assert_key_guard(
+        module,
+        "pub async fn display(",
+        ".display_urls(",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+    assert_key_guard(
+        module,
+        "pub async fn remove(",
+        ".delete(&key)",
+        MEDIA_KEY_EXACT_CHECK,
+    );
+}
+
 async fn run_domain_types_dto(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<GeneratedFile> {
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
     let out = tempfile::tempdir().expect("out dir");
