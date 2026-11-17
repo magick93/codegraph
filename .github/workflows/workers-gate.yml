@@ -33,7 +33,11 @@ env:
 
 jobs:
   workers-gate:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 (resolute), whose archive no longer
+    # ships the `libxml2` the hurl .deb depends on ("not installable") — the
+    # proven recipe in ci.yml's `test-ops-integration` job runs on 24.04
+    # (noble) for exactly this reason. Nothing else here is runner-specific.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -47,11 +51,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
-      # GitHub release binary — far faster than cargo install.
+      # The .deb recipe from ci.yml's `test-ops-integration` job (proven
+      # there): the release TARBALL nests its binaries under
+      # `hurl-<ver>-x86_64-unknown-linux-gnu/bin/`, so the old
+      # `tar --strip-components=1 -C /usr/local/bin` installed
+      # /usr/local/bin/bin/hurl — off PATH, `hurl: command not found`.
       - name: Install hurl
         run: |
-          curl -sL https://github.com/Orange-OpenSource/hurl/releases/download/7.1.0/hurl-7.1.0-x86_64-unknown-linux-gnu.tar.gz \
-            | sudo tar -xz -C /usr/local/bin --strip-components=1
+          HURL_VERSION=8.1.0
+          curl --silent --location --remote-name \
+            "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get update && sudo apt-get install -y "./hurl_${HURL_VERSION}_amd64.deb"
           hurl --version
       # Pre-pull the CLI (and warm the npm cache) before the gate runs.
       - name: Prefetch Supabase CLI
