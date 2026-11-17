@@ -1,0 +1,15 @@
+package assets
+
+/// The stored media reference (url + mime) — a contained value.
+class MediaReference {
+    String url
+    String mimeType
+}
+
+/// A media-bearing record. `contains` alone makes MediaReference a value
+/// object (its rows nest in `asset_photo`); Asset itself is the entity —
+/// the object the media route family addresses.
+class Asset {
+    String name
+    contains MediaReference[0..1] photo
+}

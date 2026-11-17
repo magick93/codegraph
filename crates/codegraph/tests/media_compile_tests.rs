@@ -481,6 +481,34 @@ fn main() {
     );
 }
 
+/// Issue #695 Stage 1's first finding, pinned node-free: the SigV4 canonical
+/// URI must keep OBJECT-KEY SLASHES LITERAL. The adapter encoded them
+/// (`uri_encode(key, true)` → `%2F`), which R2 tolerates and a server that
+/// actually verifies the credential scope (RustFS, real S3) rejects with
+/// `403 SignatureDoesNotMatch` — every put/get/presign failed against RustFS
+/// until the runtime gate (`media_runtime_tests`) caught it. The KAT above
+/// cannot see this (its path is one segment); this pin is the string tripwire
+/// and the runtime gate owns the behaviour.
+#[tokio::test]
+async fn r2_adapter_keeps_object_key_separators_in_the_canonical_uri() {
+    let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
+    let files = emit_media_plane(&config).await;
+    let r2_rs = files.get("r2").expect("r2 adapter emitted");
+    let separator_safe =
+        "canonical_uri: format!(\"/{}/{}\", self.bucket, crate::media::encode_key(key))";
+    assert_eq!(
+        r2_rs.matches(separator_safe).count(),
+        2,
+        "BOTH the header-signed path (`s3_request`) and the presigned path must build a \
+         path-style canonical URI with literal key separators:\n{r2_rs}"
+    );
+    assert!(
+        !r2_rs.contains("canonical_uri: format!(\"/{}/{}\", self.bucket, uri_encode"),
+        "the canonical URI must not percent-encode `/` in the object key (403 \
+         SignatureDoesNotMatch on any store that verifies the scope):\n{r2_rs}"
+    );
+}
+
 /// Teeth (à la #550): the pin must reject a broken trait signature — a
 /// renamed method makes the noop impl fail to compile.
 #[tokio::test]

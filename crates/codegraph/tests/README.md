@@ -7,7 +7,8 @@ Layered test suite for the codegraph generator. CI lanes:
 - **`test-ops-integration`** — the `--ignored` tests (real Postgres:
   ops harness, hooks runtime pin, worker wasm32 gate, wrapper compile
   gate).
-- **Nightly** — live-app gates (`review_api_suite`, `ifml_codegen_gate`).
+- **Nightly** — live-app gates (`review_api_suite`, `ifml_codegen_gate`,
+  `child_tenant_contract_tests`, `media_runtime_tests`).
 
 Local full-suite runs MUST mirror CI's `RUSTFLAGS: -C debuginfo=0`:
 `RUSTFLAGS="-C debuginfo=0" cargo test --workspace` (see AGENTS.md
