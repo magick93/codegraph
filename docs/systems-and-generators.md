@@ -743,8 +743,8 @@ consumed by the generated testkit (`codegraph-ops` harness). Values support
 | `ui_dir` | path | `{output_dir}/ui` | UI dir override (monorepo sync). |
 | `api_version` | string | `"v1"` | Route prefix. |
 | `servers.api_port` / `ui_port` / `bind_addr` | int/int/string | `3000`/`5173`/`0.0.0.0` | Server ports/bind. |
-| `database.api` / `.e2e` / `.e2e_app` | table | api required | Postgres targets: `{host, port, user, password, database, reset_sql, seed_sql, grant_role, grant_strict}`. |
-| `supabase.dir` / `.health_url` / `.anon_key` / `.service_key` / `.jwt_secret` | — | — | Local Supabase stack (required for `e2e`). |
+| `database.api` / `.e2e` / `.e2e_app` | table | api required | **Supabase-postgres** targets: `{host, port, user, password, database, reset_sql, seed_sql, grant_role, grant_strict}`. `api` is the same Supabase-provisioned database as `e2e` — the generated migrations need the image's `auth` schema, so plain `postgres:<n>` is not a supported target (issue #640). |
+| `supabase.dir` / `.health_url` / `.anon_key` / `.service_key` / `.jwt_secret` | — | — | Local Supabase stack (required for `api` AND `e2e`: `run_api` starts it before any DB-touching stage and fails fast when the section is absent). |
 | `capabilities.has_cli` / `.has_ui` / `.has_admin_cli` / `.has_grpc` / `.database_target` / `.persistence_provider` | — | false…/`postgres`/`sea_orm` | Which suites/steps run (mirrors profile). |
 | `hurl.dir` / `.skip` / `.org_id_a` / `.org_id_b` / `.limited_key` | — | `hurl`/`[]`/`…0001`/`…0002`/`false` | hurl contract-test config (+ read-only key for scope-denial tests). |
 | `smoke.entity` / `.route` / `.create_body` | string | — | Entity exercised by the api suite's curl CRUD checks. |
