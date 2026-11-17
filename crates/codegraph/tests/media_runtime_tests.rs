@@ -651,9 +651,14 @@ async fn media_plane_end_to_end_over_rustfs() {
         route_module.contains("pub async fn upload"),
         "the fixture must emit the through-app upload handler"
     );
-    // The #707 object-key guard (PR #717) — detected from the EMITTED module,
-    // never assumed: the pre-#707 handler signs/deletes ANY stored key.
-    let key_guard = route_module.contains("const KEY_PREFIX_FORMAT");
+    // The #707 object-key guard belongs to the emitted handler (#717, merged
+    // before this gate landed). Assert it is there rather than detecting it:
+    // a gate that silently degrades when the guard disappears is a gate that
+    // cannot fail, which is the class #708 exists to kill.
+    assert!(
+        route_module.contains("const KEY_PREFIX_FORMAT"),
+        "the emitted media route must carry the #707 object-key guard — without it \n         display/remove sign and delete ANY stored key"
+    );
 
     let db = ScratchDb::create()
         .await
@@ -712,7 +717,7 @@ async fn media_plane_end_to_end_over_rustfs() {
     let base = format!("http://127.0.0.1:{}", server.port);
     println!("gate: app booted on {base}");
 
-    run_legs(&base, &target, &rustfs, &key_a, &key_b, key_guard).await;
+    run_legs(&base, &target, &rustfs, &key_a, &key_b).await;
 
     // ── Cleanup (explicit; ScratchDb/RustFs also guard the panic path) ──
     drop(server);
@@ -732,14 +737,7 @@ async fn media_plane_end_to_end_over_rustfs() {
 }
 
 /// The legs. Kept out of the test body so setup/teardown stay readable.
-async fn run_legs(
-    base: &str,
-    target: &PgTarget,
-    rustfs: &RustFs,
-    key_a: &str,
-    key_b: &str,
-    key_guard: bool,
-) {
+async fn run_legs(base: &str, target: &PgTarget, rustfs: &RustFs, key_a: &str, key_b: &str) {
     // Payloads: distinct bytes so "the object is the NEW bytes" is provable.
     let payload_a = b"\x89PNG\r\n\x1a\nmedia-runtime gate payload A".to_vec();
     let payload_b = b"\x89PNG\r\n\x1a\nmedia-runtime gate payload B (overwrite)".to_vec();
@@ -969,69 +967,39 @@ async fn run_legs(
     let d = remove(base, PARENT_B2, key_b, "cross-poisoned-remove");
     let d = (d.status, d.text());
 
-    if key_guard {
-        assert_eq!(
-            r.0, 404,
-            "display of a reference pointing outside the session org's key prefix must 404 \
-             (never 403, never a signed foreign URL): {}",
-            r.1
-        );
-        assert_eq!(
-            d.0, 404,
-            "remove of a reference pointing outside the session org's key prefix must 404: {}",
-            d.1
-        );
-        // The guard runs BEFORE the storage/row work, so BOTH A's object and
-        // B's (poisoned) row survive.
-        let (status, bytes) = rustfs.get_object(&key_a_obj).expect("bucket read");
-        assert_eq!(
-            status, 200,
-            "org A's object survives the poisoned-reference attempts"
-        );
-        assert_eq!(bytes, payload_a, "org A's bytes are unchanged");
-        let rows = media_rows(target, PARENT_B2).await;
-        assert_rows(
-            &rows,
-            &format!("1|{key_a_obj}|image/png|{ORG_B}"),
-            "the refused remove must not delete the child row",
-        );
-        println!("leg 5c poisoned reference: display/remove 404; A's object + B's row intact");
-    } else {
-        // PRE-#707 base (PR #717 not merged here). The hole is REAL and this
-        // arm records it instead of asserting it as correct: `display` signs
-        // A's key for B, and `remove` deletes A's bytes. Deleting this arm is
-        // not enough — see the issue report; the 404 arm above takes over the
-        // moment the guard emits.
-        eprintln!(
-            "KNOWN GAP (#707, PR #717 not in this base): display={} remove={} for org B's row \
-             naming org A's key — the emitted handler carries no KEY_PREFIX_FORMAT guard",
-            r.0, d.0
-        );
-        let (status, _) = rustfs.get_object(&key_a_obj).expect("bucket read");
-        eprintln!(
-            "KNOWN GAP: org A's object after the attempts: {status} (pre-#707 remove deletes it)"
-        );
-        // Restore A's row + object so the remaining legs stay meaningful and
-        // the gate's other assertions are not poisoned by this one.
-        let (status, _) = rustfs.get_object(&key_a_obj).expect("bucket read");
-        if status != 200 {
-            let r = upload(
-                base,
-                PARENT_A,
-                key_a,
-                &file_a,
-                "image/png",
-                "upload-a-restore",
-            );
-            assert_eq!(r.status, 200, "restore org A's object: {}", r.text());
-        }
-        psql_exec(
-            target,
-            &format!("DELETE FROM {CHILD_TABLE} WHERE asset_id = '{PARENT_B2}';"),
-        )
-        .await
-        .expect("clear the poisoned row");
-    }
+    assert_eq!(
+        r.0, 404,
+        "display of a reference pointing outside the session org's key prefix must 404 \
+         (never 403, never a signed foreign URL): {}",
+        r.1
+    );
+    assert_eq!(
+        d.0, 404,
+        "remove of a reference pointing outside the session org's key prefix must 404: {}",
+        d.1
+    );
+    // The guard runs BEFORE the storage/row work, so BOTH A's object and
+    // B's (poisoned) row survive.
+    let (status, bytes) = rustfs.get_object(&key_a_obj).expect("bucket read");
+    assert_eq!(
+        status, 200,
+        "org A's object survives the poisoned-reference attempts"
+    );
+    assert_eq!(bytes, payload_a, "org A's bytes are unchanged");
+    let rows = media_rows(target, PARENT_B2).await;
+    assert_rows(
+        &rows,
+        &format!("1|{key_a_obj}|image/png|{ORG_B}"),
+        "the refused remove must not delete the child row",
+    );
+    // Clean up B's poisoned row so the remaining legs start from a known state.
+    psql_exec(
+        target,
+        &format!("DELETE FROM {CHILD_TABLE} WHERE asset_id = '{PARENT_B2}';"),
+    )
+    .await
+    .expect("clear the poisoned row");
+    println!("leg 5c poisoned reference: display/remove 404; A's object + B's row intact");
 
     // ── LEG 6 — 413 / 415 against the corrected contract (#691) ────────
     //
