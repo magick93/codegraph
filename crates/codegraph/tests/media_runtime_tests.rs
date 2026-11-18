@@ -89,6 +89,30 @@ const ENTITY_PATH: &str = "/api/v1/assets/asset";
 /// The generated route module (the #707 guard's home).
 const ROUTE_MODULE: &str = "src/api/assets/media_asset_photo.rs";
 
+// ── Issue #722: the nested (child) media fixture ────────────────────────
+//
+// A root `Person` and a CHILD `Contact` (`refers Person`, media `avatar`).
+// `router.tera` mounts the child's media routes as
+// `/api/v1/assets/persons/{person_id}/contacts/{contact_id}/avatar`; the
+// handlers must extract the ancestor tuple and prove the row belongs to the
+// URL parent — a flat `Path<Uuid>` answered 400 and an extractor without the
+// ownership predicate was an IDOR.
+
+/// `assets.person` / `assets.contact` / the child media table.
+const PERSON_TABLE: &str = "assets.person";
+const CONTACT_TABLE: &str = "assets.contact";
+const CONTACT_CHILD_TABLE: &str = "assets.contact_avatar";
+/// The generated child media route module.
+const NESTED_ROUTE_MODULE: &str = "src/api/assets/media_contact_avatar.rs";
+/// Org A's root record + a second root (the link-mismatch probe).
+const PERSON_A1: &str = "aaaaaaaa-0000-4000-8000-000000000011";
+const PERSON_A2: &str = "aaaaaaaa-0000-4000-8000-000000000012";
+/// Org A's contact, linked to [`PERSON_A1`].
+const CONTACT_A1: &str = "aaaaaaaa-0000-4000-8000-000000000021";
+/// Org B's root record + contact (the own-tenant leg).
+const PERSON_B: &str = "bbbbbbbb-0000-4000-8000-000000000011";
+const CONTACT_B: &str = "bbbbbbbb-0000-4000-8000-000000000021";
+
 /// RustFS: one container, S3 API on 9000, default credentials, `us-east-1`.
 /// Pinned by DIGEST, not a mutable tag: a nightly gate must exercise the
 /// store that was actually validated (the digest below is the image this
@@ -558,6 +582,77 @@ fn write_bytes(name: &str, bytes: &[u8]) -> PathBuf {
     path
 }
 
+// ── Issue #722: nested route helpers ────────────────────────────────────
+
+/// The router's nested child media path (`.nest("/{person_id}/contacts", …)`).
+fn nested_url(base: &str, person: &str, contact: &str) -> String {
+    format!("{base}/api/v1/assets/persons/{person}/contacts/{contact}/avatar")
+}
+
+fn nested_upload(
+    base: &str,
+    person: &str,
+    contact: &str,
+    key: &str,
+    bytes: &Path,
+    mime: &str,
+    tag: &str,
+) -> HttpResponse {
+    http(
+        &nested_url(base, person, contact),
+        &[
+            "-X".to_string(),
+            "PUT".to_string(),
+            "-H".to_string(),
+            bearer(key),
+            "-F".to_string(),
+            format!("file=@{};type={mime}", bytes.display()),
+        ],
+        tag,
+    )
+    .expect("nested upload request must run")
+}
+
+fn nested_display(base: &str, person: &str, contact: &str, key: &str, tag: &str) -> HttpResponse {
+    http(
+        &nested_url(base, person, contact),
+        &["-H".to_string(), bearer(key)],
+        tag,
+    )
+    .expect("nested display request must run")
+}
+
+fn nested_remove(base: &str, person: &str, contact: &str, key: &str, tag: &str) -> HttpResponse {
+    http(
+        &nested_url(base, person, contact),
+        &[
+            "-X".to_string(),
+            "DELETE".to_string(),
+            "-H".to_string(),
+            bearer(key),
+        ],
+        tag,
+    )
+    .expect("nested remove request must run")
+}
+
+/// `count|url|mime|tenant` for one contact's media rows.
+async fn contact_media_rows(target: &PgTarget, contact: &str) -> String {
+    psql_query(
+        target,
+        &format!(
+            "SELECT count(*)::text || '|' || coalesce(max(url), '') || '|' || \
+             coalesce(max(mime_type), '') || '|' || \
+             coalesce(max(platform_organization_id::text), '') \
+             FROM {CONTACT_CHILD_TABLE} WHERE contact_id = '{contact}';"
+        ),
+    )
+    .await
+    .expect("contact media row probe")
+    .trim()
+    .to_string()
+}
+
 // ── Postgres probes ─────────────────────────────────────────────────────
 
 /// `count|url|mime|tenant` for one parent's media rows — the psql side of
@@ -598,6 +693,33 @@ async fn insert_parent(target: &PgTarget, id: &str, org: &str, name: &str) {
     )
     .await
     .expect("insert parent row");
+}
+
+/// A root `Person` row (issue #722's nested anchor).
+async fn insert_person(target: &PgTarget, id: &str, org: &str, name: &str) {
+    psql_exec(
+        target,
+        &format!(
+            "INSERT INTO {PERSON_TABLE} (id, platform_organization_id, name) \
+             VALUES ('{id}', '{org}', '{name}');"
+        ),
+    )
+    .await
+    .expect("insert person row");
+}
+
+/// A `Contact` row owned by `person` — the nested media route's addressed
+/// record. The FK is what the #722 ownership gate verifies.
+async fn insert_contact(target: &PgTarget, id: &str, org: &str, person: &str, name: &str) {
+    psql_exec(
+        target,
+        &format!(
+            "INSERT INTO {CONTACT_TABLE} (id, platform_organization_id, person_id, name) \
+             VALUES ('{id}', '{org}', '{person}', '{name}');"
+        ),
+    )
+    .await
+    .expect("insert contact row");
 }
 
 /// Another organization's `sk_…` key (`public.create_api_key` is the
@@ -684,15 +806,36 @@ async fn media_plane_end_to_end_over_rustfs() {
         "the emitted media route must carry the #707 object-key guard — without it \n         display/remove sign and delete ANY stored key"
     );
 
+    // Issue #722: the CHILD media module must extract the ancestor tuple and
+    // gate ownership. Asserted before boot so a template regression fails
+    // with the root cause, not as a 400/IDOR in a leg.
+    let nested_route_module = fs::read_to_string(app_dir.join(NESTED_ROUTE_MODULE))
+        .expect("the child media route module must emit");
+    assert!(
+        nested_route_module.contains("Path((parent_id, id)): Path<(Uuid, Uuid)>,"),
+        "the child media handler must extract the ancestor tuple (a flat Path<Uuid> is the \
+         #722 400):\n{nested_route_module}"
+    );
+    assert!(
+        nested_route_module.contains("crate::media::session::parent_exists_linked("),
+        "the child media handler must gate ownership through the link column:\n{nested_route_module}"
+    );
+    assert!(
+        nested_route_module.contains(r#"const PARENT_LINK_COLUMN: &str = "person_id";"#),
+        "the configured parent_ref is the ownership predicate:\n{nested_route_module}"
+    );
+
     let db = ScratchDb::create()
         .await
         .unwrap_or_else(|e| panic!("database: {e}"));
     let target = PgTarget::from_url(&db.db().url()).expect("parse the gate db url");
-    // NO `apply_prelude()`: the Supabase image already ships its reserved
-    // roles (creating them errors with "is a reserved role"), and the
-    // generated `0003_pgmq_setup.sql` installs pgmq + `emit_domain_event`
-    // itself — the tenant-table event triggers the migration band creates
-    // depend on it, so a missing extension fails the parent INSERT below.
+    // NO `apply_prelude()`: the image treats `supabase_realtime_admin` (and
+    // its siblings) as RESERVED roles that only a superuser may create, and
+    // this gate runs as `postgres` (`NOSUPERUSER`) — so the prelude is skipped
+    // deliberately. The generated `0003_pgmq_setup.sql` installs pgmq +
+    // `emit_domain_event` itself — the tenant-table event triggers the
+    // migration band creates depend on it, so a missing extension fails the
+    // parent INSERT below.
     db.db()
         .apply_migrations(&app_dir.join("migrations"))
         .await
@@ -702,6 +845,14 @@ async fn media_plane_end_to_end_over_rustfs() {
     insert_parent(&target, PARENT_A, ORG_A, "A").await;
     insert_parent(&target, PARENT_B, ORG_B, "B").await;
     insert_parent(&target, PARENT_B2, ORG_B, "B2").await;
+    // Issue #722: the nested (child) media records — org A owns a person and
+    // its contact (plus a SECOND person for the link-mismatch probe), org B
+    // owns its own pair.
+    insert_person(&target, PERSON_A1, ORG_A, "A1").await;
+    insert_person(&target, PERSON_A2, ORG_A, "A2").await;
+    insert_contact(&target, CONTACT_A1, ORG_A, PERSON_A1, "A1 contact").await;
+    insert_person(&target, PERSON_B, ORG_B, "B").await;
+    insert_contact(&target, CONTACT_B, ORG_B, PERSON_B, "B contact").await;
     let key_a = create_api_key(&target, ORG_A, "media-gate-a").await;
     let key_b = create_api_key(&target, ORG_B, "media-gate-b").await;
     println!(
@@ -752,6 +903,10 @@ async fn media_plane_end_to_end_over_rustfs() {
     )
     .await;
     run_legs(&base, &target, &rustfs, &key_a, &key_b, &key_scoped_out).await;
+    // Issue #722: the nested (child) media plane — the route the pre-#722
+    // handler answered 400 on, and the ownership predicate that keeps it from
+    // being an IDOR.
+    run_nested_legs(&base, &target, &rustfs, &key_a, &key_b).await;
 
     // ── Cleanup (explicit; ScratchDb/RustFs also guard the panic path) ──
     drop(server);
@@ -1123,4 +1278,204 @@ async fn run_legs(
     assert_eq!(status, 200, "org A's object survives the denied calls");
     assert_eq!(bytes, payload_a, "org A's bytes are unchanged");
     println!("leg 7 scope denial: upload/display/remove 403; row + object intact");
+}
+
+/// Issue #722 — the nested (child-entity) media data path.
+///
+/// The route is the router's own
+/// `/api/v1/assets/persons/{person_id}/contacts/{contact_id}/avatar`. Before
+/// #722 every one of these answered **400** (a flat extractor on a two-param
+/// route); the fix extracts `(parent_id, id)` AND requires the contact row's
+/// `person_id` to equal the URL parent — otherwise a caller could pair its own
+/// person id with another org's contact id (an IDOR).
+async fn run_nested_legs(base: &str, target: &PgTarget, rustfs: &RustFs, key_a: &str, key_b: &str) {
+    let payload_a = b"\x89PNG\r\n\x1a\nnested media payload A".to_vec();
+    let payload_b = b"\x89PNG\r\n\x1a\nnested media payload B".to_vec();
+    let file_a = write_bytes("nested-a.png", &payload_a);
+    let file_b = write_bytes("nested-b.png", &payload_b);
+
+    // ── LEG N1 — upload under the nested route ──────────────────────────
+    let r = nested_upload(
+        base,
+        PERSON_A1,
+        CONTACT_A1,
+        key_a,
+        &file_a,
+        "image/png",
+        "nested-upload-a",
+    );
+    assert_eq!(
+        r.status,
+        200,
+        "a nested upload must succeed (the pre-#722 handler answered 400): {}",
+        r.text()
+    );
+    let key_a_obj = r
+        .json()
+        .get("key")
+        .and_then(|k| k.as_str())
+        .expect("the upload response carries the object key")
+        .to_string();
+    assert_eq!(
+        key_a_obj,
+        format!("{ORG_A}/assets/contact/{CONTACT_A1}/avatar"),
+        "the key renders the CHILD entity + its id under the session org"
+    );
+    let rows = contact_media_rows(target, CONTACT_A1).await;
+    assert_rows(
+        &rows,
+        &format!("1|{key_a_obj}|image/png|{ORG_A}"),
+        "nested upload: one child reference row under the session org",
+    );
+    let (status, bytes) = rustfs.get_object(&key_a_obj).expect("bucket read");
+    assert_eq!(status, 200, "the nested upload lands in the bucket");
+    assert_eq!(bytes, payload_a, "the bucket holds the nested bytes");
+    println!("leg N1 nested upload: 200, row `{rows}`");
+
+    // ── LEG N2 — display: 307 → the signed URL returns the bytes ────────
+    let r = nested_display(base, PERSON_A1, CONTACT_A1, key_a, "nested-display-a");
+    assert_eq!(r.status, 307, "nested display redirects: {}", r.text());
+    let location = r.location.expect("the 307 must carry a Location header");
+    let signed = http(&location, &[], "nested-display-a-signed").expect("signed GET runs");
+    assert_eq!(signed.status, 200, "{}", signed.text());
+    assert_eq!(
+        signed.body, payload_a,
+        "the signed URL serves the nested bytes"
+    );
+    println!("leg N2 nested display: 307 → signed GET 200");
+
+    // ── LEG N3 — remove: row gone AND object gone ───────────────────────
+    let r = nested_remove(base, PERSON_A1, CONTACT_A1, key_a, "nested-remove-a");
+    assert_eq!(r.status, 204, "nested remove answers 204: {}", r.text());
+    let rows = contact_media_rows(target, CONTACT_A1).await;
+    assert_rows(&rows, "0|||", "nested remove: the child row is gone");
+    let (status, _) = rustfs.get_object(&key_a_obj).expect("bucket read");
+    assert_eq!(status, 404, "nested remove: the object is gone");
+    println!("leg N3 nested remove: 204, row + object gone");
+
+    // Re-upload so the cross-tenant legs have something to attack.
+    let r = nested_upload(
+        base,
+        PERSON_A1,
+        CONTACT_A1,
+        key_a,
+        &file_a,
+        "image/png",
+        "nested-upload-a-again",
+    );
+    assert_eq!(r.status, 200, "{}", r.text());
+    let rows = contact_media_rows(target, CONTACT_A1).await;
+    assert_rows(
+        &rows,
+        &format!("1|{key_a_obj}|image/png|{ORG_A}"),
+        "org A owns one nested row before the denials",
+    );
+
+    // ── LEG N4 — cross-tenant: org B's key + org A's ids ⇒ 404 ──────────
+    //
+    // Both the parent gate (session org) and the link predicate must refuse;
+    // the row/object must be untouched. A nested route that only checked the
+    // org of the CHILD row would still leak org A's record to a caller who
+    // guesses the parent id, so all three handlers are exercised.
+    let r = nested_upload(
+        base,
+        PERSON_A1,
+        CONTACT_A1,
+        key_b,
+        &file_b,
+        "image/png",
+        "nested-cross-upload",
+    );
+    assert_eq!(r.status, 404, "org B nested upload must 404: {}", r.text());
+    let r = nested_display(base, PERSON_A1, CONTACT_A1, key_b, "nested-cross-display");
+    assert_eq!(r.status, 404, "org B nested display must 404: {}", r.text());
+    let r = nested_remove(base, PERSON_A1, CONTACT_A1, key_b, "nested-cross-remove");
+    assert_eq!(r.status, 404, "org B nested remove must 404: {}", r.text());
+    let rows = contact_media_rows(target, CONTACT_A1).await;
+    assert_rows(
+        &rows,
+        &format!("1|{key_a_obj}|image/png|{ORG_A}"),
+        "org B's denied nested calls must not touch org A's row",
+    );
+    let (status, bytes) = rustfs.get_object(&key_a_obj).expect("bucket read");
+    assert_eq!(status, 200, "org A's nested object survives");
+    assert_eq!(bytes, payload_a, "org A's nested bytes are unchanged");
+    println!("leg N4 nested cross-tenant: upload/display/remove all 404; A intact");
+
+    // ── LEG N5 — link mismatch: org A's contact under a DIFFERENT parent ─
+    //
+    // This is the IDOR the ownership predicate closes: the id and the session
+    // org are both valid, but `CONTACT_A1` belongs to `PERSON_A1`, not
+    // `PERSON_A2`. The extractor alone would have served the record.
+    for (tag, req) in [
+        (
+            "upload",
+            nested_upload(
+                base,
+                PERSON_A2,
+                CONTACT_A1,
+                key_a,
+                &file_b,
+                "image/png",
+                "nested-mismatch-upload",
+            ),
+        ),
+        (
+            "display",
+            nested_display(
+                base,
+                PERSON_A2,
+                CONTACT_A1,
+                key_a,
+                "nested-mismatch-display",
+            ),
+        ),
+        (
+            "remove",
+            nested_remove(base, PERSON_A2, CONTACT_A1, key_a, "nested-mismatch-remove"),
+        ),
+    ] {
+        assert_eq!(
+            req.status,
+            404,
+            "a contact addressed under the WRONG parent must 404 on {tag}: {}",
+            req.text()
+        );
+    }
+    let rows = contact_media_rows(target, CONTACT_A1).await;
+    assert_rows(
+        &rows,
+        &format!("1|{key_a_obj}|image/png|{ORG_A}"),
+        "the link-mismatch denials must not touch the row",
+    );
+    let (status, bytes) = rustfs.get_object(&key_a_obj).expect("bucket read");
+    assert_eq!(status, 200);
+    assert_eq!(
+        bytes, payload_a,
+        "the link-mismatch denials must not rewrite the object"
+    );
+    println!("leg N5 nested link mismatch: upload/display/remove all 404; row + object intact");
+
+    // ── LEG N6 — org B's OWN nested record still works ──────────────────
+    let r = nested_upload(
+        base,
+        PERSON_B,
+        CONTACT_B,
+        key_b,
+        &file_b,
+        "image/png",
+        "nested-b-own-upload",
+    );
+    assert_eq!(r.status, 200, "org B's own nested upload: {}", r.text());
+    let key_b_obj = format!("{ORG_B}/assets/contact/{CONTACT_B}/avatar");
+    let rows_b = contact_media_rows(target, CONTACT_B).await;
+    assert_rows(
+        &rows_b,
+        &format!("1|{key_b_obj}|image/png|{ORG_B}"),
+        "org B's nested upload lands under its own org + key",
+    );
+    let (status, bytes_b) = rustfs.get_object(&key_b_obj).expect("bucket read");
+    assert_eq!(status, 200);
+    assert_eq!(bytes_b, payload_b);
+    println!("leg N6 nested own-tenant: B scoped to its own contact key");
 }

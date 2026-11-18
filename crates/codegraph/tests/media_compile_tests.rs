@@ -26,6 +26,11 @@
 //!   API, the bin-crate module declaration) — compiles in isolation
 //!   against the REAL storage trait + `scaffold/error.tera`. Only the two
 //!   trivial AppState/middleware slots are hand-stubbed.
+//!   Issue #704 rides the same scratch tree: `src/openapi_probe.rs` carries
+//!   the `#[derive(utoipa::OpenApi)]` registration the openapi templates
+//!   emit for the module (paths + the presigned `PresignRequest` schema),
+//!   so the registration is COMPILED, not merely text-pinned. The full
+//!   per-domain document still needs the app crate (every handler + DTO).
 //!
 //! Teeth are validated per repo discipline (à la #550): break the trait
 //! signature in `templates/media/mod.tera`, this pin must fail; revert.
@@ -204,12 +209,117 @@ async fn ingest_model(db: &(impl GraphIngestor + GraphQuerier)) {
     .expect("references edge");
 }
 
+/// Issue #722: a ROOT (`PersonType`) + a CHILD (`ContactType`) whose media
+/// field is mounted nested — the shape whose handler must extract the
+/// ancestor tuple.
+async fn ingest_parent_and_child(db: &(impl GraphIngestor + GraphQuerier)) {
+    ingest_model(db).await;
+    db.ingest_schema(&schema(
+        "ContactType",
+        "ContactType",
+        "entity",
+        "contact",
+        true,
+    ))
+    .await
+    .expect("contact schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("ContactType", "ContactType", &p)
+            .await
+            .expect("contact property");
+    }
+    db.ingest_edge(
+        "avatar::ContactType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("contact references edge");
+}
+
+/// Issue #722 review: a GRANDCHILD media entity under `ContactType` — the
+/// depth-2 fixture the extractor and the nested session module need in the
+/// graph.
+async fn ingest_grandchild(db: &(impl GraphIngestor + GraphQuerier)) {
+    ingest_parent_and_child(db).await;
+    db.ingest_schema(&schema(
+        "AddressType",
+        "AddressType",
+        "entity",
+        "address",
+        true,
+    ))
+    .await
+    .expect("address schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("AddressType", "AddressType", &p)
+            .await
+            .expect("address property");
+    }
+    db.ingest_edge(
+        "avatar::AddressType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("address references edge");
+}
+
+/// The nested counterpart of [`r2_toml`] (issue #722): a child entity mounted
+/// under its configured parent, through-app so the multipart handler compiles.
+fn r2_nested_toml() -> String {
+    format!(
+        "{}\n[domains.core.entity_config.ContactType]\n\
+         role = \"child\"\nparent = \"PersonType\"\nparent_ref = \"person_id\"\n\
+         path_segment = \"contacts\"\n",
+        r2_toml()
+    )
+}
+
+/// The depth-2 counterpart (issue #722 review): `AddressType` nests under
+/// `ContactType`, which nests under `PersonType`.
+fn r2_grandchild_toml() -> String {
+    format!(
+        "{}\n[domains.core.entity_config.AddressType]\n\
+         role = \"child\"\nparent = \"ContactType\"\nparent_ref = \"contact_id\"\n\
+         path_segment = \"addresses\"\n",
+        r2_nested_toml()
+    )
+}
+
 /// Emit the plane for `config` into a temp dir and return (name, content)
 /// keyed by file stem — `mod`, `noop`, `http`, and the adapter.
 async fn emit_media_plane(config: &DomainConfig) -> BTreeMap<String, String> {
+    emit_media_plane_for(config, 0).await
+}
+
+/// Issue #722: the nested fixtures need the parent chain in the graph so the
+/// session module renders its `parent_exists_linked` branch. `depth` is the
+/// number of ancestors above the media-bearing entity (0 = root).
+async fn emit_media_plane_for(config: &DomainConfig, depth: usize) -> BTreeMap<String, String> {
     let out = tempfile::tempdir().expect("emission dir");
     let engine = GrafeoEngine::in_memory().expect("engine");
-    ingest_model(&engine).await;
+    match depth {
+        0 => ingest_model(&engine).await,
+        1 => ingest_parent_and_child(&engine).await,
+        _ => ingest_grandchild(&engine).await,
+    }
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])
         .expect("template engine");
     let generator = MediaStorageGenerator::new(out.path());
@@ -597,18 +707,50 @@ pub struct ApiKeyInfo {
 "#;
 
 /// The app-side module tree the emitted files expect: the media plane, the
-/// error envelope, the two pin stubs, and the route module under
-/// `api::{domain}::…`.
-const PIN_LIB_RS: &str = r#"pub mod api {
-    pub mod core {
-        pub mod media_person_avatar;
-    }
+/// error envelope, the two pin stubs, the route module under
+/// `api::{domain}::…`, and the #704 OpenAPI registration probe.
+fn pin_lib_rs(route_module: &str) -> String {
+    format!(
+        "pub mod api {{\n    pub mod core {{\n        pub mod {route_module};\n    }}\n}}\n\
+         pub mod app_state;\npub mod error;\npub mod media;\npub mod middleware;\n\
+         pub mod openapi_probe;\n"
+    )
 }
-pub mod app_state;
-pub mod error;
-pub mod media;
-pub mod middleware;
-"#;
+
+/// The `#[derive(utoipa::OpenApi)]` probe for issue #704: the registration
+/// `api/openapi_domain.tera` / `api/openapi_all.tera` now emit for a media
+/// module — the media paths plus (presigned only) the `PresignRequest`
+/// schema entry.
+///
+/// The module path comes from the emitted FILE STEM and the handler names from
+/// the emitted MODULE's own handler surface (`pub async fn …`) — the same data
+/// used to place the module in the scratch tree — so the probe can only ever
+/// address the module compiled beside it, and only the fns that module
+/// defines. The multi-template document as a whole still needs the app crate
+/// (every entity's handlers and DTOs); this probe isolates the part #704 adds.
+fn openapi_probe_rs(route_stem: &str, route_rs: &str) -> String {
+    let mut probe = String::from(
+        "//! Issue #704 pin: the OpenAPI registration the openapi templates emit\n\
+         //! for one media module. `cargo check` proves every registered path and\n\
+         //! schema resolves against the REAL emitted module.\n\n\
+         #[derive(utoipa::OpenApi)]\n#[openapi(\n    paths(\n",
+    );
+    for handler in ["presign", "upload", "display", "remove"] {
+        if route_rs.contains(&format!("pub async fn {handler}")) {
+            probe.push_str(&format!(
+                "        crate::api::core::{route_stem}::{handler},\n"
+            ));
+        }
+    }
+    probe.push_str("    ),\n");
+    if route_rs.contains("pub struct PresignRequest") {
+        probe.push_str(&format!(
+            "    components(schemas(\n        crate::api::core::{route_stem}::PresignRequest,\n    )),\n"
+        ));
+    }
+    probe.push_str(")]\npub struct OpenApiProbe;\n");
+    probe
+}
 
 /// #551 pin for the media ROUTE handler (issue #683 part b): the #686
 /// defects (missing `sea_orm::ConnectionTrait`, the pre-2.0 statement API)
@@ -629,21 +771,36 @@ pub mod middleware;
 /// replacing `tx.execute_raw(delete)` with the pre-2.0 `tx.execute(…)` reaches
 /// the compiler and fails with `error[E0308]` on `StatementBuilder` — the
 /// exact #686 class. Reverted; see the test file header.
+///
+/// Issue #704 adds `src/openapi_probe.rs` to the same tree: the
+/// `#[derive(utoipa::OpenApi)]` registration the openapi templates emit for
+/// this module. Teeth: registering a handler the module does not define
+/// (`::bogus`, or `::presign` in through-app mode) fails with E0433/E0425
+/// (`__path_*` not found); a schema entry naming a type the module lacks fails
+/// E0425. Dropping `PresignRequest` from `components(schemas(...))` compiles
+/// fine (utoipa resolves `request_body` from the annotation), so that half is
+/// held by the derived-shape assertion below.
 async fn check_media_route_handler(
     config: &DomainConfig,
+    title: &str,
+    depth: usize,
     label: &str,
     required: &[&str],
     forbidden: &[&str],
 ) {
     let engine = GrafeoEngine::in_memory().expect("engine");
-    ingest_model(&engine).await;
+    match depth {
+        0 => ingest_model(&engine).await,
+        1 => ingest_parent_and_child(&engine).await,
+        _ => ingest_grandchild(&engine).await,
+    }
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[])
         .expect("template engine");
     let project = ProjectConfig::default();
     let out = tempfile::tempdir().expect("emission dir");
     let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
     let routes = generator
-        .generate(&engine, "PersonType", "core", config, &tera, &project)
+        .generate(&engine, title, "core", config, &tera, &project)
         .await
         .expect("media route generation");
     assert_eq!(
@@ -652,8 +809,14 @@ async fn check_media_route_handler(
         "one route module per media field ({label})"
     );
     let route_path = routes[0].path.to_string_lossy().to_string();
+    let route_stem = routes[0]
+        .path
+        .file_stem()
+        .expect("route module stem")
+        .to_string_lossy()
+        .to_string();
     assert!(
-        route_path.ends_with("src/api/core/media_person_avatar.rs"),
+        route_path.ends_with(&format!("src/api/core/{route_stem}.rs")),
         "route module path: {route_path}"
     );
     let route_rs = routes[0].content.clone();
@@ -677,7 +840,7 @@ async fn check_media_route_handler(
     // The real storage plane (trait + noop + native transport + session +
     // r2 adapter) and the real error envelope — only AppState/middleware are
     // stubbed.
-    let media_files = emit_media_plane(config).await;
+    let media_files = emit_media_plane_for(config, depth).await;
     let empty: BTreeMap<String, String> = BTreeMap::new();
     let error_rs = codegraph_generate::render_template_with_project(
         &tera,
@@ -687,15 +850,37 @@ async fn check_media_route_handler(
     )
     .expect("scaffold/error.tera");
 
+    // Issue #704: the registration the openapi templates emit for this module,
+    // compiled beside it (the probe's paths/schema resolve against the REAL
+    // emitted handler fns).
+    let openapi_probe = openapi_probe_rs(&route_stem, &route_rs);
+    // Non-vacuous: every media module exposes display + remove plus exactly one
+    // upload-mode handler, so a probe that registered fewer resolved nothing
+    // and the `cargo check` below would be a false green.
+    let registered = openapi_probe.matches("crate::api::core::").count();
+    assert!(
+        registered >= 3,
+        "{label}: the #704 OpenAPI probe registered {registered} media items — \
+         a media module always exposes display/remove plus one upload handler:\n{openapi_probe}"
+    );
+    // The schema half follows the module's own branch: `PresignRequest` is the
+    // only media type the templates register in `components(schemas(...))`.
+    assert_eq!(
+        openapi_probe.contains("PresignRequest"),
+        route_rs.contains("pub struct PresignRequest"),
+        "{label}: the probe's schema registration must follow the emitted mode:\n{openapi_probe}"
+    );
+
     let mut files: Vec<(String, String)> = vec![
-        ("src/lib.rs".to_string(), PIN_LIB_RS.to_string()),
+        ("src/lib.rs".to_string(), pin_lib_rs(&route_stem)),
         ("src/app_state.rs".to_string(), PIN_APP_STATE_RS.to_string()),
         (
             "src/middleware.rs".to_string(),
             PIN_MIDDLEWARE_RS.to_string(),
         ),
         ("src/error.rs".to_string(), error_rs),
-        ("src/api/core/media_person_avatar.rs".to_string(), route_rs),
+        (format!("src/api/core/{route_stem}.rs"), route_rs),
+        ("src/openapi_probe.rs".to_string(), openapi_probe),
     ];
     for (stem, content) in &media_files {
         files.push((format!("src/media/{stem}.rs"), content.clone()));
@@ -730,6 +915,8 @@ async fn emitted_media_route_handler_compiles_in_isolation() {
     let config: DomainConfig = parse_domain_config_str(&r2_toml()).expect("domains.toml");
     check_media_route_handler(
         &config,
+        "PersonType",
+        0,
         "through_app",
         &[
             "pub async fn upload",
@@ -766,6 +953,8 @@ async fn presigned_media_route_handler_compiles_in_isolation() {
     let config: DomainConfig = parse_domain_config_str(&r2_presigned_toml()).expect("domains.toml");
     check_media_route_handler(
         &config,
+        "PersonType",
+        0,
         "presigned",
         &[
             "pub async fn presign",
@@ -780,6 +969,72 @@ async fn presigned_media_route_handler_compiles_in_isolation() {
             "fn db_err(",
         ],
         &["pub async fn upload"],
+    )
+    .await;
+}
+
+/// Issue #722 review: the depth-2 tuple (`_grandparent_id`) was string-pinned
+/// but never COMPILED — the #551 policy's spirit. Same scratch crate; only the
+/// rendered branch differs.
+#[tokio::test]
+async fn depth_two_media_route_handler_compiles_in_isolation() {
+    let config: DomainConfig =
+        parse_domain_config_str(&r2_grandchild_toml()).expect("domains.toml");
+    check_media_route_handler(
+        &config,
+        "AddressType",
+        2,
+        "depth_two_through_app",
+        &[
+            "pub async fn upload",
+            "Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,",
+            r#"const PARENT_LINK_COLUMN: &str = "contact_id";"#,
+            "crate::media::session::parent_exists_linked(",
+            "crate::media::session::begin_scoped(",
+            "fn db_err(",
+        ],
+        &[
+            "pub async fn presign",
+            "Path(id): Path<Uuid>,",
+            "crate::media::session::parent_exists(",
+        ],
+    )
+    .await;
+}
+
+/// Issue #722: the NESTED branch of `api/media_route.tera` — the ancestor
+/// tuple extractor, `PARENT_LINK_COLUMN`, and the `parent_exists_linked`
+/// ownership gate — was never compiled by any pin (every existing leg is a
+/// root entity). This leg renders the child module AND the nested session
+/// module and `cargo check`s them together, so the #551 policy covers the
+/// branch the #722 fix adds.
+#[tokio::test]
+async fn nested_media_route_handler_compiles_in_isolation() {
+    let config: DomainConfig = parse_domain_config_str(&r2_nested_toml()).expect("domains.toml");
+    check_media_route_handler(
+        &config,
+        "ContactType",
+        1,
+        "nested_through_app",
+        &[
+            "pub async fn upload",
+            "pub async fn display",
+            "pub async fn remove",
+            // The depth-1 extractor (the #722 400 defect was a flat
+            // `Path<Uuid>` on a two-param route).
+            "Path((parent_id, id)): Path<(Uuid, Uuid)>,",
+            // The ownership predicate's column, from config `parent_ref`.
+            r#"const PARENT_LINK_COLUMN: &str = "person_id";"#,
+            // The nested gate, not the existence-only one.
+            "crate::media::session::parent_exists_linked(",
+            "crate::media::session::begin_scoped(",
+            "fn db_err(",
+        ],
+        &[
+            "pub async fn presign",
+            "Path(id): Path<Uuid>,",
+            "crate::media::session::parent_exists(",
+        ],
     )
     .await;
 }

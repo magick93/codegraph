@@ -2036,7 +2036,15 @@ the proven #573 IFML pattern:
   has no webServer block; the gate owns the process and points
   `PUBLIC_SVELTEKIT_URL` at it; the json reporter rides
   `PLAYWRIGHT_JSON_OUTPUT_NAME` via `--reporter=json` since the emitted
-  config carries no reporter). The UI-driven families (`generated/**`,
+  config carries no reporter). The preview bind is PINNED to
+  `127.0.0.1` (`--host 127.0.0.1`, issue #740: bare `vite preview` binds
+  `localhost`, and a runner resolving that to `::1` first leaves an
+  IPv6-only listener the IPv4 readiness probe can never reach) and the
+  readiness probe's own `curl` stderr rides the "not ready within 60s"
+  error, so a refused connection reads differently from a hang — which is
+  why the probe is `curl -sSf` and not `-sf`: `-s` alone suppresses curl's
+  error text too, leaving the splice empty for every failure mode. The
+  UI-driven families (`generated/**`,
   `webhooks`, journeys) need the Supabase persona stack (GoTrue + BaseJump
   orgs in the global-setup) and stay the consumer `testkit e2e` lane's
   job — their file paths are still held to the coverage invariant.
@@ -2065,18 +2073,59 @@ worse: the gate that was meant to catch it **could not fail**.
   status was discarded (`let _ = check_ok;`), `src/lib/forms/**` was not in
   the asserted set, and no workflow ran it. Repaired: path-attributed
   diagnostics parsed into (path, line, column, severity), the parsed error
-  count RECONCILED against svelte-check's own summary line + exit status
-  (shape drift is a hard failure, never a silent zero), an unattributed
-  `Error:` line is fatal, attribution is fail-CLOSED (everything under
-  `ui/src` unless listed consumer/gate-owned), consumer diagnostics are
-  printed + written to `target/entity-gate/consumer-diagnostics.txt`, and
-  a shrink-only `KNOWN_DEFECTS` ledger makes pre-existing debt enumerable
-  (an entry matching nothing FAILS, so the ledger cannot rot). Nightly
-  workflow `.github/workflows/entity-gate.yml` (04:00 UTC, supabase
-  postgres, chromium, `--test-threads=1` — both tests regenerate the same
-  fixture in place).
-  **Unfixed tree: 190 generated-path errors** it had been hiding;
+  count RECONCILED against svelte-check's own summary + exit status (shape
+  drift is a hard failure, never a silent zero), attribution is fail-CLOSED
+  (everything under `ui/src` unless listed consumer/gate-owned), consumer
+  diagnostics are printed + written to
+  `target/entity-gate/consumer-diagnostics.txt`, and a shrink-only
+  `KNOWN_DEFECTS` ledger makes pre-existing debt enumerable (an entry
+  matching nothing FAILS, so the ledger cannot rot). Nightly workflow
+  `.github/workflows/entity-gate.yml` (04:00 UTC, supabase postgres,
+  chromium, `--test-threads=1` — both tests regenerate the same fixture in
+  place). **Unfixed tree: 190 generated-path errors** it had been hiding;
   **after the sweep: 1 documented** (gap G1 below).
+- **The parser reads svelte-check's MACHINE format (issue #728).** The
+  #634 parser still stripped the human shape (`path:line:col`,
+  `Error:`/`Warn:`, the `svelte-check found N errors …` summary) — and CI
+  colourises all of it, so every `strip_prefix` missed: the attribution set
+  came back empty, the summary `None`, and the gate died on its own
+  reconciliation check while reporting the summary was missing (it had been
+  printed as `\x1b[31msvelte-check found 10 errors and 254 warnings …`),
+  masking ten real diagnostics. `NodeProject::run_check_machine` now runs
+  `--output machine-verbose` (ndjson, no colour) and
+  `parse_svelte_check_machine` consumes it: `START "<workspace>"`
+  (diagnostic filenames are workspace-RELATIVE and are resolved against it
+  before `ui_relative`/`consumer_owned` — skipping that silently degrades
+  attribution to "everything is consumer-owned"), `{"type":"ERROR"|
+  "WARNING","filename"|"fn",start,end,message,code,source}` ndjson records
+  (positions are LSP-zero-based; emitted one-based like the human print),
+  `COMPLETED <n> FILES <n> ERRORS <n> WARNINGS <n> FILES_WITH_PROBLEMS`
+  (counts read BY LABEL, never by index), and `FAILURE "<message>"`. A
+  `FAILURE` record, a missing `COMPLETED`, an unrecognised record type, a
+  truncated record, and a diagnostic with no resolvable filename are each a
+  HARD parser error — the silent-zero class must not come back. Because
+  attribution is a lexical `strip_prefix(ui_dir())` while `START` is the
+  svelte-check process CWD (physical) and `ui_dir()` is
+  `CARGO_MANIFEST_DIR`-derived (logical), the gate also canonicalizes both
+  and HARD-errors when the workspace does not contain the ui dir — a
+  symlinked checkout would otherwise bucket every diagnostic as
+  consumer-owned while the counts still reconciled (fail-open, the same
+  blindness one level out). `run_check` stays the human entry point (the
+  IFML gate's two call sites are exit-status-only; its T1 still carries a
+  legacy `contains("Error:")` count, marked `TODO(#728)` as dead weight —
+  the `panic!` on exit status precedes it). Pins (node-free, PR CI):
+  `machine_report_attributes_each_record_to_the_start_workspace`,
+  `reconciliation_fires_when_the_records_disagree_with_the_completed_summary`,
+  `parser_refuses_{a_failure_record_and_names_its_message,
+  a_report_without_a_completed_record, a_truncated_record_line,
+  an_unrecognised_record_type, a_diagnostic_without_a_filename,
+  a_diagnostic_that_precedes_the_start_record}`,
+  `parser_accepts_the_filename_and_the_legacy_fn_key`,
+  `completed_counts_are_read_by_label_not_by_position`,
+  `zero_diagnostic_report_parses_as_empty`,
+  `workspace_guard_{requires_the_start_root_to_contain_the_ui_dir,
+  reads_the_start_record_it_checks}`, and the pre-existing
+  `generated_paths_are_fail_closed_and_consumer_paths_are_recorded`.
 - **Class 1 (`imported-but-unemitted export`)**: `list_page.tera` imported
   `deleteItem` whenever ux was on; the module emits it only for
   `ux_delete && has_delete` — an entity with list/read/update and no delete
@@ -2134,7 +2183,10 @@ worse: the gate that was meant to catch it **could not fail**.
   (6 — incl. the structural **parity pin**: every emitted
   `./data.remote` named import must be a sibling-module export AND every
   `.refresh()` target must be a module export) + `cargo test -p codegraph
-  --test entity_codegen_gate` (4 node-free parser/attribution pins) +
+  --test entity_codegen_gate` (14 node-free pins: the machine-format
+  parser + reconciliation cases, the `START`/ui-dir containment guard,
+  and the pre-existing `generated_paths_are_fail_closed_…` attribution
+  pin) +
   `-- --ignored --test-threads=1` (nightly, both lane tests) +
   `entity_form_tests` (3) + `cargo test -p codegraph-generate --lib -- ui::remote ui::page`.
 - Deferred / gaps (`docs/tdd/entity-kit-sweep.tdd.md`): G1
@@ -2554,9 +2606,37 @@ that cannot parse as `Path<Uuid>`. The contract is now
 (`MEDIA_CONTRACT_MISSING_ID`) and two PROVIDER-FREE legs: no credentials →
 401, valid key + a missing parent → 404 (never 403, and addressed through
 the GET display route so no multipart extractor answers first). The utoipa
-`path` uses `project.api_version` too, but media handlers are still NOT
-registered in any OpenAPI `paths(...)` — the annotation is inert today
-(#704). Rejections answer the statuses the utoipa block already published —
+`path` uses `project.api_version` too, and **#704 registers the handlers in
+the served documents**: `OpenApiEntity.media_fields` +
+`media_mode_presigned` are filled at BOTH construction sites (the
+config-`entities` loop and the unlisted generation-order loop) from the
+ROUTER's own `media_route_surface` + `media_upload_mode`, and
+`api/openapi_domain.tera` + `api/openapi_all.tera` register
+`media_{module}_{field}::{presign|upload, display, remove}` per field —
+presign for `presigned`, the multipart upload for `through-app` (which
+documents NO `request_body`: there is deliberately no `ToSchema` for a
+`Multipart` body), plus `::PresignRequest` in `components(schemas(...))`
+for presigned only. `client-direct` registers nothing (the surface is
+empty). Nested children register too — the path nests via the annotation,
+not via a root-only gate. Pins:
+`openapi_registers_the_through_app_media_paths`,
+`openapi_registers_the_presigned_media_paths_and_request_schema`,
+`openapi_documents_no_media_path_for_client_direct`,
+`openapi_registers_a_nested_child_media_module`, and the DRIFT pin
+`openapi_media_registration_tracks_the_emitted_media_modules` (the
+expected list is derived from the emitted `media_*.rs` modules' own
+`pub async fn` surface, so a module/handler rename cannot desync the two
+planes). The registration SHAPE is also COMPILED: `media_compile_tests`'s
+route-handler legs carry a `src/openapi_probe.rs` — a
+`#[derive(utoipa::OpenApi)]` over the REAL emitted module — with the
+module stem and handler names derived from that module (see the #551
+table row). That probe mirrors the templates' registration rather than
+consuming their output, so the two halves are split on purpose: the
+DRIFT pin holds the text contract (a template that names the wrong
+handler fails there — proved by mutation), the probe holds
+resolvability, and the document the templates actually emit is compiled
+by `media_runtime_tests`, which builds and boots the generated app.
+Rejections answer the statuses the utoipa block already published —
 413 (`AppError::payload_too_large`) and 415
 (`AppError::unsupported_media_type`); a malformed multipart body stays 400.
 Pins: `media_hurl_contract_url_matches_the_router_route` /
@@ -2610,9 +2690,9 @@ in it), naming the configured parent and/or the candidate considered — never
 a silent flat contract, and never a nested path under a parent the router
 never mounted. A child media field emits
 `/api/{version}/{domain}/{parent_segment}/{parent_id}/{child_segment}/{id}/{field}`
-and the utoipa `params(...)` documents the ancestor ids. Nested contracts are
-NOT live until #722 (the handlers extract `Path<Uuid>`; a two-param route
-answers 400 — the emitted file says so). Pins:
+and the utoipa `params(...)` documents the ancestor ids. A nested contract is
+LIVE since #722 — the handlers extract the ancestor tuple and gate ownership
+(see "#722: nested media handlers" below). Pins:
 `child_media_field_contract_nests_under_the_parent_route` (ROOT + CHILD, the
 CHILD's title sorting FIRST so the contract anchors on it; hurl == router ==
 utoipa, including the concrete parent sentinel),
@@ -2624,6 +2704,84 @@ both prefix renderings), `graph_parent_candidate_is_the_nesting_fallback`,
 `graph_parent_candidates_skip_unmountable_parents`,
 `child_media_field_without_a_parent_is_config_error`. Existing root pins stay
 green; no `[media]` ⇒ byte-identical (ux/forms canaries, no re-bless).
+
+### #722: nested media handlers (the extractor + the ownership predicate)
+
+The #713 contract fix left the **extractor** flat: `router.tera` has always
+mounted a child's media routes nested
+(`.nest("/{person_id}/contacts", contact_routes())`, whose `contact_routes()`
+mounts `/{id}/avatar`), but every handler in `api/media_route.tera` extracted
+`Path(id): Path<Uuid>`. axum 0.8's `PathDeserializer` rejects a single value
+when `url_params.len() != 1` (`parse_single_value!`), so **every child media
+route answered 400** — no gate covered it because `media_runtime_tests` drove
+a root entity only. #722 fixes both halves:
+
+- **Extractor mirrors CRUD** (`templates/api/handler.tera`'s
+  `ancestor_path_params` rule, computed from `route_parents.len()`):
+  depth 1 → `Path((parent_id, id)): Path<(Uuid, Uuid)>`; depth 2 →
+  `Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>`.
+  `route_parents` is outermost-first, so the IMMEDIATE parent is the LAST hop
+  and earlier hops are `_`-prefixed (unused). Ancestors bind as extractors,
+  i.e. before the handler body/gate; the utoipa `params(...)` block stays in
+  the same order (grandparent → parent → `id`).
+- **Ownership predicate (an extractor without it is an IDOR)**: the nested
+  gate proves the row `id` exists AND its link column equals the URL
+  `parent_id` AND it belongs to the session org.
+  `templates/media/session.tera` gains a SECOND function,
+  `parent_exists_linked(conn, table, tenant_column, link_column, id,
+  parent_id, organization_id)` (`WHERE id = $1 AND {link_column} = $2 [AND
+  tenant = $3] LIMIT 1`; `table`/`tenant_column`/`link_column` are generator
+  constants, only the ids/org are BOUND parameters). The root-only session
+  module stays byte-identical: the function is emitted only when SOME field
+  has a non-empty `route_parents` (`has_nested_media` on the
+  `MediaStorageGenerator` context), and the existing `parent_exists` keeps its
+  `(id, organization_id)` ordering. **Depth 2 checks the IMMEDIATE parent
+  only** (mirrors `find_by_id_scoped(id, parent_id)` — the grandparent id
+  addresses the route and is not re-verified), said so in the emitted
+  comment.
+- **Link column from the canonical resolver, never a new rule**:
+  `MediaFieldPlan.parent_link_column` (`codegraph-core/src/types/media.rs`,
+  `#[serde(default)]` — plan IR, NOT a graph node, so NO
+  `GRAPH_FORMAT_VERSION` bump) is resolved in `media/plan.rs` through
+  `fk::resolve_parent_fk_column_same_domain` (config `parent_ref` → config
+  child+parent (`{parent}_id`) → graph parent candidate). A non-empty
+  `route_parents` with no resolvable column is a HARD `Error::Config` naming
+  the entity, the domain and the fix (`parent_ref`) — fail closed, never a
+  wider gate. The branch is defensive (the nesting resolver's parent
+  predicate is narrower than the FK resolver's), so it is pinned by a
+  direct unit test (`media::plan` tests) plus the
+  `media_pipeline_tests::nested_media_field_without_a_link_column_is_config_error`
+  pin over the same resolver.
+- **Depth cap (review)**: the emitted extractor binds at most
+  grandparent → parent → id — the CRUD plane's `ancestor_path_params` limit.
+  `router.tera` nests recursively, so a depth-3 media entity would be mounted
+  with four url params and every request would 400; it is a HARD
+  `Error::Config` at plan build instead (naming the entity, the depth and the
+  chain), never an advertised dead route. Depth 2 itself compiles: the
+  `media_compile_tests` depth-2 leg renders `AddressType` and checks the
+  three-id tuple against the nested `session.rs`.
+- **hurl**: the `#722` "not live" paragraph is gone; the emitted
+  `09_media.hurl` describes nested contracts as live (the handlers they
+  address now exist).
+- **Gates**: `media_pipeline_tests` (depth-1 extractor tuple + position
+  before the gate; the gate carrying `parent_id`/`PARENT_LINK_COLUMN`;
+  depth-2 `(Uuid, Uuid, Uuid)` with `_grandparent_id` + the recursive
+  `.nest` router pin; the hard link-column error; the depth-3 config error;
+  `nested_session_pins_the_linked_gate_sql_and_bind_order` — the SQL body
+  and the `(id, parent_id, organization_id)` bind order, because the call-site
+  pins alone left the predicate unpinned; the root module's flat shape;
+  utoipa params order == extractor order) + `media_compile_tests`
+  (`nested_media_route_handler_compiles_in_isolation` AND
+  `depth_two_media_route_handler_compiles_in_isolation` — the #551 policy:
+  both branches COMPILED with the nested `session.rs`, not just
+  string-pinned) + `media_plan_tests` (`parent_link_column`) +
+  `media_runtime_tests` (nested upload/display/remove, cross-tenant 404s,
+  and the link-mismatch 404 — see the runtime gate section).
+- **Byte-identity**: a root-only media app is unchanged (the new session
+  function is gated on `has_nested_media`; the extractor/gate are
+  pre-rendered from `nesting_depth == 0`). No `[media]` in the review fixture
+  ⇒ zero movement (the media e2e/runtime fixtures carry media and are
+  regenerated, not byte-goldened).
 
 ### Media runtime gate against a real S3 server (#695 Stage 1)
 
@@ -2638,7 +2796,10 @@ bucket-create path by design — #625 OQ2; that signed request is also the
 preflight: a 403 there means credentials/region, not a broken store), then
 generates a `[media]` app with the CURRENT generators (`driver::run`, the
 `tests/fixtures/media_runtime/` mox fixture: `class Asset` +
-`contains MediaReference[0..1] photo`, `provider = "r2"`,
+`contains MediaReference[0..1] photo`, plus — since #722 — a root `Person`
+and a CHILD `Contact` (`refers Person person`,
+`contains MediaReference[0..1] avatar`, `role = "child"`, `parent_ref =
+"person_id"`, `path_segment = "contacts"`), `provider = "r2"`,
 `upload_mode = "through-app"`, `max_bytes = 1024` so the 413 leg stays under
 axum's 2 MiB `DefaultBodyLimit`), builds + boots it
 (`test_framework::axum_server`, app `CARGO_TARGET_DIR` isolated under
@@ -2764,7 +2925,7 @@ their runtime substitute.
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
-| media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg) |
+| media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg). The #704 OpenAPI registration rides the same scratch tree as `src/openapi_probe.rs` — a `#[derive(utoipa::OpenApi)]` probe carrying the registration SHAPE (the paths `presign` \| `upload`, `display`, `remove`, and the presigned `PresignRequest` schema entry) with the module stem and handler names derived from the emitted media module — so that shape is COMPILED against the real handlers (the `*_media_route_handler_compiles_in_isolation` legs, through-app + presigned + depth-2 + nested). The probe MIRRORS the templates rather than consuming their output: the emitted registrations' text is held by the `media_pipeline_tests` drift pin, and the document the templates actually emit is compiled by `media_runtime_tests` (builds and boots the generated through-app app, root + nested child). The full per-domain document is not compiled here (it needs the whole app crate: every handler + DTO). Teeth: a probe registering `::bogus`, or `::presign` in through-app mode, fails E0433/E0425 (`__path_*` not found); a schema entry naming a type the module lacks fails E0425. Dropping `PresignRequest` from `components(schemas(...))` does NOT fail compilation (utoipa resolves `request_body` from the annotation) — that half is caught by the probe's derived-shape assertion + the `media_pipeline_tests` text pin |
 | full app (every generator the default plan emits) | `grafeo_e2e_tests -- grafeo_generated_code_compiles` | the whole-tree backstop; failures are not plane-attributable |
 | wrapper binary | `wrapper_compile_tests -- --ignored` | #348 |
 | runtime substitutes for live-DB planes | `hooks_cornucopia_runtime_tests` (cornucopia hooks over real Postgres, #518), `review_api_suite` (real HTTP), `media_runtime_tests` (the media data path over RustFS, #695) | compile pins for these shapes ride the stubs above |
@@ -3085,6 +3246,10 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 - Tests use `lsp_server::Connection::memory()` + `tokio::spawn`
 
 ## Testing
+
+Template mutation experiments need a fresh embed — on a pre-#718 checkout run
+`touch crates/codegraph-generate/build.rs` before trusting a red or green
+result (see "Template Overrides → Embedding watch").
 
 ```bash
 # Rust tests
@@ -3509,6 +3674,21 @@ Implemented in `crates/codegraph-generate/src/template_engine.rs`:
 2. It then iterates override directories in order, calling `merge_tera_dir()` for each
 3. **`merge_tera_dir()`** walks each directory, reading `.tera` files and registering them by their relative path name
 4. A template with the same relative path from a later directory **shadows** the earlier one — no merging, full replacement
+
+**Embedding watch (issue #718).** `build.rs` embeds every `templates/**/*.tera`
+and emits one `cargo:rerun-if-changed` directive **per file**, from the same
+walk that produces the embed list, plus one for the `templates/` directory
+(which is what catches added/removed files). The per-file set is pinned by
+`template_engine::tests::every_embedded_template_is_watched_for_content_changes`
+(manifest `CODEGRAPH_TEMPLATE_WATCH` vs the on-disk tree, naming any unwatched
+template) and `the_build_script_emits_the_watch_manifest_it_publishes` (the
+directive loop itself, which a manifest-only check cannot see). On a
+**pre-#718 checkout** only the directory was watched, and a false green after
+an in-place `.tera` edit was reported twice (#718) — the exact cause is
+toolchain/filesystem dependent (cargo ≥ 1.100 also re-embeds through rustc
+dep-info, so it did NOT reproduce on the machine that landed the fix). Force
+the re-embed before trusting a mutation result:
+`touch crates/codegraph-generate/build.rs`.
 
 ### Available Tera custom filters
 

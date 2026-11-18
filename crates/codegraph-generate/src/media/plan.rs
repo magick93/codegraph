@@ -351,7 +351,7 @@ pub async fn build_media_plan_for_domain(
         // Resolved lazily: only an entity that actually carries a media field
         // needs its route path, so an unrelated child with broken nesting
         // cannot fail this domain's plan.
-        let mut route_path: Option<(String, Vec<MediaRouteParent>)> = None;
+        let mut route_path: Option<ResolvedRoutePath> = None;
         // Tenancy of the owning table follows the DDL's own rule — NEVER a
         // property scan: mox entity schemas never declare the tenant column
         // (the DDL injects it), so a scan would return `None` for every real
@@ -400,27 +400,49 @@ pub async fn build_media_plan_for_domain(
                     let field_snake = to_snake_case(&prop.name);
                     let child_table = child_table_name(&schema.pg_table_name, &field_snake);
                     if seen.insert((title.clone(), field_snake.clone())) {
-                        let (entity_path_segment, route_parents) = match &route_path {
+                        let resolved = match &route_path {
                             Some(path) => path.clone(),
                             None => {
-                                let path = resolve_media_route_path(
+                                let (entity_path_segment, route_parents) =
+                                    resolve_media_route_path(
+                                        db,
+                                        config,
+                                        domain_name,
+                                        title,
+                                        &schema,
+                                        &mut parent_candidates,
+                                    )
+                                    .await?;
+                                // Issue #722: a nested route carries the parent
+                                // id, so the parent gate must also prove the
+                                // addressed row belongs to that parent. The
+                                // link column comes from the canonical FK
+                                // resolver chain; a nested field with none is
+                                // a hard error (fail closed — never a wider
+                                // gate).
+                                let parent_link_column = resolve_media_parent_link_column(
                                     db,
                                     config,
                                     domain_name,
                                     title,
-                                    &schema,
+                                    &route_parents,
                                     &mut parent_candidates,
                                 )
                                 .await?;
-                                route_path = Some(path.clone());
-                                path
+                                let resolved = ResolvedRoutePath {
+                                    entity_path_segment,
+                                    route_parents,
+                                    parent_link_column,
+                                };
+                                route_path = Some(resolved.clone());
+                                resolved
                             }
                         };
                         fields.push(MediaFieldPlan {
                             entity_title: title.clone(),
                             entity_table: schema.pg_table_name.clone(),
-                            entity_path_segment,
-                            route_parents,
+                            entity_path_segment: resolved.entity_path_segment,
+                            route_parents: resolved.route_parents,
                             field_name: prop.name.clone(),
                             field_snake,
                             child_table,
@@ -428,6 +450,7 @@ pub async fn build_media_plan_for_domain(
                             url_column,
                             mime_column,
                             parent_tenant_column: parent_tenant_column.clone(),
+                            parent_link_column: resolved.parent_link_column,
                         });
                     }
                 }
@@ -503,6 +526,96 @@ fn find_column(props: &[PropertyNode], expected: &str, class_title: &str) -> Res
                  model or point url_field/mime_field at the column the class carries"
             ))
         })
+}
+
+/// The route path a media field is addressed under, resolved once per owning
+/// entity (issue #713 + #722): the entity's own segment plus the nesting
+/// chain, and — for a nested entity — the column that links its rows to the
+/// URL parent.
+#[derive(Debug, Clone)]
+struct ResolvedRoutePath {
+    entity_path_segment: String,
+    route_parents: Vec<MediaRouteParent>,
+    parent_link_column: Option<String>,
+}
+
+/// The link column a NESTED media route's parent gate filters on (issue
+/// #722): the column on the OWNING table that points at the ancestor the
+/// route is mounted under (e.g. `person_id` on `contact`).
+///
+/// The derivation is the canonical resolver, never a new rule
+/// ([`crate::fk::resolve_parent_fk_column_same_domain`]: config `parent_ref` →
+/// config child+parent (`{parent}_id`) → graph parent candidate, with the
+/// router's same-domain check). A nested field with no resolvable column is a
+/// HARD config error: the gate must prove the addressed row belongs to the URL
+/// parent, and skipping that proof is an IDOR.
+///
+/// Public so the node-free PR-CI gates (`media_pipeline_tests`) can pin the
+/// fail-closed branch directly: the branch is defensive (the nesting resolver's
+/// parent predicate is narrower than the FK resolver's), so no graph shape
+/// reaches it through `build_media_plan_for_domain` alone.
+pub async fn resolve_media_parent_link_column(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    title: &str,
+    route_parents: &[MediaRouteParent],
+    parent_candidates: &mut Option<Vec<ParentCandidate>>,
+) -> Result<Option<String>, Error> {
+    if route_parents.is_empty() {
+        return Ok(None);
+    }
+    // Depth cap (issue #722 review): the emitted extractor binds at most
+    // grandparent → parent → id — the SAME limit the CRUD plane's
+    // `ancestor_path_params` arm has. `router.tera` nests recursively, so a
+    // deeper entity WOULD be mounted with more url params and every media
+    // request would answer 400 (axum rejects a tuple whose arity differs from
+    // the route's param count). Fail closed at generation time instead of
+    // advertising a route the handler can never serve.
+    if route_parents.len() > 2 {
+        let chain: Vec<&str> = route_parents
+            .iter()
+            .map(|hop| hop.entity_title.as_str())
+            .collect();
+        return Err(Error::Config(format!(
+            "domain \"{domain_name}\" media: \"{title}\" is mounted {} levels deep ({}), but a \
+             media handler binds at most grandparent → parent → id (the CRUD plane's \
+             `ancestor_path_params` limit) — a deeper route would answer 400 on every request. \
+             Flatten the nesting or extend both planes together.",
+            route_parents.len(),
+            chain.join(" > "),
+        )));
+    }
+    // Loaded lazily by the route-path resolver for Source-2 nesting; a
+    // config-declared nesting may not have needed it yet, so ensure it exists
+    // (the resolver's graph fallback reads it).
+    if parent_candidates.is_none() {
+        *parent_candidates = Some(db.get_parent_candidates().await?);
+    }
+    let candidates = parent_candidates.as_ref().cloned().unwrap_or_default();
+    let entity_cfg = config
+        .domains
+        .get(domain_name)
+        .and_then(|d| d.get_entity_config(title));
+    crate::fk::resolve_parent_fk_column_same_domain(
+        title,
+        &candidates,
+        entity_cfg,
+        domain_name,
+        config,
+        db,
+    )
+    .await
+    .ok_or_else(|| {
+        Error::Config(format!(
+            "domain \"{domain_name}\" media: nested media field on \"{title}\" has no resolvable \
+             link column to its parent route — the parent gate must prove the row belongs to the \
+             URL parent (without it the route is an IDOR). Declare \
+             `parent_ref = \"<parent_fk_column>\"` under \
+             [domains.{domain_name}.entity_config.{title}]"
+        ))
+    })
+    .map(Some)
 }
 
 /// The route path a media field is addressed under (issue #713): the owning
@@ -741,5 +854,169 @@ fn unresolvable_parent_reason(
         (None, None) => "Declare `parent`/`parent_ref` naming a generated entity of this domain \
                          (or model a parent candidate)."
             .to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use codegraph_config::config::parse_domain_config_str;
+    use codegraph_core::mock::MockEngine;
+
+    /// Issue #722: a nested media field whose link column cannot be resolved
+    /// must fail closed. Shipping the ancestor-tuple extractor without the
+    /// ownership predicate turns a nested media route into an IDOR, so a
+    /// missing link column is a hard `Error::Config` naming the entity, the
+    /// domain, and the fix — never a silently wider gate.
+    #[tokio::test]
+    async fn nested_media_without_a_resolvable_link_column_is_config_error() {
+        let config = parse_domain_config_str(
+            "[defaults]\n\
+             type_suffix = \"Type\"\n\n\
+             [domains.core]\n\
+             label = \"Core\"\n\
+             schema_dir = \"core\"\n\
+             postgres_schema = \"core\"\n\n\
+             [domains.core.entity_config.ContactType]\n\
+             role = \"value_object\"\n\
+             path_segment = \"contacts\"\n\n\
+             [domains.core.media]\n\
+             provider = \"supabase\"\n\
+             upload_mode = \"through-app\"\n\
+             bucket = \"person-media\"\n\
+             max_bytes = 100\n\
+             accept = [\"image/png\"]\n",
+        )
+        .expect("domains.toml");
+
+        // No `parent_ref`, no config child+parent arm (role is not "child"),
+        // and no graph parent candidate ⇒ the canonical FK resolver has
+        // nothing to resolve.
+        let db = MockEngine::new();
+        let route_parents = vec![MediaRouteParent {
+            entity_title: "PersonType".into(),
+            path_segment: "persons".into(),
+            param_name: "person_id".into(),
+        }];
+        let mut candidates = None;
+        let err = resolve_media_parent_link_column(
+            &db,
+            &config,
+            "core",
+            "ContactType",
+            &route_parents,
+            &mut candidates,
+        )
+        .await
+        .expect_err("a nested media field with no link column must fail closed");
+
+        let Error::Config(msg) = err else {
+            panic!("expected Error::Config, got {err:?}");
+        };
+        assert!(msg.contains("ContactType"), "{msg}");
+        assert!(msg.contains("core"), "{msg}");
+        assert!(
+            msg.contains("parent_ref"),
+            "the diagnostic names the fix: {msg}"
+        );
+        assert!(msg.contains("IDOR"), "{msg}");
+    }
+
+    /// A ROOT media field carries no link column — the resolver is only
+    /// consulted for a nested route (and root output must stay byte-identical).
+    #[tokio::test]
+    async fn root_media_field_has_no_link_column() {
+        let config = parse_domain_config_str(
+            "[defaults]\n\
+             type_suffix = \"Type\"\n\n\
+             [domains.core]\n\
+             label = \"Core\"\n\
+             schema_dir = \"core\"\n\
+             postgres_schema = \"core\"\n\n\
+             [domains.core.media]\n\
+             provider = \"supabase\"\n\
+             upload_mode = \"through-app\"\n\
+             bucket = \"person-media\"\n\
+             max_bytes = 100\n\
+             accept = [\"image/png\"]\n",
+        )
+        .expect("domains.toml");
+        let db = MockEngine::new();
+        let mut candidates = None;
+        let link = resolve_media_parent_link_column(
+            &db,
+            &config,
+            "core",
+            "PersonType",
+            &[],
+            &mut candidates,
+        )
+        .await
+        .expect("a root field needs no link column");
+        assert!(link.is_none());
+    }
+
+    /// Issue #722 review: `router.tera` nests recursively, but the emitted
+    /// extractor (like the CRUD plane's `ancestor_path_params`) binds at most
+    /// three ids. A depth-3 media route would carry four url params and the
+    /// handler could never serve it (axum rejects an arity mismatch with 400),
+    /// so it must fail at generation time — never as an advertised dead route.
+    #[tokio::test]
+    async fn depth_three_media_nesting_is_config_error() {
+        let config = parse_domain_config_str(
+            "[defaults]\n\
+             type_suffix = \"Type\"\n\n\
+             [domains.core]\n\
+             label = \"Core\"\n\
+             schema_dir = \"core\"\n\
+             postgres_schema = \"core\"\n\n\
+             [domains.core.entity_config.AddressType]\n\
+             role = \"child\"\n\
+             parent = \"ContactType\"\n\
+             parent_ref = \"contact_id\"\n\n\
+             [domains.core.media]\n\
+             provider = \"supabase\"\n\
+             upload_mode = \"through-app\"\n\
+             bucket = \"person-media\"\n\
+             max_bytes = 100\n\
+             accept = [\"image/png\"]\n",
+        )
+        .expect("domains.toml");
+        let db = MockEngine::new();
+        let route_parents = [
+            ("CountryType", "countries", "country_id"),
+            ("PersonType", "persons", "person_id"),
+            ("ContactType", "contacts", "contact_id"),
+        ]
+        .into_iter()
+        .map(|(title, segment, param)| MediaRouteParent {
+            entity_title: title.into(),
+            path_segment: segment.into(),
+            param_name: param.into(),
+        })
+        .collect::<Vec<_>>();
+        let mut candidates = None;
+        let err = resolve_media_parent_link_column(
+            &db,
+            &config,
+            "core",
+            "AddressType",
+            &route_parents,
+            &mut candidates,
+        )
+        .await
+        .expect_err("depth 3 cannot be served by the emitted extractor");
+
+        let Error::Config(msg) = err else {
+            panic!("expected Error::Config, got {err:?}");
+        };
+        assert!(msg.contains("AddressType"), "{msg}");
+        assert!(msg.contains("3 levels deep"), "{msg}");
+        assert!(msg.contains("grandparent"), "{msg}");
+        assert!(
+            msg.contains("CountryType > PersonType > ContactType"),
+            "the diagnostic names the chain: {msg}"
+        );
     }
 }

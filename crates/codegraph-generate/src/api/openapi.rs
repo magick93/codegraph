@@ -69,6 +69,19 @@ pub struct OpenApiEntity {
     pub parent_entity: Option<String>,
     /// For child entities: the domain the parent belongs to
     pub parent_domain: Option<String>,
+    /// Media route fields that emit an app-plane handler module for this
+    /// entity — `src/api/{domain}/media_{module_name}_{field}.rs` (issue
+    /// #704). Resolved through the router's own `media_route_surface`, so
+    /// the documented paths and the mounted ones cannot drift. Empty when
+    /// the domain declares no `[media]`, or is `client-direct` (no
+    /// app-plane route). (NO skip_serializing_if — the Tera context needs
+    /// the empty vec.)
+    pub media_fields: Vec<String>,
+    /// `upload_mode = "presigned"` ⇒ the media module exposes `presign`;
+    /// otherwise (`through-app`) it exposes the multipart `upload`. Both
+    /// always expose `display`/`remove`. Resolved through
+    /// `media_upload_mode`, the helper the router template branches on.
+    pub media_mode_presigned: bool,
 }
 
 /// Context for a single-domain OpenAPI spec (`openapi_domain.tera`).
@@ -116,6 +129,27 @@ pub struct ApiCatalogDomain {
 
 pub struct OpenApiGenerator {
     output_dir: PathBuf,
+}
+
+/// The media route surface an entity DOCUMENTS (issue #704): the publisher's
+/// counterpart to `router.tera`'s mount. Both sides read the same two plan
+/// helpers — `media_route_surface` (the mode-gated field list) and
+/// `media_upload_mode` (presign vs multipart) — so the documented paths and
+/// the served routes cannot drift. The run path already hard-failed a broken
+/// media config in the driver's pre-generation pass, and the router treats a
+/// plan error the same way (skip the surface), so this follows suit.
+async fn resolve_media_surface(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain_name: &str,
+    entity_title: &str,
+) -> (Vec<String>, bool) {
+    let surface = crate::media::plan::media_route_surface(db, config, domain_name, entity_title)
+        .await
+        .unwrap_or_default();
+    let presigned = crate::media::plan::media_upload_mode(config, domain_name)
+        .is_some_and(|mode| mode == codegraph_core::types::UploadMode::Presigned);
+    (surface.fields, presigned)
 }
 
 impl OpenApiGenerator {
@@ -240,6 +274,8 @@ impl GlobalGenerator for OpenApiGenerator {
                     let entity_cfg = domain_entry.get_entity_config(entity_name);
                     let operations =
                         resolve_entity_operations(db, config, domain_name, entity_name).await;
+                    let (media_fields, media_mode_presigned) =
+                        resolve_media_surface(db, config, domain_name, title).await;
 
                     // Resolve role and parent relationship info from entity config.
                     // These mirror the fields populated by HandlerContext so that
@@ -284,6 +320,8 @@ impl GlobalGenerator for OpenApiGenerator {
                         parent_path_segment,
                         parent_entity,
                         parent_domain,
+                        media_fields,
+                        media_mode_presigned,
                     });
                 }
             }
@@ -306,6 +344,8 @@ impl GlobalGenerator for OpenApiGenerator {
                     continue;
                 };
                 let operations = resolve_entity_operations(db, config, domain_name, title).await;
+                let (media_fields, media_mode_presigned) =
+                    resolve_media_surface(db, config, domain_name, title).await;
                 entities.push(OpenApiEntity {
                     entity_name: schema.rust_type_name.clone(),
                     module_name: schema.pg_table_name.clone(),
@@ -320,6 +360,8 @@ impl GlobalGenerator for OpenApiGenerator {
                     parent_path_segment: None,
                     parent_entity: None,
                     parent_domain: None,
+                    media_fields,
+                    media_mode_presigned,
                 });
             }
 

@@ -215,8 +215,10 @@ async fn child_rows_carry_the_session_org_and_evict_the_zero_tenant() {
         // is sound.
         .expect("the generated migration set must run");
 
-    // A target for owner-side statements (GateDb connects as the owner
-    // superuser, which bypasses RLS and can disable the trigger).
+    // A target for owner-side statements: GateDb's app target is the
+    // migration owner (on the Supabase image `postgres` is also BYPASSRLS, so
+    // it can disable the trigger). This is NOT RLS evidence — every probe
+    // below runs as `app_user` through `SET LOCAL ROLE`.
     let target = PgTarget::from_url(&db.url()).expect("parse the gate db url");
 
     // Parents: org A and org B each own one row.

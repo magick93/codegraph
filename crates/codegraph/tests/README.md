@@ -68,6 +68,22 @@ AGENTS.md ("Compile-pin policy").
 - `test_framework/` — `NodeProject`, `postgres.rs` GateDb,
   `axum_server.rs`, `playwright.rs` for the live gates.
 
+Gate Postgres targets (`test_framework/postgres.rs`): `apply_prelude` runs on a
+superuser ADMIN target resolved from the BASE target (that is `DATABASE_URL`'s
+role, or the docker fallback container when the URL is unusable) — the role
+itself when it is a superuser, else `GATE_ADMIN_USER` (default
+`supabase_admin`) with `GATE_ADMIN_PASSWORD` (default: the base URL's
+password). The admin is resolved only by the prelude, so a gate that never
+calls `apply_prelude` needs no admin role at all. The app plane (migrations,
+API keys, the booted app's URL) never gains that privilege, except on a base
+that is already a superuser, where the app plane IS the admin target — which
+is exactly why the generated `SET LOCAL ROLE app_user` is the RLS boundary.
+The docker fallback container is created with `POSTGRES_USER=supabase_admin`,
+and a reused container whose contract does not match (init user, image,
+`auth.users`, pgcrypto, `authenticator` role) is recreated after a ~30 s
+grace, announced by one `gate: recreating …` line on stdout (the lanes run
+`--nocapture`).
+
 ### Follow-up ledger (planes still riding the backstop only)
 
 Tracked follow-ups reference the AGENTS.md policy section:

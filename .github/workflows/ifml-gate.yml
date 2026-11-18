@@ -25,7 +25,17 @@ jobs:
         image: public.ecr.aws/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
+          # The image's /docker-entrypoint-initdb.d/migrate.sh runs `psql -U
+          # supabase_admin` BEFORE that role exists, so the bootstrap only
+          # completes when supabase_admin is the init user (with
+          # POSTGRES_USER=postgres the container exits 2 with FATAL: role
+          # "supabase_admin" does not exist). The generated apps still connect
+          # as `postgres` (DATABASE_URL unchanged): the image creates that role
+          # with rolsuper=f and rolbypassrls=t — a BYPASSING session role, so
+          # RLS honesty rests entirely on the app plane's `SET LOCAL ROLE
+          # app_user` (NOBYPASSRLS), which every generated query/command handler
+          # issues, not on the role the pool connects as.
+          POSTGRES_USER: supabase_admin
         ports:
           - 5432:5432
         options: >-
@@ -40,6 +50,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # Issue #733: the child-tenancy and media-runtime gates drive the `psql`
+      # binary through the test framework, so the runner needs a client.
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Install Playwright chromium
         run: npx --yes playwright@1.62.0 install --with-deps chromium
       - name: Run IFML codegen gate

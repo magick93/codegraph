@@ -126,7 +126,16 @@ impl GlobalGenerator for MediaStorageGenerator {
                 ));
             }
         };
-        let ctx = json!({ "adapters": [adapter] });
+        let ctx = json!({
+            "adapters": [adapter],
+            // Issue #722: the session module gains the nested parent gate
+            // (`parent_exists_linked`) only when SOME media field is mounted
+            // under a parent route — a root-only app keeps the exact
+            // pre-#722 session module (byte identity).
+            "has_nested_media": plans
+                .values()
+                .any(|p| p.fields.iter().any(|f| !f.route_parents.is_empty())),
+        });
         let mut files = vec![
             GeneratedFile {
                 path: self.output_dir.join("src").join("media").join("mod.rs"),

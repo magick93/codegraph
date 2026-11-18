@@ -8,6 +8,25 @@
 # Everything not needed by the workers suite (studio, email testing,
 # storage, realtime, edge runtime, analytics) is disabled so the stack
 # boots fewer containers.
+#
+# Two halves make the stack boot, both load-bearing (issue #729, each
+# verified on the pinned CLI):
+#  * the suite PINs the CLI version (`SUPABASE_CLI_VERSION` in
+#    crates/codegraph/tests/workers_live_gate.rs); a node-free lockstep pin
+#    holds the workflow's prefetch LITERAL to it, so the runner can never
+#    resolve npm `latest` into a different CLI than this file was written
+#    for;
+#  * this file speaks that version's KEY SPELLING. The rename below is
+#    REQUIRED, not cosmetic: `supabase@3.2.0` REJECTS the legacy key
+#    ("inbucket in supabase/config.toml is no longer supported. Use
+#    local_smtp instead."), so `start` dies at config load without it —
+#    while `supabase@2.105.0` still accepted `[inbucket]`. Do not revert.
+#
+# Limits of the lockstep pin, stated so nobody over-trusts it: it holds the
+# prefetch literal and THIS section's key spelling + body (`[local_smtp]`,
+# `enabled = false`, the 54343 port). It cannot know about a FUTURE CLI
+# renaming some OTHER key — that surfaces as a config rejection in the
+# nightly lane, not as a PR-CI failure.
 project_id = "workers-gate"
 
 [api]
@@ -39,7 +58,7 @@ enabled = false
 enabled = false
 port = 54342
 
-[inbucket]
+[local_smtp]
 enabled = false
 port = 54343
 

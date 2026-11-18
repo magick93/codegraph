@@ -244,17 +244,10 @@ async fn run_media_route_generator_for(
     config: &DomainConfig,
     title: &str,
 ) -> Vec<String> {
-    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
-    let project = ProjectConfig::default();
-    let out = tempfile::tempdir().expect("out dir");
-    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
-    use codegraph_generate::traits::EntityGenerator;
-    generator
-        .generate(db, title, "core", config, &tera, &project)
+    emitted_media_files(db, config, title)
         .await
-        .expect("media route generation")
-        .iter()
-        .map(|f| f.content.clone())
+        .into_iter()
+        .map(|(_, content)| content)
         .collect()
 }
 
@@ -925,6 +918,10 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
         "entity_snake": "org",
         "route_prefix": "/api/v1/core/org",
         "route_parents": [],
+        "nesting_depth": 0,
+        "path_extractor": "Path(id): Path<Uuid>,",
+        "scoped_tx_call": "scoped_tx(&state, &api_key_info, id)",
+        "parent_link_column": serde_json::Value::Null,
         "entity_module": "core_org",
         "domain": "core",
         "media_field_name": "logo",
@@ -1586,6 +1583,129 @@ async fn media_plane_emits_the_session_bundle_and_a_bound_parent_lookup() {
 }
 
 #[tokio::test]
+async fn nested_session_pins_the_linked_gate_sql_and_bind_order() {
+    // Issue #722 review: the (a)-(f) pins cover the CALL of
+    // `parent_exists_linked`, but nothing pinned its BODY — weakening the SQL
+    // to an existence-only predicate (`id = $1 AND tenant = $2`) left all 56
+    // node-free pins green and only the nightly runtime gate caught it. Pin
+    // the predicate and the bind order here so PR CI sees the ownership
+    // contract too.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let files = run_generator(&engine, &config, out.path())
+        .await
+        .expect("files");
+    let session_rs = &files
+        .iter()
+        .find(|f| f.path.ends_with("src/media/session.rs"))
+        .expect("the session module")
+        .content;
+
+    // Both tenancy variants: the linked predicate is `id AND link AND org`.
+    for sql in [
+        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 AND {column} = $3 LIMIT 1",
+        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 LIMIT 1",
+    ] {
+        assert!(
+            session_rs.contains(sql),
+            "the linked gate must carry the ownership predicate `{sql}`: {session_rs}"
+        );
+    }
+    // …and never degrade to the existence-only shape. (The plain
+    // `parent_exists` in the same file legitimately carries it — the check is
+    // scoped to the linked function below.)
+    let body = session_rs
+        .split("pub async fn parent_exists_linked<")
+        .nth(1)
+        .expect("the linked gate function");
+    assert!(
+        !body.contains("SELECT 1 FROM {table} WHERE id = $1 AND {column} = $2 LIMIT 1"),
+        "the linked gate must not collapse to `id + org` (an IDOR): {body}"
+    );
+    let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains(
+            "Value::from(id), sea_orm::Value::from(parent_id), \
+             sea_orm::Value::from(organization_id),"
+        ),
+        "the binds are (id, parent_id, organization_id) in that order — a swap would \
+         still compile: {normalized}"
+    );
+    assert!(
+        normalized.contains("Value::from(id), sea_orm::Value::from(parent_id), ],"),
+        "the GLOBAL arm binds (id, parent_id) — no org predicate for a global parent: \
+         {normalized}"
+    );
+    assert_eq!(
+        body.matches("Value::from(").count(),
+        5,
+        "tenant arm (id, parent_id, org) + global arm (id, parent_id): {body}"
+    );
+}
+
+/// Issue #722 review: a depth-3 media entity is refused at generation time —
+/// the emitted extractor binds at most three ids (the CRUD plane's limit), so
+/// a deeper route could never be served (always 400).
+#[tokio::test]
+async fn depth_three_media_nesting_is_a_config_error() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_grandchild(&engine).await;
+    // A child of the grandchild: `AddressType` under `ContactType` under
+    // `PersonType`.
+    db_ingest_depth_three(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{}\n[domains.core.entity_config.RegionType]\nrole = \"child\"\nparent = \"AddressType\"\nparent_ref = \"address_id\"\npath_segment = \"regions\"\n",
+        media_toml_with_nested_grandchild()
+    ))
+    .expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let err = run_generator(&engine, &config, out.path())
+        .await
+        .expect_err("depth 3 must fail closed");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("RegionType") && msg.contains("3 levels deep"),
+        "the config error names the entity and the depth: {msg}"
+    );
+}
+
+/// A depth-3 entity with a media field (`RegionType` under `AddressType`).
+async fn db_ingest_depth_three(db: &(impl GraphIngestor + GraphQuerier)) {
+    db.ingest_schema(&schema(
+        "RegionType",
+        "RegionType",
+        "entity",
+        "region",
+        true,
+    ))
+    .await
+    .expect("region schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("RegionType", "RegionType", &p)
+            .await
+            .expect("region property");
+    }
+    db.ingest_edge(
+        "avatar::RegionType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("region references edge");
+}
+
+#[tokio::test]
 async fn broken_media_config_is_a_config_error_not_silent_emission() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
@@ -1857,12 +1977,11 @@ async fn child_media_field_contract_nests_under_the_parent_route() {
             "both the parent anchor and the entity id are concrete: {line}"
         );
     }
-    // N1: a nested contract is NOT a live leg until #722 lands (the handlers
-    // extract a single `Path<Uuid>` while the route carries two ids) — the
-    // emitted file must say so.
+    // #722: the emitted file must no longer claim the nested route is dead —
+    // the handlers now extract the ancestor tuple and prove ownership.
     assert!(
-        hurl.content.contains("#722"),
-        "the child contract names the #722 handler gap: {}",
+        !hurl.content.contains("not live"),
+        "the child contract no longer claims the route is dead: {}",
         hurl.content
     );
 
@@ -1882,6 +2001,270 @@ async fn child_media_field_contract_nests_under_the_parent_route() {
         !module.contains(r#"path = "/api/v1/core/contacts/{id}/avatar""#),
         "never the flat child path: {module}"
     );
+}
+
+// ── #722: a nested media handler extracts its ancestors and gates ownership ─
+//
+// The #713 contract fix left the EXTRACTOR flat: `Path(id): Path<Uuid>` on a
+// route mounted as `.nest("/{person_id}/contacts", …)` — axum's
+// `PathDeserializer` rejects a single value when the route carries more than
+// one url param, so every child media route answered 400. And the extractor
+// alone is an IDOR: the parent gate only proves the row exists.
+
+#[tokio::test]
+async fn nested_media_handler_extracts_the_ancestor_tuple_before_the_gate() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+
+    let modules = run_media_route_generator_for(&engine, &config, "ContactType").await;
+    assert_eq!(modules.len(), 1, "one module per media field");
+    let module = &modules[0];
+
+    // (a) The extractor mirrors the CRUD plane's `ancestor_path_params`:
+    // depth 1 → `(parent_id, id)`.
+    assert!(
+        module.contains("Path((parent_id, id)): Path<(Uuid, Uuid)>,"),
+        "the child handler must extract the URL parent alongside id: {module}"
+    );
+    assert!(
+        !module.contains("Path(id): Path<Uuid>,"),
+        "the flat extractor is the #722 400 defect: {module}"
+    );
+    for handler in [
+        "pub async fn upload(",
+        "pub async fn display(",
+        "pub async fn remove(",
+    ] {
+        let start = media_route_module_key(module, handler);
+        let body = &module[start..];
+        let extractor = body
+            .find("Path((parent_id, id)): Path<(Uuid, Uuid)>,")
+            .unwrap_or_else(|| panic!("{handler} must bind the ancestor tuple: {module}"));
+        let gate = body
+            .find("scoped_tx(&state, &api_key_info, id, parent_id)")
+            .unwrap_or_else(|| {
+                panic!("{handler} must pass the URL parent to the ownership gate: {module}")
+            });
+        // Extractors are function parameters: they lexically precede the body
+        // (and therefore the gate call). Pinned positionally, not by wording.
+        assert!(
+            extractor < gate,
+            "{handler}: the ancestor extractor precedes the parent gate: {module}"
+        );
+    }
+
+    // (b) The gate carries the parent id AND the link column — the ownership
+    // predicate (`id` must belong to `parent_id`), never a wider existence
+    // check.
+    assert!(
+        module.contains(r#"const PARENT_LINK_COLUMN: &str = "person_id";"#),
+        "the child's configured `parent_ref` is the gate's link column: {module}"
+    );
+    media_route_module_key(module, "crate::media::session::parent_exists_linked(");
+    assert!(
+        !module.contains("crate::media::session::parent_exists("),
+        "a nested route must never fall back to the existence-only gate: {module}"
+    );
+    let gate_call = module
+        .split("session::parent_exists_linked(")
+        .nth(1)
+        .expect("parent_exists_linked call");
+    let args = gate_call.split(')').next().unwrap_or_default();
+    let lines: Vec<&str> = args
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    assert_eq!(
+        lines,
+        vec![
+            "&tx,",
+            "PARENT_TABLE,",
+            "PARENT_TENANT_COLUMN,",
+            "PARENT_LINK_COLUMN,",
+            "id,",
+            "parent_id,",
+            "api_key_info.organization_id,",
+        ],
+        "parent_exists_linked(conn, table, tenant, link, id, parent_id, session_org): {module}"
+    );
+
+    // (f) The utoipa `params` block documents the SAME order the extractor
+    // binds: the ancestor first, the owning id last.
+    let ancestor = media_route_module_key(module, r#"("person_id" = Uuid, Path"#);
+    let owning = media_route_module_key(module, r#"("id" = Uuid, Path"#);
+    assert!(
+        ancestor < owning,
+        "utoipa documents the ancestor before the owning id, as the extractor binds: {module}"
+    );
+    // …and the documented path is still the router's nested route.
+    assert!(
+        module.contains(r#"path = "/api/v1/core/persons/{person_id}/contacts/{id}/avatar""#),
+        "the documented path is the nested route: {module}"
+    );
+}
+
+/// A grandchild beneath `ContactType` — the depth-2 shape (issue #722, the
+/// router's recursive `.nest`).
+async fn ingest_grandchild(db: &(impl GraphIngestor + GraphQuerier)) {
+    ingest_parent_and_child(db).await;
+    db.ingest_schema(&schema(
+        "AddressType",
+        "AddressType",
+        "entity",
+        "address",
+        true,
+    ))
+    .await
+    .expect("address schema");
+    for p in [
+        prop("id", RefClassificationKind::EntityReference, None),
+        prop(
+            "avatar",
+            RefClassificationKind::ValueObject,
+            Some("MediaReferenceType"),
+        ),
+    ] {
+        db.ingest_property("AddressType", "AddressType", &p)
+            .await
+            .expect("address property");
+    }
+    db.ingest_edge(
+        "avatar::AddressType",
+        "MediaReferenceType",
+        EdgeType::ReferencesSchema,
+        None,
+    )
+    .await
+    .expect("address references edge");
+}
+
+fn media_toml_with_nested_grandchild() -> String {
+    format!(
+        "{}\n\
+         [domains.core.entity_config.AddressType]\n\
+         role = \"child\"\n\
+         parent = \"ContactType\"\n\
+         parent_ref = \"contact_id\"\n\
+         path_segment = \"addresses\"\n",
+        media_toml_with_nested_child("through-app")
+    )
+}
+
+#[tokio::test]
+async fn depth_two_media_handler_extracts_the_grandparent_tuple() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_grandchild(&engine).await;
+    let config = parse_domain_config_str(&media_toml_with_nested_grandchild()).expect("toml");
+    let titles = [
+        "PersonType".to_string(),
+        "ContactType".to_string(),
+        "AddressType".to_string(),
+    ];
+
+    // The router's recursive `.nest` mounts the depth-2 route — the pin the
+    // brief asks for even though no consumer uses it today.
+    let router = rendered_router_media_block_for(&engine, &config, &titles).await;
+    assert!(
+        router.contains(r#".nest("/{person_id}/contacts", contact_routes())"#),
+        "the child router nests under the root: {router}"
+    );
+    assert!(
+        router.contains(r#".nest("/{contact_id}/addresses", address_routes())"#),
+        "the grandchild nests under the child (depth 2): {router}"
+    );
+
+    let modules = run_media_route_generator_for(&engine, &config, "AddressType").await;
+    let module = &modules[0];
+    assert!(
+        module.contains("Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,"),
+        "depth 2 binds the grandparent (unused, `_`-prefixed) then the parent: {module}"
+    );
+    assert!(
+        module.contains(r#"const PARENT_LINK_COLUMN: &str = "contact_id";"#),
+        "the IMMEDIATE parent's FK is the ownership predicate: {module}"
+    );
+    // Depth 2 checks the immediate parent only — the grandparent id addresses
+    // the route and is not re-verified (mirrors `find_by_id_scoped`).
+    assert!(
+        module.contains("scoped_tx(&state, &api_key_info, id, parent_id)"),
+        "the gate receives the immediate parent id, never the grandparent: {module}"
+    );
+    let ancestor = media_route_module_key(module, r#"("contact_id" = Uuid, Path"#);
+    let grandparent = media_route_module_key(module, r#"("person_id" = Uuid, Path"#);
+    let owning = media_route_module_key(module, r#"("id" = Uuid, Path"#);
+    assert!(
+        grandparent < ancestor && ancestor < owning,
+        "utoipa documents grandparent → parent → id, the extractor's order: {module}"
+    );
+}
+
+#[tokio::test]
+async fn nested_media_field_without_a_link_column_is_config_error() {
+    // Fail closed: the ancestor extractor without the ownership predicate is
+    // an IDOR, so a nested route whose link column cannot be resolved is a
+    // hard config error naming the entity, the domain and the fix.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config = parse_domain_config_str(&format!(
+        "{}\n[domains.core.entity_config.ContactType]\nrole = \"value_object\"\npath_segment = \"contacts\"\n",
+        media_toml("supabase", "through-app")
+    ))
+    .expect("toml");
+    let route_parents = vec![codegraph_core::types::MediaRouteParent {
+        entity_title: "PersonType".into(),
+        path_segment: "persons".into(),
+        param_name: "person_id".into(),
+    }];
+    let mut candidates = None;
+    let err = codegraph_generate::media::plan::resolve_media_parent_link_column(
+        &engine,
+        &config,
+        "core",
+        "ContactType",
+        &route_parents,
+        &mut candidates,
+    )
+    .await
+    .expect_err("no link column ⇒ hard error");
+    let Error::Config(msg) = err else {
+        panic!("expected Error::Config, got {err:?}");
+    };
+    assert!(msg.contains("ContactType"), "{msg}");
+    assert!(msg.contains("core"), "{msg}");
+    assert!(msg.contains("parent_ref"), "the fix is named: {msg}");
+}
+
+#[tokio::test]
+async fn root_media_handler_keeps_the_flat_extractor_and_gate() {
+    // Byte-identity shape: a root entity's module must keep the pre-#722
+    // single-id extractor and the existence-only parent gate.
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let modules = run_media_route_generator_for(&engine, &config, "PersonType").await;
+    let module = &modules[0];
+    assert!(
+        module.contains("Path(id): Path<Uuid>,"),
+        "a root media handler keeps its flat extractor: {module}"
+    );
+    assert!(
+        module.contains("crate::media::session::parent_exists("),
+        "a root media handler keeps the existence-only gate: {module}"
+    );
+    for needle in [
+        "parent_exists_linked",
+        "PARENT_LINK_COLUMN",
+        "parent_id: Uuid",
+        "Path((parent_id, id))",
+    ] {
+        assert!(
+            !module.contains(needle),
+            "root output must not carry the nesting surface `{needle}`: {module}"
+        );
+    }
 }
 
 /// A modeled scalar ref from the child to a candidate parent — the router's
@@ -2609,5 +2992,343 @@ async fn repository_plane_never_writes_the_media_child_row() {
             naive_impl.contains("DELETE FROM core.person_avatar"),
             "{label} keeps the replace-on-update path:\n{naive_impl}"
         );
+    }
+}
+
+// ── Issue #704: the served OpenAPI documents register the media routes ──
+//
+// `api/media_route.tera` has always carried `#[utoipa::path]` annotations for
+// presign/upload/display/remove, but nothing registered those handler
+// functions in an `#[derive(OpenApi)]` document — so the generated spec
+// contained NO media path while the annotations implied a published contract.
+// The registration is derived from the SAME plan helpers the router uses
+// (`media_route_surface` + `media_upload_mode`), so the documented surface and
+// the mounted surface cannot drift.
+
+fn presigned_media_toml() -> String {
+    // Supabase cannot serve `presigned` (the capability matrix), so the r2
+    // binding rides along — the same shape the sibling presigned pins use.
+    format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    )
+}
+
+/// The emitted media handler modules for one entity, as `(module_stem,
+/// source)` pairs. The stem is the file name the mod-file emitter declares
+/// (`media_{entity_snake}_{field_snake}`), i.e. the path segment the OpenAPI
+/// registration must address.
+async fn emitted_media_files(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    title: &str,
+) -> Vec<(String, String)> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let out = tempfile::tempdir().expect("out dir");
+    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
+    use codegraph_generate::traits::EntityGenerator;
+    generator
+        .generate(db, title, "core", config, &tera, &ProjectConfig::default())
+        .await
+        .expect("media route generation")
+        .into_iter()
+        .map(|f| {
+            let stem = f
+                .path
+                .file_stem()
+                .expect("the media module has a file stem")
+                .to_string_lossy()
+                .into_owned();
+            (stem, f.content)
+        })
+        .collect()
+}
+
+async fn run_openapi_generator(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    titles: &[&str],
+) -> Vec<GeneratedFile> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let out = tempfile::tempdir().expect("out dir");
+    let generation_order: Vec<GenerationEntry> = titles
+        .iter()
+        .map(|title| GenerationEntry {
+            schema_title: (*title).to_string(),
+            domain: "core".to_string(),
+            pg_schema: "core".to_string(),
+            is_cyclic: false,
+        })
+        .collect();
+    let generator = codegraph_generate::api::openapi::OpenApiGenerator::new(out.path());
+    generator
+        .generate(
+            db,
+            config,
+            &generation_order,
+            &tera,
+            &ProjectConfig::default(),
+        )
+        .await
+        .expect("openapi generation")
+}
+
+fn openapi_doc<'a>(files: &'a [GeneratedFile], name: &str) -> &'a str {
+    files
+        .iter()
+        .find(|f| f.path.ends_with(format!("api/openapi/{name}")))
+        .map(|f| f.content.as_str())
+        .unwrap_or_else(|| panic!("the openapi generator must emit {name}"))
+}
+
+/// The registrations inside a `paths(...)` / `components(schemas(...))`
+/// block, read POSITIONALLY between the opener and the first closing-paren
+/// line (`    ),` for paths, `    )),` for the nested schemas call) — so a
+/// pin can assert what the derive actually publishes instead of grepping the
+/// whole file (where a comment or a DTO name would match).
+fn registrations_after(source: &str, opener: &str) -> Vec<String> {
+    let start = source
+        .find(opener)
+        .unwrap_or_else(|| panic!("`{opener}` missing from: {source}"))
+        + opener.len();
+    let rest = &source[start..];
+    let mut registrations = Vec::new();
+    for line in rest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(')') {
+            return registrations;
+        }
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        registrations.push(trimmed.trim_end_matches(',').to_string());
+    }
+    panic!("the `{opener}` block never closes: {rest}");
+}
+
+fn openapi_paths(source: &str) -> Vec<String> {
+    registrations_after(source, "paths(")
+}
+
+fn openapi_schemas(source: &str) -> Vec<String> {
+    registrations_after(source, "components(schemas(")
+}
+
+fn media_paths(source: &str) -> Vec<String> {
+    openapi_paths(source)
+        .into_iter()
+        .filter(|path| path.contains("::media_"))
+        .collect()
+}
+
+/// The handler fns a module ACTUALLY defines — the expectation source for the
+/// drift pin, so neither list is an independent hardcode.
+fn emitted_handlers(content: &str) -> Vec<&'static str> {
+    ["presign", "upload", "display", "remove"]
+        .into_iter()
+        .filter(|handler| content.contains(&format!("pub async fn {handler}")))
+        .collect()
+}
+
+#[tokio::test]
+async fn openapi_registers_the_through_app_media_paths() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+
+    // Sanity: the fixture really is the through-app shape (the expectation
+    // below is derived from this, not assumed).
+    let emitted = emitted_media_files(&engine, &config, "PersonType").await;
+    assert_eq!(emitted.len(), 1, "one module per media field");
+    assert_eq!(emitted[0].0, "media_person_avatar");
+    assert_eq!(emitted[0].1.matches("pub async fn upload").count(), 1);
+
+    for doc in ["core.rs", "all.rs"] {
+        let registered = media_paths(openapi_doc(&files, doc));
+        for expected in [
+            "crate::api::core::media_person_avatar::upload",
+            "crate::api::core::media_person_avatar::display",
+            "crate::api::core::media_person_avatar::remove",
+        ] {
+            assert!(
+                registered.iter().any(|p| p == expected),
+                "{doc} must register {expected}: {registered:?}"
+            );
+        }
+        assert!(
+            !registered
+                .iter()
+                .any(|p| p.ends_with("::media_person_avatar::presign")),
+            "through-app publishes no presign route: {registered:?}"
+        );
+        // The multipart upload body documents NO request_body: there is no
+        // `ToSchema` struct for it (deliberate — never invent one).
+        assert!(
+            !openapi_schemas(openapi_doc(&files, doc))
+                .iter()
+                .any(|s| s.contains("PresignRequest")),
+            "{doc}: through-app registers no PresignRequest schema"
+        );
+    }
+}
+
+#[tokio::test]
+async fn openapi_registers_the_presigned_media_paths_and_request_schema() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&presigned_media_toml()).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+
+    let emitted = emitted_media_files(&engine, &config, "PersonType").await;
+    assert_eq!(emitted.len(), 1, "one module per media field");
+    assert!(
+        emitted[0].1.contains("pub struct PresignRequest"),
+        "the presigned module owns the request schema"
+    );
+
+    for doc in ["core.rs", "all.rs"] {
+        let registered = media_paths(openapi_doc(&files, doc));
+        for expected in [
+            "crate::api::core::media_person_avatar::presign",
+            "crate::api::core::media_person_avatar::display",
+            "crate::api::core::media_person_avatar::remove",
+        ] {
+            assert!(
+                registered.iter().any(|p| p == expected),
+                "{doc} must register {expected}: {registered:?}"
+            );
+        }
+        assert!(
+            !registered
+                .iter()
+                .any(|p| p.ends_with("::media_person_avatar::upload")),
+            "presigned publishes no multipart upload: {registered:?}"
+        );
+        // `request_body = PresignRequest` only compiles when the schema is
+        // registered in the same document.
+        assert!(
+            openapi_schemas(openapi_doc(&files, doc))
+                .iter()
+                .any(|s| s == "crate::api::core::media_person_avatar::PresignRequest"),
+            "{doc} must register the presign request schema: {:?}",
+            openapi_schemas(openapi_doc(&files, doc))
+        );
+    }
+}
+
+#[tokio::test]
+async fn openapi_documents_no_media_path_for_client_direct() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+
+    assert!(
+        emitted_media_files(&engine, &config, "PersonType")
+            .await
+            .is_empty(),
+        "R5: client-direct emits no app-plane media module"
+    );
+
+    for doc in ["core.rs", "all.rs"] {
+        let paths = openapi_paths(openapi_doc(&files, doc));
+        // The document is otherwise populated — this is not a vacuous pass.
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.ends_with("person_handler::get_by_id")),
+            "{doc}: the CRUD surface is still registered: {paths:?}"
+        );
+        assert!(
+            media_paths(openapi_doc(&files, doc)).is_empty(),
+            "{doc} must document no media path for client-direct"
+        );
+        assert!(
+            !openapi_schemas(openapi_doc(&files, doc))
+                .iter()
+                .any(|s| s.contains("PresignRequest")),
+            "{doc}: no presign schema without app-plane media"
+        );
+    }
+}
+
+/// THE DRIFT PIN (issue #704): the expected registration is derived from the
+/// EMITTED module files — every `src/api/{domain}/media_*.rs` stem must appear
+/// in the published path list with exactly the handlers that module defines.
+/// A module rename, a handler rename, or a lost registration desyncs the two
+/// planes and fails here.
+#[tokio::test]
+async fn openapi_media_registration_tracks_the_emitted_media_modules() {
+    for (label, toml) in [
+        ("through-app", media_toml("supabase", "through-app")),
+        ("presigned", presigned_media_toml()),
+    ] {
+        let engine = GrafeoEngine::in_memory().expect("engine");
+        ingest_model(&engine).await;
+        let config = parse_domain_config_str(&toml).expect("toml");
+
+        let emitted = emitted_media_files(&engine, &config, "PersonType").await;
+        assert_eq!(emitted.len(), 1, "{label}: one module per media field");
+        let mut expected: Vec<String> = emitted
+            .iter()
+            .flat_map(|(stem, content)| {
+                emitted_handlers(content)
+                    .into_iter()
+                    .map(move |handler| format!("crate::api::core::{stem}::{handler}"))
+            })
+            .collect();
+        expected.sort();
+        assert!(
+            expected.len() >= 3,
+            "{label}: the fixture exposes at least display/remove: {expected:?}"
+        );
+
+        let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+        for doc in ["core.rs", "all.rs"] {
+            let mut registered = media_paths(openapi_doc(&files, doc));
+            registered.sort();
+            assert_eq!(
+                registered, expected,
+                "{label}: {doc} must register exactly what the emitted media modules expose"
+            );
+        }
+    }
+}
+
+/// A `role = "child"` entity's media route is NESTED by its utoipa annotation
+/// (issue #713) but it is still an app-plane route that must be DOCUMENTED —
+/// registration must not be root-gated.
+#[tokio::test]
+async fn openapi_registers_a_nested_child_media_module() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType", "ContactType"]).await;
+
+    let emitted = emitted_media_files(&engine, &config, "ContactType").await;
+    assert_eq!(emitted.len(), 1, "one module per media field");
+    assert_eq!(emitted[0].0, "media_contact_avatar");
+    // The module documents the NESTED path it is mounted at.
+    assert!(
+        emitted[0]
+            .1
+            .contains(r#"path = "/api/v1/core/persons/{person_id}/contacts/{id}/avatar""#),
+        "the child module's own contract is nested: {}",
+        emitted[0].1
+    );
+
+    for doc in ["core.rs", "all.rs"] {
+        let registered = media_paths(openapi_doc(&files, doc));
+        for expected in [
+            "crate::api::core::media_contact_avatar::display",
+            "crate::api::core::media_contact_avatar::remove",
+            "crate::api::core::media_contact_avatar::upload",
+        ] {
+            assert!(
+                registered.iter().any(|p| p == expected),
+                "{doc} must register the nested child's {expected}: {registered:?}"
+            );
+        }
     }
 }

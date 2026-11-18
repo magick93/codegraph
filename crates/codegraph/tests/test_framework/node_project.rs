@@ -1,6 +1,8 @@
 //! npm project helpers for full-stack integration tests: hash-gated
-//! installs, svelte-kit sync, typecheck (`run_check`) and build
-//! (`run_build`) invocations with shared command logging.
+//! installs, svelte-kit sync, typecheck (`run_check` — human output;
+//! `run_check_machine` — the ndjson contract a diagnostic-attributing gate
+//! parses, issue #728) and build (`run_build`) invocations with shared
+//! command logging.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -99,11 +101,43 @@ impl NodeProject {
     }
 
     /// `npx svelte-check --tsconfig ./tsconfig.json`, captured.
+    ///
+    /// Human format (colourised by default). Gates that only key off the
+    /// exit status can keep using this; a gate that ATTRIBUTES diagnostics
+    /// should use [`Self::run_check_machine`] instead — see its note.
     pub fn run_check(&self) -> Result<(bool, String), String> {
         capture(
             &self.root,
             "npx",
             &["svelte-check", "--tsconfig", "./tsconfig.json"],
+        )
+    }
+
+    /// `npx svelte-check --tsconfig ./tsconfig.json --output
+    /// machine-verbose`, captured.
+    ///
+    /// `machine-verbose` is svelte-check's documented ndjson report: one
+    /// timestamp-prefixed `START` / `ERROR` / `WARNING` / `COMPLETED` /
+    /// `FAILURE` record per line, no colour, filenames relative to the
+    /// `START` workspace. Parsing THAT is the only stable attribution
+    /// contract (issue #728: the human shape colourises `Error:` under CI,
+    /// so a `strip_prefix` parser matched nothing and reported zero
+    /// diagnostics while svelte-check was reporting ten).
+    ///
+    /// `run_check` stays the human entry point (the IFML gate's two call
+    /// sites are exit-status-only and can adopt this variant if they ever
+    /// grow a report parser).
+    pub fn run_check_machine(&self) -> Result<(bool, String), String> {
+        capture(
+            &self.root,
+            "npx",
+            &[
+                "svelte-check",
+                "--tsconfig",
+                "./tsconfig.json",
+                "--output",
+                "machine-verbose",
+            ],
         )
     }
 

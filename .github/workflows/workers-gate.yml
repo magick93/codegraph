@@ -33,7 +33,14 @@ env:
 
 jobs:
   workers-gate:
-    runs-on: ubuntu-latest
+    # Pinned off the rolling tag: `ubuntu-latest` is moving to 26.04
+    # (resolute), whose archive does not ship the `libxml2` the hurl .deb
+    # depends on ("not installable") — the reason ci.yml's
+    # `test-ops-integration` job runs on 24.04 (noble). The exit-127 defect
+    # observed here was the tarball's `bin/` nesting (see the hurl step), so
+    # the .deb is the load-bearing fix and this pin keeps the lane off a tag
+    # mid-rollout. Nothing else here is runner-specific.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
@@ -47,15 +54,27 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
-      # GitHub release binary — far faster than cargo install.
+      # The .deb recipe from ci.yml's `test-ops-integration` job (proven
+      # there): the release TARBALL nests its binaries under
+      # `hurl-<ver>-x86_64-unknown-linux-gnu/bin/`, so the old
+      # `tar --strip-components=1 -C /usr/local/bin` installed
+      # /usr/local/bin/bin/hurl — off PATH, `hurl: command not found`.
       - name: Install hurl
         run: |
-          curl -sL https://github.com/Orange-OpenSource/hurl/releases/download/7.1.0/hurl-7.1.0-x86_64-unknown-linux-gnu.tar.gz \
-            | sudo tar -xz -C /usr/local/bin --strip-components=1
+          HURL_VERSION=8.1.0
+          curl --silent --location --remote-name \
+            "https://github.com/Orange-OpenSource/hurl/releases/download/${HURL_VERSION}/hurl_${HURL_VERSION}_amd64.deb"
+          sudo apt-get update && sudo apt-get install -y "./hurl_${HURL_VERSION}_amd64.deb"
           hurl --version
-      # Pre-pull the CLI (and warm the npm cache) before the gate runs.
+      # Pre-pull the PINNED CLI (and warm the npm cache) before the gate
+      # runs. This must stay the ONLY `npx … supabase` command in the file,
+      # and its version literal MUST equal `SUPABASE_CLI_VERSION` in
+      # crates/codegraph/tests/workers_live_gate.rs — that suite's node-free
+      # lockstep pin fails, naming the mismatch, otherwise (issue #729: a
+      # bare `npx supabase` resolves npm `latest`, and the pinned CLI rejects
+      # the fixture's legacy config key).
       - name: Prefetch Supabase CLI
-        run: npx --yes supabase@2.105.0 --version
+        run: npx --yes supabase@3.2.0 --version
       - name: Run workers live gate
         run: cargo test -p codegraph --test workers_live_gate -- --ignored --nocapture
       - name: Upload gate logs on failure
