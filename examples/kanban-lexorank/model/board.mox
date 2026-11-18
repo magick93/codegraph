@@ -1,0 +1,43 @@
+/// Kanban board model — the primary model source (companion to
+/// docs/lexorank-kanban.md). Regenerate after edits:
+///   kanban-graph run --mox-files model/board.mox --config domains.toml \
+///       --profiles-config profiles.toml --template-dir templates-override \
+///       --output generated
+package board
+
+/// A kanban board.
+class BoardType {
+    /// Display name of the board.
+    String name
+}
+
+/// A column on a board.
+class BoardListType {
+    /// Column title (e.g. "Todo", "In Progress", "Done").
+    String name
+    /// Column order left-to-right (columns are not drag-reordered in v1).
+    int position
+    refers BoardType board
+}
+
+/// A card on a board.
+class CardType {
+    /// Card title.
+    String title
+
+    /// Optional free-form description.
+    String [0..1] description
+
+    /// LexoRank ordering key within the list — "{bucket}|{rank}", e.g.
+    /// "0|hzzzzz" (lexorank crate 2.0, bucket fixed at 0). Assigned by the
+    /// board.assign_card_rank trigger on INSERT; rewritten only by the
+    /// move/rebalance endpoints. The pattern uses [|] (character class)
+    /// rather than \| so it survives the mox string literal unescaped; it
+    /// renders as #[garde(pattern(r"^0[|][0-9a-z]*[1-9a-z]$"))] on the
+    /// create DTO, and migrations/custom.sql mirrors it as a CHECK.
+    String [0..1] rank { pattern "^0[|][0-9a-z]*[1-9a-z]$" }
+
+    /// The list (column) this card sits in. parent_ref in domains.toml —
+    /// nested routes GET /api/v1/board/lists/{list_id}/cards.
+    refers BoardListType list
+}
