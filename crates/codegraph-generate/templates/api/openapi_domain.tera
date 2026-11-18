@@ -25,7 +25,17 @@ use utoipa::OpenApi;
 {% if entity.has_list %}
         crate::api::{{ domain_name }}::{{ entity.module_name }}_handler::list,
 {% endif %}
-{% endfor %}
+{% for mf in entity.media_fields %}{% if entity.media_mode_presigned %}
+        crate::api::{{ domain_name }}::media_{{ entity.module_name }}_{{ mf }}::presign,
+{% else %}
+        // `upload` extracts a `Multipart` body: there is no `ToSchema` request
+        // struct for it (deliberately), so this path documents NO
+        // `request_body` — the annotation carries none either (issue #704).
+        crate::api::{{ domain_name }}::media_{{ entity.module_name }}_{{ mf }}::upload,
+{% endif %}
+        crate::api::{{ domain_name }}::media_{{ entity.module_name }}_{{ mf }}::display,
+        crate::api::{{ domain_name }}::media_{{ entity.module_name }}_{{ mf }}::remove,
+{% endfor %}{% endfor %}
 {%- for function in functions %}
         crate::api::{{ domain_name }}::functions_api::{{ function.fn_name }},
 {%- endfor %}
@@ -45,7 +55,9 @@ use utoipa::OpenApi;
         crate::domain::{{ domain_name }}::{{ entity.module_name }}::dto_update::Update{{ entity.entity_name }}Request,
 {% endif %}
         crate::domain::{{ domain_name }}::{{ entity.module_name }}::dto_response::{{ entity.entity_name }}Response,
-{% endfor %}
+{% for mf in entity.media_fields %}{% if entity.media_mode_presigned %}
+        crate::api::{{ domain_name }}::media_{{ entity.module_name }}_{{ mf }}::PresignRequest,
+{% endif %}{% endfor %}{% endfor %}
 {%- for function in functions %}
         crate::api::{{ domain_name }}::functions_api::{{ function.request }},
         crate::api::{{ domain_name }}::functions_api::{{ function.response }},

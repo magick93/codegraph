@@ -244,17 +244,10 @@ async fn run_media_route_generator_for(
     config: &DomainConfig,
     title: &str,
 ) -> Vec<String> {
-    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
-    let project = ProjectConfig::default();
-    let out = tempfile::tempdir().expect("out dir");
-    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
-    use codegraph_generate::traits::EntityGenerator;
-    generator
-        .generate(db, title, "core", config, &tera, &project)
+    emitted_media_files(db, config, title)
         .await
-        .expect("media route generation")
-        .iter()
-        .map(|f| f.content.clone())
+        .into_iter()
+        .map(|(_, content)| content)
         .collect()
 }
 
@@ -2999,5 +2992,343 @@ async fn repository_plane_never_writes_the_media_child_row() {
             naive_impl.contains("DELETE FROM core.person_avatar"),
             "{label} keeps the replace-on-update path:\n{naive_impl}"
         );
+    }
+}
+
+// ── Issue #704: the served OpenAPI documents register the media routes ──
+//
+// `api/media_route.tera` has always carried `#[utoipa::path]` annotations for
+// presign/upload/display/remove, but nothing registered those handler
+// functions in an `#[derive(OpenApi)]` document — so the generated spec
+// contained NO media path while the annotations implied a published contract.
+// The registration is derived from the SAME plan helpers the router uses
+// (`media_route_surface` + `media_upload_mode`), so the documented surface and
+// the mounted surface cannot drift.
+
+fn presigned_media_toml() -> String {
+    // Supabase cannot serve `presigned` (the capability matrix), so the r2
+    // binding rides along — the same shape the sibling presigned pins use.
+    format!(
+        "{BASE_TOML}\n[domains.core.media]\nprovider = \"r2\"\nupload_mode = \"presigned\"\nbucket = \"person-media\"\nmax_bytes = 5242880\naccept = [\"image/png\"]\n\n[domains.core.media.r2]\nbinding = \"MEDIA_BUCKET\"\n"
+    )
+}
+
+/// The emitted media handler modules for one entity, as `(module_stem,
+/// source)` pairs. The stem is the file name the mod-file emitter declares
+/// (`media_{entity_snake}_{field_snake}`), i.e. the path segment the OpenAPI
+/// registration must address.
+async fn emitted_media_files(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    title: &str,
+) -> Vec<(String, String)> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let out = tempfile::tempdir().expect("out dir");
+    let generator = codegraph_generate::api::media::MediaRouteGenerator::new(out.path());
+    use codegraph_generate::traits::EntityGenerator;
+    generator
+        .generate(db, title, "core", config, &tera, &ProjectConfig::default())
+        .await
+        .expect("media route generation")
+        .into_iter()
+        .map(|f| {
+            let stem = f
+                .path
+                .file_stem()
+                .expect("the media module has a file stem")
+                .to_string_lossy()
+                .into_owned();
+            (stem, f.content)
+        })
+        .collect()
+}
+
+async fn run_openapi_generator(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    titles: &[&str],
+) -> Vec<GeneratedFile> {
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let out = tempfile::tempdir().expect("out dir");
+    let generation_order: Vec<GenerationEntry> = titles
+        .iter()
+        .map(|title| GenerationEntry {
+            schema_title: (*title).to_string(),
+            domain: "core".to_string(),
+            pg_schema: "core".to_string(),
+            is_cyclic: false,
+        })
+        .collect();
+    let generator = codegraph_generate::api::openapi::OpenApiGenerator::new(out.path());
+    generator
+        .generate(
+            db,
+            config,
+            &generation_order,
+            &tera,
+            &ProjectConfig::default(),
+        )
+        .await
+        .expect("openapi generation")
+}
+
+fn openapi_doc<'a>(files: &'a [GeneratedFile], name: &str) -> &'a str {
+    files
+        .iter()
+        .find(|f| f.path.ends_with(format!("api/openapi/{name}")))
+        .map(|f| f.content.as_str())
+        .unwrap_or_else(|| panic!("the openapi generator must emit {name}"))
+}
+
+/// The registrations inside a `paths(...)` / `components(schemas(...))`
+/// block, read POSITIONALLY between the opener and the first closing-paren
+/// line (`    ),` for paths, `    )),` for the nested schemas call) — so a
+/// pin can assert what the derive actually publishes instead of grepping the
+/// whole file (where a comment or a DTO name would match).
+fn registrations_after(source: &str, opener: &str) -> Vec<String> {
+    let start = source
+        .find(opener)
+        .unwrap_or_else(|| panic!("`{opener}` missing from: {source}"))
+        + opener.len();
+    let rest = &source[start..];
+    let mut registrations = Vec::new();
+    for line in rest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(')') {
+            return registrations;
+        }
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        registrations.push(trimmed.trim_end_matches(',').to_string());
+    }
+    panic!("the `{opener}` block never closes: {rest}");
+}
+
+fn openapi_paths(source: &str) -> Vec<String> {
+    registrations_after(source, "paths(")
+}
+
+fn openapi_schemas(source: &str) -> Vec<String> {
+    registrations_after(source, "components(schemas(")
+}
+
+fn media_paths(source: &str) -> Vec<String> {
+    openapi_paths(source)
+        .into_iter()
+        .filter(|path| path.contains("::media_"))
+        .collect()
+}
+
+/// The handler fns a module ACTUALLY defines — the expectation source for the
+/// drift pin, so neither list is an independent hardcode.
+fn emitted_handlers(content: &str) -> Vec<&'static str> {
+    ["presign", "upload", "display", "remove"]
+        .into_iter()
+        .filter(|handler| content.contains(&format!("pub async fn {handler}")))
+        .collect()
+}
+
+#[tokio::test]
+async fn openapi_registers_the_through_app_media_paths() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+
+    // Sanity: the fixture really is the through-app shape (the expectation
+    // below is derived from this, not assumed).
+    let emitted = emitted_media_files(&engine, &config, "PersonType").await;
+    assert_eq!(emitted.len(), 1, "one module per media field");
+    assert_eq!(emitted[0].0, "media_person_avatar");
+    assert_eq!(emitted[0].1.matches("pub async fn upload").count(), 1);
+
+    for doc in ["core.rs", "all.rs"] {
+        let registered = media_paths(openapi_doc(&files, doc));
+        for expected in [
+            "crate::api::core::media_person_avatar::upload",
+            "crate::api::core::media_person_avatar::display",
+            "crate::api::core::media_person_avatar::remove",
+        ] {
+            assert!(
+                registered.iter().any(|p| p == expected),
+                "{doc} must register {expected}: {registered:?}"
+            );
+        }
+        assert!(
+            !registered
+                .iter()
+                .any(|p| p.ends_with("::media_person_avatar::presign")),
+            "through-app publishes no presign route: {registered:?}"
+        );
+        // The multipart upload body documents NO request_body: there is no
+        // `ToSchema` struct for it (deliberate — never invent one).
+        assert!(
+            !openapi_schemas(openapi_doc(&files, doc))
+                .iter()
+                .any(|s| s.contains("PresignRequest")),
+            "{doc}: through-app registers no PresignRequest schema"
+        );
+    }
+}
+
+#[tokio::test]
+async fn openapi_registers_the_presigned_media_paths_and_request_schema() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&presigned_media_toml()).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+
+    let emitted = emitted_media_files(&engine, &config, "PersonType").await;
+    assert_eq!(emitted.len(), 1, "one module per media field");
+    assert!(
+        emitted[0].1.contains("pub struct PresignRequest"),
+        "the presigned module owns the request schema"
+    );
+
+    for doc in ["core.rs", "all.rs"] {
+        let registered = media_paths(openapi_doc(&files, doc));
+        for expected in [
+            "crate::api::core::media_person_avatar::presign",
+            "crate::api::core::media_person_avatar::display",
+            "crate::api::core::media_person_avatar::remove",
+        ] {
+            assert!(
+                registered.iter().any(|p| p == expected),
+                "{doc} must register {expected}: {registered:?}"
+            );
+        }
+        assert!(
+            !registered
+                .iter()
+                .any(|p| p.ends_with("::media_person_avatar::upload")),
+            "presigned publishes no multipart upload: {registered:?}"
+        );
+        // `request_body = PresignRequest` only compiles when the schema is
+        // registered in the same document.
+        assert!(
+            openapi_schemas(openapi_doc(&files, doc))
+                .iter()
+                .any(|s| s == "crate::api::core::media_person_avatar::PresignRequest"),
+            "{doc} must register the presign request schema: {:?}",
+            openapi_schemas(openapi_doc(&files, doc))
+        );
+    }
+}
+
+#[tokio::test]
+async fn openapi_documents_no_media_path_for_client_direct() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "client-direct")).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+
+    assert!(
+        emitted_media_files(&engine, &config, "PersonType")
+            .await
+            .is_empty(),
+        "R5: client-direct emits no app-plane media module"
+    );
+
+    for doc in ["core.rs", "all.rs"] {
+        let paths = openapi_paths(openapi_doc(&files, doc));
+        // The document is otherwise populated — this is not a vacuous pass.
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.ends_with("person_handler::get_by_id")),
+            "{doc}: the CRUD surface is still registered: {paths:?}"
+        );
+        assert!(
+            media_paths(openapi_doc(&files, doc)).is_empty(),
+            "{doc} must document no media path for client-direct"
+        );
+        assert!(
+            !openapi_schemas(openapi_doc(&files, doc))
+                .iter()
+                .any(|s| s.contains("PresignRequest")),
+            "{doc}: no presign schema without app-plane media"
+        );
+    }
+}
+
+/// THE DRIFT PIN (issue #704): the expected registration is derived from the
+/// EMITTED module files — every `src/api/{domain}/media_*.rs` stem must appear
+/// in the published path list with exactly the handlers that module defines.
+/// A module rename, a handler rename, or a lost registration desyncs the two
+/// planes and fails here.
+#[tokio::test]
+async fn openapi_media_registration_tracks_the_emitted_media_modules() {
+    for (label, toml) in [
+        ("through-app", media_toml("supabase", "through-app")),
+        ("presigned", presigned_media_toml()),
+    ] {
+        let engine = GrafeoEngine::in_memory().expect("engine");
+        ingest_model(&engine).await;
+        let config = parse_domain_config_str(&toml).expect("toml");
+
+        let emitted = emitted_media_files(&engine, &config, "PersonType").await;
+        assert_eq!(emitted.len(), 1, "{label}: one module per media field");
+        let mut expected: Vec<String> = emitted
+            .iter()
+            .flat_map(|(stem, content)| {
+                emitted_handlers(content)
+                    .into_iter()
+                    .map(move |handler| format!("crate::api::core::{stem}::{handler}"))
+            })
+            .collect();
+        expected.sort();
+        assert!(
+            expected.len() >= 3,
+            "{label}: the fixture exposes at least display/remove: {expected:?}"
+        );
+
+        let files = run_openapi_generator(&engine, &config, &["PersonType"]).await;
+        for doc in ["core.rs", "all.rs"] {
+            let mut registered = media_paths(openapi_doc(&files, doc));
+            registered.sort();
+            assert_eq!(
+                registered, expected,
+                "{label}: {doc} must register exactly what the emitted media modules expose"
+            );
+        }
+    }
+}
+
+/// A `role = "child"` entity's media route is NESTED by its utoipa annotation
+/// (issue #713) but it is still an app-plane route that must be DOCUMENTED —
+/// registration must not be root-gated.
+#[tokio::test]
+async fn openapi_registers_a_nested_child_media_module() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_parent_and_child(&engine).await;
+    let config =
+        parse_domain_config_str(&media_toml_with_nested_child("through-app")).expect("toml");
+    let files = run_openapi_generator(&engine, &config, &["PersonType", "ContactType"]).await;
+
+    let emitted = emitted_media_files(&engine, &config, "ContactType").await;
+    assert_eq!(emitted.len(), 1, "one module per media field");
+    assert_eq!(emitted[0].0, "media_contact_avatar");
+    // The module documents the NESTED path it is mounted at.
+    assert!(
+        emitted[0]
+            .1
+            .contains(r#"path = "/api/v1/core/persons/{person_id}/contacts/{id}/avatar""#),
+        "the child module's own contract is nested: {}",
+        emitted[0].1
+    );
+
+    for doc in ["core.rs", "all.rs"] {
+        let registered = media_paths(openapi_doc(&files, doc));
+        for expected in [
+            "crate::api::core::media_contact_avatar::display",
+            "crate::api::core::media_contact_avatar::remove",
+            "crate::api::core::media_contact_avatar::upload",
+        ] {
+            assert!(
+                registered.iter().any(|p| p == expected),
+                "{doc} must register the nested child's {expected}: {registered:?}"
+            );
+        }
     }
 }
