@@ -67,11 +67,12 @@ jobs:
           sudo apt-get update && sudo apt-get install -y "./hurl_${HURL_VERSION}_amd64.deb"
           hurl --version
       # Pre-pull the PINNED CLI (and warm the npm cache) before the gate
-      # runs. The version literal MUST equal `SUPABASE_CLI_VERSION` in
+      # runs. This must stay the ONLY `npx … supabase` command in the file,
+      # and its version literal MUST equal `SUPABASE_CLI_VERSION` in
       # crates/codegraph/tests/workers_live_gate.rs — that suite's node-free
       # lockstep pin fails, naming the mismatch, otherwise (issue #729: a
-      # bare `npx supabase` resolves npm `latest`, and a drifted CLI rejects
-      # the fixture's legacy config).
+      # bare `npx supabase` resolves npm `latest`, and the pinned CLI rejects
+      # the fixture's legacy config key).
       - name: Prefetch Supabase CLI
         run: npx --yes supabase@3.2.0 --version
       - name: Run workers live gate

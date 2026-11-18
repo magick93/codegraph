@@ -20,9 +20,10 @@
 //!    the hand-authored workflow contract really pins the 409 edges, and the
 //!    Supabase CLI pin cannot re-drift
 //!    (`supabase_cli_version_is_pinned_and_the_fixture_speaks_its_key_vocabulary`,
-//!    issue #729: the workflow prefetch and this suite name the same
-//!    `SUPABASE_CLI_VERSION`, and the fixture config speaks that version's
-//!    `[local_smtp]` vocabulary).
+//!    issue #729: the workflow's ONE `npx … supabase` command is the pinned
+//!    invocation this suite runs, and the fixture config speaks that version's
+//!    `[local_smtp]` vocabulary — renamed AND still disabled off the default
+//!    ports).
 //! 2. **The live gate** (ignored; nightly lane): regenerate → migrate into
 //!    a scratch database inside the fixture Supabase postgres → build the
 //!    11-crate workers workspace → boot gateway + 10 workers → run the
@@ -70,13 +71,24 @@ pub const SUPABASE_DB_PORT: u16 = 54340;
 pub const SUPABASE_HEALTH_URL: &str = "http://localhost:54341/auth/v1/health";
 
 /// The Supabase CLI version this gate pins (issue #729). Bare `npx supabase`
-/// resolves whatever npm `latest` happens to be, and a drifted CLI fatally
-/// rejected the fixture config (`inbucket in supabase/config.toml is no
-/// longer supported. Use local_smtp instead.`). EVERY CLI invocation in this
-/// suite names this version, and `.github/workflows/workers-gate.yml`'s
-/// prefetch names the same literal — the node-free lockstep pin below fails
-/// (naming the mismatch) when the two drift apart.
+/// resolves whatever npm `latest` happens to be, and the runner's resolved
+/// CLI fatally rejected the fixture config's legacy key. Both halves are
+/// load-bearing and verified on the pinned CLI: `supabase@3.2.0` accepts
+/// `[local_smtp]` and rejects `[inbucket]` (`inbucket in supabase/config.toml
+/// is no longer supported. Use local_smtp instead.`), while `supabase@2.105.0`
+/// still accepts `[inbucket]` — so the pin kills `latest` drift AND the
+/// fixture's rename is what gets `start` past config load. EVERY CLI
+/// invocation in this suite names this version, and
+/// `.github/workflows/workers-gate.yml`'s prefetch names the same literal —
+/// the node-free lockstep pin below fails (naming the mismatch) when the two
+/// drift apart.
 pub const SUPABASE_CLI_VERSION: &str = "3.2.0";
+
+/// The fixture's local SMTP port (`[local_smtp].port`) — inside the 54340+
+/// block the fixture owns, and part of what the lockstep pin holds (issue
+/// #729: the section must stay disabled AND off the default ports, or the
+/// stack collides with the resident Supabase stacks).
+pub const SUPABASE_LOCAL_SMTP_PORT: u16 = 54343;
 
 /// hurl files the fixture manifest may skip — fixture-specific reasons
 /// only. These two generated files reference keys the workers suite does
@@ -370,44 +382,113 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Section headers of a TOML source (`[a.b]` → `a.b`), comment-agnostic so a
+/// TOML sections as `(name, body)` pairs — `[a.b]` → `"a.b"`, body = the
+/// trimmed non-comment lines until the next header. Comment-agnostic so a
 /// header comment may NAME a retired key without tripping the assertions.
-fn toml_section_names(source: &str) -> Vec<String> {
-    source
+fn toml_sections(source: &str) -> Vec<(String, Vec<String>)> {
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    for raw in source.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('[') {
+            let name = rest
+                .split(']')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            sections.push((name, Vec::new()));
+        } else if let Some((_, body)) = sections.last_mut() {
+            body.push(line.to_string());
+        }
+    }
+    sections
+}
+
+/// `key = value` → `("key", "value")` (both trimmed), for body assertions
+/// that must not depend on the TOML's spacing.
+fn toml_kv(line: &str) -> Option<(&str, &str)> {
+    line.split_once('=')
+        .map(|(key, value)| (key.trim(), value.trim()))
+}
+
+/// Non-comment workflow lines that name an `npx … supabase` command — the
+/// ONLY thing half 1 inspects (comments never execute, so the explanatory
+/// block above the prefetch may say `npx supabase` freely).
+fn npx_supabase_lines(workflow: &str) -> Vec<String> {
+    workflow
         .lines()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix('[')
-                .and_then(|rest| rest.split(']').next())
-                .map(|name| name.trim().to_string())
-        })
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with('#'))
+        .filter(|line| line.contains("npx") && line.contains("supabase"))
+        .map(str::to_string)
         .collect()
 }
 
 /// The durable half of issue #729: the CLI pin cannot re-drift.
 ///
-/// Two things must agree — (1) the workflow's prefetch names the version this
-/// suite actually invokes, so the runner never resolves npm `latest` into a
-/// different CLI than the one that warmed the cache; (2) the fixture config
-/// speaks THAT version's key vocabulary (`[local_smtp]`, the CLI's rename of
-/// `[inbucket]`, which the drifted CLI rejected outright:
-/// `inbucket in supabase/config.toml is no longer supported. Use local_smtp
-/// instead.`). Bump both halves in the same PR.
+/// Three things must hold — (1) the workflow's prefetch is the invocation
+/// this suite runs, `npx --yes supabase@{SUPABASE_CLI_VERSION} --version`, so
+/// the runner never resolves npm `latest` into a different CLI than the one
+/// that warmed the cache; (2) it is the ONLY `npx … supabase` command in the
+/// file (a second bare prefetch would reintroduce the drift); (3) the fixture
+/// config speaks that version's key vocabulary (`[local_smtp]`, the CLI's
+/// rename of `[inbucket]`) WITH its container gate intact.
+///
+/// Teeth (mutate → red; every bullet below was verified):
+/// - `supabase@3.2.0` → `supabase@2.105.0` on the prefetch line: fails the
+///   "must be the invocation this suite runs" assertion.
+/// - deleting the prefetch step: fails the exactly-one-command assertion.
+/// - appending a second bare `run: npx supabase --version` step: fails the
+///   exactly-one-command assertion (the old `workflow.contains("supabase@…")`
+///   shape passed both of those — this is the tightened replacement).
+/// - rewriting it as `run: npx --yes supabase --version # supabase@3.2.0`
+///   (the version only in a trailing comment): fails the inline-`run:`/
+///   pinned-spec assertion.
+/// - `[local_smtp]` with its body stripped to a bare header: fails the
+///   `enabled = false` assertion — the CLI's SMTP container gate is
+///   `local_smtp.enabled`, and its DEFAULT is on, so a bare section would
+///   silently start an SMTP container on a default port (what the old
+///   `[inbucket]` block existed to prevent).
+/// - `enabled = false` → `true`, or the `port` line dropped: fails the body
+///   assertions (the stack's ports must stay inside the 54340+ block).
+/// - the section renamed back to `[inbucket]`: fails the legacy-key
+///   assertion.
+///
+/// Bump the version and the fixture vocabulary in the same PR.
 #[test]
 fn supabase_cli_version_is_pinned_and_the_fixture_speaks_its_key_vocabulary() {
     let pinned = pinned_supabase_cli();
 
-    // ── half 1: the runner prefetches the CLI this suite invokes ──────
+    // ── half 1: the ONE npx supabase command is the pinned invocation ──
     let workflow_path = repo_root().join(".github/workflows/workers-gate.yml");
     let workflow = std::fs::read_to_string(&workflow_path)
         .unwrap_or_else(|e| panic!("{} must exist: {e}", workflow_path.display()));
+    let commands = npx_supabase_lines(&workflow);
+    assert_eq!(
+        commands.len(),
+        1,
+        "{} must carry EXACTLY ONE `npx … supabase` command (the prefetch); \
+         got {commands:?} — a second/bare invocation resolves npm `latest` \
+         again, which is the drift issue #729 exists to kill",
+        workflow_path.display()
+    );
+    let command = &commands[0];
     assert!(
-        workflow.contains(&pinned),
-        "{} must prefetch the CLI this suite invokes (`{pinned}`): update its \
-         `Prefetch Supabase CLI` step to `npx --yes {pinned} --version` in the \
-         same PR that moves SUPABASE_CLI_VERSION (issue #729 — a bare \
-         `npx supabase` resolves npm `latest`, and a drifted CLI rejected the \
-         fixture config)",
+        command.starts_with("run: npx --yes supabase@"),
+        "{}: the prefetch line must be an inline `run:` invoking a PINNED \
+         spec (`run: npx --yes supabase@<version> --version`), got \
+         `{command}` — an unpinned or commented-out pin never pins the \
+         resolver (issue #729)",
+        workflow_path.display()
+    );
+    assert!(
+        command.contains(&pinned) && command.contains("--version"),
+        "{} must prefetch the CLI this suite invokes: `run: npx --yes \
+         {pinned} --version`. It carries `{command}` instead — update it in \
+         the same PR that moves SUPABASE_CLI_VERSION (issue #729)",
         workflow_path.display()
     );
 
@@ -415,22 +496,54 @@ fn supabase_cli_version_is_pinned_and_the_fixture_speaks_its_key_vocabulary() {
     let config_path = fixture_dir().join("supabase/config.toml");
     let config = std::fs::read_to_string(&config_path)
         .unwrap_or_else(|e| panic!("{} must exist: {e}", config_path.display()));
-    let sections = toml_section_names(&config);
+    let sections = toml_sections(&config);
+    let names: Vec<&str> = sections.iter().map(|(name, _)| name.as_str()).collect();
     assert!(
-        sections.iter().any(|name| name == "local_smtp"),
-        "{} must carry a [local_smtp] section — that is the key spelling the \
-         pinned CLI (supabase@{SUPABASE_CLI_VERSION}) accepts. The legacy \
-         [inbucket] section is rejected outright: `inbucket in \
-         supabase/config.toml is no longer supported. Use local_smtp \
-         instead.` (issue #729; keep `enabled = false` and the port)",
-        config_path.display()
-    );
-    assert!(
-        !sections.iter().any(|name| name == "inbucket"),
+        !names.contains(&"inbucket"),
         "{} must NOT carry an [inbucket] section — the pinned CLI \
          (supabase@{SUPABASE_CLI_VERSION}) renamed it to [local_smtp] and \
-         fails the stack start on the legacy key (issue #729). Rename the \
-         section header, keeping `enabled`/`port`",
+         REJECTS the legacy key outright (`inbucket in supabase/config.toml \
+         is no longer supported. Use local_smtp instead.`), so `start` never \
+         gets past config load (issue #729). Sections: {names:?}",
+        config_path.display()
+    );
+    let body = sections
+        .iter()
+        .find(|(name, _)| name == "local_smtp")
+        .map(|(_, body)| body)
+        .unwrap_or_else(|| {
+            panic!(
+                "{} must carry a [local_smtp] section — that is the key \
+                 spelling the pinned CLI (supabase@{SUPABASE_CLI_VERSION}) \
+                 accepts; the legacy [inbucket] section is rejected outright \
+                 (issue #729). Sections: {names:?}",
+                config_path.display()
+            )
+        });
+    let value = |key: &str| {
+        body.iter()
+            .find_map(|line| toml_kv(line).filter(|(k, _)| *k == key))
+            .map(|(_, value)| value)
+    };
+    assert_eq!(
+        value("enabled"),
+        Some("false"),
+        "{}: [local_smtp] must carry `enabled = false` — the CLI gates its \
+         SMTP container on `local_smtp.enabled` and the DEFAULT is on, so a \
+         bare/true section silently starts an SMTP container on a default \
+         port (the exact container the old [inbucket] block disabled) \
+         (issue #729). Body: {body:?}",
+        config_path.display()
+    );
+    let port = SUPABASE_LOCAL_SMTP_PORT.to_string();
+    assert_eq!(
+        value("port"),
+        Some(port.as_str()),
+        "{}: [local_smtp] must carry `port = {port}` — every fixture port \
+         stays inside the 54340+ block (the triple the file header names: db \
+         port ↔ [database.api].port ↔ the manifest health_url), and a \
+         default SMTP port collides with the resident stacks (issue #729). \
+         Body: {body:?}",
         config_path.display()
     );
 }
