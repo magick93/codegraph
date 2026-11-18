@@ -8,6 +8,13 @@
 # Everything not needed by the workers suite (studio, email testing,
 # storage, realtime, edge runtime, analytics) is disabled so the stack
 # boots fewer containers.
+#
+# The gate pairs this file with a PINNED Supabase CLI
+# (`SUPABASE_CLI_VERSION` in crates/codegraph/tests/workers_live_gate.rs —
+# a node-free lockstep pin holds the workflow prefetch and this file to
+# the same version): the keys below must be the spelling THAT version
+# expects. `[local_smtp]` is the CLI's rename of `[inbucket]` (issue #729:
+# the drifted CLI rejected the legacy key outright).
 project_id = "workers-gate"
 
 [api]
@@ -39,7 +46,7 @@ enabled = false
 enabled = false
 port = 54342
 
-[inbucket]
+[local_smtp]
 enabled = false
 port = 54343
 

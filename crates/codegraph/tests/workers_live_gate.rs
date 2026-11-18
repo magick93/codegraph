@@ -17,7 +17,12 @@
 //!    list into the run), the manifest targets the fixture's dedicated
 //!    Supabase postgres, hurl skips are fixture-specific only, the profile
 //!    resolves through `BuildPlan` (workers ⇒ cornucopia is a hard rule),
-//!    and the hand-authored workflow contract really pins the 409 edges.
+//!    the hand-authored workflow contract really pins the 409 edges, and the
+//!    Supabase CLI pin cannot re-drift
+//!    (`supabase_cli_version_is_pinned_and_the_fixture_speaks_its_key_vocabulary`,
+//!    issue #729: the workflow prefetch and this suite name the same
+//!    `SUPABASE_CLI_VERSION`, and the fixture config speaks that version's
+//!    `[local_smtp]` vocabulary).
 //! 2. **The live gate** (ignored; nightly lane): regenerate → migrate into
 //!    a scratch database inside the fixture Supabase postgres → build the
 //!    11-crate workers workspace → boot gateway + 10 workers → run the
@@ -63,6 +68,15 @@ pub const EXPECTED_DOMAINS: [&str; 10] = [
 /// foreign stacks at 54321-54334/54337 are never touched.
 pub const SUPABASE_DB_PORT: u16 = 54340;
 pub const SUPABASE_HEALTH_URL: &str = "http://localhost:54341/auth/v1/health";
+
+/// The Supabase CLI version this gate pins (issue #729). Bare `npx supabase`
+/// resolves whatever npm `latest` happens to be, and a drifted CLI fatally
+/// rejected the fixture config (`inbucket in supabase/config.toml is no
+/// longer supported. Use local_smtp instead.`). EVERY CLI invocation in this
+/// suite names this version, and `.github/workflows/workers-gate.yml`'s
+/// prefetch names the same literal — the node-free lockstep pin below fails
+/// (naming the mismatch) when the two drift apart.
+pub const SUPABASE_CLI_VERSION: &str = "3.2.0";
 
 /// hurl files the fixture manifest may skip — fixture-specific reasons
 /// only. These two generated files reference keys the workers suite does
@@ -341,11 +355,91 @@ fn workers_gate_profile_resolves_into_a_valid_build_plan() {
     }
 }
 
+/// The pinned CLI spec npm resolves (`supabase@{SUPABASE_CLI_VERSION}`) — one
+/// spelling for the preflight probe and the `start` spawn (issue #729).
+fn pinned_supabase_cli() -> String {
+    format!("supabase@{SUPABASE_CLI_VERSION}")
+}
+
+/// The repo root: this crate lives at `crates/codegraph`.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("crates/codegraph must sit two levels below the repo root")
+        .to_path_buf()
+}
+
+/// Section headers of a TOML source (`[a.b]` → `a.b`), comment-agnostic so a
+/// header comment may NAME a retired key without tripping the assertions.
+fn toml_section_names(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix('[')
+                .and_then(|rest| rest.split(']').next())
+                .map(|name| name.trim().to_string())
+        })
+        .collect()
+}
+
+/// The durable half of issue #729: the CLI pin cannot re-drift.
+///
+/// Two things must agree — (1) the workflow's prefetch names the version this
+/// suite actually invokes, so the runner never resolves npm `latest` into a
+/// different CLI than the one that warmed the cache; (2) the fixture config
+/// speaks THAT version's key vocabulary (`[local_smtp]`, the CLI's rename of
+/// `[inbucket]`, which the drifted CLI rejected outright:
+/// `inbucket in supabase/config.toml is no longer supported. Use local_smtp
+/// instead.`). Bump both halves in the same PR.
+#[test]
+fn supabase_cli_version_is_pinned_and_the_fixture_speaks_its_key_vocabulary() {
+    let pinned = pinned_supabase_cli();
+
+    // ── half 1: the runner prefetches the CLI this suite invokes ──────
+    let workflow_path = repo_root().join(".github/workflows/workers-gate.yml");
+    let workflow = std::fs::read_to_string(&workflow_path)
+        .unwrap_or_else(|e| panic!("{} must exist: {e}", workflow_path.display()));
+    assert!(
+        workflow.contains(&pinned),
+        "{} must prefetch the CLI this suite invokes (`{pinned}`): update its \
+         `Prefetch Supabase CLI` step to `npx --yes {pinned} --version` in the \
+         same PR that moves SUPABASE_CLI_VERSION (issue #729 — a bare \
+         `npx supabase` resolves npm `latest`, and a drifted CLI rejected the \
+         fixture config)",
+        workflow_path.display()
+    );
+
+    // ── half 2: the fixture config speaks that version's vocabulary ───
+    let config_path = fixture_dir().join("supabase/config.toml");
+    let config = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("{} must exist: {e}", config_path.display()));
+    let sections = toml_section_names(&config);
+    assert!(
+        sections.iter().any(|name| name == "local_smtp"),
+        "{} must carry a [local_smtp] section — that is the key spelling the \
+         pinned CLI (supabase@{SUPABASE_CLI_VERSION}) accepts. The legacy \
+         [inbucket] section is rejected outright: `inbucket in \
+         supabase/config.toml is no longer supported. Use local_smtp \
+         instead.` (issue #729; keep `enabled = false` and the port)",
+        config_path.display()
+    );
+    assert!(
+        !sections.iter().any(|name| name == "inbucket"),
+        "{} must NOT carry an [inbucket] section — the pinned CLI \
+         (supabase@{SUPABASE_CLI_VERSION}) renamed it to [local_smtp] and \
+         fails the stack start on the legacy key (issue #729). Rename the \
+         section header, keeping `enabled`/`port`",
+        config_path.display()
+    );
+}
+
 // ── the live gate ─────────────────────────────────────────────────────
 
 /// Which tools the live gate needs (all present in CI's nightly lane).
 fn skip_if_no_tooling() -> bool {
-    let mut missing = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
     let have = |bin: &str, args: &[&str]| {
         std::process::Command::new(bin)
             .args(args)
@@ -355,17 +449,18 @@ fn skip_if_no_tooling() -> bool {
             .map(|s| s.success())
             .unwrap_or(false)
     };
-    if !have("npx", &["supabase", "--version"]) {
-        missing.push("npx supabase");
+    let pinned = pinned_supabase_cli();
+    if !have("npx", &["--yes", &pinned, "--version"]) {
+        missing.push(format!("npx --yes {pinned}"));
     }
     if !have("docker", &["info"]) {
-        missing.push("docker");
+        missing.push("docker".into());
     }
     if codegraph_ops::env::ensure_psql().is_err() {
-        missing.push("psql");
+        missing.push("psql".into());
     }
     if !have("hurl", &["--version"]) {
-        missing.push("hurl");
+        missing.push("hurl".into());
     }
     if !missing.is_empty() {
         eprintln!("skipping: missing tools: {}", missing.join(", "));
@@ -410,27 +505,32 @@ async fn supabase_healthy() -> bool {
 }
 
 /// Ensure the fixture Supabase stack is up (the suite's stage-0 contract,
-/// mirrored test-side: health probe first, `npx supabase start` when down).
-/// The stack is left running (suite behavior); the foreign stacks on other
-/// ports are never touched — the fixture project id scopes every container.
+/// mirrored test-side: health probe first, then the PINNED CLI
+/// (`npx --yes supabase@{SUPABASE_CLI_VERSION} start`) when down). The stack
+/// is left running (suite behavior); the foreign stacks on other ports are
+/// never touched — the fixture project id scopes every container.
 async fn ensure_supabase_up(fixture: &Path) -> Result<(), String> {
     if supabase_healthy().await {
         println!("fixture Supabase already running ({SUPABASE_HEALTH_URL})");
         return Ok(());
     }
-    println!("starting fixture Supabase (npx supabase start; first run pulls GB of images)…");
+    let pinned = pinned_supabase_cli();
+    println!("starting fixture Supabase (npx --yes {pinned} start; first run pulls GB of images)…");
     let out = std::process::Command::new("npx")
-        .args(["supabase", "start"])
+        .args(["--yes", &pinned, "start"])
         .current_dir(fixture.join("supabase"))
         .output()
-        .map_err(|e| format!("spawn npx supabase start: {e}"))?;
+        .map_err(|e| format!("spawn npx --yes {pinned} start: {e}"))?;
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
     if !out.status.success() {
-        return Err(format!("npx supabase start failed:\n{}", tail(&text, 40)));
+        return Err(format!(
+            "npx --yes {pinned} start failed:\n{}",
+            tail(&text, 40)
+        ));
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while std::time::Instant::now() < deadline {
@@ -992,7 +1092,7 @@ async fn run_suite_on_scratch(_admin: &PgTarget, scratch: &str) -> Result<(), St
 
 /// The live gate (ignored; the nightly lane).
 #[tokio::test]
-#[ignore = "requires npx supabase + docker + psql + hurl and a (cold) build of the fixture workers topology"]
+#[ignore = "requires npx + the pinned Supabase CLI + docker + psql + hurl and a (cold) build of the fixture workers topology"]
 async fn workers_live_gate_supabase_stack_runs_the_full_workers_suite() {
     if skip_if_no_tooling() {
         return;
