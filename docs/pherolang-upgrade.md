@@ -1,3 +1,8 @@
+> **Later pin (2026-11-17).** This document records the 0.3 bump. The live
+> pin is now `phero-*` @ `4f497e1` (v0.4.0 + shared surface kernel SK1–SK6).
+> That move is API-only for us and re-blesses only the `pheroVersion` line in
+> `tests/fixtures/ddd/library.ddd.json`; see AGENTS.md "Pherolang 0.4 pin".
+
 # Upgrading to pherolang 0.3 (rexlang rebrand + the DDD/IR epic)
 
 Status: planned (epic + sub-issues filed)

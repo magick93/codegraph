@@ -58,7 +58,18 @@ tree-sitter-language = "0.1"
 # auto-lsp 0.6.2, and phero-driver brings 0.28.5 (which clears
 # RUSTSEC-2026-0308). A direct upgrade is still gated on the same auto-lsp
 # release as tree-sitter above (issue #423).
-# phero-* @ 298267e: pherolang is now **Phero Lang**. Every crate is
+# phero-* @ 4f497e1: epic pherolang#328's SK4–SK6 (PR #337, merged
+# 2026-11-17). The public `compile_*_str` entry points now take one inert
+# `phero_driver::CompileInputs` bundle instead of parallel `(path, payload)`
+# slices; the `_with_actors`/`_with_decisions`/`_with_designs` variants are
+# replaced by the bundle builders (`with_actors`/`with_decisions`/
+# `with_designs`). `compile_str`, `compile_files`, the gatherers,
+# `DddFragment` and every result type are unchanged, so this pin bump is a
+# call-site rewrite, not a data migration. The same bump also carries SK2/SK3
+# (PR #336): the workspace's one diagnostic record and one import walker.
+# Neither PR moved an artifact byte, so our committed goldens stay as they
+# are. Compiled in-process, as before.
+# Previous pin: phero-* @ 298267e: pherolang is now **Phero Lang**. Every crate is
 # `phero-*`, the repository is yestechgroup/pherolang, the binary and LSP
 # identity are `pherolang`, and the artifacts carry `pheroVersion` with
 # `formatVersion` 2 — the one deliberate pre-1.0 wire break (0.2 artifacts
@@ -89,14 +100,14 @@ tree-sitter-language = "0.1"
 # stays on 69115a7 — upstream's own pin, so lockstep is a no-op.
 # Previous pin (for the history): phero-* @ 1fe0ca9 — the pherolang PR #174
 # dedup sweep; artifacts carried `rexVersion` with formatVersion 1.
-phero-ir = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
-phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+phero-ir = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
 # `phero-syntax` owns the compiler's PUBLIC word tables (`words::KEYWORDS`,
 # `words::MOX_CONTEXTUAL`) — `codegraph migrate` escapes emitted identifiers
 # from them instead of a hand-copied list (issue #668).
-phero-syntax = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
-phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
-phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "298267e32a5112dc6fd84708868b9bc59d65ade7" }
+phero-syntax = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the pherolang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
 # into codegraph-generate / codegraph-core). Pinned to the SAME rev pherolang

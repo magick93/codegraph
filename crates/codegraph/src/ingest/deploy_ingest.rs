@@ -262,7 +262,10 @@ pub fn read_and_compile_deploy(
     Option<DeployModelGraph>,
     Vec<(String, phero_driver::Diagnostic)>,
 ) {
-    let compilation = phero_driver::compile_deploy_str(path, source, designs, flows);
+    let inputs = phero_driver::CompileInputs::new()
+        .with_designs(designs.to_vec())
+        .with_flows(flows.to_vec());
+    let compilation = phero_driver::compile_deploy_str(path, source, &inputs);
     let graph = compilation
         .model
         .as_ref()
@@ -338,7 +341,10 @@ pub fn read_and_resolve_deploy(path: &Path) -> Result<DeployCompiled> {
     }
 
     let (graph, diagnostics) = read_and_compile_deploy(&deploy_path, &source, &designs, &flows);
-    let model = phero_driver::compile_deploy_str(&deploy_path, &source, &designs, &flows).model;
+    let inputs = phero_driver::CompileInputs::new()
+        .with_designs(designs.clone())
+        .with_flows(flows.clone());
+    let model = phero_driver::compile_deploy_str(&deploy_path, &source, &inputs).model;
     Ok(DeployCompiled {
         path: deploy_path,
         source,
@@ -466,7 +472,11 @@ mod tests {
             "    configure { gateway.replicas: 4 }\n",
             "}\n",
         );
-        let compilation = phero_driver::compile_deploy_str("shop.deploy", source, &[], &[]);
+        let compilation = phero_driver::compile_deploy_str(
+            "shop.deploy",
+            source,
+            &phero_driver::CompileInputs::new(),
+        );
         assert!(
             compilation.diagnostics.is_empty(),
             "{:?}",

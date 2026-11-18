@@ -60,12 +60,11 @@ view "PromoDetail" {
 "#;
 
 fn compiled_grant_policy() -> ActorPolicyModel {
-    let compilation = phero_driver::compile_actors_str(
-        "policy.actor",
-        ACTOR,
-        &[("domain.mox".to_string(), DOMAIN_MOX.to_string())],
-        &phero_driver::DomainImports::default(),
-    );
+    let inputs = phero_driver::CompileInputs::from_domains(&[(
+        "domain.mox".to_string(),
+        DOMAIN_MOX.to_string(),
+    )]);
+    let compilation = phero_driver::compile_actors_str("policy.actor", ACTOR, &inputs);
     assert!(
         compilation.diagnostics.is_empty(),
         "fixture policy must compile: {:?}",

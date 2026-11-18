@@ -6,7 +6,7 @@ use codegraph_core::types::{
     ActorNode, ActorPolicyModel, ActorPolicyNode, CapabilityNode, DelegationRecord, GrantEdge,
     NeverBothGroup,
 };
-use phero_driver::{DomainImports, SchemaImports, SigilImports, compile_actors_str};
+use phero_driver::{CompileInputs, DomainImports, SchemaImports, SigilImports, compile_actors_str};
 use phero_ifml::IfmlModel;
 use phero_ir::ActorModel;
 
@@ -175,7 +175,8 @@ fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorModel
         schemas: schema_imports,
         sigil: SigilImports::new(),
     };
-    let compilation = compile_actors_str(raw, source, &domain_pairs, &imports);
+    let inputs = CompileInputs::from_domains(&domain_pairs).with_imports(imports);
+    let compilation = compile_actors_str(raw, source, &inputs);
     for (path, diagnostic) in &compilation.diagnostics {
         eprintln!(
             "Warning: policy import '{raw}' diagnostic in {path}: {}",

@@ -3235,18 +3235,21 @@ dependencies = [
 
 [[package]]
 name = "phero-dates"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 
 [[package]]
 name = "phero-diagnostics"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+dependencies = [
+ "phero-parser",
+]
 
 [[package]]
 name = "phero-driver"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "anyhow",
  "ariadne 0.6.0",
@@ -3257,6 +3260,7 @@ dependencies = [
  "phero-expr",
  "phero-ifml",
  "phero-ir",
+ "phero-parser",
  "phero-syntax",
  "phero-verify",
  "phero-vocab",
@@ -3272,8 +3276,8 @@ dependencies = [
 
 [[package]]
 name = "phero-expr"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3288,8 +3292,8 @@ dependencies = [
 
 [[package]]
 name = "phero-ifml"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3303,8 +3307,8 @@ dependencies = [
 
 [[package]]
 name = "phero-ir"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "serde",
  "serde_json",
@@ -3313,22 +3317,23 @@ dependencies = [
 
 [[package]]
 name = "phero-parser"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "chumsky 0.10.1",
+ "serde",
  "thiserror",
 ]
 
 [[package]]
 name = "phero-strings"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 
 [[package]]
 name = "phero-syntax"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "chumsky 0.10.1",
  "logos",
@@ -3339,16 +3344,16 @@ dependencies = [
 
 [[package]]
 name = "phero-verify"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "creusot-std",
 ]
 
 [[package]]
 name = "phero-vocab"
-version = "0.3.0"
-source = "git+https://github.com/yestechgroup/pherolang.git?rev=298267e32a5112dc6fd84708868b9bc59d65ade7#298267e32a5112dc6fd84708868b9bc59d65ade7"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
 dependencies = [
  "anyhow",
  "phero-ir",
