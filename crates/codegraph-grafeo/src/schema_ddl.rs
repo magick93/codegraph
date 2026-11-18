@@ -68,7 +68,7 @@
 /// `children PayRun { addLine => lines.add }` block would silently emit
 /// nothing (the pre-#661 silent-drop) instead of its nested action route.
 /// Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 10;
+pub const GRAPH_FORMAT_VERSION: u32 = 11;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact

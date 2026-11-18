@@ -13,7 +13,7 @@
 //!   persistence path.
 //! - **L3 conformance kit**: executable cases pinning the document format
 //!   (the committed case file lives at
-//!   `tests/fixtures/artifact_kit/graph_document_v10.md`).
+//!   `tests/fixtures/artifact_kit/graph_document_v11.md`).
 
 pub mod kit;
 
