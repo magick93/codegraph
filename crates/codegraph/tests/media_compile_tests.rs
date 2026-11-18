@@ -26,6 +26,11 @@
 //!   API, the bin-crate module declaration) — compiles in isolation
 //!   against the REAL storage trait + `scaffold/error.tera`. Only the two
 //!   trivial AppState/middleware slots are hand-stubbed.
+//!   Issue #704 rides the same scratch tree: `src/openapi_probe.rs` carries
+//!   the `#[derive(utoipa::OpenApi)]` registration the openapi templates
+//!   emit for the module (paths + the presigned `PresignRequest` schema),
+//!   so the registration is COMPILED, not merely text-pinned. The full
+//!   per-domain document still needs the app crate (every handler + DTO).
 //!
 //! Teeth are validated per repo discipline (à la #550): break the trait
 //! signature in `templates/media/mod.tera`, this pin must fail; revert.
@@ -702,13 +707,49 @@ pub struct ApiKeyInfo {
 "#;
 
 /// The app-side module tree the emitted files expect: the media plane, the
-/// error envelope, the two pin stubs, and the route module under
-/// `api::{domain}::…`.
+/// error envelope, the two pin stubs, the route module under
+/// `api::{domain}::…`, and the #704 OpenAPI registration probe.
 fn pin_lib_rs(route_module: &str) -> String {
     format!(
         "pub mod api {{\n    pub mod core {{\n        pub mod {route_module};\n    }}\n}}\n\
-         pub mod app_state;\npub mod error;\npub mod media;\npub mod middleware;\n"
+         pub mod app_state;\npub mod error;\npub mod media;\npub mod middleware;\n\
+         pub mod openapi_probe;\n"
     )
+}
+
+/// The `#[derive(utoipa::OpenApi)]` probe for issue #704: the registration
+/// `api/openapi_domain.tera` / `api/openapi_all.tera` now emit for a media
+/// module — the media paths plus (presigned only) the `PresignRequest`
+/// schema entry.
+///
+/// The module path comes from the emitted FILE STEM and the handler names from
+/// the emitted MODULE's own handler surface (`pub async fn …`) — the same data
+/// used to place the module in the scratch tree — so the probe can only ever
+/// address the module compiled beside it, and only the fns that module
+/// defines. The multi-template document as a whole still needs the app crate
+/// (every entity's handlers and DTOs); this probe isolates the part #704 adds.
+fn openapi_probe_rs(route_stem: &str, route_rs: &str) -> String {
+    let mut probe = String::from(
+        "//! Issue #704 pin: the OpenAPI registration the openapi templates emit\n\
+         //! for one media module. `cargo check` proves every registered path and\n\
+         //! schema resolves against the REAL emitted module.\n\n\
+         #[derive(utoipa::OpenApi)]\n#[openapi(\n    paths(\n",
+    );
+    for handler in ["presign", "upload", "display", "remove"] {
+        if route_rs.contains(&format!("pub async fn {handler}")) {
+            probe.push_str(&format!(
+                "        crate::api::core::{route_stem}::{handler},\n"
+            ));
+        }
+    }
+    probe.push_str("    ),\n");
+    if route_rs.contains("pub struct PresignRequest") {
+        probe.push_str(&format!(
+            "    components(schemas(\n        crate::api::core::{route_stem}::PresignRequest,\n    )),\n"
+        ));
+    }
+    probe.push_str(")]\npub struct OpenApiProbe;\n");
+    probe
 }
 
 /// #551 pin for the media ROUTE handler (issue #683 part b): the #686
@@ -730,6 +771,15 @@ fn pin_lib_rs(route_module: &str) -> String {
 /// replacing `tx.execute_raw(delete)` with the pre-2.0 `tx.execute(…)` reaches
 /// the compiler and fails with `error[E0308]` on `StatementBuilder` — the
 /// exact #686 class. Reverted; see the test file header.
+///
+/// Issue #704 adds `src/openapi_probe.rs` to the same tree: the
+/// `#[derive(utoipa::OpenApi)]` registration the openapi templates emit for
+/// this module. Teeth: registering a handler the module does not define
+/// (`::bogus`, or `::presign` in through-app mode) fails with E0433/E0425
+/// (`__path_*` not found); a schema entry naming a type the module lacks fails
+/// E0425. Dropping `PresignRequest` from `components(schemas(...))` compiles
+/// fine (utoipa resolves `request_body` from the annotation), so that half is
+/// held by the derived-shape assertion below.
 async fn check_media_route_handler(
     config: &DomainConfig,
     title: &str,
@@ -800,6 +850,27 @@ async fn check_media_route_handler(
     )
     .expect("scaffold/error.tera");
 
+    // Issue #704: the registration the openapi templates emit for this module,
+    // compiled beside it (the probe's paths/schema resolve against the REAL
+    // emitted handler fns).
+    let openapi_probe = openapi_probe_rs(&route_stem, &route_rs);
+    // Non-vacuous: every media module exposes display + remove plus exactly one
+    // upload-mode handler, so a probe that registered fewer resolved nothing
+    // and the `cargo check` below would be a false green.
+    let registered = openapi_probe.matches("crate::api::core::").count();
+    assert!(
+        registered >= 3,
+        "{label}: the #704 OpenAPI probe registered {registered} media items — \
+         a media module always exposes display/remove plus one upload handler:\n{openapi_probe}"
+    );
+    // The schema half follows the module's own branch: `PresignRequest` is the
+    // only media type the templates register in `components(schemas(...))`.
+    assert_eq!(
+        openapi_probe.contains("PresignRequest"),
+        route_rs.contains("pub struct PresignRequest"),
+        "{label}: the probe's schema registration must follow the emitted mode:\n{openapi_probe}"
+    );
+
     let mut files: Vec<(String, String)> = vec![
         ("src/lib.rs".to_string(), pin_lib_rs(&route_stem)),
         ("src/app_state.rs".to_string(), PIN_APP_STATE_RS.to_string()),
@@ -809,6 +880,7 @@ async fn check_media_route_handler(
         ),
         ("src/error.rs".to_string(), error_rs),
         (format!("src/api/core/{route_stem}.rs"), route_rs),
+        ("src/openapi_probe.rs".to_string(), openapi_probe),
     ];
     for (stem, content) in &media_files {
         files.push((format!("src/media/{stem}.rs"), content.clone()));

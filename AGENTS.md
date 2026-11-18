@@ -2554,9 +2554,37 @@ that cannot parse as `Path<Uuid>`. The contract is now
 (`MEDIA_CONTRACT_MISSING_ID`) and two PROVIDER-FREE legs: no credentials →
 401, valid key + a missing parent → 404 (never 403, and addressed through
 the GET display route so no multipart extractor answers first). The utoipa
-`path` uses `project.api_version` too, but media handlers are still NOT
-registered in any OpenAPI `paths(...)` — the annotation is inert today
-(#704). Rejections answer the statuses the utoipa block already published —
+`path` uses `project.api_version` too, and **#704 registers the handlers in
+the served documents**: `OpenApiEntity.media_fields` +
+`media_mode_presigned` are filled at BOTH construction sites (the
+config-`entities` loop and the unlisted generation-order loop) from the
+ROUTER's own `media_route_surface` + `media_upload_mode`, and
+`api/openapi_domain.tera` + `api/openapi_all.tera` register
+`media_{module}_{field}::{presign|upload, display, remove}` per field —
+presign for `presigned`, the multipart upload for `through-app` (which
+documents NO `request_body`: there is deliberately no `ToSchema` for a
+`Multipart` body), plus `::PresignRequest` in `components(schemas(...))`
+for presigned only. `client-direct` registers nothing (the surface is
+empty). Nested children register too — the path nests via the annotation,
+not via a root-only gate. Pins:
+`openapi_registers_the_through_app_media_paths`,
+`openapi_registers_the_presigned_media_paths_and_request_schema`,
+`openapi_documents_no_media_path_for_client_direct`,
+`openapi_registers_a_nested_child_media_module`, and the DRIFT pin
+`openapi_media_registration_tracks_the_emitted_media_modules` (the
+expected list is derived from the emitted `media_*.rs` modules' own
+`pub async fn` surface, so a module/handler rename cannot desync the two
+planes). The registration SHAPE is also COMPILED: `media_compile_tests`'s
+route-handler legs carry a `src/openapi_probe.rs` — a
+`#[derive(utoipa::OpenApi)]` over the REAL emitted module — with the
+module stem and handler names derived from that module (see the #551
+table row). That probe mirrors the templates' registration rather than
+consuming their output, so the two halves are split on purpose: the
+DRIFT pin holds the text contract (a template that names the wrong
+handler fails there — proved by mutation), the probe holds
+resolvability, and the document the templates actually emit is compiled
+by `media_runtime_tests`, which builds and boots the generated app.
+Rejections answer the statuses the utoipa block already published —
 413 (`AppError::payload_too_large`) and 415
 (`AppError::unsupported_media_type`); a malformed multipart body stays 400.
 Pins: `media_hurl_contract_url_matches_the_router_route` /
@@ -2845,7 +2873,7 @@ their runtime substitute.
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
-| media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg) |
+| media route handler + session module (`api/media_route.tera`, `media/session.tera`) | `media_compile_tests` | native + wasm32 for the storage plane; the route handler and `session.rs` native-only (scratch crate stubs AppState/ApiKeyInfo, compiles the REAL storage trait + `scaffold/error.tera`; the presigned branch has its own leg). The #704 OpenAPI registration rides the same scratch tree as `src/openapi_probe.rs` — a `#[derive(utoipa::OpenApi)]` probe carrying the registration SHAPE (the paths `presign` \| `upload`, `display`, `remove`, and the presigned `PresignRequest` schema entry) with the module stem and handler names derived from the emitted media module — so that shape is COMPILED against the real handlers (the `*_media_route_handler_compiles_in_isolation` legs, through-app + presigned + depth-2 + nested). The probe MIRRORS the templates rather than consuming their output: the emitted registrations' text is held by the `media_pipeline_tests` drift pin, and the document the templates actually emit is compiled by `media_runtime_tests` (builds and boots the generated through-app app, root + nested child). The full per-domain document is not compiled here (it needs the whole app crate: every handler + DTO). Teeth: a probe registering `::bogus`, or `::presign` in through-app mode, fails E0433/E0425 (`__path_*` not found); a schema entry naming a type the module lacks fails E0425. Dropping `PresignRequest` from `components(schemas(...))` does NOT fail compilation (utoipa resolves `request_body` from the annotation) — that half is caught by the probe's derived-shape assertion + the `media_pipeline_tests` text pin |
 | full app (every generator the default plan emits) | `grafeo_e2e_tests -- grafeo_generated_code_compiles` | the whole-tree backstop; failures are not plane-attributable |
 | wrapper binary | `wrapper_compile_tests -- --ignored` | #348 |
 | runtime substitutes for live-DB planes | `hooks_cornucopia_runtime_tests` (cornucopia hooks over real Postgres, #518), `review_api_suite` (real HTTP), `media_runtime_tests` (the media data path over RustFS, #695) | compile pins for these shapes ride the stubs above |
