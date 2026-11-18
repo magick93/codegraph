@@ -308,3 +308,72 @@ async fn generated_app_with_aggregate_child_operations_compiles() {
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with aggregate child operations must compile");
 }
+
+/// Issue #663: the INJECTED-SCOPE `when` plane compiles. The async
+/// authorize fn — `&AppState` + `&ApiKeyInfo` params, the own-record FK
+/// extraction, the sibling query slot's `find_by_id` load, and the scoped
+/// comparison — must compile against the generated app exactly like the
+/// synchronous own-record gate does. Before this leg the injected-guard
+/// emission compiled NOWHERE (the exact #551 silent-emission class).
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_injected_guard_compiles() {
+    let fixture = fixture::write_guard_fixture();
+    let _engine = fixture::ingest_guard(&fixture).await;
+
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the guard fixture must succeed");
+
+    // The async gate must be ON DISK before the build spend: the sibling
+    // query slot spelling and the FK field are compile-coupled (a misspelt
+    // slot or DTO field is an E0602/E0560, not a silent seam).
+    let handler = fs::read_to_string(output.join("src/api/guardpay/pay_run_handler.rs"))
+        .expect("the guarded handler must emit");
+    assert!(
+        handler.contains("async fn service_op_submit_authorize"),
+        "the injected guard must render the async authorize fn:\n{handler}"
+    );
+    assert!(
+        handler.contains("state.guardpay_timecard_queries"),
+        "the load must ride the injected entity's query slot:\n{handler}"
+    );
+    assert!(
+        handler.contains("response.timecard_id"),
+        "the id must come from the own-record FK:\n{handler}"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with an injected-scope guard must compile");
+}
