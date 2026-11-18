@@ -98,6 +98,12 @@ ops-wasm-compile:
 ops-service-ops-compile:
     #!/usr/bin/env bash
     set -euo pipefail
+    # The three service_ops_compile_gate tests are DISK-BACKED by
+    # construction (issue #734): each scratch tree carries a full cargo
+    # target, and it lands under CARGO_TARGET_TMPDIR (<workspace>/target/tmp),
+    # falling back to <workspace>/target/gate-tmp — never std::env::temp_dir().
+    # `TMPDIR=/var/tmp` used to be the workaround for the tmpfs EDQUOT
+    # (os error 122); it is obsolete and no longer needed.
     cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
 
 ops-service-ops-hurl:
