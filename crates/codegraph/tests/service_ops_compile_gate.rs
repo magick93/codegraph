@@ -31,7 +31,7 @@ use std::fs;
 use std::path::Path;
 
 use fixture::{
-    DOMAINS_TOML, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, tempdir, write_fixture_in,
+    DOMAINS_TOML, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, gate_tempdir, ingest, write_fixture_in,
 };
 
 /// The fixture profiles: the workspace default with path deps (the gate
@@ -78,7 +78,7 @@ async fn generated_app_with_service_ops_compiles() {
     let fixture = write_fixture_in("service_ops_gate", PAYROLL_DDD);
     let _engine = ingest(&fixture).await;
 
-    let out_dir = tempdir();
+    let out_dir = gate_tempdir();
     let output = out_dir.path().join("app");
     fs::create_dir_all(&output).unwrap();
 
@@ -178,7 +178,7 @@ async fn generated_app_with_authored_transition_bindings_compiles() {
     let fixture = fixture::write_binding_fixture();
     let _engine = fixture::ingest_binding(&fixture).await;
 
-    let out_dir = tempdir();
+    let out_dir = gate_tempdir();
     let output = out_dir.path().join("app");
     fs::create_dir_all(&output).unwrap();
     let fixture_root = fixture.config.parent().unwrap().to_path_buf();
@@ -247,7 +247,7 @@ async fn generated_app_with_aggregate_child_operations_compiles() {
     let engine = fixture::ingest_child_ops(&fixture).await;
     let _ = &engine;
 
-    let out_dir = tempdir();
+    let out_dir = gate_tempdir();
     let output = out_dir.path().join("app");
     fs::create_dir_all(&output).unwrap();
     let fixture_root = fixture.config.parent().unwrap().to_path_buf();

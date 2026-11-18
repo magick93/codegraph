@@ -659,8 +659,67 @@ pub async fn ingest_binding(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine
     engine
 }
 
+/// Scratch dir for the node-free service-ops pins: small, generation-only
+/// trees that never build a Rust crate, so the default temp dir is fine.
 pub fn tempdir() -> TempDir {
     TempDir::new().unwrap()
+}
+
+/// Resolve the compile gate's scratch root (issue #734).
+///
+/// The gate's scratch trees each carry a FULL cargo `target/` (a generated
+/// app plus its dependency graph — ~1 GB per test with `cargo check`, and
+/// up to ~15 GB peak reported for the whole parallel run). On the standard
+/// dev/CI host `std::env::temp_dir()` is `/tmp`, a 31 GiB tmpfs with a user
+/// quota: the parallel run filled it and died with `Disk quota exceeded
+/// (os error 122)` from a dependency's build script — a disk artifact that
+/// read as a code regression in `just ci-local`. So the scratch root must
+/// land on the DISK-BACKED cargo target dir. Relocating, not serialising:
+/// the three tests stay parallel.
+///
+/// Resolution order:
+/// 1. `cargo_target_tmpdir` — Cargo sets `CARGO_TARGET_TMPDIR` for
+///    integration tests to `<target-dir>/tmp` (the workspace root `target/`,
+///    NOT the tracked `crates/codegraph/target/` — issue #683a);
+/// 2. `<manifest>/../../target/gate-tmp` — the workspace target dir derived
+///    from `CARGO_MANIFEST_DIR`, for any runner that does not set it.
+///
+/// Pure so the priority order is unit-testable without cargo's env.
+fn gate_temp_root(cargo_target_tmpdir: Option<&str>, manifest_dir: &Path) -> PathBuf {
+    match cargo_target_tmpdir {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let workspace_root = manifest_dir
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or(manifest_dir);
+            workspace_root.join("target").join("gate-tmp")
+        }
+    }
+}
+
+/// The compile gate's resolved scratch root (issue #734). `option_env!`, not
+/// `env!`: the fallback must stay reachable (and buildable) for any harness
+/// that compiles this file without Cargo's integration-test env.
+fn gate_scratch_root() -> PathBuf {
+    gate_temp_root(
+        option_env!("CARGO_TARGET_TMPDIR"),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
+}
+
+/// Disk-backed scratch dir for the compile gate (issue #734): a full
+/// generated app plus its cargo `target/` lives under here, so it must never
+/// be `std::env::temp_dir()`. Prints the resolved root once per test so a
+/// future disk-exhaustion report names the filesystem it hit.
+pub fn gate_tempdir() -> TempDir {
+    let root = gate_scratch_root();
+    if let Err(e) = fs::create_dir_all(&root) {
+        panic!("create compile-gate scratch root {}: {e}", root.display());
+    }
+    eprintln!("scratch: {}", root.display());
+    TempDir::new_in(&root)
+        .unwrap_or_else(|e| panic!("create compile-gate temp dir under {}: {e}", root.display()))
 }
 
 pub async fn ingest(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
@@ -808,4 +867,138 @@ pub async fn run_generation(
 
 pub fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod gate_temp_root_tests {
+    use super::{gate_scratch_root, gate_temp_root};
+    use std::path::{Path, PathBuf};
+
+    fn manifest_dir() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// The workspace root: `<manifest>/../../` (`crates/codegraph` →
+    /// `crates` → workspace).
+    fn workspace_root() -> PathBuf {
+        manifest_dir()
+            .parent()
+            .and_then(Path::parent)
+            .expect("the crate lives two levels below the workspace root")
+            .to_path_buf()
+    }
+
+    #[test]
+    fn cargo_target_tmpdir_wins_when_provided() {
+        let provided = "/somewhere/else/target/tmp";
+        assert_eq!(
+            gate_temp_root(Some(provided), manifest_dir()),
+            PathBuf::from(provided),
+            "an explicit CARGO_TARGET_TMPDIR must be used verbatim"
+        );
+    }
+
+    #[test]
+    fn fallback_is_the_workspace_target_gate_tmp() {
+        assert_eq!(
+            gate_temp_root(None, manifest_dir()),
+            workspace_root().join("target").join("gate-tmp"),
+            "the fallback must be <manifest>/../../target/gate-tmp"
+        );
+    }
+
+    /// Issue #683a: `crates/codegraph/target/**` is TRACKED in git — nothing
+    /// the gate writes may land there, on either resolution path.
+    #[test]
+    fn resolved_roots_never_land_in_the_tracked_crate_target_dir() {
+        let cargo_tmpdir = workspace_root().join("target").join("tmp");
+        let tracked = manifest_dir().join("target");
+        for resolved in [
+            gate_temp_root(Some(cargo_tmpdir.to_str().unwrap()), manifest_dir()),
+            gate_temp_root(None, manifest_dir()),
+        ] {
+            assert!(
+                !resolved.starts_with(&tracked),
+                "{} must never resolve under the TRACKED crate target dir {} (issue #683a)",
+                resolved.display(),
+                tracked.display()
+            );
+        }
+    }
+
+    /// Issue #734: the whole point — the scratch root is disk-backed, never
+    /// the (tmpfs) system temp dir. Mutating the resolver to prefer
+    /// `std::env::temp_dir()` must fail here.
+    ///
+    /// Skipped when the WORKSPACE itself lives under the temp dir (a checkout
+    /// in `/tmp`, or the common `TMPDIR=$HOME` habit): then the disk-backed
+    /// root is legitimately under `std::env::temp_dir()` and this pin has
+    /// nothing to say — asserting anyway would build a false red of exactly
+    /// the class #734 removes. The hazard the pin exists for (a resolver
+    /// picking `env::temp_dir()` while the workspace is elsewhere) stays red.
+    #[test]
+    fn resolved_roots_are_not_the_system_temp_dir() {
+        let sys_tmp = std::env::temp_dir();
+        if workspace_root().starts_with(&sys_tmp) {
+            eprintln!(
+                "skip: workspace {} is under the system temp dir {}",
+                workspace_root().display(),
+                sys_tmp.display()
+            );
+            return;
+        }
+        let cargo_tmpdir = workspace_root().join("target").join("tmp");
+        for resolved in [
+            gate_temp_root(Some(cargo_tmpdir.to_str().unwrap()), manifest_dir()),
+            gate_temp_root(None, manifest_dir()),
+        ] {
+            assert!(
+                !resolved.starts_with(&sys_tmp),
+                "{} is under the system temp dir {} — the compile gate must stay disk-backed (issue #734)",
+                resolved.display(),
+                sys_tmp.display()
+            );
+        }
+    }
+
+    /// Issue #734 (review): the pins above feed SYNTHETIC inputs, so they
+    /// cannot see the value the gate actually uses. `gate_scratch_root()`
+    /// consumes `CARGO_TARGET_TMPDIR` at compile time — with
+    /// `CARGO_TARGET_DIR` pointed at tmpfs, the gate would put the same
+    /// multi-GB trees back on `/tmp` while every synthetic pin stayed green
+    /// (and the docs/justfile claim "disk-backed"). This pin inspects the
+    /// EFFECTIVE root (the wrapper's own return value, asserted to be what
+    /// cargo's value resolves to), so a wrapper that ignores the input and
+    /// hands back `env::temp_dir()` fails here too.
+    ///
+    /// Guarded like [`resolved_roots_are_not_the_system_temp_dir`]: a
+    /// workspace under the temp dir has a legitimately temp-dir root, so
+    /// there is nothing to assert.
+    #[test]
+    fn the_effective_root_is_not_the_temp_dir() {
+        let sys_tmp = std::env::temp_dir();
+        if workspace_root().starts_with(&sys_tmp) {
+            eprintln!(
+                "skip: workspace {} is under the system temp dir {}",
+                workspace_root().display(),
+                sys_tmp.display()
+            );
+            return;
+        }
+        let root = gate_scratch_root();
+        assert!(
+            !root.starts_with(&sys_tmp),
+            "the gate's effective scratch root {} is under the system temp dir {} \
+             (a CARGO_TARGET_DIR on tmpfs?) — the compile gate must stay disk-backed (issue #734)",
+            root.display(),
+            sys_tmp.display()
+        );
+        if let Some(dir) = option_env!("CARGO_TARGET_TMPDIR") {
+            assert_eq!(
+                root,
+                gate_temp_root(Some(dir), manifest_dir()),
+                "the gate must use cargo's CARGO_TARGET_TMPDIR ({dir}) verbatim"
+            );
+        }
+    }
 }
