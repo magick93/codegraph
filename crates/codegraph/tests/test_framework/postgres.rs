@@ -7,8 +7,9 @@
 //! Supabase image `postgres` is `CREATEROLE` + `BYPASSRLS` but
 //! `NOSUPERUSER`, and the app plane's `SET LOCAL ROLE app_user`
 //! (NOBYPASSRLS) is what makes RLS honest. Only the prelude's reserved-role
-//! block needs the image's superuser, so it alone runs on a separate admin
-//! target (#727).
+//! block needs a superuser, so `apply_prelude` resolves a separate admin
+//! target lazily — a gate that never applies the prelude needs no admin
+//! (#727).
 
 use std::path::Path;
 use std::process::Command;
@@ -48,6 +49,9 @@ const FALLBACK_APP_USER: &str = "postgres";
 /// later than the port).
 const FALLBACK_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const FALLBACK_CONTRACT_TIMEOUT: Duration = Duration::from_secs(180);
+/// Grace window before a REUSED container is judged stale: a container that
+/// is still finishing a (re)start must not be recreated out from under itself.
+const FALLBACK_REUSE_GRACE: Duration = Duration::from_secs(30);
 /// Environment overrides for the role that runs the prelude's reserved-role
 /// block (the Supabase image's superuser is its `POSTGRES_USER`).
 const ADMIN_USER_ENV: &str = "GATE_ADMIN_USER";
@@ -93,30 +97,40 @@ fn choose_admin_user(
     }
 }
 
+/// Parse the `rolsuper` answer. The spelling depends on the query: a bare
+/// boolean column renders `t`/`f`, while `rolsuper::text` renders
+/// `true`/`false` — comparing against one form silently answered "not a
+/// superuser" in the other (the B1 class). Accept both spellings, trimmed and
+/// case-insensitive; ANY other answer is `false`, which takes the admin path
+/// and its actionable error rather than silently claiming a non-superuser.
+fn parse_superuser(raw: &str) -> bool {
+    matches!(raw.trim().to_ascii_lowercase().as_str(), "t" | "true")
+}
+
 /// Resolve the ADMIN target for `base`: the role allowed to create the
 /// image's reserved roles (`supabase_realtime_admin` and friends), which a
 /// `NOSUPERUSER` base cannot (#727). The admin keeps the base target's
 /// host/port/database and differs only in the role (and password, from
-/// `GATE_ADMIN_PASSWORD`, defaulting to the base password). Failing to
-/// connect as that role is a HARD error naming the overrides and the image
+/// `GATE_ADMIN_PASSWORD`, defaulting to the base password).
+///
+/// Both halves of the privilege are checked, so a wrong knob fails here with
+/// its own message instead of surfacing later as the raw
+/// `"supabase_realtime_admin" is a reserved role` text: the admin must
+/// CONNECT and must actually be a superuser. Failing either is a hard error
+/// naming the overrides and the `POSTGRES_USER=supabase_admin` image
 /// contract — never a silent fall back to a non-superuser prelude.
 async fn resolve_admin_target(base: &PgTarget) -> Result<PgTarget, String> {
-    let is_superuser = psql_query(
-        base,
-        "SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user;",
-    )
-    .await
-    .map_err(|e| {
-        format!(
-            "gate: cannot read the privilege of {}@{}:{}: {e}",
-            base.user, base.host, base.port
-        )
-    })?
-    .trim()
-        == "t";
+    let base_is_superuser = read_superuser(base, "the base target").await?;
     let override_user = std::env::var(ADMIN_USER_ENV).ok();
-    let admin_user = choose_admin_user(is_superuser, override_user.as_deref(), &base.user);
-    if admin_user == base.user {
+    let admin_user = choose_admin_user(base_is_superuser, override_user.as_deref(), &base.user);
+    if base_is_superuser {
+        if let Some(ignored) = override_user.as_deref() {
+            println!(
+                "gate: {ADMIN_USER_ENV}={ignored} is ignored — the base target \
+                 {}@{}:{} is a superuser, so it runs the prelude itself",
+                base.user, base.host, base.port
+            );
+        }
         return Ok(base.clone());
     }
     let admin = PgTarget {
@@ -124,17 +138,40 @@ async fn resolve_admin_target(base: &PgTarget) -> Result<PgTarget, String> {
         password: std::env::var(ADMIN_PASSWORD_ENV).unwrap_or_else(|_| base.password.clone()),
         ..base.clone()
     };
-    if database_reachable(&admin).await {
-        return Ok(admin);
+    let admin_is_superuser = read_superuser(&admin, "the admin role")
+        .await
+        .map_err(|e| format!("{e} {ADMIN_HINT}"))?;
+    if !admin_is_superuser {
+        return Err(format!(
+            "gate: {ADMIN_USER_ENV} resolves to {}, which connects but is NOT a superuser \
+             (rolsuper=f), so it cannot create the image's reserved roles. {ADMIN_HINT}",
+            admin.user
+        ));
     }
-    Err(format!(
-        "gate: the prelude needs a superuser to create the image's reserved roles, but the base \
-         target {}@{}:{} is not one and the admin role {} cannot connect either. Set \
-         {ADMIN_USER_ENV} / {ADMIN_PASSWORD_ENV} to a superuser, or start the gate container with \
-         POSTGRES_USER={DEFAULT_ADMIN_USER} (the documented image contract: the Supabase \
-         image's superuser is its POSTGRES_USER).",
-        base.user, base.host, base.port, admin.user
-    ))
+    Ok(admin)
+}
+
+/// What to do about a base target that is not a superuser — the actionable
+/// tail every admin-resolution failure carries.
+const ADMIN_HINT: &str = "Set GATE_ADMIN_USER / GATE_ADMIN_PASSWORD to a superuser, or start \
+                          the gate container with POSTGRES_USER=supabase_admin (the image \
+                          contract: the Supabase image's superuser is its POSTGRES_USER).";
+
+/// Read and parse `rolsuper` for `target`, naming `what` in the error so an
+/// unreachable admin is distinguishable from an unreachable base.
+async fn read_superuser(target: &PgTarget, what: &str) -> Result<bool, String> {
+    psql_query(
+        target,
+        "SELECT rolsuper::text FROM pg_roles WHERE rolname = current_user;",
+    )
+    .await
+    .map(|raw| parse_superuser(&raw))
+    .map_err(|e| {
+        format!(
+            "gate: cannot connect as {what} {}@{}:{} to read its privilege: {e}",
+            target.user, target.host, target.port
+        )
+    })
 }
 
 /// Resolve a usable base Postgres target. The configured DATABASE_URL wins
@@ -216,9 +253,12 @@ async fn ensure_fallback_postgres() -> Result<PgTarget, String> {
         docker(&["start", FALLBACK_CONTAINER])?;
     }
     // A container this run did not create is never trusted silently (#730):
-    // a half-initialised one answers connections but has no `auth` tables, no
+    // a half-initialised one answers connections but has no `auth.users`, no
     // pgcrypto and no `authenticator` role, so reuse must verify the contract
-    // first and be LOUD when it recreates.
+    // first and recreate when it does not match. A container that is still
+    // finishing a (re)start gets the same grace window the create path has
+    // (M4), and the recreate is announced with one stdout line — visible
+    // because the lanes run `--nocapture` (there is no log channel).
     wait_until_reachable(&target, FALLBACK_READY_TIMEOUT).await?;
     let inspect_env = docker(&[
         "inspect",
@@ -226,8 +266,14 @@ async fn ensure_fallback_postgres() -> Result<PgTarget, String> {
         "--format",
         "{{range .Config.Env}}{{println .}}{{end}}",
     ])?;
-    let mut reasons: Vec<String> = fallback_init_user_error(&inspect_env).into_iter().collect();
-    reasons.extend(fallback_contract_errors(&target).await);
+    let image = docker(&[
+        "inspect",
+        FALLBACK_CONTAINER,
+        "--format",
+        "{{.Config.Image}}",
+    ])?;
+    let mut reasons: Vec<String> = fallback_reuse_contract_errors(&inspect_env, &image);
+    reasons.extend(wait_for_contract_grace(&target, FALLBACK_REUSE_GRACE).await);
     if reasons.is_empty() {
         println!("gate: reusing {FALLBACK_CONTAINER} (contract verified)");
         return Ok(target);
@@ -265,13 +311,25 @@ fn run_fallback_container() -> Result<(), String> {
     Ok(())
 }
 
+/// The DOCKER-side half of the reuse contract: the init user and the image.
+/// Pure so a stale container is unit-testable without docker.
+fn fallback_reuse_contract_errors(inspect_env: &str, image: &str) -> Vec<String> {
+    fallback_init_user_error(inspect_env)
+        .into_iter()
+        .chain(fallback_image_error(image))
+        .collect()
+}
+
 /// `docker inspect`'s `.Config.Env` lines → the init-user verdict. Pure so a
 /// stale contract is unit-testable without docker.
 fn fallback_init_user_error(inspect_env: &str) -> Option<String> {
-    match inspect_env
-        .lines()
-        .find_map(|line| line.strip_prefix("POSTGRES_USER="))
-    {
+    // `split_once` rather than `strip_prefix`: `POSTGRES_USERX=…` must not
+    // read as `POSTGRES_USER=…`.
+    let value = inspect_env.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "POSTGRES_USER").then_some(value)
+    });
+    match value {
         Some(value) if value.trim() == FALLBACK_INIT_USER => None,
         Some(value) => Some(format!(
             "its POSTGRES_USER is {} (must be {FALLBACK_INIT_USER}: the image's bootstrap runs \
@@ -284,12 +342,27 @@ fn fallback_init_user_error(inspect_env: &str) -> Option<String> {
     }
 }
 
-/// The initialised-state half of the fallback contract: the image's bootstrap
-/// is what creates the `auth` tables, installs pgcrypto and the
-/// `authenticator` role. One round trip, empty when the container is usable.
+/// The container's image must be the pinned one — a container built from an
+/// older tag is recreated rather than reused.
+fn fallback_image_error(image: &str) -> Option<String> {
+    let image = image.trim();
+    if image == FALLBACK_IMAGE {
+        None
+    } else {
+        Some(format!("its image is {image} (must be {FALLBACK_IMAGE})"))
+    }
+}
+
+/// The initialised-state half of the fallback contract. Deliberately a
+/// PRELUDE-FREE reuse check: it proves the image's bootstrap ran far enough to
+/// create `auth.users`, install pgcrypto and create the `authenticator` role —
+/// it says nothing about the prelude's reserved roles (admin-only), the
+/// `pgmq` schema, or the app role's attributes, which a prelude-using gate
+/// exercises for itself. One round trip; empty when the container is usable.
 async fn fallback_contract_errors(target: &PgTarget) -> Vec<String> {
     let sql = "SELECT concat_ws(',', \
-               (SELECT count(*) FROM information_schema.tables WHERE table_schema = 'auth'), \
+               (SELECT count(*) FROM information_schema.tables \
+                 WHERE table_schema = 'auth' AND table_name = 'users'), \
                (SELECT count(*) FROM pg_extension WHERE extname = 'pgcrypto'), \
                (SELECT count(*) FROM pg_roles WHERE rolname = 'authenticator'));";
     let out = match psql_query(target, sql).await {
@@ -306,8 +379,9 @@ async fn fallback_contract_errors(target: &PgTarget) -> Vec<String> {
     }
     let mut errors = Vec::new();
     if counts[0] == 0 {
-        errors
-            .push("the `auth` schema has no tables (the image bootstrap did not complete)".into());
+        errors.push(
+            "the `auth.users` table is missing (the image bootstrap did not complete)".into(),
+        );
     }
     if counts[1] == 0 {
         errors.push("the `pgcrypto` extension is missing".into());
@@ -316,6 +390,20 @@ async fn fallback_contract_errors(target: &PgTarget) -> Vec<String> {
         errors.push("the `authenticator` role is missing".into());
     }
     errors
+}
+
+/// Probe the catalog half of the reuse contract for up to `grace`, so a
+/// container still finishing a (re)start is not recreated out from under
+/// itself. Returns the LAST reasons (empty when the contract landed).
+async fn wait_for_contract_grace(target: &PgTarget, grace: Duration) -> Vec<String> {
+    let deadline = Instant::now() + grace;
+    loop {
+        let reasons = fallback_contract_errors(target).await;
+        if reasons.is_empty() || Instant::now() >= deadline {
+            return reasons;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 async fn wait_until_reachable(target: &PgTarget, timeout: Duration) -> Result<(), String> {
@@ -355,15 +443,17 @@ async fn wait_for_fallback_contract(target: &PgTarget, timeout: Duration) -> Res
 /// force-dropped on cleanup.
 ///
 /// Two connection targets ride a run, and the split is the point (#727):
-/// `target` is the APP target — the role in `DATABASE_URL` (`postgres` on the
+/// `target` is the APP target — the role the base names (`postgres` on the
 /// Supabase image, `NOSUPERUSER`), which migrates, provisions API keys and is
 /// the URL the booted app receives, so every RLS claim rests on the generated
-/// handlers' `SET LOCAL ROLE app_user`; `admin` is the PRELUDE target, the
-/// image's superuser (`supabase_admin`), the only role that may create the
-/// image's reserved roles. Only `apply_prelude` uses `admin`.
+/// handlers' `SET LOCAL ROLE app_user`; the PRELUDE target (the image's
+/// superuser) is resolved from `base` inside `apply_prelude` and never
+/// stored. Resolving it there is deliberate: only gates that call
+/// `apply_prelude` require an admin role, so a gate that never does (the
+/// child-tenancy and media runtime gates) still runs on a base whose role has
+/// CREATEDB but no reachable admin.
 pub struct GateDb {
     target: PgTarget,
-    admin: PgTarget,
     base: PgTarget,
 }
 
@@ -376,22 +466,13 @@ impl GateDb {
                 .map_err(|e| e.to_string())?
                 .as_millis()
         );
-        // Resolve the prelude role BEFORE creating the database: a failed
-        // resolution must not leave an orphan per-run database behind.
-        let mut admin = resolve_admin_target(&base).await?;
-        admin.db = name.clone();
-        admin.role = DB_ROLE.to_string();
         let mut target = base.clone();
         target.db = name.clone();
         target.role = DB_ROLE.to_string();
         psql_exec(&base, &format!("CREATE DATABASE {name};"))
             .await
             .map_err(|e| e.to_string())?;
-        Ok(Self {
-            target,
-            admin,
-            base,
-        })
+        Ok(Self { target, base })
     }
 
     /// Connection URL of the per-run database (the APP target the booted app
@@ -406,11 +487,15 @@ impl GateDb {
     /// the pgmq schema the platform grants expect, and a no-op domain event
     /// emitter (the pgmq_setup generator is not part of test profiles).
     ///
-    /// Runs on the ADMIN target, not the app target: `supabase_realtime_admin`
-    /// and its siblings are RESERVED roles on the Supabase image, so creating
-    /// them requires a superuser — a `NOSUPERUSER` prelude fails with
-    /// `"supabase_realtime_admin" is a reserved role, only superusers can
-    /// modify it` (#727). Nothing else in the harness needs that privilege.
+    /// Runs on an ADMIN target resolved from the base target HERE (not in
+    /// `create`), because `supabase_realtime_admin` and its siblings are
+    /// RESERVED roles on the Supabase image: creating them requires a
+    /// superuser, and only prelude-needing gates should require one — a
+    /// `NOSUPERUSER` prelude fails with `"supabase_realtime_admin" is a
+    /// reserved role, only superusers can modify it` (#727). A resolution or
+    /// statement failure leaves the per-run database behind for the caller's
+    /// `cleanup()`: that is the same post-`create` failure shape as any other
+    /// prelude error, not a window the ordering closes.
     pub async fn apply_prelude(&self) -> Result<(), String> {
         let sql = r#"
 DO $$
@@ -429,6 +514,11 @@ BEGIN
   END LOOP;
 END $$;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- Owned by the ADMIN role, so the app role cannot create tables in it:
+-- `CREATE TABLE pgmq.t` as `postgres` answers "permission denied for schema
+-- pgmq". No gate combines this prelude with the generated `pgmq_setup`
+-- today, so the constraint is inert here; an app-plane writer of pgmq tables
+-- needs an owner/GRANT decision and is out of scope (#727 review M6).
 CREATE SCHEMA IF NOT EXISTS pgmq;
 CREATE OR REPLACE FUNCTION public.emit_domain_event() RETURNS trigger AS $fn$
 BEGIN
@@ -436,12 +526,19 @@ BEGIN
 END;
 $fn$ LANGUAGE plpgsql;
 "#;
-        psql_exec(&self.admin, sql).await.map_err(|e| e.to_string())
+        let mut admin = resolve_admin_target(&self.base).await?;
+        admin.db = self.target.db.clone();
+        admin.role = self.target.role.clone();
+        psql_exec(&admin, sql).await.map_err(|e| e.to_string())
     }
 
-    /// Run the generated migration set as the APP target — the role the app
-    /// runs as, so the migration set is exercised under the same privileges a
-    /// deployment has.
+    /// Run the generated migration set as the APP target (the role the base
+    /// names). On the Supabase image that role is `BYPASSRLS` +
+    /// `CREATEROLE` — privileges a deployment's `app_user` does not have — so
+    /// treat this as the migration OWNER path: it proves the set applies and
+    /// that the owner can grant `app_user`, not that a runtime role could run
+    /// it. The RLS assertions in the gates go through `SET LOCAL ROLE
+    /// app_user` for exactly that reason.
     pub async fn apply_migrations(&self, migrations_dir: &Path) -> Result<(), String> {
         run_api_migrations(migrations_dir, &self.target)
             .await
@@ -501,10 +598,35 @@ mod tests {
         );
     }
 
-    /// #730: the reused-container verdict names the mismatch, so the loud
-    /// recreate line says what is wrong rather than "something changed".
+    /// B1 (#727 review): the SQL→bool derivation was the untested step. A
+    /// bare boolean column renders `t`/`f`, `rolsuper::text` renders
+    /// `true`/`false` — a parser that bet on one spelling answered "not a
+    /// superuser" for the other and broke the plain-postgres ops lane. Any
+    /// unrecognised answer must fall to `false` (the admin path, whose error
+    /// is actionable), never to `true`.
+    ///
+    /// TEETH: reverting `parse_superuser` to `raw.trim() == "t"` fails the
+    /// `"true"` / `"TRUE"` cases; reverting it to `== "true"` fails `"t"`.
     #[test]
-    fn fallback_init_user_contract_names_the_mismatch() {
+    fn parse_superuser_accepts_both_boolean_text_spellings() {
+        for truthy in ["t", "T", "true", "TRUE", "True", " true ", "\tt\n"] {
+            assert!(
+                parse_superuser(truthy),
+                "{truthy:?} must read as a superuser"
+            );
+        }
+        for falsy in ["f", "F", "false", "FALSE", "", " ", "yes", "1", "supabase"] {
+            assert!(
+                !parse_superuser(falsy),
+                "{falsy:?} must not read as a superuser"
+            );
+        }
+    }
+
+    /// #730: the reused-container verdict names the mismatch, so the recreate
+    /// line says what is wrong rather than "something changed".
+    #[test]
+    fn fallback_reuse_contract_names_the_mismatch() {
         assert_eq!(
             fallback_init_user_error(
                 "POSTGRES_USER=supabase_admin\nPGDATA=/var/lib/postgresql/data"
@@ -519,5 +641,27 @@ mod tests {
         let missing =
             fallback_init_user_error("PGDATA=/var/lib/postgresql/data").expect("must be reported");
         assert!(missing.contains("sets no POSTGRES_USER"), "{missing}");
+        // A longer key must not match the prefix.
+        assert_eq!(
+            fallback_init_user_error("POSTGRES_USERX=supabase_admin"),
+            fallback_init_user_error("PGDATA=/x"),
+            "POSTGRES_USERX must not satisfy the POSTGRES_USER contract"
+        );
+    }
+
+    /// A container built from another image tag is recreated, not reused.
+    #[test]
+    fn fallback_reuse_contract_requires_the_pinned_image() {
+        assert_eq!(fallback_image_error(FALLBACK_IMAGE), None);
+        assert_eq!(fallback_image_error(&format!(" {FALLBACK_IMAGE}\n")), None);
+        let stale = fallback_image_error("postgres:15").expect("a stale image must be reported");
+        assert!(stale.contains("postgres:15"), "{stale}");
+        assert!(stale.contains(FALLBACK_IMAGE), "{stale}");
+        assert!(
+            fallback_reuse_contract_errors("POSTGRES_USER=supabase_admin", "postgres:15")
+                .iter()
+                .any(|reason| reason.contains("image")),
+            "the combined verdict must carry the image mismatch"
+        );
     }
 }
