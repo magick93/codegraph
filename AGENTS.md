@@ -872,9 +872,11 @@ own-record field".
   the guard end-to-end + the refusal classes + the multi-machine pin),
   `cargo test -p codegraph-generate --lib -- ddd::service_ops` (35),
   `--test ddd_ingest_tests`, `--test artifact_kit_tests` (the bump),
-  `--test service_ops_compile_gate -- --ignored` (the emitted async
-  handler must compile), plus the standing canaries (flag-off
-  byte-identical, no re-bless).
+  `--test service_ops_injected_guard_gate -- --ignored` (its own test
+  BINARY — the #551 pin: the emitted async handler must compile; the
+  process-global `TYPE_REGISTRY` (#746) forced the isolation after its
+  first runs caught the design-op override missing rust-name lookups),
+  plus the standing canaries (flag-off byte-identical, no re-bless).
 - **Deferred**: a class-typed service-parameter arm as the id source
   (today's source is the own-record FK only); `db/expr_sql.rs` policy-
   plane cross-table predicates (the #663 issue scopes them OUT — the

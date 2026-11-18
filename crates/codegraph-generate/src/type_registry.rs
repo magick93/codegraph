@@ -116,6 +116,13 @@ impl Default for InMemoryTypeRegistry {
 // Global singleton — same pattern as ProjectConfig in mod.rs
 // ---------------------------------------------------------------------------
 
+// TODO(#746): the registry is PROCESS-GLOBAL — every `driver::run` in one
+// process shares it, so two PARALLEL generations resolve each other's
+// module paths (first registrant wins; the compile gates hit this when a
+// second fixture declared the same class titles in a different domain),
+// and even sequential runs keep the previous run's registrations. A
+// per-run registry threaded through GeneratorOpts/GeneratorContext is the
+// fix; the compile gates isolate by test binary until then.
 static TYPE_REGISTRY: OnceLock<Mutex<InMemoryTypeRegistry>> = OnceLock::new();
 
 /// Must be called at the start of the generation pipeline before any generator runs.
