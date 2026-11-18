@@ -26,15 +26,22 @@
 //! a booted API over `vite preview`; the UI-driven families stay the
 //! consumer `testkit e2e` lane (they need the Supabase persona stack).
 //!
-//! Diagnostic attribution (issue #634): svelte-check prints the file path on
-//! the line BEFORE the `Error:`/`Warn:` line, so the pre-#634 assertion
-//! (which filtered lines containing `"Error:"`) could never match a path and
-//! the "zero diagnostics on generated paths" gate was vacuous. The gate now
-//! parses `path:line:col` + severity blocks, RECONCILES the parsed error
-//! count against svelte-check's own summary line (and its exit status), and
-//! asserts on every diagnostic inside a GENERATED path. Consumer-authored /
-//! gate-owned paths are reported explicitly (and written to
-//! `target/entity-gate/consumer-diagnostics.txt`) instead of silently
+//! Diagnostic attribution (issues #634, #728): svelte-check prints the file
+//! path on the line BEFORE the `Error:`/`Warn:` line, so the pre-#634
+//! assertion (which filtered lines containing `"Error:"`) could never match
+//! a path and the "zero diagnostics on generated paths" gate was vacuous.
+//! #634 repaired the parser against that human shape — and #728 showed the
+//! repair was still ANSI-blind: under CI svelte-check colourises `Error:`
+//! and the summary line, so every `strip_prefix` missed, the attribution set
+//! came back empty and the gate died on its own reconciliation check (while
+//! masking ten real diagnostics). The gate therefore parses svelte-check's
+//! `--output machine-verbose` ndjson contract instead — `START` /
+//! `ERROR` / `WARNING` / `COMPLETED` / `FAILURE` records, no colour,
+//! filenames resolved against the `START` workspace. It RECONCILES the
+//! parsed error count against the `COMPLETED … ERRORS` count (and the exit
+//! status), and asserts on every diagnostic inside a GENERATED path.
+//! Consumer-authored / gate-owned paths are reported explicitly (and written
+//! to `target/entity-gate/consumer-diagnostics.txt`) instead of silently
 //! disappearing.
 
 use std::fs;
@@ -542,91 +549,261 @@ impl Diagnostic {
     }
 }
 
-/// Parse a `path:line:col` header line. svelte-check prints absolute paths
-/// on Unix; the trailing two `:`-segments are the position.
-fn parse_path_header(line: &str) -> Option<(PathBuf, u32, u32)> {
-    let (path, line_no, column) = {
-        let mut parts = line.rsplitn(3, ':');
-        let column: u32 = parts.next()?.parse().ok()?;
-        let line_no: u32 = parts.next()?.parse().ok()?;
-        let path = parts.next()?;
-        (path, line_no, column)
-    };
-    if path.is_empty() || !Path::new(path).is_absolute() {
+/// svelte-check's machine records are `<millisecond timestamp> <body>`
+/// (ndjson for `--output machine-verbose`). A line is a record iff its
+/// first space-delimited column is an integer timestamp; everything else
+/// (`Loading svelte-check in workspace: …`, `Getting Svelte diagnostics...`,
+/// npm/npx noise on the merged stderr) is preamble and is ignored.
+fn machine_record_body(line: &str) -> Option<&str> {
+    let (timestamp, rest) = line.split_once(' ')?;
+    if timestamp.is_empty() || !timestamp.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    Some((PathBuf::from(path), line_no, column))
+    Some(rest)
 }
 
-/// Parse svelte-check's report: `path:line:col` header, then the
-/// `Error:`/`Warn:` line, plus the final `svelte-check found N errors and
-/// M warnings[ in K files]` summary. Unattributed `Error:`/`Warn:` lines
-/// are a hard parser failure — that is exactly the shape drift the pre-#634
-/// gate swallowed.
-/// `(diagnostics, Some((errors, warnings)))` from svelte-check's summary.
+/// The payload of a single-string machine record (`START` / `FAILURE`).
+fn machine_quoted_payload(payload: &str) -> Result<String, String> {
+    serde_json::from_str::<String>(payload.trim()).map_err(|e| format!("{e}: {payload}"))
+}
+
+/// Resolve a machine record's filename against the `START` workspace.
+///
+/// Filenames in the machine format are workspace-RELATIVE. Resolving them is
+/// load-bearing, not cosmetic: the gate's `ui_relative` / `consumer_owned`
+/// attribution is a prefix match, so an unresolved relative path would land
+/// every diagnostic in the consumer bucket — attribution silently degraded
+/// is exactly the #634/#728 defect class. `.` segments are normalized away
+/// so `strip_prefix(workspace)` yields the clean `src/…` tail.
+fn resolve_machine_path(workspace: &Path, filename: &str) -> PathBuf {
+    let candidate = Path::new(filename);
+    let joined = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        workspace.join(candidate)
+    };
+    let mut resolved = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            other => resolved.push(other.as_os_str()),
+        }
+    }
+    resolved
+}
+
+/// `(diagnostics, Some((errors, warnings)))`, both counts from the report's
+/// `COMPLETED` record (there is no `None` case on success — a report with no
+/// summary is a parser failure).
 type CheckReport = (Vec<Diagnostic>, Option<(usize, usize)>);
 
-fn parse_svelte_check(output: &str) -> Result<CheckReport, String> {
-    let mut diagnostics = Vec::new();
-    let mut pending: Option<(PathBuf, u32, u32)> = None;
-    let mut summary = None;
-    let mut unattributed = Vec::new();
+/// Parse svelte-check's `--output machine-verbose` report.
+///
+/// The record vocabulary is svelte-check's own (see the CLI's
+/// "Machine-readable output" docs, same implementation as the
+/// `svelte-check` v4 binary the fixture pins):
+///
+/// ```text
+/// <ts> START "<workspace folder>"
+/// <ts> {"type":"ERROR","filename":"src/x.svelte","start":{"line":9,"character":31},
+///       "end":{…},"message":"…","code":2307,"source":"js"}
+/// <ts> {"type":"WARNING",…}
+/// <ts> COMPLETED 20 FILES 21 ERRORS 1 WARNINGS 3 FILES_WITH_PROBLEMS
+/// <ts> FAILURE "Connection closed"
+/// ```
+///
+/// Deliberate contract choices (each pinned below, node-free):
+///   - `ERROR`/`WARNING` carry `filename` (the released binary) or `fn`
+///     (the shape the CLI docs spell in one example) — both are accepted,
+///     `filename` preferred.
+///   - `start.line`/`start.character` are LSP-zero-based; they are emitted
+///     ONE-based (like the human print shape) so rendered attributions keep
+///     pointing at the line an IDE links to.
+///   - `COMPLETED` counts are read BY LABEL, never by index — a reordered or
+///     extended record cannot shift `ERRORS` into the warnings slot.
+///   - Anything timestamp-prefixed that this parser cannot read (unknown
+///     record type, truncated JSON, missing count label, a diagnostic with
+///     no usable filename, a diagnostic before `START`) is a HARD error. A
+///     malformed record must never be skipped: skipping is precisely how
+///     the ANSI-blind human parser returned an empty attribution set while
+///     svelte-check reported ten errors (issue #728).
+///   - `FAILURE` and a missing `COMPLETED` are hard errors too — a run that
+///     died (or whose summary never printed) must not read as "zero
+///     diagnostics".
+fn parse_svelte_check_machine(output: &str) -> Result<CheckReport, String> {
+    let mut workspace: Option<PathBuf> = None;
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut summary: Option<(usize, usize)> = None;
+    let mut failures: Vec<String> = Vec::new();
 
-    for line in output.lines() {
-        let trimmed = line.trim_end();
-
-        if let Some(rest) = trimmed.strip_prefix("svelte-check found ") {
-            let nums: Vec<usize> = rest
-                .split(|c: char| !c.is_ascii_digit())
-                .filter(|s| !s.is_empty())
-                .filter_map(|s| s.parse().ok())
-                .collect();
-            if nums.len() >= 2 {
-                summary = Some((nums[0], nums[1]));
-            }
+    for (index, raw) in output.lines().enumerate() {
+        let line = raw.trim_end();
+        let Some(body) = machine_record_body(line) else {
+            // Human preamble / npm noise — not a record.
             continue;
-        }
-
-        if let Some((path, line_no, column)) = parse_path_header(trimmed) {
-            pending = Some((path, line_no, column));
-            continue;
-        }
-
-        let severity = if let Some(message) = trimmed
-            .strip_prefix("Error: ")
-            .or_else(|| trimmed.strip_prefix("Error:"))
-        {
-            Some((Severity::Error, message.trim().to_string()))
-        } else {
-            trimmed
-                .strip_prefix("Warn: ")
-                .or_else(|| trimmed.strip_prefix("Warn:"))
-                .map(|message| (Severity::Warn, message.trim().to_string()))
         };
-        if let Some((severity, message)) = severity {
-            match pending.take() {
-                Some((path, line_no, column)) => diagnostics.push(Diagnostic {
-                    path,
-                    line: line_no,
-                    column,
-                    severity,
-                    message,
-                }),
-                None => unattributed.push(trimmed.to_string()),
+        let at = format!("line {}", index + 1);
+
+        // Diagnostic records are ndjson OBJECTS whose `type` field names the
+        // record (`{"type":"ERROR",…}`) — the released binary, and the docs'
+        // own example. START / COMPLETED / FAILURE are bare-word records.
+        if body.starts_with('{') {
+            let record: serde_json::Value = serde_json::from_str(body)
+                .map_err(|e| format!("malformed machine record ({at}, ndjson): {e}: {body}"))?;
+            let kind = record
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("machine record ({at}) carries no `type` field: {body}"))?;
+            if !matches!(kind, "ERROR" | "WARNING") {
+                return Err(format!(
+                    "unrecognised svelte-check machine record type `{kind}` ({at}) — the gate \
+                     understands ERROR/WARNING diagnostic records plus the START/COMPLETED/\
+                     FAILURE bookends; a record it cannot read must fail loudly, never vanish \
+                     from the attribution set (issue #728): {line}"
+                ));
+            }
+            let severity = if kind == "ERROR" {
+                Severity::Error
+            } else {
+                Severity::Warn
+            };
+            let filename = record
+                .get("filename")
+                .or_else(|| record.get("fn"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "{kind} record ({at}) carries no usable `filename` (or legacy `fn`) \
+                         field — the diagnostic cannot be attributed: {body}"
+                    )
+                })?;
+            let start = record.get("start").ok_or_else(|| {
+                format!("{kind} record ({at}) carries no `start` position: {body}")
+            })?;
+            let line_no = start
+                .get("line")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| {
+                    format!("{kind} record ({at}) carries no numeric `start.line`: {body}")
+                })?;
+            let character = start
+                .get("character")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| {
+                    format!("{kind} record ({at}) carries no numeric `start.character`: {body}")
+                })?;
+            let workspace = workspace.as_ref().ok_or_else(|| {
+                format!(
+                    "{kind} record ({at}) precedes the START record — filenames are \
+                     workspace-relative, so the gate cannot resolve a path: {body}"
+                )
+            })?;
+            let message = record
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            diagnostics.push(Diagnostic {
+                path: resolve_machine_path(workspace, filename),
+                line: one_based(line_no),
+                column: one_based(character),
+                severity,
+                message,
+            });
+            continue;
+        }
+
+        let (kind, payload) = body.split_once(' ').unwrap_or((body, ""));
+
+        match kind {
+            "START" => {
+                let folder = machine_quoted_payload(payload)
+                    .map_err(|e| format!("malformed START record ({at}): {e}"))?;
+                if folder.is_empty() {
+                    return Err(format!(
+                        "START record ({at}) names an empty workspace folder — machine-verbose \
+                         filenames are workspace-relative, so nothing can be attributed"
+                    ));
+                }
+                workspace = Some(PathBuf::from(folder));
+            }
+            "COMPLETED" => {
+                let mut errors = None;
+                let mut warnings = None;
+                let tokens: Vec<&str> = payload.split_whitespace().collect();
+                if !tokens.len().is_multiple_of(2) {
+                    return Err(format!(
+                        "COMPLETED record ({at}) does not carry `<count> <LABEL>` pairs: {line}"
+                    ));
+                }
+                for pair in tokens.chunks(2) {
+                    let count: usize = pair[0].parse().map_err(|_| {
+                        format!(
+                            "COMPLETED record ({at}) carries a non-numeric count `{}`: {line}",
+                            pair[0]
+                        )
+                    })?;
+                    // By LABEL, never by index: an extra/reordered segment
+                    // must not shift the counts the gate reconciles on.
+                    match pair[1] {
+                        "ERRORS" => errors = Some(count),
+                        "WARNINGS" => warnings = Some(count),
+                        _ => {}
+                    }
+                }
+                match (errors, warnings) {
+                    (Some(errors), Some(warnings)) => summary = Some((errors, warnings)),
+                    _ => {
+                        return Err(format!(
+                            "COMPLETED record ({at}) is missing its ERRORS and/or WARNINGS \
+                             count — the gate reconciles its attribution set against both: {line}"
+                        ));
+                    }
+                }
+            }
+            "FAILURE" => {
+                // A runtime error record: the run died, so the report is not
+                // a report. Name the message the binary gave (it is a JSON
+                // string; if it is not, keep the raw payload rather than
+                // losing it).
+                failures.push(
+                    machine_quoted_payload(payload).unwrap_or_else(|_| payload.trim().to_string()),
+                );
+            }
+            other => {
+                return Err(format!(
+                    "unrecognised svelte-check machine record `{other}` ({at}) — the gate \
+                     understands the START/COMPLETED/FAILURE bookends plus ndjson \
+                     ERROR/WARNING records; a record it cannot read must fail loudly, never \
+                     vanish from the attribution set (issue #728): {line}"
+                ));
             }
         }
     }
 
-    if !unattributed.is_empty() {
+    if !failures.is_empty() {
         return Err(format!(
-            "{} diagnostic line(s) carried no preceding `path:line:col` header — the gate \
-             parser drifted from svelte-check's print shape (a vacuous attribution set is \
-             how the pre-#634 gate always passed):\n{}",
-            unattributed.len(),
-            unattributed.join("\n")
+            "svelte-check reported FAILURE — the run died before producing a report the gate \
+             can reconcile: {}",
+            failures.join("; ")
         ));
     }
-    Ok((diagnostics, summary))
+    let Some(summary) = summary else {
+        return Err(format!(
+            "svelte-check printed no COMPLETED record — the machine report is truncated, and a \
+             missing summary is exactly the blindness issue #728 removed (the gate reconciles \
+             its attribution set against the compiler's own counts):\n{output}"
+        ));
+    };
+    Ok((diagnostics, Some(summary)))
+}
+
+/// Machine records report LSP positions, which are zero-based; the gate
+/// renders (and pinned against) the one-based position svelte-check's human
+/// output prints.
+fn one_based(position: u64) -> u32 {
+    u32::try_from(position.saturating_add(1)).unwrap_or(u32::MAX)
 }
 
 /// Paths the gate does NOT assert (consumer-authored or gate-owned): the
@@ -772,7 +949,7 @@ async fn entity_app_builds_and_typechecks() {
         "vite build did not produce .svelte-kit/output artifacts"
     );
 
-    let Ok((check_ok, output)) = project.run_check() else {
+    let Ok((check_ok, output)) = project.run_check_machine() else {
         panic!("failed to launch svelte-check");
     };
     // The gate holds the GENERATOR's surface to zero type errors. The
@@ -780,13 +957,17 @@ async fn entity_app_builds_and_typechecks() {
     // gate-owned api stubs) whose fidelity is not the generator's contract
     // — diagnostics against those are reported, not asserted (issue #634:
     // every one is printed AND written to a file, never silently dropped).
-    let (diagnostics, summary) = parse_svelte_check(&output).unwrap_or_else(|e| {
-        panic!("svelte-check report unparsable: {e}\n--- output ---\n{output}")
+    // The report is svelte-check's `machine-verbose` ndjson (issue #728):
+    // the human shape colourises `Error:` under CI, so the old
+    // `strip_prefix` parser attributed nothing while the compiler was
+    // reporting ten errors.
+    let (diagnostics, summary) = parse_svelte_check_machine(&output).unwrap_or_else(|e| {
+        panic!("svelte-check machine report unparsable: {e}\n--- output ---\n{output}")
     });
     let (reported_errors, _reported_warnings) = summary.unwrap_or_else(|| {
         panic!(
-            "svelte-check printed no `svelte-check found N errors …` summary — the gate \
-             cannot reconcile its attribution set against the compiler's own count:\n{output}"
+            "svelte-check printed no `COMPLETED` summary record — the gate cannot reconcile its \
+             attribution set against the compiler's own count:\n{output}"
         )
     });
     let parsed_errors = diagnostics
@@ -926,6 +1107,25 @@ fn emitted_playwright_files() -> Vec<String> {
     out
 }
 
+/// One readiness probe against the preview server: `(reachable, curl's own
+/// stderr)`. The stderr IS the diagnosis — a refused connection and a
+/// timeout must not read the same (issue #740).
+async fn probe_preview(url: &str) -> (bool, String) {
+    match tokio::process::Command::new("curl")
+        .args(["-sf", "--max-time", "2", url])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .await
+    {
+        Ok(out) => (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ),
+        Err(e) => (false, format!("spawn curl: {e}")),
+    }
+}
+
 /// The entity e2e lane (issue #575): the EMITTED playwright config's
 /// project table must cover every emitted test file (the `--list`
 /// coverage invariant), and the sessionless slice the repo gate can
@@ -938,6 +1138,10 @@ fn emitted_playwright_files() -> Vec<String> {
 /// job — their file paths are still held to the coverage invariant, so a
 /// future config regression names the orphan file instead of dying
 /// silently.
+///
+/// The preview server is bound to `127.0.0.1` explicitly (issue #740):
+/// bare `vite preview` binds `localhost`, which Node may resolve to `::1`
+/// first, leaving an IPv6-only listener that every IPv4 probe refuses.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "entity e2e lane: run with --ignored (needs node, chromium, postgres)"]
 async fn entity_specs_run_green() {
@@ -1085,6 +1289,9 @@ async fn entity_specs_run_green() {
         // Serve the BUILT tree over `vite preview` — the emitted config has
         // no webServer block (the ops ui suite boots the server itself), so
         // the gate owns the process and points PUBLIC_SVELTEKIT_URL at it.
+        // The bind is PINNED to 127.0.0.1 (issue #740): without `--host`,
+        // vite binds `localhost`, which a runner may resolve to `::1`
+        // first — an IPv6-only listener every 127.0.0.1 probe refuses.
         let built = project.run_build()?;
         assert!(built, "vite build failed before the spec run");
         let preview_port = process::free_port();
@@ -1093,6 +1300,8 @@ async fn entity_specs_run_green() {
         cmd.args([
             "vite",
             "preview",
+            "--host",
+            "127.0.0.1",
             "--port",
             &preview_port.to_string(),
             "--strictPort",
@@ -1110,21 +1319,18 @@ async fn entity_specs_run_green() {
         let preview_url = format!("http://127.0.0.1:{preview_port}/");
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         loop {
-            let reachable = tokio::process::Command::new("curl")
-                .args(["-sf", "--max-time", "2", &preview_url])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .await
-                .map(|s| s.success())
-                .unwrap_or(false);
+            let (reachable, probe_error) = probe_preview(&preview_url).await;
             if reachable {
                 break;
             }
             if std::time::Instant::now() >= deadline {
                 let tail = fs::read_to_string(&preview_log).unwrap_or_default();
+                // The last probe's OWN diagnosis rides the error (issue
+                // #740: the log tail's `Local:` banner proves the server
+                // started, so it cannot explain a refused connection).
                 return Err(format!(
-                    "vite preview not ready within 60s. log tail:\n{tail}"
+                    "vite preview not ready within 60s — probe `curl {preview_url}` says: \
+                     {probe_error}. log tail:\n{tail}"
                 ));
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1183,66 +1389,235 @@ async fn entity_specs_run_green() {
     result.unwrap();
 }
 
-// ── The report-parser pins (issue #634) ─────────────────────────────────────
+// ── The report-parser pins (issues #634, #728) ─────────────────────────────
 //
 // Node-free: these run in PR CI (`cargo test -p codegraph --test
 // entity_codegen_gate`) and are what keep the gate's attribution honest —
-// the pre-#634 gate asserted over a set that was always empty.
+// the pre-#634 gate asserted over a set that was always empty, and the
+// pre-#728 parser was ANSI-blind over exactly the same class of failure.
+
+/// The workspace every machine-format fixture declares in its `START` record.
+const MACHINE_WORKSPACE: &str = "/home/u/app/ui";
+
+/// One `machine-verbose` `ERROR` record, so a pin can vary the filename key
+/// (`filename` vs the docs' `fn`) without hand-escaping JSON braces.
+fn machine_error_record(timestamp: &str, filename_key: &str, filename: &str) -> String {
+    format!(
+        "{timestamp} {{\"type\":\"ERROR\",\"{filename_key}\":\"{filename}\",\
+         \"start\":{{\"line\":0,\"character\":0}},\"end\":{{\"line\":0,\"character\":1}},\
+         \"message\":\"boom\",\"code\":2307,\"source\":\"js\"}}"
+    )
+}
 
 #[test]
-fn parser_attributes_the_path_printed_on_the_preceding_line() {
-    // The EXACT shape captured from the ws6 gate run (svelte-check prints
-    // the path, then `Error:` on the next line, then an indented code
-    // frame) — the shape the pre-#634 `contains("Error:")` filter could
-    // never match to a path.
-    let output = "\
-Loading svelte-check in workspace: /tmp/app/ui
+fn machine_report_attributes_each_record_to_the_start_workspace() {
+    // The real `--output machine-verbose` shape (issue #728): the human
+    // preamble still prints, then timestamp-prefixed ndjson records. One
+    // error + one warning, and a COMPLETED summary that AGREES with them —
+    // an honest fixture, so the gate's reconciliation holds (the
+    // disagreement case is its own pin below).
+    let output = r#"Loading svelte-check in workspace: /home/u/app/ui
 Getting Svelte diagnostics...
 
-/home/u/app/ui/src/lib/forms/fields/select-variant.svelte:10:32
-Error: Cannot find module '$lib/components/ui/native-select/index.js'. (ts)
-\timport * as NativeSelect from '$lib/components/ui/native-select/index.js';
-\t                              ^
-
-/home/u/app/ui/src/routes/request/+page.svelte:7:2
-Warn: `<span>` with a mouseover handler must have an ARIA role (svelte)
-<span class=\"tooltip\">
-
-====================================
-svelte-check found 1 error and 1 warning in 2 files
-";
-    let (diagnostics, summary) = parse_svelte_check(output).expect("parse");
+1590680325583 START "/home/u/app/ui"
+1590680326283 {"type":"ERROR","filename":"src/lib/forms/fields/select-variant.svelte","start":{"line":9,"character":31},"end":{"line":9,"character":60},"message":"Cannot find module '$lib/components/ui/native-select/index.js'.","code":2307,"source":"js"}
+1590680326778 {"type":"WARNING","filename":"src/routes/request/+page.svelte","start":{"line":6,"character":1},"end":{"line":6,"character":40},"message":"`<span>` with a mouseover handler must have an ARIA role","code":"a11y-no-static-element-interactions","source":"svelte"}
+1590680326807 COMPLETED 2 FILES 1 ERRORS 1 WARNINGS 1 FILES_WITH_PROBLEMS
+"#;
+    let (diagnostics, summary) = parse_svelte_check_machine(output).expect("parse");
     assert_eq!(summary, Some((1, 1)));
     assert_eq!(diagnostics.len(), 2);
+
     let error = &diagnostics[0];
     assert_eq!(error.severity, Severity::Error);
+    // THE resolution contract: the record's `filename` is relative to the
+    // START workspace, so the parsed path must be the ABSOLUTE path under
+    // it — the form `ui_relative`/`consumer_owned` attribute against.
+    assert!(
+        error.path.starts_with(MACHINE_WORKSPACE),
+        "unresolved relative path: {:?}",
+        error.path
+    );
     assert_eq!(
         error.path,
-        PathBuf::from("/home/u/app/ui/src/lib/forms/fields/select-variant.svelte")
+        PathBuf::from(format!(
+            "{MACHINE_WORKSPACE}/src/lib/forms/fields/select-variant.svelte"
+        ))
     );
+    // One-based, like the human print shape (records carry LSP positions,
+    // which are zero-based).
     assert_eq!((error.line, error.column), (10, 32));
     assert!(error.message.contains("Cannot find module"), "{error:?}");
+
     assert_eq!(diagnostics[1].severity, Severity::Warn);
+    assert_eq!(
+        diagnostics[1].path,
+        PathBuf::from(format!(
+            "{MACHINE_WORKSPACE}/src/routes/request/+page.svelte"
+        ))
+    );
+
+    // Reconciliation holds when the fixture is honest.
+    let parsed_errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    assert_eq!(parsed_errors, summary.expect("summary").0);
 }
 
 #[test]
-fn parser_summary_shape_without_the_files_suffix() {
-    let output = "\
-====================================
-svelte-check found 0 errors and 0 warnings
-";
-    let (diagnostics, summary) = parse_svelte_check(output).expect("parse");
+fn reconciliation_fires_when_the_records_disagree_with_the_completed_summary() {
+    // The summary the CI run in issue #728 actually printed — `10 errors
+    // and 254 warnings = 72 files` — over a report whose records the
+    // colour-blind human parser could read NONE of. With the machine
+    // parser, a record the summary counts but the attribution set does not
+    // is visible, and the gate's `assert_eq!(parsed_errors,
+    // reported_errors, …)` fires. This pin asserts BOTH sides of that
+    // comparison: the recovered counts (10/254) and a parsed set that
+    // cannot account for them.
+    let output = r#"1590680325583 START "/home/u/app/ui"
+1590680326283 {"type":"ERROR","filename":"src/routes/x/+page.svelte","start":{"line":0,"character":0},"end":{"line":0,"character":1},"message":"boom","code":2307,"source":"js"}
+1590680326807 COMPLETED 72 FILES 10 ERRORS 254 WARNINGS 41 FILES_WITH_PROBLEMS
+"#;
+    let (diagnostics, summary) = parse_svelte_check_machine(output).expect("parse");
+    let (reported_errors, reported_warnings) = summary.expect("completed summary");
+    assert_eq!((reported_errors, reported_warnings), (10, 254));
+    let parsed_errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    let parsed_warnings = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Warn)
+        .count();
+    assert_eq!((parsed_errors, parsed_warnings), (1, 0));
+    assert_ne!(
+        parsed_errors, reported_errors,
+        "the gate's reconciliation must fire when the attribution set cannot account for \
+         COMPLETED's error count"
+    );
+}
+
+#[test]
+fn parser_refuses_a_failure_record_and_names_its_message() {
+    // A `FAILURE` record means the run died: the report is not a report.
+    let output = r#"1590680325583 START "/home/u/app/ui"
+1590680328921 FAILURE "Connection closed"
+"#;
+    let err = parse_svelte_check_machine(output).unwrap_err();
+    assert!(err.contains("reported FAILURE"), "{err}");
+    assert!(err.contains("Connection closed"), "{err}");
+}
+
+#[test]
+fn parser_refuses_a_report_without_a_completed_record() {
+    // A truncated report must never read as "zero diagnostics" — the
+    // pre-#728 blindness, and the reason the summary requirement exists.
+    let output = r#"1590680325583 START "/home/u/app/ui"
+1590680326283 {"type":"ERROR","filename":"src/routes/x/+page.svelte","start":{"line":0,"character":0},"end":{"line":0,"character":1},"message":"boom","code":2307,"source":"js"}
+"#;
+    let err = parse_svelte_check_machine(output).unwrap_err();
+    assert!(err.contains("COMPLETED"), "{err}");
+}
+
+#[test]
+fn parser_refuses_a_truncated_record_line() {
+    let output = r#"1590680325583 START "/home/u/app/ui"
+1590680326283 {"type":"ERROR","filename":"src/routes/x/+page.svelte","start":{"line":0,
+1590680326807 COMPLETED 1 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+"#;
+    let err = parse_svelte_check_machine(output).unwrap_err();
+    assert!(err.contains("malformed machine record"), "{err}");
+}
+
+#[test]
+fn parser_refuses_an_unrecognised_record_type() {
+    // Whatever svelte-check calls a record, the gate must not skip it: an
+    // ignored record is an unattributed diagnostic waiting to happen. Both
+    // record spellings are covered — a bare-word record and an ndjson
+    // record whose `type` the gate does not know.
+    let bare_word = r#"1590680325583 START "/home/u/app/ui"
+1590680326283 DIAGNOSTIC "something new"
+1590680326807 COMPLETED 1 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS
+"#;
+    let err = parse_svelte_check_machine(bare_word).unwrap_err();
+    assert!(err.contains("DIAGNOSTIC"), "{err}");
+
+    let unknown_json_type = r#"1590680325583 START "/home/u/app/ui"
+1590680326283 {"type":"HINT","filename":"src/a.svelte","start":{"line":0,"character":0},"message":"hint"}
+1590680326807 COMPLETED 1 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS
+"#;
+    let err = parse_svelte_check_machine(unknown_json_type).unwrap_err();
+    assert!(err.contains("HINT"), "{err}");
+}
+
+#[test]
+fn parser_refuses_a_diagnostic_without_a_filename() {
+    let output = r#"1590680325583 START "/home/u/app/ui"
+1590680326283 {"type":"ERROR","start":{"line":0,"character":0},"end":{"line":0,"character":1},"message":"boom","code":2307,"source":"js"}
+1590680326807 COMPLETED 1 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS
+"#;
+    let err = parse_svelte_check_machine(output).unwrap_err();
+    assert!(err.contains("filename"), "{err}");
+}
+
+#[test]
+fn parser_refuses_a_diagnostic_that_precedes_the_start_record() {
+    // No workspace ⇒ the workspace-relative filename cannot be resolved,
+    // and an unresolved path would silently land in the consumer bucket
+    // instead of the generated one (silent attribution degradation).
+    let output = format!(
+        "{}\n1590680326807 COMPLETED 1 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS\n",
+        machine_error_record("1590680326283", "filename", "src/a.svelte")
+    );
+    let err = parse_svelte_check_machine(&output).unwrap_err();
+    assert!(err.contains("precedes the START record"), "{err}");
+}
+
+#[test]
+fn parser_accepts_the_filename_and_the_legacy_fn_key() {
+    // The CLI docs spell the key `fn` in one example while the released
+    // binary emits `filename`; both are accepted, `filename` preferred.
+    for key in ["filename", "fn"] {
+        let output = format!(
+            "1590680325583 START \"{MACHINE_WORKSPACE}\"\n{}\n\
+             1590680326807 COMPLETED 1 FILES 1 ERRORS 0 WARNINGS 1 FILES_WITH_PROBLEMS\n",
+            machine_error_record("1590680326283", key, "src/a.svelte")
+        );
+        let (diagnostics, summary) =
+            parse_svelte_check_machine(&output).unwrap_or_else(|e| panic!("key `{key}`: {e}"));
+        assert_eq!(diagnostics.len(), 1, "key `{key}`");
+        assert_eq!(
+            diagnostics[0].path,
+            PathBuf::from(format!("{MACHINE_WORKSPACE}/src/a.svelte")),
+            "key `{key}`"
+        );
+        assert_eq!(summary, Some((1, 0)), "key `{key}`");
+    }
+}
+
+#[test]
+fn completed_counts_are_read_by_label_not_by_position() {
+    // A reordered / extended COMPLETED record must not shift ERRORS into
+    // the warnings slot (or out of the reconciliation entirely).
+    let output = "1590680325583 START \"/home/u/app/ui\"\n\
+                  1590680326807 COMPLETED 0 ERRORS 1 WARNINGS 20 FILES 3 FILES_WITH_PROBLEMS\n";
+    let (diagnostics, summary) = parse_svelte_check_machine(output).expect("parse");
+    assert!(diagnostics.is_empty());
+    assert_eq!(summary, Some((0, 1)));
+}
+
+#[test]
+fn zero_diagnostic_report_parses_as_empty() {
+    let output = r#"Loading svelte-check in workspace: /home/u/app/ui
+Getting Svelte diagnostics...
+
+1590680325583 START "/home/u/app/ui"
+1590680326807 COMPLETED 0 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS
+"#;
+    let (diagnostics, summary) = parse_svelte_check_machine(output).expect("parse");
     assert!(diagnostics.is_empty());
     assert_eq!(summary, Some((0, 0)));
-}
-
-#[test]
-fn parser_refuses_unattributed_diagnostics() {
-    // If svelte-check's shape moves, an `Error:` with no path header must
-    // be a HARD failure — silently zeroing the attribution set is the
-    // vacuous-gate failure mode (issue #634).
-    let err = parse_svelte_check("Error: something broke (ts)\n").unwrap_err();
-    assert!(err.contains("no preceding"), "{err}");
 }
 
 #[test]

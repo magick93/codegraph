@@ -16,6 +16,42 @@ prefix — so the `generated` set was always empty, the check's exit status was 
 surface, and the gate was wired into no workflow at all ("nightly lane" was
 documentation).
 
+## Follow-up: the repaired parser was still ANSI-blind (codegraph#728)
+
+The #634 repair parsed svelte-check's **human** shape (`path:line:col`,
+`Error:`/`Warn:`, `svelte-check found N errors and M warnings …`) with bare
+`strip_prefix`. CI colourises every one of those fragments, so nothing matched: the
+attribution set came back empty, `summary` was `None`, and the gate panicked on its own
+reconciliation check while claiming the summary was missing — it had been printed, as
+`\x1b[31msvelte-check found 10 errors and 254 warnings in 72 files`. Ten real
+diagnostics were masked.
+
+The gate now parses svelte-check's **machine format** (`--output machine-verbose`,
+ndjson, no colour) via `NodeProject::run_check_machine`:
+
+- `START "<workspace>"` — diagnostic filenames are workspace-RELATIVE and are resolved
+  against it before `ui_relative`/`consumer_owned`. Skipping that join silently degrades
+  attribution (every path lands in the consumer bucket) — the same blindness class.
+- `{"type":"ERROR"|"WARNING","filename":"…",start,end,message,code,source}` — `filename`
+  (released binary) or `fn` (the CLI docs' spelling) are both accepted; LSP positions
+  are zero-based and are emitted one-based, matching the human print the renderer
+  links to.
+- `COMPLETED <n> FILES <n> ERRORS <n> WARNINGS <n> FILES_WITH_PROBLEMS` — counts read
+  BY LABEL, never by index.
+- `FAILURE "<message>"` — the run died.
+
+Hard parser errors (never a silent zero): a `FAILURE` record, a missing `COMPLETED`, an
+unrecognised record type, a truncated record, and a diagnostic whose filename cannot be
+resolved (no `filename`/`fn`, or a record before `START`). `run_check` stays the human
+entry point — the IFML gate's two call sites are exit-status-only.
+
+The same run exposed a second lane defect (codegraph#740): `vite preview` was spawned
+without `--host`, so it bound `localhost` and an `::1`-first resolution left an
+IPv6-only listener the gate's `127.0.0.1` probe could never reach (the log banner proved
+the server was up). The bind is now pinned to `127.0.0.1` and the readiness probe's own
+`curl` stderr rides the timeout error, so a refusal reads differently from a hang.
+
+
 With the gate repaired and asserting for real, the **unfixed** tree reports:
 
 ```text
@@ -83,7 +119,7 @@ family and are fixed here (each enumerated in the PR):
 |---|---|---|
 | `@crewbase/entities` / `@crewbase/ui` stubs exported components as plain functions | 55+5 false diagnostics ("not assignable to Component", "not constructable") | `Component`-typed runtime values (a cast keeps both the type and the runtime export) |
 | `stub_api_types` scanned only `src/` with one specifier | every emitted Playwright suite's request-DTO import unresolved (20 diagnostics) | walk the whole ui tree, both `#lib/api/types.ts` and `./api/types.ts` specifiers |
-| The report parser only looked at `Error:` lines | the assertion could never fail | `path:line:col` + severity block parsing, reconciled against the summary line and the exit status; unattributed diagnostics are a hard failure |
+| The report parser only looked at `Error:` lines | the assertion could never fail | `path:line:col` + severity block parsing, reconciled against the summary line and the exit status; unattributed diagnostics are a hard failure — superseded by the machine-format parser below (#728) |
 
 ## Test specification
 
@@ -96,7 +132,7 @@ family and are fixed here (each enumerated in the PR):
 | 5 | The generated form does not depend on the consumer-owned creator registration | `entity_remote_functions_tests::generated_forms_do_not_depend_on_the_consumer_owned_form_registration` | PASS |
 | 6 | The remote child-section component declares + receives `onDelete` | `ui::page::…::remote_child_section_component_declares_the_ondelete_callback` | PASS |
 | 7 | Kit-3 arity: `query.live('unchecked', …)`, zero-arg queries, single-object commands | `ui::remote` unit pins + `entity_remote_functions_tests` string pins | PASS |
-| 8 | The gate's parser attributes the real print shape and refuses unattributed diagnostics | `entity_codegen_gate::{parser_…,generated_paths_are_fail_closed_…}` (node-free, PR CI) | PASS (4) |
+| 8 | The gate's parser reads the machine-verbose contract (workspace-relative filenames resolved, `COMPLETED` counts by label, `FAILURE`/missing-summary/malformed/unknown records refused) and the reconciliation fires on a disagreement | `entity_codegen_gate::{machine_report_attribution…, reconciliation_fires…, parser_refuses_…}` (node-free, PR CI) | PASS (12) |
 | 9 | Generated-path attribution is fail-closed (new directories are asserted) | same | PASS |
 | 10 | Zero undocumented generated-path diagnostics, reconciled with svelte-check | `entity_codegen_gate::entity_app_builds_and_typechecks` (nightly) | PASS (1 documented) |
 | 11 | The emitted playwright config covers every emitted test file, and the sessionless `auth` project runs green against the booted app | `entity_codegen_gate::entity_specs_run_green` (nightly) | PASS — coverage `154 files, 8 projects`; `auth` project 3 passed / 0 failed (162s) |
@@ -106,7 +142,7 @@ family and are fixed here (each enumerated in the PR):
 ```bash
 # node-free PR-CI pins
 cargo test -p codegraph --test entity_remote_functions_tests        # 6
-cargo test -p codegraph --test entity_codegen_gate                  # 4 (parser + attribution)
+cargo test -p codegraph --test entity_codegen_gate                  # 12 (parser + attribution)
 cargo test -p codegraph --test entity_form_tests                    # 3
 cargo test -p codegraph-generate --lib -- ui::remote ui::page       # 7 + 18
 cargo test -p codegraph --test ux_rules_byte_identity_tests         # flag-off canary

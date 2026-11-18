@@ -2036,7 +2036,13 @@ the proven #573 IFML pattern:
   has no webServer block; the gate owns the process and points
   `PUBLIC_SVELTEKIT_URL` at it; the json reporter rides
   `PLAYWRIGHT_JSON_OUTPUT_NAME` via `--reporter=json` since the emitted
-  config carries no reporter). The UI-driven families (`generated/**`,
+  config carries no reporter). The preview bind is PINNED to
+  `127.0.0.1` (`--host 127.0.0.1`, issue #740: bare `vite preview` binds
+  `localhost`, and a runner resolving that to `::1` first leaves an
+  IPv6-only listener the IPv4 readiness probe can never reach) and the
+  readiness probe's own `curl` stderr rides the "not ready within 60s"
+  error, so a refused connection reads differently from a hang. The
+  UI-driven families (`generated/**`,
   `webhooks`, journeys) need the Supabase persona stack (GoTrue + BaseJump
   orgs in the global-setup) and stay the consumer `testkit e2e` lane's
   job — their file paths are still held to the coverage invariant.
@@ -2065,18 +2071,48 @@ worse: the gate that was meant to catch it **could not fail**.
   status was discarded (`let _ = check_ok;`), `src/lib/forms/**` was not in
   the asserted set, and no workflow ran it. Repaired: path-attributed
   diagnostics parsed into (path, line, column, severity), the parsed error
-  count RECONCILED against svelte-check's own summary line + exit status
-  (shape drift is a hard failure, never a silent zero), an unattributed
-  `Error:` line is fatal, attribution is fail-CLOSED (everything under
-  `ui/src` unless listed consumer/gate-owned), consumer diagnostics are
-  printed + written to `target/entity-gate/consumer-diagnostics.txt`, and
-  a shrink-only `KNOWN_DEFECTS` ledger makes pre-existing debt enumerable
-  (an entry matching nothing FAILS, so the ledger cannot rot). Nightly
-  workflow `.github/workflows/entity-gate.yml` (04:00 UTC, supabase
-  postgres, chromium, `--test-threads=1` — both tests regenerate the same
-  fixture in place).
-  **Unfixed tree: 190 generated-path errors** it had been hiding;
+  count RECONCILED against svelte-check's own summary + exit status (shape
+  drift is a hard failure, never a silent zero), attribution is fail-CLOSED
+  (everything under `ui/src` unless listed consumer/gate-owned), consumer
+  diagnostics are printed + written to
+  `target/entity-gate/consumer-diagnostics.txt`, and a shrink-only
+  `KNOWN_DEFECTS` ledger makes pre-existing debt enumerable (an entry
+  matching nothing FAILS, so the ledger cannot rot). Nightly workflow
+  `.github/workflows/entity-gate.yml` (04:00 UTC, supabase postgres,
+  chromium, `--test-threads=1` — both tests regenerate the same fixture in
+  place). **Unfixed tree: 190 generated-path errors** it had been hiding;
   **after the sweep: 1 documented** (gap G1 below).
+- **The parser reads svelte-check's MACHINE format (issue #728).** The
+  #634 parser still stripped the human shape (`path:line:col`,
+  `Error:`/`Warn:`, the `svelte-check found N errors …` summary) — and CI
+  colourises all of it, so every `strip_prefix` missed: the attribution set
+  came back empty, the summary `None`, and the gate died on its own
+  reconciliation check while reporting the summary was missing (it had been
+  printed as `\x1b[31msvelte-check found 10 errors and 254 warnings …`),
+  masking ten real diagnostics. `NodeProject::run_check_machine` now runs
+  `--output machine-verbose` (ndjson, no colour) and
+  `parse_svelte_check_machine` consumes it: `START "<workspace>"`
+  (diagnostic filenames are workspace-RELATIVE and are resolved against it
+  before `ui_relative`/`consumer_owned` — skipping that silently degrades
+  attribution to "everything is consumer-owned"), `{"type":"ERROR"|
+  "WARNING","filename"|"fn",start,end,message,code,source}` ndjson records
+  (positions are LSP-zero-based; emitted one-based like the human print),
+  `COMPLETED <n> FILES <n> ERRORS <n> WARNINGS <n> FILES_WITH_PROBLEMS`
+  (counts read BY LABEL, never by index), and `FAILURE "<message>"`. A
+  `FAILURE` record, a missing `COMPLETED`, an unrecognised record type, a
+  truncated record, and a diagnostic with no resolvable filename are each a
+  HARD parser error — the silent-zero class must not come back. `run_check`
+  stays the human entry point (the IFML gate's two call sites are
+  exit-status-only). Pins (node-free, PR CI):
+  `machine_report_attributes_each_record_to_the_start_workspace`,
+  `reconciliation_fires_when_the_records_disagree_with_the_completed_summary`,
+  `parser_refuses_{a_failure_record_and_names_its_message,
+  a_report_without_a_completed_record, a_truncated_record_line,
+  an_unrecognised_record_type, a_diagnostic_without_a_filename,
+  a_diagnostic_that_precedes_the_start_record}`,
+  `parser_accepts_the_filename_and_the_legacy_fn_key`,
+  `completed_counts_are_read_by_label_not_by_position`,
+  `zero_diagnostic_report_parses_as_empty`.
 - **Class 1 (`imported-but-unemitted export`)**: `list_page.tera` imported
   `deleteItem` whenever ux was on; the module emits it only for
   `ux_delete && has_delete` — an entity with list/read/update and no delete
@@ -2134,7 +2170,7 @@ worse: the gate that was meant to catch it **could not fail**.
   (6 — incl. the structural **parity pin**: every emitted
   `./data.remote` named import must be a sibling-module export AND every
   `.refresh()` target must be a module export) + `cargo test -p codegraph
-  --test entity_codegen_gate` (4 node-free parser/attribution pins) +
+  --test entity_codegen_gate` (12 node-free parser/attribution pins) +
   `-- --ignored --test-threads=1` (nightly, both lane tests) +
   `entity_form_tests` (3) + `cargo test -p codegraph-generate --lib -- ui::remote ui::page`.
 - Deferred / gaps (`docs/tdd/entity-kit-sweep.tdd.md`): G1
