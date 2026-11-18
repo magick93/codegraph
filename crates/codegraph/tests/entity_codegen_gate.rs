@@ -574,7 +574,12 @@ fn machine_quoted_payload(payload: &str) -> Result<String, String> {
 /// attribution is a prefix match, so an unresolved relative path would land
 /// every diagnostic in the consumer bucket — attribution silently degraded
 /// is exactly the #634/#728 defect class. `.` segments are normalized away
-/// so `strip_prefix(workspace)` yields the clean `src/…` tail.
+/// so `strip_prefix(workspace)` yields the clean `src/…` tail. `..` is
+/// deliberately NOT collapsed: svelte-check reports `path.relative()`
+/// against its workspace, so a `..` means the file is OUTSIDE the report
+/// root — rewriting it lexically would fabricate a path, and the
+/// `START`-contains-`ui_dir` guard (not this function) is what anchors the
+/// root.
 fn resolve_machine_path(workspace: &Path, filename: &str) -> PathBuf {
     let candidate = Path::new(filename);
     let joined = if candidate.is_absolute() {
@@ -590,6 +595,57 @@ fn resolve_machine_path(workspace: &Path, filename: &str) -> PathBuf {
         }
     }
     resolved
+}
+
+/// The `START` workspace a machine report declares (`None` when the report
+/// carries no `START` record at all).
+fn machine_start_workspace(output: &str) -> Option<PathBuf> {
+    output.lines().find_map(|raw| {
+        let body = machine_record_body(raw.trim_end())?;
+        let folder = body.strip_prefix("START ")?;
+        machine_quoted_payload(folder).ok().map(PathBuf::from)
+    })
+}
+
+/// Hard guard: the report's `START` workspace must physically CONTAIN the
+/// ui dir the gate attributes against (review F2 on issue #728).
+///
+/// Attribution is a lexical `strip_prefix(ui_dir())`, while `START` is the
+/// svelte-check process CWD (physical, `getcwd(2)`) and `ui_dir()` is
+/// `CARGO_MANIFEST_DIR`-derived (logical). In a symlinked checkout the two
+/// spellings differ, every diagnostic's absolute path then falls outside
+/// `ui_dir()` and lands in the CONSUMER bucket — printed, never asserted —
+/// while the parsed-vs-`COMPLETED` reconciliation still passes. That is the
+/// #634/#728 blindness class one level out, so it is a hard error here.
+///
+/// Both sides are canonicalized (symlinks resolved); a canonicalization
+/// failure is itself named rather than ignored.
+fn assert_workspace_covers_ui(workspace: &Path, ui: &Path) -> Result<(), String> {
+    let canonical = |path: &Path, what: &str| {
+        fs::canonicalize(path).map_err(|e| {
+            format!(
+                "cannot canonicalize the {what} `{}`: {e} — the gate cannot prove its \
+                 diagnostic attribution root, and guessing would silently degrade attribution \
+                 (issue #728 review F2)",
+                path.display()
+            )
+        })
+    };
+    let workspace = canonical(workspace, "START workspace")?;
+    let ui = canonical(ui, "ui dir")?;
+    if !ui.starts_with(&workspace) {
+        return Err(format!(
+            "svelte-check's START workspace `{}` does not contain the gate's ui dir `{}` — \
+             attribution is a lexical strip_prefix against the ui dir, so every diagnostic \
+             would land in the consumer bucket (printed, never asserted) while the \
+             parsed-vs-COMPLETED counts still reconcile. That is the #634/#728 blindness with \
+             nothing left to catch it (issue #728 review F2). Fix the gate's workspace/ui-dir \
+             derivation (symlinked checkout?) rather than widening this guard.",
+            workspace.display(),
+            ui.display()
+        ));
+    }
+    Ok(())
 }
 
 /// `(diagnostics, Some((errors, warnings)))`, both counts from the report's
@@ -964,6 +1020,17 @@ async fn entity_app_builds_and_typechecks() {
     let (diagnostics, summary) = parse_svelte_check_machine(&output).unwrap_or_else(|e| {
         panic!("svelte-check machine report unparsable: {e}\n--- output ---\n{output}")
     });
+    // The parser resolves record filenames against the report's OWN `START`
+    // workspace; the gate attributes against `ui_dir()`. Those must be the
+    // same physical tree, or the lexical `strip_prefix` below silently
+    // buckets every diagnostic as consumer-owned (issue #728 review F2).
+    let report_workspace = machine_start_workspace(&output).unwrap_or_else(|| {
+        panic!(
+            "svelte-check's machine report carries no START record — the gate cannot verify \
+             its attribution root:\n{output}"
+        )
+    });
+    assert_workspace_covers_ui(&report_workspace, &ui_dir()).unwrap_or_else(|e| panic!("{e}"));
     let (reported_errors, _reported_warnings) = summary.unwrap_or_else(|| {
         panic!(
             "svelte-check printed no `COMPLETED` summary record — the gate cannot reconcile its \
@@ -1110,9 +1177,13 @@ fn emitted_playwright_files() -> Vec<String> {
 /// One readiness probe against the preview server: `(reachable, curl's own
 /// stderr)`. The stderr IS the diagnosis — a refused connection and a
 /// timeout must not read the same (issue #740).
+///
+/// `-S/--show-error` is load-bearing: plain `-s` suppresses curl's error
+/// message too, so every failure mode (refused, 500, timeout) would render
+/// as an empty splice.
 async fn probe_preview(url: &str) -> (bool, String) {
     match tokio::process::Command::new("curl")
-        .args(["-sf", "--max-time", "2", url])
+        .args(["-sSf", "--max-time", "2", url])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .output()
@@ -1605,6 +1676,47 @@ fn completed_counts_are_read_by_label_not_by_position() {
     let (diagnostics, summary) = parse_svelte_check_machine(output).expect("parse");
     assert!(diagnostics.is_empty());
     assert_eq!(summary, Some((0, 1)));
+}
+
+#[test]
+fn workspace_guard_requires_the_start_root_to_contain_the_ui_dir() {
+    // Issue #728 review F2: a START/ui-dir mismatch is fail-OPEN (every
+    // diagnostic becomes consumer-owned, the reconciliation still passes),
+    // so the guard is hard. Canonicalization failures are named too.
+    let root = tempfile::tempdir().expect("tempdir");
+    let ui = root.path().join("ui");
+    fs::create_dir_all(ui.join("src")).expect("mkdir ui");
+
+    // The ui dir itself is the gate's normal shape (svelte-check runs with
+    // the ui dir as its CWD); an ancestor is equally sound.
+    assert_workspace_covers_ui(&ui, &ui).expect("ui dir contains itself");
+    assert_workspace_covers_ui(root.path(), &ui).expect("ancestor workspace");
+
+    let unrelated = tempfile::tempdir().expect("tempdir");
+    let err = assert_workspace_covers_ui(unrelated.path(), &ui).unwrap_err();
+    assert!(err.contains("does not contain"), "{err}");
+    assert!(err.contains("consumer bucket"), "{err}");
+
+    // A path that cannot be canonicalized is an error naming the path —
+    // never silently skipped.
+    let missing = root.path().join("missing-workspace");
+    let err = assert_workspace_covers_ui(&missing, &ui).unwrap_err();
+    assert!(err.contains("cannot canonicalize"), "{err}");
+    assert!(err.contains("missing-workspace"), "{err}");
+}
+
+#[test]
+fn workspace_guard_reads_the_start_record_it_checks() {
+    let output = r#"Loading svelte-check in workspace: /tmp/app/ui
+1590680325583 START "/tmp/app/ui"
+1590680326807 COMPLETED 0 FILES 0 ERRORS 0 WARNINGS 0 FILES_WITH_PROBLEMS
+"#;
+    assert_eq!(
+        machine_start_workspace(output),
+        Some(PathBuf::from("/tmp/app/ui"))
+    );
+    // No START ⇒ no root to verify (the gate treats that as fatal itself).
+    assert_eq!(machine_start_workspace(""), None);
 }
 
 #[test]

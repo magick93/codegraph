@@ -31,7 +31,12 @@ ndjson, no colour) via `NodeProject::run_check_machine`:
 
 - `START "<workspace>"` — diagnostic filenames are workspace-RELATIVE and are resolved
   against it before `ui_relative`/`consumer_owned`. Skipping that join silently degrades
-  attribution (every path lands in the consumer bucket) — the same blindness class.
+  attribution (every path lands in the consumer bucket) — the same blindness class. The
+  gate then canonicalizes BOTH the `START` workspace and `ui_dir()` and hard-errors when
+  the workspace does not contain the ui dir: `START` is the svelte-check process CWD
+  (physical) while `ui_dir()` is `CARGO_MANIFEST_DIR`-derived (logical), so a symlinked
+  checkout would otherwise fail open (all diagnostics consumer-owned, counts still
+  reconciled).
 - `{"type":"ERROR"|"WARNING","filename":"…",start,end,message,code,source}` — `filename`
   (released binary) or `fn` (the CLI docs' spelling) are both accepted; LSP positions
   are zero-based and are emitted one-based, matching the human print the renderer
@@ -48,8 +53,9 @@ entry point — the IFML gate's two call sites are exit-status-only.
 The same run exposed a second lane defect (codegraph#740): `vite preview` was spawned
 without `--host`, so it bound `localhost` and an `::1`-first resolution left an
 IPv6-only listener the gate's `127.0.0.1` probe could never reach (the log banner proved
-the server was up). The bind is now pinned to `127.0.0.1` and the readiness probe's own
-`curl` stderr rides the timeout error, so a refusal reads differently from a hang.
+the server was up). The bind is now pinned to `127.0.0.1` and the readiness probe —
+`curl -sSf`, because `-s` alone suppresses curl's error text too — rides its own stderr
+into the timeout error, so a refusal reads differently from a hang.
 
 
 With the gate repaired and asserting for real, the **unfixed** tree reports:
@@ -132,7 +138,7 @@ family and are fixed here (each enumerated in the PR):
 | 5 | The generated form does not depend on the consumer-owned creator registration | `entity_remote_functions_tests::generated_forms_do_not_depend_on_the_consumer_owned_form_registration` | PASS |
 | 6 | The remote child-section component declares + receives `onDelete` | `ui::page::…::remote_child_section_component_declares_the_ondelete_callback` | PASS |
 | 7 | Kit-3 arity: `query.live('unchecked', …)`, zero-arg queries, single-object commands | `ui::remote` unit pins + `entity_remote_functions_tests` string pins | PASS |
-| 8 | The gate's parser reads the machine-verbose contract (workspace-relative filenames resolved, `COMPLETED` counts by label, `FAILURE`/missing-summary/malformed/unknown records refused) and the reconciliation fires on a disagreement | `entity_codegen_gate::{machine_report_attribution…, reconciliation_fires…, parser_refuses_…}` (node-free, PR CI) | PASS (12) |
+| 8 | The gate's parser reads the machine-verbose contract (workspace-relative filenames resolved, `COMPLETED` counts by label, `FAILURE`/missing-summary/malformed/unknown records refused) and the reconciliation fires on a disagreement; the `START` root must physically contain the ui dir the gate attributes against | `entity_codegen_gate::{machine_report_attributes_each_record_to_the_start_workspace, reconciliation_fires_when_the_records_disagree_with_the_completed_summary, parser_refuses_…, workspace_guard_…, generated_paths_are_fail_closed_and_consumer_paths_are_recorded}` (node-free, PR CI) | PASS (14) |
 | 9 | Generated-path attribution is fail-closed (new directories are asserted) | same | PASS |
 | 10 | Zero undocumented generated-path diagnostics, reconciled with svelte-check | `entity_codegen_gate::entity_app_builds_and_typechecks` (nightly) | PASS (1 documented) |
 | 11 | The emitted playwright config covers every emitted test file, and the sessionless `auth` project runs green against the booted app | `entity_codegen_gate::entity_specs_run_green` (nightly) | PASS — coverage `154 files, 8 projects`; `auth` project 3 passed / 0 failed (162s) |

@@ -2041,7 +2041,9 @@ the proven #573 IFML pattern:
   `localhost`, and a runner resolving that to `::1` first leaves an
   IPv6-only listener the IPv4 readiness probe can never reach) and the
   readiness probe's own `curl` stderr rides the "not ready within 60s"
-  error, so a refused connection reads differently from a hang. The
+  error, so a refused connection reads differently from a hang — which is
+  why the probe is `curl -sSf` and not `-sf`: `-s` alone suppresses curl's
+  error text too, leaving the splice empty for every failure mode. The
   UI-driven families (`generated/**`,
   `webhooks`, journeys) need the Supabase persona stack (GoTrue + BaseJump
   orgs in the global-setup) and stay the consumer `testkit e2e` lane's
@@ -2101,9 +2103,17 @@ worse: the gate that was meant to catch it **could not fail**.
   (counts read BY LABEL, never by index), and `FAILURE "<message>"`. A
   `FAILURE` record, a missing `COMPLETED`, an unrecognised record type, a
   truncated record, and a diagnostic with no resolvable filename are each a
-  HARD parser error — the silent-zero class must not come back. `run_check`
-  stays the human entry point (the IFML gate's two call sites are
-  exit-status-only). Pins (node-free, PR CI):
+  HARD parser error — the silent-zero class must not come back. Because
+  attribution is a lexical `strip_prefix(ui_dir())` while `START` is the
+  svelte-check process CWD (physical) and `ui_dir()` is
+  `CARGO_MANIFEST_DIR`-derived (logical), the gate also canonicalizes both
+  and HARD-errors when the workspace does not contain the ui dir — a
+  symlinked checkout would otherwise bucket every diagnostic as
+  consumer-owned while the counts still reconciled (fail-open, the same
+  blindness one level out). `run_check` stays the human entry point (the
+  IFML gate's two call sites are exit-status-only; its T1 still carries a
+  legacy `contains("Error:")` count, marked `TODO(#728)` as dead weight —
+  the `panic!` on exit status precedes it). Pins (node-free, PR CI):
   `machine_report_attributes_each_record_to_the_start_workspace`,
   `reconciliation_fires_when_the_records_disagree_with_the_completed_summary`,
   `parser_refuses_{a_failure_record_and_names_its_message,
@@ -2112,7 +2122,10 @@ worse: the gate that was meant to catch it **could not fail**.
   a_diagnostic_that_precedes_the_start_record}`,
   `parser_accepts_the_filename_and_the_legacy_fn_key`,
   `completed_counts_are_read_by_label_not_by_position`,
-  `zero_diagnostic_report_parses_as_empty`.
+  `zero_diagnostic_report_parses_as_empty`,
+  `workspace_guard_{requires_the_start_root_to_contain_the_ui_dir,
+  reads_the_start_record_it_checks}`, and the pre-existing
+  `generated_paths_are_fail_closed_and_consumer_paths_are_recorded`.
 - **Class 1 (`imported-but-unemitted export`)**: `list_page.tera` imported
   `deleteItem` whenever ux was on; the module emits it only for
   `ux_delete && has_delete` — an entity with list/read/update and no delete
@@ -2170,7 +2183,10 @@ worse: the gate that was meant to catch it **could not fail**.
   (6 — incl. the structural **parity pin**: every emitted
   `./data.remote` named import must be a sibling-module export AND every
   `.refresh()` target must be a module export) + `cargo test -p codegraph
-  --test entity_codegen_gate` (12 node-free parser/attribution pins) +
+  --test entity_codegen_gate` (14 node-free pins: the machine-format
+  parser + reconciliation cases, the `START`/ui-dir containment guard,
+  and the pre-existing `generated_paths_are_fail_closed_…` attribution
+  pin) +
   `-- --ignored --test-threads=1` (nightly, both lane tests) +
   `entity_form_tests` (3) + `cargo test -p codegraph-generate --lib -- ui::remote ui::page`.
 - Deferred / gaps (`docs/tdd/entity-kit-sweep.tdd.md`): G1
