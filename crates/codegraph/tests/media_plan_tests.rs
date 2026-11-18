@@ -320,6 +320,72 @@ async fn plan_resolves_child_table_and_columns() {
     );
 }
 
+/// Issue #699: a soft-deleted parent must not serve or destroy its media.
+/// The `deleted_at` column exists exactly when the table DDL calls the entity
+/// auditable — the domain's `auditable` flag (default ON) and NOT
+/// append-only (`db/ddl/query.rs`) — so the plan carries that ONE decision
+/// and the emitted gate filters on it only when the column exists. Mutating
+/// the resolver to a constant `true` fails the append-only leg; a constant
+/// `false` fails the default leg; ignoring `auditable` fails the middle leg.
+#[tokio::test]
+async fn parent_soft_delete_follows_the_ddl_auditable_decision() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+
+    // Default: `auditable` defaults ON in the DDL, so the column exists.
+    let config = parse(&media_toml("supabase", "client-direct"));
+    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    assert!(
+        plans
+            .get("core")
+            .expect("core plan")
+            .fields
+            .first()
+            .expect("one media field")
+            .parent_soft_delete,
+        "an auditable parent carries `deleted_at`, so the gate must filter it"
+    );
+
+    // `auditable = false`: the DDL emits NO `deleted_at`, so the gate must
+    // not reference it (the reference would 500 every media request).
+    let not_auditable = media_toml("supabase", "client-direct")
+        .replace("[domains.core]\n", "[domains.core]\nauditable = false\n");
+    assert_ne!(not_auditable, media_toml("supabase", "client-direct"));
+    let config = parse(&not_auditable);
+    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    assert!(
+        !plans
+            .get("core")
+            .expect("core plan")
+            .fields
+            .first()
+            .expect("one media field")
+            .parent_soft_delete,
+        "a non-auditable parent has no deleted_at column"
+    );
+
+    // Append-only — the `operations` inference the DDL uses (no update AND
+    // no delete): the row is never soft-deleted, and the DDL drops the
+    // audit block, so there is nothing to filter on.
+    let append_only = media_toml("supabase", "client-direct").replace(
+        r#"operations = ["create", "read", "update", "delete", "list"]"#,
+        r#"operations = ["create", "read", "list"]"#,
+    );
+    assert_ne!(append_only, media_toml("supabase", "client-direct"));
+    let config = parse(&append_only);
+    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    assert!(
+        !plans
+            .get("core")
+            .expect("core plan")
+            .fields
+            .first()
+            .expect("one media field")
+            .parent_soft_delete,
+        "an append-only parent is never soft-deleted"
+    );
+}
+
 #[tokio::test]
 async fn plans_are_deterministic_across_runs() {
     let engine = GrafeoEngine::in_memory().expect("engine");

@@ -450,6 +450,17 @@ pub struct MediaFieldPlan {
     /// format bump.
     #[serde(default)]
     pub parent_link_column: Option<String>,
+    /// Whether the owning table carries the DDL's soft-delete marker
+    /// (`deleted_at`, issue #699). Resolved from the SAME decision the table
+    /// DDL uses to emit the column (`db/ddl/query.rs`: the domain's
+    /// `auditable` flag — default ON — and not append-only), because both
+    /// errors are silent: a gate referencing a missing column 500s every
+    /// media request, while one that ignores an existing column keeps
+    /// serving and destructively removing the media of a soft-deleted
+    /// parent. This is plan IR, not a graph node, so it carries no graph
+    /// format bump.
+    #[serde(default)]
+    pub parent_soft_delete: bool,
 }
 
 impl MediaFieldPlan {

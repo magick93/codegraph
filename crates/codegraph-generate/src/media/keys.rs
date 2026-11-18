@@ -243,6 +243,7 @@ mod tests {
                     url_column: "url".to_string(),
                     mime_column: "mime_type".to_string(),
                     parent_tenant_column: Some("platform_organization_id".to_string()),
+                    parent_soft_delete: true,
                     parent_link_column: None,
                 },
                 MediaFieldPlan {
@@ -257,6 +258,7 @@ mod tests {
                     url_column: "url".to_string(),
                     mime_column: "mime_type".to_string(),
                     parent_tenant_column: Some("platform_organization_id".to_string()),
+                    parent_soft_delete: true,
                     parent_link_column: None,
                 },
                 MediaFieldPlan {
@@ -271,6 +273,7 @@ mod tests {
                     url_column: "url".to_string(),
                     mime_column: "mime_type".to_string(),
                     parent_tenant_column: Some("platform_organization_id".to_string()),
+                    parent_soft_delete: true,
                     parent_link_column: None,
                 },
             ],

@@ -67,6 +67,10 @@ struct MediaRouteContext {
     parent_fk_column: String,
     /// The owning table's tenant column (`None` for a global parent).
     parent_tenant_column: Option<String>,
+    /// Whether the owning table carries `deleted_at` (issue #699) — the
+    /// parent gate filters soft-deleted rows on it. Emitted as
+    /// `PARENT_SOFT_DELETE`, a generation-time constant, never request data.
+    parent_soft_delete: bool,
     url_column: String,
     mime_column: String,
     /// Presigned mode ⇒ presign issuance route (no multipart upload).
@@ -185,6 +189,7 @@ impl EntityGenerator for MediaRouteGenerator {
                 child_table: field.child_table.clone(),
                 parent_fk_column: field.parent_fk_column.clone(),
                 parent_tenant_column: field.parent_tenant_column.clone(),
+                parent_soft_delete: field.parent_soft_delete,
                 url_column: field.url_column.clone(),
                 mime_column: field.mime_column.clone(),
                 mode_presigned: media_plan.upload_mode
