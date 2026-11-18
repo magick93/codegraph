@@ -232,6 +232,33 @@ fn state_aware_legs(
             }
             continue;
         }
+        // An injected-scope `when` guard (issue #663): the contract's fresh
+        // CREATE fixture cannot drive the related record past its machine's
+        // initial state, so an unverifiable guard pins the conservative
+        // denial leg (403) — with a comment naming the guard it pins. The
+        // machine state does NOT advance: a denial does not transition.
+        if let Some(guard) = &op.injected_guard
+            && !guard.satisfiable_on_fresh_fixture
+        {
+            legs.push(OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 403,
+                seam: false,
+                seam_reason: String::new(),
+                wrong_state: false,
+                body: String::new(),
+                note: format!(
+                    "injected-scope `when` guard ({}): the fresh fixture cannot \
+                     drive the related record past its initial state, so the \
+                     contract pins the denial",
+                    guard.condition
+                ),
+                ..Default::default()
+            });
+            continue;
+        }
         // A bodied op that may answer a declared 4xx has NO deterministic
         // expected status (it depends on the fixture row the contract just
         // created) — the leg is omitted rather than mis-pinned. The live

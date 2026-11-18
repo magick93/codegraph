@@ -424,6 +424,183 @@ schema_dir = "model-schemas"
 postgres_schema = "release"
 "#;
 
+// ── Issue #663: injected-scope `when` guards (`condition_paths`) ────────
+
+/// A PayRun whose `submit` action is guarded by the RELATED Timecard's
+/// machine state: `when (payRunStatus == Draft) &&
+/// TimecardRepository.timecardStatus == Approved`. The injected path root
+/// is the declared dependency name (the upstream `PathScan` contract —
+/// the first segment must match an `inject`ed repository exactly as
+/// declared), and the own-record `refers` FK (`timecard`) is the id source
+/// the rendered handler loads the related record through.
+pub const GUARD_MOX: &str = r#"
+package guardpay
+
+enum PayRunStatus {
+    Draft = 0
+    Calculating = 1
+    Posted = 2
+}
+
+enum TimecardStatus {
+    Pending = 0
+    Approved = 1
+    Rejected = 2
+}
+
+class TimecardType {
+    String timecardId
+    TimecardStatus timecardStatus
+    int hours
+}
+
+class PayRunType {
+    String payRunId
+    PayRunStatus payRunStatus
+    int total
+    String [0..1] note
+    refers TimecardType[0..1] timecard
+}
+"#;
+
+pub const GUARD_DDD: &str = r#"
+import "guard_pay_run.mox";
+
+application GuardPay {
+    module guardpay {
+        entity PayRunType scaffold repository PayRunRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine payRunStatus: PayRunStatus {
+            initial Draft;
+            Draft -> Calculating via Submit;
+            Calculating -> Posted via Approve;
+            terminal Posted;
+        }
+        entity TimecardType scaffold repository TimecardRepository {
+            findById;
+            findAll;
+            save;
+        }
+        machine timecardStatus: TimecardStatus {
+            initial Pending;
+            Pending -> Approved via Approve;
+            terminal Approved;
+        }
+        service PayRunGuardService {
+            inject PayRunRepository;
+            inject TimecardRepository;
+            submit => PayRunRepository.save capability SubmitGuardPayRun when (payRunStatus == Draft && TimecardRepository.timecardStatus == Approved);
+        }
+    }
+}
+"#;
+
+pub const GUARD_ACTOR: &str = r#"
+import "guard_pay_run.mox"
+
+actors GuardPay {
+    actor Owner
+
+    capability SubmitGuardPayRun on PayRunType
+
+    grant Owner {
+        permit SubmitGuardPayRun
+    }
+}
+"#;
+
+/// The guard fixture's config: mox-first (no `entities` key — the mox
+/// bridge owns the graph), one domain.
+pub const GUARD_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.guardpay]
+label = "GuardPay"
+schema_dir = "model-schemas"
+postgres_schema = "guardpay"
+"#;
+
+/// The injected-scope guard fixture (issue #663): mox-first, one domain,
+/// two machine-bearing designs, and one op whose op-level `when` reads an
+/// INJECTED repository's machine field across the aggregate boundary.
+pub fn write_guard_fixture() -> Fixture {
+    write_guard_fixture_with(GUARD_MOX)
+}
+
+/// The same design with the injected path's remainder DOTTED one level
+/// deeper (`...Timecard.holder.name`) — the chain COMPILES upstream (each
+/// segment is a stored field), so it reaches the lowering and must be a
+/// named generation error: a single segment under the injected root is the
+/// closed subset, never a silently broader guard.
+pub fn guard_ddd_with_deep_injected_path() -> (String, String) {
+    (
+        GUARD_MOX
+            .replace(
+                "class TimecardType {",
+                "class HolderType {\n    String holderId\n    String name\n}\n\nclass TimecardType {",
+            )
+            .replace(
+                "    TimecardStatus timecardStatus\n",
+                "    TimecardStatus timecardStatus\n    refers HolderType[1] holder\n",
+            ),
+        GUARD_DDD.replace(
+            "TimecardRepository.timecardStatus == Approved",
+            "TimecardRepository.holder.name == \"Ada\"",
+        ),
+    )
+}
+
+/// The same design with the injected root naming a class the entity does
+/// NOT reference: the guard has no id source (no `timecard` FK) and the
+/// generation error must say so — never a load of an unresolvable record.
+/// The path still compiles upstream (the driver checks it against the
+/// injected CLASS's fields, not the op entity's), so this reaches the
+/// lowering.
+pub fn guard_fixture_without_fk() -> Fixture {
+    let mox = GUARD_MOX.replace("    refers TimecardType[0..1] timecard\n", "");
+    write_guard_fixture_with(&mox)
+}
+
+/// The same design with TWO `refers` to the injected class: the id source
+/// is ambiguous and the generation error must name both fields — never a
+/// guess.
+pub fn guard_fixture_with_ambiguous_fk() -> Fixture {
+    let mox = GUARD_MOX.replace(
+        "    refers TimecardType[0..1] timecard\n",
+        "    refers TimecardType[0..1] timecard\n    refers TimecardType[0..1] reviewTimecard\n",
+    );
+    write_guard_fixture_with(&mox)
+}
+
+/// `write_guard_fixture` over a different mox source (the guard mutations
+/// differ only in the model).
+pub fn write_guard_fixture_with(mox_source: &str) -> Fixture {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir); // the fixture outlives the guard on purpose
+    let schemas_dir = root.join("model-schemas");
+    let mox = root.join("guard_pay_run.mox");
+    fs::write(&mox, mox_source).unwrap();
+    let ddd = root.join("guardpay.ddd");
+    fs::write(&ddd, GUARD_DDD).unwrap();
+    let actor = root.join("policy.actor");
+    fs::write(&actor, GUARD_ACTOR).unwrap();
+    let config = root.join("domains.toml");
+    fs::write(&config, GUARD_DOMAINS_TOML).unwrap();
+    Fixture {
+        schemas_dir,
+        mox,
+        ddd,
+        actor,
+        config,
+    }
+}
+
 /// The same design with ONE unlowerable statement body (issue #662): the
 /// `let` initializer uses arithmetic, which the closed body subset refuses.
 /// The run-path validation pass must surface it as a HARD error naming the
@@ -604,7 +781,9 @@ pub fn write_mox_first_fixture_in(_prefix: &str, ddd_source: &str) -> Fixture {
 /// The authored-transition-binding fixture (issue #660): mox-first, one
 /// domain, two machine-bearing designs in one module (the qualifier-forcing
 /// shape), and every machine-bound op declaring `transition`.
-pub fn write_binding_fixture() -> Fixture {
+/// `write_binding_fixture` over a different `.ddd` source (the multi-machine
+/// `when` mutation differs only in the design).
+pub fn write_binding_fixture_with(ddd_source: &str) -> Fixture {
     let dir = TempDir::new().unwrap();
     let root = dir.path().to_path_buf();
     std::mem::forget(dir); // the fixture outlives the guard on purpose
@@ -613,7 +792,7 @@ pub fn write_binding_fixture() -> Fixture {
     let mox = root.join("release.mox");
     fs::write(&mox, RELEASE_MOX).unwrap();
     let ddd = root.join("release.ddd");
-    fs::write(&ddd, RELEASE_DDD).unwrap();
+    fs::write(&ddd, ddd_source).unwrap();
     // No actor policy: the fixture's ops are ungated, so no capability
     // plane is involved (the binding plane is independent of it).
     let actor = root.join("policy.actor");
@@ -626,6 +805,19 @@ pub fn write_binding_fixture() -> Fixture {
         actor,
         config,
     }
+}
+
+pub fn write_binding_fixture() -> Fixture {
+    write_binding_fixture_with(RELEASE_DDD)
+}
+
+/// The deep-path guard mutation as a ready fixture: BOTH files carry the
+/// mutation (the mox gains the `HolderType` chain, the guard reads it).
+pub fn guard_fixture_with_deep_path() -> Fixture {
+    let (mox, ddd) = guard_ddd_with_deep_injected_path();
+    let fixture = write_guard_fixture_with(&mox);
+    std::fs::write(&fixture.ddd, ddd).unwrap();
+    fixture
 }
 
 /// Ingest the binding fixture: the mox bridge + the `.ddd` design, with no
@@ -656,6 +848,46 @@ pub async fn ingest_binding(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine
         ddd_stats.services, 2,
         "both services must ingest (release + review)"
     );
+    engine
+}
+
+/// Ingest the injected-scope guard fixture (issue #663): mox + `.ddd` + the
+/// actor policy (the capability binds the guarded op to the entity).
+pub async fn ingest_guard(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let mox_stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(mox_stats.skipped, 0, "mox classes must bridge the schemas");
+    let ddd_stats = codegraph::ingest::ddd_ingest::ingest_ddd_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.ddd),
+        &config,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        ddd_stats.services, 1,
+        "the guard service must ingest"
+    );
+    let policy = codegraph::ifml_actor_import::resolve_actor_policy(
+        &["policy.actor".to_string()],
+        fixture.ddd.parent().unwrap(),
+    )
+    .expect("the actor policy must resolve");
+    engine
+        .ingest_actor_policy(&policy)
+        .await
+        .expect("policy ingests");
     engine
 }
 

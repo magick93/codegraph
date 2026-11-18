@@ -21,7 +21,7 @@ pub struct ValidationPass;
 impl ValidationPass {
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -36,6 +36,7 @@ impl ValidationPass {
             Self::check_repository_queries(db),
             Self::check_service_op_bodies(db, config),
             Self::check_transition_bindings(db, config),
+            Self::check_service_op_guards(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -52,6 +53,7 @@ impl ValidationPass {
         issues.extend(r12);
         issues.extend(r13);
         issues.extend(r14);
+        issues.extend(r15);
         issues
     }
 
@@ -80,14 +82,37 @@ impl ValidationPass {
             .collect()
     }
 
+    /// Injected-scope `when` guards (issue #663): every guarded operation's
+    /// injected paths must resolve and the whole condition must lower. The
+    /// same hard-error posture as `check_service_op_bodies` — the generator
+    /// collects its own refusal non-fatally, so this pre-generation pass is
+    /// what makes it fail BEFORE any tree is written.
+    async fn check_service_op_guards(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) = codegraph_generate::ddd::service_ops::guard_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(service op guard)".to_string(),
+                check: "service_op_guard",
+                message,
+            })
+            .collect()
+    }
+
     /// DD9 typed repository queries (issue #659): every query-carrying
     /// declared operation must lower to a parameterized store query. A
     /// construct outside the documented subset is a HARD error naming the
     /// repository, the operation, and the construct — the upstream consumer
     /// contract forbids silently broadening the result set, and the
     /// generator's own error would only surface after files were written.
-    async fn check_repository_queries(db: &dyn GraphQuerier) -> Vec<ValidationIssue> {
-        let Ok(refusals) = codegraph_generate::ddd::design::query_refusals(db).await else {
+    async fn check_repository_queries(db: &dyn GraphQuerier) -> Vec<ValidationIssue> {        let Ok(refusals) = codegraph_generate::ddd::design::query_refusals(db).await else {
             return Vec::new();
         };
         refusals
