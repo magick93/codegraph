@@ -546,6 +546,13 @@ async fn generated_app_typechecks() {
         .lines()
         .filter(|l| l.contains("Error:") || l.starts_with("Error: "))
         .count();
+    // TODO(#728): dead weight, kept only so this call site does not change
+    // shape in the parser PR. `run_check` prints the COLOURISED human shape,
+    // so a count over `Error:` text is blind under CI — and it cannot fire
+    // anyway: the `!ok` panic above already handles "there were errors".
+    // The entity gate parses the machine format
+    // (`NodeProject::run_check_machine`); this gate should either adopt it
+    // or delete the count.
     assert_eq!(
         errors, 0,
         "svelte-check reported {errors} errors:\n{output}"
