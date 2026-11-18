@@ -829,11 +829,13 @@ async fn media_plane_end_to_end_over_rustfs() {
         .await
         .unwrap_or_else(|e| panic!("database: {e}"));
     let target = PgTarget::from_url(&db.db().url()).expect("parse the gate db url");
-    // NO `apply_prelude()`: the Supabase image already ships its reserved
-    // roles (creating them errors with "is a reserved role"), and the
-    // generated `0003_pgmq_setup.sql` installs pgmq + `emit_domain_event`
-    // itself — the tenant-table event triggers the migration band creates
-    // depend on it, so a missing extension fails the parent INSERT below.
+    // NO `apply_prelude()`: the image treats `supabase_realtime_admin` (and
+    // its siblings) as RESERVED roles that only a superuser may create, and
+    // this gate runs as `postgres` (`NOSUPERUSER`) — so the prelude is skipped
+    // deliberately. The generated `0003_pgmq_setup.sql` installs pgmq +
+    // `emit_domain_event` itself — the tenant-table event triggers the
+    // migration band creates depend on it, so a missing extension fails the
+    // parent INSERT below.
     db.db()
         .apply_migrations(&app_dir.join("migrations"))
         .await
