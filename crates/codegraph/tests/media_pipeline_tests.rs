@@ -2068,6 +2068,12 @@ async fn nested_media_handler_extracts_the_ancestor_tuple_before_the_gate() {
     assert_eq!(modules.len(), 1, "one module per media field");
     let module = &modules[0];
 
+    // (a0) Issue #699 (review): the NESTED module's value, not just the
+    // argument name — a resolver that dropped the DDL-derived decision for
+    // nested entities left this route serving a deleted parent's media with
+    // every other pin green.
+    media_route_module_key(module, "const PARENT_SOFT_DELETE: bool = true;");
+
     // (a) The extractor mirrors the CRUD plane's `ancestor_path_params`:
     // depth 1 → `(parent_id, id)`.
     assert!(

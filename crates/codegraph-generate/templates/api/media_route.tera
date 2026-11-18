@@ -100,11 +100,15 @@ const CHILD_TABLE: &str = "{{ schema }}.{{ child_table }}";
 /// are deliberately unscoped.
 const PARENT_TENANT_COLUMN: Option<&str> = None;
 {% endif %}
-/// Issue #699 — the owning table is auditable (and not append-only), so the
+{% if parent_soft_delete %}/// Issue #699 — the owning table is auditable (and not append-only), so the
 /// DDL emitted `deleted_at`: the parent gate must treat a soft-deleted row as
 /// absent (404) instead of serving or destroying its media. A generation-time
 /// constant resolved from the DDL's own decision, never request data.
-const PARENT_SOFT_DELETE: bool = {{ parent_soft_delete }};{% if parent_link_column %}
+{% else %}/// Issue #699 — the owning table is NOT auditable (or is append-only), so the
+/// DDL emitted NO `deleted_at`: the parent gate must never name that column (a
+/// reference would 500 every media request). A generation-time constant
+/// resolved from the DDL's own decision, never request data.
+{% endif %}const PARENT_SOFT_DELETE: bool = {{ parent_soft_delete }};{% if parent_link_column %}
 /// Issue #722 — the column linking this row to its URL parent. A nested media
 /// route is addressed by `(parent_id, id)`, so the parent gate requires the
 /// addressed row to carry this FK equal to the URL parent (never a wider gate).

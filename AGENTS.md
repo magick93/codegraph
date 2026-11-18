@@ -2783,6 +2783,32 @@ a root entity only. #722 fixes both halves:
   ⇒ zero movement (the media e2e/runtime fixtures carry media and are
   regenerated, not byte-goldened).
 
+### #699: a soft-deleted parent serves no media
+
+A parent soft-deleted through the normal CRUD path (the auditable default)
+keeps its row, so the media gate's `id` + tenant lookup still matched it: the
+CRUD routes 404'd while `display` served the reference and `remove`
+destructively deleted it. `MediaFieldPlan.parent_soft_delete` carries the
+DDL's own auditable decision (`db/ddl/query.rs`: the domain's `auditable`
+flag — default ON — and NOT append-only, i.e. the explicit entity flag OR the
+operations inference), resolved LAZILY per media field in `media/plan.rs`
+(never per entity: `resolve_entity_operations` is uncached and the builder
+runs once per entity handler too). The route module emits it as
+`PARENT_SOFT_DELETE` — a generation-time constant, never request data — and
+`session.tera`'s `parent_exists` / `parent_exists_linked` take it as
+`soft_delete: bool`, appending `AND deleted_at IS NULL` when set. One value,
+because both disagreements are silent: a gate naming a column the table lacks
+500s every media request, and one ignoring an existing column keeps serving a
+deleted parent's media. Pins:
+`media_plan_tests::parent_soft_delete_follows_the_ddl_auditable_decision`
+asserts the plan flag AND the emitted `table.tera` DDL AGREE in all three legs
+(default / `auditable = false` / append-only operations), the nested field's
+flag is asserted per title (the shape a root-only resolver would miss — proved
+by mutation), and `media_pipeline_tests` pins both session SQL bodies, the
+emitted constant on BOTH branches, and both gate calls' argument order. Byte
+identity: media-only output; the three whole-tree canaries hold with no
+re-bless. Filed: #744 (the runtime gate never exercises a soft-deleted parent).
+
 ### Media runtime gate against a real S3 server (#695 Stage 1)
 
 `media_runtime_tests` (`--ignored`, nightly `ifml-gate.yml`) is the media

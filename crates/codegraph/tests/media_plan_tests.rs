@@ -7,6 +7,8 @@
 //! Node-free PR-CI pins: in-memory Grafeo — no node, no DB, no protoc.
 
 use codegraph_config::DomainConfig;
+use std::path::Path;
+
 use codegraph_config::config::parse_domain_config_str;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{EdgeType, MediaRouteParent, PropertyNode, SchemaNode};
@@ -324,66 +326,104 @@ async fn plan_resolves_child_table_and_columns() {
 /// The `deleted_at` column exists exactly when the table DDL calls the entity
 /// auditable — the domain's `auditable` flag (default ON) and NOT
 /// append-only (`db/ddl/query.rs`) — so the plan carries that ONE decision
-/// and the emitted gate filters on it only when the column exists. Mutating
-/// the resolver to a constant `true` fails the append-only leg; a constant
-/// `false` fails the default leg; ignoring `auditable` fails the middle leg.
+/// and the emitted gate filters on it only when the column exists.
+///
+/// Each leg asserts BOTH halves against each other: the plan's flag AND the
+/// actual emitted DDL (`table.tera`'s `{% if is_auditable %}` block). The
+/// decision lives in two places by necessity (the gate is raw SQL; the DDL
+/// emitter is template-driven), so this is the pin that stops them drifting —
+/// a gate flagging `true` over a table with no such column 500s every media
+/// request, and `false` over one that has it re-opens this issue.
 #[tokio::test]
 async fn parent_soft_delete_follows_the_ddl_auditable_decision() {
     let engine = GrafeoEngine::in_memory().expect("engine");
     ingest_model(&engine).await;
 
-    // Default: `auditable` defaults ON in the DDL, so the column exists.
+    // Default: `auditable` defaults ON, so the DDL emits the column.
     let config = parse(&media_toml("supabase", "client-direct"));
-    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    let (plan_flag, ddl_flag) = soft_delete_decisions(&engine, &config).await;
     assert!(
-        plans
-            .get("core")
-            .expect("core plan")
-            .fields
-            .first()
-            .expect("one media field")
-            .parent_soft_delete,
+        plan_flag,
         "an auditable parent carries `deleted_at`, so the gate must filter it"
     );
+    assert_eq!(
+        ddl_flag, plan_flag,
+        "the gate and the emitted DDL must agree on `deleted_at` (#699)"
+    );
 
-    // `auditable = false`: the DDL emits NO `deleted_at`, so the gate must
-    // not reference it (the reference would 500 every media request).
+    // `auditable = false`: no column, so the gate must not name it.
     let not_auditable = media_toml("supabase", "client-direct")
         .replace("[domains.core]\n", "[domains.core]\nauditable = false\n");
     assert_ne!(not_auditable, media_toml("supabase", "client-direct"));
     let config = parse(&not_auditable);
-    let plans = build_media_plans(&engine, &config).await.expect("plans");
+    let (plan_flag, ddl_flag) = soft_delete_decisions(&engine, &config).await;
     assert!(
-        !plans
-            .get("core")
-            .expect("core plan")
-            .fields
-            .first()
-            .expect("one media field")
-            .parent_soft_delete,
+        !plan_flag,
         "a non-auditable parent has no deleted_at column"
+    );
+    assert_eq!(
+        ddl_flag, plan_flag,
+        "the gate and the emitted DDL must agree on `deleted_at` (#699)"
     );
 
     // Append-only — the `operations` inference the DDL uses (no update AND
-    // no delete): the row is never soft-deleted, and the DDL drops the
-    // audit block, so there is nothing to filter on.
+    // no delete): the row is never soft-deleted and the DDL drops the audit
+    // block, so there is nothing to filter on.
     let append_only = media_toml("supabase", "client-direct").replace(
         r#"operations = ["create", "read", "update", "delete", "list"]"#,
         r#"operations = ["create", "read", "list"]"#,
     );
     assert_ne!(append_only, media_toml("supabase", "client-direct"));
     let config = parse(&append_only);
-    let plans = build_media_plans(&engine, &config).await.expect("plans");
-    assert!(
-        !plans
-            .get("core")
-            .expect("core plan")
-            .fields
-            .first()
-            .expect("one media field")
-            .parent_soft_delete,
-        "an append-only parent is never soft-deleted"
+    let (plan_flag, ddl_flag) = soft_delete_decisions(&engine, &config).await;
+    assert!(!plan_flag, "an append-only parent is never soft-deleted");
+    assert_eq!(
+        ddl_flag, plan_flag,
+        "the gate and the emitted DDL must agree on `deleted_at` (#699)"
     );
+}
+
+/// `(plan flag, emitted-DDL flag)` for the fixture's media field and the
+/// `core.person` table (issue #699's cross-pin).
+async fn soft_delete_decisions(engine: &GrafeoEngine, config: &DomainConfig) -> (bool, bool) {
+    let plans = build_media_plans(engine, config).await.expect("plans");
+    let plan_flag = plans
+        .get("core")
+        .expect("core plan")
+        .fields
+        .first()
+        .expect("one media field")
+        .parent_soft_delete;
+    (plan_flag, person_table_has_deleted_at(engine, config).await)
+}
+
+/// Whether the DDL emitter's `core.person` table carries the soft-delete
+/// column — `table.tera` blocks the whole audit band on `is_auditable`.
+async fn person_table_has_deleted_at(engine: &GrafeoEngine, config: &DomainConfig) -> bool {
+    use codegraph::generate::traits::EntityGenerator as _;
+
+    let tera = codegraph::generate::template_engine::create_tera(Path::new("")).expect("tera");
+    let generator = codegraph::generate::db::ddl::DdlGenerator::new(Path::new(
+        "/tmp/media-plan-soft-delete-ddl",
+    ));
+    let files = generator
+        .generate(
+            engine,
+            "PersonType",
+            "core",
+            config,
+            &tera,
+            &codegraph::generate::ProjectConfig::default(),
+        )
+        .await
+        .expect("DDL generation");
+    let sql = files
+        .iter()
+        .find(|f| f.path.to_string_lossy().ends_with("core_person.sql"))
+        .expect("person table SQL")
+        .content
+        .clone();
+    sql.contains("deleted_at TIMESTAMPTZ NULL")
 }
 
 #[tokio::test]
@@ -520,12 +560,23 @@ async fn media_fields_carry_the_route_path_they_are_mounted_under() {
         Some("person_id"),
         "issue #722: the nested route's ownership predicate column, from config `parent_ref`"
     );
+    // Issue #699: the soft-delete decision is per owning TABLE, so a nested
+    // field must carry it too — a resolver that only set it for root entities
+    // would leave the child route serving a deleted parent's media.
+    assert!(
+        child.parent_soft_delete,
+        "the nested field carries the DDL-derived soft-delete decision"
+    );
 
     let root = &fields[1];
     assert_eq!(root.entity_title, "PersonType");
     assert_eq!(root.entity_path_segment, "persons");
     assert!(root.route_parents.is_empty(), "a root has no parent hops");
     assert_eq!(root.route_prefix("v2", "core"), "/api/v2/core/persons");
+    assert!(
+        root.parent_soft_delete,
+        "the root field's DDL-derived soft-delete decision"
+    );
     assert!(
         root.parent_link_column.is_none(),
         "a root media field carries no ownership link column"

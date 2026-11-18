@@ -57,8 +57,9 @@ pub async fn begin_scoped(
 /// global row.
 ///
 /// `soft_delete` (issue #699) is also a generation-time constant per media
-/// field: it is the DDL's own auditable decision, so it is true exactly when
-/// the owning table carries `deleted_at`. When set, a soft-deleted row is
+/// field: it is the DDL's own auditable decision, so it is true when the DDL
+/// calls the owning table auditable — i.e. when that table carries
+/// `deleted_at`. When set, a soft-deleted row is
 /// treated as absent — the media of a deleted parent must not be served, and
 /// must not be destructively removed by `remove`.
 pub async fn parent_exists<C: ConnectionTrait>(
