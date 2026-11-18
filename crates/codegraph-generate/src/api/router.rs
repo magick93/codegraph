@@ -313,10 +313,19 @@ impl DomainGenerator for RouterGenerator {
                 // pass already hard-failed a broken media config, so a plan
                 // error here cannot silently drop routes. The surface carries
                 // the SAME `max_bytes` the handler checks (issue #710).
-                let media_surface =
+                // #703: the media route tree is a MONOLITH surface — the
+                // route generator is registry-gated off under workers, so the
+                // router must not import or mount the modules either (the
+                // DELETE cleanup block's `!workers` precedent). An empty
+                // surface keeps the worker router free of `super::media_*`
+                // references to files that were never emitted.
+                let media_surface = if project.is_workers_topology() {
+                    crate::media::plan::MediaRouteSurface::default()
+                } else {
                     crate::media::plan::media_route_surface(db, config, domain, title)
                         .await
-                        .unwrap_or_default();
+                        .unwrap_or_default()
+                };
 
                 let permissions = entity_cfg
                     .map(|ec| ec.permissions.clone())
@@ -376,8 +385,9 @@ impl DomainGenerator for RouterGenerator {
                     cross_refs: vec![],
                     media_fields: media_surface.fields,
                     media_max_bytes: media_surface.max_bytes,
-                    media_mode_presigned: crate::media::plan::media_upload_mode(config, domain)
-                        .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
+                    media_mode_presigned: !project.is_workers_topology()
+                        && crate::media::plan::media_upload_mode(config, domain)
+                            .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
                     hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
                     pipeline_middleware: Vec::new(),
                     has_pipeline_layer: false,
@@ -680,9 +690,15 @@ pub async fn build_router_context(
             // sibling build_router_context site so the api contract cannot
             // drift (#590 precedent). The surface also carries the configured
             // `max_bytes` the handler checks (issue #710).
-            let media_surface = crate::media::plan::media_route_surface(db, config, domain, title)
-                .await
-                .unwrap_or_default();
+            // #703: the media route tree is a MONOLITH surface — the same
+            // `!workers` gate as the sibling site (see the comment there).
+            let media_surface = if project.is_workers_topology() {
+                crate::media::plan::MediaRouteSurface::default()
+            } else {
+                crate::media::plan::media_route_surface(db, config, domain, title)
+                    .await
+                    .unwrap_or_default()
+            };
 
             let permissions = entity_cfg
                 .map(|ec| ec.permissions.clone())
@@ -740,8 +756,9 @@ pub async fn build_router_context(
                 cross_refs: vec![],
                 media_fields: media_surface.fields,
                 media_max_bytes: media_surface.max_bytes,
-                media_mode_presigned: crate::media::plan::media_upload_mode(config, domain)
-                    .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
+                media_mode_presigned: !project.is_workers_topology()
+                    && crate::media::plan::media_upload_mode(config, domain)
+                        .is_some_and(|m| m == codegraph_core::types::UploadMode::Presigned),
                 hierarchy_field: entity_cfg.and_then(|ec| ec.hierarchy_field.clone()),
                 pipeline_middleware: Vec::new(),
                 has_pipeline_layer: false,

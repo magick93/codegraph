@@ -3391,3 +3391,212 @@ async fn openapi_registers_a_nested_child_media_module() {
         }
     }
 }
+
+// ── #703: the media route tree is a MONOLITH surface ────────────────────
+
+/// Full-pipeline run over the media fixture at the given topology. Returns
+/// `(relative_path, content)` pairs so the assertions can talk about where
+/// files landed (root crate vs per-domain worker crates) without holding
+/// the temp dir open.
+async fn run_media_pipeline(
+    topology: codegraph::profile::DeploymentTopology,
+) -> Vec<(String, String)> {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let config = parse_domain_config_str(&media_toml("supabase", "through-app")).expect("toml");
+    let out = tempfile::tempdir().expect("out dir");
+    let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+    let domain_types_tmp = tempfile::tempdir().expect("domain types dir");
+    let hooks_tmp = tempfile::tempdir().expect("hooks dir");
+
+    let workers = topology == codegraph::profile::DeploymentTopology::Workers;
+    let project = ProjectConfig {
+        deployment: codegraph_generate::DeploymentConfig {
+            deployment_topology: topology,
+        },
+        ..Default::default()
+    };
+    // Workers swap the monolith scaffold for the per-worker scaffold (the
+    // plan may name either spelling — registry.rs's topology gate).
+    let scaffold = if workers {
+        "worker_scaffold"
+    } else {
+        "scaffold"
+    };
+    let plan = codegraph::profile::BuildPlan {
+        entity_form: false,
+        ui_live_queries: false,
+        ifml_tanstack_forms: false,
+        entity_generators: vec!["media_route".to_string()],
+        domain_generators: vec!["router".to_string()],
+        global_generators: vec![scaffold.to_string()],
+        post_gen_scripts: vec![],
+        ifml_frameworks: vec![],
+        template_pack_path: None,
+        database_target: codegraph_generate::db::dialect::DatabaseTarget::Postgres,
+        has_atproto: false,
+        atproto_tenancy: "shared_pds".to_string(),
+        has_fern: false,
+        has_emdash: false,
+        fern_sdk_languages: vec!["typescript".to_string()],
+        persistence_provider: codegraph::profile::PersistenceProvider::SeaOrm,
+        dto_key_casing: "snake".to_string(),
+        deployment_topology: topology,
+        dependency_strategy: codegraph::profile::DependencyStrategy::Rev,
+        event_envelope: codegraph_generate::events::EnvelopeVariant::Native,
+        event_idempotency: false,
+        event_archive: false,
+        namespace_layout: false,
+        ux_rules: false,
+        expr_ir: false,
+        ifml_e2e_auth: false,
+        ifml_remote_functions: false,
+        entity_remote_functions: false,
+        testid_module: false,
+        structural_gates: false,
+        public_operations_rls: false,
+        features: toml::Table::new(),
+    };
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
+            db: &engine,
+            config: &config,
+            output_dir: out.path(),
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: std::path::Path::new(""),
+            domain_types_base: Some(domain_types_tmp.path()),
+            hooks_base: Some(hooks_tmp.path()),
+            ext_points: None,
+            seed_config: None,
+            build_plan: Some(&plan),
+            profile_name: "default",
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .expect("pipeline run");
+    assert!(
+        !report.has_errors(),
+        "pipeline run should have no errors: {}",
+        report.summary()
+    );
+    let root = out.path().to_path_buf();
+    report
+        .files
+        .into_iter()
+        .map(|f| {
+            let rel = f
+                .path
+                .strip_prefix(&root)
+                .unwrap_or(&f.path)
+                .to_string_lossy()
+                .into_owned();
+            (rel, f.content)
+        })
+        .collect()
+}
+
+/// The media route modules the pipeline emitted, as relative paths.
+fn emitted_media_module_paths(files: &[(String, String)]) -> Vec<String> {
+    files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .filter(|path| {
+            path.ends_with(".rs")
+                && path
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.starts_with("media_"))
+        })
+        .collect()
+}
+
+/// Workers topology + `[media]`: the media route tree must NOT be emitted
+/// into the per-domain worker crates (issue #703). The routed module
+/// imports `crate::app_state::AppState` and calls
+/// `crate::media::session::begin_scoped` — root-crate paths the worker
+/// crate does not carry (`worker_lib.tera` declares no `pub mod media;`,
+/// `worker_app_state.tera` has no `{domain}_media_storage` slot), so a
+/// routed media module is an uncompilable worker — the same failure class
+/// the DELETE handler's cleanup block already avoids with its `!workers`
+/// gate. The route generator is gated at its construction site and the
+/// router's media surface is emptied under workers; this pin holds both at
+/// the pipeline tier: no media modules AND a worker router free of
+/// `super::media_*` references to files that were never emitted.
+#[tokio::test]
+async fn workers_topology_emits_no_media_route_modules() {
+    let files = run_media_pipeline(codegraph::profile::DeploymentTopology::Workers).await;
+    let media_modules = emitted_media_module_paths(&files);
+    assert!(
+        media_modules.is_empty(),
+        "workers topology must not receive media route modules; got {media_modules:?} — \
+         the worker crates have no `pub mod media;` and no media AppState slot"
+    );
+    let router = files
+        .iter()
+        .find(|(path, _)| path.ends_with("workers/core/src/api/core/router.rs"))
+        .map(|(_, content)| content.clone())
+        .expect("the worker router is emitted (worker-routed domain generator)");
+    assert!(
+        // `media_person_avatar` is the route module's exact stem — the
+        // fixture's `media_reference` value object is an unrelated nested
+        // child and legitimately appears in the router.
+        !router.contains("media_person_avatar"),
+        "the worker router must not import or mount media routes: {router}"
+    );
+}
+
+/// Monolith-positive leg: the same `[media]` fixture on the monolith
+/// topology still emits the media route module at the root crate, carrying
+/// the root-crate paths that make it compile there, and the monolith router
+/// still imports + mounts the media routes. This is the pipeline tier's
+/// byte-identity evidence — the construction-site gate changes NOTHING for
+/// the monolith.
+#[tokio::test]
+async fn monolith_topology_still_emits_media_route_modules() {
+    let files = run_media_pipeline(codegraph::profile::DeploymentTopology::Monolith).await;
+    let media_modules = emitted_media_module_paths(&files);
+    assert_eq!(
+        media_modules,
+        vec!["src/api/core/media_person_avatar.rs".to_string()],
+        "monolith emits exactly the media route module at the root crate: {media_modules:?}"
+    );
+    let (_, content) = files
+        .iter()
+        .find(|(path, _)| path == "src/api/core/media_person_avatar.rs")
+        .expect("the media module");
+    assert!(
+        content.contains("use crate::app_state::AppState;"),
+        "the module addresses the ROOT crate's AppState: {content}"
+    );
+    assert!(
+        content.contains("crate::media::session::begin_scoped"),
+        "the module rides the root crate's media session bundle (#690): {content}"
+    );
+    assert!(
+        content.contains("pub async fn upload"),
+        "through-app mode mounts the multipart upload: {content}"
+    );
+    // The monolith router is unchanged: it imports and mounts the module.
+    let router = files
+        .iter()
+        .find(|(path, _)| path == "src/api/core/router.rs")
+        .map(|(_, content)| content.clone())
+        .expect("the monolith router is emitted");
+    assert!(
+        router.contains("use super::media_person_avatar;"),
+        "the router imports the media module: {router}"
+    );
+    assert!(
+        router.contains("media_person_avatar::upload"),
+        "the router mounts the upload route: {router}"
+    );
+}
