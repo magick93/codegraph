@@ -1825,6 +1825,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
                 body_receiver: None,
                 transition: None,
                 child_scope: None,
+                condition_paths: Vec::new(),
                 ordinal: 0,
             }],
         }],

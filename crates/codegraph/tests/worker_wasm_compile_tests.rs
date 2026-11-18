@@ -798,6 +798,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                             class: "compilecheck.PayRunLine".to_string(),
                             action: "add".to_string(),
                         }),
+                        condition_paths: Vec::new(),
                         ordinal: 0,
                     },
                     codegraph_core::types::DddServiceOperation {
@@ -821,6 +822,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                             class: "compilecheck.PayRunLine".to_string(),
                             action: "save".to_string(),
                         }),
+                        condition_paths: Vec::new(),
                         ordinal: 1,
                     },
                     codegraph_core::types::DddServiceOperation {
@@ -844,6 +846,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                             class: "compilecheck.PayRunLine".to_string(),
                             action: "remove".to_string(),
                         }),
+                        condition_paths: Vec::new(),
                         ordinal: 2,
                     },
                 ],
@@ -1029,6 +1032,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                     body_receiver: None,
                     transition: None,
                     child_scope: None,
+                condition_paths: Vec::new(),
                     ordinal: 0,
                 }],
                 ordinal: 0,
@@ -1060,6 +1064,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         body_receiver: None,
                         transition: None,
                         child_scope: None,
+                condition_paths: Vec::new(),
                         ordinal: 0,
                     },
                     codegraph_core::types::DddServiceOperation {
@@ -1079,6 +1084,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                         body_receiver: None,
                         transition: None,
                         child_scope: None,
+                condition_paths: Vec::new(),
                         ordinal: 1,
                     },
                 ],

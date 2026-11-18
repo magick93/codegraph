@@ -51,10 +51,10 @@ pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
 pub use condition::{ConditionKind, ConditionNode};
 pub use ddd::{
-    DddApplicationNode, DddChildRef, DddDesignFlags, DddDesignNode, DddDocumentField,
-    DddModelGraph, DddModuleNode, DddPagination, DddParam, DddRepositoryNode,
-    DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
-    DddTransitionRef,
+    DddApplicationNode, DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags,
+    DddDesignNode, DddDocumentField, DddModelGraph, DddModuleNode, DddPagination, DddParam,
+    DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode,
+    DddServiceOperation, DddTransitionRef,
 };
 pub use deploy::{
     DeployApplicationNode, DeployBindingNode, DeployComponentNode, DeployConnectionNode,
