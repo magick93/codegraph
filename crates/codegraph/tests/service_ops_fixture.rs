@@ -875,10 +875,7 @@ pub async fn ingest_guard(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
     )
     .await
     .unwrap();
-    assert_eq!(
-        ddd_stats.services, 1,
-        "the guard service must ingest"
-    );
+    assert_eq!(ddd_stats.services, 1, "the guard service must ingest");
     let policy = codegraph::ifml_actor_import::resolve_actor_policy(
         &["policy.actor".to_string()],
         fixture.ddd.parent().unwrap(),

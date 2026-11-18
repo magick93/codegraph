@@ -24,10 +24,10 @@ use codegraph_core::traits::GraphQuerier;
 use tempfile::TempDir;
 
 use fixture::{
-    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, RELEASE_DDD, ingest,
-    ingest_binding, ingest_child_ops, guard_fixture_with_ambiguous_fk,
-    guard_fixture_with_deep_path, guard_fixture_without_fk, read, run_generation, tempdir,
-    write_binding_fixture, write_binding_fixture_with, write_child_ops_fixture, ingest_guard,
+    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, RELEASE_DDD,
+    guard_fixture_with_ambiguous_fk, guard_fixture_with_deep_path, guard_fixture_without_fk,
+    ingest, ingest_binding, ingest_child_ops, ingest_guard, read, run_generation, tempdir,
+    write_binding_fixture, write_binding_fixture_with, write_child_ops_fixture,
     write_child_ops_fixture_with, write_fixture_in, write_guard_fixture,
     write_mox_first_fixture_in,
 };
@@ -903,9 +903,15 @@ async fn injected_scope_when_guards_load_the_related_record_and_deny() {
     let injected = op
         .condition_paths
         .iter()
-        .find(|p| matches!(p.scope, codegraph_core::types::DddConditionScope::Injected { .. }))
+        .find(|p| {
+            matches!(
+                p.scope,
+                codegraph_core::types::DddConditionScope::Injected { .. }
+            )
+        })
         .expect("an injected-scope path");
-    let codegraph_core::types::DddConditionScope::Injected { repository, class } = &injected.scope else {
+    let codegraph_core::types::DddConditionScope::Injected { repository, class } = &injected.scope
+    else {
         unreachable!("found above");
     };
     assert_eq!(repository, "TimecardRepository");
@@ -915,7 +921,14 @@ async fn injected_scope_when_guards_load_the_related_record_and_deny() {
     let out = tempdir();
     let domain_types = tempdir();
     let hooks = tempdir();
-    let report = run_generation(&engine, &fixture, out.path(), domain_types.path(), hooks.path()).await;
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
     assert!(
         !report.has_errors(),
         "the injected-scope guard must lower: {report:?}"
@@ -1037,10 +1050,10 @@ async fn multi_machine_module_accepts_op_level_when() {
         .find(|op| op.name == "prepareRelease")
         .expect("prepareRelease op");
     assert!(
-        op.condition_paths
-            .iter()
-            .any(|p| matches!(p.scope, codegraph_core::types::DddConditionScope::OwnRecord)
-                && p.field == "releaseStatus"),
+        op.condition_paths.iter().any(|p| matches!(
+            p.scope,
+            codegraph_core::types::DddConditionScope::OwnRecord
+        ) && p.field == "releaseStatus"),
         "the own-record machine path must ride condition_paths: {:?}",
         op.condition_paths
     );
@@ -1048,7 +1061,14 @@ async fn multi_machine_module_accepts_op_level_when() {
     let out = tempdir();
     let domain_types = tempdir();
     let hooks = tempdir();
-    let report = run_generation(&engine, &fixture, out.path(), domain_types.path(), hooks.path()).await;
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
     assert!(
         !report.has_errors(),
         "a multi-machine module must accept the op-level `when`: {report:?}"
@@ -1071,7 +1091,10 @@ async fn injected_guard_without_fk_is_a_named_generation_error() {
     let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
     let refusal = issues
         .iter()
-        .find(|i| matches!(i.severity, codegraph::validate::Severity::Error) && i.check == "service_op_guard")
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+        })
         .unwrap_or_else(|| panic!("the missing FK must hard-fail validation: {issues:?}"));
     assert!(
         refusal.message.contains("TimecardRepository") && refusal.message.contains("no id source"),
@@ -1087,7 +1110,10 @@ async fn injected_guard_with_ambiguous_fk_is_a_named_generation_error() {
     let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
     let refusal = issues
         .iter()
-        .find(|i| matches!(i.severity, codegraph::validate::Severity::Error) && i.check == "service_op_guard")
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+        })
         .unwrap_or_else(|| panic!("the ambiguous FK must hard-fail validation: {issues:?}"));
     assert!(
         refusal.message.contains("timecard_id") && refusal.message.contains("review_timecard_id"),
@@ -1107,7 +1133,10 @@ async fn injected_guard_with_dotted_path_is_a_named_generation_error() {
     let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
     let refusal = issues
         .iter()
-        .find(|i| matches!(i.severity, codegraph::validate::Severity::Error) && i.check == "service_op_guard")
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+        })
         .unwrap_or_else(|| panic!("the dotted path must hard-fail validation: {issues:?}"));
     assert!(
         refusal.message.contains("holder.name"),

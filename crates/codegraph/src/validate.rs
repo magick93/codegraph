@@ -112,7 +112,8 @@ impl ValidationPass {
     /// repository, the operation, and the construct — the upstream consumer
     /// contract forbids silently broadening the result set, and the
     /// generator's own error would only surface after files were written.
-    async fn check_repository_queries(db: &dyn GraphQuerier) -> Vec<ValidationIssue> {        let Ok(refusals) = codegraph_generate::ddd::design::query_refusals(db).await else {
+    async fn check_repository_queries(db: &dyn GraphQuerier) -> Vec<ValidationIssue> {
+        let Ok(refusals) = codegraph_generate::ddd::design::query_refusals(db).await else {
             return Vec::new();
         };
         refusals

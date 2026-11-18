@@ -485,6 +485,7 @@ pub(crate) fn lower_when_to_rust(
 /// to the string literal the codelist/string comparison path consumes.
 /// Unknown names fail closed with a diagnostic naming both the fields and
 /// the declared states.
+#[cfg(test)]
 pub(crate) fn lower_when_to_rust_with_states(
     source: &str,
     capability: &str,
@@ -511,14 +512,9 @@ pub(crate) fn lower_when_scoped(
 ) -> Result<String, String> {
     let parsed = phero_expr::parse(source);
     match parsed.ast {
-        Some(ast) if parsed.errors.is_empty() => lower_scoped(
-            &ast,
-            capability,
-            entity,
-            fields,
-            states,
-            injected,
-        ),
+        Some(ast) if parsed.errors.is_empty() => {
+            lower_scoped(&ast, capability, entity, fields, states, injected)
+        }
         _ => Err(format!(
             "capability `{capability}`: `when` condition is not valid \
              pherolang expression syntax: {source:?}"
@@ -573,7 +569,7 @@ pub struct InjectedMachine {
 /// non-field operand (literal), the own record (`response`) for a bare
 /// entity field, the scope's local for a one-segment injected path.
 fn resolve_operand(
-    scopes: &( &str, &HashMap<String, FieldInfo>, &[InjectedScope] ),
+    scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
     expr: &Expr,
     capability: &str,
 ) -> Result<Option<(String, FieldInfo)>, String> {
@@ -591,7 +587,11 @@ fn resolve_operand(
                 Ok(None)
             }
         },
-        ExprKind::FeatureAccess { receiver, name, optional_safe } => {
+        ExprKind::FeatureAccess {
+            receiver,
+            name,
+            optional_safe,
+        } => {
             if *optional_safe {
                 return Err(format!(
                     "capability `{capability}`: `when` condition uses `?.` \
@@ -776,7 +776,11 @@ fn lower(
                 rhs,
             )
         }
-        ExprKind::FeatureAccess { receiver, name, optional_safe } => {
+        ExprKind::FeatureAccess {
+            receiver,
+            name,
+            optional_safe,
+        } => {
             if *optional_safe {
                 return reject("`?.` (safe navigation)");
             }
@@ -825,7 +829,15 @@ fn comparison(
     match (lhs_field, rhs_field) {
         (Some((root, field)), None) => {
             let literal = strip_parens(rhs_text);
-            field_vs_literal(&root, &field, &literal, rust_op, is_ordering, capability, scopes.0)
+            field_vs_literal(
+                &root,
+                &field,
+                &literal,
+                rust_op,
+                is_ordering,
+                capability,
+                scopes.0,
+            )
         }
         (None, Some((root, field))) => {
             let literal = strip_parens(lhs_text);
@@ -843,7 +855,15 @@ fn comparison(
                     unreachable!("arithmetic is rejected before comparison rendering")
                 }
             };
-            field_vs_literal(&root, &field, &literal, flipped, is_ordering, capability, scopes.0)
+            field_vs_literal(
+                &root,
+                &field,
+                &literal,
+                flipped,
+                is_ordering,
+                capability,
+                scopes.0,
+            )
         }
         (Some((lhs_root, a)), Some((rhs_root, b))) => {
             if lhs_root != rhs_root {
@@ -957,20 +977,6 @@ fn eq_op(rust_op: &str) -> &'static str {
         "==" => "==",
         _ => "!=",
     }
-}
-
-fn field_for(
-    name: &str,
-    capability: &str,
-    entity: &str,
-    fields: &HashMap<String, FieldInfo>,
-) -> Result<FieldInfo, String> {
-    fields.get(name).cloned().ok_or_else(|| {
-        format!(
-            "capability `{capability}`: `when` condition references \
-                 `{name}`, which is not a field of `{entity}`"
-        )
-    })
 }
 
 /// Render one field reference over its scope root (`response` for the own
@@ -1233,14 +1239,8 @@ pub(crate) fn render_authorize_fn_with_injected(
     }
     let lowered_condition = condition
         .map(|source| {
-            let lowered = lower_when_scoped(
-                source,
-                op_name,
-                entity,
-                fields,
-                &all_states,
-                injected,
-            )?;
+            let lowered =
+                lower_when_scoped(source, op_name, entity, fields, &all_states, injected)?;
             Ok::<_, String>((lowered, source.to_string()))
         })
         .transpose()?;
@@ -1696,15 +1696,9 @@ pub async fn routes_for_entity(
                 // domain, query slot, FK) plus the class fields the
                 // comparison lowers over. Unresolvable shapes are named
                 // generation errors — never a silently narrower guard.
-                let injected = resolve_injected_scopes(
-                    db,
-                    config,
-                    entity_title,
-                    op,
-                    &props,
-                    &design_surface,
-                )
-                .await?;
+                let injected =
+                    resolve_injected_scopes(db, config, entity_title, op, &props, &design_surface)
+                        .await?;
                 let injected_guard = injected_guard_facts(op, &injected);
                 let authorize_fn = render_authorize_fn_with_injected(
                     &snake,
@@ -1722,7 +1716,8 @@ pub async fn routes_for_entity(
                     &machine_states,
                     &injected,
                 )?;
-                let params = if op.bodies.is_empty() {                    Vec::new()
+                let params = if op.bodies.is_empty() {
+                    Vec::new()
                 } else {
                     crate::ddd::body_lower::body_params(&op.name, &op.params)
                         .map_err(|refusal| refusal.0)?
@@ -1931,9 +1926,6 @@ pub async fn routes_for_entity(
     Ok(routes)
 }
 
-/// Whether the entity's config declares it a nested child of `parent_title`
-/// (config `role = "child"`, `parent` naming the root, `parent_ref` naming
-/// the back-ref column) — the WS4 nesting contract.
 // ── Injected-scope `when` guards (issue #663) ──────────────────────────
 
 /// Resolve an op's injected-scope `when` paths (issue #663) into the
@@ -1958,9 +1950,7 @@ async fn resolve_injected_scopes(
     for path in &op.condition_paths {
         if let codegraph_core::types::DddConditionScope::Injected { repository, class } =
             &path.scope
-            && !requested
-                .iter()
-                .any(|(r, c)| r == repository && c == class)
+            && !requested.iter().any(|(r, c)| r == repository && c == class)
         {
             requested.push((repository.clone(), class.clone()));
         }
@@ -1978,11 +1968,7 @@ async fn resolve_injected_scopes(
                 op.name
             ));
         };
-        let Some(injected_schema) = db
-            .get_schema(&title)
-            .await
-            .map_err(|e| e.to_string())?
-        else {
+        let Some(injected_schema) = db.get_schema(&title).await.map_err(|e| e.to_string())? else {
             return Err(format!(
                 "service op `{}`: the injected class `{class}` resolved to `{title}`, \
                  which is not in the graph",
@@ -2034,11 +2020,9 @@ async fn resolve_injected_scopes(
             .filter(|p| {
                 !p.is_array
                     && p.effective_kind()
-                        == Some(
-                            codegraph_type_contracts::RefClassificationKind::EntityReference,
-                        )
+                        == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
                     && p.ref_target.as_deref().is_some_and(|target| {
-                        target == &title
+                        target == title
                             || target == class_leaf
                             || format!("{class_leaf}{type_suffix}") == target
                     })
@@ -2067,10 +2051,7 @@ async fn resolve_injected_scopes(
                 ));
             }
         };
-        let injected_fields = db
-            .get_properties(&title)
-            .await
-            .map_err(|e| e.to_string())?;
+        let injected_fields = db.get_properties(&title).await.map_err(|e| e.to_string())?;
         let machine = design_surface.as_ref().and_then(|s| s.machine_for(&title));
         scopes.push(InjectedScope {
             root: repository.clone(),
@@ -2112,9 +2093,7 @@ fn injected_guard_facts(
     if scopes.is_empty() {
         return None;
     }
-    let Some(source) = op.condition.as_deref() else {
-        return None;
-    };
+    let source = op.condition.as_deref()?;
     let parsed = phero_expr::parse(source);
     let Some(ast) = parsed.ast.filter(|_| parsed.errors.is_empty()) else {
         return Some(InjectedGuard {
@@ -2158,7 +2137,11 @@ fn collect_injected_comparisons(
         ExprKind::Binary { op, lhs, rhs } => {
             if matches!(*op, BinOp::Eq | BinOp::Ne) {
                 let injected_side = |e: &Expr| -> Option<(usize, String)> {
-                    let ExprKind::FeatureAccess { receiver, name, optional_safe: false } = &e.kind
+                    let ExprKind::FeatureAccess {
+                        receiver,
+                        name,
+                        optional_safe: false,
+                    } = &e.kind
                     else {
                         return None;
                     };
@@ -2202,6 +2185,9 @@ fn collect_injected_comparisons(
     }
 }
 
+/// Whether the entity's config declares it a nested child of `parent_title`
+/// (config `role = "child"`, `parent` naming the root, `parent_ref` naming
+/// the back-ref column) — the WS4 nesting contract.
 fn is_nested_child_of(
     entity_cfg: Option<&codegraph_config::EntityConfig>,
     parent_title: &str,
@@ -4297,7 +4283,7 @@ postgres_schema = "payroll"
             body_receiver: None,
             transition: None,
             child_scope: None,
-                condition_paths: Vec::new(),
+            condition_paths: Vec::new(),
             ordinal: 0,
         }
     }
@@ -4956,7 +4942,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             body_receiver: None,
             transition: None,
             child_scope: None,
-                condition_paths: Vec::new(),
+            condition_paths: Vec::new(),
             ordinal: 0,
         }
     }
