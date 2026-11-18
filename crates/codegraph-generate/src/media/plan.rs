@@ -438,6 +438,37 @@ pub async fn build_media_plan_for_domain(
                                 resolved
                             }
                         };
+                        // Issue #699: the table DDL emits `deleted_at` when it
+                        // calls the entity auditable — the domain's `auditable`
+                        // flag (default ON) and NOT append-only
+                        // (`db/ddl/query.rs`). Append-only is the explicit
+                        // entity flag OR the same operations inference the DDL
+                        // uses (effective operations exclude update AND
+                        // delete). A soft-deleted parent must not serve or
+                        // destroy its media, but a gate naming a column the
+                        // table lacks would 500 every request — so both halves
+                        // ride this ONE value. Computed HERE (not per entity)
+                        // because `resolve_entity_operations` is not cached
+                        // and this builder runs once per entity handler too:
+                        // an entity with no media field must cost no query.
+                        let parent_soft_delete = {
+                            let domain_cfg = config.domains.get(domain_name);
+                            let auditable = domain_cfg.and_then(|d| d.auditable).unwrap_or(true);
+                            let append_only = domain_cfg
+                                .and_then(|d| d.get_entity_config(title))
+                                .is_some_and(|ec| ec.is_append_only())
+                                || {
+                                    let ops = crate::api::api_model::resolve_entity_operations(
+                                        db,
+                                        config,
+                                        domain_name,
+                                        title,
+                                    )
+                                    .await;
+                                    !ops.iter().any(|op| op == "update" || op == "delete")
+                                };
+                            auditable && !append_only
+                        };
                         fields.push(MediaFieldPlan {
                             entity_title: title.clone(),
                             entity_table: schema.pg_table_name.clone(),
@@ -451,6 +482,7 @@ pub async fn build_media_plan_for_domain(
                             mime_column,
                             parent_tenant_column: parent_tenant_column.clone(),
                             parent_link_column: resolved.parent_link_column,
+                            parent_soft_delete,
                         });
                     }
                 }

@@ -606,6 +606,11 @@ async fn media_routes_ride_the_session_bundle_and_a_tenant_scoped_parent_gate() 
         module,
         "const PARENT_TENANT_COLUMN: Option<&str> = Some(\"platform_organization_id\");",
     );
+    // Issue #699: the default fixture domain is auditable (no `auditable`
+    // key, so the DDL's default ON applies) and not append-only — so the
+    // owning table carries `deleted_at` and the gate must filter it.
+    media_route_module_key(module, "const PARENT_SOFT_DELETE: bool = true;");
+    media_route_module_key(module, "        PARENT_SOFT_DELETE,\n");
 
     // Every child statement carries the tenant predicate (the child table
     // inherits the parent's tenant column): upload DELETE + INSERT column,
@@ -913,7 +918,7 @@ async fn media_upload_insert_binds_the_tenant_second() {
 async fn global_parent_media_route_renders_the_unscoped_variant() {
     let tera = codegraph_generate::template_engine::create_tera_with_overrides(&[]).expect("tera");
     let project = ProjectConfig::default();
-    let ctx = serde_json::json!({
+    let mut ctx = serde_json::json!({
         "entity_name": "OrgType",
         "entity_snake": "org",
         "route_prefix": "/api/v1/core/org",
@@ -930,6 +935,7 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
         "child_table": "org_logo",
         "parent_fk_column": "org_id",
         "parent_tenant_column": serde_json::Value::Null,
+        "parent_soft_delete": true,
         "url_column": "url",
         "mime_column": "mime_type",
         "mode_presigned": false,
@@ -969,6 +975,34 @@ async fn global_parent_media_route_renders_the_unscoped_variant() {
     assert!(
         rendered.contains("PARENT_TENANT_COLUMN,"),
         "the parent gate passes None:\n{rendered}"
+    );
+    // Issue #699: an auditable parent filters soft-deleted rows.
+    assert!(
+        rendered.contains("const PARENT_SOFT_DELETE: bool = true;"),
+        "an auditable parent declares the filter (#699):\n{rendered}"
+    );
+    assert!(
+        rendered.contains("        PARENT_SOFT_DELETE,\n"),
+        "the gate passes the soft-delete decision (#699):\n{rendered}"
+    );
+
+    // …and a NON-auditable parent (the DDL emits no `deleted_at`) renders the
+    // flag OFF, so the gate can never name a column the table lacks.
+    ctx["parent_soft_delete"] = serde_json::json!(false);
+    let unfiltered = codegraph_generate::render_template_with_project(
+        &tera,
+        "api/media_route.tera",
+        &ctx,
+        &project,
+    )
+    .expect("non-auditable render");
+    assert!(
+        unfiltered.contains("const PARENT_SOFT_DELETE: bool = false;"),
+        "a non-auditable parent declares no filter (#699):\n{unfiltered}"
+    );
+    assert!(
+        unfiltered.contains("        PARENT_SOFT_DELETE,\n"),
+        "the gate still receives the (false) decision (#699):\n{unfiltered}"
     );
 }
 
@@ -1567,13 +1601,25 @@ async fn media_plane_emits_the_session_bundle_and_a_bound_parent_lookup() {
         );
     }
     // Bound parameters only: the parent lookup and org are $1/$2 values.
+    // Issue #699: the predicate carries `{live_only}` — the soft-delete
+    // filter the route module selects with its generation-time constant.
     assert!(
-        session_rs.contains("SELECT 1 FROM {table} WHERE id = $1 AND {column} = $2 LIMIT 1"),
+        session_rs
+            .contains("SELECT 1 FROM {table} WHERE id = $1 AND {column} = $2{live_only} LIMIT 1"),
         "tenant-scoped parent lookup: {session_rs}"
     );
     assert!(
-        session_rs.contains("SELECT 1 FROM {table} WHERE id = $1 LIMIT 1"),
+        session_rs.contains("SELECT 1 FROM {table} WHERE id = $1{live_only} LIMIT 1"),
         "global-parent lookup: {session_rs}"
+    );
+    assert!(
+        session_rs.contains("let live_only = if soft_delete {")
+            && session_rs.contains("\" AND deleted_at IS NULL\""),
+        "the gate must treat a soft-deleted parent as absent (#699): {session_rs}"
+    );
+    assert!(
+        session_rs.contains("soft_delete: bool,"),
+        "the DDL's auditable decision arrives as a generation-time parameter (#699): {session_rs}"
     );
     assert!(
         session_rs.contains("Statement::from_sql_and_values")
@@ -1606,8 +1652,8 @@ async fn nested_session_pins_the_linked_gate_sql_and_bind_order() {
 
     // Both tenancy variants: the linked predicate is `id AND link AND org`.
     for sql in [
-        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 AND {column} = $3 LIMIT 1",
-        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 LIMIT 1",
+        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2 AND {column} = $3{live_only} LIMIT 1",
+        "SELECT 1 FROM {table} WHERE id = $1 AND {link_column} = $2{live_only} LIMIT 1",
     ] {
         assert!(
             session_rs.contains(sql),
@@ -2022,6 +2068,12 @@ async fn nested_media_handler_extracts_the_ancestor_tuple_before_the_gate() {
     assert_eq!(modules.len(), 1, "one module per media field");
     let module = &modules[0];
 
+    // (a0) Issue #699 (review): the NESTED module's value, not just the
+    // argument name — a resolver that dropped the DDL-derived decision for
+    // nested entities left this route serving a deleted parent's media with
+    // every other pin green.
+    media_route_module_key(module, "const PARENT_SOFT_DELETE: bool = true;");
+
     // (a) The extractor mirrors the CRUD plane's `ancestor_path_params`:
     // depth 1 → `(parent_id, id)`.
     assert!(
@@ -2087,8 +2139,9 @@ async fn nested_media_handler_extracts_the_ancestor_tuple_before_the_gate() {
             "id,",
             "parent_id,",
             "api_key_info.organization_id,",
+            "PARENT_SOFT_DELETE,",
         ],
-        "parent_exists_linked(conn, table, tenant, link, id, parent_id, session_org): {module}"
+        "parent_exists_linked(conn, table, tenant, link, id, parent_id, session_org, soft_delete): {module}"
     );
 
     // (f) The utoipa `params` block documents the SAME order the extractor
@@ -2488,8 +2541,14 @@ async fn media_child_sql_rides_the_scoped_transaction_and_the_gate_gets_the_sess
         .position(|l| *l == "api_key_info.organization_id,");
     assert_eq!(
         (id_pos, org_pos),
-        (Some(pair.len() - 2), Some(pair.len() - 1)),
-        "parent_exists(id, session_org) — the last two arguments, in that order: {pair:?}"
+        (Some(pair.len() - 3), Some(pair.len() - 2)),
+        "parent_exists(id, session_org, soft_delete) — id and the org keep their order, \
+         with the #699 soft-delete constant LAST: {pair:?}"
+    );
+    assert_eq!(
+        pair.last().copied(),
+        Some("PARENT_SOFT_DELETE,"),
+        "the soft-delete decision must be the last argument (#699): {pair:?}"
     );
 }
 

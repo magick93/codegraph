@@ -99,7 +99,16 @@ const CHILD_TABLE: &str = "{{ schema }}.{{ child_table }}";
 /// organization by definition, so the parent gate and the child statements
 /// are deliberately unscoped.
 const PARENT_TENANT_COLUMN: Option<&str> = None;
-{% endif %}{% if parent_link_column %}
+{% endif %}
+{% if parent_soft_delete %}/// Issue #699 — the owning table is auditable (and not append-only), so the
+/// DDL emitted `deleted_at`: the parent gate must treat a soft-deleted row as
+/// absent (404) instead of serving or destroying its media. A generation-time
+/// constant resolved from the DDL's own decision, never request data.
+{% else %}/// Issue #699 — the owning table is NOT auditable (or is append-only), so the
+/// DDL emitted NO `deleted_at`: the parent gate must never name that column (a
+/// reference would 500 every media request). A generation-time constant
+/// resolved from the DDL's own decision, never request data.
+{% endif %}const PARENT_SOFT_DELETE: bool = {{ parent_soft_delete }};{% if parent_link_column %}
 /// Issue #722 — the column linking this row to its URL parent. A nested media
 /// route is addressed by `(parent_id, id)`, so the parent gate requires the
 /// addressed row to carry this FK equal to the URL parent (never a wider gate).
@@ -197,12 +206,14 @@ async fn scoped_tx(
         id,
         parent_id,
         api_key_info.organization_id,
+        PARENT_SOFT_DELETE,
     ){% else %}    let exists = crate::media::session::parent_exists(
         &tx,
         PARENT_TABLE,
         PARENT_TENANT_COLUMN,
         id,
         api_key_info.organization_id,
+        PARENT_SOFT_DELETE,
     ){% endif %}
     .await
     .map_err(|e| db_err("failed to resolve the media parent", e))?;
