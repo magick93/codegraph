@@ -298,6 +298,7 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 /// ingested into a fresh persistent engine which is checkpointed and
 /// recorded for the next run.
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn run_with_graph_cache(
     args: RunArgs<'_>,
     graph_cache: Option<&Path>,

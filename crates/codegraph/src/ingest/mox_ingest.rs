@@ -393,6 +393,7 @@ pub(crate) fn collect_schema_imports(
 /// and alias-typed features on [`MoxIngestOutcome::pending_alias_refs`] for
 /// the post-schema-pass wiring step ([`wire_alias_refs`]).
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn ingest_mox_files(
     ingestor: &dyn GraphIngestor,
     querier: &dyn GraphQuerier,

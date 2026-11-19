@@ -14,7 +14,6 @@ use crate::error::Result;
 
 /// Collects UI fields from graph properties, applying standard classification
 /// and codelist value resolution. Shared across page, form, and type generators.
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn collect_ui_fields(
     db: &dyn GraphQuerier,
     schema_title: &str,

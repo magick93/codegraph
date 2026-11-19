@@ -106,7 +106,6 @@ pub fn all_domains_for_generation(
 /// title appears in multiple domains (e.g. "OrderType" in both screening and
 /// assessments).  We now use `list_schemas` per-domain so each domain gets its
 /// own entry for shared titles.
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn compute_generation_order(
     db: &dyn GraphQuerier,
     config: &DomainConfig,

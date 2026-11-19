@@ -700,7 +700,6 @@ impl RepositoryImplEmitter {
         Ok(code.into_string())
     }
 
-    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub async fn query_entity_tree(
         &self,
         db: &dyn GraphQuerier,

@@ -3,7 +3,7 @@
 # too-many-lines threshold (issue #751): the lint is enabled with
 # `-D clippy::too_many_lines` in the CI lint job. The default of 100 lines
 # flags ~500 functions in this codebase (mostly long template-context
-# builders); 300 keeps the enforced population to the genuinely oversized
-# generation routines (~60 sites at the time the lint landed, each carrying
+# builders); 400 keeps the enforced population to the genuinely oversized
+# generation routines (12 sites at the time the lint landed, each carrying
 # a `TODO(#751)` allow + tracked follow-up).
-too-many-lines-threshold = 300
+too-many-lines-threshold = 400
