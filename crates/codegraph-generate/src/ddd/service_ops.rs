@@ -2261,6 +2261,14 @@ fn collect_injected_comparisons(
                 // The operands of a comparison are values, not conjuncts —
                 // nothing more to collect either way.
                 if let (Some((index, field)), Some(literal)) = (lhs_injected, literal_side(rhs)) {
+                    // NOTE: `literal` may be any bare Name — including an
+                    // OWN-record field when a future relaxation lifts the
+                    // cross-scope field-to-field refusal (the lowering
+                    // refuses that pair today, so this push is unreachable
+                    // for it). If that refusal ever lifts, re-derive the
+                    // freshness reasoning here — a decided-but-meaningless
+                    // comparison would silently mis-verdict (#749's
+                    // follow-up ledger).
                     if machine_decidable(index, &field) {
                         out.push((index, field, *op, literal));
                     } else {
