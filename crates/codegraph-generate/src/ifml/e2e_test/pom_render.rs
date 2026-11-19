@@ -35,10 +35,17 @@ pub(super) fn render_pom_page(pom: &ViewPom) -> String {
     );
     if needs_ux_table {
         s.push_str("import { BasePage } from './support/base-page';\n");
-        s.push_str("import { UxTable } from './support/ux-table';\n\n");
+        s.push_str("import { UxTable } from './support/ux-table';\n");
     } else {
-        s.push_str("import { BasePage } from './support/base-page';\n\n");
+        s.push_str("import { BasePage } from './support/base-page';\n");
     }
+    // Issue #692: a collection-add method resolves its route through the
+    // shared apiUrl helper. Gated on the payload — the import block stays
+    // byte-identical without one.
+    if pom.actions.iter().any(|action| action.collection.is_some()) {
+        s.push_str("import { apiUrl } from './support/api';\n");
+    }
+    s.push('\n');
 
     s.push_str(&format!(
         "export class {} extends BasePage {{\n",
@@ -512,6 +519,33 @@ pub(super) fn render_actions_section(
     let mut s = String::new();
     s.push_str(&format!("  // ── Actions: {component} ──\n\n"));
     for action in actions {
+        // Issue #692: a collection-level child `add` has NO rendered
+        // button — the POM method POSTs the child's create payload to the
+        // parent-scoped collection route through `page.request` (the
+        // context's request carries the persona/config auth headers, the
+        // same plane the spec fixture seeds ride) and returns the
+        // ok/status/created-id triple the specs assert.
+        if let Some(add) = &action.collection {
+            s.push_str(&format!(
+                "  /** The `{}` collection action (issue #692): POSTs the child's\n   * create payload to the parent-scoped collection route; the created\n   * element's id rides the envelope (`$.data.id`). */\n",
+                action.op_snake
+            ));
+            s.push_str(&format!(
+                "  async {}(payload: Record<string, unknown>, parentId: string): Promise<{{ ok: boolean; status: number; id?: string }}> {{\n",
+                add.method
+            ));
+            s.push_str(&format!(
+                "    const response = await this.page.request.post({}, {{ data: payload }});\n",
+                add.route_expr
+            ));
+            s.push_str(
+                "    const body = (await response.json().catch(() => undefined)) as\n      | { data?: { id?: string } }\n      | undefined;\n",
+            );
+            s.push_str(
+                "    return { ok: response.ok(), status: response.status(), id: body?.data?.id };\n  }\n\n",
+            );
+            continue;
+        }
         s.push_str(&format!(
             "  /** The `{}` action control (issue #559 markup). */\n",
             action.op_snake

@@ -105,6 +105,33 @@ pub struct ServiceOpState {
     pub op: Vec<ServiceOpTransition>,
 }
 
+/// The parent load-or-404 plan a collection-level child `add` renders
+/// BEFORE its create command (issue #692).
+///
+/// The `add` writes the child row with the parent's FK taken from the
+/// path, so the handler must prove the parent row exists — and is visible
+/// to the session — before the write: a bogus or foreign-org parent
+/// answers 404 through the RLS-scoped query plane, never Postgres `23503`
+/// as a 500 (the domain error classifier maps only scope/role/RLS
+/// markers). The plan resolves the parent's query slot AT GENERATION TIME
+/// so the handler can never reference a method that does not exist; the
+/// fail-closed refusals (no plain by-id load on the parent, a cross-domain
+/// parent) are named generation errors raised in [`super::routes`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChildParentLoad {
+    /// The parent aggregate's Rust type (`PayRun`) — the 404 prose.
+    pub entity: String,
+    /// The parent's query-slot module stem (`pay_run`) — the AppState slot
+    /// is `state.{domain}_{module}_queries`.
+    pub module: String,
+    /// The parent's owning domain — the AppState slot prefix. Same-domain
+    /// by construction (a cross-domain parent is a named generation error).
+    pub domain: String,
+    /// The parent's auditable arity — the `, false` include-deleted
+    /// argument the query plane's `find_by_id` expects.
+    pub auditable: bool,
+}
+
 /// The executable lowering for one service op.
 ///
 /// Replaces the former `is_delete`/`is_read`/`is_update` boolean pack (which
@@ -150,6 +177,15 @@ pub enum ExecutionKind {
         /// Whether the child exposes `read` — the `add` leg's read-back
         /// contract rides it (the created row is fetched by id).
         read_back: bool,
+        /// The parent load-or-404 the collection-level `add` renders
+        /// BEFORE its create command (issue #692): the FK write only runs
+        /// for a parent the session can see, so a bogus or foreign-org
+        /// parent answers 404, never a 500. `Some` for every lowered
+        /// `add`; `None` for `remove`/`save` (their scoped record load IS
+        /// the parent-ownership proof) and for seamed adds (the 501 arm
+        /// never reaches the create).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_load: Option<ChildParentLoad>,
     },
     /// No executable lowering; the route answers 501 naming the gap.
     Seam { reason: String },

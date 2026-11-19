@@ -871,6 +871,18 @@ added_line: jsonpath "$.data.id"
 [Asserts]
 jsonpath "$.data.pay_run_id" == "{{parent_a}}"
 
+# issue #692: `add` under a BOGUS parent — the parent load-or-404 answers
+# 404 through the RLS-scoped query plane BEFORE the create (never Postgres
+# 23503 as a 500, and no row is written anywhere)
+POST {{base_url}}/api/v1/payroll/pay-run/00000000-0000-0000-0000-000000000000/pay-run-line/actions/add_line
+Authorization: Bearer {{api_key}}
+{
+  "line_id": "ws661-bogus-parent-line",
+  "quantity": 4
+}
+
+HTTP 404
+
 # the added element is READABLE under A
 GET {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{added_line}}
 Authorization: Bearer {{api_key}}
@@ -951,6 +963,12 @@ fn assert_child_emitted_surface(output: &Path) -> Result<(), String> {
         ("HTTP 422", "the add failure leg"),
         ("HTTP 404", "the ownership failure leg"),
         ("__unknown_field__", "the unknown-field failure body"),
+        // Issue #692: the bogus-parent 404 failure leg — the collection
+        // route under the zero-uuid PARENT segment.
+        (
+            "/pay-run/00000000-0000-0000-0000-000000000000/pay-run-line/actions/add_line",
+            "the bogus-parent 404 failure leg",
+        ),
     ] {
         if !actions.contains(needle) {
             return Err(format!(

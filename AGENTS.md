@@ -1086,13 +1086,16 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   generalization beyond the already-emitted depth-2 route, the M:N
   junction write (`refers T[]` without a back-ref column lowers to a
   junction table; the action's link is the config child back-ref FK — a
-  junction-only aggregate link is not written), a collection-add POM/
-  action-spec leg, and a modeled child op over a cross-domain child.
+  junction-only aggregate link is not written), and a modeled child op
+  over a cross-domain child (since #692 a cross-domain PARENT is a named
+  generation error). ~~A collection-add POM/action-spec leg~~ — **retired
+  by #692** (see below).
 - **Deferred**: delegation breadth beyond the lowered set
   (service-to-service, `search`); api_key capability enforcement
   (JWT-only policy gates); hurl 403 legs over JWT
   personas; register-class properties (issue Ask 4, upstream pherolang
-  #83); a collection-add POM/action-spec leg. **Landed, no longer
+  #83); ~~a collection-add POM/action-spec leg~~ — **retired by #692**.
+  **Landed, no longer
   deferred** (the ledger drifted): the live `service_ops_hurl_gate`
   (WS1, state-aware contract + psql proofs), the IFML action-op e2e spec
   category + POM surface (WS6 via the #591 manifest), the doctor
@@ -1109,6 +1112,84 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   keeps driving the unbound payroll fixture), `codegraph doctor
   --ddd-files` binding parity (needs the graph to bind an op to its
   entity), and the module ambiguity set's cross-file reach (see below).
+
+### The collection add loads the parent first (issue #692)
+
+The #661 collection-level `add` called the child's create command directly
+with NO parent check — a bogus or foreign-org `parent_id` reached the FK
+and Postgres `23503` surfaced as a 500 (the domain error classifier maps
+only scope/role/RLS markers). The `add` now proves the parent row exists
+BEFORE the create, and the IFML/hurl planes gained the collection-add
+legs:
+
+- **Handler** (`templates/api/handler.tera`'s `add` sub-arm): a parent
+  load-or-404 BEFORE `_commands.create` —
+  `state.{domain}_{parent_module}_queries.find_by_id(parent_id,
+  [auditable false], api_key_info.…)` → `from_domain_error` →
+  `AppError::not_found(format!("{Parent} {parent_id} not found"))`, the
+  `record_load` block's whitespace/shape. The query plane is RLS-scoped,
+  so a cross-tenant parent answers None → 404 (the repo convention: 404
+  never 403 for cross-tenant); a genuine FK failure after the check stays
+  a 500.
+- **Route planning** (`ddd/service_ops/routes.rs::child_parent_load`):
+  the parent-load facts (parent module, auditable arity, entity name)
+  ride `ExecutionKind::ChildOp.parent_load` (`ChildParentLoad`), resolved
+  with the EXACT rule the query plane uses to emit `find_by_id`
+  (`resolve_entity_operations` — design-surface override included — plus
+  the `has_create or (has_read and not parent_ref)` mirror of query.tera's
+  `uses_find_by_id`, the parent_ref from the canonical
+  `resolve_parent_fk_column_same_domain`). **Fail closed**: a parent
+  whose resolved op set exposes no plain by-id load, and a cross-domain
+  parent (child ops are same-domain by construction — the #663 posture),
+  are NAMED generation errors at route planning — never a handler that
+  references a method the query plane does not carry. Seamed adds render
+  the 501 arm and pay no parent resolution. The refusals also ride the
+  pre-generation pass: `child_parent_load_refusals` (validation.rs) →
+  `ValidationPass::check_child_add_parent_load` (check name
+  `child_op_parent_load`, Error severity).
+- **hurl** (`api/hurl_contract.rs`): the add contract gains the
+  bogus-parent 404 failure leg — the same collection URL with the
+  ZERO-UUID PARENT segment (`OpLeg.full_url` used verbatim, the new
+  `zero_uuid_parent_base` replaces every non-`base_url` capture in
+  `item_url_base`), the child's create body, `expect 404`. A leg that
+  500s (the FK surfacing) or 200s (a missing parent check) fails the
+  contract.
+- **IFML action plane**: `ActionActKind::NotFound` (404) joins
+  Ok/Conflict/Forbidden/NotImplemented; `plan_action_legs`' `ChildOp add`
+  arm now returns the sound `[200, 404]` pair (the TODO(#661) empty-vec
+  gap retired); `build_collection_add` builds the
+  `ActionCollectionAdd` payload (PARENT fixture from `with_required_
+  entries` + `add_required_refs` on the config parent, the child's typed
+  create body dep-wired under the `add` prefix, the collection route
+  from the SAME segments the API plane mounts); the POM gains
+  `async add{Child}(payload, parentId)` (`PomAction::collection` —
+  `page.request.post` to the collection route, returning
+  `{ ok, status, id }`; the `apiUrl` import is payload-gated) BESIDE the
+  unchanged item-addressed button methods; `render_action_spec` renders
+  the collection-add test (seed the parent → POST add under the seeded
+  parent, 200 + created id → bogus-parent POST, 404) with zero raw
+  testids. The build_action_spec gate keys on the built payload — a
+  child-bound component's zeroed CRUD api (`resolve_entity_api` zeroes
+  `role = "child"` surfaces) no longer hides aggregate ops; models
+  without child ops keep byte-identical output (routes are empty and the
+  loop continues either way).
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (29: the
+  parent-load-before-create pin, the fail-closed pin over a parent design
+  narrowed to `findAll`, the bogus-parent hurl leg pins beside the
+  existing add-leg pins) + `cargo test -p codegraph-generate --lib --
+  ddd::service_ops` + the in-crate collection-add POM/leg pins
+  (`collection_add_plans_ok_then_not_found_legs`,
+  `collection_add_renders_a_pom_method_posting_the_collection_route`,
+  `collection_add_spec_drives_the_pom_method_with_the_parent_fixture`) +
+  `--test worker_wasm_compile_tests -- --ignored` (the same-domain parent
+  load compiles in the cornucopia worker, native + wasm32) + the live
+  `service_ops_hurl_gate` (the `CHILD_OWNERSHIP_PROBE` bogus-parent 404
+  leg + `assert_child_emitted_surface`'s emitted-contract pin).
+  Byte-identity: everything is gated on a declared child op — the
+  ux/forms canaries hold without re-bless.
+- **Deferred**: a depth-2 `add` whose parent exposes only the SCOPED
+  read (no `create`) refuses named — the grandparent-addressed scoped
+  load is a recorded follow-up.
 
 ### The authored transition binding is the selector (issue #660)
 

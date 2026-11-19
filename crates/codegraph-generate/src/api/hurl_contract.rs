@@ -140,6 +140,12 @@ struct OpLeg {
     /// `add` read-back and the child failure legs); empty ⇒ the action
     /// route.
     url: String,
+    /// Non-empty ⇒ the COMPLETE request URL, used verbatim (issue #692's
+    /// bogus-parent leg: the collection route with the parent id segment
+    /// replaced by the zero uuid — a suffix on `item_url_base` cannot
+    /// express that). Empty ⇒ the `url`/`collection` selection.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    full_url: String,
     /// Non-empty ⇒ a `[Captures]` entry (`name: jsonpath "$.data.id"`) this
     /// leg records — the child `add` leg captures the created element.
     capture: String,
@@ -187,6 +193,7 @@ fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
 fn state_aware_legs(
     ops: &[crate::ddd::service_ops::ServiceOpRoute],
     child_bodies: (&str, &str),
+    item_url_base: &str,
 ) -> Vec<OpLeg> {
     use crate::ddd::service_ops::{ExecutionKind, ServiceOpTransition};
 
@@ -225,7 +232,8 @@ fn state_aware_legs(
             action, read_back, ..
         } = &op.execution
         {
-            let child_legs = child_action_legs(op, *action, *read_back, child_bodies);
+            let child_legs =
+                child_action_legs(op, *action, *read_back, child_bodies, item_url_base);
             match action {
                 crate::ddd::service_ops::ChildAction::Remove => delete_legs.extend(child_legs),
                 _ => legs.extend(child_legs),
@@ -391,8 +399,11 @@ fn state_aware_legs(
 /// - `add` → POST the collection action with the entity's create body
 ///   (200, capturing the created element), an optional read-back GET by the
 ///   captured id (200 — proves the element really landed and is readable
-///   under the parent), then the failure leg: the create DTO denies unknown
-///   fields, so a bogus key pins 422;
+///   under the parent), then the failure legs: the create DTO denies unknown
+///   fields, so a bogus key pins 422; and (issue #692) the SAME collection
+///   route with the parent id segment replaced by the zero uuid pins 404 —
+///   the handler's parent load-or-404 is the route's existence contract, so
+///   a bogus parent must never reach the FK (a 500, pre-fix);
 /// - `save` → POST the item action with the entity's update body (200), then
 ///   the failure leg: an unknown child id under the parent pins 404;
 /// - `remove` → POST the item action (200, the caller defers it to the end),
@@ -402,6 +413,7 @@ fn child_action_legs(
     action: crate::ddd::service_ops::ChildAction,
     read_back: bool,
     child_bodies: (&str, &str),
+    item_url_base: &str,
 ) -> Vec<OpLeg> {
     use crate::ddd::service_ops::ChildAction;
 
@@ -444,6 +456,27 @@ fn child_action_legs(
                 note: "failure leg: the create body denies unknown fields (422)".to_string(),
                 ..Default::default()
             });
+            // Issue #692: the bogus-parent 404 leg — the same collection
+            // route under a parent id that does not exist. The handler's
+            // parent load-or-404 must answer BEFORE the create; a leg that
+            // 500s (the FK failure surfacing) or 200s (a missing parent
+            // check) fails the contract.
+            legs.push(OpLeg {
+                op_name: format!("{} (failure)", op.op_name),
+                service: base.clone(),
+                snake: op.snake.clone(),
+                expect: 404,
+                full_url: format!(
+                    "{}/actions/{}",
+                    zero_uuid_parent_base(item_url_base),
+                    op.snake
+                ),
+                body: child_bodies.0.to_string(),
+                note: "failure leg: a bogus parent answers 404 through the parent \
+                       load-or-404 — never a 500"
+                    .to_string(),
+                ..Default::default()
+            });
         }
         ChildAction::Save => {
             legs.push(OpLeg {
@@ -470,6 +503,32 @@ fn child_action_legs(
         }
     }
     legs
+}
+
+/// The nested entity URL with every parent id capture replaced by the zero
+/// uuid (issue #692): the bogus-parent probe's base. `{{base_url}}` stays
+/// verbatim (it is the hurl origin variable); the parent captures end in
+/// `_id`. Depth-2 chains replace every ancestor id — a bogus grandparent
+/// fails the parent load just as deterministically.
+fn zero_uuid_parent_base(item_url_base: &str) -> String {
+    const ZERO_UUID: &str = "00000000-0000-0000-0000-000000000000";
+    let mut out = String::with_capacity(item_url_base.len());
+    let mut rest = item_url_base;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let Some(end_offset) = rest[start..].find("}}") else {
+            break;
+        };
+        let name = rest[start + 2..start + end_offset].trim();
+        if name == "base_url" {
+            out.push_str(&rest[start..start + end_offset + 2]);
+        } else {
+            out.push_str(ZERO_UUID);
+        }
+        rest = &rest[start + end_offset + 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The child action's failure leg: an id the parent does not own (the zero
@@ -685,7 +744,11 @@ impl DomainGenerator for HurlContractGenerator {
             .await
             .map_err(codegraph_core::error::Error::Config)?;
             if !ops.is_empty() {
-                let legs = state_aware_legs(&ops, (&contract.create_body, &contract.update_body));
+                let legs = state_aware_legs(
+                    &ops,
+                    (&contract.create_body, &contract.update_body),
+                    &contract.item_url_base,
+                );
                 let ctx = ActionsContractCtx {
                     domain: domain.to_string(),
                     module: schema.pg_table_name.clone(),

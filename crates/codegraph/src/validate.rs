@@ -37,7 +37,8 @@ impl ValidationPass {
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17) =
+            tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -54,6 +55,7 @@ impl ValidationPass {
             Self::check_transition_bindings(db, config),
             Self::check_service_op_guards(db, config, workers_topology),
             Self::check_invariants(db, config),
+            Self::check_child_add_parent_load(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -72,6 +74,7 @@ impl ValidationPass {
         issues.extend(r14);
         issues.extend(r15);
         issues.extend(r16);
+        issues.extend(r17);
         issues
     }
 
@@ -122,6 +125,33 @@ impl ValidationPass {
                 severity: Severity::Error,
                 entity: "(service op guard)".to_string(),
                 check: "service_op_guard",
+                message,
+            })
+            .collect()
+    }
+
+    /// Collection-level child `add` parent loads (issue #692): every
+    /// lowered `add` must resolve the parent's plain by-id query slot —
+    /// the handler renders a parent load-or-404 BEFORE the create, so the
+    /// method it calls must provably exist. Same hard-error posture (the
+    /// `check_service_op_guards` precedent): a parent with no plain
+    /// `find_by_id`, and a cross-domain parent, fail BEFORE any tree is
+    /// written.
+    async fn check_child_add_parent_load(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) =
+            codegraph_generate::ddd::service_ops::child_parent_load_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(child op parent load)".to_string(),
+                check: "child_op_parent_load",
                 message,
             })
             .collect()
