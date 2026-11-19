@@ -81,17 +81,24 @@ jobs:
     # entity-gate.yml / test_framework/postgres.rs run. A vanilla
     # postgres:<n> made the two band tests skip themselves and the job
     # stayed green while the band was never applied.
+    #
+    # POSTGRES_USER must be supabase_admin: the image's
+    # /docker-entrypoint-initdb.d/migrate.sh runs `psql -U supabase_admin`
+    # BEFORE that role exists, so the bootstrap only completes when
+    # supabase_admin is the init user (with POSTGRES_USER=postgres the
+    # container exits 2 — the IFML/entity gates' comments carry the full
+    # story). The tests still connect as `postgres` (DATABASE_URL
+    # unchanged): the image creates that role too.
     services:
       postgres:
         image: public.ecr.aws/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_USER: supabase_admin
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5

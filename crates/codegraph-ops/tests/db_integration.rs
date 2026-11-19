@@ -377,6 +377,23 @@ async fn cleanup_full_set(t: &PgTarget) {
          DROP SCHEMA IF EXISTS platform_integrations CASCADE;",
     )
     .await;
+    // On the Supabase postgres image (the lane's image since #708) the
+    // basejump install lands as an EXTENSION (`basejump@basejump_core`,
+    // pg_tle-powered) — DROP SCHEMA basejump CASCADE refuses with
+    // "extension basejump@basejump_core requires it", leaving objects
+    // behind and making the parity test's outcome depend on leftover
+    // symmetry. Drop the extension first (a no-op where basejump installed
+    // as plain SQL, e.g. postgres:15), then the schema.
+    let _ = psql_exec(
+        t,
+        "DROP EXTENSION IF EXISTS \"basejump@basejump_core\" CASCADE;",
+    )
+    .await;
+    let _ = psql_exec(
+        t,
+        "DROP SCHEMA IF EXISTS basejump CASCADE;",
+    )
+    .await;
 }
 
 #[tokio::test]
