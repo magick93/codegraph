@@ -558,6 +558,10 @@ fn doctor_command_reports_dependency_outcomes() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     };
     let summary = cmd_doctor(&args(project.join("domains.toml"))).unwrap();
     assert_eq!(

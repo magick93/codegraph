@@ -2,6 +2,7 @@ pub mod artifact;
 pub mod classify;
 pub mod doctor_dependencies;
 pub mod doctor_extras;
+pub mod doctor_graph;
 pub mod driver;
 pub mod error;
 pub mod expr_json;

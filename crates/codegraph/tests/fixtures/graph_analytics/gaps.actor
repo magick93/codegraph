@@ -1,0 +1,38 @@
+// The dead-capability + monotonicity fixture (issue #673), adapted from
+// upstream's analytics conformance policy:
+// - `ResolveTicket` is permitted then forbidden by `Finance` and nobody
+//   else permits it — the status is dead (a FINDING).
+// - `EscalateRefund` is declared and never granted — latent, deliberately
+//   NOT a finding.
+// - `Manager` extends `Agent` but forbids `UpdateTicket`, which `Agent`
+//   permits — the monotonicity gap (a FINDING).
+// - The declared `never_both` pair is clean: nobody holds both sides.
+import "app.mox"
+
+actors App {
+    actor Agent
+    actor Manager extends Agent
+    actor Finance
+
+    capability ReadTicket on Ticket
+    capability UpdateTicket on Ticket
+    capability ResolveTicket on Ticket
+    capability EscalateRefund on Ticket
+
+    grant Agent {
+        permit ReadTicket
+        permit UpdateTicket
+    }
+
+    grant Manager {
+        permit ReadTicket
+        forbid UpdateTicket
+    }
+
+    grant Finance {
+        permit ResolveTicket
+        forbid ResolveTicket
+    }
+
+    never_both { ReadTicket, ResolveTicket }
+}

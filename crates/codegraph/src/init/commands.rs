@@ -307,6 +307,24 @@ pub struct DoctorArgs {
     /// the model-derived entity tables (hard error when a model source is
     /// available).
     pub extension_points: Option<PathBuf>,
+    /// Gate on policy findings (issue #673). When set, every definite
+    /// graph-analytics finding (separation-of-duty, monotonicity, dead
+    /// capabilities, unreachable reachability targets) is a HARD failure;
+    /// without it findings are advisory warnings.
+    pub fail_on_findings: bool,
+    /// A committed semantic-graph artifact (`GraphModel` JSON) to analyze
+    /// INSTEAD of building from sources — the analysis runs from the
+    /// artifact alone, no sources, no recompile (issue #673's CI mode:
+    /// build once, analyze many). Malformed artifacts are hard failures.
+    pub graph_artifact: Option<PathBuf>,
+    /// Write the built semantic-graph artifact as pretty JSON to this
+    /// path (the commit side of the artifact mode).
+    pub emit_graph: Option<PathBuf>,
+    /// Reachability queries: `from-actor=<ref>` XOR `from-capability=<ref>`
+    /// plus `to=<ref>`, comma-separated, repeatable. An unreachable target
+    /// is a finding (same severity contract as the sweeps); a malformed
+    /// spec or an unresolvable reference is a hard error.
+    pub graph_reachability: Vec<String>,
 }
 
 /// Outcome counts for a doctor run. `model_warnings` isolates the
@@ -464,29 +482,30 @@ fn check_codegraph_rev() -> usize {
     }
 }
 
-/// Validate `--mox-files` for doctor: every file must compile with the pherolang
-/// compiler and every package must resolve to a domains.toml domain.
-/// `import schema` targets (issue #230) are validated too — a missing or
-/// invalid target is a hard failure naming the import path and the .mox
-/// that declares it. Returns the (hard_failures, soft_warnings) contributed.
-///
-/// The files compile as ONE workspace (`compile_files` — the `run`
-/// pipeline's semantics): every file lowers against the union namespace of
-/// all packages, so cross-package type references resolve the same way they
-/// do at generation time. Per-file isolation would false-fail models whose
-/// packages reference each other (the union resolves bare names uniquely
-/// across packages; a single-file compile sees only its own).
-fn check_mox_files(
-    mox_files: &[PathBuf],
-    domain_config: Option<&codegraph_config::config::DomainConfig>,
-) -> (usize, usize) {
-    let mut hard = 0;
-    let mut soft = 0;
-    // Read every file and validate its `import schema` targets; imports
-    // resolve relative to each file's directory (unchanged, per file).
+/// The read mox source set, shared by `check_mox_files` (validation) and
+/// the graph-analytics plane (issue #673) so the two cannot drift: the
+/// SAME files, the SAME `import schema` resolution, ONE read.
+pub(crate) struct MoxSources {
+    /// `(display path, source text)` for every file whose `import schema`
+    /// targets all resolved (files with import failures are excluded —
+    /// the read already reported them as hard failures).
+    pub sources: Vec<(String, String)>,
+    /// The resolved `import schema` payloads, keyed `(file, import path)`.
+    pub schema_imports: phero_driver::SchemaImports,
+    /// Per-file schema-import counts (the PASS line's counts).
+    pub import_counts: HashMap<String, usize>,
+    /// Hard failures contributed by the read itself (unreadable files,
+    /// missing/invalid `import schema` targets — already printed).
+    pub hard: usize,
+}
+
+/// Read every mox file and validate its `import schema` targets; imports
+/// resolve relative to each file's directory (unchanged, per file).
+pub(crate) fn read_mox_sources(mox_files: &[PathBuf]) -> MoxSources {
     let mut sources: Vec<(String, String)> = Vec::new();
     let mut schema_imports = phero_driver::SchemaImports::new();
     let mut import_counts: HashMap<String, usize> = HashMap::new();
+    let mut hard = 0usize;
     for path in mox_files {
         let text = match fs::read_to_string(path) {
             Ok(t) => t,
@@ -536,6 +555,36 @@ fn check_mox_files(
         import_counts.insert(mox_path.clone(), import_count);
         sources.push((mox_path, text));
     }
+    MoxSources {
+        sources,
+        schema_imports,
+        import_counts,
+        hard,
+    }
+}
+
+/// Validate `--mox-files` for doctor: every file must compile with the pherolang
+/// compiler and every package must resolve to a domains.toml domain.
+/// `import schema` targets (issue #230) are validated too — a missing or
+/// invalid target is a hard failure naming the import path and the .mox
+/// that declares it. Returns the (hard_failures, soft_warnings) contributed.
+///
+/// The files compile as ONE workspace (`compile_files` — the `run`
+/// pipeline's semantics): every file lowers against the union namespace of
+/// all packages, so cross-package type references resolve the same way they
+/// do at generation time. Per-file isolation would false-fail models whose
+/// packages reference each other (the union resolves bare names uniquely
+/// across packages; a single-file compile sees only its own).
+fn check_mox_files(
+    mox: &MoxSources,
+    domain_config: Option<&codegraph_config::config::DomainConfig>,
+) -> (usize, usize) {
+    let mut hard = 0;
+    let mut soft = 0;
+    hard += mox.hard;
+    let sources = mox.sources.clone();
+    let schema_imports = mox.schema_imports.clone();
+    let import_counts = mox.import_counts.clone();
     if sources.is_empty() {
         return (hard, soft);
     }
@@ -644,17 +693,19 @@ pub fn bodyless_op_seams(model: &phero_ir::Model) -> Vec<String> {
 
 /// The `package` declaration of a `.mox` source (the parser requires it at
 /// the top of the file; a compiling file always carries one).
-fn declared_package(text: &str) -> Option<String> {
-    text.lines().find_map(|line| {
-        let trimmed = line.trim_start();
-        trimmed.strip_prefix("package ").map(|rest| {
-            rest.split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .trim_end_matches(';')
-                .to_string()
+pub(crate) fn declared_package(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| {
+            let trimmed = line.trim_start();
+            trimmed.strip_prefix("package ").map(|rest| {
+                rest.split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end_matches(';')
+                    .to_string()
+            })
         })
-    })
+        .filter(|p| !p.is_empty())
 }
 
 /// Validate `--rosetta-files` for doctor: every file must pass the sigil
@@ -1415,89 +1466,49 @@ fn check_ifml_files(ifml_files: &[PathBuf]) -> (usize, usize) {
 /// Doctor re-compiles each surface through the SAME ingest helpers the
 /// per-surface checks above use (`read_and_compile_ddd`,
 /// `read_and_compile_evt`, `compile_and_check_ifml`, and the deploy
-/// compile from the sources `read_and_resolve_deploy` gathered), so this
-/// stage cannot drift from what ingest ships. Error-severity diagnostics
-/// are hard failures; the stage renders path-tagged against the owning
-/// file's source. Actor models arrive through the `.ifml` policy imports
-/// (there are no standalone `--actor-files`), so actor-side diagnostics
-/// render against the importing flow's source.
+/// compile from the sources `read_and_resolve_deploy` gathered) — via the
+/// SHARED `gather_cross_surface` the graph-analytics plane consumes
+/// (issue #673), so this stage cannot drift from what ingest ships.
+/// Error-severity diagnostics are hard failures; the stage renders
+/// path-tagged against the owning file's source. Actor models arrive
+/// through the `.ifml` policy imports (there are no standalone
+/// `--actor-files`), so actor-side diagnostics render against the
+/// importing flow's source.
 ///
 /// Returns the (hard_failures, soft_warnings) contributed.
 fn check_union_integrity(
-    ddd_files: &[PathBuf],
-    evt_files: &[PathBuf],
-    deploy_files: &[PathBuf],
-    ifml_files: &[PathBuf],
+    cross: &crate::doctor_graph::UnionGather,
+    sources: &std::collections::BTreeMap<String, String>,
 ) -> (usize, usize) {
-    if ddd_files.is_empty()
-        && evt_files.is_empty()
-        && deploy_files.is_empty()
-        && ifml_files.is_empty()
-    {
+    if cross.is_empty() {
         return (0, 0);
     }
 
-    let mut designs: Vec<(String, phero_ir::ddd::DddModel)> = Vec::new();
-    let mut events: Vec<(String, phero_ir::events::EventModel)> = Vec::new();
-    let mut deploys: Vec<(String, phero_ir::deploy::DeployModel)> = Vec::new();
-    let mut flows: Vec<(String, phero_ir::ifml::IfmlModel)> = Vec::new();
-    let mut actors: Vec<(String, phero_ir::ActorModel)> = Vec::new();
-    // path → source, for rendering the pass's path-tagged diagnostics.
-    let mut sources: std::collections::BTreeMap<String, String> = Default::default();
-
-    for path in ddd_files {
-        if let Some(model) = crate::ingest::ddd_ingest::read_and_compile_ddd(path)
-            .ok()
-            .and_then(|compiled| compiled.compilation.model)
-        {
-            sources.insert(
-                path.display().to_string(),
-                std::fs::read_to_string(path).unwrap_or_default(),
-            );
-            designs.push((path.display().to_string(), model));
-        }
-    }
-    for path in evt_files {
-        if let Some(model) = crate::ingest::evt_ingest::read_and_compile_evt(path)
-            .ok()
-            .and_then(|compiled| compiled.compilation.model)
-        {
-            sources.insert(
-                path.display().to_string(),
-                std::fs::read_to_string(path).unwrap_or_default(),
-            );
-            events.push((path.display().to_string(), model));
-        }
-    }
-    for path in ifml_files {
-        if let Ok(compiled) = crate::ifml_compile::compile_and_check_ifml(path) {
-            sources.insert(
-                path.display().to_string(),
-                std::fs::read_to_string(path).unwrap_or_default(),
-            );
-            flows.push((path.display().to_string(), compiled.compilation.model));
-            for actor in compiled.actor_models {
-                actors.push((path.display().to_string(), actor));
-            }
-        }
-    }
-    for path in deploy_files {
-        let compiled = match crate::ingest::deploy_ingest::read_and_resolve_deploy(path) {
-            Ok(compiled) => compiled,
-            Err(_) => continue,
-        };
-        let Some(model) = compiled.model else {
-            continue;
-        };
-        sources.insert(compiled.path.clone(), compiled.source.clone());
-        for (import_path, import_source) in compiled.design_sources.iter() {
-            sources.insert(import_path.clone(), import_source.clone());
-        }
-        for (import_path, import_source) in compiled.flow_sources.iter() {
-            sources.insert(import_path.clone(), import_source.clone());
-        }
-        deploys.push((compiled.path.clone(), model));
-    }
+    let designs: Vec<(String, phero_ir::ddd::DddModel)> = cross
+        .designs
+        .iter()
+        .map(|file| (file.display.clone(), file.model.clone()))
+        .collect();
+    let events: Vec<(String, phero_ir::events::EventModel)> = cross
+        .events
+        .iter()
+        .map(|file| (file.display.clone(), file.model.clone()))
+        .collect();
+    let deploys: Vec<(String, phero_ir::deploy::DeployModel)> = cross
+        .deploys
+        .iter()
+        .map(|file| (file.display.clone(), file.model.clone()))
+        .collect();
+    let flows: Vec<(String, phero_ir::ifml::IfmlModel)> = cross
+        .flows
+        .iter()
+        .map(|file| (file.display.clone(), file.model.clone()))
+        .collect();
+    let actors: Vec<(String, phero_ir::ActorModel)> = cross
+        .actors
+        .iter()
+        .map(|file| (file.display.clone(), file.model.clone()))
+        .collect();
 
     let diagnostics = phero_driver::check_integrity(&designs, &actors, &events, &deploys, &flows);
     if diagnostics.is_empty() {
@@ -1809,8 +1820,14 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         println!("     hint: create the directory and add JSON schemas");
     }
 
+    // ONE mox read for the whole doctor run: the mox validation block and
+    // the graph-analytics plane below consume the SAME MoxSources (issue
+    // #673 — the import-schema failures print once, the union compile is
+    // the graph plane's only additional cost).
+    let mox_sources = read_mox_sources(&args.mox_files);
+
     if mox_mode {
-        let (hard, soft) = check_mox_files(&args.mox_files, domain_config.as_ref().ok());
+        let (hard, soft) = check_mox_files(&mox_sources, domain_config.as_ref().ok());
         hard_failures += hard;
         soft_warnings += soft;
         model_warnings += soft;
@@ -1918,13 +1935,28 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     // fail here — that is the point (the dangling-wiring class: a
     // capability no op carries, an action bound to no op, a subscription
     // to no component).
+    //
+    // The cross-surface gather is SHARED with the graph-analytics plane
+    // below (issue #673): one compile feeds both stages.
+    let (cross, cross_sources) = crate::doctor_graph::gather_cross_surface(
+        &args.ddd_files,
+        &args.evt_files,
+        &args.deploy_files,
+        &args.ifml_files,
+    );
     {
-        let (hard, soft) = check_union_integrity(
-            &args.ddd_files,
-            &args.evt_files,
-            &args.deploy_files,
-            &args.ifml_files,
-        );
+        let (hard, soft) = check_union_integrity(&cross, &cross_sources);
+        hard_failures += hard;
+        soft_warnings += soft;
+    }
+
+    // The graph-analytics plane (issue #673): the upstream semantic graph
+    // + the sweep analytics (separation-of-duty across merged policies,
+    // monotonicity, dead capabilities) over the SERIALIZED artifact, plus
+    // the reachability passthrough. Findings are advisory warnings by
+    // default and hard failures under --fail-on-findings.
+    {
+        let (hard, soft) = crate::doctor_graph::check_graph_plane(args, &mox_sources, &cross);
         hard_failures += hard;
         soft_warnings += soft;
     }

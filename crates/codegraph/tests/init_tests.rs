@@ -521,6 +521,10 @@ fn doctor_fresh_scaffold_has_zero_model_warnings() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -573,6 +577,10 @@ generators = ["ddl"]
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -604,6 +612,10 @@ fn doctor_empty_schemas_dir_in_mox_mode_still_warns() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -638,6 +650,10 @@ fn doctor_classifier_missing_with_json_schemas_is_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -670,6 +686,10 @@ fn doctor_validates_multiple_mox_files() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -697,6 +717,10 @@ fn doctor_fails_on_missing_schemas() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -746,6 +770,10 @@ fn doctor_mox_mode_validates_packages_and_allows_missing_schemas() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -774,6 +802,10 @@ fn doctor_mox_package_without_domain_entry_is_a_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -805,6 +837,10 @@ fn doctor_broken_mox_file_is_a_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -941,6 +977,10 @@ fn doctor_valid_import_passes() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
 }
@@ -962,6 +1002,10 @@ fn doctor_missing_import_target_is_a_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -987,6 +1031,10 @@ fn doctor_invalid_import_json_is_a_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1244,6 +1292,10 @@ fn doctor_rosetta_starter_has_zero_model_warnings() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -1272,6 +1324,10 @@ fn doctor_broken_rosetta_file_is_a_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1307,6 +1363,10 @@ fn doctor_rosetta_namespace_without_domain_entry_warns() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1348,6 +1408,10 @@ fn doctor_rosetta_import_without_matching_file_warns() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(summary.hard_failures, 0);
@@ -1456,6 +1520,10 @@ fn doctor_deploy_files_compile_clean_with_matching_topology() {
         deploy_files: vec![deploy],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1505,6 +1573,10 @@ fn doctor_deploy_workers_profile_conflicts_with_monolith_topology() {
         deploy_files: vec![deploy],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1555,6 +1627,10 @@ fn doctor_workers_topology_without_deploy_profile_is_hard_failure() {
         deploy_files: vec![deploy],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1608,6 +1684,10 @@ fn doctor_deploy_component_coverage_gap_warns_but_does_not_fail() {
         deploy_files: vec![deploy],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1697,6 +1777,10 @@ fn doctor_ifml_files_parse_clean_and_resolve_policy() {
         deploy_files: vec![],
         ifml_files: vec![ifml],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1727,6 +1811,10 @@ fn doctor_ifml_missing_policy_import_is_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![ifml],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1756,6 +1844,10 @@ fn doctor_ifml_parse_error_is_hard_failure() {
         deploy_files: vec![],
         ifml_files: vec![ifml],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap_err();
     assert!(
@@ -1812,6 +1904,10 @@ fn doctor_with_ext_points(ext_toml: &str) -> std::io::Result<String> {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: Some(ext_path),
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     });
     match result {
         Ok(summary) => Ok(format!("ok: {} hard", summary.hard_failures)),
@@ -1866,6 +1962,10 @@ fn doctor_ext_points_advises_signing_secret_provisioning() {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: Some(ext_path),
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1938,6 +2038,10 @@ fn doctor_ext_points_push_covered_domain_without_deploy_component_warns() {
         deploy_files: vec![deploy],
         ifml_files: vec![],
         extension_points: Some(ext_path),
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -1978,6 +2082,10 @@ fn doctor_ext_points_push_covered_domain_with_matching_component_no_extra_warn()
         deploy_files: vec![deploy.clone()],
         ifml_files: vec![],
         extension_points: Some(ext_path),
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     let baseline = cmd_doctor(&DoctorArgs {
@@ -1992,6 +2100,10 @@ fn doctor_ext_points_push_covered_domain_with_matching_component_no_extra_warn()
         deploy_files: vec![deploy],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -2067,6 +2179,10 @@ generators = ["functions"]
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     });
     match result {
         Ok(summary) => Some(format!("ok: {} hard", summary.hard_failures)),
@@ -2144,6 +2260,10 @@ fn doctor_with_media(domains_extra: &str) -> Option<String> {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     });
     match result {
         Ok(summary) => Some(format!("ok: {} hard", summary.hard_failures)),
@@ -2281,6 +2401,10 @@ view "CustomerList" {
         deploy_files: vec![],
         ifml_files: vec![model.join("crm.ifml")],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .expect("the dangling grant soft-warns (upstream #128)");
     assert_eq!(
@@ -2308,6 +2432,10 @@ view "CustomerList" {
         deploy_files: vec![],
         ifml_files: vec![model.join("crm.ifml")],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -2377,6 +2505,10 @@ application Payroll {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -2399,6 +2531,10 @@ application Payroll {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(
@@ -2452,6 +2588,10 @@ application Payroll {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     })
     .unwrap();
     assert_eq!(

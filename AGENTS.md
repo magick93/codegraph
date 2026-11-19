@@ -3589,6 +3589,16 @@ Tera templates in `crates/codegraph-generate/templates/project/` (see
 | `--classifier` | optional | classifier.toml parses; absent + JSON schemas present = hard failure, absent + no JSON schemas = info line |
 | `--profiles-config` | optional | profiles.toml parses + BuildPlan capability validation |
 | `--rosetta-files <file>` | repeatable | Each file sigil-verified (parse → lower → resolve; severity-Error diagnostics = hard failure). A namespace whose last segment matches no domains.toml key = WARN (generation silently drops it); `import <ns>.*` with no file among `--rosetta-files` and no matching domain key = WARN. Prints an INFO line with the embedded sigil rev (`rev::sigil_rev()`, WARN when unpinned) |
+| `--fail-on-findings` | off | Issue #673: every definite graph-analytics finding (separation-of-duty, monotonicity, dead capabilities, unreachable reachability targets) is a HARD failure; without it findings are `WARN` lines (+1 soft warning each) |
+| `--emit-graph <path>` | none | Write the built semantic-graph artifact (`GraphModel` pretty JSON) to the path — the commit side of `--graph-artifact` |
+| `--graph-artifact <path>` | none | Analyze a COMMITTED semantic-graph artifact instead of building from sources — the analysis runs from the artifact alone, no sources, no recompile; an unreadable/invalid artifact is a hard failure |
+| `--graph-reachability <spec>` | repeatable | Upstream `reachability` query; spec `from-actor=<ref>` XOR `from-capability=<ref>` plus `to=<ref>`, comma-separated. Prints the upstream envelope JSON verbatim; an unreachable target is a finding (same severity contract as the sweeps), a malformed spec or an unresolvable reference is a hard error |
+
+The graph-analytics plane (issue #673) rides the union-integrity gather: the
+sweeps run only when policy artifacts exist (or `--graph-artifact` is given),
+are silent otherwise, and consume the SERIALIZED artifact (`to_json` →
+`from_json`) so analysis provably runs from the artifact alone. Coverage
+matrix: `docs/pherolang-upgrade.md` §"P6 landed".
 
 Doctor's model-source matrix (zero warnings is the intentional mox-first
 new-project shape): schemas dir absent + mox files → INFO; schemas dir

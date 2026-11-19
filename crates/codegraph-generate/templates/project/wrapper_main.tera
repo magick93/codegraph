@@ -186,6 +186,24 @@ enum Commands {
         /// cross-checked).
         #[arg(long)]
         extension_points: Option<PathBuf>,
+        /// Gate on policy findings (issue #673): every definite
+        /// graph-analytics finding is a hard failure; without it findings
+        /// are advisory warnings.
+        #[arg(long)]
+        fail_on_findings: bool,
+        /// A committed semantic-graph artifact (GraphModel JSON) to
+        /// analyze INSTEAD of building from sources — no sources, no
+        /// recompile (issue #673).
+        #[arg(long)]
+        graph_artifact: Option<PathBuf>,
+        /// Write the built semantic-graph artifact as pretty JSON to this
+        /// path (the commit side of --graph-artifact).
+        #[arg(long)]
+        emit_graph: Option<PathBuf>,
+        /// Reachability query: from-actor=<ref> XOR from-capability=<ref>
+        /// plus to=<ref>, comma-separated; repeatable.
+        #[arg(long = "graph-reachability")]
+        graph_reachability: Vec<String>,
     },
 }
 
@@ -328,6 +346,10 @@ async fn main() -> Result<()> {
             deploy_files,
             ifml_files,
             extension_points,
+            fail_on_findings,
+            graph_artifact,
+            emit_graph,
+            graph_reachability,
         } => codegraph::init::commands::cmd_doctor(&codegraph::init::commands::DoctorArgs {
             config,
             schemas,
@@ -340,6 +362,10 @@ async fn main() -> Result<()> {
             deploy_files,
             ifml_files,
             extension_points,
+            fail_on_findings,
+            graph_artifact,
+            emit_graph,
+            graph_reachability,
         })
         .map(|_summary| ())
         .map_err(|e| codegraph::error::Error::Config(format!("doctor failed: {e}"))),

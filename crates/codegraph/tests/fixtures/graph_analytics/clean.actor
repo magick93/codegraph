@@ -1,0 +1,21 @@
+// The clean policy (issue #673): zero findings. Every capability is alive,
+/// the single `extends` edge is monotone, no capability is dead, and no
+/// `never_both` pair is declared. Also the reachability fixture: `Customer`
+/// holds `ReadTicket` on `Ticket`, so Ticket is reachable and the
+/// `Patron` class is not (the two classes carry no connecting relation).
+import "app.mox"
+
+actors App {
+    actor Customer
+    actor Agent extends Customer
+
+    capability ReadTicket on Ticket
+
+    grant Customer {
+        permit ReadTicket
+    }
+
+    grant Agent {
+        permit ReadTicket
+    }
+}

@@ -1,0 +1,14 @@
+domain "app" { schema "app"; }
+
+import "clean.actor";
+
+view "Home" {
+    label "Home";
+    landmark: true;
+
+    component "portal" {
+        type: details;
+        data: Ticket;
+        fields: [title];
+    }
+}

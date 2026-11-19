@@ -404,6 +404,31 @@ pub enum Commands {
         /// model (issue #503)
         #[arg(long)]
         extension_points: Option<PathBuf>,
+
+        /// Gate on policy findings (issue #673): every definite
+        /// graph-analytics finding (separation-of-duty, monotonicity,
+        /// dead capabilities, unreachable reachability targets) is a hard
+        /// failure; without it findings are advisory warnings
+        #[arg(long)]
+        fail_on_findings: bool,
+
+        /// A committed semantic-graph artifact (GraphModel JSON) to
+        /// analyze INSTEAD of building from sources — no sources, no
+        /// recompile (issue #673)
+        #[arg(long)]
+        graph_artifact: Option<PathBuf>,
+
+        /// Write the built semantic-graph artifact as pretty JSON to this
+        /// path (the commit side of --graph-artifact)
+        #[arg(long)]
+        emit_graph: Option<PathBuf>,
+
+        /// Reachability query: from-actor=<ref> XOR from-capability=<ref>
+        /// plus to=<ref>, comma-separated; repeatable. An unreachable
+        /// target is a finding; a malformed spec or unresolvable
+        /// reference is a hard error
+        #[arg(long = "graph-reachability")]
+        graph_reachability: Vec<String>,
     },
     /// Add to an existing consumer project
     Add {
