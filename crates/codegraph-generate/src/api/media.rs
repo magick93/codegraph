@@ -131,10 +131,13 @@ impl EntityGenerator for MediaRouteGenerator {
         let Some(media_cfg) = entry.media.as_ref() else {
             return Ok(Vec::new());
         };
-        // Schema source (issue #702): `postgres_schema` is the grants/RLS
-        // plane's spelling, but the DDL keys tables off the DOMAIN name — a
-        // divergence here is silent today (nothing cross-checks the two).
-        let postgres_schema = entry.postgres_schema.clone();
+        // Schema source (issue #702, resolved): the DOMAIN key is the single
+        // Postgres schema source of truth — the schema the DDL created the
+        // tables in, and the one `app_user`'s grants and the RLS policies
+        // cover. The declared `postgres_schema` stays a required domains.toml
+        // field but is validated equal to the domain key (the consistency
+        // gate + `codegraph doctor`), so the two can no longer diverge.
+        let postgres_schema = domain.to_string();
         let titles = [schema_title.to_string()];
         let media_plan = plan::build_media_plan_for_domain(
             db,

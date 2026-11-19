@@ -201,11 +201,10 @@ pub async fn build_entity_model(
         format!("{}.{}.{}", authority, domain, schema.pg_table_name)
     };
 
-    let pg_schema = config
-        .domains
-        .get(domain)
-        .map(|d| d.postgres_schema.clone())
-        .unwrap_or_else(|| domain.to_string());
+    // Issue #702: the domain key is the single Postgres schema source of
+    // truth — the `{schema}_{table}` module prefix must match the entity
+    // module the DDL/entity plane emits (which keys off the domain key).
+    let pg_schema = domain.to_string();
 
     let entity_module = format!("{}_{}", pg_schema, schema.pg_table_name);
 

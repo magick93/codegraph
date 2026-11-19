@@ -117,6 +117,20 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
             .map_err(Error::Config)?;
     }
 
+    // Issue #702: the domain key is the single Postgres schema source of
+    // truth (DDL, entity/repository SQL, RLS, grants, media session SQL,
+    // sql-function schemas). A `postgres_schema` naming a different schema
+    // is a HARD config error BEFORE any tree is written — config-only, so
+    // this runs unconditionally and first, on every topology.
+    let schema_divergences = crate::consistency::postgres_schema_alignments(opts.config);
+    if !schema_divergences.is_empty() {
+        return Err(Error::Config(format!(
+            "postgres_schema divergence: tables and policies would land in different \
+             schemas:\n  - {}",
+            schema_divergences.join("\n  - ")
+        )));
+    }
+
     // Project config is threaded explicitly to every generator/helper that
     // needs it (no global state).
     let default_project = ProjectConfig::default();

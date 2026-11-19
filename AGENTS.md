@@ -2861,12 +2861,45 @@ see "Child-table tenancy (#700)" below). DB errors classify through the
 `from_repo_err` markers → **403** (INSUFFICIENT_SCOPE / ROLE_FORBIDDEN /
 row-level-security violation). Tables are schema-qualified because `app_user`'s
 search_path is `public, extensions` (the unqualified SQL the plane shipped
-500'd on every non-public schema); issue #702 tracks the `postgres_schema` vs
-DDL-domain divergence. Gates: `media_pipeline_tests`
+500'd on every non-public schema); the schema is the DOMAIN key since #702
+(the media session SQL qualifies with the domain key, never the declared
+`postgres_schema` — see "Postgres schema source of truth (#702)" below).
+Gates: `media_pipeline_tests`
 (bundle/predicate/ordering/exact-org/doc pins), `media_plan_tests`
 (`parent_tenant_column` via `is_global_entity`), `media_compile_tests` (native
 route + session, presigned leg, wasm32 sea-orm-free), nightly
 `ifml_codegen_gate` T0 boot.
+
+### Postgres schema source of truth (#702)
+
+The domains.toml DOMAIN KEY is the single source of truth for every
+Postgres-qualified plane — the DDL, the entity/repository SQL, the RLS and
+public-operations policies, `policy_rls`, the app_user grants (monolith AND
+workers — both are projections of `ScaffoldDomain.postgres_schema`, which now
+carries the domain key), the media session SQL, and the sql-function schemas.
+Before #702 several planes read `DomainEntry.postgres_schema` instead, so a
+divergence scattered tables and their policies across two schemas silently.
+`postgres_schema` stays a REQUIRED domains.toml field (parsing unchanged —
+codegraph-config untouched; the init scaffold emits it equal to the domain
+key), but a divergence is now a named hard config error:
+`consistency::postgres_schema_alignments` runs UNCONDITIONALLY and FIRST in
+`run_generators_with_opts` (config-only, no graph access — before any tree is
+written) and doctor carries the same predicate (`check_domain_schemas`-shaped
+loop in `cmd_doctor` over the shared function), so doctor and generation
+cannot drift. Consumers switched: `db/policy_rls.rs`,
+`db/public_operations_rls.rs`, `ddd/functions_sql.rs` + `ddd/functions.rs`
+(sql migration + `SqlFnImpls` call plane), `api/media.rs`, and — found by the
+grep sweep, same divergence class — `domain_model.rs` +
+`atproto/xrpc_gen.rs` (`{schema}_{table}` module prefix) and
+`ifml_scaffold.rs` (starter `.ifml` schema headers). All committed fixtures
+keep the two equal, so generated output is byte-identical (the ux/forms
+canaries and the `policy_rls` full-output baseline hold; the media doc pin in
+`media_pipeline_tests` was updated deliberately to the resolution text).
+Gates: `cargo test -p codegraph --test postgres_schema_alignment_tests` (the
+driver-level red/green pair) + the divergent-fixture pins per plane
+(`policy_rls_snapshot_tests`, `media_pipeline_tests`, the in-crate
+`consistency`/`public_operations_rls`/`functions_sql`/`functions`/
+`scaffold` test modules) + `init_tests` doctor pair.
 
 **The media contract addresses the route the router serves (issue #691)**:
 the emitted utoipa path and `hurl/09_media.hurl` derive the entity segment

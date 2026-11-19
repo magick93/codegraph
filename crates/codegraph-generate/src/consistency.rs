@@ -27,6 +27,30 @@ use crate::ddd::repository_emitter::RepositoryImplEmitter;
 use crate::error::{Error, Result};
 use crate::project_config::GenerationEntry;
 
+/// Issue #702: the domain key is the single Postgres schema source of truth.
+/// `postgres_schema` stays a required domains.toml field (the init scaffold
+/// emits it, parsing is unchanged), but every Postgres-qualified plane —
+/// the DDL, the RLS/grants planes, the media session SQL, the sql-function
+/// schemas — reads the DOMAIN key. A `postgres_schema` naming a different
+/// schema would scatter tables and their policies across two schemas
+/// silently; it is a named hard config error. Config-only: no graph access,
+/// so callers may run it unconditionally and early. Returns one
+/// human-readable line per divergent domain (empty = clean), sorted for
+/// deterministic diagnostics.
+pub fn postgres_schema_alignments(config: &DomainConfig) -> Vec<String> {
+    let mut divergences = BTreeSet::new();
+    for (name, entry) in &config.domains {
+        if entry.postgres_schema != *name {
+            divergences.insert(format!(
+                "domains.{name}.postgres_schema = \"{}\" does not match the domain key \
+                 \"{name}\" — the domain key is the Postgres schema source of truth (#702)",
+                entry.postgres_schema
+            ));
+        }
+    }
+    divergences.into_iter().collect()
+}
+
 /// The consistency sweep. Returns one human-readable line per divergence
 /// (empty = clean). Errors from the underlying context builders propagate —
 /// an entity that cannot build its contexts fails generation anyway.
@@ -363,6 +387,57 @@ fn flatten_tree_children(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_with_postgres_schema(pg_schema: &str) -> DomainConfig {
+        toml::from_str(&format!(
+            r#"
+[domains.core]
+label = "Core"
+schema_dir = "core"
+postgres_schema = "{pg_schema}"
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll"
+"#
+        ))
+        .expect("config")
+    }
+
+    #[test]
+    fn postgres_schema_divergence_names_the_domain_and_both_spellings() {
+        let config = config_with_postgres_schema("core_legacy");
+        let lines = postgres_schema_alignments(&config);
+        assert_eq!(
+            lines.len(),
+            1,
+            "exactly the divergent domain is reported: {lines:?}"
+        );
+        let message = &lines[0];
+        assert!(
+            message.contains("domains.core.postgres_schema"),
+            "must name the config path: {message}"
+        );
+        assert!(
+            message.contains("core_legacy"),
+            "must name the declared spelling: {message}"
+        );
+        assert!(
+            message.contains("\"core\""),
+            "must name the domain key: {message}"
+        );
+        assert!(message.contains("#702"), "must cite the issue: {message}");
+    }
+
+    #[test]
+    fn aligned_postgres_schema_is_silent() {
+        let config = config_with_postgres_schema("core");
+        assert!(
+            postgres_schema_alignments(&config).is_empty(),
+            "aligned schemas are the standing fixture shape — nothing to report"
+        );
+    }
 
     #[test]
     fn duplicate_fk_names_are_reported() {

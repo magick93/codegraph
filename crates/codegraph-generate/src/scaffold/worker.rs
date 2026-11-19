@@ -2206,3 +2206,54 @@ entities = ["TimeEntryType"]
         assert!(DeployShape::from_models(&[compose_only]).is_none());
     }
 }
+
+#[cfg(test)]
+mod postgres_schema_source_tests {
+    use super::*;
+    use codegraph_config::config::parse_domain_config_str;
+
+    /// Issue #702: the workers grant list is a projection of
+    /// `ScaffoldDomain.postgres_schema`, so the worker scaffold inherits the
+    /// domain-key resolution from `build_scaffold_domains` — both the
+    /// per-worker context and the API-key grant schema list must use the
+    /// DOMAIN key even when `postgres_schema` names a different schema.
+    #[test]
+    fn worker_domains_inherit_the_domain_key_schema() {
+        let config = parse_domain_config_str(
+            r#"
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll_legacy"
+custom_routes = true
+"#,
+        )
+        .expect("config");
+        let scaffold = futures::executor::block_on(async {
+            let engine = codegraph_core::mock::MockEngine::builder().build();
+            let empty: Vec<crate::GenerationEntry> = vec![];
+            crate::scaffold::generator::build_scaffold_domains(&engine, &config, &empty)
+                .await
+                .expect("scaffold domains")
+        });
+
+        let domains = build_worker_domains(
+            "hr",
+            &config,
+            scaffold,
+            None,
+            None,
+            &HashSet::new(),
+            Default::default(),
+        );
+        let payroll = domains
+            .iter()
+            .find(|d| d.name == "payroll")
+            .expect("the custom-routes worker is emitted");
+        assert_eq!(
+            payroll.postgres_schema, "payroll",
+            "the DOMAIN key wins (#702)"
+        );
+        assert_ne!(payroll.postgres_schema, "payroll_legacy");
+    }
+}

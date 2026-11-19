@@ -83,17 +83,18 @@ const ACCEPTED_MIME_TYPES: &[&str] = &[
 /// domain's Postgres schema, while `app_user`'s search_path is
 /// `public, extensions` — an unqualified name is not the table the DDL
 /// created (every media statement used to 500 on a non-public schema).
-/// Schema source is `postgres_schema` (the grants/RLS plane); the DDL keys
-/// tables off the domain name — the divergence is silent today (issue #702).
+/// Schema source is the DOMAIN key (issue #702): the domain key is the
+/// single Postgres schema source of truth, and the declared `postgres_schema`
+/// is validated equal to it at generation time and by `codegraph doctor`.
 const PARENT_TABLE: &str = "{{ schema }}.{{ entity_snake }}";
 /// The contained-value child table (the media reference), schema-qualified.
 const CHILD_TABLE: &str = "{{ schema }}.{{ child_table }}";
 /// The owning table's tenancy column, resolved through `is_global_entity` —
 /// the tenancy rule is currently THREE separate copies (`db/entity.rs`,
 /// `db/ddl/query.rs`, `persistence.rs`) that MUST move together; unifying
-/// them is a recorded follow-up with no issue yet (#702 tracks the
-/// neighbouring schema-source divergence). A `None` value means a GLOBAL
-/// owning table.
+/// them is a recorded follow-up. (The neighbouring schema-source divergence
+/// WAS resolved by #702: the domain key is the Postgres schema source of
+/// truth.) A `None` value means a GLOBAL owning table.
 {% if parent_tenant_column %}const PARENT_TENANT_COLUMN: Option<&str> = Some("{{ parent_tenant_column }}");
 {% else %}/// `None` only for a GLOBAL owning table: such a table is visible to every
 /// organization by definition, so the parent gate and the child statements

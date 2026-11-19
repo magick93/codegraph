@@ -140,13 +140,19 @@ fn policy(
 }
 
 fn domain_config() -> DomainConfig {
+    domain_config_with_postgres_schema("recruiting")
+}
+
+/// #702: the divergent twin — `postgres_schema` naming a schema OTHER than
+/// the domain key. Generation must still qualify with the DOMAIN key.
+fn domain_config_with_postgres_schema(pg_schema: &str) -> DomainConfig {
     let mut domains = HashMap::new();
     domains.insert(
         "recruiting".to_string(),
         DomainEntry {
             label: "Recruiting".into(),
             schema_dir: "schemas/recruiting".into(),
-            postgres_schema: "recruiting".into(),
+            postgres_schema: pg_schema.into(),
             depends_on: vec!["common".into()],
             dependencies: Vec::new(),
             entities: vec!["CandidateType".into()],
@@ -199,7 +205,14 @@ async fn generate(
     engine: &MockEngine,
     dialect: DatabaseTarget,
 ) -> Result<Vec<codegraph::generate::traits::GeneratedFile>, codegraph_core::error::Error> {
-    let config = domain_config();
+    generate_with_config(engine, dialect, &domain_config()).await
+}
+
+async fn generate_with_config(
+    engine: &MockEngine,
+    dialect: DatabaseTarget,
+    config: &DomainConfig,
+) -> Result<Vec<codegraph::generate::traits::GeneratedFile>, codegraph_core::error::Error> {
     // create_tera uses the templates embedded by codegraph-generate's
     // build.rs; the path argument is ignored (kept for signature compat).
     let tera = codegraph::generate::template_engine::create_tera(Path::new("")).unwrap();
@@ -208,7 +221,7 @@ async fn generate(
         .with_dialect(dialect_for_target(dialect));
     let empty: Vec<codegraph::generate::GenerationEntry> = vec![];
     generator
-        .generate(engine, &config, &empty, &tera, &project)
+        .generate(engine, config, &empty, &tera, &project)
         .await
 }
 
@@ -413,5 +426,39 @@ async fn unresolvable_class_is_a_hard_error_naming_the_capability() {
     assert!(
         message.contains("RefundRequest"),
         "error must name the class, got: {message}"
+    );
+}
+
+/// Issue #702: the domain key is the single Postgres schema source of truth.
+/// Even when `postgres_schema` names a DIFFERENT schema, the policy RLS
+/// migration must qualify with the DOMAIN key — the schema the DDL actually
+/// created the tables in.
+#[tokio::test]
+async fn postgres_schema_divergence_still_qualifies_with_the_domain_key() {
+    let engine = engine_with_candidate();
+    engine
+        .ingest_actor_policy(&policy(
+            vec![actor("Recruiter", Some("human"), None)],
+            vec![capability("ReviewCandidate", "CandidateType")],
+            vec![grant("Recruiter", "ReviewCandidate", "permit", None)],
+        ))
+        .await
+        .unwrap();
+
+    let config = domain_config_with_postgres_schema("recruiting_legacy");
+    let files = generate_with_config(&engine, DatabaseTarget::Postgres, &config)
+        .await
+        .expect("generation must succeed");
+    assert_eq!(files.len(), 1);
+    let content = &files[0].content;
+    assert!(
+        content.contains("ON recruiting.candidate"),
+        "policies must qualify with the DOMAIN key schema:\n{}",
+        content
+    );
+    assert!(
+        !content.contains("recruiting_legacy"),
+        "the declared postgres_schema spelling must not leak into the migration:\n{}",
+        content
     );
 }

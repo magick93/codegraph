@@ -266,11 +266,15 @@ impl DomainGenerator for FunctionsGenerator {
                 .into_iter()
                 .map(|c| c.name)
                 .collect();
-            let entry = config.domains.get(domain).ok_or_else(|| {
-                codegraph_core::error::Error::Config(format!(
+            // Existence gate only: the schema passed to `plan_sql_function`
+            // below is the domain key itself (issue #702) — the declared
+            // `postgres_schema` is validated equal to it by the consistency
+            // gate.
+            if !config.domains.contains_key(domain) {
+                return Err(codegraph_core::error::Error::Config(format!(
                     "domain '{domain}' is not configured in domains.toml"
-                ))
-            })?;
+                )));
+            }
             for surface in &mut surfaces {
                 if !is_sql(surface) {
                     continue;
@@ -298,7 +302,12 @@ impl DomainGenerator for FunctionsGenerator {
                 sql_plans.push(
                     crate::ddd::functions_sql::plan_sql_function(
                         &surface.node,
-                        &entry.postgres_schema,
+                        // Issue #702: the DOMAIN key is the Postgres schema
+                        // source of truth — the schema the `functions_sql`
+                        // migration created the function in. The declared
+                        // `postgres_schema` is validated equal to it (the
+                        // consistency gate).
+                        domain,
                         &codelists,
                     )
                     .map_err(codegraph_core::error::Error::Config)?,
@@ -1802,6 +1811,8 @@ fn emit_function_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_core::traits::GraphIngestor;
+    use codegraph_core::types::FunctionInput;
 
     fn set_op(root: &str, path: &[&str], expr_json: &str) -> FunctionOperation {
         FunctionOperation {
@@ -1868,5 +1879,87 @@ mod tests {
             r#"{"kind":"FeatureCall","receiver":{"kind":"SymbolReference","symbol":"tradeState"},"feature":"clone"}"#,
         );
         assert_eq!(wholesale_copy_source(&call, "reset", &args), None);
+    }
+
+    fn sql_bound_function(domain: &str) -> FunctionNode {
+        FunctionNode {
+            name: "AddVat".to_string(),
+            domain: Some(domain.to_string()),
+            definition: None,
+            dispatch: None,
+            inputs: vec![FunctionInput {
+                name: "amount".to_string(),
+                type_ref: "number".to_string(),
+                is_array: false,
+                is_optional: false,
+            }],
+            output: Some(FunctionInput {
+                name: "result".to_string(),
+                type_ref: "number".to_string(),
+                is_array: false,
+                is_optional: false,
+            }),
+            aliases: vec![],
+            operations: vec![FunctionOperation {
+                is_add: false,
+                assign_root: "result".to_string(),
+                path: vec![],
+                expr_json: r#"{"kind":"Binary","op":"+","left":{"kind":"SymbolReference","symbol":"amount"},"right":{"kind":"Number","text":"1.0"}}"#.to_string(),
+            }],
+            post_conditions: vec![],
+            extends: None,
+            transform_annotations: vec![],
+            properties: serde_json::Value::Null,
+        }
+    }
+
+    fn sql_binding_config(pg_schema: &str) -> DomainConfig {
+        toml::from_str(&format!(
+            r#"
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "{pg_schema}"
+
+[functions.AddVat]
+implementation = "sql"
+"#
+        ))
+        .expect("config")
+    }
+
+    /// Issue #702: the SqlFnImpls call plane must call the Postgres function
+    /// in the DOMAIN key's schema — the schema the `functions_sql` migration
+    /// created it in — even when `postgres_schema` names a different schema.
+    #[tokio::test]
+    async fn sql_impl_calls_land_in_the_domain_key_schema() {
+        let engine = codegraph_core::mock::MockEngine::builder().build();
+        engine
+            .ingest_function(&sql_bound_function("payroll"))
+            .await
+            .expect("ingest");
+        let config = sql_binding_config("payroll_legacy");
+        let out = tempfile::tempdir().expect("out dir");
+        let tera = crate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+        let project = ProjectConfig::default();
+
+        let files = FunctionsGenerator::new(out.path())
+            .generate(&engine, "payroll", &[], &config, &tera, &project)
+            .await
+            .expect("generation");
+        let sql_impl = files
+            .iter()
+            .find(|f| f.path.to_string_lossy().ends_with("sql_impl.rs"))
+            .expect("the sql call plane emits sql_impl.rs");
+        assert!(
+            sql_impl.content.contains("payroll.add_vat"),
+            "the call must target the DOMAIN key schema:\n{}",
+            sql_impl.content
+        );
+        assert!(
+            !sql_impl.content.contains("payroll_legacy"),
+            "the declared postgres_schema spelling must not leak into the call plane:\n{}",
+            sql_impl.content
+        );
     }
 }

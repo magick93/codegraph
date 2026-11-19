@@ -166,11 +166,10 @@ pub async fn ifml_scaffold(args: IfmlScaffoldArgs<'_>) -> Result<()> {
     let mut specs: Vec<EntityViewSpec> = Vec::new();
     for (domain_name, titles) in &selected {
         let entry = &domain_config.domains[domain_name.as_str()];
-        let schema_name = if entry.postgres_schema.is_empty() {
-            domain_name.clone()
-        } else {
-            entry.postgres_schema.clone()
-        };
+        // Issue #702: the domain key is the single Postgres schema source of
+        // truth — the emitted `schema "…"` header names the schema the DDL
+        // keys tables off.
+        let schema_name = domain_name.clone();
         headers.push(DomainHeader {
             name: domain_name.clone(),
             schema: schema_name,
