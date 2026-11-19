@@ -225,6 +225,7 @@ impl RouterGenerator {
     }
 }
 
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 #[async_trait]
 impl DomainGenerator for RouterGenerator {
     fn kind(&self) -> DomainGeneratorKind {

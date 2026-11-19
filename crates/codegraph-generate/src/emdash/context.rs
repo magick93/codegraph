@@ -446,6 +446,7 @@ fn auto_assign_line(field: &EntityField, control: FieldControl, module: &str) ->
 ///
 /// `fields` must already be VO-expanded (see `expand_vo_fields`); `codelists`
 /// maps a field name to its resolved `{value,label}[]` options.
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub fn build_entity_context(
     entity_key: &str,
     domain: &str,

@@ -1283,6 +1283,7 @@ pub(crate) fn page_guard_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub(super) async fn build_page_context(
     db: &dyn GraphQuerier,
     config: &DomainConfig,

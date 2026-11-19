@@ -86,6 +86,7 @@ impl RepositoryImplEmitter {
     // Issue #167 Phase 1 will restructure this API (resolver + renderer
     // split), at which point the argument list collapses into the model.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub async fn emit(
         &self,
         db: &dyn GraphQuerier,
@@ -699,6 +700,7 @@ impl RepositoryImplEmitter {
         Ok(code.into_string())
     }
 
+    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub async fn query_entity_tree(
         &self,
         db: &dyn GraphQuerier,

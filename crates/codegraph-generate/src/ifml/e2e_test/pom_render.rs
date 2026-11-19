@@ -13,6 +13,7 @@ const DENIAL_REDIRECT_TIMEOUT_MS: u32 = 5_000;
 // ── Page-class rendering ─────────────────────────────────────────────────────
 
 /// The `tests/pages/{view-kebab}-page.ts` content for one view.
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub(super) fn render_pom_page(pom: &ViewPom) -> String {
     let denial_presentation = pom.auth_enabled
         && pom.denial_target.is_some()

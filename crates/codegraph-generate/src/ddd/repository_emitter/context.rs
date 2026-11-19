@@ -356,6 +356,7 @@ pub(crate) struct ClassificationContext<'a> {
 /// This is the core property-classification loop extracted from `query_entity_tree`.
 /// It walks each property and, based on its `RefClassificationKind`, decides whether
 /// to emit a direct column (TreeColumn) or a child table (ChildTableInfo).
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub(crate) async fn build_columns_and_children(
     db: &dyn GraphQuerier,
     props: &[codegraph_core::types::PropertyNode],

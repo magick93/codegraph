@@ -12,6 +12,7 @@ use super::registry::keys;
 use crate::engine::GrafeoEngine;
 
 impl GrafeoEngine {
+    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub(super) async fn insert_edge(
         &self,
         from_id: &str,

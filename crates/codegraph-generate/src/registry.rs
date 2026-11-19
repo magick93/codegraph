@@ -277,6 +277,7 @@ pub(crate) fn build_domain_generators(
 /// Build the global generator set: fixed core generators, the topology-
 /// dependent scaffold, feature-gated extras, IFML generators per framework,
 /// and integration generators when extension points are configured.
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn GlobalGenerator>> {
     let output_dir = ctx.output_dir;
     // Push-covered entity refs ("domain.table") — the entities whose command

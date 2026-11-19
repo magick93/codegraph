@@ -161,6 +161,7 @@ impl IfmlE2eTestGenerator {
     }
 }
 
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 #[async_trait]
 impl GlobalGenerator for IfmlE2eTestGenerator {
     fn kind(&self) -> GlobalGeneratorKind {
