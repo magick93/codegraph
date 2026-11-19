@@ -907,6 +907,82 @@ async fn media_plane_end_to_end_over_rustfs() {
     // handler answered 400 on, and the ownership predicate that keeps it from
     // being an IDOR.
     run_nested_legs(&base, &target, &rustfs, &key_a, &key_b).await;
+    // Issue #744: the end-to-end soft-deleted-parent leg (#699) — the
+    // tier-local pins (plan flag, template SQL, compile) hold or fail
+    // independently of the REAL handler behaviour; this leg proves the
+    // running app serves nothing for a soft-deleted parent and leaves the
+    // reference row + the object intact.
+    run_soft_delete_leg(&base, &target, &rustfs, &key_a).await;
+
+    // ── Issue #744: the soft-deleted parent serves no media (#699) ──────
+    // #699's pins are tier-local (the plan flag cross-checked against the
+    // DDL, the gate SQL bodies, the compile); this leg runs the REAL
+    // handler over a REAL soft-delete: upload → soft-delete the parent
+    // row → display/remove both 404 (the `AND deleted_at IS NULL` gate),
+    // and the reference row + the stored object both INTACT (a 404 must
+    // not delete anything).
+    async fn run_soft_delete_leg(base: &str, target: &PgTarget, rustfs: &RustFs, key_a: &str) {
+        // Pre-state: the parent is ALIVE and serves its media (run_legs
+        // left ONE row + object on PARENT_A — leg 4 removed, then the
+        // cross-tenant preamble re-uploaded payload A).
+        let alive = display(base, PARENT_A, key_a, "softdel-pre-display");
+        assert_eq!(
+            alive.status,
+            307,
+            "pre-state: the live parent must serve (got: {})",
+            alive.text()
+        );
+        // Soft-delete the parent the way the auditable CRUD path would.
+        psql_exec(
+            target,
+            &format!("UPDATE {PARENT_TABLE} SET deleted_at = NOW() WHERE id = '{PARENT_A}';"),
+        )
+        .await
+        .expect("soft-delete the parent row");
+        // Display and remove both 404 — the #699 gate (`parent_exists`
+        // carries `AND deleted_at IS NULL` when the plan says the parent
+        // soft-deletes) answers before any storage call.
+        let d = display(base, PARENT_A, key_a, "softdel-display");
+        assert_eq!(
+            d.status,
+            404,
+            "a soft-deleted parent must serve no media (got: {})",
+            d.text()
+        );
+        let r = remove(base, PARENT_A, key_a, "softdel-remove");
+        assert_eq!(
+            r.status,
+            404,
+            "remove must 404 too — never destructively delete past the gate (got: {})",
+            r.text()
+        );
+        // Nothing was destroyed: the reference row survives (count 1) and
+        // the object is still in the bucket (200).
+        let rows = media_rows(target, PARENT_A).await;
+        let url = format!("{ORG_A}/assets/asset/{PARENT_A}/photo");
+        assert_rows(
+            &rows,
+            &format!("1|{url}|image/png|{ORG_A}"),
+            "the soft delete must not touch the reference row",
+        );
+        let (status, bytes) = rustfs.get_object(&url).expect("bucket read");
+        assert_eq!(
+            status, 200,
+            "the stored object must survive the soft-deleted parent"
+        );
+        // The object is run_legs' RE-UPLOAD (leg 4 removed, then the
+        // cross-tenant preamble re-uploaded payload A) — assert it
+        // survived the soft delete.
+        let payload_a = b"\x89PNG\r\n\x1a\nmedia-runtime gate payload A".to_vec();
+        assert_eq!(
+            bytes, payload_a,
+            "the object is run_legs' re-uploaded payload"
+        );
+        println!(
+            "leg soft-delete: parent deleted → display/remove 404, row intact (`{rows}`), bucket 200 + {} bytes",
+            bytes.len()
+        );
+    }
 
     // ── Cleanup (explicit; ScratchDb/RustFs also guard the panic path) ──
     drop(server);
