@@ -298,7 +298,6 @@ pub async fn run(args: RunArgs<'_>) -> Result<()> {
 /// ingested into a fresh persistent engine which is checkpointed and
 /// recorded for the next run.
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn run_with_graph_cache(
     args: RunArgs<'_>,
     graph_cache: Option<&Path>,
@@ -359,37 +358,227 @@ pub async fn run_with_graph_cache(
         .map_err(|e| crate::error::Error::Config(e.to_string()))?;
 
     let config_dir = config_path.parent();
+    let sources = ModelSources {
+        schemas,
+        classifier,
+        mox_files,
+        rosetta_files,
+        ddd_files,
+        evt_files,
+        deploy_files,
+        ifml_files,
+        openapi_files,
+    };
+    let inputs_hash = compute_inputs_hash(
+        graph_cache,
+        &sources,
+        config_path,
+        &domain_config,
+        config_dir,
+    )?;
+
+    let (be, graph_cache_reused) = open_graph_backend(graph_cache, inputs_hash.as_deref()).await?;
+
+    let classifier_config = match classifier {
+        Some(classifier) => codegraph_classifier::config::parse_classifier_config(classifier)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+        // An empty TOML document deserializes to the all-defaults config.
+        None => codegraph_classifier::config::parse_classifier_config_str("")
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
+    };
+
+    let ui_overrides = load_ui_overrides(config_path)?;
+    let ui_domains = load_ui_domains(config_path)?;
+
+    let profiles_path = profiles_config_path.unwrap_or_else(|| PathBuf::from("profiles.toml"));
+    let (build_plan, project_config, domain_types_base_path) = resolve_run_profile(
+        &profiles_path,
+        profile_name,
+        variant,
+        ifml_framework,
+        codegraph_rev.as_deref(),
+        output,
+        &domain_config,
+    )?;
+    let mut project_config = Some(project_config);
+
+    // All ingestion passes are skipped when the graph cache reused the
+    // persisted graph (inputs unchanged): the graph already holds the
+    // model. Generation and validation still run on the reused graph.
+    if !graph_cache_reused {
+        run_model_ingest_passes(
+            &be,
+            &domain_config,
+            &classifier_config,
+            &ui_overrides,
+            &sources,
+        )
+        .await?;
+        run_design_ingest_passes(&be, &domain_config, &sources).await?;
+        run_classification_passes(
+            &be,
+            &domain_config,
+            &classifier_config,
+            config_dir,
+            project_config.as_ref(),
+        )
+        .await?;
+    }
+
+    // Synthetic bounded contexts for the dependency domains (issue #276):
+    // generation reads the foreign faces from the graph; the entries carry
+    // no local model config. Runs on both the fresh and the cache-reused
+    // path (domain_config is re-parsed every run).
+    crate::ingest::dependencies::inject_dependency_domains(&mut domain_config);
+
+    if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused)
+        && let Some(hash) = inputs_hash.as_deref()
+    {
+        persist_fresh_graph(&be, cache_dir, hash)?;
+    }
+
+    // Perf counters (issues #469/#473): one ingest summary line after the
+    // ingest passes, one validate+generate line after generation — both only
+    // when CODEGRAPH_PERF_COUNTERS is set.
+    print_ingest_perf();
+    let perf_generate_start = codegraph_grafeo::perf::perf_snapshot();
+
+    let GenerationPrep {
+        tera,
+        ext_config,
+        integration_manifests,
+        ux_resolved,
+        ifml_component_mappings,
+    } = prepare_generation(
+        template_dir,
+        ifml_design_system,
+        build_plan.as_ref(),
+        ifml_components,
+        extension_points_path,
+        integration_manifests,
+        ux_rules,
+        &mut project_config,
+    )?;
+
+    run_validation_gates(&be, &domain_config, build_plan.as_ref()).await?;
+
+    let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
+        db: be.querier(),
+        config: &domain_config,
+        output_dir: output,
+        tera: &tera,
+        ui_overrides: &ui_overrides,
+        ui_domains: &ui_domains,
+        // mox-only runs have no schemas dir; an empty path keeps the UI
+        // codelist generator's schema-dir lookups graceful (see `generate`).
+        schema_base_dir: schemas.unwrap_or_else(|| Path::new("")),
+        seed_config: load_seed_config(config_path).as_deref(),
+        domain_types_base: domain_types_base_path.as_deref(),
+        hooks_base: None,
+        ext_points: ext_config.as_ref(),
+        integration_manifests: integration_manifests.as_ref(),
+        build_plan: build_plan.as_ref(),
+        profile_name,
+        ifml_frameworks: ifml_framework.to_vec(),
+        ifml_components: ifml_component_mappings.as_ref(),
+        ux_rules: ux_resolved,
+        project_config: project_config.as_ref(),
+        emdash_plugins: None,
+        domain_config_dir: config_path.parent(),
+    })
+    .await?;
+
+    print!("{}", report.summary());
+    if report.has_errors() {
+        eprintln!("Generation completed with errors. Some entities were skipped.");
+    }
+
+    if perf_counters_enabled() {
+        let perf_end = codegraph_grafeo::perf::perf_snapshot();
+        eprintln!(
+            "[perf] validate+generate: gql_read=+{} (total {}) | cache hits/misses: {}",
+            perf_end.read_gql_calls - perf_generate_start.read_gql_calls,
+            perf_end.read_gql_calls,
+            format_cache_stats()
+        );
+    }
+
+    run_post_gen_scripts(build_plan.as_ref(), no_post_gen).await?;
+
+    // Post-generate compile gate (issue #336): strictly opt-in via `--check`
+    // — flag off ⇒ no cargo invocation, no output change.
+    if check {
+        check_generated_output(output)?;
+    }
+
+    println!("Done.");
+    Ok(RunOutcome {
+        graph_cache_reused,
+        inputs_hash,
+    })
+}
+/// The CLI model-source inputs (the `RunArgs` model fields), threaded
+/// through the inputs-hash computation and the ingest pass groups.
+struct ModelSources<'a> {
+    schemas: Option<&'a Path>,
+    classifier: Option<&'a Path>,
+    mox_files: &'a [PathBuf],
+    rosetta_files: &'a [PathBuf],
+    ddd_files: &'a [PathBuf],
+    evt_files: &'a [PathBuf],
+    deploy_files: &'a [PathBuf],
+    ifml_files: &'a [PathBuf],
+    openapi_files: &'a [PathBuf],
+}
+
+/// Compute the persisted-graph cache inputs hash (issue #275): every model
+/// config input plus the pinned dependency faces (#276). `None` when no
+/// cache dir was requested (hashing is skipped entirely).
+fn compute_inputs_hash(
+    graph_cache: Option<&Path>,
+    sources: &ModelSources<'_>,
+    config_path: &Path,
+    domain_config: &codegraph_config::config::DomainConfig,
+    config_dir: Option<&Path>,
+) -> Result<Option<String>> {
     let inputs_hash: Option<String> = match graph_cache {
         Some(_cache_dir) => {
             let mut inputs = crate::artifact::collect_run_inputs(
-                schemas,
-                classifier,
+                sources.schemas,
+                sources.classifier,
                 config_path,
-                mox_files,
-                rosetta_files,
-                ddd_files,
-                evt_files,
-                deploy_files,
-                ifml_files,
-                openapi_files,
+                sources.mox_files,
+                sources.rosetta_files,
+                sources.ddd_files,
+                sources.evt_files,
+                sources.deploy_files,
+                sources.ifml_files,
+                sources.openapi_files,
             )
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
             // Pinned dependency faces shape the graph too (issue #276):
             // editing one must invalidate the persisted graph cache.
             inputs.extend(
-                crate::ingest::dependencies::collect_dependency_inputs(&domain_config, config_dir)
+                crate::ingest::dependencies::collect_dependency_inputs(domain_config, config_dir)
                     .map_err(|e| crate::error::Error::Config(e.to_string()))?,
             );
             Some(crate::artifact::inputs_hash(&inputs))
         }
         None => None,
     };
+    Ok(inputs_hash)
+}
 
-    // Graph cache (issue #275): reopen the persisted graph when the stored
-    // inputs hash matches; otherwise ingest fresh into a persistent engine
-    // (checkpointed after ingestion). Without a cache dir this is the
-    // in-memory default.
-    let (be, graph_cache_reused) = match (graph_cache, inputs_hash.as_deref()) {
+/// Graph cache (issue #275): reopen the persisted graph when the stored
+/// inputs hash matches; otherwise ingest fresh into a persistent engine
+/// (checkpointed after ingestion). Without a cache dir this is the
+/// in-memory default. Returns the backend and whether the persisted graph
+/// was reused (ingestion passes are skipped on reuse).
+async fn open_graph_backend(
+    graph_cache: Option<&Path>,
+    inputs_hash: Option<&str>,
+) -> Result<(Backend, bool)> {
+    let (be, graph_cache_reused) = match (graph_cache, inputs_hash) {
         (Some(cache_dir), Some(hash)) => {
             if let Some(engine) = crate::artifact::open_reusable_engine(cache_dir, hash)
                 .map_err(|e| crate::error::Error::Config(e.to_string()))?
@@ -427,26 +616,33 @@ pub async fn run_with_graph_cache(
             (backend, false)
         }
     };
+    Ok((be, graph_cache_reused))
+}
 
-    let classifier_config = match classifier {
-        Some(classifier) => codegraph_classifier::config::parse_classifier_config(classifier)
-            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
-        // An empty TOML document deserializes to the all-defaults config.
-        None => codegraph_classifier::config::parse_classifier_config_str("")
-            .map_err(|e| crate::error::Error::Config(e.to_string()))?,
-    };
-
-    let ui_overrides = load_ui_overrides(config_path)?;
-    let ui_domains = load_ui_domains(config_path)?;
-
-    // Load and resolve the profile.
-    let profiles_path = profiles_config_path.unwrap_or_else(|| PathBuf::from("profiles.toml"));
+/// Load and resolve the profile: CLI `--ifml-framework` injection, the
+/// `BuildPlan`, and the `ProjectConfig` the templates render from
+/// (profile meta overriding defaults). Plan-less fallback (profiles.toml
+/// missing AND default profile) keeps the issue-#447 coherent-workspace
+/// contract. Returns the plan, the project config, and the
+/// `domain_types_base` path (profile meta or the conventional fallback).
+#[allow(clippy::too_many_arguments)]
+fn resolve_run_profile(
+    profiles_path: &Path,
+    profile_name: &str,
+    variant: Option<&str>,
+    ifml_framework: &[String],
+    codegraph_rev: Option<&str>,
+    output: &Path,
+    domain_config: &codegraph_config::config::DomainConfig,
+) -> Result<(
+    Option<crate::profile::BuildPlan>,
+    ProjectConfig,
+    Option<PathBuf>,
+)> {
     let registry = crate::profile::CapabilityRegistry::new();
-    let mut project_config: Option<ProjectConfig>;
-    let domain_types_base_path: Option<PathBuf>;
-    let build_plan = if profiles_path.exists() || profile_name != "default" {
+    if profiles_path.exists() || profile_name != "default" {
         let mut resolved =
-            crate::profile::load_and_resolve_profile(&profiles_path, profile_name, variant)?;
+            crate::profile::load_and_resolve_profile(profiles_path, profile_name, variant)?;
         // CLI --ifml-framework wins when the profile declares no
         // per-framework IFML targets: without the targets
         // `expand_ifml_sections` keeps the unsuffixed `ifml_*` generator
@@ -472,8 +668,8 @@ pub async fn run_with_graph_cache(
 
         // Build project config from profile meta (optional fields override defaults).
         let meta = &resolved.meta;
-        domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
-        project_config = Some(ProjectConfig {
+        let domain_types_base_path = meta.domain_types_base.as_ref().map(|p| output.join(p));
+        let project_config = ProjectConfig {
             identity: IdentityConfig {
                 app_name: meta.app_name.clone().unwrap_or_else(|| "app".into()),
                 lib_name: "cosmos".into(),
@@ -526,7 +722,7 @@ pub async fn run_with_graph_cache(
                 deployment_topology: plan.deployment_topology(),
             },
             cargo: CargoConfig {
-                codegraph_rev: resolve_codegraph_rev(codegraph_rev.as_deref()),
+                codegraph_rev: resolve_codegraph_rev(codegraph_rev),
                 dependency_strategy: plan.dependency_strategy,
                 codegraph_path_root: codegraph_checkout_root(),
                 ..CargoConfig::default()
@@ -557,7 +753,7 @@ pub async fn run_with_graph_cache(
                     .to_string(),
             },
             ux: UxConfig { ux: None },
-        });
+        };
 
         println!(
             "Using profile \"{}\" (variant: {:?}) — {} entity, {} domain, {} global generators",
@@ -567,7 +763,7 @@ pub async fn run_with_graph_cache(
             plan.domain_generators.len(),
             plan.global_generators.len(),
         );
-        Some(plan)
+        Ok((Some(plan), project_config, domain_types_base_path))
     } else {
         // profiles.toml doesn't exist and profile is "default" —
         // backward compat: run all generators without a plan.
@@ -596,402 +792,436 @@ pub async fn run_with_graph_cache(
         // every other template key keeps its default value, and the build
         // plan stays `None` so no plan semantics leak into generator
         // gating.
-        domain_types_base_path = Some(output.join("crates/domain-types"));
-        project_config = Some(ProjectConfig {
+        let domain_types_base_path = Some(output.join("crates/domain-types"));
+        let project_config = ProjectConfig {
             paths: PathsConfig {
                 domain_types_base: "crates/domain-types".into(),
                 ..PathsConfig::default()
             },
             cargo: CargoConfig {
-                codegraph_rev: resolve_codegraph_rev(codegraph_rev.as_deref()),
+                codegraph_rev: resolve_codegraph_rev(codegraph_rev),
                 ..CargoConfig::default()
             },
             ..ProjectConfig::default()
-        });
-        None
-    };
+        };
+        Ok((None, project_config, domain_types_base_path))
+    }
+}
 
-    // All ingestion passes are skipped when the graph cache reused the
-    // persisted graph (inputs unchanged): the graph already holds the
-    // model. Generation and validation still run on the reused graph.
-    if !graph_cache_reused {
-        // Pass 1: Ingest pherolang .mox domain sources FIRST (mox-first, issue
-        // #231): vocabularies with facets, class operations, derived features,
-        // and schema/property nodes for mox-authored classes and enums. The
-        // bridged class titles win schema-title conflicts because the schema
-        // pass below skips every title created here. Diagnostics warn and never
-        // fail the run — except missing/invalid `import schema` targets, which
-        // are a hard error (issue #230): the lowered model's structural
-        // references depend on them.
-        let mut mox_covered: HashSet<String> = HashSet::new();
-        let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();
-        let mut pending_alias_refs: Vec<crate::ingest::mox_ingest::PendingAliasRef> = Vec::new();
-        if !mox_files.is_empty() {
-            println!("Pass 1: {} mox files to ingest", mox_files.len());
-            let outcome = crate::ingest::mox_ingest::ingest_mox_files(
-                be.ingestor(),
-                be.querier(),
-                mox_files,
-                &domain_config,
-                &domain_config.defaults.type_suffix,
-            )
-            .await?;
-            println!("Pass 1 complete: {}", outcome.stats);
-            mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
-            mox_stats = outcome.stats;
-            pending_alias_refs = outcome.pending_alias_refs;
-
-            // Pass 1 (imports): the .mox model's imported JSON schema files go
-            // through the same pipeline as --schemas, BEFORE the schema pass so
-            // their titles join the skip-set and a file passed both ways
-            // ingests exactly once (issue #230).
-            if !outcome.imported_files.is_empty() {
-                let imported = crate::ingest::async_ingest::ingest_imported_schemas(
-                    be.ingestor(),
-                    &outcome.imported_files,
-                    &classifier_config,
-                    &ui_overrides,
-                    &domain_config.defaults.type_suffix,
-                )
-                .await?;
-                println!(
-                    "Pass 1 imports: {} schema files ingested",
-                    imported.ingested.schemas_created
-                );
-                mox_covered.extend(imported.titles);
-            }
-        }
-
-        // Pass 1b: Rosetta (Rune DSL) data-plane bridge (issues #256, #257).
-        // Runs alongside mox and BEFORE the JSON schema pass: bridged titles
-        // join the skip-set so a same-titled JSON schema never duplicates the
-        // node. Mox keeps primary position (rosetta wins over JSON by passing
-        // first; mox wins over rosetta).
-        if !rosetta_files.is_empty() {
-            println!("Pass 1b: {} rosetta files to ingest", rosetta_files.len());
-            let outcome = crate::ingest::rosetta_ingest::ingest_rosetta_files(
-                be.ingestor(),
-                be.querier(),
-                rosetta_files,
-                &domain_config,
-                &domain_config.defaults.type_suffix,
-            )
-            .await?;
-            println!("Pass 1b complete: {}", outcome.stats);
-            mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
-        }
-
-        // Pass 1a: Ingest JSON schemas (no entity classification). Optional
-        // under mox-first: skipped entirely when only .mox files are provided,
-        // and titles already created from .mox are skipped within the pass.
-        if let Some(schemas_dir) = schemas {
-            let empty_entities = HashSet::new();
-            let ingest_result = crate::ingest::async_ingest::ingest_schemas_with_skips(
-                be.ingestor(),
-                schemas_dir,
-                &classifier_config,
-                &empty_entities,
-                &ui_overrides,
-                &domain_config.defaults.type_suffix,
-                &mox_covered,
-            )
-            .await?;
-            println!(
-                "Pass 1a: {} schemas ingested",
-                ingest_result.schemas_created
-            );
-        }
-
-        // Pass 1a (alias wiring): imported-schema aliases resolve now that both
-        // the imported files and the --schemas pass have run — exact title
-        // match, then title + type suffix; misses warn and skip the edge
-        // (issue #230).
-        if !pending_alias_refs.is_empty() {
-            crate::ingest::mox_ingest::wire_alias_refs(
-                be.ingestor(),
-                be.querier(),
-                &pending_alias_refs,
-                &domain_config.defaults.type_suffix,
-                &mut mox_stats,
-            )
-            .await?;
-            println!(
-                "Pass 1a wiring: {} aliases resolved, {} unresolved",
-                mox_stats.resolved_aliases, mox_stats.unresolved_aliases
-            );
-        }
-
-        // Pass 1b: Ingest IFML DSL files (if provided). Each file goes
-        // through the front door (issue #591): the import closure is
-        // gathered, the compilation resolves module composition, the
-        // interaction-reference + authorization checker runs (E0104–E0108
-        // — every action/navigate/refresh target and requires:/roles:
-        // name is proven before anything lands in the graph), and the
-        // declaration-backed manifest is derived. A compile or
-        // ERROR-severity checker diagnostic is a hard error (the
-        // EvtModel precedent): the #559 defect class cannot half-ingest.
-        // The lint channel (W0150+) renders as warnings.
-        if !ifml_files.is_empty() {
-            println!("Pass 1b: {} IFML files to ingest", ifml_files.len());
-            let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
-            let mut total_manifest = phero_ir::ifml_manifest::IfmlManifest::new();
-            for ifml_path in ifml_files {
-                let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
-                for lint in &compiled.lints {
-                    eprintln!("warning: ifml: {lint}");
-                }
-                let mut stats = crate::ingest::ifml_ingest::ingest_ifml_model(
-                    be.ingestor(),
-                    &compiled.compilation.model,
-                )
-                .await?;
-                stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
-                    be.ingestor(),
-                    be.querier(),
-                    &compiled.compilation.model,
-                    ifml_path,
-                )
-                .await?;
-                total_stats.view_containers += stats.view_containers;
-                total_stats.containers += stats.containers;
-                total_stats.components += stats.components;
-                total_stats.events += stats.events;
-                total_stats.parameters += stats.parameters;
-                total_stats.actions += stats.actions;
-                total_stats.module_uses += stats.module_uses;
-                total_stats.actors += stats.actors;
-                total_stats.imported_policies += stats.imported_policies;
-                total_manifest.views.extend(compiled.manifest.views);
-                total_manifest.controls.extend(compiled.manifest.controls);
-                total_manifest.edges.extend(compiled.manifest.edges);
-                total_manifest.actions.extend(compiled.manifest.actions);
-                total_manifest.commands.extend(compiled.manifest.commands);
-            }
-            println!("Pass 1b complete: {total_stats}");
-            println!(
-                "Pass 1b manifest: {} routes, {} controls, {} edges, {} actions, {} commands \
-                 (declaration-backed — pherolang #118)",
-                total_manifest.views.len(),
-                total_manifest.controls.len(),
-                total_manifest.edges.len(),
-                total_manifest.actions.len(),
-                total_manifest.commands.len(),
-            );
-            // WS6: the folded manifest persists as the run's singleton
-            // IfmlManifestNode — the e2e action plane consumes it (it used
-            // to be dropped after the counts printed).
-            let source_paths: Vec<String> =
-                ifml_files.iter().map(|p| p.display().to_string()).collect();
-            crate::ingest::ifml_ingest::ingest_ifml_manifest(
-                be.ingestor(),
-                &total_manifest,
-                &source_paths,
-            )
-            .await?;
-        }
-
-        // Pass 1c: Ingest pherolang .ddd design files (issue #449): compiled
-        // against their imported .mox domains and landed as the DDD design
-        // plane. Runs AFTER the schema passes so design classes resolve
-        // against the full ingested title set; a compile error is a hard
-        // error (the RosettaModel precedent).
-        if !ddd_files.is_empty() {
-            println!("Pass 1c: {} ddd files to ingest", ddd_files.len());
-            let ddd_stats = crate::ingest::ddd_ingest::ingest_ddd_files(
-                be.ingestor(),
-                be.querier(),
-                ddd_files,
-                &domain_config,
-            )
-            .await?;
-            println!("Pass 1c complete: {ddd_stats}");
-        }
-
-        // Pass 1d: Ingest pherolang .evt event-contract files (issue #454):
-        // compiled against their imported .mox domains and landed as the
-        // events plane. Runs AFTER the schema passes so payload field types
-        // resolve against the full ingested title set; a compile error is a
-        // hard error (the DddModel precedent).
-        if !evt_files.is_empty() {
-            println!("Pass 1d: {} evt files to ingest", evt_files.len());
-            let evt_stats = crate::ingest::evt_ingest::ingest_evt_files(
-                be.ingestor(),
-                be.querier(),
-                evt_files,
-                &domain_config,
-            )
-            .await?;
-            println!("Pass 1d complete: {evt_stats}");
-        }
-
-        // Pass 1e: Ingest pherolang .deploy deployment files (pherolang #49):
-        // compiled against their imported .ddd designs and .ifml flows and
-        // landed as the deployment plane. A compile error is a hard error
-        // (the EvtModel precedent).
-        if !deploy_files.is_empty() {
-            println!("Pass 1e: {} deploy files to ingest", deploy_files.len());
-            let deploy_stats =
-                crate::ingest::deploy_ingest::ingest_deploy_files(be.ingestor(), deploy_files)
-                    .await?;
-            println!("Pass 1e complete: {deploy_stats}");
-        }
-
-        // Pass 1c: Ingest API model from domain configuration
-        {
-            let api_stats =
-                crate::ingest::api_ingest::ingest_api_model(be.ingestor(), &domain_config).await?;
-            println!("Pass 1c complete: {api_stats}");
-        }
-
-        // Pass 1f: Ingest modeled charts from the `[charts]` config table
-        // (issue #577). Runs AFTER the schema passes so entity refs resolve
-        // against the full ingested title set; the deprecated
-        // `has_orgchart` sugar synthesizes org entries here (WARN).
-        if !domain_config.charts.is_empty()
-            || crate::ingest::chart_ingest::has_orgchart_sugar(&domain_config)
-        {
-            let chart_stats = crate::ingest::chart_ingest::ingest_chart_definitions(
-                be.ingestor(),
-                be.querier(),
-                &domain_config,
-            )
-            .await?;
-            println!("Pass 1f complete: {chart_stats}");
-        }
-
-        // Pass 1d: Ingest OpenAPI spec files (if provided)
-        if !openapi_files.is_empty() {
-            println!("Pass 1d: {} OpenAPI files to ingest", openapi_files.len());
-            for openapi_path in openapi_files {
-                let stats =
-                    crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
-                        .await?;
-                println!("  ingested {}: {stats}", openapi_path.display());
-            }
-        }
-
-        // Auto-classify
-        let classifier_types: HashSet<String> = classifier_config
-            .primitive_wrappers
-            .keys()
-            .cloned()
-            .chain(classifier_config.array_wrappers.keys().cloned())
-            .chain(classifier_config.range_wrappers.keys().cloned())
-            .chain(
-                classifier_config
-                    .composite_wrappers
-                    .iter()
-                    .map(|cw| cw.schema.clone()),
-            )
-            .collect();
-
-        let all_data = be
-            .querier()
-            .get_classification_data()
-            .await
-            .map_err(crate::error::Error::Graph)?;
-
-        let naming_rules = classifier_config.naming_rules.clone();
-        let auto_classifier = crate::classify::AutoClassifier::new(classifier_types, naming_rules);
-        let mut entity_names = HashSet::new();
-
-        let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
-        sorted_domain_names.sort();
-        for domain_name in &sorted_domain_names {
-            let domain_entry = &domain_config.domains[domain_name.as_str()];
-            let domain_schemas: Vec<_> = all_data
-                .iter()
-                .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
-                .cloned()
-                .collect();
-            let result =
-                auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
-            for score in &result.entities {
-                entity_names.insert(score.title.clone());
-            }
-        }
-
-        // Also include legacy entities[] for backward compat during migration
-        for domain_entry in domain_config.domains.values() {
-            for entity in &domain_entry.entities {
-                entity_names.insert(entity.clone());
-            }
-        }
-
-        println!("Auto-classified {} entities", entity_names.len());
-
-        // Pass 2: Update graph with entity flags
-        crate::ingest::async_ingest::reclassify_with_entities(
+/// The mox-first + rosetta + JSON-schema ingestion passes (driver passes
+/// 1/1b/1a and the #230 alias wiring). Skipped entirely by the caller when
+/// the graph cache reused the persisted graph.
+async fn run_model_ingest_passes(
+    be: &Backend,
+    domain_config: &codegraph_config::config::DomainConfig,
+    classifier_config: &codegraph_classifier::config::ClassifierConfig,
+    ui_overrides: &codegraph_config::UiOverrideConfig,
+    sources: &ModelSources<'_>,
+) -> Result<()> {
+    // Pass 1: Ingest pherolang .mox domain sources FIRST (mox-first, issue
+    // #231): vocabularies with facets, class operations, derived features,
+    // and schema/property nodes for mox-authored classes and enums. The
+    // bridged class titles win schema-title conflicts because the schema
+    // pass below skips every title created here. Diagnostics warn and never
+    // fail the run — except missing/invalid `import schema` targets, which
+    // are a hard error (issue #230): the lowered model's structural
+    // references depend on them.
+    let mut mox_covered: HashSet<String> = HashSet::new();
+    let mut mox_stats = crate::ingest::mox_ingest::MoxIngestStats::default();
+    let mut pending_alias_refs: Vec<crate::ingest::mox_ingest::PendingAliasRef> = Vec::new();
+    if !sources.mox_files.is_empty() {
+        println!("Pass 1: {} mox files to ingest", sources.mox_files.len());
+        let outcome = crate::ingest::mox_ingest::ingest_mox_files(
             be.ingestor(),
             be.querier(),
-            &entity_names,
+            sources.mox_files,
+            domain_config,
+            &domain_config.defaults.type_suffix,
         )
         .await?;
+        println!("Pass 1 complete: {}", outcome.stats);
+        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
+        mox_stats = outcome.stats;
+        pending_alias_refs = outcome.pending_alias_refs;
 
-        // Pass 2b: pinned dependency faces (issue #276). Foreign schemas
-        // load AFTER classification so their artifact classification is
-        // authoritative (never re-classified); local titles shadow foreign
-        // titles (local wins dedup) and every shadow is reported.
-        let dep_stats = crate::ingest::dependencies::load_dependency_artifacts(
-            be.ingestor(),
-            be.querier(),
-            &domain_config,
-            config_dir,
-        )
-        .await?;
-        if dep_stats.artifacts > 0 {
-            println!("Pass 2b: dependency faces — {dep_stats}");
-            for title in &dep_stats.shadowed_titles {
-                eprintln!(
-                    "WARN dependency title {title} is also defined locally — local definition wins dedup"
-                );
-            }
-        }
-
-        // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
-        if let Some(ref pc) = project_config
-            && pc.integration.has_atproto
-        {
-            crate::ingest::atproto_projection::project_atproto_lexicons(
+        // Pass 1 (imports): the .mox model's imported JSON schema files go
+        // through the same pipeline as --sources.schemas, BEFORE the schema pass so
+        // their titles join the skip-set and a file passed both ways
+        // ingests exactly once (issue #230).
+        if !outcome.imported_files.is_empty() {
+            let imported = crate::ingest::async_ingest::ingest_imported_schemas(
                 be.ingestor(),
-                be.querier(),
-                &domain_config,
-                pc,
+                &outcome.imported_files,
+                classifier_config,
+                ui_overrides,
+                &domain_config.defaults.type_suffix,
             )
-            .await
-            .map_err(|e| {
-                crate::error::Error::Config(format!("AT Protocol projection failed: {e}"))
-            })?;
+            .await?;
+            println!(
+                "Pass 1 imports: {} schema files ingested",
+                imported.ingested.schemas_created
+            );
+            mox_covered.extend(imported.titles);
         }
     }
 
-    // Synthetic bounded contexts for the dependency domains (issue #276):
-    // generation reads the foreign faces from the graph; the entries carry
-    // no local model config. Runs on both the fresh and the cache-reused
-    // path (domain_config is re-parsed every run).
-    crate::ingest::dependencies::inject_dependency_domains(&mut domain_config);
-
-    if let Some(cache_dir) = graph_cache.filter(|_| !graph_cache_reused)
-        && let Some(hash) = inputs_hash.as_deref()
-    {
-        let node_count = be
-            .engine()
-            .node_count()
-            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-        be.engine()
-            .checkpoint()
-            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
-        crate::artifact::persist_cache_marker(cache_dir, hash, node_count)
-            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    // Pass 1b: Rosetta (Rune DSL) data-plane bridge (issues #256, #257).
+    // Runs alongside mox and BEFORE the JSON schema pass: bridged titles
+    // join the skip-set so a same-titled JSON schema never duplicates the
+    // node. Mox keeps primary position (rosetta wins over JSON by passing
+    // first; mox wins over rosetta).
+    if !sources.rosetta_files.is_empty() {
         println!(
-            "Graph cache: persisted fresh graph (inputs hash {})",
-            &hash[..16]
+            "Pass 1b: {} rosetta files to ingest",
+            sources.rosetta_files.len()
+        );
+        let outcome = crate::ingest::rosetta_ingest::ingest_rosetta_files(
+            be.ingestor(),
+            be.querier(),
+            sources.rosetta_files,
+            domain_config,
+            &domain_config.defaults.type_suffix,
+        )
+        .await?;
+        println!("Pass 1b complete: {}", outcome.stats);
+        mox_covered.extend(outcome.stats.bridged_titles.iter().cloned());
+    }
+
+    // Pass 1a: Ingest JSON sources.schemas (no entity classification). Optional
+    // under mox-first: skipped entirely when only .mox files are provided,
+    // and titles already created from .mox are skipped within the pass.
+    if let Some(schemas_dir) = sources.schemas {
+        let empty_entities = HashSet::new();
+        let ingest_result = crate::ingest::async_ingest::ingest_schemas_with_skips(
+            be.ingestor(),
+            schemas_dir,
+            classifier_config,
+            &empty_entities,
+            ui_overrides,
+            &domain_config.defaults.type_suffix,
+            &mox_covered,
+        )
+        .await?;
+        println!(
+            "Pass 1a: {} sources.schemas ingested",
+            ingest_result.schemas_created
         );
     }
 
-    // Perf counters (issues #469/#473): one ingest summary line after the
-    // ingest passes, one validate+generate line after generation — both only
-    // when CODEGRAPH_PERF_COUNTERS is set.
+    // Pass 1a (alias wiring): imported-schema aliases resolve now that both
+    // the imported files and the --sources.schemas pass have run — exact title
+    // match, then title + type suffix; misses warn and skip the edge
+    // (issue #230).
+    if !pending_alias_refs.is_empty() {
+        crate::ingest::mox_ingest::wire_alias_refs(
+            be.ingestor(),
+            be.querier(),
+            &pending_alias_refs,
+            &domain_config.defaults.type_suffix,
+            &mut mox_stats,
+        )
+        .await?;
+        println!(
+            "Pass 1a wiring: {} aliases resolved, {} unresolved",
+            mox_stats.resolved_aliases, mox_stats.unresolved_aliases
+        );
+    }
+    Ok(())
+}
+
+/// The interaction/design/event/deployment/API-model/chart/OpenAPI ingest
+/// passes (driver passes 1b–1f). Skipped entirely by the caller when the
+/// graph cache reused the persisted graph.
+async fn run_design_ingest_passes(
+    be: &Backend,
+    domain_config: &codegraph_config::config::DomainConfig,
+    sources: &ModelSources<'_>,
+) -> Result<()> {
+    // Pass 1b: Ingest IFML DSL files (if provided). Each file goes
+    // through the front door (issue #591): the import closure is
+    // gathered, the compilation resolves module composition, the
+    // interaction-reference + authorization checker runs (E0104–E0108
+    // — every action/navigate/refresh target and requires:/roles:
+    // name is proven before anything lands in the graph), and the
+    // declaration-backed manifest is derived. A compile or
+    // ERROR-severity checker diagnostic is a hard error (the
+    // EvtModel precedent): the #559 defect class cannot half-ingest.
+    // The lint channel (W0150+) renders as warnings.
+    if !sources.ifml_files.is_empty() {
+        println!("Pass 1b: {} IFML files to ingest", sources.ifml_files.len());
+        let mut total_stats = crate::ingest::ifml_ingest::IfmlIngestStats::default();
+        let mut total_manifest = phero_ir::ifml_manifest::IfmlManifest::new();
+        for ifml_path in sources.ifml_files {
+            let compiled = crate::ifml_compile::compile_and_check_ifml(ifml_path)?;
+            for lint in &compiled.lints {
+                eprintln!("warning: ifml: {lint}");
+            }
+            let mut stats = crate::ingest::ifml_ingest::ingest_ifml_model(
+                be.ingestor(),
+                &compiled.compilation.model,
+            )
+            .await?;
+            stats.imported_policies = crate::ifml_actor_import::ingest_actor_imports(
+                be.ingestor(),
+                be.querier(),
+                &compiled.compilation.model,
+                ifml_path,
+            )
+            .await?;
+            total_stats.view_containers += stats.view_containers;
+            total_stats.containers += stats.containers;
+            total_stats.components += stats.components;
+            total_stats.events += stats.events;
+            total_stats.parameters += stats.parameters;
+            total_stats.actions += stats.actions;
+            total_stats.module_uses += stats.module_uses;
+            total_stats.actors += stats.actors;
+            total_stats.imported_policies += stats.imported_policies;
+            total_manifest.views.extend(compiled.manifest.views);
+            total_manifest.controls.extend(compiled.manifest.controls);
+            total_manifest.edges.extend(compiled.manifest.edges);
+            total_manifest.actions.extend(compiled.manifest.actions);
+            total_manifest.commands.extend(compiled.manifest.commands);
+        }
+        println!("Pass 1b complete: {total_stats}");
+        println!(
+            "Pass 1b manifest: {} routes, {} controls, {} edges, {} actions, {} commands \
+             (declaration-backed — pherolang #118)",
+            total_manifest.views.len(),
+            total_manifest.controls.len(),
+            total_manifest.edges.len(),
+            total_manifest.actions.len(),
+            total_manifest.commands.len(),
+        );
+        // WS6: the folded manifest persists as the run's singleton
+        // IfmlManifestNode — the e2e action plane consumes it (it used
+        // to be dropped after the counts printed).
+        let source_paths: Vec<String> = sources
+            .ifml_files
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        crate::ingest::ifml_ingest::ingest_ifml_manifest(
+            be.ingestor(),
+            &total_manifest,
+            &source_paths,
+        )
+        .await?;
+    }
+
+    // Pass 1c: Ingest pherolang .ddd design files (issue #449): compiled
+    // against their imported .mox domains and landed as the DDD design
+    // plane. Runs AFTER the schema passes so design classes resolve
+    // against the full ingested title set; a compile error is a hard
+    // error (the RosettaModel precedent).
+    if !sources.ddd_files.is_empty() {
+        println!("Pass 1c: {} ddd files to ingest", sources.ddd_files.len());
+        let ddd_stats = crate::ingest::ddd_ingest::ingest_ddd_files(
+            be.ingestor(),
+            be.querier(),
+            sources.ddd_files,
+            domain_config,
+        )
+        .await?;
+        println!("Pass 1c complete: {ddd_stats}");
+    }
+
+    // Pass 1d: Ingest pherolang .evt event-contract files (issue #454):
+    // compiled against their imported .mox domains and landed as the
+    // events plane. Runs AFTER the schema passes so payload field types
+    // resolve against the full ingested title set; a compile error is a
+    // hard error (the DddModel precedent).
+    if !sources.evt_files.is_empty() {
+        println!("Pass 1d: {} evt files to ingest", sources.evt_files.len());
+        let evt_stats = crate::ingest::evt_ingest::ingest_evt_files(
+            be.ingestor(),
+            be.querier(),
+            sources.evt_files,
+            domain_config,
+        )
+        .await?;
+        println!("Pass 1d complete: {evt_stats}");
+    }
+
+    // Pass 1e: Ingest pherolang .deploy deployment files (pherolang #49):
+    // compiled against their imported .ddd designs and .ifml flows and
+    // landed as the deployment plane. A compile error is a hard error
+    // (the EvtModel precedent).
+    if !sources.deploy_files.is_empty() {
+        println!(
+            "Pass 1e: {} deploy files to ingest",
+            sources.deploy_files.len()
+        );
+        let deploy_stats =
+            crate::ingest::deploy_ingest::ingest_deploy_files(be.ingestor(), sources.deploy_files)
+                .await?;
+        println!("Pass 1e complete: {deploy_stats}");
+    }
+
+    // Pass 1c: Ingest API model from domain configuration
+    {
+        let api_stats =
+            crate::ingest::api_ingest::ingest_api_model(be.ingestor(), domain_config).await?;
+        println!("Pass 1c complete: {api_stats}");
+    }
+
+    // Pass 1f: Ingest modeled charts from the `[charts]` config table
+    // (issue #577). Runs AFTER the schema passes so entity refs resolve
+    // against the full ingested title set; the deprecated
+    // `has_orgchart` sugar synthesizes org entries here (WARN).
+    if !domain_config.charts.is_empty()
+        || crate::ingest::chart_ingest::has_orgchart_sugar(domain_config)
+    {
+        let chart_stats = crate::ingest::chart_ingest::ingest_chart_definitions(
+            be.ingestor(),
+            be.querier(),
+            domain_config,
+        )
+        .await?;
+        println!("Pass 1f complete: {chart_stats}");
+    }
+
+    // Pass 1d: Ingest OpenAPI spec files (if provided)
+    if !sources.openapi_files.is_empty() {
+        println!(
+            "Pass 1d: {} OpenAPI files to ingest",
+            sources.openapi_files.len()
+        );
+        for openapi_path in sources.openapi_files {
+            let stats =
+                crate::ingest::openapi_ingest::ingest_openapi_file(be.ingestor(), openapi_path)
+                    .await?;
+            println!("  ingested {}: {stats}", openapi_path.display());
+        }
+    }
+    Ok(())
+}
+
+/// The classification + dependency-face + AT-Protocol projection passes
+/// (driver passes 2/2b). Skipped entirely by the caller when the graph
+/// cache reused the persisted graph.
+async fn run_classification_passes(
+    be: &Backend,
+    domain_config: &codegraph_config::config::DomainConfig,
+    classifier_config: &codegraph_classifier::config::ClassifierConfig,
+    config_dir: Option<&Path>,
+    project_config: Option<&ProjectConfig>,
+) -> Result<()> {
+    // Auto-classify
+    let classifier_types: HashSet<String> = classifier_config
+        .primitive_wrappers
+        .keys()
+        .cloned()
+        .chain(classifier_config.array_wrappers.keys().cloned())
+        .chain(classifier_config.range_wrappers.keys().cloned())
+        .chain(
+            classifier_config
+                .composite_wrappers
+                .iter()
+                .map(|cw| cw.schema.clone()),
+        )
+        .collect();
+
+    let all_data = be
+        .querier()
+        .get_classification_data()
+        .await
+        .map_err(crate::error::Error::Graph)?;
+
+    let naming_rules = classifier_config.naming_rules.clone();
+    let auto_classifier = crate::classify::AutoClassifier::new(classifier_types, naming_rules);
+    let mut entity_names = HashSet::new();
+
+    let mut sorted_domain_names: Vec<&String> = domain_config.domains.keys().collect();
+    sorted_domain_names.sort();
+    for domain_name in &sorted_domain_names {
+        let domain_entry = &domain_config.domains[domain_name.as_str()];
+        let domain_schemas: Vec<_> = all_data
+            .iter()
+            .filter(|d| d.domain.as_deref() == Some(domain_name.as_str()))
+            .cloned()
+            .collect();
+        let result = auto_classifier.classify_domain(domain_name, domain_entry, &domain_schemas);
+        for score in &result.entities {
+            entity_names.insert(score.title.clone());
+        }
+    }
+
+    // Also include legacy entities[] for backward compat during migration
+    for domain_entry in domain_config.domains.values() {
+        for entity in &domain_entry.entities {
+            entity_names.insert(entity.clone());
+        }
+    }
+
+    println!("Auto-classified {} entities", entity_names.len());
+
+    // Pass 2: Update graph with entity flags
+    crate::ingest::async_ingest::reclassify_with_entities(
+        be.ingestor(),
+        be.querier(),
+        &entity_names,
+    )
+    .await?;
+
+    // Pass 2b: pinned dependency faces (issue #276). Foreign schemas
+    // load AFTER classification so their artifact classification is
+    // authoritative (never re-classified); local titles shadow foreign
+    // titles (local wins dedup) and every shadow is reported.
+    let dep_stats = crate::ingest::dependencies::load_dependency_artifacts(
+        be.ingestor(),
+        be.querier(),
+        domain_config,
+        config_dir,
+    )
+    .await?;
+    if dep_stats.artifacts > 0 {
+        println!("Pass 2b: dependency faces — {dep_stats}");
+        for title in &dep_stats.shadowed_titles {
+            eprintln!(
+                "WARN dependency title {title} is also defined locally — local definition wins dedup"
+            );
+        }
+    }
+
+    // AT Protocol projection pass — populates Lexicon/Collection/Namespace nodes
+    if let Some(pc) = project_config
+        && pc.integration.has_atproto
+    {
+        crate::ingest::atproto_projection::project_atproto_lexicons(
+            be.ingestor(),
+            be.querier(),
+            domain_config,
+            pc,
+        )
+        .await
+        .map_err(|e| crate::error::Error::Config(format!("AT Protocol projection failed: {e}")))?;
+    }
+    Ok(())
+}
+
+/// Persist the freshly ingested graph to the cache dir (issue #275): the
+/// engine checkpoint plus the node-count-stamped marker.
+fn persist_fresh_graph(be: &Backend, cache_dir: &Path, hash: &str) -> Result<()> {
+    let node_count = be
+        .engine()
+        .node_count()
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    be.engine()
+        .checkpoint()
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    crate::artifact::persist_cache_marker(cache_dir, hash, node_count)
+        .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+    println!(
+        "Graph cache: persisted fresh graph (inputs hash {})",
+        &hash[..16]
+    );
+    Ok(())
+}
+
+/// One ingest summary line after the ingest passes (issues #469/#473) —
+/// only when CODEGRAPH_PERF_COUNTERS is set.
+fn print_ingest_perf() {
     if perf_counters_enabled() {
         let perf = codegraph_grafeo::perf::perf_snapshot();
         eprintln!(
@@ -1002,13 +1232,38 @@ pub async fn run_with_graph_cache(
             perf.read_gql_calls
         );
     }
-    let perf_generate_start = codegraph_grafeo::perf::perf_snapshot();
+}
 
+/// Everything the generation call consumes that isn't the graph or the
+/// domain config: the template engine (override dirs + design-system pack),
+/// the extension-points + integration-manifest configs, the resolved
+/// ux-rules, and the IFML component mappings. Also stamps the two
+/// project-config fields the pipeline resolves here (`ux`, and the
+/// extension-points presence flag, issue #503).
+struct GenerationPrep {
+    tera: tera::Tera,
+    ext_config: Option<codegraph_ext_points::ExtensionPointsConfig>,
+    integration_manifests: Option<codegraph_ext_points::IntegrationManifestSet>,
+    ux_resolved: Option<codegraph_config::UxRules>,
+    ifml_component_mappings: Option<codegraph_config::IfmlComponentMappings>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_generation(
+    template_dir: &[PathBuf],
+    ifml_design_system: Option<&str>,
+    build_plan: Option<&crate::profile::BuildPlan>,
+    ifml_components: Option<&Path>,
+    extension_points_path: Option<&Path>,
+    integration_manifests: &[PathBuf],
+    ux_rules: Option<&Path>,
+    project_config: &mut Option<ProjectConfig>,
+) -> Result<GenerationPrep> {
     let override_dirs: Vec<&Path> = template_dir.iter().map(|p| p.as_path()).collect();
 
     // Precedence: project template dirs > design-system pack templates >
     // embedded built-ins.
-    let design_system = effective_design_system(ifml_design_system, build_plan.as_ref());
+    let design_system = effective_design_system(ifml_design_system, build_plan);
     let tera =
         crate::generate::template_engine::create_tera_for_run(design_system, &override_dirs)?;
 
@@ -1040,7 +1295,7 @@ pub async fn run_with_graph_cache(
     // keep the template context ux-blind (the historical contract) even
     // though issue #447 threads a minimal config for the dep pins —
     // generators still receive the rules via GeneratorOpts.
-    let ux_resolved = effective_ux_rules(ux_rules, build_plan.as_ref())?;
+    let ux_resolved = effective_ux_rules(ux_rules, build_plan)?;
     if build_plan.is_some()
         && let Some(pc) = project_config.as_mut()
     {
@@ -1053,10 +1308,29 @@ pub async fn run_with_graph_cache(
         pc.integration.has_extension_points = ext_config.is_some();
     }
 
+    let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
+
+    Ok(GenerationPrep {
+        tera,
+        ext_config,
+        integration_manifests,
+        ux_resolved,
+        ifml_component_mappings,
+    })
+}
+
+/// The pre-generation validation surface: ValidationPass (topology-aware,
+/// issue #663), the #450 function-binding checks, and the #625 media
+/// config validation. A broken config never half-generates.
+async fn run_validation_gates(
+    be: &Backend,
+    domain_config: &codegraph_config::config::DomainConfig,
+    build_plan: Option<&crate::profile::BuildPlan>,
+) -> Result<()> {
     run_validation(
         be.querier(),
-        &domain_config,
-        build_plan.as_ref().is_some_and(|plan| {
+        domain_config,
+        build_plan.is_some_and(|plan| {
             plan.deployment_topology == codegraph_generate::profile::DeploymentTopology::Workers
         }),
     )
@@ -1067,9 +1341,8 @@ pub async fn run_with_graph_cache(
     // the sqlite dialect. No-op when the `[functions]` table is absent.
     let binding_errors = crate::validate::check_function_bindings(
         be.querier(),
-        &domain_config,
+        domain_config,
         &build_plan
-            .as_ref()
             .map(|p| p.database_target().to_string())
             .unwrap_or_else(|| "postgres".to_string()),
     )
@@ -1081,7 +1354,7 @@ pub async fn run_with_graph_cache(
     // generated Rust types — a broken binding never half-generates.
     let binding_errors = codegraph_generate::ddd::functions_api::check_exposed_function_types(
         be.querier(),
-        &domain_config,
+        domain_config,
     )
     .await;
     if !binding_errors.is_empty() {
@@ -1092,53 +1365,18 @@ pub async fn run_with_graph_cache(
     // template, and graph resolution are hard config errors naming the
     // domain — a broken media config never half-generates. No-op when no
     // domain declares [media].
-    codegraph_generate::media::validate_media_configs(be.querier(), &domain_config).await?;
+    codegraph_generate::media::validate_media_configs(be.querier(), domain_config).await?;
+    Ok(())
+}
 
-    let ifml_component_mappings = load_ifml_component_mappings(ifml_components, design_system)?;
-
-    let report = crate::generate::run_generators_with_opts(crate::generate::GeneratorOpts {
-        db: be.querier(),
-        config: &domain_config,
-        output_dir: output,
-        tera: &tera,
-        ui_overrides: &ui_overrides,
-        ui_domains: &ui_domains,
-        // mox-only runs have no schemas dir; an empty path keeps the UI
-        // codelist generator's schema-dir lookups graceful (see `generate`).
-        schema_base_dir: schemas.unwrap_or_else(|| Path::new("")),
-        seed_config: load_seed_config(config_path).as_deref(),
-        domain_types_base: domain_types_base_path.as_deref(),
-        hooks_base: None,
-        ext_points: ext_config.as_ref(),
-        integration_manifests: integration_manifests.as_ref(),
-        build_plan: build_plan.as_ref(),
-        profile_name,
-        ifml_frameworks: ifml_framework.to_vec(),
-        ifml_components: ifml_component_mappings.as_ref(),
-        ux_rules: ux_resolved,
-        project_config: project_config.as_ref(),
-        emdash_plugins: None,
-        domain_config_dir: config_path.parent(),
-    })
-    .await?;
-
-    print!("{}", report.summary());
-    if report.has_errors() {
-        eprintln!("Generation completed with errors. Some entities were skipped.");
-    }
-
-    if perf_counters_enabled() {
-        let perf_end = codegraph_grafeo::perf::perf_snapshot();
-        eprintln!(
-            "[perf] validate+generate: gql_read=+{} (total {}) | cache hits/misses: {}",
-            perf_end.read_gql_calls - perf_generate_start.read_gql_calls,
-            perf_end.read_gql_calls,
-            format_cache_stats()
-        );
-    }
-
+/// Run the profile plan's post-generation scripts (issue #336 era): one
+/// `sh -c` per script, streamed, first failure aborts the run.
+async fn run_post_gen_scripts(
+    build_plan: Option<&crate::profile::BuildPlan>,
+    no_post_gen: bool,
+) -> Result<()> {
     // Run post-generation scripts from the profile plan.
-    if let Some(ref plan) = build_plan
+    if let Some(plan) = build_plan
         && !no_post_gen
         && !plan.post_gen_scripts.is_empty()
     {
@@ -1164,18 +1402,7 @@ pub async fn run_with_graph_cache(
             }
         }
     }
-
-    // Post-generate compile gate (issue #336): strictly opt-in via `--check`
-    // — flag off ⇒ no cargo invocation, no output change.
-    if check {
-        check_generated_output(output)?;
-    }
-
-    println!("Done.");
-    Ok(RunOutcome {
-        graph_cache_reused,
-        inputs_hash,
-    })
+    Ok(())
 }
 
 /// How many trailing `cargo check` output lines a gate failure carries.
