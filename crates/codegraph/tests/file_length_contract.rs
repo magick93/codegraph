@@ -12,7 +12,9 @@
 //! FAILS this test, so the list can only shrink. Integration-test
 //! directories (`crates/*/tests/`) are deliberately out of scope: the
 //! contract guards hand-maintained production source, and the largest
-//! offenders there are exercised by their own suites.
+//! offenders there are exercised by their own suites. So are nested
+//! fixture `src` trees (`crates/review/generated-candidate/**`,
+//! `crates/*/tests/fixtures/**`) — those are generator output.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -108,8 +110,10 @@ fn line_count(path: &Path) -> usize {
 fn src_files_stay_under_the_line_limit() {
     let root = workspace_root();
     let files = src_rust_files(&root);
+    // Baseline 497 when the contract landed (crate-level `src` trees
+    // only, see the module docs for the fixture-tree exclusions).
     assert!(
-        files.len() > 700,
+        files.len() > 400,
         "walked only {} source files under {}/crates — did the workspace root resolve wrong?",
         files.len(),
         root.display()
