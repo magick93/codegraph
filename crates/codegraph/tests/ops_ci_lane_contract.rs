@@ -164,3 +164,39 @@ fn the_justfile_ops_recipe_mirrors_the_gate_env() {
          is fail-closed exactly like CI)"
     );
 }
+
+fn normalize(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The real `testkit api` lane (issue #709): the ops harness's own api
+/// suite was validated by nothing in CI (`grep -rn testkit
+/// .github/workflows/` found nothing). ci.yml must build the committed
+/// review fixture app and run its testkit against the Supabase-image
+/// service (shape B — the stack is already up, the suite skips stack
+/// startup), and the justfile must mirror the steps (the
+/// `ci_local_contract` drift discipline).
+#[test]
+fn the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile() {
+    let ci = normalize(&read(".github/workflows/ci.yml"));
+    let api_step =
+        "cargo run -p testkit -- api --skip-build --allow-gen-rev-mismatch";
+    let build_step =
+        "cargo build --manifest-path crates/review/generated-candidate/Cargo.toml";
+    assert!(
+        ci.contains(api_step),
+        "ci.yml must run the ops harness's own api suite (`{api_step}`, \
+         issue #709: the harness's api suite was validated by nothing in CI)"
+    );
+    assert!(
+        ci.contains(build_step),
+        "ci.yml must build the review fixture app before the api suite \
+         (`--skip-build` skips generate+build; the binary must exist)"
+    );
+    let justfile = normalize(&read("justfile"));
+    assert!(
+        justfile.contains(api_step) && justfile.contains(build_step),
+        "the justfile must mirror the testkit api lane steps (issue #709: \
+         every non-runner-only CI step appears in the justfile)"
+    );
+}
