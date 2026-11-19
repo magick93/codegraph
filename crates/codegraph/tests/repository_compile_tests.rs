@@ -66,6 +66,58 @@ schema_dir = "library"
 postgres_schema = "library"
 "#;
 
+/// Mixed-shape fixture (issue #459): an unformatted wraps-String datatype
+/// (→ TEXT/String; the ingest WARN "declares no format — mapping to TEXT"
+/// is expected) living BESIDE a scalar `refers` edge (uuid FK column) and a
+/// `refers[]` junction, over the TRIO's recruiting package. The `id`
+/// feature stays a separate uuid-formatted field so the sole-identity
+/// override (#522) never touches the datatype field. The repository plane
+/// for this shape must `cargo check` — the main row→Response hydrator and
+/// the DTO type source agree on the FK's uuid even when TEXT-mapped
+/// datatype fields surround it.
+const MIXED_MOX: &str = r#"
+package staff
+
+/// A uuid-formatted surrogate identity.
+type UUID wraps String {
+    format "uuid"
+}
+
+/// A durable badge identifier (no format — maps to TEXT/String).
+type Identifier wraps String
+
+/// A duty roster.
+class DutyType {
+    UUID id
+    String label
+}
+
+/// A crew member.
+class CrewType {
+    UUID id
+    Identifier badge
+    refers DutyType [0..1] duty
+    refers DutyType[] duties
+}
+"#;
+
+/// Config for the mixed fixture's `staff` package (exact domain-key match),
+/// sharing the gate run with the TRIO's `recruiting` package.
+const MIXED_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.recruiting]
+label = "Recruiting"
+schema_dir = "recruiting"
+postgres_schema = "recruiting"
+
+[domains.staff]
+label = "Staff"
+schema_dir = "staff"
+postgres_schema = "staff"
+"#;
+
 /// Fixed materialization root (the #550 convention): survives a failed run
 /// so the generated tree can be inspected.
 fn tree_root(label: &str) -> PathBuf {
@@ -112,7 +164,7 @@ async fn generate_tree(
     label: &str,
     config_toml: Option<&str>,
     ingest_schemas: bool,
-    mox: Option<&Path>,
+    mox: Option<&[std::path::PathBuf]>,
     ddd_fixture: Option<&str>,
 ) -> (PathBuf, PathBuf) {
     let root = tree_root(label);
@@ -154,11 +206,11 @@ async fn generate_tree(
         .unwrap();
     }
 
-    if let Some(mox_path) = mox {
+    if let Some(mox_paths) = mox {
         codegraph::ingest::mox_ingest::ingest_mox_files(
             &engine,
             &engine,
-            &[mox_path.to_path_buf()],
+            mox_paths,
             &config,
             &config.defaults.type_suffix,
         )
@@ -442,7 +494,7 @@ async fn seaorm_repository_impl_with_junction_compiles() {
         "junction",
         None,
         true,
-        Some(&mox_root.join("model.mox")),
+        Some(&[mox_root.join("model.mox")]),
         None,
     )
     .await;
@@ -464,6 +516,52 @@ async fn seaorm_repository_impl_with_junction_compiles() {
     cargo_check(&ws);
 }
 
+/// Mixed-shape variant (issue #459): the TRIO's recruiting plane AND the
+/// unformatted-datatype `staff` plane (TEXT datatype field beside a scalar
+/// refers FK and a refers[] junction) materialize together and the
+/// assembled workspace `cargo check`s green — no E0308 in the mixed shape.
+#[tokio::test]
+async fn mixed_datatype_repository_plane_compiles() {
+    let trio_root = std::env::temp_dir().join("repository-pin-mixed-trio");
+    write_file(&trio_root.join("model.mox"), TRIO_MOX);
+    let mixed_root = std::env::temp_dir().join("repository-pin-mixed");
+    write_file(&mixed_root.join("model.mox"), MIXED_MOX);
+    let (app_dir, domain_types_dir) = generate_tree(
+        "mixed",
+        Some(MIXED_DOMAINS_TOML),
+        false,
+        Some(&[trio_root.join("model.mox"), mixed_root.join("model.mox")]),
+        None,
+    )
+    .await;
+
+    let impl_path = app_dir.join("src/domain/staff/crew/repository_impl.rs");
+    assert!(
+        impl_path.exists(),
+        "the mixed fixture must emit the crew repository impl:\n{:?}",
+        app_dir.join("src/domain")
+    );
+    let impl_src = fs::read_to_string(&impl_path).unwrap();
+    // The scalar refers FK hydrates as a uuid column …
+    assert!(
+        impl_src.contains("duty_id: row.duty_id,"),
+        "the scalar refers FK must keep the plain uuid assignment:\n{impl_src}"
+    );
+    // … while the junction branch stays present beside it.
+    assert!(
+        impl_src.contains("duties"),
+        "the junction branch must appear in the emitted impl:\n{impl_src}"
+    );
+
+    let ws = tree_root("mixed").join("ws");
+    let impls = assemble_workspace(&app_dir, &domain_types_dir, &ws);
+    assert!(
+        impls >= 4,
+        "both fixtures must emit their repository impls, got {impls}"
+    );
+    cargo_check(&ws);
+}
+
 /// Design-finders variant (issue #449): the `.ddd` design's finders emit
 /// trait methods + SeaORM impl blocks (EXISTS subqueries, `eq_arg`
 /// binding) — compile them too. Since DD9 (issue #659) the same fixture
@@ -476,7 +574,7 @@ async fn design_finder_emission_compiles() {
         "finders",
         Some(LIBRARY_DOMAINS_TOML),
         false,
-        Some(&fixture_dir.join("library.mox")),
+        Some(&[fixture_dir.join("library.mox")]),
         Some("library.ddd"),
     )
     .await;

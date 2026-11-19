@@ -4354,6 +4354,29 @@ surface:
   `x_id`) rather than silently aliased.
 - The optionality contract (plain feature = required, `T[0..1]` = Option)
   is documented in the init scaffold README's "Modeling contract" section.
+- **Type adaptation + unified entity-ref DTO type (#459)**: the MAIN
+  repository row→Response hydrator (`repository_emitter::dto::
+  emit_entity_to_dto_field`) adapts uuid↔String mismatches exactly like
+  the include-fetch emitter's `emit_field_assignments_typed` — Uuid
+  column → String DTO emits `.to_string()` (nullable:
+  `.map(|v| v.to_string())`), String column → non-String DTO keeps
+  `.parse()` (nullable: `.and_then(|v| v.parse().ok())`), matching types
+  keep the byte-identical plain assignment — and `ddd/dto_fields.rs`'s
+  `resolve_dto_fields` (split from `dto.rs`, #751 budget) resolves a
+  scalar entity-reference's DTO type to `uuid::Uuid` UNCONDITIONALLY
+  (matching `dot_field_type` and the child-DTO plane), so a stale graph
+  can never drift the FK's DTO type off the Uuid column. Both producers
+  already set `uuid::Uuid` — no reachable fixture output moved (mox↔JSON
+  equivalence + the ux/hurl canaries hold). Gates: the four
+  `entity_to_dto_{converts,parses}_*` hydrator KATs +
+  `entity_to_dto_keeps_plain_assignment_for_matching_types`
+  (`cargo test -p codegraph-generate --lib -- repository_emitter`) + the
+  `scalar_entity_ref_resolves_uuid_even_when_the_graph_says_string` pin
+  (`-- ddd::dto_fields`) + the `mixed_datatype_repository_plane_compiles`
+  compile gate (`cargo test -p codegraph --test repository_compile_tests`
+  — an unformatted `type Identifier wraps String` beside a scalar
+  `refers` FK and a `refers[]` junction over the TRIO's plane;
+  `cargo check` green).
 - Gates: `cargo test -p codegraph-generate --lib -- refers_junction` (10;
   the two serde-behavior KATs compile the emitted DTOs verbatim into a
   scratch crate — cargo-only, node-free/DB-free).
