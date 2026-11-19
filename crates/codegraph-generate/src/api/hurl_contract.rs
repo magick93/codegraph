@@ -232,32 +232,47 @@ fn state_aware_legs(
             }
             continue;
         }
-        // An injected-scope `when` guard (issue #663): the contract's fresh
-        // CREATE fixture cannot drive the related record past its machine's
-        // initial state, so an unverifiable guard pins the conservative
-        // denial leg (403) — with a comment naming the guard it pins. The
-        // machine state does NOT advance: a denial does not transition.
-        if let Some(guard) = &op.injected_guard
-            && !guard.satisfiable_on_fresh_fixture
-        {
-            legs.push(OpLeg {
-                op_name: op.op_name.clone(),
-                service: op.service.clone(),
-                snake: op.snake.clone(),
-                expect: 403,
-                seam: false,
-                seam_reason: String::new(),
-                wrong_state: false,
-                body: String::new(),
-                note: format!(
-                    "injected-scope `when` guard ({}): the fresh fixture cannot \
-                     drive the related record past its initial state, so the \
-                     contract pins the denial",
-                    guard.condition
-                ),
-                ..Default::default()
-            });
-            continue;
+        // An injected-scope `when` guard (issue #663): the fresh-fixture
+        // verdict decides the leg, never a guess — a mis-pinned status
+        // fails the suite as hard in either direction.
+        // - Denied: the fresh row PROVABLY fails the guard (an optional FK
+        //   is NULL — the create body omits nullable props — so the gate
+        //   denies before evaluating, or a machine-decided comparison
+        //   fails on the initial state) → pin 403, machine stream NOT
+        //   advanced.
+        // - Unverifiable: some comparison the planner cannot decide → the
+        //   leg is OMITTED with the documented header (the
+        //   `Body { may_refuse }` precedent).
+        // - Satisfied: the guard provably holds → the normal legs below.
+        if let Some(guard) = &op.injected_guard {
+            match guard.fresh_fixture {
+                crate::ddd::service_ops::FreshFixtureGuard::Satisfied => {}
+                crate::ddd::service_ops::FreshFixtureGuard::Denied => {
+                    legs.push(OpLeg {
+                        op_name: op.op_name.clone(),
+                        service: op.service.clone(),
+                        snake: op.snake.clone(),
+                        expect: 403,
+                        seam: false,
+                        seam_reason: String::new(),
+                        wrong_state: false,
+                        body: String::new(),
+                        note: format!(
+                            "injected-scope `when` guard ({}): the fresh fixture row \
+                             provably fails the guard (an optional related-reference FK \
+                             is left NULL by the create body, or a machine-decided \
+                             comparison fails on the related record's initial state), \
+                             so the contract pins the denial",
+                            guard.condition
+                        ),
+                        ..Default::default()
+                    });
+                    continue;
+                }
+                crate::ddd::service_ops::FreshFixtureGuard::Unverifiable => {
+                    continue;
+                }
+            }
         }
         // A bodied op that may answer a declared 4xx has NO deterministic
         // expected status (it depends on the fixture row the contract just

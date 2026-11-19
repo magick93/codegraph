@@ -861,16 +861,40 @@ own-record field".
   (emitted exactly where the owning machine is not a priori derivable)
   are the acceptance evidence; the lowering itself keeps the re-parse
   path and needs no paths for own-record resolution.
-- **hurl** (`api/hurl_contract.rs::state_aware_legs`): an injected guard
-  that is NOT provably satisfied by a fresh fixture — every injected
-  comparison must target the related machine's field with its initial
-  state (eq: required == initial; ne: required != initial) — pins the
-  CONSERVATIVE denial leg (HTTP 403), does not advance the machine
-  stream, and its comment names the guard it pins. A guard equal to the
-  initial state keeps the normal legs.
-- **Gates**: `cargo test -p codegraph --test service_ops_tests` (26:
-  the guard end-to-end + the refusal classes + the multi-machine pin),
-  `cargo test -p codegraph-generate --lib -- ddd::service_ops` (35),
+- **hurl** (`api/hurl_contract.rs::state_aware_legs`): the guard's
+  fresh-fixture verdict is a THREE-value model — never a guess, because a
+  mis-pinned leg fails the suite as hard in either direction (a guessed
+  403 that comes back 200 is a false positive, not a safe fallback):
+  - **Denied** → pin 403: PROVABLE failure on a fresh row — some scope's
+    FK is OPTIONAL (the create body omits nullable props, so the fresh
+    FK is NULL and the gate denies before evaluating), or a
+    machine-decided comparison fails on the related record's initial
+    state (`==` non-initial / `!=` initial) under plain AND from the
+    root. The machine stream does not advance.
+  - **Satisfied** → normal legs: every scope's FK is REQUIRED and every
+    comparison is machine-decided and passing on the fresh row
+    (`==` initial / `!=` non-initial).
+  - **Unverifiable** → the leg is OMITTED with the documented header (the
+    `Body { may_refuse }` precedent): any comparison the collector does
+    not fully understand — negation, `||` composition, non-machine
+    injected fields, non-name/date literals, field-to-field. The
+    collector only pushes comparisons under PLAIN AND from the root (a
+    failing one there decides the whole guard); `!(X)` and `X || Y`
+    subtrees are not pushed and mark the condition undecided.
+- **Workers topology**: an injected guard REFUSES under
+  `deployment_topology = "workers"` (named generation error) — the #590
+  action handlers run in per-domain worker crates whose `AppState`
+  carries only its OWN domain's query slots, so a cross-domain injected
+  load renders a field no worker crate has (E0599 at consumer build,
+  silently). Same-domain loads would compile, but the plane refuses both
+  until the worker async-AppState story exists (the #338 "guards stay
+  doc-only under workers" conservatism). `BodyRenderContext::
+  workers_topology` rides `from_project` so every `routes_for_entity`
+  caller sees it.
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (27:
+  the guard end-to-end + the refusal classes + the multi-machine pin +
+  the workers refusal), `cargo test -p codegraph-generate --lib --
+  ddd::service_ops` (38, incl. the fresh-fixture-verdict KATs),
   `--test ddd_ingest_tests`, `--test artifact_kit_tests` (the bump),
   `--test service_ops_injected_guard_gate -- --ignored` (its own test
   BINARY — the #551 pin: the emitted async handler must compile; the
@@ -880,9 +904,18 @@ own-record field".
 - **Deferred**: a class-typed service-parameter arm as the id source
   (today's source is the own-record FK only); `db/expr_sql.rs` policy-
   plane cross-table predicates (the #663 issue scopes them OUT — the
-  policy plane keeps `expr_sql`'s own-record subset); the IFML action
-  e2e planner's injected-guard legs (the hurl contract carries them;
-  the guard fixture is not an IFML fixture).
+  policy plane keeps `expr_sql`'s own-record subset); injected guards
+  under the workers topology (the refusal above is the recorded
+  deferral); the IFML action e2e planner's injected-guard legs (the hurl
+  contract carries them; the guard fixture is not an IFML fixture);
+  `DddConditionPath.field_type` rides the graph unread (the documented
+  lowering contract for consumers — the lowering re-parses the source);
+  a mixed entity (bodied op + injected-guarded op) can surface one
+  refusal twice through `check_service_op_bodies` +
+  `check_service_op_guards` (both run `routes_for_entity`; identical
+  text, different check names); the child-op-with-injected-path refusal
+  branch is defensive (the upstream compiler rejects injected paths in a
+  `children` block — no service means no injections to resolve).
 
 ### Aggregate child operations (issue #661)
 
@@ -1044,7 +1077,7 @@ the op's name and are demoted to a **no-binding fallback**:
   nightly gate exercises the primary path.
 - **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 at that bump (the artifact
   kit fixture was renamed `graph_document_v7.md` → `v8.md` then; it is
-  `graph_document_v10.md` now, and the `format_version_too_new` case pins a
+  `graph_document_v11.md` now, and the `format_version_too_new` case pins a
   LITERAL next version that every bump must move by hand — see "Format bump
   discipline + doctor signal" for the current constant) — the binding
   rides the serde-serialized `operations_json` blob, so a warm cache would
@@ -5087,7 +5120,7 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
   generation, **not** the compiler rev, so without the bump a warm
   `.graph-cache/` would silently serve the pre-upgrade graph. At that
   upgrade the artifact kit fixture was `graph_document_v5.md` (five bumps
-  older than the current `graph_document_v10.md` — see "Format bump
+  older than the current `graph_document_v11.md` — see "Format bump
   discipline + doctor signal" for the live constant).
 - **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
   byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use

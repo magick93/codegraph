@@ -1145,6 +1145,52 @@ async fn injected_guard_with_dotted_path_is_a_named_generation_error() {
 }
 
 #[tokio::test]
+async fn injected_guards_refuse_under_workers_topology() {
+    // Issue #663 review fix: under `deployment_topology = "workers"` the
+    // #590 action handlers run in per-domain worker crates whose AppState
+    // carries only its OWN domain's query slots — a cross-domain injected
+    // load renders a field no worker crate has (E0599 at consumer build,
+    // silently). The plane refuses (named error) instead of breaking the
+    // worker; the monolith keeps lowering (the sibling test).
+    let fixture = write_guard_fixture();
+    let engine = ingest_guard(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let body = codegraph_generate::ddd::service_ops::BodyRenderContext {
+        workers_topology: true,
+        ..Default::default()
+    };
+    let err = codegraph_generate::ddd::service_ops::routes_for_entity(
+        &engine,
+        &config,
+        "guardpay",
+        "PayRunType",
+        &body,
+    )
+    .await
+    .expect_err("the workers topology must refuse injected guards");
+    assert!(
+        err.contains("workers") && err.contains("injected-scope `when` guard"),
+        "the refusal must name the topology and the guard: {err}"
+    );
+    // The monolith (default context) lowers.
+    let routes = codegraph_generate::ddd::service_ops::routes_for_entity(
+        &engine,
+        &config,
+        "guardpay",
+        "PayRunType",
+        &Default::default(),
+    )
+    .await
+    .expect("the monolith lowers the injected guard");
+    assert!(
+        routes
+            .iter()
+            .any(|route| route.authorize_async && route.injected_guard.is_some()),
+        "the monolith leg must keep the async guard: {routes:?}"
+    );
+}
+
+#[tokio::test]
 async fn no_ddd_services_keeps_router_and_handler_free_of_actions() {
     // Schemas + mox only: no `.ddd` input ⇒ no service nodes ⇒ no action
     // routes (presence gating; the standing canaries pin full byte-identity).

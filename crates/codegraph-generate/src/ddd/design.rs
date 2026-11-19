@@ -227,15 +227,20 @@ impl DddDesignSurface {
 
     /// The design-mapped operation set for an entity addressed by its RUST
     /// type name — the title with the mox bridge's `Type` suffix stripped
-    /// and PascalCased (`Timecard` for `TimecardType`), the same
-    /// normalization [`crate::api::api_model::normalized_resource_name`]
-    /// applies. Handlers, routers, and the OpenAPI plane key entities by
-    /// the rust name while the surface is keyed by resolved TITLE; a miss
-    /// here would silently fall back to the config defaults and re-add
-    /// operations the design's repository does not implement (the crewbase
-    /// compile-gate class, hit again by the #663 guard fixture whose
-    /// Timecard design declares no `delete`). Exact titles still win; the
-    /// alias candidates resolve in sorted-title order (deterministic).
+    /// ONCE and PascalCased (`Timecard` for `TimecardType`), the same rule
+    /// the ingest applies to build `rust_type_name`
+    /// (`sanitize_rust_type_name(strip_suffix(title, suffix))`; the
+    /// sanitize step's leading-digit strip and 200-char cap apply to a
+    /// handful of exotic titles and are not replicated here — those titles
+    /// miss the alias and fall back exactly as before). Handlers, routers,
+    /// and the OpenAPI plane key entities by the rust name while the
+    /// surface is keyed by resolved TITLE; a miss here would silently fall
+    /// back to the config defaults and re-add operations the design's
+    /// repository does not implement (the crewbase compile-gate class, hit
+    /// again by the #663 guard fixture whose Timecard design declares no
+    /// `delete`). Exact titles still win; the alias candidates resolve in
+    /// sorted-title order (deterministic — a genuine two-titles-one-rust-
+    /// name collision picks the alphabetically first, documented).
     pub fn operations_for_rust_name(&self, rust_name: &str) -> Option<Vec<String>> {
         if let Some(ops) = self.operations_for(rust_name) {
             return Some(ops);
@@ -244,7 +249,12 @@ impl DddDesignSurface {
             .designs
             .keys()
             .filter(|title| {
-                codegraph_naming::to_pascal_case(title.trim_end_matches("Type")) == rust_name
+                // `strip_suffix` strips ONCE — `trim_end_matches` (the
+                // resource-name convention) would over-strip repeated
+                // suffixes (`TaskTypeType` → `Task`, whose rust name is
+                // `TaskType`).
+                let stripped = title.strip_suffix("Type").unwrap_or(title);
+                codegraph_naming::to_pascal_case(stripped) == rust_name
             })
             .collect();
         candidates.sort();

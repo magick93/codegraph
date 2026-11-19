@@ -350,19 +350,43 @@ pub struct ServiceOpRoute {
     pub injected_guard: Option<InjectedGuard>,
 }
 
-/// The compact injected-scope guard facts a route carries for the hurl
-/// contract's planner (issue #663).
+/// The compact injected-scope guard facts the hurl contract's planner
+/// needs (issue #663) — a THREE-VERDICT model, never a guess, because a
+/// mis-pinned contract leg fails the suite as hard in EITHER direction
+/// (a guessed 403 that comes back 200 is a false positive, not a safe
+/// fallback):
+///
+/// - [`FreshFixtureGuard::Satisfied`] — every scope's FK is REQUIRED and
+///   every injected comparison targets its machine field with a value the
+///   machine's initial state decides, and every decided comparison PASSES
+///   on a fresh row → the guard provably holds; the contract keeps the
+///   normal legs.
+/// - [`FreshFixtureGuard::Denied`] — provable denial: some scope's FK is
+///   OPTIONAL (the create body omits nullable props, so the fresh row's FK
+///   is NULL and the rendered gate denies BEFORE evaluating), or some
+///   machine-decided comparison FAILS on the fresh row → pin 403.
+/// - [`FreshFixtureGuard::Unverifiable`] — any comparison the collector
+///   does not fully understand (negation, `||` composition, non-machine
+///   fields, non-name/date literals, field-to-field) or an unparseable
+///   condition → the contract OMITS the leg with the documented header
+///   (the `Body { may_refuse }` precedent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshFixtureGuard {
+    Satisfied,
+    Denied,
+    Unverifiable,
+}
+
+/// The compact guard facts a route carries for the hurl contract's
+/// planner (issue #663).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InjectedGuard {
     /// The guard's condition source, verbatim — the comment the emitted
     /// contract pins.
     pub condition: String,
-    /// Whether a FRESH fixture row provably satisfies the guard: every
-    /// injected comparison targets the related record's machine field
-    /// with a value equal to that machine's initial state. `false` ⇒ the
-    /// contract cannot verify the guard at plan time and pins the
-    /// conservative denial leg (403) with a comment saying why.
-    pub satisfiable_on_fresh_fixture: bool,
+    /// The fresh-fixture verdict (see [`FreshFixtureGuard`]).
+    pub fresh_fixture: FreshFixtureGuard,
 }
 
 // ── Field knowledge ────────────────────────────────────────────────────
@@ -868,10 +892,10 @@ fn comparison(
         (Some((lhs_root, a)), Some((rhs_root, b))) => {
             if lhs_root != rhs_root {
                 return Err(format!(
-                    "capability `{capability}`: comparison between `{}` \
-                     (own record) and `{}` (an injected record) cannot be \
-                     lowered faithfully — compare each side against a \
-                     literal instead",
+                    "capability `{capability}`: comparison between `{}` and `{}` across \
+                     different records (an own-record field vs an injected field, or two \
+                     injected scopes) cannot be lowered faithfully — compare each side \
+                     against a literal instead",
                     a.rust_name, b.rust_name
                 ));
             }
@@ -1516,6 +1540,15 @@ pub struct BodyRenderContext {
     pub domain_types_crate: String,
     /// The Update-DTO wire-key casing.
     pub dto_casing: DtoKeyCasing,
+    /// The deployment topology is `workers` (issue #663): an injected-scope
+    /// `when` guard refuses. The #590 action handlers run in per-domain
+    /// worker crates whose `AppState` carries only its OWN domain's query
+    /// slots, so a cross-domain injected load (`state.{other_domain}_…`)
+    /// renders a field no worker crate has — E0599 at consumer build time,
+    /// silently. Same-domain loads would compile, but the plane refuses
+    /// both until the worker media/async story exists (#338's "guards stay
+    /// doc-only under workers" conservatism). Default `false`.
+    pub workers_topology: bool,
 }
 
 impl Default for BodyRenderContext {
@@ -1526,6 +1559,7 @@ impl Default for BodyRenderContext {
         Self {
             domain_types_crate: "domain_types".to_string(),
             dto_casing: DtoKeyCasing::default(),
+            workers_topology: false,
         }
     }
 }
@@ -1537,6 +1571,7 @@ impl BodyRenderContext {
         Self {
             domain_types_crate: project.identity.domain_types_crate.clone(),
             dto_casing: project.codegen.dto_key_casing,
+            workers_topology: project.is_workers_topology(),
         }
     }
 }
@@ -1699,6 +1734,29 @@ pub async fn routes_for_entity(
                 let injected =
                     resolve_injected_scopes(db, config, entity_title, op, &props, &design_surface)
                         .await?;
+                // Issue #663, workers topology: the #590 action handlers
+                // run in per-domain worker crates whose AppState carries
+                // only its own domain's query slots — a cross-domain
+                // injected load renders a field no worker crate has
+                // (E0599 at consumer build, silently). The plane refuses
+                // both scopes until the worker async-AppState story
+                // exists (the #338 "guards stay doc-only under workers"
+                // conservatism).
+                if body.workers_topology && !injected.is_empty() {
+                    return Err(format!(
+                        "service op `{}` carries an injected-scope `when` guard, but the \
+                         deployment topology is `workers`: the action handlers run in \
+                         per-domain worker crates whose AppState carries only its own \
+                         domain's query slots, so the injected load cannot address the \
+                         `{}` aggregate — use the monolith topology for injected guards \
+                         (a recorded #663 deferral, not a silent break)",
+                        op.name,
+                        injected
+                            .first()
+                            .map(|scope| scope.root.as_str())
+                            .unwrap_or("injected")
+                    ));
+                }
                 let injected_guard = injected_guard_facts(op, &injected);
                 let authorize_fn = render_authorize_fn_with_injected(
                     &snake,
@@ -2079,13 +2137,13 @@ async fn resolve_injected_scopes(
 }
 
 /// The compact guard facts the hurl contract's planner needs (issue #663):
-/// whether a FRESH fixture row provably satisfies the guard. Every
-/// injected comparison must target the injected class's MACHINE field with
-/// a literal the machine's initial state decides (eq: the required state
-/// IS the initial; ne: the required state is NOT the initial). A
-/// comparison on any other injected field has a fixture-dependent answer —
-/// unverifiable, so the planner pins the conservative denial. `None` when
-/// the op carries no injected scopes.
+/// the THREE-verdict model — [`FreshFixtureGuard::Satisfied`] (every
+/// comparison machine-decided and passing on a fresh row), [`FreshFixtureGuard::Denied`]
+/// (an optional FK — the fresh row's FK is NULL and the gate denies before
+/// evaluating — or a machine-decided comparison failing on the fresh row),
+/// or [`FreshFixtureGuard::Unverifiable`] (any comparison the collector
+/// does not fully understand). `None` when the op carries no injected
+/// scopes.
 fn injected_guard_facts(
     op: &codegraph_core::types::DddServiceOperation,
     scopes: &[InjectedScope],
@@ -2094,48 +2152,81 @@ fn injected_guard_facts(
         return None;
     }
     let source = op.condition.as_deref()?;
+    let verdict = |fresh: FreshFixtureGuard| {
+        Some(InjectedGuard {
+            condition: source.to_string(),
+            fresh_fixture: fresh,
+        })
+    };
+    // An optional FK denies BEFORE any comparison is evaluated: the create
+    // body omits nullable props, so the fresh row's FK is NULL and the
+    // rendered `let Some(..) else` fires. Provable 403 regardless of the
+    // condition's content.
+    if scopes.iter().any(|scope| scope.fk_optional) {
+        return verdict(FreshFixtureGuard::Denied);
+    }
     let parsed = phero_expr::parse(source);
     let Some(ast) = parsed.ast.filter(|_| parsed.errors.is_empty()) else {
-        return Some(InjectedGuard {
-            condition: source.to_string(),
-            satisfiable_on_fresh_fixture: false,
-        });
+        return verdict(FreshFixtureGuard::Unverifiable);
     };
     let mut comparisons = Vec::new();
-    collect_injected_comparisons(&ast, scopes, &mut comparisons);
-    let satisfiable = !comparisons.is_empty()
-        && comparisons.iter().all(|(scope_index, field, op, literal)| {
-            let Some(machine) = scopes[*scope_index].machine.as_ref() else {
-                // No machine on the injected class: the fresh value of any
-                // field is fixture-seeded, not derivable — unverifiable.
-                return false;
-            };
-            let field_names = [machine.field.as_str(), &to_snake_case(&machine.field)];
-            if !field_names.contains(&field.as_str()) {
-                return false;
-            }
-            match op {
-                BinOp::Eq => literal == &machine.initial,
-                BinOp::Ne => literal != &machine.initial,
-                _ => false,
-            }
+    // Only comparisons under PLAIN AND from the root are collected (a
+    // failing one there decides the whole guard); negation, `||`
+    // composition and arithmetic set `fully_understood = false` and their
+    // subtrees are not pushed — uncollected ⇒ Unverifiable (omit, never
+    // guess).
+    let mut fully_understood = true;
+    collect_injected_comparisons(&ast, scopes, &mut comparisons, &mut fully_understood, true);
+    let mut machine_decided: Vec<bool> = Vec::with_capacity(comparisons.len());
+    for (scope_index, field, op, literal) in &comparisons {
+        let Some(machine) = scopes[*scope_index].machine.as_ref() else {
+            // No machine on the injected class: the fresh value of any
+            // field is fixture-seeded, not derivable.
+            machine_decided.push(false);
+            continue;
+        };
+        let field_names = [machine.field.as_str(), &to_snake_case(&machine.field)];
+        if !field_names.contains(&field.as_str()) {
+            machine_decided.push(false);
+            continue;
+        }
+        machine_decided.push(match op {
+            BinOp::Eq => literal == &machine.initial,
+            BinOp::Ne => literal != &machine.initial,
+            _ => false,
         });
-    Some(InjectedGuard {
-        condition: source.to_string(),
-        satisfiable_on_fresh_fixture: satisfiable,
-    })
+    }
+    if let Some(false_value) = machine_decided.iter().find(|passes| !**passes) {
+        let _ = false_value;
+        // A machine-decided comparison FAILS on the fresh row: under AND
+        // composition (the only composition collected) the guard is false.
+        return verdict(FreshFixtureGuard::Denied);
+    }
+    if !fully_understood || comparisons.is_empty() {
+        return verdict(FreshFixtureGuard::Unverifiable);
+    }
+    verdict(FreshFixtureGuard::Satisfied)
 }
 
 /// The `(scope index, field, operator, literal)` triples of every injected
-/// eq/ne comparison in the condition — the planner's verification inputs.
+/// eq/ne comparison the planner can decide. ONLY comparisons under PLAIN
+/// AND from the root are pushed (a failing one there decides the whole
+/// guard); anything else — negation, `||` composition, non-machine
+/// comparisons, non-name literals, field-to-field — sets
+/// `fully_understood = false` and is not pushed: the planner's verdict
+/// becomes Unverifiable and the contract OMITS the leg — a guess in
+/// either direction fails the suite just as hard.
+#[allow(clippy::too_many_arguments)]
 fn collect_injected_comparisons(
     expr: &Expr,
     scopes: &[InjectedScope],
     out: &mut Vec<(usize, String, BinOp, String)>,
+    fully_understood: &mut bool,
+    plain_and: bool,
 ) {
     match &expr.kind {
         ExprKind::Binary { op, lhs, rhs } => {
-            if matches!(*op, BinOp::Eq | BinOp::Ne) {
+            if plain_and && matches!(*op, BinOp::Eq | BinOp::Ne) {
                 let injected_side = |e: &Expr| -> Option<(usize, String)> {
                     let ExprKind::FeatureAccess {
                         receiver,
@@ -2151,6 +2242,9 @@ fn collect_injected_comparisons(
                     let index = scopes.iter().position(|scope| &scope.root == root)?;
                     Some((index, name.value.clone()))
                 };
+                // A decidable literal is a bare name (an enum member), a
+                // string, or an integer — everything else (floats, bools,
+                // dates, arithmetic) leaves the fresh value undecidable.
                 let literal_side = |e: &Expr| -> Option<String> {
                     match &e.kind {
                         ExprKind::Name(name) => Some(name.clone()),
@@ -2177,10 +2271,27 @@ fn collect_injected_comparisons(
                     return;
                 }
             }
-            collect_injected_comparisons(lhs, scopes, out);
-            collect_injected_comparisons(rhs, scopes, out);
+            match op {
+                // `||`: the guard may pass via the own-record side — the
+                // collected set no longer decides the whole condition, and
+                // nothing under it is plain-AND from the root.
+                BinOp::Or => *fully_understood = false,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => *fully_understood = false,
+                _ => {}
+            }
+            let child_and = plain_and && matches!(*op, BinOp::And);
+            collect_injected_comparisons(lhs, scopes, out, fully_understood, child_and);
+            collect_injected_comparisons(rhs, scopes, out, fully_understood, child_and);
         }
-        ExprKind::Unary { expr, .. } => collect_injected_comparisons(expr, scopes, out),
+        ExprKind::Unary { op, expr } => {
+            // Negation flips polarity: an un-negated collect would decide
+            // the comparison upside down, and nothing under it is
+            // plain-AND from the root.
+            if matches!(op, UnOp::Not) {
+                *fully_understood = false;
+            }
+            collect_injected_comparisons(expr, scopes, out, fully_understood, false);
+        }
         _ => {}
     }
 }
@@ -5045,5 +5156,178 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             Some("PayRunType"),
             "param-typed signature"
         );
+    }
+
+    // ── Injected-scope guard facts (issue #663) ────────────────────────
+
+    fn injected_scope(fk_optional: bool) -> InjectedScope {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "timecardStatus".to_string(),
+            FieldInfo {
+                rust_name: "timecard_status".to_string(),
+                kind: FieldKind::Codelist,
+                optional: false,
+            },
+        );
+        fields.insert(
+            "hours".to_string(),
+            FieldInfo {
+                rust_name: "hours".to_string(),
+                kind: FieldKind::Integer,
+                optional: false,
+            },
+        );
+        InjectedScope {
+            root: "TimecardRepository".to_string(),
+            local: "timecard_repository".to_string(),
+            slot: "guardpay_timecard".to_string(),
+            auditable: false,
+            fk_field: "timecard_id".to_string(),
+            fk_optional,
+            fields,
+            machine: Some(InjectedMachine {
+                field: "timecardStatus".to_string(),
+                states: vec![
+                    "Pending".to_string(),
+                    "Approved".to_string(),
+                    "Rejected".to_string(),
+                ],
+                initial: "Pending".to_string(),
+            }),
+        }
+    }
+
+    fn guard_op(condition: &str) -> codegraph_core::types::DddServiceOperation {
+        codegraph_core::types::DddServiceOperation {
+            name: "submit".to_string(),
+            return_type: None,
+            return_multiplicity: None,
+            params: Vec::new(),
+            delegation_target: None,
+            delegation_operation: None,
+            capabilities: Vec::new(),
+            is_protected: false,
+            condition: Some(condition.to_string()),
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
+            transition: None,
+            child_scope: None,
+            condition_paths: Vec::new(),
+            ordinal: 0,
+        }
+    }
+
+    #[test]
+    fn fresh_fixture_verdicts_are_provable_never_guessed() {
+        let scopes = vec![injected_scope(false)];
+        // eq with the machine's initial state: the fresh row PASSES → the
+        // contract keeps the normal legs.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus == Pending"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Satisfied);
+        // ne with a NON-initial state: `Pending != Approved` holds on the
+        // fresh row → Satisfied.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus != Approved"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Satisfied);
+        // eq with a non-initial state: the fresh row (initial `Pending`)
+        // FAILS the comparison → provable denial, pin 403.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus == Approved"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Denied);
+        // An OPTIONAL FK denies BEFORE any comparison is evaluated (the
+        // create body omits nullable props → the fresh FK is NULL): 403
+        // regardless of the comparison's content — including an
+        // eq-initial comparison that would otherwise read `Satisfied`
+        // (the exact reviewer case: planner 200 vs handler 403).
+        let optional = vec![injected_scope(true)];
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus == Pending"),
+            &optional,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Denied);
+    }
+
+    #[test]
+    fn undecided_comparisons_omit_the_leg_never_guess() {
+        let scopes = vec![injected_scope(false)];
+        // A NON-machine injected field (`hours > 8`): the fresh value
+        // (fixture-seeded 42) is derivable but the planner does not model
+        // it — Unverifiable, and the contract OMITS the leg (a guessed
+        // 403 would come back 200; a guessed 200 would come back 403 —
+        // a wrong pin fails the suite in either direction).
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.hours > 8"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // Negation flips polarity: an un-negated collect would decide the
+        // comparison upside down — Unverifiable.
+        let facts = injected_guard_facts(
+            &guard_op("!(TimecardRepository.timecardStatus == Approved)"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // `||` composition: the guard may pass via the own-record side —
+        // the collected set no longer decides the whole condition.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Posted || TimecardRepository.timecardStatus == Approved"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // No injected scopes at all → no guard facts.
+        assert!(injected_guard_facts(&guard_op("payRunStatus == Draft"), &[]).is_none());
+    }
+
+    #[test]
+    fn cross_scope_field_comparisons_refuse() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "status".to_string(),
+            FieldInfo {
+                rust_name: "status".to_string(),
+                kind: FieldKind::String,
+                optional: false,
+            },
+        );
+        let mut own = scopes_for_test(&fields);
+        let scopes = vec![injected_scope(false)];
+        let _ = &mut own;
+        // An own-record field vs an injected field: no honest root for
+        // both sides — named refusal (the message covers two injected
+        // scopes too).
+        let err = lower_when_scoped(
+            "status == TimecardRepository.timecardStatus",
+            "SubmitPayRun",
+            "PayRunType",
+            &fields,
+            &[],
+            &scopes,
+        )
+        .unwrap_err();
+        assert!(err.contains("across different records"), "{err}");
+    }
+
+    fn scopes_for_test(
+        fields: &HashMap<String, FieldInfo>,
+    ) -> (&str, &HashMap<String, FieldInfo>, &[InjectedScope]) {
+        ("PayRunType", fields, &[])
     }
 }
