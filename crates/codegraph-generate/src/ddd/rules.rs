@@ -36,6 +36,14 @@
 //! (`{Entity}Response`) so the call sites compile. list/search
 //! row-filtering remains a documented follow-up.
 //!
+//! Design invariants (DD5, issue #666 slice 2) share the plane: one typed
+//! predicate fn per authored `invariant <expr>;` (`{class_snake}_invariant_
+//! {index}`, declaration order — the index IS the `invariantIndex` the
+//! enforcement plane reports), lowered by [`crate::ddd::invariants`]
+//! through the same own-record subset the #590 `when` guards use. The
+//! generator runs when EITHER surface has content; a domain with neither
+//! emits nothing (byte-identical flag-off).
+//!
 //! A separate generator from `functions` (issue #263) on purpose: profile
 //! independence — consumers can adopt rules without the func machinery —
 //! and a different emission shape (single-expression functions vs
@@ -309,7 +317,7 @@ pub async fn eligibility_guards_for(
 /// `{rust_type_name}Response` from `crate::domain/{domain}/{table}/
 /// dto_response`. `None` when the title does not resolve in the domain —
 /// emission keeps the bare sigil title (the pre-#338 shape).
-async fn record_type_for(
+pub(crate) async fn record_type_for(
     db: &dyn GraphQuerier,
     domain: &str,
     title: &str,
@@ -326,6 +334,17 @@ async fn record_type_for(
         schema.pg_table_name
     );
     Ok(Some((record_type, import)))
+}
+
+/// One entity's invariant emission surface (DD5, issue #666): the ever-
+/// complete plans in declaration order plus the resolved record type/import
+/// the predicates take (`{Entity}Response` out of the entity's
+/// `dto_response` module — the same resolution the #338 eligibility guards
+/// use).
+struct InvariantSurface {
+    title: String,
+    record: Option<(String, String)>,
+    plans: Vec<crate::ddd::invariants::InvariantPlan>,
 }
 
 pub struct RulesGenerator {
@@ -350,7 +369,7 @@ impl DomainGenerator for RulesGenerator {
         &self,
         db: &dyn GraphQuerier,
         domain: &str,
-        _entity_titles: &[String],
+        entity_titles: &[String],
         config: &DomainConfig,
         _tera: &tera::Tera,
         project: &ProjectConfig,
@@ -363,7 +382,25 @@ impl DomainGenerator for RulesGenerator {
             .into_iter()
             .filter(|r| r.domain.as_deref() == Some(domain))
             .collect();
-        if rules.is_empty() {
+
+        // Design invariants (DD5, issue #666 slice 2): one typed predicate
+        // fn per authored invariant, in the entity's generation order. The
+        // plans are only ever complete — `invariants_for` carries refusals
+        // out and the ValidationPass (`check_invariants`) hard-errors on
+        // them BEFORE any tree is written.
+        let mut invariant_surfaces: Vec<InvariantSurface> = Vec::new();
+        for title in entity_titles {
+            let plans = crate::ddd::invariants::invariants_for(db, config, domain, title).await;
+            if plans.is_empty() {
+                continue;
+            }
+            invariant_surfaces.push(InvariantSurface {
+                title: title.clone(),
+                record: record_type_for(db, domain, title).await?,
+                plans,
+            });
+        }
+        if rules.is_empty() && invariant_surfaces.is_empty() {
             return Ok(Vec::new());
         }
 
@@ -388,7 +425,7 @@ impl DomainGenerator for RulesGenerator {
             surfaces.push(build_surface(db, node, &knowledge, &record_types, domain, config).await);
         }
 
-        let content = emit_domain_rules(domain, &surfaces, project);
+        let content = emit_domain_rules(domain, &surfaces, &invariant_surfaces, project);
         Ok(vec![GeneratedFile {
             path: self
                 .output_dir
@@ -475,8 +512,14 @@ async fn build_surface(
 }
 
 /// Emit the complete `rules.rs` for one domain (deterministic by
-/// construction — surfaces arrive name-ordered).
-fn emit_domain_rules(domain: &str, rules: &[RuleSurface], project: &ProjectConfig) -> String {
+/// construction — surfaces arrive name-ordered, invariants generation
+/// order).
+fn emit_domain_rules(
+    domain: &str,
+    rules: &[RuleSurface],
+    invariants: &[InvariantSurface],
+    project: &ProjectConfig,
+) -> String {
     let mut code = CodeWriter::new();
     wln!(
         code,
@@ -505,11 +548,18 @@ fn emit_domain_rules(domain: &str, rules: &[RuleSurface], project: &ProjectConfi
     wln!(code, "#![allow(dead_code)]");
 
     // Record-type imports (issue #338): every emitted function takes the
-    // entity's real `{Entity}Response` from its dto_response module.
+    // entity's real `{Entity}Response` from its dto_response module. The
+    // invariant predicates (issue #666) take the same shape, so both
+    // surfaces share the import block.
     let mut imports: Vec<&String> = rules
         .iter()
         .filter_map(|r| r.record.as_ref().map(|(_, import)| import))
         .collect();
+    imports.extend(
+        invariants
+            .iter()
+            .filter_map(|s| s.record.as_ref().map(|(_, import)| import)),
+    );
     imports.sort();
     imports.dedup();
     for import in imports {
@@ -546,7 +596,64 @@ fn emit_domain_rules(domain: &str, rules: &[RuleSurface], project: &ProjectConfi
         }
     }
 
+    // Design invariants (DD5, issue #666 slice 2) — a GATED section: no
+    // invariant ⇒ no section, byte-identical output.
+    if !invariants.is_empty() {
+        wln!(code);
+        wln!(
+            code,
+            "// ── Design invariants (DD5, issue #666) ───────────"
+        );
+        for surface in invariants {
+            emit_invariants(&mut code, surface);
+        }
+    }
+
     code.into_string()
+}
+
+/// Emit one entity's invariant predicate functions (DD5, issue #666
+/// slice 2). Each fn takes the entity's real record type (issue #338
+/// shape) and is `pub` so slice 4's handler call sites can invoke it.
+fn emit_invariants(code: &mut CodeWriter, surface: &InvariantSurface) {
+    let record = surface
+        .record
+        .as_ref()
+        .map(|(record, _)| record.clone())
+        .unwrap_or_else(|| surface.title.clone());
+    for plan in &surface.plans {
+        wln!(code);
+        wln!(
+            code,
+            "/// Invariant {index} of `{title}` (issue #666).",
+            index = plan.index,
+            title = surface.title,
+        );
+        wln!(code, "///");
+        wln!(
+            code,
+            "/// Declaration order is the identity: this index is the"
+        );
+        wln!(
+            code,
+            "/// `invariantIndex` the enforcement plane reports (the 409"
+        );
+        wln!(code, "/// detail).");
+        wln!(code, "///");
+        wln!(
+            code,
+            "/// Authored expression: `{expression}`",
+            expression = plan.expression,
+        );
+        wln!(
+            code,
+            "pub fn {fn_name}(input: &{record}) -> bool {{",
+            fn_name = plan.fn_name,
+            record = record,
+        );
+        wln!(code, "    {}", plan.predicate_code);
+        wln!(code, "}}");
+    }
 }
 
 /// Emit one rule function (or its TODO marker block).

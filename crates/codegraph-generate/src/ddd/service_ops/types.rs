@@ -376,7 +376,7 @@ fn numeric_class(rust_field_type: &str) -> (bool, bool) {
     (numeric, integer)
 }
 
-pub(super) fn fields_for(props: &[PropertyNode]) -> HashMap<String, FieldInfo> {
+pub(crate) fn fields_for(props: &[PropertyNode]) -> HashMap<String, FieldInfo> {
     let mut fields = HashMap::new();
     for p in props {
         let info = FieldInfo {

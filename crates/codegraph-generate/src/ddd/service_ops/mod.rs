@@ -99,8 +99,8 @@ pub use validation::{
 pub use when_lower::InjectedMachine;
 
 pub(crate) use transitions::dto_wire_key;
-pub(crate) use types::{FieldInfo, FieldKind};
-pub(crate) use when_lower::rust_string_literal;
+pub(crate) use types::{FieldInfo, FieldKind, fields_for};
+pub(crate) use when_lower::{lower_invariant, rust_string_literal};
 
 #[cfg(test)]
 pub(crate) use policy::{PolicySurface, render_authorize_fn};

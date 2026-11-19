@@ -8,6 +8,7 @@ pub mod event;
 pub mod functions;
 pub mod functions_api;
 pub mod functions_sql;
+pub mod invariants;
 pub mod mox_ops;
 pub mod query;
 pub mod regulatory_report;

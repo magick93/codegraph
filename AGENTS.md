@@ -644,6 +644,46 @@ grafeo_query_tests` (deep Grafeo round-trip over both blobs) +
 `--test artifact_kit_tests --test artifact_tests`. Byte identity: no `.ddd`
 input change ⇒ zero generated-output movement (the canaries hold).
 
+**Slice 2 — invariants lower to typed predicate fns (landed)**:
+`ddd/invariants.rs` re-parses each verbatim expression with
+`phero_expr::parse` and lowers it through the own-record subset the #590
+`when` guards use — over `input`, not `response` (`lower_invariant` lives in
+`service_ops/when_lower.rs`, whose lowering is now parameterized by the
+record identifier and a `LowerWording` context {subject, noun, refusal
+tails} so the when-wording stays byte-identical — the service_ops pins
+prove it). One
+`pub fn {class_snake}_invariant_{index}(input: &{Entity}Response) -> bool`
+per invariant, emitted into the domain's `rules.rs` plane beside the #338
+eligibility guards (the `RulesGenerator` now runs when rules OR invariants
+exist; the section is gated — no invariants ⇒ byte-identical, and the
+record-type/import resolution is the guards' own `record_type_for`). The
+`index` is the declaration-order position (0-based) and IS the
+`invariantIndex` the enforcement plane reports (slice 4's 409 detail).
+Refusals (the `body_refusals` posture): arithmetic, navigation beyond
+own-record scalars (a cross-aggregate read), collection algebra and list
+literals, lambdas, `let`/`if`, operation calls, `?.`, ordering on
+codelist/date/bool fields, unknown fields, unparseable source, and
+non-boolean roots (the upstream phero-driver bool typing re-proven on the
+re-parsed AST — construct refusals fire first, the shape proof second).
+`invariants_for(db, config, domain, title)` returns only ever-complete
+plans; `invariant_refusals(...)` (per title) and
+`all_invariant_refusals(db, config)` (the walker — it also names designs
+whose class resolved to no schema) feed `ValidationPass::check_invariants`
+(check `invariant`, ERROR severity) so nothing is half-written. Each
+refusal names the domain, the class, the invariant index, and the
+construct, and states the invariant is not emitted. A dto design carrying
+invariants (a stale graph — upstream refuses them) and a value-object
+projection with no record plane (`{Entity}Response` unresolvable) are
+named refusals too. Gates: the `ddd::invariants` unit KATs (13: typed
+lowerings, machine-state binding, Option idioms, every refusal class,
+MockEngine plan/refusal resolvers) + `cargo test -p codegraph --test
+ddd_invariant_tests` (3: emission into `rules.rs`, the no-invariant twin,
+the validation + fail-closed-emission refusal over the production mox+ddd
+front doors). Deferred: handler call sites + hurl legs land in slice 4;
+emission rides the `rules` generator's plan membership (a plan without
+`rules` carries no invariant predicates — slice 4's call sites must gate
+on the same membership).
+
 ## Service ops lower to API surface (issue #590)
 
 `.ddd` service operations are the application surface, not documentation:

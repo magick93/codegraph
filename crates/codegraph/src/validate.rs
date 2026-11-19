@@ -37,7 +37,7 @@ impl ValidationPass {
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -53,6 +53,7 @@ impl ValidationPass {
             Self::check_service_op_bodies(db, config),
             Self::check_transition_bindings(db, config),
             Self::check_service_op_guards(db, config, workers_topology),
+            Self::check_invariants(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -70,6 +71,7 @@ impl ValidationPass {
         issues.extend(r13);
         issues.extend(r14);
         issues.extend(r15);
+        issues.extend(r16);
         issues
     }
 
@@ -141,6 +143,33 @@ impl ValidationPass {
                 severity: Severity::Error,
                 entity: "ddd".to_string(),
                 check: "repository_query",
+                message,
+            })
+            .collect()
+    }
+
+    /// Design invariants (DD5, issue #666 slice 2): every authored
+    /// `invariant <expr>;` must lower into a typed predicate fn. A
+    /// construct outside the closed subset is a HARD error naming the
+    /// domain, the class, the invariant index, and the construct — the
+    /// generator emits refused invariants NOWHERE, so this pre-generation
+    /// pass is what makes the refusal fail BEFORE any tree is written (the
+    /// `check_service_op_bodies` posture).
+    async fn check_invariants(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) =
+            codegraph_generate::ddd::invariants::all_invariant_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(design invariant)".to_string(),
+                check: "invariant",
                 message,
             })
             .collect()
