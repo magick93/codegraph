@@ -324,6 +324,7 @@ pub async fn routes_for_entity(
                     record_load,
                     authorize_async: !injected.is_empty(),
                     injected_guard,
+                    invariant_block: None,
                 });
             }
         }
@@ -535,6 +536,7 @@ pub async fn routes_for_entity(
                     record_load,
                     authorize_async: false,
                     injected_guard: None,
+                    invariant_block: None,
                 });
             }
         }

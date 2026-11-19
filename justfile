@@ -51,7 +51,7 @@ audit:
 
 # CI test-ops-integration job: the ignored gates (service_ops_compile_gate
 # is wired into CI by issue #629's pin work — mirrored here ahead of it).
-ops: ops-db-integration ops-generator-tests ops-wrapper-compile ops-hooks-runtime ops-wasm-compile ops-service-ops-compile ops-service-ops-hurl
+ops: ops-db-integration ops-generator-tests ops-wrapper-compile ops-hooks-runtime ops-wasm-compile ops-service-ops-compile ops-service-ops-hurl ops-invariants-live
 
 ops-db-integration:
     #!/usr/bin/env bash
@@ -135,3 +135,21 @@ ops-service-ops-hurl:
         exit 0
     fi
     cargo test -p codegraph --test service_ops_hurl_gate -- --ignored --nocapture
+
+ops-invariants-live:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Design-invariant enforcement over real HTTP (issue #666 slices
+    # 4d+4e): violating create 409 + compensation, violating update/transition
+    # 409 pre-write, member-invariant denial of the root save — with psql
+    # proofs. Same prerequisites as ops-service-ops-hurl.
+    DB_URL="${DATABASE_URL:-postgres://postgres:postgres@localhost:5432/postgres}"
+    if ! command -v psql >/dev/null 2>&1 || ! psql "$DB_URL" -c 'select 1' >/dev/null 2>&1; then
+        echo "WARN ops — Postgres unreachable ($DB_URL); skipping ddd_invariants_live_gate"
+        exit 0
+    fi
+    if ! command -v hurl >/dev/null 2>&1; then
+        echo "WARN ops — hurl not installed; skipping ddd_invariants_live_gate (CI installs the 8.1.0 .deb)"
+        exit 0
+    fi
+    cargo test -p codegraph --test ddd_invariants_live_gate -- --ignored --nocapture

@@ -193,6 +193,24 @@ impl AuthoredBoundaryIndex {
         self.parent_of.contains_key(title)
     }
 
+    /// The authored member titles whose routing parent is `root_title` in
+    /// `domain`, sorted (slice 4d's member validation consumes the SAME
+    /// facts the router routes through — one resolver, the planes cannot
+    /// drift). Depth-capped members are already absent from the index.
+    pub fn members_of(&self, root_title: &str, domain: &str) -> Vec<&str> {
+        let mut members: Vec<&str> = self
+            .parent_of
+            .iter()
+            .filter(|(_, (parent, parent_domain))| {
+                parent.as_str() == root_title && parent_domain.as_str() == domain
+            })
+            .map(|(member, _)| member.as_str())
+            .collect();
+        members.sort();
+        members.dedup();
+        members
+    }
+
     /// `true` when no design carries an authored membership — the early-
     /// return gate every consumer uses to stay byte-identical.
     pub fn is_empty(&self) -> bool {

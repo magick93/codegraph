@@ -71,6 +71,45 @@ pub async fn invariants_for(
     invariants_of(db, config, domain, title).await.0
 }
 
+/// The enforcement surface of one entity (issue #666 slice 4d): the
+/// DESIGNED class name — the 409 detail's `class` key — plus the
+/// ever-complete predicate plans in declaration order. `plans` empty =
+/// no enforcement (no invariants, an undeclared domain, or a graph-read
+/// degradation — the same posture as [`invariants_for`]).
+#[derive(Debug, Clone)]
+pub struct InvariantEnforcement {
+    /// The designed class name as authored in the `.ddd` design (NOT the
+    /// schema title — the 409 detail reports what the designer wrote).
+    pub class: String,
+    /// The lowered predicates, declaration order.
+    pub plans: Vec<InvariantPlan>,
+}
+
+impl InvariantEnforcement {
+    /// `true` when the entity carries no enforceable invariants — the
+    /// byte-identity gate every handler call site uses.
+    pub fn is_empty(&self) -> bool {
+        self.plans.is_empty()
+    }
+}
+
+/// The handler-plane enforcement surface for one entity (issue #666
+/// slice 4d): the designed class plus its complete predicate plans. The
+/// `HandlerGenerator` consumes THIS — never re-derives the lowering —
+/// exactly as it consumes `eligibility_guards_for`.
+pub async fn enforcement_for(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    title: &str,
+) -> InvariantEnforcement {
+    let (class, plans, _) = lower_full(db, config, domain, title).await;
+    InvariantEnforcement {
+        class: class.unwrap_or_else(|| title.to_string()),
+        plans,
+    }
+}
+
 /// Every refusal for one entity's invariants, sorted + deduped (the
 /// `guard_refusals` posture). Each refusal names the domain, the class,
 /// the invariant index, and the offending construct, and states that the
@@ -101,10 +140,7 @@ pub async fn all_invariant_refusals(
     config: &DomainConfig,
 ) -> Result<Vec<String>, GraphError> {
     let models = db.get_ddd_models().await?;
-    if models
-        .iter()
-        .all(|model| model.designs.iter().all(|d| d.invariants.is_empty()))
-    {
+    if no_modeled_invariants(&models) {
         return Ok(Vec::new());
     }
     let surface = match DddDesignSurface::from_graph(db).await {
@@ -131,7 +167,7 @@ pub async fn all_invariant_refusals(
         let Some(domain) = schema.domain.clone() else {
             continue;
         };
-        let (_, refused) = lower_with_surface(&surface, db, config, &domain, title).await;
+        let (_, _, refused) = lower_with_surface(&surface, db, config, &domain, title).await;
         refusals.extend(refused);
     }
     // Unresolved designs: the class named no ingested schema, so its
@@ -165,18 +201,32 @@ async fn invariants_of(
     domain: &str,
     title: &str,
 ) -> (Vec<InvariantPlan>, Vec<String>) {
+    let (_, plans, refusals) = lower_full(db, config, domain, title).await;
+    (plans, refusals)
+}
+
+/// The full lowering for one entity: `(designed class, complete plans,
+/// refusals)`. The class rides out for the enforcement surface's 409
+/// detail (`class` names the DESIGNED class, not the schema title).
+async fn lower_full(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    title: &str,
+) -> (Option<String>, Vec<InvariantPlan>, Vec<String>) {
     // An undeclared domain has no rules plane to emit into.
     if !config.domains.contains_key(domain) {
-        return (Vec::new(), Vec::new());
+        return (None, Vec::new(), Vec::new());
     }
     let Ok(surface) = DddDesignSurface::from_graph(db).await else {
-        return (Vec::new(), Vec::new());
+        return (None, Vec::new(), Vec::new());
     };
     lower_with_surface(&surface, db, config, domain, title).await
 }
 
 /// The lowering core over a pre-built surface: the per-entity shape both
-/// the public resolvers and the all-models walk share.
+/// the public resolvers and the all-models walk share. Returns `(designed
+/// class, complete plans, refusals)`.
 ///
 /// Upstream typing guarantees (pherolang `check_design_invariants`) are
 /// re-proven defensively where a stale graph could break them: a dto
@@ -191,20 +241,20 @@ async fn lower_with_surface(
     config: &DomainConfig,
     domain: &str,
     title: &str,
-) -> (Vec<InvariantPlan>, Vec<String>) {
+) -> (Option<String>, Vec<InvariantPlan>, Vec<String>) {
     let mut plans = Vec::new();
     let mut refusals = Vec::new();
     // An undeclared domain has no rules plane to emit into.
     if !config.domains.contains_key(domain) {
-        return (plans, refusals);
+        return (None, plans, refusals);
     }
     let Some(design) = surface.design_for(title) else {
-        return (plans, refusals);
+        return (None, plans, refusals);
     };
     if design.invariants.is_empty() {
-        return (plans, refusals);
+        return (None, plans, refusals);
     }
-    let class = &design.class;
+    let class = design.class.clone();
     // Upstream refuses invariants on dto designs (pherolang
     // E_DTO_INVARIANT); a stale graph that carries them is refused, never
     // emitted.
@@ -216,14 +266,14 @@ async fn lower_with_surface(
                  the invariant is not emitted (fail-closed)"
             ));
         }
-        return (plans, refusals);
+        return (Some(class), plans, refusals);
     }
     // The predicate fn takes `&{Entity}Response`; a title with no stored
     // table emits no such record (a value-object projection) — named
     // deferral, never a guessed signature.
     let record_resolves = match crate::ddd::rules::record_type_for(db, domain, title).await {
         Ok(resolved) => resolved.is_some(),
-        Err(_) => return (plans, refusals),
+        Err(_) => return (Some(class), plans, refusals),
     };
     if !record_resolves {
         for index in 0..design.invariants.len() {
@@ -235,14 +285,14 @@ async fn lower_with_surface(
                  emitted (fail-closed)"
             ));
         }
-        return (plans, refusals);
+        return (Some(class), plans, refusals);
     }
     let Ok(props) = db.get_properties(title).await else {
-        return (plans, refusals);
+        return (Some(class), plans, refusals);
     };
     let fields = fields_for(&props);
     let states = surface.machine_states_for(title);
-    let class_snake = escape_rust_keyword(&to_snake_case(class));
+    let class_snake = escape_rust_keyword(&to_snake_case(class.as_str()));
     for (index, invariant) in design.invariants.iter().enumerate() {
         let subject = format!("invariant {index} of `{class}` in domain `{domain}`");
         match lower_invariant(
@@ -265,7 +315,43 @@ async fn lower_with_surface(
             )),
         }
     }
-    (plans, refusals)
+    (Some(class), plans, refusals)
+}
+
+/// The MODELED invariant counts across the graph: `(entities with
+/// invariants, total invariants)` — the workers-topology WARN's facts
+/// (slice 4d). `None` when no design carries invariants (the common graph:
+/// the WARN must not even fire its early return).
+pub async fn modeled_invariant_counts(db: &dyn GraphQuerier) -> Option<(usize, usize)> {
+    let models = db.get_ddd_models().await.ok()?;
+    let mut entities = 0usize;
+    let mut total = 0usize;
+    let mut seen = std::collections::BTreeSet::new();
+    for model in &models {
+        for design in &model.designs {
+            if design.invariants.is_empty() {
+                continue;
+            }
+            total += design.invariants.len();
+            if seen.insert(
+                design
+                    .resolved_title
+                    .clone()
+                    .unwrap_or_else(|| design.class.clone()),
+            ) {
+                entities += 1;
+            }
+        }
+    }
+    (total > 0).then_some((entities, total))
+}
+
+/// `true` when no ingested design carries invariants — the shared
+/// early-return gate (one models read, nothing else).
+fn no_modeled_invariants(models: &[codegraph_core::types::DddModelGraph]) -> bool {
+    models
+        .iter()
+        .all(|model| model.designs.iter().all(|d| d.invariants.is_empty()))
 }
 
 #[cfg(test)]

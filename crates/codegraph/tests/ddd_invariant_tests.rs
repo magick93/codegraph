@@ -22,6 +22,11 @@ use std::path::{Path, PathBuf};
 use codegraph_core::traits::GraphQuerier;
 use tempfile::TempDir;
 
+#[path = "service_ops_fixture.rs"]
+mod fixture;
+
+use codegraph_generate::traits::{DomainGenerator, EntityGenerator};
+
 const GRANTS_MOX: &str = r#"
 package grants
 
@@ -282,4 +287,427 @@ async fn unlowerable_invariant_fails_validation_and_emits_nothing() {
         "a refused invariant emits nothing: {:?}",
         files.iter().map(|f| &f.path).collect::<Vec<_>>()
     );
+}
+
+// ── Slice 4d: handler enforcement blocks (issue #666) ──────────────────
+
+/// Render one entity's handler over the invariant fixture, with or
+/// without the `rules` plan membership (the flag the registry derives).
+async fn render_invariant_handler(with_rules: bool, title: &str) -> String {
+    let fx = fixture::write_invariant_fixture();
+    let engine = fixture::ingest_invariant(&fx).await;
+    let config = codegraph_config::config::parse_domain_config(&fx.config).unwrap();
+    let tera = codegraph_generate::template_engine::create_tera(Path::new("")).unwrap();
+    let project = codegraph_generate::ProjectConfig::default();
+    codegraph::generate::type_registry::register_framework_types();
+    let generator = codegraph_generate::api::handler::HandlerGenerator::new(Path::new(
+        "/tmp/ddd-invariant-handler",
+    ))
+    .with_rules_guards(with_rules);
+    let files = generator
+        .generate(&engine, title, "payroll", &config, &tera, &project)
+        .await
+        .expect("handler generation");
+    assert_eq!(files.len(), 1, "{:?}", files.len());
+    files[0].content.clone()
+}
+
+#[tokio::test]
+async fn create_handler_evaluates_the_created_record_compensates_and_conflicts_409() {
+    let out = render_invariant_handler(true, "PayRunType").await;
+
+    // The created record is evaluated through the slice-2 predicate.
+    assert!(
+        out.contains("if !crate::domain::payroll::rules::pay_run_type_invariant_0(&response) {"),
+        "the create block evaluates the CREATED record:\n{out}"
+    );
+    // The violation is compensated (the auditable soft-delete shape)
+    // before the 409.
+    assert!(
+        out.contains("design invariant violated on create — compensating"),
+        "{out}"
+    );
+    assert!(out.contains("payroll_pay_run_commands.delete(id"), "{out}");
+    // The 409 detail: INVARIANT_VIOLATION + class + invariantIndex.
+    assert!(out.contains("code: \"INVARIANT_VIOLATION\""), "{out}");
+    assert!(
+        out.contains(
+            "crate::error::FieldError { field: \"class\".to_string(), message: \"PayRunType\".to_string() }"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "crate::error::FieldError { field: \"invariantIndex\".to_string(), message: \"0\".to_string() }"
+        ),
+        "{out}"
+    );
+    // utoipa documents the denial on BOTH guarded routes.
+    assert_eq!(
+        out.matches(
+            r#"(status = 409, description = "Denied by a design invariant (INVARIANT_VIOLATION)")"#
+        )
+        .count(),
+        2,
+        "create AND update document the 409:\n{out}"
+    );
+}
+
+#[tokio::test]
+async fn root_save_validates_member_invariants_with_the_aggregate_root_detail() {
+    let out = render_invariant_handler(true, "PayRunType").await;
+
+    // Member rows load through the scoped fetch the repository exposes.
+    assert!(
+        out.contains(
+            "payroll_pay_run_line_queries.list_filtered(0, 1000, &member_filters_pay_run_line"
+        ),
+        "the root save loads member rows:\n{out}"
+    );
+    assert!(
+        out.contains("member_filters_pay_run_line.insert(\"pay_run_id\""),
+        "the member fetch filters on the child→root FK column:\n{out}"
+    );
+    // The member predicate evaluates in declaration order and names the
+    // member class, its index, and the aggregate root.
+    assert!(
+        out.contains(
+            "if !crate::domain::payroll::rules::pay_run_line_type_invariant_0(&member_row) {"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "crate::error::FieldError { field: \"aggregateRoot\".to_string(), message: \"PayRunType\".to_string() }"
+        ),
+        "a member violation names the aggregate root:\n{out}"
+    );
+    assert!(
+        out.contains(
+            "crate::error::FieldError { field: \"class\".to_string(), message: \"PayRunLineType\".to_string() }"
+        ),
+        "a member violation names the member class:\n{out}"
+    );
+    // Member validation rides BOTH the create and the update blocks.
+    assert!(
+        out.matches("let (member_rows_pay_run_line, _)").count() == 2,
+        "create AND update validate the members:\n{out}"
+    );
+}
+
+#[tokio::test]
+async fn update_handler_builds_the_candidate_before_the_write() {
+    let out = render_invariant_handler(true, "PayRunType").await;
+
+    assert!(
+        out.contains("let candidate: PayRunResponse = serde_json::from_value(candidate_json)"),
+        "the candidate decodes back into the record type:\n{out}"
+    );
+    assert!(
+        out.contains("if !crate::domain::payroll::rules::pay_run_type_invariant_0(&candidate) {"),
+        "{out}"
+    );
+    // Ordering: the candidate is built (and evaluated) BEFORE the write.
+    let candidate_pos = out
+        .find("let candidate: PayRunResponse")
+        .expect("candidate");
+    let write_pos = out
+        .find("commands.update(id, body")
+        .expect("update command");
+    assert!(
+        candidate_pos < write_pos,
+        "the invariant evaluates BEFORE the write: {candidate_pos} < {write_pos}"
+    );
+    // The root update arm carries its own load-or-404 (no eligibility
+    // guards bound `existing` first).
+    assert!(
+        out.contains("let existing = state.payroll_pay_run_queries.find_by_id(id, "),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn transition_arm_evaluates_the_post_patch_candidate_pre_write() {
+    let out = render_invariant_handler(true, "PayRunType").await;
+
+    let arm_pos = out
+        .find("pub async fn service_op_submit")
+        .expect("the transition handler must emit");
+    let arm = &out[arm_pos..];
+    assert!(
+        arm.contains("if !crate::domain::payroll::rules::pay_run_type_invariant_0(&candidate) {"),
+        "the transition arm evaluates the candidate:\n{arm}"
+    );
+    // The machine state patch applies BEFORE the candidate is evaluated.
+    let patch_pos = arm
+        .find("value[\"pay_run_status\"]")
+        .expect("the state patch");
+    let cand_pos = arm.find("let mut candidate_json").expect("the candidate");
+    assert!(
+        patch_pos < cand_pos,
+        "the state patch rides the candidate before evaluation"
+    );
+    // The write sits AFTER the evaluation in the arm.
+    let write_pos = arm
+        .find("dto_update::UpdatePayRunRequest")
+        .expect("the cmd");
+    assert!(cand_pos < write_pos, "evaluation precedes the write");
+    // The action route documents the invariant denial (the utoipa block
+    // precedes the handler fn — assert on the whole output).
+    assert!(
+        out.contains("The transition is not allowed from the current state, or a design invariant denied the write"),
+        "the utoipa 409 names both denial classes:\n{out}"
+    );
+}
+
+#[tokio::test]
+async fn child_update_claims_the_ownership_prefix_for_the_candidate() {
+    let out = render_invariant_handler(true, "PayRunLineType").await;
+
+    // The child's existing ownership load gains the `let existing = `
+    // binding (no eligibility guards claimed it first).
+    assert!(
+        out.contains(
+            "let existing = state.payroll_pay_run_line_queries.find_by_id_scoped(id, parent_id"
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("let candidate: PayRunLineResponse = serde_json::from_value(candidate_json)"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "if !crate::domain::payroll::rules::pay_run_line_type_invariant_0(&candidate) {"
+        ),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn invariant_enforcement_off_keeps_the_handler_free_of_the_surface() {
+    let out = render_invariant_handler(false, "PayRunType").await;
+    for needle in [
+        "INVARIANT_VIOLATION",
+        "candidate_json",
+        "member_filters_pay_run_line",
+        "pay_run_type_invariant_0",
+        "Denied by a design invariant",
+    ] {
+        assert!(
+            !out.contains(needle),
+            "flag-off handler must not contain {needle:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn workers_topology_warns_that_invariants_are_not_enforced() {
+    let fixture = write_fixture(GRANTS_DDD);
+    let engine = ingest(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+
+    // Under workers: the Warning names the counts and the monolith-only
+    // rules plane.
+    let issues =
+        codegraph::validate::ValidationPass::run_with_topology(&engine, &config, true).await;
+    let warn = issues
+        .iter()
+        .find(|i| {
+            i.check == "invariant" && matches!(i.severity, codegraph::validate::Severity::Warning)
+        })
+        .unwrap_or_else(|| panic!("expected the workers-topology invariant WARN, got: {issues:?}"));
+    assert!(
+        warn.message
+            .contains("not enforced under the workers topology"),
+        "{warn:?}"
+    );
+    assert!(
+        warn.message
+            .contains("1 design invariant(s) on 1 entity/entities"),
+        "the WARN names the counts: {warn:?}"
+    );
+    assert!(warn.message.contains("monolith-only"), "{warn:?}");
+
+    // Monolith: no Warning-severity invariant finding (the lowering
+    // refusals stay Error-severity; this fixture lowers cleanly).
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    assert!(
+        !issues.iter().any(|i| i.check == "invariant"
+            && matches!(i.severity, codegraph::validate::Severity::Warning)),
+        "monolith runs stay quiet: {issues:?}"
+    );
+}
+
+// ── Slice 4e: the hurl contract's three-verdict invariant legs ─────────
+
+async fn render_invariant_contracts(
+    with_rules: bool,
+) -> Vec<codegraph_generate::traits::GeneratedFile> {
+    let fx = fixture::write_invariant_fixture();
+    let engine = fixture::ingest_invariant(&fx).await;
+    let config = codegraph_config::config::parse_domain_config(&fx.config).unwrap();
+    let tera = codegraph_generate::template_engine::create_tera(Path::new("")).unwrap();
+    let project = codegraph_generate::ProjectConfig::default();
+    let generator = codegraph_generate::api::hurl_contract::HurlContractGenerator::new(Path::new(
+        "/tmp/ddd-invariant-hurl",
+    ))
+    .with_rules_guards(with_rules);
+    DomainGenerator::generate(
+        &generator,
+        &engine,
+        "payroll",
+        &["PayRunType".to_string(), "PayRunLineType".to_string()],
+        &config,
+        &tera,
+        &project,
+    )
+    .await
+    .expect("hurl contract generation")
+}
+
+#[tokio::test]
+async fn hurl_contract_emits_the_provable_violating_create_leg() {
+    let files = render_invariant_contracts(true).await;
+    let pay_run = files
+        .iter()
+        .find(|f| {
+            f.path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with("payroll_pay_run.hurl"))
+        })
+        .expect("the pay_run contract must emit");
+
+    // The create body seeds total = 42; the violating leg flips ONE
+    // satisfied leaf to its provably-rejected seed (the literal 0 stepped
+    // below: -1) and pins the 409.
+    assert!(
+        pay_run.content.contains("\"total\": -1"),
+        "the violating leg carries the flipped seed:\n{}",
+        pay_run.content
+    );
+    assert!(pay_run.content.contains("HTTP 409"), "{}", pay_run.content);
+    assert!(
+        pay_run
+            .content
+            .contains("jsonpath \"$.error.code\" == \"INVARIANT_VIOLATION\""),
+        "{}",
+        pay_run.content
+    );
+    assert!(
+        pay_run
+            .content
+            .contains("# Design invariant denial (DD5, issue #666 slice 4e)"),
+        "{}",
+        pay_run.content
+    );
+    // The leg posts the contract's OWN create URL (hurl == router).
+    assert!(
+        pay_run
+            .content
+            .contains("POST {{base_url}}/api/v1/payroll/pay-run\n"),
+        "{}",
+        pay_run.content
+    );
+    // The MAIN create leg stays 201 — the denial leg posts the flipped
+    // body, not the contract's fixture row.
+    assert!(pay_run.content.contains("HTTP 201"), "{}", pay_run.content);
+
+    // The child contract carries the same leg shape for its invariant.
+    let line = files
+        .iter()
+        .find(|f| {
+            f.path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with("payroll_pay_run_line.hurl"))
+        })
+        .expect("the child contract must emit");
+    assert!(
+        line.content.contains("\"quantity\": -1"),
+        "{}",
+        line.content
+    );
+    assert!(line.content.contains("HTTP 409"), "{}", line.content);
+}
+
+#[tokio::test]
+async fn hurl_contract_update_roundtrip_pins_409_when_provably_violating() {
+    // `total > 100`: the update seed (43 over the create's 42) provably
+    // violates, so the PUT roundtrip pins the pre-write 409 and drops the
+    // update-landed echo.
+    let fx = fixture::write_invariant_fixture();
+    let ddd = fixture::INVARIANT_DDD.replace("invariant total > 0;", "invariant total > 100;");
+    fs::write(&fx.ddd, ddd).unwrap();
+    let engine = fixture::ingest_invariant(&fx).await;
+    let config = codegraph_config::config::parse_domain_config(&fx.config).unwrap();
+    let tera = codegraph_generate::template_engine::create_tera(Path::new("")).unwrap();
+    let project = codegraph_generate::ProjectConfig::default();
+    let generator = codegraph_generate::api::hurl_contract::HurlContractGenerator::new(Path::new(
+        "/tmp/ddd-invariant-hurl-2",
+    ))
+    .with_rules_guards(true);
+    let files = DomainGenerator::generate(
+        &generator,
+        &engine,
+        "payroll",
+        &["PayRunType".to_string()],
+        &config,
+        &tera,
+        &project,
+    )
+    .await
+    .expect("generation");
+    let pay_run = files
+        .iter()
+        .find(|f| {
+            f.path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with("payroll_pay_run.hurl"))
+        })
+        .expect("pay_run contract");
+    assert!(
+        pay_run
+            .content
+            .contains("PUT below pins the 409 the handler answers BEFORE the write"),
+        "{}",
+        pay_run.content
+    );
+    // The denied roundtrip: PUT 409 + the invariant assert + the read-back
+    // that proves the write never started (no update echo asserts).
+    assert!(
+        pay_run
+            .content
+            .contains("HTTP 409\n[Asserts]\njsonpath \"$.error.code\" == \"INVARIANT_VIOLATION\""),
+        "{}",
+        pay_run.content
+    );
+    assert!(
+        pay_run.content.contains("# GET — the write never started"),
+        "{}",
+        pay_run.content
+    );
+}
+
+#[tokio::test]
+async fn hurl_contract_flag_off_keeps_the_contract_free_of_invariant_legs() {
+    let files = render_invariant_contracts(false).await;
+    let pay_run = files
+        .iter()
+        .find(|f| {
+            f.path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with("payroll_pay_run.hurl"))
+        })
+        .expect("pay_run contract");
+    for needle in [
+        "INVARIANT_VIOLATION",
+        "Design invariant denial",
+        "Design invariant omission",
+        "\"total\": -1",
+    ] {
+        assert!(
+            !pay_run.content.contains(needle),
+            "flag-off contract must not contain {needle:?}"
+        );
+    }
 }

@@ -977,6 +977,141 @@ parent = "PayRunLineType"
 parent_ref = "pay_run_line_id"
 "#;
 
+// ── Issue #666 slices 4d+4e: design-invariant enforcement fixture ──────
+
+/// The invariant fixture's mox: the child-ops shape (a root with a
+/// `refers`-paired child carrying a numeric `quantity`) — the child is a
+/// config `role = "child"` entity with its own repository, so the root's
+/// save can load member rows through the scoped fetch.
+pub const INVARIANT_MOX: &str = r#"
+package payroll
+
+enum PayRunStatus {
+    Draft = 0
+    Calculated = 1
+}
+
+class PayRunType {
+    String payRunId
+    PayRunStatus payRunStatus
+    int total
+    refers PayRunLineType[] lines opposite payRun
+}
+
+class PayRunLineType {
+    String lineId
+    int quantity
+    String [0..1] notes
+    refers PayRunType[0..1] payRun opposite lines
+}
+"#;
+
+/// The invariant design (issue #666 slices 4d+4e): ONE lowerable invariant
+/// per entity (`total > 0` on the root, `quantity > 0` on the config
+/// child), a machine on the root (the transition-arm leg), and one
+/// authored-boundary save op (`transition PayRunStatus.Submit`) so the
+/// state-aware arm renders with its invariant block.
+pub const INVARIANT_DDD: &str = r#"
+import "invariant.mox";
+
+application Payroll {
+    module payroll {
+        entity PayRunType scaffold invariant total > 0; repository PayRunRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        machine payRunStatus: PayRunStatus {
+            initial Draft;
+            Draft -> Calculated via Submit;
+            terminal Calculated;
+        }
+        service PayRunService {
+            inject PayRunRepository;
+            submit => PayRunRepository.save transition PayRunStatus.Submit;
+        }
+        entity PayRunLineType scaffold invariant quantity > 0; repository PayRunLineRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+    }
+}
+"#;
+
+/// The invariant fixture's config: the child-ops shape — the line entity
+/// is a `role = "child"` of the pay run (`parent_ref` names the REAL
+/// `pay_run_id` column the refers pair projects), so the root's save
+/// validates the child's member invariants.
+pub const INVARIANT_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+
+[domains.payroll.entity_config.PayRunLineType]
+role = "child"
+parent = "PayRunType"
+parent_ref = "pay_run_id"
+"#;
+
+/// The design-invariant fixture (issue #666 slices 4d+4e): mox-first, one
+/// domain, invariants on the root AND its config child, a machine, and
+/// one authored transition binding. No actor policy — nothing is
+/// capability-gated.
+pub fn write_invariant_fixture() -> Fixture {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    std::mem::forget(dir); // the fixture outlives the guard on purpose
+    let schemas_dir = root.join("model-schemas");
+    fs::create_dir_all(&schemas_dir).unwrap();
+    let mox = root.join("invariant.mox");
+    fs::write(&mox, INVARIANT_MOX).unwrap();
+    let ddd = root.join("invariant.ddd");
+    fs::write(&ddd, INVARIANT_DDD).unwrap();
+    let actor = root.join("policy.actor");
+    let config = root.join("domains.toml");
+    fs::write(&config, INVARIANT_DOMAINS_TOML).unwrap();
+    Fixture {
+        schemas_dir,
+        mox,
+        ddd,
+        actor,
+        config,
+    }
+}
+
+/// Ingest the invariant fixture (mox bridge + `.ddd` design; no policy).
+pub async fn ingest_invariant(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let mox_stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(mox_stats.skipped, 0, "mox classes must bridge the schemas");
+    codegraph::ingest::ddd_ingest::ingest_ddd_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.ddd),
+        &config,
+    )
+    .await
+    .unwrap();
+    engine
+}
+
 // ── Harness ────────────────────────────────────────────────────────────
 
 pub struct Fixture {

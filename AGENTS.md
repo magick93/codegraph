@@ -684,6 +684,154 @@ emission rides the `rules` generator's plan membership (a plan without
 `rules` carries no invariant predicates — slice 4's call sites must gate
 on the same membership).
 
+**Slice 4d — invariants enforce at create/save/transition (landed)**:
+the predicate fns become REAL handler-side enforcement, mirroring #338's
+`build_guard_blocks` shape. `HandlerGenerator` consumes slice 2's
+`ddd::invariants::enforcement_for` (the `InvariantEnforcement { class,
+plans }` — the DESIGNED class name rides out for the 409 detail; the
+lowering is never re-derived) under the SAME gating the eligibility
+guards use: `with_rules_guards` (the `rules` plan membership) AND
+monolith topology. `build_invariant_blocks` pre-renders whitespace-exact
+blocks; empty context = byte-identical handler (the canaries hold, no
+re-bless):
+
+- **CREATE** evaluates the CREATED record (server-generated fields exist
+  only post-insert) in declaration order and **COMPENSATES** on violation
+  — a best-effort `commands.delete` (the #338 auditable soft-delete
+  shape; an entity with no delete op answers straight 409 with a comment
+  naming the gap) — before the 409.
+- **UPDATE** builds the **CANDIDATE before the write**: the loaded
+  record's JSON (`serde_json::to_value`) with the request patch applied
+  (`serde_json::to_value(&body)` — the Update DTO serializes
+  `skip_serializing_if = "Option::is_none"`, so it IS the patch) and
+  decoded back into `{Entity}Response` (`from_value`); a violation
+  answers 409 and the write never starts. The generated command is a
+  single transaction, so handler-level pre-write evaluation is
+  observably identical to in-transaction rollback for the shapes we
+  support (documented in the emitted comments). The root arm carries its
+  own load-or-404 when no eligibility guard bound `existing`; a child arm
+  CLAIMS the `let existing = ` ownership prefix (at most one plane claims
+  it — merged in Rust, one template key).
+- **TRANSITION** (the state-aware update arm, `ExecutionKind::Update`):
+  `ServiceOpRoute.invariant_block` (pre-rendered by the handler
+  generator — `routes_for_entity` results are post-processed, so the
+  service-op plane needs no plan knowledge) applies the action patch —
+  the machine state move INCLUDED — to the candidate after the
+  idempotent-read early return, before `let cmd`; a transition that
+  would leave an invariant false answers 409 pre-write.
+- **MEMBERS**: a root entity whose aggregate CHILDREN carry invariants
+  (config `role = "child"` children ∪ the 4b authored index — consumed
+  via the new `AuthoredBoundaryIndex::members_of`, never re-derived; one
+  routed level, the 4b depth cap) loads each member's rows through the
+  scoped fetch the repository already exposes (`list_filtered` under the
+  parent-FK filter — the child→root FK column rides the canonical
+  `fk::resolve_parent_fk_column_same_domain`) in BOTH the create and
+  update blocks and evaluates the member predicates pre-write. A member
+  violation names the member class, its index, and
+  `aggregateRoot` = the root's designed class.
+- **409 detail**: `AppError { status: CONFLICT, code: "INVARIANT_VIOLATION",
+  message: "Invariant {index} of `{class}` violated: {expr}", details:
+  [class, invariantIndex, aggregateRoot?] }` — built as a struct literal
+  in the pre-rendered block (the `service_op_not_implemented` precedent;
+  `code` is `&'static str`, so NO error.tera constructor and flag-off
+  output never moves). The wire envelope is `error.code` +
+  `error.details` as `FieldError { field, message }` entries — the
+  AppError API's structured-detail surface. utoipa documents the 409 on
+  every guarded route (create/update + the action route, whose wording
+  names both denial classes when a machine-bound op carries invariants).
+- **Workers topology**: the rules plane is monolith-only (#338), so
+  modeled invariants are NOT enforced under workers. The gap is VISIBLE:
+  `check_invariants` gained the topology parameter and emits a
+  Warning-severity finding — "N design invariant(s) on M entity/entities
+  are not enforced under the workers topology — the rules plane
+  (the predicate fns and their handler call sites) is monolith-only
+  (#338)" — never a silent no-op. Monolith runs stay quiet.
+- Gates: `cargo test -p codegraph --test ddd_invariant_tests` (18:
+  the slice-2 three + create compensation/409-detail, the candidate
+  pre-write ordering pin, the transition-arm pin (state patch before
+  candidate, candidate before write), the member-validation pin
+  (aggregateRoot detail, both blocks), the child ownership-prefix pin,
+  the flag-off twin, the workers WARN + monolith-quiet pair, and the
+  hurl legs below). The compile pin rides
+  `service_ops_compile_gate ::
+  generated_app_with_design_invariants_compiles` (ignored; its first
+  runs caught TWO real emitted-code defects the string pins could not
+  see — an unbalanced `Some(vec![` and the ux-sort-widened `list_filtered`
+  arity the member fetch missed).
+
+**Slice 4e — hurl legs, the live gate (landed)**:
+`hurl_contract` gains `.with_rules_guards(plan_has_domain("rules"))`
+(registry-wired — the handler call sites and predicates exist only under
+that plan membership) and evaluates the AUTHORED invariant expressions
+against the contract's OWN bodies — the **FreshFixtureGuard three-verdict
+model** (the #663 posture: never guess a status, a mis-pinned leg fails
+the suite as hard in either direction). The evaluator lives in
+`api/hurl_contract/invariants.rs` (the #751 split — `decide_invariant_plan`
+→ closed collector → `invariant_contract_facts`):
+
+- **Denied** — a literal comparison over the contract's own values
+  provably fails (plain `&&` from the root, `field <op> literal` leaves
+  with the field present in the body — the contract seeds REQUIRED fields
+  only) → the violating-create leg posts the contract's OWN create URL
+  (nested routes included) with ONE satisfied leaf flipped to its
+  provably-rejected seed (`violating_value`: Gt/Ge → literal − 1,
+  Lt/Le → +1, Eq → mutated, Ne → the literal) and pins **409** +
+  `jsonpath "$.error.code" == "INVARIANT_VIOLATION"`. A body that
+  already violates posts verbatim.
+- **Satisfied** — every decided leaf holds and nothing is undecidable →
+  no leg (the create succeeds).
+- **Unverifiable** — any comparison the collector cannot decide (an
+  absent optional field, arithmetic, collections, negation it cannot
+  flip, `||` over an undecided sibling, non-name/literal leaves) → the
+  leg is OMITTED with the documented omission comment naming the
+  invariant (the `Body { may_refuse }` precedent). MIXED verdicts never
+  mis-fire: one provably failing conjunct decides the conjunction.
+- **UPDATE**: the candidate is the create values with the update values
+  applied; a provable violation flips the PUT roundtrip itself — it pins
+  409 + the INVARIANT_VIOLATION assert and drops the update-landed echo
+  (the row is provably unchanged; the read-back stays 200).
+- The verdicts ride `decide_invariant_plan` (phero_expr parse → closed
+  collector: `&&`/`||` folds, negation via `UnOp::Not`, numeric Int/Float
+  cross-compare, string/bool/ISO-date ordering; dates ride their literal
+  text). Silent for every entity without invariants — byte-identical
+  contract (`hurl_contract_tests` goldens hold, no re-bless).
+- **The live gate** `ddd_invariants_live_gate` (ignored, OWN test binary
+  — the #663 TYPE_REGISTRY isolation precedent, TODO(#746); modeled on
+  `service_ops_hurl_gate`): own fixture (the review fixture is shared
+  with `review_api_suite` and must not move), persistent gate dir with
+  the generated SOURCE deleted first (#687), driver regen → GateDb
+  scratch (pgmq shim) → boot → hurl the emitted ROOT + actions contracts
+  (the violating-create leg 409s + compensates; the CHILD contract is
+  pinned by shape only — its LIST entry reads the parent capture it
+  introduces later, so it cannot run standalone, the ops `[hurl]` skip
+  convention; its nested violating-create leg runs live in probe part 1)
+  → hand-authored probes:
+  a transition patch carrying `total: -1` answers 409 + the detail keys
+  asserted, the clean submit advances Draft → Calculated, a violating
+  PUT answers 409, and the member leg stamps the child row violating
+  DIRECTLY IN THE DB (no API sequence can persist a violating member —
+  the member's own plane enforces the same predicate — so the root-save
+  member validation is proven against a stale row) and PUTs the root
+  with a VALID total → 409 naming `PayRunLineType` + `aggregateRoot`.
+  psql proofs: 0 live violating rows (compensation), the probe row's
+  total unchanged at 42, the machine state exactly `Calculated`, and the
+  stamped member untouched.
+- **Opt-in (the #338 shape)**: the default profile does NOT carry the
+  `rules` generator; consumers opt in with `rosetta_backend = true` +
+  `"rules"` in the `[api]` generators list (both gates inject exactly
+  that — the `review_api_suite_regen` precedent). Presence gating keeps
+  every non-opted run byte-identical.
+- Gates: `cargo test -p codegraph --test ddd_invariants_live_gate --
+  --ignored --nocapture` (wired into CI's `test-ops-integration` job and
+  the `just ci-local ops-invariants-live` recipe) + the node-free pins
+  above. Deferred: member validation on transition-arm saves (the CRUD
+  update/create blocks carry it; a machine-bound save evaluates the
+  entity's OWN invariants only), member fetch beyond the first 1000 rows
+  (`list_filtered` page cap — documented v1), a member child exposing no
+  `list` op skips member validation silently (the fetch does not exist
+  to consume), and enforcement under the workers topology (the WARN is
+  the contract; worker-routed rules.rs is the #338 deferral).
+
 **Slice 4b — authored boundaries warn on disagreement and drive child
 routing (landed)**: `ddd/aggregate.rs` (codegraph-generate) is the
 graph-only consumer plane for the slice-1 mirrors. One resolver answers

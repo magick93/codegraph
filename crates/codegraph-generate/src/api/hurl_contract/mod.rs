@@ -36,6 +36,10 @@ use codegraph_core::types::{PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
+mod invariants;
+
+use invariants::{InvariantContractFacts, invariant_contract_facts};
+
 use super::api_model::{resolve_entity_operations, resolve_path_segment_with_config};
 use crate::error::Result;
 use crate::ordering::compute_generation_order;
@@ -60,13 +64,28 @@ const ENTITY_NN_BASE: usize = 10;
 
 pub struct HurlContractGenerator {
     output_dir: PathBuf,
+    /// Whether the plan carries the `rules` domain generator: the
+    /// invariant predicate fns (DD5, issue #666 slice 4e) exist only when
+    /// the `RulesGenerator` runs, so the invariant-denied legs resolve
+    /// their verdicts only under the same flag the handler uses.
+    rules_guards: bool,
 }
 
 impl HurlContractGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            rules_guards: false,
         }
+    }
+
+    /// Enable the invariant-denied contract legs (issue #666 slice 4e).
+    /// The registry derives this from the build plan's `rules` generator
+    /// membership — the handler call sites (and the predicates they call)
+    /// exist only when that generator runs.
+    pub fn with_rules_guards(mut self, enabled: bool) -> Self {
+        self.rules_guards = enabled;
+        self
     }
 }
 
@@ -110,6 +129,22 @@ struct EntityContractCtx {
     minimal_body: String,
     update_body: String,
     update_asserts: String,
+    /// Design-invariant contract legs (DD5, issue #666 slice 4e): the
+    /// violating-create leg (when the contract's own values PROVE a
+    /// denial) and the documented omission comments (when a verdict is
+    /// undecidable — the `Body { may_refuse }` precedent). Empty for
+    /// every entity without invariants — byte-identical contract.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    invariant_sections: Vec<ContractSection>,
+    /// `true` when the contract's update values PROVABLY violate an
+    /// invariant: the PUT roundtrip then pins 409 + INVARIANT_VIOLATION
+    /// (the write never starts) instead of the 200 roundtrip.
+    #[serde(default)]
+    update_invariant_denied: bool,
+    /// The update-denial comment naming the violated invariant (rendered
+    /// inside the denied roundtrip branch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_invariant_note: Option<ContractSection>,
 }
 
 /// One service-op action leg in the actions contract (issue #590).
@@ -719,8 +754,16 @@ impl DomainGenerator for HurlContractGenerator {
             };
             let nn = format!("{:02}", ENTITY_NN_BASE + idx);
 
-            let contract =
-                build_entity_contract(db, domain, &schema, api_version, &nn, config).await?;
+            let contract = build_entity_contract(
+                db,
+                domain,
+                &schema,
+                api_version,
+                &nn,
+                config,
+                self.rules_guards,
+            )
+            .await?;
 
             files.push(GeneratedFile {
                 path: self
@@ -1270,6 +1313,7 @@ async fn resolve_nesting_chain(
 }
 
 /// Assemble one entity's full template context.
+#[allow(clippy::too_many_arguments)]
 async fn build_entity_contract(
     db: &dyn GraphQuerier,
     domain: &str,
@@ -1277,6 +1321,7 @@ async fn build_entity_contract(
     api_version: &str,
     nn: &str,
     config: &DomainConfig,
+    rules_guards: bool,
 ) -> Result<EntityContractCtx> {
     // The config-declared nesting chain (empty for roots): each hop's
     // preamble POST creates the parent row and captures its id, and the
@@ -1370,6 +1415,29 @@ async fn build_entity_contract(
     let update_body = body(&update);
     let update_asserts = update_echo.join("\n");
 
+    // Design-invariant contract legs (DD5, issue #666 slice 4e). The SAME
+    // plan-membership gate the handler uses — the predicate fns exist only
+    // when the `rules` generator runs. Silent for every entity without
+    // invariants: byte-identical contract.
+    let invariant_facts = if rules_guards {
+        invariant_contract_facts(
+            db,
+            config,
+            domain,
+            schema,
+            &entity_url,
+            &create_body,
+            &update_body,
+        )
+        .await?
+    } else {
+        InvariantContractFacts {
+            create_sections: Vec::new(),
+            update_denied: false,
+            update_note: None,
+        }
+    };
+
     Ok(EntityContractCtx {
         domain: domain.to_string(),
         module: module.clone(),
@@ -1392,6 +1460,9 @@ async fn build_entity_contract(
         minimal_body: create_body,
         update_body,
         update_asserts,
+        invariant_sections: invariant_facts.create_sections,
+        update_invariant_denied: invariant_facts.update_denied,
+        update_invariant_note: invariant_facts.update_note,
     })
 }
 

@@ -53,7 +53,7 @@ impl ValidationPass {
             Self::check_service_op_bodies(db, config),
             Self::check_transition_bindings(db, config),
             Self::check_service_op_guards(db, config, workers_topology),
-            Self::check_invariants(db, config),
+            Self::check_invariants(db, config, workers_topology),
             Self::check_child_add_parent_load(db, config),
             Self::check_aggregate_boundaries(db, config),
         );
@@ -208,24 +208,47 @@ impl ValidationPass {
     /// generator emits refused invariants NOWHERE, so this pre-generation
     /// pass is what makes the refusal fail BEFORE any tree is written (the
     /// `check_service_op_bodies` posture).
+    ///
+    /// Slice 4d adds the topology half: the rules plane (where the
+    /// predicate fns — and therefore every enforcement call site — live)
+    /// is monolith-only (#338), so under the workers topology modeled
+    /// invariants are NOT enforced. That gap is made VISIBLE as a
+    /// Warning-severity finding naming the counts — never a silent
+    /// no-op.
     async fn check_invariants(
         db: &dyn GraphQuerier,
         config: &DomainConfig,
+        workers_topology: bool,
     ) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        if workers_topology
+            && let Some((entities, invariants)) =
+                codegraph_generate::ddd::invariants::modeled_invariant_counts(db).await
+        {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(design invariant)".to_string(),
+                check: "invariant",
+                message: format!(
+                    "{invariants} design invariant(s) on {entities} entity/entities are \
+                     not enforced under the workers topology — the rules plane \
+                     (the predicate fns and their handler call sites) is \
+                     monolith-only (#338)"
+                ),
+            });
+        }
         let Ok(refusals) =
             codegraph_generate::ddd::invariants::all_invariant_refusals(db, config).await
         else {
-            return Vec::new();
+            return issues;
         };
-        refusals
-            .into_iter()
-            .map(|message| ValidationIssue {
-                severity: Severity::Error,
-                entity: "(design invariant)".to_string(),
-                check: "invariant",
-                message,
-            })
-            .collect()
+        issues.extend(refusals.into_iter().map(|message| ValidationIssue {
+            severity: Severity::Error,
+            entity: "(design invariant)".to_string(),
+            check: "invariant",
+            message,
+        }));
+        issues
     }
 
     /// Scaffold-path transition bypass (issue #590, Ask 3): an entity with

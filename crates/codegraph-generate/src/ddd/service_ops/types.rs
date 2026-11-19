@@ -299,6 +299,13 @@ pub struct ServiceOpRoute {
     /// guard is present but not provably satisfied by a fresh fixture.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub injected_guard: Option<InjectedGuard>,
+    /// Pre-rendered design-invariant block (DD5, issue #666 slice 4d):
+    /// the candidate (loaded record + action patch, machine state move
+    /// included) evaluated BEFORE the write. `None` = the entity carries
+    /// no enforceable invariants (or the plane is gated off) —
+    /// byte-identical arm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invariant_block: Option<String>,
 }
 
 /// The compact injected-scope guard facts the hurl contract's planner

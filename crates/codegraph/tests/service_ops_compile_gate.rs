@@ -50,6 +50,18 @@ use fixture::{
 /// `codegraph-type-contracts` at this checkout's (unpushed) git rev and
 /// the gate's cargo check fetch fails (the WS1 finding).
 fn write_profiles(dir: &Path) -> std::path::PathBuf {
+    write_profiles_inner(dir, false)
+}
+
+/// The invariant variant (issue #666 slices 4d+4e): the plan ALSO carries
+/// the `rules` generator (with the `rosetta_backend` feature it requires)
+/// — the enforcement plane is an opt-in like the #338 guards, and the
+/// review-fixture regen is the established injection precedent.
+fn write_invariant_profiles(dir: &Path) -> std::path::PathBuf {
+    write_profiles_inner(dir, true)
+}
+
+fn write_profiles_inner(dir: &Path, with_rules: bool) -> std::path::PathBuf {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
     let type_contracts = workspace_root.join("crates/codegraph-type-contracts");
@@ -71,13 +83,27 @@ fn write_profiles(dir: &Path) -> std::path::PathBuf {
         "[profiles.default.features]\n",
         "[profiles.default.features]\ndependency_strategy = \"path\"\n",
     );
+    if with_rules {
+        // The workspace profile declares `rosetta_backend = false` — flip
+        // it (a duplicate key is a parse error).
+        text = text.replace("rosetta_backend = false", "rosetta_backend = true");
+    }
     // Strip grpc generator lines (protoc is not a gate prerequisite here).
     let filtered: Vec<&str> = text
         .lines()
         .filter(|line| !line.trim_start().starts_with("\"grpc_"))
         .collect();
+    let mut body = filtered.join("\n");
+    if with_rules {
+        // The `rules` domain generator rides the [api] list (the
+        // eligibility-guard injection shape from `review_api_suite_regen`).
+        body = body.replace(
+            "    \"errors\", \"router\", \"links\",",
+            "    \"errors\", \"router\", \"links\", \"rules\",",
+        );
+    }
     let path = dir.join("profiles.toml");
-    fs::write(&path, filtered.join("\n")).unwrap();
+    fs::write(&path, body).unwrap();
     path
 }
 
@@ -316,4 +342,96 @@ async fn generated_app_with_aggregate_child_operations_compiles() {
 
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with aggregate child operations must compile");
+}
+
+/// Issue #666 slices 4d+4e (the #551 policy): the design-invariant plane
+/// compiles — the slice-2 predicate fns in `rules.rs`, the create
+/// compensation + candidate pre-write blocks, the member validation's
+/// scoped member fetches, and the transition-arm invariant block compile
+/// together with the rest of the app. Before this pin the invariant call
+/// sites compiled NOWHERE (the silent-emission class the policy exists
+/// for).
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_design_invariants_compiles() {
+    let fixture = fixture::write_invariant_fixture();
+    let _engine = fixture::ingest_invariant(&fixture).await;
+
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let profiles_path = write_invariant_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the invariant fixture must succeed");
+
+    // The invariant surface must be ON DISK before any build spend: the
+    // rules predicates, the candidate pre-write blocks, the member
+    // validation, and the transition arm's invariant block.
+    let rules = fs::read_to_string(output.join("src/domain/payroll/rules.rs")).unwrap();
+    for needle in [
+        "pub fn pay_run_type_invariant_0(input: &PayRunResponse) -> bool {",
+        "pub fn pay_run_line_type_invariant_0(input: &PayRunLineResponse) -> bool {",
+    ] {
+        assert!(
+            rules.contains(needle),
+            "the predicate fns must emit before the build: {needle}\n{rules}"
+        );
+    }
+    let handler = fs::read_to_string(output.join("src/api/payroll/pay_run_handler.rs")).unwrap();
+    for needle in [
+        "code: \"INVARIANT_VIOLATION\"",
+        "let candidate: PayRunResponse = serde_json::from_value(candidate_json)",
+        "pay_run_type_invariant_0(&candidate)",
+        "pay_run_type_invariant_0(&response)",
+        "payroll_pay_run_line_queries.list_filtered(0, 1000, &member_filters_pay_run_line",
+        "pay_run_line_type_invariant_0(&member_row)",
+        "design invariant violated on create — compensating",
+    ] {
+        assert!(
+            handler.contains(needle),
+            "the root handler must carry `{needle}` before the build:\n{handler}"
+        );
+    }
+    let child_handler =
+        fs::read_to_string(output.join("src/api/payroll/pay_run_line_handler.rs")).unwrap();
+    for needle in [
+        "let existing = state.payroll_pay_run_line_queries.find_by_id_scoped(id, parent_id",
+        "pay_run_line_type_invariant_0(&candidate)",
+    ] {
+        assert!(
+            child_handler.contains(needle),
+            "the child handler must carry `{needle}` before the build:\n{child_handler}"
+        );
+    }
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with design invariants must pass the compile gate");
 }
