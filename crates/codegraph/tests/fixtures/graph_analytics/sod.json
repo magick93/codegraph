@@ -1,0 +1,33 @@
+{
+  "formatVersion": 2,
+  "blocks": [
+    {
+      "name": "App",
+      "actors": [
+        { "name": "Finance" }
+      ],
+      "capabilities": [
+        {
+          "name": "ReadTicket",
+          "class": { "type": "class", "value": { "package": "app", "name": "Ticket" } }
+        },
+        {
+          "name": "ResolveTicket",
+          "class": { "type": "class", "value": { "package": "app", "name": "Ticket" } }
+        }
+      ],
+      "grants": [
+        {
+          "actor": "Finance",
+          "entries": [
+            { "effect": "permit", "capability": "ReadTicket" },
+            { "effect": "permit", "capability": "ResolveTicket" }
+          ]
+        }
+      ],
+      "neverBoth": [
+        { "capabilities": ["ReadTicket", "ResolveTicket"] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+[domains.app]
+label = "App"
+schema_dir = "schemas/app"
+postgres_schema = "app"

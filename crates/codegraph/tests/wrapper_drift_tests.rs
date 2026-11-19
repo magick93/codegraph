@@ -100,6 +100,67 @@ fn rendered_wrapper_runargs_covers_every_driver_field() {
     );
 }
 
+/// The doctor surface has its own contract (issue #673): every
+/// `DoctorArgs` field must appear in the rendered wrapper's `DoctorArgs`
+/// construction, exactly like the `RunArgs` contract above. `DoctorArgs`
+/// has no exhaustive-construction helper to derive the list from, so the
+/// field inventory lives here — adding a doctor flag without updating
+/// `project/wrapper_main.tera` fails this test naming the missing fields.
+#[test]
+fn rendered_wrapper_doctor_args_covers_every_doctor_field() {
+    const DOCTOR_ARGS_FIELDS: &[&str] = &[
+        "config",
+        "schemas",
+        "classifier",
+        "profiles_config",
+        "mox_files",
+        "rosetta_files",
+        "ddd_files",
+        "evt_files",
+        "deploy_files",
+        "ifml_files",
+        "extension_points",
+        "fail_on_findings",
+        "graph_artifact",
+        "emit_graph",
+        "graph_reachability",
+    ];
+    let dir = TempDir::new().unwrap();
+    let main = scaffold_wrapper_main(&dir);
+    let start = main
+        .find("cmd_doctor(&codegraph::init::commands::DoctorArgs {")
+        .expect("wrapper main.rs must construct DoctorArgs");
+    let brace = main[start..].find('{').unwrap() + start;
+    let mut depth = 0usize;
+    let mut end = brace;
+    for (i, ch) in main[brace..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = brace + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let block = &main[brace..=end];
+    let missing: Vec<&str> = DOCTOR_ARGS_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| !wrapper_sets_field(block, field))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "wrapper_main.tera's DoctorArgs construction is missing fields — \
+         the scaffold would NOT compile against this driver: {missing:?}. \
+         Add each field with its CLI flag to project/wrapper_main.tera \
+         (re-rendering is the mechanical fix for consumers)."
+    );
+}
+
 fn doctor_args(project: &Path) -> DoctorArgs {
     DoctorArgs {
         config: project.join("domains.toml"),
@@ -113,6 +174,10 @@ fn doctor_args(project: &Path) -> DoctorArgs {
         deploy_files: vec![],
         ifml_files: vec![],
         extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
     }
 }
 

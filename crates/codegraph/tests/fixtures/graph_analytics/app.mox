@@ -1,0 +1,9 @@
+package app
+
+class Ticket {
+    String title
+}
+
+class Patron {
+    String name
+}

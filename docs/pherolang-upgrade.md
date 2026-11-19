@@ -314,10 +314,50 @@ Each item **deletes** a heuristic or seam we wrote as a workaround.
 
 - `.dmn` decision plane: ingest, `invokes` resolution, `.ifml` decision data.
 - `.uc` / `.cmmn` ingest.
-- Upstream `GraphModel` + `graph query` analytics (separation-of-duty, dead
-  capabilities, reachability) as a validation plane over our graph.
+- ~~Upstream `GraphModel` + `graph query` analytics (separation-of-duty, dead
+  capabilities, reachability) as a validation plane over our graph~~ — **LANDED
+  as issue #673**; the coverage matrix is below.
 - `pherolang artifact check` / `verify` receipts as CI gates over committed
   artifacts.
+
+### P6 landed — the semantic-graph analytics as a validation plane (#673)
+
+`codegraph doctor` now builds the upstream semantic graph
+(`phero_driver::graph::build`) from the SAME compiled artifacts the union
+integrity pass checks (one shared gather — `doctor_graph.rs::
+gather_cross_surface` — so the two cannot drift), round-trips it through the
+serialized wire artifact (`to_json_pretty` → `GraphModel::from_json`, the
+artifact-alone contract), and runs the sweep analytics over it
+(`phero_driver::graph::analytics`). Findings are `WARN graph-analytics —`
+lines (+1 soft warning each) by default and HARD failures under
+`--fail-on-findings` (the doctor exit-1 contract). New doctor flags:
+`--fail-on-findings`, `--emit-graph <path>` (commit the artifact),
+`--graph-artifact <path>` (analyze a committed artifact — no sources, no
+recompile: the CI mode), and `--graph-reachability from-actor=X,to=Y` (the
+passthrough query; unreachable target = a finding, malformed spec or
+unresolvable reference = a hard error).
+
+#### Coverage matrix (ours vs upstream)
+
+| Check | codegraph before | upstream analytics | Verdict |
+|---|---|---|---|
+| Separation-of-duty, declared `never_both` pair | runtime gates only (`service_ops` emits per-op request-time enforcement for merged policies); no static report | `separationOfDuty` sweep over the artifact | **Adopted.** The static sweep's honest finding class is the COMPILER-BYPASS path: `.json` policy imports load through `ActorModel::from_json` with no compile, so a violation the `.actor` compile rejects enters the graph unchecked (pinned by `sod_violation_found_across_merged_policies`). Single-file `.actor` violations are already compiler diagnostics, and the per-file artifact cannot pool duplicate capability declarations across files (`Symbols::one` is None on ambiguity — upstream derivation semantics), so the merged-policy class stays the runtime gates' enforcement domain: documented, not duplicated. |
+| Monotonicity (`extends` gaps) | none | `monotonicity` sweep | **Adopted** — never had it. `Manager extends Agent` while forbidding what `Agent` permits is a named finding. |
+| Dead capabilities | `check_integrity`'s coverage check is OPERATION-level (granted-but-no-op-carries); policy-level deadness (every permitting actor also forbids) had no check | `deadCapabilities` sweep (`latent`/`unknown` deliberately never findings) | **Adopted** — never had it. |
+| Reachability | none | `reachability` query (requires an explicit `--to`) | **Adopted as the passthrough flag** — it has no sweep semantics (a target is required), so doctor answers targeted queries; the envelope JSON prints verbatim. |
+| Granted capability no operation/search carries; capability clauses naming undeclared capabilities | `check_integrity` (union integrity stage) | compiler diagnostics, not analytics | Ours stays — different plane (operation wiring, not policy outcomes). |
+| FK/ref/codelist/namespace/service-op/transition/binding checks | `validate.rs` + consistency gates | upstream has no DDL/config model | Ours alone — upstream never sees these. |
+| Capability/actor graph source | run path: `.ifml` policy imports → Grafeo actor graph (`ingest_actor_policy`) | same `ActorModel`s → `GraphModel` artifact | **Same source, two projections** (deliverable 3). Both consume the compiled `ActorModel`s gathered by `ifml_actor_import::resolve_actor_imports` (one function since #673 — the path-carrying refactor; `resolve_actor_models` delegates). Feeding the Grafeo store FROM the artifact would invert a dependency for no generation benefit: generation needs graph-store queries (RLS/policy nodes), analytics need the versioned wire artifact. They cannot drift because the input is one gather. |
+
+Gates: `cargo test -p codegraph --test graph_analytics_tests` (27 pins:
+the three sweeps' findings, latent-not-a-finding, artifact round-trip +
+committed-artifact mode without recompile, reachability contract, doctor
+severity contract incl. malformed-spec hard errors) +
+`wrapper_drift_tests::rendered_wrapper_doctor_args_covers_every_doctor_field`
+(the wrapper's `DoctorArgs` contract — node-free, previously only the
+ignored compile gate covered the Doctor arm). Presence-gated: no policy
+artifacts, no reachability queries, no artifact mode, no `--emit-graph` ⇒
+the stage is silent and existing doctor output is byte-identical.
 
 ---
 

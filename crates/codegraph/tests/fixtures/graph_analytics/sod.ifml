@@ -1,0 +1,18 @@
+domain "app" { schema "app"; }
+
+// The COMMITTED policy artifact: `.json` policy imports load through
+// `ActorModel::from_json` — no compile, so a violation the `.actor`
+// compile would reject enters the graph unchecked. The graph-analytics
+// sweep is exactly this artifact's checker (issue #673).
+import "sod.json";
+
+view "Home" {
+    label "Home";
+    landmark: true;
+
+    component "portal" {
+        type: details;
+        data: Ticket;
+        fields: [title];
+    }
+}

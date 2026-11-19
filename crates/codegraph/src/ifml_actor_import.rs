@@ -86,7 +86,35 @@ pub fn resolve_actor_policy(import_paths: &[String], base_dir: &Path) -> Option<
 /// skip that import — the run path's warn-and-continue contract, where an
 /// empty result simply leaves the authorization dimension unchecked.
 pub fn resolve_actor_models(import_paths: &[String], base_dir: &Path) -> Vec<ActorModel> {
-    let mut models: Vec<ActorModel> = Vec::new();
+    resolve_actor_imports(import_paths, base_dir)
+        .into_iter()
+        .map(|imported| imported.model)
+        .collect()
+}
+
+/// One resolved policy import: the path as written, the resolved path,
+/// and the compiled actor model. The graph analytics plane (issue #673)
+/// consumes the paths for `GraphModel` attribution; the model list is the
+/// same `resolve_actor_models` output — one source for both, so the two
+/// cannot drift.
+#[derive(Debug, Clone)]
+pub struct ActorImport {
+    /// The import path as written on the `import "…"` statement.
+    pub raw: String,
+    /// The resolved file path (import path joined onto the importing
+    /// file's directory).
+    pub resolved: PathBuf,
+    /// The file source text (the `.actor`'s own `import` statements are
+    /// the graph import edges' input).
+    pub source: String,
+    /// The compiled actor model.
+    pub model: ActorModel,
+}
+
+/// [`resolve_actor_models`] with the per-import paths and sources the
+/// graph plane needs. Same dedup, same warn-and-continue contract.
+pub fn resolve_actor_imports(import_paths: &[String], base_dir: &Path) -> Vec<ActorImport> {
+    let mut imports: Vec<ActorImport> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     for raw in import_paths {
         let resolved = base_dir.join(raw);
@@ -94,27 +122,36 @@ pub fn resolve_actor_models(import_paths: &[String], base_dir: &Path) -> Vec<Act
         if !seen.insert(dedup_key) {
             continue;
         }
-        if let Some(model) = import_actor_model(raw, &resolved) {
-            models.push(model);
+        let source = match std::fs::read_to_string(&resolved) {
+            Ok(source) => source,
+            Err(e) => {
+                eprintln!("Warning: policy import '{raw}' could not be read: {e}");
+                continue;
+            }
+        };
+        match compile_actor_source(raw, &resolved, &source) {
+            Some(model) => imports.push(ActorImport {
+                raw: raw.clone(),
+                resolved,
+                source,
+                model,
+            }),
+            None => continue,
         }
     }
-    models
+    imports
 }
 
-fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
-    let source = match std::fs::read_to_string(resolved) {
-        Ok(source) => source,
-        Err(e) => {
-            eprintln!("Warning: policy import '{raw}' could not be read: {e}");
-            return None;
-        }
-    };
+/// Compile one `.actor` source (or load one `.json` artifact) — the
+/// single compile path behind `resolve_actor_models` and
+/// `ingest_actor_imports`. `None` = the import warned and was skipped.
+fn compile_actor_source(raw: &str, resolved: &Path, source: &str) -> Option<ActorModel> {
     let extension = resolved
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or_default();
     match extension {
-        "json" => match ActorModel::from_json(&source) {
+        "json" => match ActorModel::from_json(source) {
             Ok(model) => Some(model),
             Err(e) => {
                 eprintln!(
@@ -126,7 +163,7 @@ fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
         "actor" => import_actor_source(
             raw,
             resolved.parent().unwrap_or_else(|| Path::new(".")),
-            &source,
+            source,
         ),
         other => {
             eprintln!(
@@ -135,6 +172,17 @@ fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
             None
         }
     }
+}
+
+fn import_actor_model(raw: &str, resolved: &Path) -> Option<ActorModel> {
+    let source = match std::fs::read_to_string(resolved) {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!("Warning: policy import '{raw}' could not be read: {e}");
+            return None;
+        }
+    };
+    compile_actor_source(raw, resolved, &source)
 }
 
 fn import_actor_source(raw: &str, dir: &Path, source: &str) -> Option<ActorModel> {

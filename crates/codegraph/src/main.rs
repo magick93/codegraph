@@ -259,6 +259,10 @@ async fn main() -> codegraph::error::Result<()> {
             deploy_files,
             ifml_files,
             extension_points,
+            fail_on_findings,
+            graph_artifact,
+            emit_graph,
+            graph_reachability,
         } => {
             let args = codegraph::init::commands::DoctorArgs {
                 config,
@@ -272,6 +276,10 @@ async fn main() -> codegraph::error::Result<()> {
                 deploy_files,
                 ifml_files,
                 extension_points,
+                fail_on_findings,
+                graph_artifact,
+                emit_graph,
+                graph_reachability,
             };
             codegraph::init::commands::cmd_doctor(&args).map(|summary| {
                 println!(
