@@ -40,6 +40,10 @@ use std::path::{Path, PathBuf};
 
 use codegraph_ops::config::OpsConfig;
 use codegraph_ops::pg::PgTarget;
+// Issue #743: the gate and the ops harness pin ONE CLI version — the
+// constant lives in codegraph_ops::supabase; the doc comment below records
+// why.
+use codegraph_ops::supabase::SUPABASE_CLI_VERSION;
 
 /// The fixture workspace (consumer-style monorepo).
 fn fixture_dir() -> PathBuf {
@@ -82,7 +86,10 @@ pub const SUPABASE_HEALTH_URL: &str = "http://localhost:54341/auth/v1/health";
 /// `.github/workflows/workers-gate.yml`'s prefetch names the same literal —
 /// the node-free lockstep pin below fails (naming the mismatch) when the two
 /// drift apart.
-pub const SUPABASE_CLI_VERSION: &str = "3.2.0";
+///
+/// The constant itself lives in `codegraph_ops::supabase` (issue #743):
+/// the ops harness's own `npx supabase` spawns import the same value, so
+/// the harness and this gate cannot pin different CLIs.
 
 /// The fixture's local SMTP port (`[local_smtp].port`) — inside the 54340+
 /// block the fixture owns, and part of what the lockstep pin holds (issue

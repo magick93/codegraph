@@ -84,7 +84,7 @@ Requires a `[[supabase]]` manifest section and `database.e2e`.
 | Fast doctor (e2e subset) | npx, pnpm, supabase CLI, chromium, api+ui ports, disk. No DB probe. Marker: `Fast doctor`. |
 | Port preflight | api + ui ports resolved through the services registry (takeover / `--reuse`). |
 | E2E 0. freshness (pre-check, --skip-build) | With `--skip-build` only: fail a stale binary in seconds instead of after ~10 minutes of supabase/DB work. |
-| E2E 1. Supabase | `npx supabase start` (or detect running), then `pre_e2e` hooks (e.g. the pgmq patch). |
+| E2E 1. Supabase | The PINNED CLI `npx --yes supabase@3.2.0 start` (or detect running), then `pre_e2e` hooks (e.g. the pgmq patch). |
 | E2E 2. Generate | Build the graph binary (release), regenerate, output-tree check, generation-error gate (`--allow-gen-errors`), generator-rev check. |
 | E2E 3. Database | Migration symlink + `supabase db reset` + seed (~2 min at consumer scale), `post_migrate` hooks, API-key provisioning. |
 | E2E 4. Build | Build the app binary, then the post-build freshness check. |
