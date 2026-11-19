@@ -127,28 +127,27 @@ pub fn indexed_properties() -> Vec<&'static str> {
     ]
 }
 
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
-fn node_type_ddl() -> Vec<&'static str> {
-    vec![
-        // AtprotoNamespace — AT Protocol repo namespaces. Renamed from
-        // `Namespace` (issue #267 collision resolution) so the graph-wide
-        // namespace concept owns the plain label.
-        "CREATE NODE TYPE IF NOT EXISTS AtprotoNamespace (
+/// Node-type DDL — AT Protocol namespaces/lexicons/collections/repos + the shared InNamespace endpoints.
+const ATPROTO_NODE_DDL: &[&str] = &[
+    // AtprotoNamespace — AT Protocol repo namespaces. Renamed from
+    // `Namespace` (issue #267 collision resolution) so the graph-wide
+    // namespace concept owns the plain label.
+    "CREATE NODE TYPE IF NOT EXISTS AtprotoNamespace (
             authority STRING NOT NULL,
             segment STRING NOT NULL,
             domain STRING NOT NULL
         )",
-        // Namespace — graph-wide namespaces (issue #267). `fqn` is the
-        // unique key; `parent` is persisted flat (and as a NamespaceParent
-        // edge); `source` records the declaration provenance ("config",
-        // "discovered", "mox", ...).
-        "CREATE NODE TYPE IF NOT EXISTS Namespace (
+    // Namespace — graph-wide namespaces (issue #267). `fqn` is the
+    // unique key; `parent` is persisted flat (and as a NamespaceParent
+    // edge); `source` records the declaration provenance ("config",
+    // "discovered", "mox", ...).
+    "CREATE NODE TYPE IF NOT EXISTS Namespace (
             fqn STRING NOT NULL,
             parent STRING,
             source STRING
         )",
-        // Lexicon — AT Protocol
-        "CREATE NODE TYPE IF NOT EXISTS Lexicon (
+    // Lexicon — AT Protocol
+    "CREATE NODE TYPE IF NOT EXISTS Lexicon (
             nsid STRING NOT NULL,
             lex_type STRING NOT NULL,
             key_strategy STRING NOT NULL,
@@ -156,22 +155,26 @@ fn node_type_ddl() -> Vec<&'static str> {
             description STRING,
             domain STRING NOT NULL
         )",
-        // Collection — AT Protocol
-        "CREATE NODE TYPE IF NOT EXISTS Collection (
+    // Collection — AT Protocol
+    "CREATE NODE TYPE IF NOT EXISTS Collection (
             nsid STRING NOT NULL,
             key_strategy STRING NOT NULL,
             domain STRING NOT NULL
         )",
-        // Repository — AT Protocol
-        "CREATE NODE TYPE IF NOT EXISTS Repository (
+    // Repository — AT Protocol
+    "CREATE NODE TYPE IF NOT EXISTS Repository (
             did STRING NOT NULL,
             handle STRING,
             pds_endpoint STRING NOT NULL,
             org_name STRING NOT NULL,
             tenancy_mode STRING NOT NULL
         )",
-        // SchemaNode — 25 fields from codegraph-core/src/types/schema.rs
-        "CREATE NODE TYPE IF NOT EXISTS Schema (
+];
+
+/// Node-type DDL — core schema/property plane (Schema, Property, CodeList, EnumValue, composite columns/ranges, Extension, Domain).
+const SCHEMA_NODE_DDL: &[&str] = &[
+    // SchemaNode — 25 fields from codegraph-core/src/types/schema.rs
+    "CREATE NODE TYPE IF NOT EXISTS Schema (
             schema_id STRING NOT NULL,
             title STRING NOT NULL,
             description STRING,
@@ -198,11 +201,11 @@ fn node_type_ddl() -> Vec<&'static str> {
             access STRING,
             annotations STRING
         )",
-        // PropertyNode — 16 fields + scalar/item bounds + _schema_title
-        // denormalized. Bounds are persisted as STRING (u64/Decimal serialize
-        // via to_string) because Decimal has no native grafeo Value;
-        // conversions parses back.
-        "CREATE NODE TYPE IF NOT EXISTS Property (
+    // PropertyNode — 16 fields + scalar/item bounds + _schema_title
+    // denormalized. Bounds are persisted as STRING (u64/Decimal serialize
+    // via to_string) because Decimal has no native grafeo Value;
+    // conversions parses back.
+    "CREATE NODE TYPE IF NOT EXISTS Property (
             name STRING NOT NULL,
             prop_type STRING NOT NULL,
             description STRING,
@@ -228,31 +231,31 @@ fn node_type_ddl() -> Vec<&'static str> {
             _schema_title STRING NOT NULL,
             _schema_id STRING
         )",
-        // CodeList — 5 fields
-        "CREATE NODE TYPE IF NOT EXISTS CodeList (
+    // CodeList — 5 fields
+    "CREATE NODE TYPE IF NOT EXISTS CodeList (
             name STRING NOT NULL,
             description STRING,
             pg_table_name STRING NOT NULL,
             render_as STRING NOT NULL,
             check_expression STRING
         )",
-        // EnumValue — 3 fields + _codelist_name denormalized
-        "CREATE NODE TYPE IF NOT EXISTS EnumValue (
+    // EnumValue — 3 fields + _codelist_name denormalized
+    "CREATE NODE TYPE IF NOT EXISTS EnumValue (
             value STRING NOT NULL,
             display_name STRING,
             sort_order INTEGER NOT NULL,
             _codelist_name STRING NOT NULL
         )",
-        // CompositeColumn — 5 fields
-        "CREATE NODE TYPE IF NOT EXISTS CompositeColumn (
+    // CompositeColumn — 5 fields
+    "CREATE NODE TYPE IF NOT EXISTS CompositeColumn (
             suffix STRING NOT NULL,
             pg_type STRING NOT NULL,
             rust_type STRING NOT NULL,
             sea_orm_type STRING NOT NULL,
             fk_target STRING
         )",
-        // CompositeRange — 6 fields
-        "CREATE NODE TYPE IF NOT EXISTS CompositeRange (
+    // CompositeRange — 6 fields
+    "CREATE NODE TYPE IF NOT EXISTS CompositeRange (
             pg_column_name STRING NOT NULL,
             pg_type STRING NOT NULL,
             rust_type STRING NOT NULL,
@@ -260,16 +263,20 @@ fn node_type_ddl() -> Vec<&'static str> {
             end_field STRING NOT NULL,
             open_end BOOLEAN NOT NULL
         )",
-        // Extension — 1 field
-        "CREATE NODE TYPE IF NOT EXISTS Extension (
+    // Extension — 1 field
+    "CREATE NODE TYPE IF NOT EXISTS Extension (
             name STRING NOT NULL
         )",
-        // Domain — 1 field
-        "CREATE NODE TYPE IF NOT EXISTS Domain (
+    // Domain — 1 field
+    "CREATE NODE TYPE IF NOT EXISTS Domain (
             name STRING NOT NULL
         )",
-        // ViewContainer — IFML
-        "CREATE NODE TYPE IF NOT EXISTS ViewContainer (
+];
+
+/// Node-type DDL — IFML interaction plane (view containers/components, events, actions, params, data bindings, module definitions).
+const IFML_NODE_DDL: &[&str] = &[
+    // ViewContainer — IFML
+    "CREATE NODE TYPE IF NOT EXISTS ViewContainer (
             name STRING NOT NULL,
             label STRING,
             is_xor BOOLEAN NOT NULL DEFAULT false,
@@ -278,8 +285,8 @@ fn node_type_ddl() -> Vec<&'static str> {
             is_modal BOOLEAN NOT NULL DEFAULT false,
             domain STRING
         )",
-        // ViewComponent — IFML
-        "CREATE NODE TYPE IF NOT EXISTS ViewComponent (
+    // ViewComponent — IFML
+    "CREATE NODE TYPE IF NOT EXISTS ViewComponent (
             name STRING NOT NULL,
             component_type STRING NOT NULL,
             mode STRING,
@@ -290,39 +297,43 @@ fn node_type_ddl() -> Vec<&'static str> {
             spec STRING,
             domain STRING
         )",
-        // Event — IFML
-        "CREATE NODE TYPE IF NOT EXISTS Event (
+    // Event — IFML
+    "CREATE NODE TYPE IF NOT EXISTS Event (
             name STRING NOT NULL,
             event_type STRING NOT NULL,
             params STRING,
             domain STRING
         )",
-        // Action — IFML
-        "CREATE NODE TYPE IF NOT EXISTS ActionNode (
+    // Action — IFML
+    "CREATE NODE TYPE IF NOT EXISTS ActionNode (
             name STRING NOT NULL,
             domain STRING
         )",
-        // ParameterDefinition — IFML
-        "CREATE NODE TYPE IF NOT EXISTS ParameterDefinition (
+    // ParameterDefinition — IFML
+    "CREATE NODE TYPE IF NOT EXISTS ParameterDefinition (
             name STRING NOT NULL,
             direction STRING NOT NULL,
             type_ref STRING NOT NULL,
             domain STRING
         )",
-        // DataBinding — IFML
-        "CREATE NODE TYPE IF NOT EXISTS DataBinding (
+    // DataBinding — IFML
+    "CREATE NODE TYPE IF NOT EXISTS DataBinding (
             name STRING NOT NULL,
             conditional_expression STRING,
             expression_language STRING NOT NULL DEFAULT 'ifml',
             domain STRING
         )",
-        // ModuleDefinition — IFML
-        "CREATE NODE TYPE IF NOT EXISTS ModuleDefinition (
+    // ModuleDefinition — IFML
+    "CREATE NODE TYPE IF NOT EXISTS ModuleDefinition (
             name STRING NOT NULL,
             domain STRING
         )",
-        // ChartDefinition — chart plane (issue #577)
-        "CREATE NODE TYPE IF NOT EXISTS ChartDefinition (
+];
+
+/// Node-type DDL — chart plane (issue #577).
+const CHART_NODE_DDL: &[&str] = &[
+    // ChartDefinition — chart plane (issue #577)
+    "CREATE NODE TYPE IF NOT EXISTS ChartDefinition (
             name STRING NOT NULL,
             kind STRING NOT NULL,
             title STRING,
@@ -332,16 +343,20 @@ fn node_type_ddl() -> Vec<&'static str> {
             route STRING,
             config_json STRING
         )",
-        // ApiResource — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS ApiResource (
+];
+
+/// Node-type DDL — API metamodel (resources, operations, interactions, endpoints, pipelines, errors, permissions).
+const API_NODE_DDL: &[&str] = &[
+    // ApiResource — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS ApiResource (
             name STRING NOT NULL,
             schema_title STRING NOT NULL,
             domain STRING NOT NULL,
             label STRING,
             path_segment STRING NOT NULL
         )",
-        // ApiOperation — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS ApiOperation (
+    // ApiOperation — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS ApiOperation (
             name STRING NOT NULL,
             kind STRING NOT NULL,
             input_schema STRING,
@@ -351,46 +366,50 @@ fn node_type_ddl() -> Vec<&'static str> {
             filtering BOOLEAN NOT NULL DEFAULT false,
             domain STRING
         )",
-        // Interaction — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Interaction (
+    // Interaction — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Interaction (
             name STRING NOT NULL,
             transport STRING NOT NULL,
             domain STRING
         )",
-        // HttpEndpoint — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS HttpEndpoint (
+    // HttpEndpoint — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS HttpEndpoint (
             name STRING NOT NULL,
             method STRING NOT NULL,
             path_template STRING NOT NULL,
             domain STRING
         )",
-        // Pipeline — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Pipeline (
+    // Pipeline — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Pipeline (
             name STRING NOT NULL,
             middleware STRING,
             domain STRING
         )",
-        // ErrorDefinition — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS ErrorDefinition (
+    // ErrorDefinition — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS ErrorDefinition (
             code STRING NOT NULL,
             description STRING NOT NULL,
             http_status INTEGER NOT NULL,
             domain STRING
         )",
-        // Permission — API metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Permission (
+    // Permission — API metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Permission (
             name STRING NOT NULL,
             domain STRING
         )",
-        // Policy — persistence metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Policy (
+];
+
+/// Node-type DDL — persistence metamodel (policies, relationships, identities, memberships, tenants).
+const PERSISTENCE_NODE_DDL: &[&str] = &[
+    // Policy — persistence metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Policy (
             name STRING NOT NULL,
             kind_json STRING NOT NULL,
             target_schema STRING NOT NULL,
             domain STRING
         )",
-        // Relationship — persistence metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Relationship (
+    // Relationship — persistence metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Relationship (
             name STRING NOT NULL,
             source_schema STRING NOT NULL,
             target_schema STRING NOT NULL,
@@ -400,14 +419,14 @@ fn node_type_ddl() -> Vec<&'static str> {
             propagation_json STRING NOT NULL,
             domain STRING
         )",
-        // SecurityIdentity — persistence metamodel
-        "CREATE NODE TYPE IF NOT EXISTS SecurityIdentity (
+    // SecurityIdentity — persistence metamodel
+    "CREATE NODE TYPE IF NOT EXISTS SecurityIdentity (
             name STRING NOT NULL,
             subject STRING NOT NULL,
             domain STRING
         )",
-        // Membership — persistence metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Membership (
+    // Membership — persistence metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Membership (
             identity STRING NOT NULL,
             tenant STRING NOT NULL,
             status STRING NOT NULL,
@@ -415,34 +434,42 @@ fn node_type_ddl() -> Vec<&'static str> {
             valid_from STRING NOT NULL,
             valid_until STRING NOT NULL
         )",
-        // Tenant — persistence metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Tenant (
+    // Tenant — persistence metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Tenant (
             name STRING NOT NULL,
             label STRING NOT NULL,
             strategy_json STRING NOT NULL,
             domain STRING
         )",
-        // Actor — authorization metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Actor (
+];
+
+/// Node-type DDL — pherolang authorization metamodel (actors, capabilities, policy singleton).
+const AUTHZ_NODE_DDL: &[&str] = &[
+    // Actor — authorization metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Actor (
             name STRING NOT NULL,
             kind STRING,
             extends STRING,
             block STRING
         )",
-        // Capability — authorization metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Capability (
+    // Capability — authorization metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Capability (
             name STRING NOT NULL,
             class STRING NOT NULL,
             block STRING
         )",
-        // ActorPolicy — authorization metamodel model-level carrier
-        "CREATE NODE TYPE IF NOT EXISTS ActorPolicy (
+    // ActorPolicy — authorization metamodel model-level carrier
+    "CREATE NODE TYPE IF NOT EXISTS ActorPolicy (
             name STRING NOT NULL,
             blocks STRING,
             never_both STRING
         )",
-        // Vocabulary — mox domain metamodel
-        "CREATE NODE TYPE IF NOT EXISTS Vocabulary (
+];
+
+/// Node-type DDL — mox domain metamodel (vocabularies, packages, operations, derived features).
+const MOX_NODE_DDL: &[&str] = &[
+    // Vocabulary — mox domain metamodel
+    "CREATE NODE TYPE IF NOT EXISTS Vocabulary (
             name STRING NOT NULL,
             package STRING NOT NULL,
             source STRING NOT NULL,
@@ -451,12 +478,12 @@ fn node_type_ddl() -> Vec<&'static str> {
             facets_json STRING NOT NULL,
             entries_json STRING NOT NULL
         )",
-        // MoxPackage — mox domain metamodel package carrier
-        "CREATE NODE TYPE IF NOT EXISTS MoxPackage (
+    // MoxPackage — mox domain metamodel package carrier
+    "CREATE NODE TYPE IF NOT EXISTS MoxPackage (
             name STRING NOT NULL
         )",
-        // Operation — mox domain metamodel (class behavior, verbatim bodies)
-        "CREATE NODE TYPE IF NOT EXISTS Operation (
+    // Operation — mox domain metamodel (class behavior, verbatim bodies)
+    "CREATE NODE TYPE IF NOT EXISTS Operation (
             name STRING NOT NULL,
             class STRING NOT NULL,
             package STRING NOT NULL,
@@ -465,18 +492,22 @@ fn node_type_ddl() -> Vec<&'static str> {
             params_json STRING NOT NULL,
             bodies_json STRING NOT NULL
         )",
-        // DerivedFeature — mox domain metamodel (computed, never stored)
-        "CREATE NODE TYPE IF NOT EXISTS DerivedFeature (
+    // DerivedFeature — mox domain metamodel (computed, never stored)
+    "CREATE NODE TYPE IF NOT EXISTS DerivedFeature (
             name STRING NOT NULL,
             class STRING NOT NULL,
             package STRING NOT NULL,
             type_ref STRING NOT NULL,
             expr STRING
         )",
-        // Condition — constraint plane (issue #261). `options` persists the
-        // one_of option titles as a JSON array string; `expr_json` carries
-        // the canonical Expr::to_json() payload for named conditions.
-        "CREATE NODE TYPE IF NOT EXISTS Condition (
+];
+
+/// Node-type DDL — constraint plane (issue #261).
+const CONSTRAINT_NODE_DDL: &[&str] = &[
+    // Condition — constraint plane (issue #261). `options` persists the
+    // one_of option titles as a JSON array string; `expr_json` carries
+    // the canonical Expr::to_json() payload for named conditions.
+    "CREATE NODE TYPE IF NOT EXISTS Condition (
             name STRING NOT NULL,
             owner_title STRING NOT NULL,
             kind STRING NOT NULL,
@@ -485,12 +516,16 @@ fn node_type_ddl() -> Vec<&'static str> {
             definition STRING,
             domain STRING
         )",
-        // Regulatory — regulatory reference plane (issue #265). ONE
-        // parameterized node type (the Condition precedent) carrying the
-        // seven regulatory kinds (report/body/corpus/segment/rule source/
-        // rule schema/meta type) in `kind`; the disjoint per-kind payloads
-        // persist as one JSON object string in `properties_json`.
-        "CREATE NODE TYPE IF NOT EXISTS Regulatory (
+];
+
+/// Node-type DDL — regulatory reference plane (issue #265).
+const REGULATORY_NODE_DDL: &[&str] = &[
+    // Regulatory — regulatory reference plane (issue #265). ONE
+    // parameterized node type (the Condition precedent) carrying the
+    // seven regulatory kinds (report/body/corpus/segment/rule source/
+    // rule schema/meta type) in `kind`; the disjoint per-kind payloads
+    // persist as one JSON object string in `properties_json`.
+    "CREATE NODE TYPE IF NOT EXISTS Regulatory (
             name STRING NOT NULL,
             kind STRING NOT NULL,
             label STRING,
@@ -498,28 +533,36 @@ fn node_type_ddl() -> Vec<&'static str> {
             domain STRING,
             properties_json STRING
         )",
-        // Function — computation plane (issue #263). ONE structured node
-        // per rosetta func: the common shape persists flat (name, domain,
-        // definition, extends_function); the typed structured payload
-        // (dispatch head, inputs, output, aliases, operations,
-        // post-conditions, transform annotations, open-ended metadata)
-        // persists as one JSON object string in `payload_json` — Grafeo
-        // node properties are a flat bag, so nested Vecs serialize (the
-        // ConditionNode `options`/RegulatoryNode `properties_json`
-        // precedent).
-        "CREATE NODE TYPE IF NOT EXISTS Function (
+];
+
+/// Node-type DDL — computation plane (issue #263).
+const COMPUTATION_NODE_DDL: &[&str] = &[
+    // Function — computation plane (issue #263). ONE structured node
+    // per rosetta func: the common shape persists flat (name, domain,
+    // definition, extends_function); the typed structured payload
+    // (dispatch head, inputs, output, aliases, operations,
+    // post-conditions, transform annotations, open-ended metadata)
+    // persists as one JSON object string in `payload_json` — Grafeo
+    // node properties are a flat bag, so nested Vecs serialize (the
+    // ConditionNode `options`/RegulatoryNode `properties_json`
+    // precedent).
+    "CREATE NODE TYPE IF NOT EXISTS Function (
             name STRING NOT NULL,
             domain STRING,
             definition STRING,
             extends_function STRING,
             payload_json STRING NOT NULL
         )",
-        // Rule — computation plane (issue #264). ONE structured node per
-        // rosetta reporting/eligibility rule: the common shape persists
-        // flat (name, domain, definition, kind, input_type); the payload
-        // (expr_json, open-ended metadata) persists as one JSON object
-        // string in `payload_json` (the FunctionNode precedent).
-        "CREATE NODE TYPE IF NOT EXISTS Rule (
+];
+
+/// Node-type DDL — rule plane (issue #264).
+const RULE_NODE_DDL: &[&str] = &[
+    // Rule — computation plane (issue #264). ONE structured node per
+    // rosetta reporting/eligibility rule: the common shape persists
+    // flat (name, domain, definition, kind, input_type); the payload
+    // (expr_json, open-ended metadata) persists as one JSON object
+    // string in `payload_json` (the FunctionNode precedent).
+    "CREATE NODE TYPE IF NOT EXISTS Rule (
             name STRING NOT NULL,
             domain STRING,
             definition STRING,
@@ -527,22 +570,26 @@ fn node_type_ddl() -> Vec<&'static str> {
             input_type STRING,
             payload_json STRING NOT NULL
         )",
-        // DDD design plane (issue #449). Seven node families mirroring the
-        // phero-ir `.ddd` artifact; service/search sub-structures persist as
-        // JSON-string properties (the ActorPolicy singleton pattern), while
-        // repository operations are their own node family (repositories are
-        // cross-queried).
-        "CREATE NODE TYPE IF NOT EXISTS DddApplication (
+];
+
+/// Node-type DDL — DDD design plane (issue #449).
+const DDD_NODE_DDL: &[&str] = &[
+    // DDD design plane (issue #449). Seven node families mirroring the
+    // phero-ir `.ddd` artifact; service/search sub-structures persist as
+    // JSON-string properties (the ActorPolicy singleton pattern), while
+    // repository operations are their own node family (repositories are
+    // cross-queried).
+    "CREATE NODE TYPE IF NOT EXISTS DddApplication (
             name STRING NOT NULL,
             base STRING,
             source_path STRING NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS DddModule (
+    "CREATE NODE TYPE IF NOT EXISTS DddModule (
             application STRING NOT NULL,
             name STRING NOT NULL,
             ordinal INTEGER NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS DddDesign (
+    "CREATE NODE TYPE IF NOT EXISTS DddDesign (
             application STRING NOT NULL,
             module STRING NOT NULL,
             class STRING NOT NULL,
@@ -554,12 +601,12 @@ fn node_type_ddl() -> Vec<&'static str> {
             child_operations_json STRING,
             ordinal INTEGER NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS DddRepository (
+    "CREATE NODE TYPE IF NOT EXISTS DddRepository (
             application STRING NOT NULL,
             name STRING NOT NULL,
             design_class STRING NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS DddRepositoryOperation (
+    "CREATE NODE TYPE IF NOT EXISTS DddRepositoryOperation (
             application STRING NOT NULL,
             repository_name STRING NOT NULL,
             name STRING NOT NULL,
@@ -571,7 +618,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             query_json STRING,
             capabilities_json STRING
         )",
-        "CREATE NODE TYPE IF NOT EXISTS DddService (
+    "CREATE NODE TYPE IF NOT EXISTS DddService (
             application STRING NOT NULL,
             module STRING NOT NULL,
             name STRING NOT NULL,
@@ -581,7 +628,7 @@ fn node_type_ddl() -> Vec<&'static str> {
             operations_json STRING NOT NULL,
             ordinal INTEGER NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS DddSearch (
+    "CREATE NODE TYPE IF NOT EXISTS DddSearch (
             application STRING NOT NULL,
             module STRING NOT NULL,
             name STRING NOT NULL,
@@ -598,13 +645,17 @@ fn node_type_ddl() -> Vec<&'static str> {
             capabilities_json STRING NOT NULL,
             ordinal INTEGER NOT NULL
         )",
-        // Event-contract plane (issue #454). Three standalone node families
-        // mirroring the phero-ir `.evt` artifact; the intra-file event
-        // references (channel publishes, subscription events) and payload
-        // fields persist as JSON-string properties (the DddService
-        // `operations_json` pattern) — no edge types this time. Unrelated
-        // to the IFML `:Event` label.
-        "CREATE NODE TYPE IF NOT EXISTS EvtEvent (
+];
+
+/// Node-type DDL — event-contract plane (issue #454).
+const EVT_NODE_DDL: &[&str] = &[
+    // Event-contract plane (issue #454). Three standalone node families
+    // mirroring the phero-ir `.evt` artifact; the intra-file event
+    // references (channel publishes, subscription events) and payload
+    // fields persist as JSON-string properties (the DddService
+    // `operations_json` pattern) — no edge types this time. Unrelated
+    // to the IFML `:Event` label.
+    "CREATE NODE TYPE IF NOT EXISTS EvtEvent (
             source_path STRING NOT NULL,
             name STRING NOT NULL,
             version STRING,
@@ -612,14 +663,14 @@ fn node_type_ddl() -> Vec<&'static str> {
             cloud_events_json STRING,
             ordinal INTEGER NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS EvtChannel (
+    "CREATE NODE TYPE IF NOT EXISTS EvtChannel (
             source_path STRING NOT NULL,
             name STRING NOT NULL,
             publishes_json STRING NOT NULL,
             scope STRING,
             ordinal INTEGER NOT NULL
         )",
-        "CREATE NODE TYPE IF NOT EXISTS EvtSubscription (
+    "CREATE NODE TYPE IF NOT EXISTS EvtSubscription (
             source_path STRING NOT NULL,
             name STRING NOT NULL,
             events_json STRING NOT NULL,
@@ -628,27 +679,51 @@ fn node_type_ddl() -> Vec<&'static str> {
             delivery_json STRING,
             ordinal INTEGER NOT NULL
         )",
-        // Deployment plane (pherolang #49). ONE node per `.deploy` model (the
-        // model is small and consumers always want it whole — the
-        // FunctionNode payload_json pattern): `source_path` is the upsert
-        // key and `model_json` carries the whole `DeployModelGraph`
-        // serialized (every sub-type is Serialize/Deserialize), so no node
-        // families or edge types this time.
-        "CREATE NODE TYPE IF NOT EXISTS DeployModel (
+];
+
+/// Node-type DDL — deployment plane (pherolang #49) + the IFML manifest singleton (WS6).
+const DEPLOY_NODE_DDL: &[&str] = &[
+    // Deployment plane (pherolang #49). ONE node per `.deploy` model (the
+    // model is small and consumers always want it whole — the
+    // FunctionNode payload_json pattern): `source_path` is the upsert
+    // key and `model_json` carries the whole `DeployModelGraph`
+    // serialized (every sub-type is Serialize/Deserialize), so no node
+    // families or edge types this time.
+    "CREATE NODE TYPE IF NOT EXISTS DeployModel (
             source_path STRING NOT NULL,
             model_json STRING NOT NULL
         )",
-        // IFML manifest plane (pherolang #118, WS6). ONE singleton node per
-        // run: `model_json` carries the whole folded `IfmlManifest`
-        // serialized (`:DeployModel` pattern — consumers always want it
-        // whole), `source_paths` is the JSON array of the `.ifml` files
-        // that folded into it. Pre-WS6 graphs carry no node; consumers
-        // degrade to `None` (presence-gated).
-        "CREATE NODE TYPE IF NOT EXISTS IfmlManifest (
+    // IFML manifest plane (pherolang #118, WS6). ONE singleton node per
+    // run: `model_json` carries the whole folded `IfmlManifest`
+    // serialized (`:DeployModel` pattern — consumers always want it
+    // whole), `source_paths` is the JSON array of the `.ifml` files
+    // that folded into it. Pre-WS6 graphs carry no node; consumers
+    // degrade to `None` (presence-gated).
+    "CREATE NODE TYPE IF NOT EXISTS IfmlManifest (
             source_paths STRING NOT NULL,
             model_json STRING NOT NULL
         )",
+];
+
+fn node_type_ddl() -> Vec<&'static str> {
+    [
+        ATPROTO_NODE_DDL,
+        SCHEMA_NODE_DDL,
+        IFML_NODE_DDL,
+        CHART_NODE_DDL,
+        API_NODE_DDL,
+        PERSISTENCE_NODE_DDL,
+        AUTHZ_NODE_DDL,
+        MOX_NODE_DDL,
+        CONSTRAINT_NODE_DDL,
+        REGULATORY_NODE_DDL,
+        COMPUTATION_NODE_DDL,
+        RULE_NODE_DDL,
+        DDD_NODE_DDL,
+        EVT_NODE_DDL,
+        DEPLOY_NODE_DDL,
     ]
+    .concat()
 }
 
 fn edge_type_ddl() -> Vec<&'static str> {
