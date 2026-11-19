@@ -123,12 +123,11 @@ fn the_band_tests_use_the_shared_fail_closed_gate() {
     ] {
         let text = read(file);
         assert!(
-            text.contains("supabase::compatibility_gate"),
+            text.contains("codegraph_ops::supabase"),
             "{file} must route its Supabase compatibility probe through \
-             codegraph_ops::supabase::compatibility_gate (issue #708: the \
-             shared gate fails closed under CODEGRAPH_REQUIRE_SUPABASE and \
-             skips otherwise) — a private `supabase_compatible` is the \
-             silent-skip class"
+             codegraph_ops::supabase (issue #708: the shared gate fails \
+             closed under CODEGRAPH_REQUIRE_SUPABASE and skips otherwise) — \
+             a private `supabase_compatible` is the silent-skip class"
         );
         assert!(
             !text.contains("fn supabase_compatible"),

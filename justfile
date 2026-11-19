@@ -61,6 +61,18 @@ ops-db-integration:
         echo "WARN ops — Postgres unreachable ($DB_URL); skipping db_integration"
         exit 0
     fi
+    # Issue #708: mirror CI's fail-closed gate. When the target serves the
+    # Supabase band, export CODEGRAPH_REQUIRE_SUPABASE=1 so a missing
+    # capability FAILS naming the image (exactly like CI); on a plain
+    # Postgres target, leave it unset (today's skip behaviour) but say so
+    # loudly.
+    SUPA=$(psql "$DB_URL" -Atc "SELECT coalesce(string_agg(name, ','), '') FROM (SELECT 'auth schema' AS name WHERE NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='auth') UNION ALL SELECT 'pgmq' WHERE NOT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name='pgmq') UNION ALL SELECT 'pg_tle' WHERE NOT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name='pg_tle') UNION ALL SELECT 'http' WHERE NOT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name='http')) missing;" 2>/dev/null || echo "unreachable")
+    if [ -z "$SUPA" ]; then
+        export CODEGRAPH_REQUIRE_SUPABASE=1
+    else
+        echo "WARN ops — $DB_URL is plain Postgres (missing: ${SUPA}): the 2 full-band tests will SKIP."
+        echo "        point DATABASE_URL at public.ecr.aws/supabase/postgres:17.6.1.132, or set CODEGRAPH_REQUIRE_SUPABASE=1 to fail instead of skip"
+    fi
     cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture
 
 ops-generator-tests:

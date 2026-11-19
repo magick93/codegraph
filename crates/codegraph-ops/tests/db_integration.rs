@@ -282,23 +282,22 @@ fn link_migrations_creates_symlinks() {
     assert!(!sup.join("b.sql").exists());
 }
 
-/// True when the target looks like a Supabase-compatible Postgres: the `auth`
-/// schema is present and the extensions basejump/pgmq depend on are available.
-/// The `migrate` integration tests that exercise the full generated platform
-/// band skip otherwise (e.g. a vanilla `postgres:15` container in CI).
-async fn supabase_compatible(t: &PgTarget) -> bool {
-    let out = psql_query(
-        t,
-        "SELECT \
-         EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pgmq') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_tle') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'http') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'uuid-ossp');",
-    )
-    .await
-    .unwrap_or_default();
-    out.trim() == "t"
+/// Probe the target through the SHARED fail-closed gate
+/// (`codegraph_ops::supabase`, issue #708): under
+/// `CODEGRAPH_REQUIRE_SUPABASE=1` a missing capability is a FAIL naming
+/// what is missing and the image; unset, the caller skips as before. One
+/// predicate, three consumers — no private copy that could drift.
+/// Returns false when the caller should skip (the reason is printed).
+async fn band_gate(t: &PgTarget) -> bool {
+    use codegraph_ops::supabase::{CompatibilityGate, compatibility_gate};
+    match compatibility_gate(t).await {
+        CompatibilityGate::Run => true,
+        CompatibilityGate::Skip { reason } => {
+            eprintln!("skipping: {reason}");
+            false
+        }
+        CompatibilityGate::Fail { reason } => panic!("{reason}"),
+    }
 }
 
 /// Write a representative full generated migration set (the same band the
@@ -308,7 +307,7 @@ async fn supabase_compatible(t: &PgTarget) -> bool {
 /// domain-event trigger.
 fn write_full_generated_set(dir: &Path) {
     let basejump = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../codegraph/static/basejump_core_2.0.1_install.sql");
+        .join("../codegraph-generate/static/basejump_core_2.0.1_install.sql");
     let basejump_sql = fs::read_to_string(&basejump)
         .unwrap_or_else(|_| panic!("cannot read basejump install at {}", basejump.display()));
 
@@ -388,8 +387,7 @@ async fn migrations_apply_full_generated_set() {
     }
     let _guard = DB_LOCK.lock().await;
     let t = target();
-    if !supabase_compatible(&t).await {
-        eprintln!("skipping: target lacks Supabase-compatible auth schema / pgmq / pg_tle / http");
+    if !band_gate(&t).await {
         return;
     }
 
@@ -536,8 +534,7 @@ async fn phased_and_file_order_application_match() {
     }
     let _guard = DB_LOCK.lock().await;
     let t = target();
-    if !supabase_compatible(&t).await {
-        eprintln!("skipping: target lacks Supabase-compatible auth schema / pgmq / pg_tle / http");
+    if !band_gate(&t).await {
         return;
     }
 

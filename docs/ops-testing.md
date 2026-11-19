@@ -369,6 +369,7 @@ listed for completeness:
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | exported | Playwright env, from the manifest `[[supabase]]` keys or the local-dev defaults. |
 | `SUPABASE_JWT_SECRET` | exported | App server boot env (api + e2e suites). |
 | `DATABASE_URL` | exported | App server boot (api or e2e db target) and Playwright env (when `database.e2e` is configured). |
+| `CODEGRAPH_REQUIRE_SUPABASE` | read | When `1`/`true`, a db target lacking the Supabase band (`auth` schema, pgmq, pg_tle, http) is a FAIL naming what is missing and the image to point at — never a skip (issue #708). Unset, plain-Postgres targets keep the historical skip behaviour. CI's `test-ops-integration` exports it; `just ops-db-integration` sets it automatically when the reachable target serves the band. |
 | `APP_DATABASE_URL` | exported (unless set) | The `app_user` serving pool for the generated server; defaults to the migration's `app_user` password. Set it yourself to override. |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | read + exported | Override for the chromium binary; the e2e suite exports it when a system chromium is found, otherwise falls back to `npx playwright install chromium`. |
 | `CODEGRAPH_ROOT` | exported via `--codegraph-root` | Inherited by hooks, cargo, and the generated app; lets manifests reference the codegraph checkout via `{env:CODEGRAPH_ROOT}`. |
