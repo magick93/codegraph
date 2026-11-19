@@ -10,22 +10,25 @@ use crate::ProjectConfig;
 use crate::error::Result;
 use crate::project_config::DtoKeyCasing;
 use crate::traits::{GeneratedFile, GlobalGenerator, GlobalGeneratorKind};
+use crate::ux::plan::UxPlan;
 use async_trait::async_trait;
+use codegraph_config::ux::UxRules;
 use codegraph_config::{DomainConfig, IfmlComponentMappings};
 use codegraph_core::traits::GraphQuerier;
+use codegraph_naming::to_kebab_case;
 
-use super::super::context::{IfmlComponent, IfmlViewContainer};
+use super::super::context::{IfmlComponent, IfmlModel, IfmlViewContainer};
 use super::super::querier::{IfmlGraphQuerier, IfmlQuerier};
 use super::super::route_generator::denial_target;
 use super::super::selectors::ComponentSelectors;
+use super::auth::{AuthTestSpec, PersonaSpec, ShellNavJourney, WorkflowJourney};
 use super::pom::{ViewPom, pom_file_set};
 use super::render::{
     package_json, playwright_config, render_action_spec, render_spec, render_ux_spec,
     render_workflow_spec,
 };
-use super::spec_payload::{UxViewTest, ViewTestSpec, WorkflowTest};
+use super::spec_payload::{UxViewTest, ViewJourney, ViewTestSpec, WorkflowTest};
 use super::ux_plans::build_ux_plans;
-use codegraph_naming::to_kebab_case;
 
 /// Global generator emitting IFML-driven Playwright E2E specs.
 ///
@@ -161,7 +164,6 @@ impl IfmlE2eTestGenerator {
     }
 }
 
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 #[async_trait]
 impl GlobalGenerator for IfmlE2eTestGenerator {
     fn kind(&self) -> GlobalGeneratorKind {
@@ -194,6 +196,131 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             return Ok(vec![]);
         }
 
+        // Flags + per-family payload assembly (issue #751 split).
+        let families = self
+            .assemble_spec_families(db, config, project, &model)
+            .await?;
+
+        let spec_by_view: HashMap<&str, &ViewTestSpec> = families
+            .specs
+            .iter()
+            .map(|spec| (spec.view_name.as_str(), spec))
+            .collect();
+        if self.nothing_to_emit(&families, &model) {
+            return Ok(vec![]);
+        }
+
+        // Remove stale per-view spec files, workflow/ux/auth/action specs,
+        // POM page classes, and journeys for views no longer in the model
+        // (issue #751 split — the sweep passes moved verbatim).
+        self.sweep_stale_outputs(&families, &spec_by_view, &model);
+
+        // The journeys (issue #463): workflow handoffs + the shell nav
+        // walk, plus the per-view navigate() walks and the journey hops
+        // threaded into the POM plans (issue #751 split).
+        let mut journeys = self
+            .build_journey_set(db, config, project, &model, &families.personas)
+            .await;
+
+        // The POM plans (built once — the auth-spec assembly reads the same
+        // plan the page classes render from).
+        let pom_plans = self.build_pom_plans(config, &families, &model, &spec_by_view, &journeys);
+        let pom_by_view: HashMap<&str, &ViewPom> = pom_plans
+            .iter()
+            .map(|(kebab, pom)| (kebab.as_str(), pom))
+            .collect();
+
+        // Resolve the journeys' arrival assertions against the POM plans
+        // (the surfaces each target page class actually exposes).
+        let pom_refs_by_name: HashMap<String, &ViewPom> = pom_by_view
+            .iter()
+            .map(|(kebab, pom)| ((*kebab).to_string(), *pom))
+            .collect();
+        super::assembly::resolve_journey_arrivals(&mut journeys.view_journeys, &pom_refs_by_name);
+        journeys
+            .view_journeys
+            .retain(|journey| !journey.paths.is_empty());
+
+        // The auth family (issue #463): one `{view}.auth.spec.ts` per
+        // guarded view, built from the same payloads + POM plan.
+        let auth = self
+            .build_auth_specs(db, config, project, &model, &families, &pom_by_view)
+            .await;
+
+        // Per-family spec emission (issue #751 split).
+        let mut files = self.emit_spec_files(&families, &model, &auth);
+        self.emit_journey_files(&families, &journeys, &mut files);
+        self.emit_pom_and_harness(&families, &pom_plans, &mut files);
+
+        Ok(files)
+    }
+}
+
+/// The per-family spec payloads + flag planes assembled from one IFML
+/// model pass (issue #751 split): what [`IfmlE2eTestGenerator::generate`]
+/// threads through its phase helpers. Owned payloads; `ux_rules` borrows
+/// the resolved rules out of `project` (they also flow into the POM plans).
+struct SpecFamilies<'a> {
+    /// Test-side auth bootstrap flag (issue #463): flag off ⇒ no personas,
+    /// no auth specs, no journeys — byte-identical output.
+    auth_enabled: bool,
+    /// TanStack form layer (issue #580): the validation spec family
+    /// gains the per-field message-visibility assertion under the flag.
+    tanstack: bool,
+    /// ux-rules plane (issue #303): the resolved rules — `None` = flag
+    /// off → no plans, no ux specs (byte-identical output).
+    ux_rules: Option<&'a UxRules>,
+    /// One ux plan per bound entity (issue #303).
+    ux_plans: HashMap<String, UxPlan>,
+    /// The test-side personas (issue #463) — empty when the flag is off.
+    personas: Vec<PersonaSpec>,
+    /// Base per-view specs (render/click-through/validation/round-trip).
+    specs: Vec<ViewTestSpec>,
+    /// Per-view workflow spec payloads.
+    workflow_specs: Vec<(String, Vec<WorkflowTest>)>,
+    /// Per-view ux spec payloads.
+    ux_specs: Vec<(String, UxViewTest)>,
+    /// WS6: the manifest-proven action ops per view (empty ⇒ no action
+    /// POM surface, no action specs).
+    actions_by_view: HashMap<String, Vec<super::pom::PomAction>>,
+    /// WS6: the manifest-proven action spec payloads.
+    action_specs: Vec<super::spec_payload::ActionSpec>,
+}
+
+/// The journey payload set (issue #751 split): the three journey
+/// families plus the POM hop steps the page classes carry.
+struct JourneySet {
+    /// Workflow handoffs across personas (issue #463).
+    workflow_journeys: Vec<WorkflowJourney>,
+    /// The shell nav walk (issue #463).
+    shell_journey: Option<ShellNavJourney>,
+    /// The per-view navigate() walks (issue #468 W5).
+    view_journeys: Vec<ViewJourney>,
+    /// Journey hops (issue #468 W5) per departing view — threaded into
+    /// the source views' POM plans; the method names are frozen in the
+    /// journey payloads.
+    steps_by_view: HashMap<String, Vec<super::pom::PomJourneyStep>>,
+}
+
+/// The auth spec family output (issue #751 split): built specs plus the
+/// explicitly-omitted guarded detail/edit views (listed rather than
+/// silently dropped).
+struct AuthSpecSet {
+    specs: Vec<AuthTestSpec>,
+    omitted: Vec<(String, String)>,
+}
+
+impl IfmlE2eTestGenerator {
+    /// Flags + the per-family payload pass (issue #751 split): the flags,
+    /// the ux planes, the personas, and one assembly call per family per
+    /// view. Moved verbatim from `generate`.
+    async fn assemble_spec_families<'a>(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        project: &'a ProjectConfig,
+        model: &IfmlModel,
+    ) -> Result<SpecFamilies<'a>> {
         // Test-side auth bootstrap (issue #463): flag off ⇒ no personas,
         // no auth specs, no journeys — byte-identical output.
         let auth_enabled = project.codegen.ifml_e2e_auth;
@@ -220,7 +347,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         // plans, no ux specs (byte-identical output).
         let ux_rules = project.ux.ux.as_ref();
         let ux_plans = match ux_rules {
-            Some(rules) => build_ux_plans(db, config, &model, rules).await?,
+            Some(rules) => build_ux_plans(db, config, model, rules).await?,
             None => HashMap::new(),
         };
         let mut ux_specs: Vec<(String, UxViewTest)> = Vec::new();
@@ -245,14 +372,14 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             Vec::new()
         };
         let personas = if auth_enabled {
-            super::auth::build_personas(&model, &human_actors)
+            super::auth::build_personas(model, &human_actors)
         } else {
             Vec::new()
         };
-        let denial = denial_target(&model);
+        let denial = denial_target(model);
         for vc in &model.view_containers {
             let mut spec = self
-                .build_view_spec(db, config, &project.identity.api_version, &model, vc)
+                .build_view_spec(db, config, &project.identity.api_version, model, vc)
                 .await;
             if let Some(policy) = &model.policy {
                 spec.personas = self.build_persona_tests(policy, &human_actors, vc, &denial);
@@ -295,30 +422,42 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 action_specs.push(action_spec);
             }
         }
-        let spec_by_view: HashMap<&str, &ViewTestSpec> = specs
-            .iter()
-            .map(|spec| (spec.view_name.as_str(), spec))
-            .collect();
-        // Issue #560: the bail-out predates the auth/ux/journey spec
-        // families — it must only fire when NOTHING will be emitted, not
-        // when the base-spec families alone are empty (a persona-only
-        // guarded model still produces auth specs + journeys).
+        Ok(SpecFamilies {
+            auth_enabled,
+            tanstack,
+            ux_rules,
+            ux_plans,
+            personas,
+            specs,
+            workflow_specs,
+            ux_specs,
+            actions_by_view,
+            action_specs,
+        })
+    }
+
+    /// Issue #560: the bail-out predates the auth/ux/journey spec
+    /// families — it must only fire when NOTHING will be emitted, not
+    /// when the base-spec families alone are empty (a persona-only
+    /// guarded model still produces auth specs + journeys). Warns and
+    /// returns true when the run would emit nothing.
+    fn nothing_to_emit(&self, families: &SpecFamilies<'_>, model: &IfmlModel) -> bool {
         let base_spec_content = |spec: &ViewTestSpec| {
-            if auth_enabled {
+            if families.auth_enabled {
                 has_tests_excluding_personas(spec)
             } else {
                 has_tests(spec)
             }
         };
-        let has_auth_surface = auth_enabled
+        let has_auth_surface = families.auth_enabled
             && model
                 .view_containers
                 .iter()
                 .any(|vc| !vc.roles.is_empty() || !vc.requires.is_empty());
-        if !specs.iter().any(base_spec_content)
-            && workflow_specs.is_empty()
-            && ux_specs.is_empty()
-            && action_specs.is_empty()
+        if !families.specs.iter().any(base_spec_content)
+            && families.workflow_specs.is_empty()
+            && families.ux_specs.is_empty()
+            && families.action_specs.is_empty()
             && !has_auth_surface
         {
             eprintln!(
@@ -326,17 +465,25 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                  a render/click-through/validation/round-trip spec",
                 model.view_containers.len()
             );
-            return Ok(vec![]);
+            return true;
         }
+        false
+    }
 
-        // Remove stale per-view spec files for views no longer in the model,
-        // stale workflow specs whose view no longer carries workflow
-        // tests (e.g. the workflow config or a mapped collection changed
-        // across regenerations into the same root), stale ux specs
-        // (issue #303) whose view lost its ux eligibility (flag off, view
-        // removed, or a mapping now replaces the fallback), stale auth
-        // specs (issue #463) whose view lost its guard or the flag turned
-        // off, and stale POM page classes (#317) for removed views.
+    /// Remove stale per-view spec files for views no longer in the model,
+    /// stale workflow specs whose view no longer carries workflow
+    /// tests (e.g. the workflow config or a mapped collection changed
+    /// across regenerations into the same root), stale ux specs
+    /// (issue #303) whose view lost its ux eligibility (flag off, view
+    /// removed, or a mapping now replaces the fallback), stale auth
+    /// specs (issue #463) whose view lost its guard or the flag turned
+    /// off, and stale POM page classes (#317) for removed views.
+    fn sweep_stale_outputs(
+        &self,
+        families: &SpecFamilies<'_>,
+        spec_by_view: &HashMap<&str, &ViewTestSpec>,
+        model: &IfmlModel,
+    ) {
         let active_specs: HashSet<String> = model
             .view_containers
             .iter()
@@ -346,7 +493,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 spec_by_view
                     .get(vc.name.as_str())
                     .map(|spec| {
-                        if auth_enabled {
+                        if families.auth_enabled {
                             has_tests_excluding_personas(spec)
                         } else {
                             has_tests(spec)
@@ -356,19 +503,22 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             })
             .map(|vc| format!("{}.spec.ts", to_kebab_case(&vc.name)))
             .collect();
-        let active_workflow_specs: HashSet<String> = workflow_specs
+        let active_workflow_specs: HashSet<String> = families
+            .workflow_specs
             .iter()
             .map(|(view_name, _)| format!("{}.workflow.spec.ts", to_kebab_case(view_name)))
             .collect();
-        let active_ux_specs: HashSet<String> = ux_specs
+        let active_ux_specs: HashSet<String> = families
+            .ux_specs
             .iter()
             .map(|(view_name, _)| format!("{}.ux.spec.ts", to_kebab_case(view_name)))
             .collect();
-        let active_action_specs: HashSet<String> = action_specs
+        let active_action_specs: HashSet<String> = families
+            .action_specs
             .iter()
             .map(|spec| format!("{}.action.spec.ts", to_kebab_case(&spec.view_name)))
             .collect();
-        let active_auth_specs: HashSet<String> = if auth_enabled {
+        let active_auth_specs: HashSet<String> = if families.auth_enabled {
             model
                 .view_containers
                 .iter()
@@ -448,17 +598,27 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
             }
         }
+    }
 
-        // The journeys (issue #463): workflow handoffs + the shell nav
-        // walk. Issue #468 W5 adds the per-view navigate() walks — built
-        // BEFORE the POM plans so the page classes carry the hop methods.
+    /// The journeys (issue #463): workflow handoffs + the shell nav
+    /// walk. Issue #468 W5 adds the per-view navigate() walks — built
+    /// BEFORE the POM plans so the page classes carry the hop methods.
+    async fn build_journey_set(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        project: &ProjectConfig,
+        model: &IfmlModel,
+        personas: &[PersonaSpec],
+    ) -> JourneySet {
+        let auth_enabled = project.codegen.ifml_e2e_auth;
         let workflow_journeys = if auth_enabled {
             super::auth::build_workflow_journeys(
                 db,
                 config,
                 &project.identity.api_version,
-                &model,
-                &personas,
+                model,
+                personas,
                 self.dto_casing,
             )
             .await
@@ -466,29 +626,27 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             Vec::new()
         };
         let shell_journey = if auth_enabled {
-            super::auth::build_shell_journey(&model, &personas)
+            super::auth::build_shell_journey(model, personas)
         } else {
             None
         };
-        let mut view_journeys = if auth_enabled {
-            self.build_view_journeys(db, config, &project.identity.api_version, &model, &personas)
+        let view_journeys = if auth_enabled {
+            self.build_view_journeys(db, config, &project.identity.api_version, model, personas)
                 .await
         } else {
             Vec::new()
         };
 
-        // The POM plans (built once — the auth-spec assembly reads the same
-        // plan the page classes render from). Journey hops (issue #468 W5)
-        // thread into the source views' plans; the method names are frozen
-        // in the journey payloads.
-        let mut journey_steps_by_view: HashMap<String, Vec<super::pom::PomJourneyStep>> =
-            HashMap::new();
+        // The POM plans read the same plans the page classes render from.
+        // Journey hops (issue #468 W5) thread into the source views'
+        // plans; the method names are frozen in the journey payloads.
+        let mut steps_by_view: HashMap<String, Vec<super::pom::PomJourneyStep>> = HashMap::new();
         for journey in &view_journeys {
             for path in &journey.paths {
                 // A hop's method lives on the page class of the view it
                 // DEPARTS from (`path.views[i]`), not the journey source.
                 for (departure, step) in path.views.iter().zip(&path.steps) {
-                    let entry = journey_steps_by_view.entry(departure.clone()).or_default();
+                    let entry = steps_by_view.entry(departure.clone()).or_default();
                     if entry.iter().any(|s| s.method == step.method) {
                         continue;
                     }
@@ -503,16 +661,36 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
             }
         }
-        let pom_plans: Vec<(String, ViewPom)> = model
+        JourneySet {
+            workflow_journeys,
+            shell_journey,
+            view_journeys,
+            steps_by_view,
+        }
+    }
+
+    /// The POM plans (built once — the auth-spec assembly reads the same
+    /// plan the page classes render from). Journey hops (issue #468 W5)
+    /// thread into the source views' plans.
+    fn build_pom_plans(
+        &self,
+        config: &DomainConfig,
+        families: &SpecFamilies<'_>,
+        model: &IfmlModel,
+        spec_by_view: &HashMap<&str, &ViewTestSpec>,
+        journeys: &JourneySet,
+    ) -> Vec<(String, ViewPom)> {
+        model
             .view_containers
             .iter()
             .map(|vc| {
                 let spec = spec_by_view.get(vc.name.as_str()).copied();
                 let kebab = to_kebab_case(&vc.name);
                 let empty_steps = Vec::new();
-                let journey_steps = journey_steps_by_view.get(&vc.name).unwrap_or(&empty_steps);
+                let journey_steps = journeys.steps_by_view.get(&vc.name).unwrap_or(&empty_steps);
                 let empty_actions = Vec::new();
-                let actions = actions_by_view
+                let actions = families
+                    .actions_by_view
                     .get(&vc.name)
                     .unwrap_or(&empty_actions)
                     .clone();
@@ -521,34 +699,36 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                     self.mappings.as_ref(),
                     vc,
                     spec,
-                    ux_rules,
-                    &ux_plans,
-                    auth_enabled,
+                    families.ux_rules,
+                    &families.ux_plans,
+                    families.auth_enabled,
                     journey_steps,
                     actions,
                 );
                 (kebab, pom)
             })
-            .collect();
-        let pom_by_view: HashMap<&str, &ViewPom> = pom_plans
-            .iter()
-            .map(|(kebab, pom)| (kebab.as_str(), pom))
-            .collect();
+            .collect()
+    }
 
-        // Resolve the journeys' arrival assertions against the POM plans
-        // (the surfaces each target page class actually exposes).
-        let pom_refs_by_name: HashMap<String, &ViewPom> = pom_by_view
-            .iter()
-            .map(|(kebab, pom)| ((*kebab).to_string(), *pom))
-            .collect();
-        super::assembly::resolve_journey_arrivals(&mut view_journeys, &pom_refs_by_name);
-        view_journeys.retain(|journey| !journey.paths.is_empty());
-
-        // The auth family (issue #463): one `{view}.auth.spec.ts` per
-        // guarded view, built from the same payloads + POM plan.
+    /// The auth family (issue #463): one `{view}.auth.spec.ts` per
+    /// guarded view, built from the same payloads + POM plan.
+    async fn build_auth_specs(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        project: &ProjectConfig,
+        model: &IfmlModel,
+        families: &SpecFamilies<'_>,
+        pom_by_view: &HashMap<&str, &ViewPom>,
+    ) -> AuthSpecSet {
         let mut auth_specs = Vec::new();
         let mut omitted_auth_specs: Vec<(String, String)> = Vec::new();
-        if auth_enabled {
+        if families.auth_enabled {
+            let spec_by_view: HashMap<&str, &ViewTestSpec> = families
+                .specs
+                .iter()
+                .map(|spec| (spec.view_name.as_str(), spec))
+                .collect();
             for vc in &model.view_containers {
                 let Some(spec) = spec_by_view.get(vc.name.as_str()) else {
                     continue;
@@ -575,14 +755,29 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
             }
         }
+        AuthSpecSet {
+            specs: auth_specs,
+            omitted: omitted_auth_specs,
+        }
+    }
 
-        let mut files: Vec<GeneratedFile> = specs
+    /// The per-family spec files: base specs, workflow specs, ux specs,
+    /// WS6 action specs, auth specs, and the omitted-auth-spec manifest
+    /// (issue #751 split — each family's emission loop moved verbatim).
+    fn emit_spec_files(
+        &self,
+        families: &SpecFamilies<'_>,
+        model: &IfmlModel,
+        auth: &AuthSpecSet,
+    ) -> Vec<GeneratedFile> {
+        let mut files: Vec<GeneratedFile> = families
+            .specs
             .iter()
             // Issue #560: under the auth flag the persona tests render in
             // `{view}.auth.spec.ts` — a view whose ONLY payload is personas
             // must not emit a base spec with an empty describe body.
             .filter(|spec| {
-                if auth_enabled {
+                if families.auth_enabled {
                     has_tests_excluding_personas(spec)
                 } else {
                     true
@@ -598,11 +793,11 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 // `{view}.auth.spec.ts` family; a persona-only payload
                 // renders an empty base describe (the file itself stays —
                 // the suite layout is stable across flag toggles).
-                content: render_spec(spec, !auth_enabled, tanstack),
+                content: render_spec(spec, !families.auth_enabled, families.tanstack),
             })
             .collect();
 
-        for (view_name, workflow_tests) in &workflow_specs {
+        for (view_name, workflow_tests) in &families.workflow_specs {
             if let Some(vc) = model
                 .view_containers
                 .iter()
@@ -619,7 +814,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             }
         }
 
-        for (view_name, ux_test) in &ux_specs {
+        for (view_name, ux_test) in &families.ux_specs {
             files.push(GeneratedFile {
                 path: self
                     .output_dir
@@ -632,7 +827,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
 
         // WS6: the action specs — one `{view}.action.spec.ts` per view
         // with manifest-proven, route-resolvable action ops.
-        for action_spec in &action_specs {
+        for action_spec in &families.action_specs {
             files.push(GeneratedFile {
                 path: self.output_dir.join("tests").join("ifml").join(format!(
                     "{}.action.spec.ts",
@@ -642,7 +837,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             });
         }
 
-        for auth_spec in &auth_specs {
+        for auth_spec in &auth.specs {
             files.push(GeneratedFile {
                 path: self.output_dir.join("tests").join("ifml").join(format!(
                     "{}.auth.spec.ts",
@@ -652,14 +847,14 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             });
         }
 
-        if !omitted_auth_specs.is_empty() {
+        if !auth.omitted.is_empty() {
             let mut manifest = String::from(
                 "# Omitted IFML auth specs\n\n\
                  The following guarded detail/edit views emit no auth spec because\n\
                  no schema-backed component could seed the record the id route\n\
                  requires. They are listed here rather than silently dropped.\n\n",
             );
-            for (view, reason) in &omitted_auth_specs {
+            for (view, reason) in &auth.omitted {
                 manifest.push_str(&format!("- `{view}` — {reason}\n"));
             }
             files.push(GeneratedFile {
@@ -672,8 +867,20 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
             });
         }
 
+        files
+    }
+
+    /// The journey files + their stale sweep (issue #751 split): workflow
+    /// handoffs, the shell nav walk, the per-view navigate() walks, and —
+    /// flag off — the auth TS bootstrap cleanup.
+    fn emit_journey_files(
+        &self,
+        families: &SpecFamilies<'_>,
+        journeys: &JourneySet,
+        files: &mut Vec<GeneratedFile>,
+    ) {
         let journeys_dir = self.journeys_dir();
-        for journey in &workflow_journeys {
+        for journey in &journeys.workflow_journeys {
             files.push(GeneratedFile {
                 path: journeys_dir.join(format!(
                     "{}-workflow.journey.spec.ts",
@@ -685,7 +892,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 ),
             });
         }
-        if let Some(journey) = &shell_journey {
+        if let Some(journey) = &journeys.shell_journey {
             files.push(GeneratedFile {
                 path: journeys_dir.join("shell-nav.journey.spec.ts"),
                 content: super::auth::render_shell_nav_journey(
@@ -696,7 +903,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         }
 
         // The per-view navigate() walks (issue #468 W5).
-        for journey in &view_journeys {
+        for journey in &journeys.view_journeys {
             files.push(GeneratedFile {
                 path: journeys_dir.join(format!(
                     "{}.journey.spec.ts",
@@ -709,10 +916,12 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         // Journey stale sweep: flag off (or a lost journey) removes the
         // file — workflow handoffs, the shell nav walk, AND the per-view
         // navigate() walks; the auth TS bootstrap likewise never lingers.
-        let active_journeys: HashSet<String> = if auth_enabled {
-            super::auth::journey_file_names(&workflow_journeys)
+        let active_journeys: HashSet<String> = if families.auth_enabled {
+            super::auth::journey_file_names(&journeys.workflow_journeys)
                 .into_iter()
-                .chain(super::auth::view_journey_file_names(&view_journeys))
+                .chain(super::auth::view_journey_file_names(
+                    &journeys.view_journeys,
+                ))
                 .collect()
         } else {
             HashSet::new()
@@ -731,7 +940,7 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
             }
         }
-        if !auth_enabled {
+        if !families.auth_enabled {
             let support = self.support();
             for rel in [support.auth_setup, support.personas] {
                 let path = self.output_dir.join(rel);
@@ -740,7 +949,17 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 }
             }
         }
+    }
 
+    /// POM infra (issue #317), the auth bootstrap (issue #463), and the
+    /// standalone harness scaffold (issue #751 split — the loops moved
+    /// verbatim; ordering preserved by the caller).
+    fn emit_pom_and_harness(
+        &self,
+        families: &SpecFamilies<'_>,
+        pom_plans: &[(String, ViewPom)],
+        files: &mut Vec<GeneratedFile>,
+    ) {
         // POM infra (issue #317): kernel + one page class per view
         // container, emitted on the same spec-infra gate as the specs.
         let pom_refs: Vec<(&str, &ViewPom)> = pom_plans
@@ -757,15 +976,15 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         // The auth bootstrap (issue #463): per-persona API-key provisioning
         // + the shared persona fixtures. Integrated mode keeps the family
         // out of the entity suite's `tests/e2e/` tree (issue #468 W1b).
-        if auth_enabled && !personas.is_empty() {
+        if families.auth_enabled && !families.personas.is_empty() {
             let support = self.support();
             files.push(GeneratedFile {
                 path: self.output_dir.join(support.auth_setup),
-                content: super::auth::render_auth_setup(&personas),
+                content: super::auth::render_auth_setup(&families.personas),
             });
             files.push(GeneratedFile {
                 path: self.output_dir.join(support.personas),
-                content: super::auth::render_personas(&personas),
+                content: super::auth::render_personas(&families.personas),
             });
         }
 
@@ -777,8 +996,8 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
         if !self.integrated {
             let config_path = self.output_dir.join("playwright.config.ts");
             if !config_path.exists() {
-                let global_setup =
-                    (auth_enabled && !personas.is_empty()).then_some("tests/e2e/auth.setup.ts");
+                let global_setup = (families.auth_enabled && !families.personas.is_empty())
+                    .then_some("tests/e2e/auth.setup.ts");
                 files.push(GeneratedFile {
                     path: config_path,
                     content: playwright_config(global_setup).to_string(),
@@ -792,8 +1011,6 @@ impl GlobalGenerator for IfmlE2eTestGenerator {
                 });
             }
         }
-
-        Ok(files)
     }
 }
 

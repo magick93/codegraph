@@ -1283,7 +1283,6 @@ pub(crate) fn page_guard_expr(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub(super) async fn build_page_context(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
@@ -1310,20 +1309,214 @@ pub(super) async fn build_page_context(
     let mut api_cache: HashMap<String, Option<ResolvedApi>> = HashMap::new();
     let container = container_context(vc, mappings);
 
+    // Component contexts, body render groups, and the P2 heading dedup
+    // (issue #751 split). `api_cache` fills as a side effect in the same
+    // pass order the inline code ran.
+    let inputs = PageContextInputs {
+        db,
+        config,
+        api_version,
+        vc,
+        mappings,
+        modal_targets,
+        ux,
+        project,
+    };
+    let mut groups = page_component_groups(
+        &inputs,
+        &container,
+        id_param.as_deref(),
+        tanstack,
+        &mut api_cache,
+    )
+    .await;
+    let components: Vec<PageComponentContext> = groups
+        .iter()
+        .flat_map(|group| group.components.iter().cloned())
+        .collect();
+
+    let view_events: Vec<RenderEvent> = vc
+        .events
+        .iter()
+        .map(|e| render_event(e, modal_targets))
+        .collect();
+
+    // View-level imports + goto/submit/on-mount flags (issue #751 split).
+    let modal = modal_context(vc, mappings);
+    let PageRenderFlags {
+        imports,
+        needs_goto,
+        has_submit,
+        needs_on_mount,
+    } = build_imports_and_flags(&components, &view_events, &modal, &container);
+    let mut control_gate = ControlGateContext::for_view(vc, &components);
+
+    let id_param = id_param_from(&vc.params);
+    let auth_surface = project.codegen.ifml_e2e_auth;
+    let file_slots =
+        resolve_view_file_slots(db, config, &groups, id_param.as_deref(), remote).await;
+    // Load fetch wiring + the remote/command/gate plane (issue #751
+    // split): the per-component pass over the render groups, verbatim.
+    let ComponentPlaneOutputs {
+        file_scripts,
+        file_imports,
+        file_media,
+        needs_denial_helper,
+        needs_browser,
+    } = wire_fetch_and_command_plane(
+        &mut groups,
+        &file_slots,
+        &id_param,
+        remote,
+        live,
+        auth_surface,
+        &mut control_gate,
+    );
+    let components: Vec<PageComponentContext> = groups
+        .iter()
+        .flat_map(|group| group.components.iter().cloned())
+        .collect();
+    let needs_invalidate = !remote
+        && components
+            .iter()
+            .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
+
+    let has_api_surface = has_submit
+        || components
+            .iter()
+            .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
+    let has_action_buttons = components
+        .iter()
+        .any(|comp| !comp.action_buttons.is_empty());
+    // Component-level awaits (issue #571): the prebuilt viewParams const
+    // reads `page.url.searchParams` with the DSL defaults — the load's
+    // `result.params` is not on the component-await plane.
+    let has_awaits = remote
+        && groups.iter().any(|group| {
+            group
+                .components
+                .iter()
+                .any(|comp| !comp.await_block.is_empty())
+        });
+    let view_params_src = build_view_params_src(vc, has_awaits);
+
+    Ok(PageSvelteContext {
+        api_version: api_version.to_string(),
+        name: vc.name.clone(),
+        label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
+        components,
+        params: vc.params.clone(),
+        view_params: {
+            let mut seen: HashSet<String> = HashSet::new();
+            vc.params
+                .iter()
+                .filter(|p| seen.insert(p.name.clone()))
+                .map(|p| p.name.clone())
+                .collect()
+        },
+        view_events,
+        imports,
+        needs_goto,
+        needs_on_mount,
+        needs_invalidate,
+        has_submit,
+        has_api_surface,
+        remote_api: remote,
+        auth_surface: project.codegen.ifml_e2e_auth,
+        remote_awaits: has_awaits,
+        // needs_browser gates the `browser` instance guard the live
+        // workflow stream requires (issue #574 S4c parity).
+        needs_browser,
+        needs_redirect: has_awaits && project.codegen.ifml_e2e_auth,
+        denial_helper_src: if needs_denial_helper {
+            remote_denial_helper(denial_target)
+        } else {
+            String::new()
+        },
+        view_params_src,
+        denial_target: denial_target.to_string(),
+        has_action_buttons,
+        file_scripts,
+        file_imports,
+        file_media,
+        tanstack_forms: groups
+            .iter()
+            .flat_map(|group| group.components.iter())
+            .any(|comp| comp.tanstack.is_some()),
+        groups,
+        view_role: semantic_view_role(vc),
+        container_role: semantic_container_role(vc),
+        roles: vc.roles.clone(),
+        requires: vc.requires.clone(),
+        control_gate,
+        modal,
+        container,
+        ux: ux.map(|uxg| page_ux_context(uxg.rules)),
+        guard_expr: page_guard_expr(vc, project)?,
+    })
+}
+
+/// Shared inputs threaded through the [`build_page_context`] seams
+/// (issue #751 split): everything the per-concern helpers read without
+/// owning. The derived flag locals (`remote`/`live`/`tanstack`) stay in
+/// `build_page_context` — only `project` is shared here.
+struct PageContextInputs<'a> {
+    db: &'a dyn GraphQuerier,
+    config: &'a DomainConfig,
+    api_version: &'a str,
+    vc: &'a IfmlViewContainer,
+    mappings: Option<&'a IfmlComponentMappings>,
+    modal_targets: &'a HashSet<String>,
+    ux: Option<&'a UxGeneration<'a>>,
+    project: &'a ProjectConfig,
+}
+
+/// The view-level import surface + goto/submit/on-mount flags the
+/// imports region derives (issue #751 split).
+struct PageRenderFlags {
+    imports: Vec<RenderImport>,
+    needs_goto: bool,
+    has_submit: bool,
+    needs_on_mount: bool,
+}
+
+/// Outputs of the per-component fetch/command wiring pass (issue #751
+/// split): the media page-script surfaces and the page-level flags the
+/// final context consumes. `needs_can_import` stays internal — it feeds
+/// the control gate's import list inside the pass.
+struct ComponentPlaneOutputs {
+    file_scripts: String,
+    file_imports: Vec<String>,
+    file_media: Vec<RenderFileMedia>,
+    needs_denial_helper: bool,
+    needs_browser: bool,
+}
+
+/// Component contexts, body render groups, and the P2 heading dedup
+/// (issue #751 split). `api_cache` is populated as a side effect — the
+/// SAME pass order (top-level components first, then one group per
+/// nested container in declaration order) the inline code ran.
+async fn page_component_groups(
+    inputs: &PageContextInputs<'_>,
+    container: &Option<RenderContainer>,
+    id_param: Option<&str>,
+    tanstack: bool,
+    api_cache: &mut HashMap<String, Option<ResolvedApi>>,
+) -> Vec<RenderGroup> {
     let mut components = Vec::new();
-    for c in &vc.components {
+    for c in &inputs.vc.components {
         let ctx = page_component_context(
-            db,
-            config,
-            api_version,
-            vc,
+            inputs.db,
+            inputs.config,
+            inputs.api_version,
+            inputs.vc,
             c,
-            id_param.as_deref(),
-            mappings,
-            &mut api_cache,
-            modal_targets,
-            ux,
-            project.codegen.dto_key_casing,
+            id_param,
+            inputs.mappings,
+            api_cache,
+            inputs.modal_targets,
+            inputs.ux,
+            inputs.project.codegen.dto_key_casing,
             tanstack,
         )
         .await;
@@ -1340,7 +1533,7 @@ pub(super) async fn build_page_context(
         components,
     }];
     if container.is_some() {
-        for group_decl in &vc.containers {
+        for group_decl in &inputs.vc.containers {
             let heading = group_decl.is_xor.then(|| {
                 let lower = group_decl.name.to_lowercase();
                 let label = group_decl
@@ -1352,17 +1545,17 @@ pub(super) async fn build_page_context(
             let mut group_components = Vec::new();
             for c in &group_decl.components {
                 let mut ctx = page_component_context(
-                    db,
-                    config,
-                    api_version,
-                    vc,
+                    inputs.db,
+                    inputs.config,
+                    inputs.api_version,
+                    inputs.vc,
                     c,
-                    id_param.as_deref(),
-                    mappings,
-                    &mut api_cache,
-                    modal_targets,
-                    ux,
-                    project.codegen.dto_key_casing,
+                    id_param,
+                    inputs.mappings,
+                    api_cache,
+                    inputs.modal_targets,
+                    inputs.ux,
+                    inputs.project.codegen.dto_key_casing,
                     tanstack,
                 )
                 .await;
@@ -1394,20 +1587,21 @@ pub(super) async fn build_page_context(
             }
         }
     }
-    let components: Vec<PageComponentContext> = groups
-        .iter()
-        .flat_map(|group| group.components.iter().cloned())
-        .collect();
+    groups
+}
 
-    let view_events: Vec<RenderEvent> = vc
-        .events
-        .iter()
-        .map(|e| render_event(e, modal_targets))
-        .collect();
-
+/// The view-level import surface (modal, TanStack field components,
+/// container, mapped components, buttons) plus the goto/submit/on-mount
+/// flags (issue #751 split). Reads the PRE-loop component flatten — the
+/// same snapshot the inline code read.
+fn build_imports_and_flags(
+    components: &[PageComponentContext],
+    view_events: &[RenderEvent],
+    modal: &Option<RenderModal>,
+    container: &Option<RenderContainer>,
+) -> PageRenderFlags {
     let mut imports: Vec<RenderImport> = Vec::new();
     let mut seen_imports: HashMap<String, String> = HashMap::new();
-    let modal = modal_context(vc, mappings);
     if let Some(imp) = modal.as_ref().and_then(|m| m.import.as_ref()) {
         seen_imports.insert(imp.import_path.clone(), imp.export_name.clone());
         imports.push(RenderImport {
@@ -1418,7 +1612,7 @@ pub(super) async fn build_page_context(
     // TanStack form layer (issue #580): every used field component imports
     // from the `$lib/forms/fields/*` scaffold through the shared import
     // loop in the template.
-    for comp in &components {
+    for comp in components {
         let Some(ts) = &comp.tanstack else {
             continue;
         };
@@ -1452,7 +1646,7 @@ pub(super) async fn build_page_context(
     }
     let mut needs_goto = view_events.iter().any(|e| e.action_kind == "navigate");
     let mut has_submit = false;
-    for comp in &components {
+    for comp in components {
         for evt in &comp.events {
             if evt.action_kind == "navigate" {
                 needs_goto = true;
@@ -1491,22 +1685,25 @@ pub(super) async fn build_page_context(
     let needs_on_mount = view_events
         .iter()
         .any(|e| e.action_kind == "navigate" && e.event_type == "load");
-    let mut control_gate = ControlGateContext::for_view(vc, &components);
+    PageRenderFlags {
+        imports,
+        needs_goto,
+        has_submit,
+        needs_on_mount,
+    }
+}
 
-    // Load fetch wiring (same rules the load context applies) plus
-    // event-level capability gates. Fetch flags gate the mapped-branch
-    // badge and transition buttons on the component's value path actually
-    // being fetch-backed; the transition handler URL resolves from the
-    // component's API path and the view's id param. Event gates compose
-    // the view gate with each component's save/submit requires (submit
-    // control) and each secondary button's event requires; buttons without
-    // requires reuse the view gate verbatim (byte-identical).
-    let id_param = id_param_from(&vc.params);
-    let auth_surface = project.codegen.ifml_e2e_auth;
-    // Media file slots (issue #633): resolved BEFORE the mutable component
-    // loop (async graph reads cannot run inside it). One entity read per
-    // distinct entity; a field that is not a media field keeps `None`
-    // (a plain file input — never a value-bound one).
+/// Media file slots (issue #633): resolved BEFORE the mutable component
+/// loop (async graph reads cannot run inside it). One entity read per
+/// distinct entity; a field that is not a media field keeps `None`
+/// (a plain file input — never a value-bound one).
+async fn resolve_view_file_slots(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    groups: &[RenderGroup],
+    id_param: Option<&str>,
+    remote: bool,
+) -> HashMap<(String, String), Option<FileSlot>> {
     let mut file_slots: HashMap<(String, String), Option<FileSlot>> = HashMap::new();
     if remote && id_param.is_some() {
         for comp in groups.iter().flat_map(|g| g.components.iter()) {
@@ -1540,6 +1737,26 @@ pub(super) async fn build_page_context(
             }
         }
     }
+    file_slots
+}
+
+/// Load fetch wiring (same rules the load context applies) plus
+/// event-level capability gates (issue #751 split). Fetch flags gate the
+/// mapped-branch badge and transition buttons on the component's value
+/// path actually being fetch-backed; the transition handler URL resolves
+/// from the component's API path and the view's id param. Event gates
+/// compose the view gate with each component's save/submit requires
+/// (submit control) and each secondary button's event requires; buttons
+/// without requires reuse the view gate verbatim (byte-identical).
+fn wire_fetch_and_command_plane(
+    groups: &mut [RenderGroup],
+    file_slots: &HashMap<(String, String), Option<FileSlot>>,
+    id_param: &Option<String>,
+    remote: bool,
+    live: bool,
+    auth_surface: bool,
+    control_gate: &mut ControlGateContext,
+) -> ComponentPlaneOutputs {
     let mut file_scripts = String::new();
     let mut file_imports: Vec<String> = Vec::new();
     let mut file_media: Vec<RenderFileMedia> = Vec::new();
@@ -1547,7 +1764,7 @@ pub(super) async fn build_page_context(
     let mut needs_can_import = false;
     let mut needs_denial_helper = false;
     let mut needs_browser = false;
-    for group in &mut groups {
+    for group in groups {
         for comp in &mut group.components {
             let is_list = comp.table.is_some() || comp.component_type == "list";
             let is_details = comp.component_type == "details";
@@ -1678,70 +1895,15 @@ pub(super) async fn build_page_context(
             needs_denial_helper = auth_surface;
 
             // Media file slots (issue #633): wire the pre-resolved slot
-            // into the form markup + collect the page-script handler. The
-            // slot is rendered HERE (not in `render_form`) because the
-            // upload route needs the view's id param and the remote plane,
-            // both known only at this point.
-            let comp_entity = comp.entity.clone();
-            // The TanStack plane renders the file slots when it is active —
-            // wiring the hand-rolled form as well would emit the script
-            // block twice (the unused copy fails svelte-check).
-            if comp.tanstack.is_none()
-                && let Some(form) = comp.form.as_mut()
-            {
-                for field in form.fields.iter_mut().filter(|f| f.is_file) {
-                    let slot = file_slots
-                        .get(&(comp_entity.clone(), field.name.clone()))
-                        .cloned()
-                        .flatten();
-                    let rendered =
-                        render_file_slot(&field.name, slot.as_ref(), id_param.as_deref());
-                    field.file_markup = rendered.markup;
-                    file_scripts.push_str(&rendered.script);
-                    if let Some(import) = rendered.import
-                        && !file_imports.contains(&import)
-                    {
-                        file_imports.push(import.clone());
-                        if let (Some(api), Some(param), Some(slot)) =
-                            (comp.api.as_ref(), id_param.as_ref(), slot.as_ref())
-                        {
-                            file_media.push(RenderFileMedia {
-                                export: import,
-                                base_path: api.base_path.clone(),
-                                field: slot.media_field.clone(),
-                                id_param: param.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-            if let Some(ts) = comp.tanstack.as_mut() {
-                let names = ts.file_fields.clone();
-                for name in names {
-                    let slot = file_slots
-                        .get(&(comp_entity.clone(), name.clone()))
-                        .cloned()
-                        .flatten();
-                    let rendered = render_file_slot(&name, slot.as_ref(), id_param.as_deref());
-                    ts.file_markup.push_str(&rendered.markup);
-                    file_scripts.push_str(&rendered.script);
-                    if let Some(import) = rendered.import
-                        && !file_imports.contains(&import)
-                    {
-                        file_imports.push(import.clone());
-                        if let (Some(api), Some(param), Some(slot)) =
-                            (comp.api.as_ref(), id_param.as_ref(), slot.as_ref())
-                        {
-                            file_media.push(RenderFileMedia {
-                                export: import,
-                                base_path: api.base_path.clone(),
-                                field: slot.media_field.clone(),
-                                id_param: param.clone(),
-                            });
-                        }
-                    }
-                }
-            }
+            // into the form markup + collect the page-script handler.
+            wire_media_file_slots(
+                comp,
+                file_slots,
+                id_param,
+                &mut file_scripts,
+                &mut file_imports,
+                &mut file_media,
+            );
 
             if let Some(workflow) = &comp.workflow {
                 let fetch_backed = match comp.component_type.as_str() {
@@ -1844,121 +2006,125 @@ pub(super) async fn build_page_context(
     if needs_can_import && !control_gate.imports.iter().any(|name| name == "can") {
         control_gate.imports.push("can".to_string());
     }
-    let components: Vec<PageComponentContext> = groups
-        .iter()
-        .flat_map(|group| group.components.iter().cloned())
-        .collect();
-    let needs_invalidate = !remote
-        && components
-            .iter()
-            .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
-
-    let has_api_surface = has_submit
-        || components
-            .iter()
-            .any(|comp| comp.transition_url_expr.is_some() || !comp.action_buttons.is_empty());
-    let has_action_buttons = components
-        .iter()
-        .any(|comp| !comp.action_buttons.is_empty());
-    // Component-level awaits (issue #571): the prebuilt viewParams const
-    // reads `page.url.searchParams` with the DSL defaults — the load's
-    // `result.params` is not on the component-await plane.
-    let has_awaits = remote
-        && groups.iter().any(|group| {
-            group
-                .components
-                .iter()
-                .any(|comp| !comp.await_block.is_empty())
-        });
-    let view_params_src = if has_awaits {
-        let mut seen: HashSet<String> = HashSet::new();
-        let entries: Vec<String> = vc
-            .params
-            .iter()
-            .filter(|p| seen.insert(p.name.clone()))
-            .map(|p| {
-                format!(
-                    "		{}: page.url.searchParams.get('{}'){}",
-                    p.name,
-                    p.name,
-                    match &p.default {
-                        Some(d) => format!(" ?? {}", crate::forms::ts_string_literal(d)),
-                        None => " ?? ''".to_string(),
-                    }
-                )
-            })
-            .collect();
-        if entries.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "	const viewParams = $derived({{
-{}
-	}});",
-                entries.join(
-                    ",
-"
-                )
-            )
-        }
-    } else {
-        String::new()
-    };
-
-    Ok(PageSvelteContext {
-        api_version: api_version.to_string(),
-        name: vc.name.clone(),
-        label: vc.label.clone().unwrap_or_else(|| vc.name.clone()),
-        components,
-        params: vc.params.clone(),
-        view_params: {
-            let mut seen: HashSet<String> = HashSet::new();
-            vc.params
-                .iter()
-                .filter(|p| seen.insert(p.name.clone()))
-                .map(|p| p.name.clone())
-                .collect()
-        },
-        view_events,
-        imports,
-        needs_goto,
-        needs_on_mount,
-        needs_invalidate,
-        has_submit,
-        has_api_surface,
-        remote_api: remote,
-        auth_surface: project.codegen.ifml_e2e_auth,
-        remote_awaits: has_awaits,
-        // needs_browser gates the `browser` instance guard the live
-        // workflow stream requires (issue #574 S4c parity).
-        needs_browser,
-        needs_redirect: has_awaits && project.codegen.ifml_e2e_auth,
-        denial_helper_src: if needs_denial_helper {
-            remote_denial_helper(denial_target)
-        } else {
-            String::new()
-        },
-        view_params_src,
-        denial_target: denial_target.to_string(),
-        has_action_buttons,
+    ComponentPlaneOutputs {
         file_scripts,
         file_imports,
         file_media,
-        tanstack_forms: groups
-            .iter()
-            .flat_map(|group| group.components.iter())
-            .any(|comp| comp.tanstack.is_some()),
-        groups,
-        view_role: semantic_view_role(vc),
-        container_role: semantic_container_role(vc),
-        roles: vc.roles.clone(),
-        requires: vc.requires.clone(),
-        control_gate,
-        modal,
-        container,
-        ux: ux.map(|uxg| page_ux_context(uxg.rules)),
-        guard_expr: page_guard_expr(vc, project)?,
-    })
+        needs_denial_helper,
+        needs_browser,
+    }
+}
+
+/// Media file slots (issue #633): wire the pre-resolved slot into the
+/// form markup + collect the page-script handler. The slot is rendered
+/// HERE (not in `render_form`) because the upload route needs the view's
+/// id param and the remote plane, both known only at this point.
+fn wire_media_file_slots(
+    comp: &mut PageComponentContext,
+    file_slots: &HashMap<(String, String), Option<FileSlot>>,
+    id_param: &Option<String>,
+    file_scripts: &mut String,
+    file_imports: &mut Vec<String>,
+    file_media: &mut Vec<RenderFileMedia>,
+) {
+    let comp_entity = comp.entity.clone();
+    // The TanStack plane renders the file slots when it is active —
+    // wiring the hand-rolled form as well would emit the script
+    // block twice (the unused copy fails svelte-check).
+    if comp.tanstack.is_none()
+        && let Some(form) = comp.form.as_mut()
+    {
+        for field in form.fields.iter_mut().filter(|f| f.is_file) {
+            let slot = file_slots
+                .get(&(comp_entity.clone(), field.name.clone()))
+                .cloned()
+                .flatten();
+            let rendered = render_file_slot(&field.name, slot.as_ref(), id_param.as_deref());
+            field.file_markup = rendered.markup;
+            file_scripts.push_str(&rendered.script);
+            if let Some(import) = rendered.import
+                && !file_imports.contains(&import)
+            {
+                file_imports.push(import.clone());
+                if let (Some(api), Some(param), Some(slot)) =
+                    (comp.api.as_ref(), id_param.as_ref(), slot.as_ref())
+                {
+                    file_media.push(RenderFileMedia {
+                        export: import,
+                        base_path: api.base_path.clone(),
+                        field: slot.media_field.clone(),
+                        id_param: param.clone(),
+                    });
+                }
+            }
+        }
+    }
+    if let Some(ts) = comp.tanstack.as_mut() {
+        let names = ts.file_fields.clone();
+        for name in names {
+            let slot = file_slots
+                .get(&(comp_entity.clone(), name.clone()))
+                .cloned()
+                .flatten();
+            let rendered = render_file_slot(&name, slot.as_ref(), id_param.as_deref());
+            ts.file_markup.push_str(&rendered.markup);
+            file_scripts.push_str(&rendered.script);
+            if let Some(import) = rendered.import
+                && !file_imports.contains(&import)
+            {
+                file_imports.push(import.clone());
+                if let (Some(api), Some(param), Some(slot)) =
+                    (comp.api.as_ref(), id_param.as_ref(), slot.as_ref())
+                {
+                    file_media.push(RenderFileMedia {
+                        export: import,
+                        base_path: api.base_path.clone(),
+                        field: slot.media_field.clone(),
+                        id_param: param.clone(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// The prebuilt `viewParams` const source (issue #571): reads
+/// `page.url.searchParams` with the DSL defaults — the load's
+/// `result.params` is not on the component-await plane.
+fn build_view_params_src(vc: &IfmlViewContainer, has_awaits: bool) -> String {
+    if !has_awaits {
+        return String::new();
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    let entries: Vec<String> = vc
+        .params
+        .iter()
+        .filter(|p| seen.insert(p.name.clone()))
+        .map(|p| {
+            format!(
+                "		{}: page.url.searchParams.get('{}'){}",
+                p.name,
+                p.name,
+                match &p.default {
+                    Some(d) => format!(" ?? {}", crate::forms::ts_string_literal(d)),
+                    None => " ?? ''".to_string(),
+                }
+            )
+        })
+        .collect();
+    if entries.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "	const viewParams = $derived({{
+{}
+	}});",
+            entries.join(
+                ",
+"
+            )
+        )
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

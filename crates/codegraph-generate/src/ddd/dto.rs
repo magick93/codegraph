@@ -425,7 +425,6 @@ fn flatten_child_dtos(children: Vec<ChildDtoContext>) -> Vec<ChildDtoContext> {
 
 /// Build the template context for DTO generation. Shared between the app DTO generator
 /// and the domain-types DTO generator.
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn build_dto_context(
     db: &dyn GraphQuerier,
     schema_title: &str,
@@ -575,9 +574,105 @@ pub async fn build_dto_context(
 
     let mut fields = Vec::new();
     let mut child_dtos = Vec::new();
+
+    let resolution = DtoFieldResolution {
+        db,
+        schema_title,
+        entity_name: &entity_name,
+        module_name: &module_name,
+        type_suffix: config.defaults.type_suffix.as_str(),
+        entity_titles: &entity_titles,
+        hierarchy_field_name: &hierarchy_field_name,
+        media_fields: &media_fields,
+    };
+    resolve_dto_fields(
+        &resolution,
+        &props,
+        &consumed_fields,
+        &mut fields,
+        &mut child_dtos,
+    )
+    .await;
+
+    inject_hierarchy_fields(&mut fields, entity_cfg, &hierarchy_field_name);
+    let has_list_fields = !list_include.is_empty();
+
+    // Flatten nested child DTOs so we scan ALL nesting levels for codelist imports
+    // and generate struct definitions for every level.
+    let all_child_dtos = flatten_child_dtos(child_dtos.clone());
+    let (codelist_imports, codelist_imports_update) =
+        collect_dto_codelist_imports(db, &fields, &all_child_dtos).await;
+    let has_workflow = workflow
+        .map(|wf| wf.generate_action_endpoints)
+        .unwrap_or(false);
+    let has_approval_status = workflow
+        .and_then(|wf| wf.approval_status_field.as_ref())
+        .is_some();
+
+    let structured_imports = collect_structured_imports(db, schema_title, &props, config).await;
+
+    let (derived_fields, mox_derived_extras) =
+        resolve_mox_derived(db, schema_title, &entity_name, &fields).await?;
+    for name in &derived_fields {
+        if !workflow_excluded_fields.contains(name) {
+            workflow_excluded_fields.push(name.clone());
+        }
+        if !immutable_fields.contains(name) {
+            immutable_fields.push(name.clone());
+        }
+    }
+
+    Ok(DtoContext {
+        module_name,
+        entity_name,
+        domain,
+        fields,
+        immutable_fields,
+        workflow_excluded_fields,
+        list_exclude,
+        list_include,
+        has_list_fields,
+        operations,
+        child_dtos,
+        all_child_dtos,
+        codelist_imports,
+        codelist_imports_update,
+        has_workflow,
+        has_approval_status,
+        structured_imports,
+        has_validate: true,
+        derived_fields,
+        mox_derived_extras,
+    })
+}
+
+/// Shared resolution inputs threaded through the per-property DTO field
+/// lowering (extracted from `build_dto_context`, issue #751).
+struct DtoFieldResolution<'a> {
+    db: &'a dyn GraphQuerier,
+    schema_title: &'a str,
+    entity_name: &'a str,
+    module_name: &'a str,
+    type_suffix: &'a str,
+    entity_titles: &'a std::collections::HashSet<String>,
+    hierarchy_field_name: &'a Option<String>,
+    media_fields: &'a std::collections::HashSet<String>,
+}
+
+/// Resolve every schema property into DTO fields / child DTOs. Extracted
+/// verbatim from `build_dto_context` (issue #751); the caller keeps the
+/// preamble (schema fetch, entity config, media plan) and the post-loop
+/// context assembly.
+async fn resolve_dto_fields(
+    r: &DtoFieldResolution<'_>,
+    props: &[PropertyNode],
+    consumed_fields: &std::collections::HashSet<String>,
+    fields: &mut Vec<DtoField>,
+    child_dtos: &mut Vec<ChildDtoContext>,
+) {
     let mut seen_child_structs = std::collections::HashSet::new();
 
-    for prop in &props {
+    for prop in props {
         // Skip fields consumed by composite ranges
         if consumed_fields.contains(&prop.name) {
             continue;
@@ -587,7 +682,7 @@ pub async fn build_dto_context(
         if prop.effective_kind() == Some(RefClassificationKind::CompositeWrapper)
             || prop.effective_kind() == Some(RefClassificationKind::MediaWrapper)
         {
-            if let Ok(comp_cols) = db.get_composite_columns(&prop.name, schema_title).await {
+            if let Ok(comp_cols) = r.db.get_composite_columns(&prop.name, r.schema_title).await {
                 for col in &comp_cols {
                     let rust_type = col
                         .dto_rust_type
@@ -618,11 +713,11 @@ pub async fn build_dto_context(
             // When a non-array VO targets a known entity, the DDL emits an
             // FK column instead of a child table. Emit a UUID field to match.
             let is_entity_fk = if !prop.is_array {
-                db.get_property_ref_target(&prop.name, schema_title)
+                r.db.get_property_ref_target(&prop.name, r.schema_title)
                     .await
                     .ok()
                     .flatten()
-                    .map(|t| entity_titles.contains(&t.title))
+                    .map(|t| r.entity_titles.contains(&t.title))
                     .unwrap_or(false)
             } else {
                 false
@@ -647,15 +742,15 @@ pub async fn build_dto_context(
                 });
             } else {
                 let mut visited = std::collections::HashSet::new();
-                visited.insert(schema_title.to_string());
+                visited.insert(r.schema_title.to_string());
                 if let Some(mut child_dto) = Box::pin(build_child_dto(
-                    db,
+                    r.db,
                     prop,
-                    schema_title,
-                    &entity_name,
+                    r.schema_title,
+                    r.entity_name,
                     &mut visited,
                     0,
-                    &config.defaults.type_suffix,
+                    r.type_suffix,
                 ))
                 .await
                 {
@@ -663,8 +758,8 @@ pub async fn build_dto_context(
                     // response DTO renders it; the media handlers address
                     // the child row) but the create/update templates omit
                     // it, so the upload handler is its only writer.
-                    child_dto.is_media = media_fields.contains(&child_dto.field_name)
-                        || media_fields.contains(&prop.rust_field_name);
+                    child_dto.is_media = r.media_fields.contains(&child_dto.field_name)
+                        || r.media_fields.contains(&prop.rust_field_name);
                     if seen_child_structs.insert(child_dto.struct_name.clone()) {
                         child_dtos.push(child_dto);
                     }
@@ -680,25 +775,26 @@ pub async fn build_dto_context(
         //    for case.party_ids): no field on the parent DTO — children are
         //    managed through their own endpoints.
         if prop.is_array && prop.effective_kind() == Some(RefClassificationKind::EntityReference) {
-            let target = db
-                .get_array_item_schema(&prop.name, schema_title)
-                .await
-                .ok()
-                .flatten();
-            let has_back_ref = match &target {
-                Some(t) => db
-                    .get_properties(&t.title)
+            let target =
+                r.db.get_array_item_schema(&prop.name, r.schema_title)
                     .await
-                    .map(|ps| {
-                        ps.iter().any(|p| {
-                            codegraph_naming::is_back_ref_column(
-                                &p.pg_column_name,
-                                &module_name,
-                                schema_title,
-                            )
+                    .ok()
+                    .flatten();
+            let has_back_ref = match &target {
+                Some(t) => {
+                    r.db.get_properties(&t.title)
+                        .await
+                        .map(|ps| {
+                            ps.iter().any(|p| {
+                                codegraph_naming::is_back_ref_column(
+                                    &p.pg_column_name,
+                                    r.module_name,
+                                    r.schema_title,
+                                )
+                            })
                         })
-                    })
-                    .unwrap_or(false),
+                        .unwrap_or(false)
+                }
                 None => false,
             };
             // The repository junction writer requires a resolvable target
@@ -738,7 +834,7 @@ pub async fn build_dto_context(
         {
             let child_struct_name = format!(
                 "{}{}",
-                entity_name,
+                r.entity_name,
                 codegraph_naming::to_pascal_case(&prop.rust_field_name)
             );
             let code_type = codelist_enum_name_from_ref(&prop.ref_target)
@@ -809,7 +905,8 @@ pub async fn build_dto_context(
             description: prop.description.as_deref().unwrap_or("").to_string(),
             render_strategy: prop.render_strategy.clone(),
             is_entity_ref,
-            is_hierarchy_field: hierarchy_field_name.as_deref() == Some(&field_def.rust_field_name),
+            is_hierarchy_field: r.hierarchy_field_name.as_deref()
+                == Some(&field_def.rust_field_name),
             min_length: if len_ok { prop.min_length } else { None },
             max_length: if len_ok { prop.max_length } else { None },
             minimum: prop.minimum,
@@ -818,10 +915,20 @@ pub async fn build_dto_context(
             format: prop.format.clone(),
         });
     }
+}
 
+/// Synthetic hierarchy fields: the self-referential FK column the DDL
+/// generator adds but the schema does not declare, plus the config-declared
+/// `hierarchy_field` as an optional UUID field. Extracted verbatim from
+/// `build_dto_context` (issue #751).
+fn inject_hierarchy_fields(
+    fields: &mut Vec<DtoField>,
+    entity_cfg: Option<&codegraph_config::EntityConfig>,
+    hierarchy_field_name: &Option<String>,
+) {
     // Add synthetic hierarchy field (self-referential FK) when configured.
     // This column is added by the DDL generator but doesn't exist in the schema.
-    if let Some(ref hf) = hierarchy_field_name {
+    if let Some(hf) = hierarchy_field_name {
         fields.push(DtoField {
             name: hf.clone(),
             rust_type: "uuid::Uuid".to_string(),
@@ -868,9 +975,18 @@ pub async fn build_dto_context(
             format: None,
         });
     }
+}
 
-    let has_list_fields = !list_include.is_empty();
-
+/// Collect codelist imports: scan the response fields and all child DTO
+/// fields (at every nesting level) for types matching known codelist names.
+/// Returns `(codelist_imports, codelist_imports_update)` — the update list
+/// covers parent-level fields only (child structs are imported from
+/// dto_create, so their codelist types aren't needed there).
+async fn collect_dto_codelist_imports(
+    db: &dyn GraphQuerier,
+    fields: &[DtoField],
+    all_child_dtos: &[ChildDtoContext],
+) -> (Vec<String>, Vec<String>) {
     // Collect codelist imports: scan fields for types matching known codelist names
     let codelist_names: std::collections::HashSet<String> = db
         .list_codelists()
@@ -879,10 +995,6 @@ pub async fn build_dto_context(
         .into_iter()
         .map(|cl| cl.name)
         .collect();
-
-    // Flatten nested child DTOs so we scan ALL nesting levels for codelist imports
-    // and generate struct definitions for every level.
-    let all_child_dtos = flatten_child_dtos(child_dtos.clone());
 
     // Scan both top-level fields and all child DTO fields (at every nesting level)
     let all_dto_fields = fields
@@ -928,13 +1040,19 @@ pub async fn build_dto_context(
         .collect();
     codelist_imports_update.sort();
 
-    let has_workflow = workflow
-        .map(|wf| wf.generate_action_endpoints)
-        .unwrap_or(false);
-    let has_approval_status = workflow
-        .and_then(|wf| wf.approval_status_field.as_ref())
-        .is_some();
+    (codelist_imports, codelist_imports_update)
+}
 
+/// Collect structured wrapper imports by scanning all DTO fields (parent +
+/// child) for types classified as StructuredWrapper. Parent properties have
+/// classification info; for child DTO fields, walk their source schemas to
+/// check classification.
+async fn collect_structured_imports(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    props: &[PropertyNode],
+    config: &DomainConfig,
+) -> Vec<String> {
     // Collect structured wrapper imports by scanning all DTO fields (parent + child)
     // for types classified as StructuredWrapper. Parent properties have classification
     // info; for child DTO fields, walk their source schemas to check classification.
@@ -942,7 +1060,7 @@ pub async fn build_dto_context(
         std::collections::HashSet::new();
 
     // 1. Direct parent-level structured wrapper properties
-    for p in &props {
+    for p in props {
         if p.effective_kind() == Some(RefClassificationKind::StructuredWrapper) {
             // Strip Vec<> and Option<> wrappers for array and optional properties
             let mut ty = strip_vec_wrapper(&p.rust_field_type);
@@ -958,7 +1076,7 @@ pub async fn build_dto_context(
     let mut vo_visit_queue: Vec<(String, String)> = Vec::new(); // (prop_name, parent_schema)
     let mut vo_visited: std::collections::HashSet<String> = std::collections::HashSet::new();
     vo_visited.insert(schema_title.to_string());
-    for p in &props {
+    for p in props {
         if p.effective_kind() == Some(RefClassificationKind::ValueObject) {
             vo_visit_queue.push((p.name.clone(), schema_title.to_string()));
         }
@@ -998,7 +1116,26 @@ pub async fn build_dto_context(
         .into_iter()
         .map(|t| format!("use {import_prefix}::{t};"))
         .collect();
+    structured_imports
+}
 
+/// Mox derived features (issues #218, #501): features the domain model
+/// marks as computed are read-only response fields, omitted from
+/// create/update inputs. Matched by class NAME against this schema
+/// (title or entity name). Features naming an existing stored field
+/// annotate that field (the #218 behavior); features naming NO stored
+/// field are exposed as new read-only response fields with computed
+/// accessors (#501 slice 1). When no mox was ingested both lists are
+/// empty and output is byte-identical.
+///
+/// Returns `(derived_fields, mox_derived_extras)`; the caller folds
+/// `derived_fields` into the workflow-excluded/immutable lists.
+async fn resolve_mox_derived(
+    db: &dyn GraphQuerier,
+    schema_title: &str,
+    entity_name: &str,
+    fields: &[DtoField],
+) -> Result<(Vec<String>, Vec<MoxDerivedExtra>)> {
     // Mox derived features (issues #218, #501): features the domain model
     // marks as computed are read-only response fields, omitted from
     // create/update inputs. Matched by class NAME against this schema
@@ -1021,14 +1158,6 @@ pub async fn build_dto_context(
         .collect();
     derived_fields.sort();
     derived_fields.dedup();
-    for name in &derived_fields {
-        if !workflow_excluded_fields.contains(name) {
-            workflow_excluded_fields.push(name.clone());
-        }
-        if !immutable_fields.contains(name) {
-            immutable_fields.push(name.clone());
-        }
-    }
 
     // Non-stored derived features (#501 slice 1, quality bar #508): a
     // read-only response field plus a fixed-signature accessor lowered
@@ -1092,29 +1221,7 @@ pub async fn build_dto_context(
     }
     mox_derived_extras.sort_by(|a, b| a.name.cmp(&b.name));
     mox_derived_extras.dedup_by(|a, b| a.name == b.name);
-
-    Ok(DtoContext {
-        module_name,
-        entity_name,
-        domain,
-        fields,
-        immutable_fields,
-        workflow_excluded_fields,
-        list_exclude,
-        list_include,
-        has_list_fields,
-        operations,
-        child_dtos,
-        all_child_dtos,
-        codelist_imports,
-        codelist_imports_update,
-        has_workflow,
-        has_approval_status,
-        structured_imports,
-        has_validate: true,
-        derived_fields,
-        mox_derived_extras,
-    })
+    Ok((derived_fields, mox_derived_extras))
 }
 
 pub struct DtoGenerator {

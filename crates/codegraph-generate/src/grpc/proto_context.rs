@@ -66,7 +66,6 @@ pub struct ProtoServiceMethod {
 }
 
 impl ProtoContext {
-    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub async fn build(
         db: &dyn GraphQuerier,
         schema_title: &str,
@@ -110,503 +109,37 @@ impl ProtoContext {
             .unwrap_or(false);
 
         let hierarchy_field = entity_cfg.and_then(|ec| ec.hierarchy_field.clone());
+        // Entity message fields + collected imports/enums live in their own
+        // helpers (issue #751); evaluation order is unchanged.
+        let entity_fields = build_entity_fields(db, &properties, &entity_name);
+        let imports = entity_fields.imports;
+        let enums = entity_fields.enums;
 
-        // Build entity message fields from properties
-        let mut all_field_defs = Vec::new();
-        let mut imports = Vec::new();
-        let mut enums: Vec<ProtoEnumDef> = Vec::new();
-        // Field numbers start at 2: field 1 is the synthetic `id` above.
-
-        // id = 1
-        all_field_defs.push(ProtoFieldDef {
-            field_number: 1,
-            name: "id".to_string(),
-            proto_type: "string".to_string(),
-            is_optional: false,
-            is_repeated: false,
-            description: Some("Unique identifier (UUID)".to_string()),
-        });
-
-        for (prop_offset, prop) in properties.iter().enumerate() {
-            let field_number = prop_offset as u32 + 2;
-            let field_type = proto_type_from_field(prop, db, &entity_name);
-
-            if field_type.is_import
-                && let Some(ref path) = field_type.import_path
-                && !imports.contains(path)
-            {
-                imports.push(path.clone());
-            }
-
-            // Check if this property should be rendered as a proto enum
-            let proto_type = maybe_collect_enum(prop, &entity_name, &mut enums)
-                .unwrap_or_else(|| field_type.proto_type.clone());
-
-            let is_repeated = field_type.proto_type.starts_with("repeated ");
-            let base_proto_type = if is_repeated {
-                field_type
-                    .proto_type
-                    .strip_prefix("repeated ")
-                    .unwrap()
-                    .to_string()
-            } else {
-                proto_type.clone()
-            };
-
-            all_field_defs.push(ProtoFieldDef {
-                field_number,
-                name: prop.name.clone(),
-                proto_type: base_proto_type,
-                is_optional: !prop.is_required || prop.is_nullable,
-                is_repeated,
-                description: prop.description.clone(),
-            });
-        }
-
-        // created_at = 998, updated_at = 999
-        let synthetic_fields = vec![
-            ProtoFieldDef {
-                field_number: 998,
-                name: "created_at".to_string(),
-                proto_type: "google.protobuf.Timestamp".to_string(),
-                is_optional: true,
-                is_repeated: false,
-                description: Some("Creation timestamp".to_string()),
-            },
-            ProtoFieldDef {
-                field_number: 999,
-                name: "updated_at".to_string(),
-                proto_type: "google.protobuf.Timestamp".to_string(),
-                is_optional: true,
-                is_repeated: false,
-                description: Some("Last update timestamp".to_string()),
-            },
-        ];
-
-        // Add timestamp import if not already present
-        for sf in synthetic_fields {
-            all_field_defs.push(sf);
-        }
-        if !imports.contains(&"google/protobuf/timestamp.proto".to_string()) {
-            imports.push("google/protobuf/timestamp.proto".to_string());
-        }
-
-        // Build messages
         let mut messages = Vec::new();
+        push_crud_messages(
+            &mut messages,
+            &entity_fields.fields,
+            &entity_name,
+            has_fts,
+            has_workflow,
+        );
+        push_special_messages(
+            &mut messages,
+            &entity_name,
+            has_fts,
+            has_embeddings,
+            has_workflow,
+            &hierarchy_field,
+        );
 
-        // Entity message
-        messages.push(ProtoMsgDef {
-            name: entity_name.clone(),
-            description: Some(format!("{} entity", entity_name)),
-            fields: all_field_defs.clone(),
-        });
-
-        // CreateRequest — id excluded, synthetic fields excluded
-        let create_fields: Vec<ProtoFieldDef> = all_field_defs
-            .iter()
-            .filter(|f| f.name != "id" && f.name != "created_at" && f.name != "updated_at")
-            .cloned()
-            .collect();
-        messages.push(ProtoMsgDef {
-            name: format!("Create{}Request", entity_name),
-            description: Some(format!("Create request for {}", entity_name)),
-            fields: create_fields,
-        });
-
-        // UpdateRequest — all fields optional, id required, immutable fields excluded
-        let update_fields: Vec<ProtoFieldDef> = all_field_defs
-            .iter()
-            .filter(|f| f.name != "created_at" && f.name != "updated_at")
-            .map(|f| {
-                if f.name == "id" {
-                    f.clone()
-                } else {
-                    ProtoFieldDef {
-                        is_optional: true,
-                        ..f.clone()
-                    }
-                }
-            })
-            .collect();
-        messages.push(ProtoMsgDef {
-            name: format!("Update{}Request", entity_name),
-            description: Some(format!("Update request for {}", entity_name)),
-            fields: update_fields,
-        });
-
-        // GetRequest
-        messages.push(ProtoMsgDef {
-            name: format!("Get{}Request", entity_name),
-            description: Some(format!("Get request for {}", entity_name)),
-            fields: vec![ProtoFieldDef {
-                field_number: 1,
-                name: "id".to_string(),
-                proto_type: "string".to_string(),
-                is_optional: false,
-                is_repeated: false,
-                description: Some("Entity UUID".to_string()),
-            }],
-        });
-
-        // DeleteRequest
-        messages.push(ProtoMsgDef {
-            name: format!("Delete{}Request", entity_name),
-            description: Some(format!("Delete request for {}", entity_name)),
-            fields: vec![ProtoFieldDef {
-                field_number: 1,
-                name: "id".to_string(),
-                proto_type: "string".to_string(),
-                is_optional: false,
-                is_repeated: false,
-                description: Some("Entity UUID".to_string()),
-            }],
-        });
-
-        // ListRequest
-        let mut list_fields = vec![
-            ProtoFieldDef {
-                field_number: 1,
-                name: "page_size".to_string(),
-                proto_type: "int32".to_string(),
-                is_optional: true,
-                is_repeated: false,
-                description: Some("Number of items per page".to_string()),
-            },
-            ProtoFieldDef {
-                field_number: 2,
-                name: "page_token".to_string(),
-                proto_type: "string".to_string(),
-                is_optional: true,
-                is_repeated: false,
-                description: Some("Pagination token".to_string()),
-            },
-        ];
-        if has_fts {
-            list_fields.push(ProtoFieldDef {
-                field_number: 3,
-                name: "query".to_string(),
-                proto_type: "string".to_string(),
-                is_optional: true,
-                is_repeated: false,
-                description: Some("Full-text search query".to_string()),
-            });
-        }
-        if has_workflow {
-            list_fields.push(ProtoFieldDef {
-                field_number: 4,
-                name: "status".to_string(),
-                proto_type: "string".to_string(),
-                is_optional: true,
-                is_repeated: false,
-                description: Some("Filter by workflow status".to_string()),
-            });
-        }
-        list_fields.push(ProtoFieldDef {
-            field_number: 5,
-            name: "filters".to_string(),
-            proto_type: "FilterClause".to_string(),
-            is_optional: true,
-            is_repeated: true,
-            description: Some("Additional field filters".to_string()),
-        });
-        messages.push(ProtoMsgDef {
-            name: format!("List{}Request", entity_name),
-            description: Some(format!("List request for {}", entity_name)),
-            fields: list_fields,
-        });
-
-        // ListResponse
-        messages.push(ProtoMsgDef {
-            name: format!("List{}Response", entity_name),
-            description: Some(format!("List response for {}", entity_name)),
-            fields: vec![
-                ProtoFieldDef {
-                    field_number: 1,
-                    name: "data".to_string(),
-                    proto_type: entity_name.clone(),
-                    is_optional: false,
-                    is_repeated: true,
-                    description: None,
-                },
-                ProtoFieldDef {
-                    field_number: 2,
-                    name: "total".to_string(),
-                    proto_type: "int32".to_string(),
-                    is_optional: false,
-                    is_repeated: false,
-                    description: Some("Total number of items".to_string()),
-                },
-                ProtoFieldDef {
-                    field_number: 3,
-                    name: "next_page_token".to_string(),
-                    proto_type: "string".to_string(),
-                    is_optional: true,
-                    is_repeated: false,
-                    description: Some("Pagination token for next page".to_string()),
-                },
-            ],
-        });
-
-        // SearchRequest (FTS)
-        if has_fts {
-            messages.push(ProtoMsgDef {
-                name: "SearchRequest".to_string(),
-                description: Some("Full-text search request".to_string()),
-                fields: vec![
-                    ProtoFieldDef {
-                        field_number: 1,
-                        name: "query".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: false,
-                        is_repeated: false,
-                        description: Some("Search query".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 2,
-                        name: "page_size".to_string(),
-                        proto_type: "int32".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Number of items per page".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 3,
-                        name: "page_token".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Pagination token".to_string()),
-                    },
-                ],
-            });
-            messages.push(ProtoMsgDef {
-                name: "SearchResponse".to_string(),
-                description: Some("Full-text search response".to_string()),
-                fields: vec![
-                    ProtoFieldDef {
-                        field_number: 1,
-                        name: "data".to_string(),
-                        proto_type: entity_name.clone(),
-                        is_optional: false,
-                        is_repeated: true,
-                        description: None,
-                    },
-                    ProtoFieldDef {
-                        field_number: 2,
-                        name: "total".to_string(),
-                        proto_type: "int32".to_string(),
-                        is_optional: false,
-                        is_repeated: false,
-                        description: Some("Total number of results".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 3,
-                        name: "next_page_token".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Pagination token for next page".to_string()),
-                    },
-                ],
-            });
-        }
-
-        // SemanticSearchRequest (embeddings)
-        if has_embeddings {
-            messages.push(ProtoMsgDef {
-                name: "SemanticSearchRequest".to_string(),
-                description: Some("Semantic search request".to_string()),
-                fields: vec![
-                    ProtoFieldDef {
-                        field_number: 1,
-                        name: "query".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: false,
-                        is_repeated: false,
-                        description: Some("Search query".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 2,
-                        name: "limit".to_string(),
-                        proto_type: "int32".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Maximum number of results".to_string()),
-                    },
-                ],
-            });
-        }
-
-        // TransitionRequest (workflow)
-        if has_workflow {
-            messages.push(ProtoMsgDef {
-                name: "TransitionRequest".to_string(),
-                description: Some("Workflow transition request".to_string()),
-                fields: vec![
-                    ProtoFieldDef {
-                        field_number: 1,
-                        name: "id".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: false,
-                        is_repeated: false,
-                        description: Some("Entity UUID".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 2,
-                        name: "action".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: false,
-                        is_repeated: false,
-                        description: Some("Transition action name".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 3,
-                        name: "comment".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Optional comment".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 4,
-                        name: "assignee_id".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Optional assignee UUID".to_string()),
-                    },
-                ],
-            });
-        }
-
-        // TreeRequest (hierarchy)
-        if hierarchy_field.is_some() {
-            messages.push(ProtoMsgDef {
-                name: "TreeRequest".to_string(),
-                description: Some("Tree/hierarchy request".to_string()),
-                fields: vec![
-                    ProtoFieldDef {
-                        field_number: 1,
-                        name: "id".to_string(),
-                        proto_type: "string".to_string(),
-                        is_optional: false,
-                        is_repeated: false,
-                        description: Some("Root entity UUID".to_string()),
-                    },
-                    ProtoFieldDef {
-                        field_number: 2,
-                        name: "max_depth".to_string(),
-                        proto_type: "int32".to_string(),
-                        is_optional: true,
-                        is_repeated: false,
-                        description: Some("Maximum tree depth".to_string()),
-                    },
-                ],
-            });
-        }
-
-        // Build service methods
-        let mut service_methods = Vec::new();
-        let op_set: std::collections::HashSet<String> = operations.iter().cloned().collect();
-
-        if op_set.contains("create") {
-            service_methods.push(ProtoServiceMethod {
-                name: "Create".to_string(),
-                input_type: format!("Create{}Request", entity_name),
-                output_type: entity_name.clone(),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("Create a new entity".to_string()),
-            });
-        }
-
-        if op_set.contains("read") {
-            service_methods.push(ProtoServiceMethod {
-                name: "Get".to_string(),
-                input_type: format!("Get{}Request", entity_name),
-                output_type: entity_name.clone(),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("Get an entity by ID".to_string()),
-            });
-        }
-
-        if op_set.contains("update") {
-            service_methods.push(ProtoServiceMethod {
-                name: "Update".to_string(),
-                input_type: format!("Update{}Request", entity_name),
-                output_type: entity_name.clone(),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("Update an existing entity".to_string()),
-            });
-        }
-
-        if op_set.contains("delete") {
-            service_methods.push(ProtoServiceMethod {
-                name: "Delete".to_string(),
-                input_type: format!("Delete{}Request", entity_name),
-                output_type: "google.protobuf.Empty".to_string(),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("Delete an entity by ID".to_string()),
-            });
-        }
-
-        if op_set.contains("list") {
-            service_methods.push(ProtoServiceMethod {
-                name: "List".to_string(),
-                input_type: format!("List{}Request", entity_name),
-                output_type: format!("List{}Response", entity_name),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("List entities with pagination".to_string()),
-            });
-        }
-
-        if has_fts && op_set.contains("list") {
-            service_methods.push(ProtoServiceMethod {
-                name: "Search".to_string(),
-                input_type: "SearchRequest".to_string(),
-                output_type: "SearchResponse".to_string(),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("Full-text search".to_string()),
-            });
-        }
-
-        if has_embeddings {
-            service_methods.push(ProtoServiceMethod {
-                name: "SemanticSearch".to_string(),
-                input_type: "SemanticSearchRequest".to_string(),
-                output_type: "SearchResult".to_string(),
-                client_streaming: false,
-                server_streaming: true,
-                description: Some("Semantic/vector search".to_string()),
-            });
-        }
-
-        if has_workflow {
-            service_methods.push(ProtoServiceMethod {
-                name: "Transition".to_string(),
-                input_type: "TransitionRequest".to_string(),
-                output_type: entity_name.clone(),
-                client_streaming: false,
-                server_streaming: false,
-                description: Some("Execute a workflow transition".to_string()),
-            });
-        }
-
-        if hierarchy_field.is_some() {
-            service_methods.push(ProtoServiceMethod {
-                name: "GetTree".to_string(),
-                input_type: "TreeRequest".to_string(),
-                output_type: entity_name.clone(),
-                client_streaming: false,
-                server_streaming: true,
-                description: Some("Get entity tree/hierarchy".to_string()),
-            });
-        }
+        let service_methods = build_service_methods(
+            &entity_name,
+            &operations,
+            has_fts,
+            has_embeddings,
+            has_workflow,
+            &hierarchy_field,
+        );
 
         let proto_file_name = format!("{}.proto", module_name);
 
@@ -648,6 +181,557 @@ impl ProtoContext {
     pub fn is_empty(&self) -> bool {
         self.proto_file_name.is_empty()
     }
+}
+
+/// The entity message's field set plus the collected imports/enums
+/// (extracted from `ProtoContext::build`, issue #751).
+struct EntityMessageFields {
+    fields: Vec<ProtoFieldDef>,
+    imports: Vec<String>,
+    enums: Vec<ProtoEnumDef>,
+}
+
+/// Build the entity message fields from properties. Field numbers start
+/// at 2: field 1 is the synthetic `id`; 998/999 are the synthetic
+/// timestamps. Extracted verbatim from `ProtoContext::build` (issue #751).
+fn build_entity_fields(
+    db: &dyn GraphQuerier,
+    properties: &[PropertyNode],
+    entity_name: &str,
+) -> EntityMessageFields {
+    // Build entity message fields from properties
+    let mut all_field_defs = Vec::new();
+    let mut imports = Vec::new();
+    let mut enums: Vec<ProtoEnumDef> = Vec::new();
+    // Field numbers start at 2: field 1 is the synthetic `id` above.
+
+    // id = 1
+    all_field_defs.push(ProtoFieldDef {
+        field_number: 1,
+        name: "id".to_string(),
+        proto_type: "string".to_string(),
+        is_optional: false,
+        is_repeated: false,
+        description: Some("Unique identifier (UUID)".to_string()),
+    });
+
+    for (prop_offset, prop) in properties.iter().enumerate() {
+        let field_number = prop_offset as u32 + 2;
+        let field_type = proto_type_from_field(prop, db, entity_name);
+
+        if field_type.is_import
+            && let Some(ref path) = field_type.import_path
+            && !imports.contains(path)
+        {
+            imports.push(path.clone());
+        }
+
+        // Check if this property should be rendered as a proto enum
+        let proto_type = maybe_collect_enum(prop, entity_name, &mut enums)
+            .unwrap_or_else(|| field_type.proto_type.clone());
+
+        let is_repeated = field_type.proto_type.starts_with("repeated ");
+        let base_proto_type = if is_repeated {
+            field_type
+                .proto_type
+                .strip_prefix("repeated ")
+                .unwrap()
+                .to_string()
+        } else {
+            proto_type.clone()
+        };
+
+        all_field_defs.push(ProtoFieldDef {
+            field_number,
+            name: prop.name.clone(),
+            proto_type: base_proto_type,
+            is_optional: !prop.is_required || prop.is_nullable,
+            is_repeated,
+            description: prop.description.clone(),
+        });
+    }
+
+    // created_at = 998, updated_at = 999
+    let synthetic_fields = vec![
+        ProtoFieldDef {
+            field_number: 998,
+            name: "created_at".to_string(),
+            proto_type: "google.protobuf.Timestamp".to_string(),
+            is_optional: true,
+            is_repeated: false,
+            description: Some("Creation timestamp".to_string()),
+        },
+        ProtoFieldDef {
+            field_number: 999,
+            name: "updated_at".to_string(),
+            proto_type: "google.protobuf.Timestamp".to_string(),
+            is_optional: true,
+            is_repeated: false,
+            description: Some("Last update timestamp".to_string()),
+        },
+    ];
+
+    // Add timestamp import if not already present
+    for sf in synthetic_fields {
+        all_field_defs.push(sf);
+    }
+    if !imports.contains(&"google/protobuf/timestamp.proto".to_string()) {
+        imports.push("google/protobuf/timestamp.proto".to_string());
+    }
+
+    EntityMessageFields {
+        fields: all_field_defs,
+        imports,
+        enums,
+    }
+}
+
+/// Entity + Create/Update/Get/Delete/List request and List response
+/// messages. Extracted verbatim from `ProtoContext::build` (issue #751).
+fn push_crud_messages(
+    messages: &mut Vec<ProtoMsgDef>,
+    all_field_defs: &[ProtoFieldDef],
+    entity_name: &str,
+    has_fts: bool,
+    has_workflow: bool,
+) {
+    // Entity message
+    messages.push(ProtoMsgDef {
+        name: entity_name.to_string(),
+        description: Some(format!("{} entity", entity_name)),
+        fields: all_field_defs.to_vec(),
+    });
+
+    // CreateRequest — id excluded, synthetic fields excluded
+    let create_fields: Vec<ProtoFieldDef> = all_field_defs
+        .iter()
+        .filter(|f| f.name != "id" && f.name != "created_at" && f.name != "updated_at")
+        .cloned()
+        .collect();
+    messages.push(ProtoMsgDef {
+        name: format!("Create{}Request", entity_name),
+        description: Some(format!("Create request for {}", entity_name)),
+        fields: create_fields,
+    });
+
+    // UpdateRequest — all fields optional, id required, immutable fields excluded
+    let update_fields: Vec<ProtoFieldDef> = all_field_defs
+        .iter()
+        .filter(|f| f.name != "created_at" && f.name != "updated_at")
+        .map(|f| {
+            if f.name == "id" {
+                f.clone()
+            } else {
+                ProtoFieldDef {
+                    is_optional: true,
+                    ..f.clone()
+                }
+            }
+        })
+        .collect();
+    messages.push(ProtoMsgDef {
+        name: format!("Update{}Request", entity_name),
+        description: Some(format!("Update request for {}", entity_name)),
+        fields: update_fields,
+    });
+
+    // GetRequest
+    messages.push(ProtoMsgDef {
+        name: format!("Get{}Request", entity_name),
+        description: Some(format!("Get request for {}", entity_name)),
+        fields: vec![ProtoFieldDef {
+            field_number: 1,
+            name: "id".to_string(),
+            proto_type: "string".to_string(),
+            is_optional: false,
+            is_repeated: false,
+            description: Some("Entity UUID".to_string()),
+        }],
+    });
+
+    // DeleteRequest
+    messages.push(ProtoMsgDef {
+        name: format!("Delete{}Request", entity_name),
+        description: Some(format!("Delete request for {}", entity_name)),
+        fields: vec![ProtoFieldDef {
+            field_number: 1,
+            name: "id".to_string(),
+            proto_type: "string".to_string(),
+            is_optional: false,
+            is_repeated: false,
+            description: Some("Entity UUID".to_string()),
+        }],
+    });
+
+    // ListRequest
+    let mut list_fields = vec![
+        ProtoFieldDef {
+            field_number: 1,
+            name: "page_size".to_string(),
+            proto_type: "int32".to_string(),
+            is_optional: true,
+            is_repeated: false,
+            description: Some("Number of items per page".to_string()),
+        },
+        ProtoFieldDef {
+            field_number: 2,
+            name: "page_token".to_string(),
+            proto_type: "string".to_string(),
+            is_optional: true,
+            is_repeated: false,
+            description: Some("Pagination token".to_string()),
+        },
+    ];
+    if has_fts {
+        list_fields.push(ProtoFieldDef {
+            field_number: 3,
+            name: "query".to_string(),
+            proto_type: "string".to_string(),
+            is_optional: true,
+            is_repeated: false,
+            description: Some("Full-text search query".to_string()),
+        });
+    }
+    if has_workflow {
+        list_fields.push(ProtoFieldDef {
+            field_number: 4,
+            name: "status".to_string(),
+            proto_type: "string".to_string(),
+            is_optional: true,
+            is_repeated: false,
+            description: Some("Filter by workflow status".to_string()),
+        });
+    }
+    list_fields.push(ProtoFieldDef {
+        field_number: 5,
+        name: "filters".to_string(),
+        proto_type: "FilterClause".to_string(),
+        is_optional: true,
+        is_repeated: true,
+        description: Some("Additional field filters".to_string()),
+    });
+    messages.push(ProtoMsgDef {
+        name: format!("List{}Request", entity_name),
+        description: Some(format!("List request for {}", entity_name)),
+        fields: list_fields,
+    });
+
+    // ListResponse
+    messages.push(ProtoMsgDef {
+        name: format!("List{}Response", entity_name),
+        description: Some(format!("List response for {}", entity_name)),
+        fields: vec![
+            ProtoFieldDef {
+                field_number: 1,
+                name: "data".to_string(),
+                proto_type: entity_name.to_string(),
+                is_optional: false,
+                is_repeated: true,
+                description: None,
+            },
+            ProtoFieldDef {
+                field_number: 2,
+                name: "total".to_string(),
+                proto_type: "int32".to_string(),
+                is_optional: false,
+                is_repeated: false,
+                description: Some("Total number of items".to_string()),
+            },
+            ProtoFieldDef {
+                field_number: 3,
+                name: "next_page_token".to_string(),
+                proto_type: "string".to_string(),
+                is_optional: true,
+                is_repeated: false,
+                description: Some("Pagination token for next page".to_string()),
+            },
+        ],
+    });
+}
+
+/// Search / semantic-search / transition / tree request messages, gated on
+/// the entity's FTS / embedding / workflow / hierarchy capabilities.
+/// Extracted verbatim from `ProtoContext::build` (issue #751).
+fn push_special_messages(
+    messages: &mut Vec<ProtoMsgDef>,
+    entity_name: &str,
+    has_fts: bool,
+    has_embeddings: bool,
+    has_workflow: bool,
+    hierarchy_field: &Option<String>,
+) {
+    // SearchRequest (FTS)
+    if has_fts {
+        messages.push(ProtoMsgDef {
+            name: "SearchRequest".to_string(),
+            description: Some("Full-text search request".to_string()),
+            fields: vec![
+                ProtoFieldDef {
+                    field_number: 1,
+                    name: "query".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: false,
+                    is_repeated: false,
+                    description: Some("Search query".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 2,
+                    name: "page_size".to_string(),
+                    proto_type: "int32".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Number of items per page".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 3,
+                    name: "page_token".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Pagination token".to_string()),
+                },
+            ],
+        });
+        messages.push(ProtoMsgDef {
+            name: "SearchResponse".to_string(),
+            description: Some("Full-text search response".to_string()),
+            fields: vec![
+                ProtoFieldDef {
+                    field_number: 1,
+                    name: "data".to_string(),
+                    proto_type: entity_name.to_string(),
+                    is_optional: false,
+                    is_repeated: true,
+                    description: None,
+                },
+                ProtoFieldDef {
+                    field_number: 2,
+                    name: "total".to_string(),
+                    proto_type: "int32".to_string(),
+                    is_optional: false,
+                    is_repeated: false,
+                    description: Some("Total number of results".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 3,
+                    name: "next_page_token".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Pagination token for next page".to_string()),
+                },
+            ],
+        });
+    }
+
+    // SemanticSearchRequest (embeddings)
+    if has_embeddings {
+        messages.push(ProtoMsgDef {
+            name: "SemanticSearchRequest".to_string(),
+            description: Some("Semantic search request".to_string()),
+            fields: vec![
+                ProtoFieldDef {
+                    field_number: 1,
+                    name: "query".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: false,
+                    is_repeated: false,
+                    description: Some("Search query".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 2,
+                    name: "limit".to_string(),
+                    proto_type: "int32".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Maximum number of results".to_string()),
+                },
+            ],
+        });
+    }
+
+    // TransitionRequest (workflow)
+    if has_workflow {
+        messages.push(ProtoMsgDef {
+            name: "TransitionRequest".to_string(),
+            description: Some("Workflow transition request".to_string()),
+            fields: vec![
+                ProtoFieldDef {
+                    field_number: 1,
+                    name: "id".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: false,
+                    is_repeated: false,
+                    description: Some("Entity UUID".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 2,
+                    name: "action".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: false,
+                    is_repeated: false,
+                    description: Some("Transition action name".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 3,
+                    name: "comment".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Optional comment".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 4,
+                    name: "assignee_id".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Optional assignee UUID".to_string()),
+                },
+            ],
+        });
+    }
+
+    // TreeRequest (hierarchy)
+    if hierarchy_field.is_some() {
+        messages.push(ProtoMsgDef {
+            name: "TreeRequest".to_string(),
+            description: Some("Tree/hierarchy request".to_string()),
+            fields: vec![
+                ProtoFieldDef {
+                    field_number: 1,
+                    name: "id".to_string(),
+                    proto_type: "string".to_string(),
+                    is_optional: false,
+                    is_repeated: false,
+                    description: Some("Root entity UUID".to_string()),
+                },
+                ProtoFieldDef {
+                    field_number: 2,
+                    name: "max_depth".to_string(),
+                    proto_type: "int32".to_string(),
+                    is_optional: true,
+                    is_repeated: false,
+                    description: Some("Maximum tree depth".to_string()),
+                },
+            ],
+        });
+    }
+}
+
+/// Service methods derived from the entity's resolved operations and
+/// capabilities. Extracted verbatim from `ProtoContext::build` (issue #751).
+fn build_service_methods(
+    entity_name: &str,
+    operations: &[String],
+    has_fts: bool,
+    has_embeddings: bool,
+    has_workflow: bool,
+    hierarchy_field: &Option<String>,
+) -> Vec<ProtoServiceMethod> {
+    let mut service_methods = Vec::new();
+    let op_set: std::collections::HashSet<String> = operations.iter().cloned().collect();
+
+    if op_set.contains("create") {
+        service_methods.push(ProtoServiceMethod {
+            name: "Create".to_string(),
+            input_type: format!("Create{}Request", entity_name),
+            output_type: entity_name.to_string(),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("Create a new entity".to_string()),
+        });
+    }
+
+    if op_set.contains("read") {
+        service_methods.push(ProtoServiceMethod {
+            name: "Get".to_string(),
+            input_type: format!("Get{}Request", entity_name),
+            output_type: entity_name.to_string(),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("Get an entity by ID".to_string()),
+        });
+    }
+
+    if op_set.contains("update") {
+        service_methods.push(ProtoServiceMethod {
+            name: "Update".to_string(),
+            input_type: format!("Update{}Request", entity_name),
+            output_type: entity_name.to_string(),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("Update an existing entity".to_string()),
+        });
+    }
+
+    if op_set.contains("delete") {
+        service_methods.push(ProtoServiceMethod {
+            name: "Delete".to_string(),
+            input_type: format!("Delete{}Request", entity_name),
+            output_type: "google.protobuf.Empty".to_string(),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("Delete an entity by ID".to_string()),
+        });
+    }
+
+    if op_set.contains("list") {
+        service_methods.push(ProtoServiceMethod {
+            name: "List".to_string(),
+            input_type: format!("List{}Request", entity_name),
+            output_type: format!("List{}Response", entity_name),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("List entities with pagination".to_string()),
+        });
+    }
+
+    if has_fts && op_set.contains("list") {
+        service_methods.push(ProtoServiceMethod {
+            name: "Search".to_string(),
+            input_type: "SearchRequest".to_string(),
+            output_type: "SearchResponse".to_string(),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("Full-text search".to_string()),
+        });
+    }
+
+    if has_embeddings {
+        service_methods.push(ProtoServiceMethod {
+            name: "SemanticSearch".to_string(),
+            input_type: "SemanticSearchRequest".to_string(),
+            output_type: "SearchResult".to_string(),
+            client_streaming: false,
+            server_streaming: true,
+            description: Some("Semantic/vector search".to_string()),
+        });
+    }
+
+    if has_workflow {
+        service_methods.push(ProtoServiceMethod {
+            name: "Transition".to_string(),
+            input_type: "TransitionRequest".to_string(),
+            output_type: entity_name.to_string(),
+            client_streaming: false,
+            server_streaming: false,
+            description: Some("Execute a workflow transition".to_string()),
+        });
+    }
+
+    if hierarchy_field.is_some() {
+        service_methods.push(ProtoServiceMethod {
+            name: "GetTree".to_string(),
+            input_type: "TreeRequest".to_string(),
+            output_type: entity_name.to_string(),
+            client_streaming: false,
+            server_streaming: true,
+            description: Some("Get entity tree/hierarchy".to_string()),
+        });
+    }
+
+    service_methods
 }
 
 /// Check if a property should be rendered as a proto enum.

@@ -154,9 +154,598 @@ impl UiE2eTestGenerator {
 
         None
     }
+
+    /// Resolve parent info for child entities (extracted verbatim from
+    /// `generate`, issue #751). Manual config (role = "child", parent =
+    /// "...") takes priority over graph detection.
+    async fn resolve_parent_info(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        domain: &str,
+        schema_title: &str,
+        entity_cfg: Option<&codegraph_config::EntityConfig>,
+    ) -> (Option<UiParentInfo>, String) {
+        let stripped = crate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
+        let mut result = None;
+        let mut parent_title_str = String::new();
+
+        // 1. Check manual config first
+        if let Some(ec) = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(schema_title))
+            && ec.role.as_deref() == Some("child")
+            && let Some(ref parent_title) = ec.parent
+            && let Ok(Some(parent_schema)) = db.get_schema_in_domain(parent_title, domain).await
+        {
+            let parent_domain = if config
+                .domains
+                .get(domain)
+                .map(|d| d.entities.contains(parent_title))
+                .unwrap_or(false)
+            {
+                domain.to_string()
+            } else {
+                parent_schema
+                    .domain
+                    .clone()
+                    .unwrap_or_else(|| domain.to_string())
+            };
+
+            let grandparent = self
+                .resolve_grandparent(db, config, parent_title, &parent_domain)
+                .await;
+
+            parent_title_str = parent_title.clone();
+            result = Some(UiParentInfo {
+                param_name: crate::api::router::param_name_from_path_segment(
+                    &resolve_path_segment_with_config(None, &parent_schema, config),
+                ),
+                domain: parent_domain,
+                path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
+                module_name: parent_schema.pg_table_name.clone(),
+                entity_name: parent_schema.rust_type_name.clone(),
+                grandparent,
+            });
+        }
+
+        // 2. Fall back to graph parent_candidates (only if parent is in same domain,
+        //    and the entity is not explicitly/implicitly configured as root).
+        let effective_role = entity_cfg
+            .and_then(|ec| ec.role.as_deref())
+            .unwrap_or("root");
+        if result.is_none() && effective_role != "root" {
+            for pc in &self.parent_candidates {
+                let child_name =
+                    crate::api::router::strip_suffix(&pc.child_title, &config.defaults.type_suffix);
+                if child_name == stripped {
+                    let in_explicit = config
+                        .domains
+                        .get(domain)
+                        .map(|d| d.entities.contains(&pc.parent_title))
+                        .unwrap_or(false);
+                    let parent_in_domain = in_explicit
+                        || db
+                            .get_schema_in_domain(&pc.parent_title, domain)
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
+                            .unwrap_or(false);
+                    if !parent_in_domain {
+                        break;
+                    }
+                    if let Ok(Some(parent_schema)) =
+                        db.get_schema_in_domain(&pc.parent_title, domain).await
+                    {
+                        let parent_domain = domain.to_string();
+
+                        let grandparent = self
+                            .resolve_grandparent(db, config, &pc.parent_title, &parent_domain)
+                            .await;
+
+                        parent_title_str = pc.parent_title.clone();
+                        result = Some(UiParentInfo {
+                            param_name: crate::api::router::param_name_from_path_segment(
+                                &resolve_path_segment_with_config(None, &parent_schema, config),
+                            ),
+                            domain: parent_domain,
+                            path_segment: resolve_path_segment_with_config(
+                                None,
+                                &parent_schema,
+                                config,
+                            ),
+                            module_name: parent_schema.pg_table_name.clone(),
+                            entity_name: parent_schema.rust_type_name.clone(),
+                            grandparent,
+                        });
+                    }
+                    break;
+                }
+            }
+        }
+
+        (result, parent_title_str)
+    }
+
+    /// Build the parent/grandparent entity test data used to create the
+    /// ancestors in beforeAll (extracted verbatim from `generate`,
+    /// issue #751).
+    async fn build_parent_test_data(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        parent: Option<&UiParentInfo>,
+        parent_title_for_data: &str,
+    ) -> (String, String) {
+        // Build parent entity test data for creating parent in beforeAll
+        let parent_test_data_json = if parent.is_some() && !parent_title_for_data.is_empty() {
+            let parent_domain = parent.map(|p| p.domain.as_str());
+            build_test_data_json(db, parent_title_for_data, parent_domain, config).await
+        } else {
+            String::new()
+        };
+
+        // Build grandparent entity test data for depth-2 nesting
+        let grandparent_test_data_json = if let Some(p) = parent {
+            if let Some(ref gp) = p.grandparent {
+                // Find grandparent's schema title from parent_candidates
+                let parent_stripped = crate::api::router::strip_suffix(
+                    parent_title_for_data,
+                    &config.defaults.type_suffix,
+                );
+                let mut gp_title = String::new();
+                for gpc in &self.parent_candidates {
+                    let gpc_child = crate::api::router::strip_suffix(
+                        &gpc.child_title,
+                        &config.defaults.type_suffix,
+                    );
+                    if gpc_child == parent_stripped {
+                        gp_title = gpc.parent_title.clone();
+                        break;
+                    }
+                }
+                if !gp_title.is_empty() {
+                    build_test_data_json(db, &gp_title, Some(&gp.domain), config).await
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        (parent_test_data_json, grandparent_test_data_json)
+    }
+
+    /// Emit the POM kernel (once per run), the per-entity page class, and
+    /// the per-family spec files (extracted verbatim from `generate`,
+    /// issue #751).
+    fn emit_spec_files(
+        &self,
+        tera: &tera::Tera,
+        project: &ProjectConfig,
+        ctx: &UiE2eTestContext,
+        path_segment: &str,
+    ) -> Result<Vec<GeneratedFile>> {
+        let tests_dir = self
+            .output_dir
+            .join("ui")
+            .join("tests")
+            .join("generated")
+            .join(&ctx.domain);
+
+        let mut files = Vec::new();
+
+        // Shared POM kernel — entity-independent content, emitted ONCE per
+        // generation run (first spec-emitting entity wins the flag). Always
+        // rewritten, stable bytes, imported from every `{domain}/` depth.
+        if ctx.pom.is_some()
+            && self
+                .kernel_emitted
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            let content =
+                render_template_with_project(tera, "ui/test/_pom_kernel.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: self
+                    .output_dir
+                    .join("ui")
+                    .join("tests")
+                    .join("generated")
+                    .join("_support")
+                    .join("pom.ts"),
+                content,
+            });
+        }
+
+        // Per-entity page class (`{seg}.page.ts`) — every spec family
+        // drives UI interaction through it.
+        if ctx.pom.is_some() {
+            let content = render_template_with_project(tera, "ui/test/page.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.page.ts", path_segment)),
+                content,
+            });
+        }
+
+        // CRUD test
+        if ctx.has_list || ctx.has_create || ctx.has_read || ctx.has_update || ctx.has_delete {
+            let content =
+                render_template_with_project(tera, "ui/test/crud.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.api.crud.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Validation test
+        if ctx.has_create {
+            let content =
+                render_template_with_project(tera, "ui/test/validation.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.validation.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Workflow test
+        if ctx.has_workflow {
+            let content =
+                render_template_with_project(tera, "ui/test/workflow.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.workflow.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Persona-based tests
+        if ctx.has_list || ctx.has_create || ctx.has_read || ctx.has_update || ctx.has_delete {
+            let content =
+                render_template_with_project(tera, "ui/test/owner_crud.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.owner.crud.test.ts", path_segment)),
+                content,
+            });
+
+            let content = render_template_with_project(
+                tera,
+                "ui/test/employee_view.test.tera",
+                &ctx,
+                project,
+            )?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.employee.view.test.ts", path_segment)),
+                content,
+            });
+
+            let content = render_template_with_project(
+                tera,
+                "ui/test/manager_team.test.tera",
+                &ctx,
+                project,
+            )?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.manager.team.test.ts", path_segment)),
+                content,
+            });
+
+            let content =
+                render_template_with_project(tera, "ui/test/isolation.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.isolation.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Search tests (only for FTS-enabled entities)
+        if ctx.has_fts && ctx.has_list {
+            let content =
+                render_template_with_project(tera, "ui/test/search.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.search.test.ts", path_segment)),
+                content,
+            });
+
+            let content = render_template_with_project(
+                tera,
+                "ui/test/search_isolation.test.tera",
+                &ctx,
+                project,
+            )?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.search.isolation.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Include test
+        if ctx.e2e_include.is_some() && ctx.has_read {
+            let content =
+                render_template_with_project(tera, "ui/test/include.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.include.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // UX list-rendering spec (issue #302) — first-class alongside the
+        // crud/validation/workflow specs, gated per feature.
+        if ctx.ux_spec.is_some() {
+            let content =
+                render_template_with_project(tera, "ui/test/ux.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.ux.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        // Media round-trip spec (issue #633): emitted ONLY when the entity
+        // has media fields with an app-plane route — upload → reference
+        // round-trip → display → remove, plus the rejection legs. Every
+        // interaction goes through the page class (zero raw testids). The
+        // fixture needs a create op and the control lives on the detail
+        // page, so read too.
+        if !ctx.media_fields.is_empty() && ctx.has_create && ctx.has_read {
+            let content =
+                render_template_with_project(tera, "ui/test/media.test.tera", &ctx, project)?;
+            files.push(GeneratedFile {
+                path: tests_dir.join(format!("{}.media.test.ts", path_segment)),
+                content,
+            });
+        }
+
+        Ok(files)
+    }
 }
 
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
+/// Fields + fixtures resolution output (extracted from `generate`,
+/// issue #751).
+struct E2eFieldResolution {
+    fields: Vec<UiField>,
+    all_props: Vec<codegraph_core::types::PropertyNode>,
+    create_fields: Vec<UiField>,
+    required_create_fields: Vec<UiField>,
+    update_fields: Vec<UiField>,
+    convention_ref_gaps: Vec<String>,
+}
+
+/// Resolve the entity's UI fields, the convention-ref decoration, and the
+/// create/update/required field projections (extracted verbatim from
+/// `generate`, issue #751).
+async fn resolve_fields_and_convention_refs(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    immutable_fields: &[String],
+    all_excluded: &[String],
+) -> Result<E2eFieldResolution> {
+    let mut fields =
+        collect_ui_fields(db, schema_title, immutable_fields, Some(domain), config).await?;
+
+    let all_props = match Some(domain) {
+        Some(d) => db.get_properties_in_domain(schema_title, d).await?,
+        None => db.get_properties(schema_title).await?,
+    };
+    // Required plain-uuid FK columns without a `$ref`/graph edge (e.g.
+    // `party.case_id`) resolve to their entity by naming convention and
+    // must be marked before create/update fields are derived. The
+    // subject entity is never a convention target (#479).
+    let convention_refs =
+        apply_convention_refs(db, config, domain, schema_title, &all_props, &mut fields).await;
+
+    // A convention ref is only dep-created when its target entity has a
+    // create API (the schema-ref path). Otherwise the field is unmarked —
+    // testData keeps the text sentinel — and the gap is named in the
+    // emitted payload.
+    let mut creatable_convention_refs: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for res in &convention_refs {
+        let target_domain = res
+            .target
+            .domain
+            .clone()
+            .unwrap_or_else(|| domain.to_string());
+        let target_operations =
+            resolve_entity_operations(db, config, &target_domain, &res.target.title).await;
+        if target_operations.iter().any(|op| op == "create") {
+            creatable_convention_refs.insert(res.field_name.clone());
+        } else if let Some(f) = fields.iter_mut().find(|f| f.name == res.field_name) {
+            f.is_entity_ref = false;
+            f.ref_api_path = None;
+        }
+    }
+
+    let mut create_fields: Vec<UiField> = fields
+        .iter()
+        .filter(|f| !all_excluded.contains(&f.name))
+        .cloned()
+        .collect();
+    // For codelist entities with no UI fields (enum-only schemas), inject a
+    // synthetic code field so testData() produces a valid create payload.
+    if create_fields.is_empty()
+        && let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, domain).await
+        && schema.is_codelist
+        && domain == "common"
+    {
+        create_fields.push(UiField {
+            name: "code".to_string(),
+            label: "Code".to_string(),
+            ts_type: "string".to_string(),
+            input_type: "code".to_string(),
+            is_required: true,
+            is_array: false,
+            is_entity_ref: false,
+            is_immutable: false,
+            is_codelist: false,
+            is_range: false,
+            codelist_values: vec![],
+            description: String::new(),
+            pg_type: "TEXT".to_string(),
+            open_end: false,
+            ref_api_path: None,
+            structured_sub_fields: vec![],
+            nested_type_name: None,
+        });
+    }
+
+    let required_create_fields: Vec<UiField> = create_fields
+        .iter()
+        .filter(|f| f.is_required)
+        .cloned()
+        .collect();
+
+    let update_fields: Vec<UiField> = fields
+        .iter()
+        .filter(|f| !f.is_immutable && !all_excluded.contains(&f.name))
+        .cloned()
+        .collect();
+
+    // Convention-ref gaps, over the create payload only (the comment is
+    // emitted inside the testData loop): required `_id` columns the name
+    // convention claims that did not resolve to a creatable entity.
+    let convention_ref_gaps: Vec<String> = create_fields
+        .iter()
+        .filter(|f| {
+            !creatable_convention_refs.contains(&f.name) && is_convention_ref_gap(f, &all_props)
+        })
+        .map(|f| f.name.clone())
+        .collect();
+
+    Ok(E2eFieldResolution {
+        fields,
+        all_props,
+        create_fields,
+        required_create_fields,
+        update_fields,
+        convention_ref_gaps,
+    })
+}
+
+/// FTS availability + the highest-weighted search field (extracted
+/// verbatim from `generate`, issue #751).
+fn resolve_fts_config(entity_cfg: Option<&codegraph_config::EntityConfig>) -> (bool, String) {
+    // Determine FTS availability and search field
+    let has_fts = entity_cfg
+        .map(|ec| {
+            !ec.search.fts_weights.is_empty()
+                || ec
+                    .search
+                    .fts_columns
+                    .as_ref()
+                    .map(|c| !c.is_empty())
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    let fts_search_field = if has_fts {
+        // Pick the field with the highest FTS weight (A > B > C > D)
+        let weights = &entity_cfg.unwrap().search.fts_weights;
+        let weight_order = ["A", "B", "C", "D"];
+        weight_order
+            .iter()
+            .find_map(|w| {
+                weights
+                    .iter()
+                    .find(|(_, v)| v.as_str() == *w)
+                    .map(|(k, _)| k.clone())
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    (has_fts, fts_search_field)
+}
+
+/// Inputs shared by the `.ux.test.ts` spec and the POM's ux mirror
+/// (`list_include`, `list_exclude`, `fields`, `create_fields`,
+/// `operations`, `initial_state`).
+type UxSpecInputs = (
+    Vec<String>,
+    Vec<String>,
+    Vec<UiField>,
+    Vec<UiField>,
+    Vec<String>,
+    String,
+);
+
+/// Build the ux spec contract from the shared inputs — called once for the
+/// `.ux.test.ts` spec and once for the POM mirror (the original call shape).
+async fn ux_spec_from_inputs(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    project: &ProjectConfig,
+    schema_title: &str,
+    domain: &str,
+    ux_inputs: &Option<UxSpecInputs>,
+) -> Result<Option<super::context::UxE2eSpecCtx>> {
+    match ux_inputs {
+        Some((list_include, list_exclude, fields, create_fields, operations, initial_state)) => {
+            build_ux_e2e_spec(
+                db,
+                config,
+                project,
+                schema_title,
+                domain,
+                fields,
+                create_fields,
+                list_include,
+                list_exclude,
+                operations,
+                initial_state,
+            )
+            .await
+        }
+        None => Ok(None),
+    }
+}
+
+/// Media fields with an app-plane route (issue #633): the entity's media
+/// reference features, resolved through the domain plan. The upload control
+/// lives on the remote-functions detail page, so the spec family rides that
+/// flag (the flag-off client plane has no control to drive — a recorded
+/// deferral). Extracted verbatim from `generate` (issue #751).
+async fn resolve_media_fields(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    project: &ProjectConfig,
+    domain: &str,
+    schema_title: &str,
+) -> Result<Vec<super::context::E2eMediaFieldCtx>> {
+    let media_fields: Vec<super::context::E2eMediaFieldCtx> =
+        if project.codegen.entity_remote_functions {
+            let field_names =
+                crate::media::plan::media_route_fields(db, config, domain, schema_title).await?;
+            let media_cfg = config.domains.get(domain).and_then(|d| d.media.as_ref());
+            match (field_names.is_empty(), media_cfg) {
+                (false, Some(media)) => field_names
+                    .into_iter()
+                    .map(|field| super::context::E2eMediaFieldCtx {
+                        pascal: codegraph_naming::to_pascal_case(&field),
+                        field,
+                        accept_first: media
+                            .accept
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "application/octet-stream".to_string()),
+                        accept: media.accept.clone(),
+                        max_bytes: media.max_bytes,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+    Ok(media_fields)
+}
 #[async_trait]
 impl EntityGenerator for UiE2eTestGenerator {
     fn kind(&self) -> EntityGeneratorKind {
@@ -222,125 +811,26 @@ impl EntityGenerator for UiE2eTestGenerator {
             }
         }
 
-        let mut fields =
-            collect_ui_fields(db, schema_title, &immutable_fields, Some(&domain), config).await?;
-
-        let all_props = match Some(domain.as_str()) {
-            Some(d) => db.get_properties_in_domain(schema_title, d).await?,
-            None => db.get_properties(schema_title).await?,
-        };
-        // Required plain-uuid FK columns without a `$ref`/graph edge (e.g.
-        // `party.case_id`) resolve to their entity by naming convention and
-        // must be marked before create/update fields are derived. The
-        // subject entity is never a convention target (#479).
-        let convention_refs =
-            apply_convention_refs(db, config, &domain, schema_title, &all_props, &mut fields).await;
-
-        // A convention ref is only dep-created when its target entity has a
-        // create API (the schema-ref path). Otherwise the field is unmarked —
-        // testData keeps the text sentinel — and the gap is named in the
-        // emitted payload.
-        let mut creatable_convention_refs: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for res in &convention_refs {
-            let target_domain = res.target.domain.clone().unwrap_or_else(|| domain.clone());
-            let target_operations =
-                resolve_entity_operations(db, config, &target_domain, &res.target.title).await;
-            if target_operations.iter().any(|op| op == "create") {
-                creatable_convention_refs.insert(res.field_name.clone());
-            } else if let Some(f) = fields.iter_mut().find(|f| f.name == res.field_name) {
-                f.is_entity_ref = false;
-                f.ref_api_path = None;
-            }
-        }
-
-        let mut create_fields: Vec<UiField> = fields
-            .iter()
-            .filter(|f| !all_excluded.contains(&f.name))
-            .cloned()
-            .collect();
-        // For codelist entities with no UI fields (enum-only schemas), inject a
-        // synthetic code field so testData() produces a valid create payload.
-        if create_fields.is_empty()
-            && let Ok(Some(schema)) = db.get_schema_in_domain(schema_title, &domain).await
-            && schema.is_codelist
-            && domain == "common"
-        {
-            create_fields.push(UiField {
-                name: "code".to_string(),
-                label: "Code".to_string(),
-                ts_type: "string".to_string(),
-                input_type: "code".to_string(),
-                is_required: true,
-                is_array: false,
-                is_entity_ref: false,
-                is_immutable: false,
-                is_codelist: false,
-                is_range: false,
-                codelist_values: vec![],
-                description: String::new(),
-                pg_type: "TEXT".to_string(),
-                open_end: false,
-                ref_api_path: None,
-                structured_sub_fields: vec![],
-                nested_type_name: None,
-            });
-        }
-
-        let required_create_fields: Vec<UiField> = create_fields
-            .iter()
-            .filter(|f| f.is_required)
-            .cloned()
-            .collect();
-
-        let update_fields: Vec<UiField> = fields
-            .iter()
-            .filter(|f| !f.is_immutable && !all_excluded.contains(&f.name))
-            .cloned()
-            .collect();
-
-        // Convention-ref gaps, over the create payload only (the comment is
-        // emitted inside the testData loop): required `_id` columns the name
-        // convention claims that did not resolve to a creatable entity.
-        let convention_ref_gaps: Vec<String> = create_fields
-            .iter()
-            .filter(|f| {
-                !creatable_convention_refs.contains(&f.name) && is_convention_ref_gap(f, &all_props)
-            })
-            .map(|f| f.name.clone())
-            .collect();
+        let E2eFieldResolution {
+            fields,
+            all_props,
+            create_fields,
+            required_create_fields,
+            update_fields,
+            convention_ref_gaps,
+        } = resolve_fields_and_convention_refs(
+            db,
+            config,
+            &domain,
+            schema_title,
+            &immutable_fields,
+            &all_excluded,
+        )
+        .await?;
 
         let first_list_column = fields.first().map(|f| f.name.clone());
 
-        // Determine FTS availability and search field
-        let has_fts = entity_cfg
-            .map(|ec| {
-                !ec.search.fts_weights.is_empty()
-                    || ec
-                        .search
-                        .fts_columns
-                        .as_ref()
-                        .map(|c| !c.is_empty())
-                        .unwrap_or(false)
-            })
-            .unwrap_or(false);
-
-        let fts_search_field = if has_fts {
-            // Pick the field with the highest FTS weight (A > B > C > D)
-            let weights = &entity_cfg.unwrap().search.fts_weights;
-            let weight_order = ["A", "B", "C", "D"];
-            weight_order
-                .iter()
-                .find_map(|w| {
-                    weights
-                        .iter()
-                        .find(|(_, v)| v.as_str() == *w)
-                        .map(|(k, _)| k.clone())
-                })
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        let (has_fts, fts_search_field) = resolve_fts_config(entity_cfg);
 
         let has_create = operations.contains(&"create".to_string());
         let has_read = operations.contains(&"read".to_string());
@@ -367,32 +857,8 @@ impl EntityGenerator for UiE2eTestGenerator {
                 initial_state.clone(),
             )
         });
-        let ux_spec = match &ux_inputs {
-            Some((
-                list_include,
-                list_exclude,
-                fields,
-                create_fields,
-                operations,
-                initial_state,
-            )) => {
-                build_ux_e2e_spec(
-                    db,
-                    config,
-                    project,
-                    schema_title,
-                    &domain,
-                    fields,
-                    create_fields,
-                    list_include,
-                    list_exclude,
-                    operations,
-                    initial_state,
-                )
-                .await?
-            }
-            None => None,
-        };
+        let ux_spec =
+            ux_spec_from_inputs(db, config, project, schema_title, &domain, &ux_inputs).await?;
 
         // Build the required entity-ref dependency closure (leaf-first).
         // Required FKs (e.g. case.tenant_id) are created in beforeAll; optional
@@ -440,153 +906,15 @@ impl EntityGenerator for UiE2eTestGenerator {
         let child_sections = collect_child_sections(db, schema_title, config, &domain).await?;
         let has_child_sections = !child_sections.is_empty();
 
-        // Resolve parent info for child entities.
-        // Manual config (role = "child", parent = "...") takes priority over graph detection.
-        let (parent, parent_title_for_data) = {
-            let stripped =
-                crate::api::router::strip_suffix(schema_title, &config.defaults.type_suffix);
-            let mut result = None;
-            let mut parent_title_str = String::new();
+        // Resolve parent info for child entities — manual config takes
+        // priority over graph detection (`resolve_parent_info`, issue #751).
+        let (parent, parent_title_for_data) = self
+            .resolve_parent_info(db, config, &domain, schema_title, entity_cfg)
+            .await;
 
-            // 1. Check manual config first
-            if let Some(ec) = config
-                .domains
-                .get(&domain)
-                .and_then(|d| d.get_entity_config(schema_title))
-                && ec.role.as_deref() == Some("child")
-                && let Some(ref parent_title) = ec.parent
-                && let Ok(Some(parent_schema)) =
-                    db.get_schema_in_domain(parent_title, &domain).await
-            {
-                let parent_domain = if config
-                    .domains
-                    .get(&domain)
-                    .map(|d| d.entities.contains(parent_title))
-                    .unwrap_or(false)
-                {
-                    domain.clone()
-                } else {
-                    parent_schema
-                        .domain
-                        .clone()
-                        .unwrap_or_else(|| domain.clone())
-                };
-
-                let grandparent = self
-                    .resolve_grandparent(db, config, parent_title, &parent_domain)
-                    .await;
-
-                parent_title_str = parent_title.clone();
-                result = Some(UiParentInfo {
-                    param_name: crate::api::router::param_name_from_path_segment(
-                        &resolve_path_segment_with_config(None, &parent_schema, config),
-                    ),
-                    domain: parent_domain,
-                    path_segment: resolve_path_segment_with_config(None, &parent_schema, config),
-                    module_name: parent_schema.pg_table_name.clone(),
-                    entity_name: parent_schema.rust_type_name.clone(),
-                    grandparent,
-                });
-            }
-
-            // 2. Fall back to graph parent_candidates (only if parent is in same domain,
-            //    and the entity is not explicitly/implicitly configured as root).
-            let effective_role = entity_cfg
-                .and_then(|ec| ec.role.as_deref())
-                .unwrap_or("root");
-            if result.is_none() && effective_role != "root" {
-                for pc in &self.parent_candidates {
-                    let child_name = crate::api::router::strip_suffix(
-                        &pc.child_title,
-                        &config.defaults.type_suffix,
-                    );
-                    if child_name == stripped {
-                        let in_explicit = config
-                            .domains
-                            .get(&domain)
-                            .map(|d| d.entities.contains(&pc.parent_title))
-                            .unwrap_or(false);
-                        let parent_in_domain = in_explicit
-                            || db
-                                .get_schema_in_domain(&pc.parent_title, &domain)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|s| s.domain.as_ref().map(|d| *d == domain))
-                                .unwrap_or(false);
-                        if !parent_in_domain {
-                            break;
-                        }
-                        if let Ok(Some(parent_schema)) =
-                            db.get_schema_in_domain(&pc.parent_title, &domain).await
-                        {
-                            let parent_domain = domain.clone();
-
-                            let grandparent = self
-                                .resolve_grandparent(db, config, &pc.parent_title, &parent_domain)
-                                .await;
-
-                            parent_title_str = pc.parent_title.clone();
-                            result = Some(UiParentInfo {
-                                param_name: crate::api::router::param_name_from_path_segment(
-                                    &resolve_path_segment_with_config(None, &parent_schema, config),
-                                ),
-                                domain: parent_domain,
-                                path_segment: resolve_path_segment_with_config(
-                                    None,
-                                    &parent_schema,
-                                    config,
-                                ),
-                                module_name: parent_schema.pg_table_name.clone(),
-                                entity_name: parent_schema.rust_type_name.clone(),
-                                grandparent,
-                            });
-                        }
-                        break;
-                    }
-                }
-            }
-            (result, parent_title_str)
-        };
-
-        // Build parent entity test data for creating parent in beforeAll
-        let parent_test_data_json = if parent.is_some() && !parent_title_for_data.is_empty() {
-            let parent_domain = parent.as_ref().map(|p| p.domain.as_str());
-            build_test_data_json(db, &parent_title_for_data, parent_domain, config).await
-        } else {
-            String::new()
-        };
-
-        // Build grandparent entity test data for depth-2 nesting
-        let grandparent_test_data_json = if let Some(ref p) = parent {
-            if let Some(ref gp) = p.grandparent {
-                // Find grandparent's schema title from parent_candidates
-                let parent_stripped = crate::api::router::strip_suffix(
-                    &parent_title_for_data,
-                    &config.defaults.type_suffix,
-                );
-                let mut gp_title = String::new();
-                for gpc in &self.parent_candidates {
-                    let gpc_child = crate::api::router::strip_suffix(
-                        &gpc.child_title,
-                        &config.defaults.type_suffix,
-                    );
-                    if gpc_child == parent_stripped {
-                        gp_title = gpc.parent_title.clone();
-                        break;
-                    }
-                }
-                if !gp_title.is_empty() {
-                    build_test_data_json(db, &gp_title, Some(&gp.domain), config).await
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
+        let (parent_test_data_json, grandparent_test_data_json) = self
+            .build_parent_test_data(db, config, parent.as_ref(), &parent_title_for_data)
+            .await;
 
         // POM inputs (issue #316): spec-infra gated — populated whenever
         // ANY spec file is emitted (any-op entities), NOT ux-flag gated.
@@ -597,32 +925,8 @@ impl EntityGenerator for UiE2eTestGenerator {
         let any_op = has_list || has_create || has_read || has_update || has_delete;
         let mut pom = None;
         if any_op {
-            let pom_ux = match &ux_inputs {
-                Some((
-                    list_include,
-                    list_exclude,
-                    fields,
-                    create_fields,
-                    operations,
-                    initial_state,
-                )) => {
-                    build_ux_e2e_spec(
-                        db,
-                        config,
-                        project,
-                        schema_title,
-                        &domain,
-                        fields,
-                        create_fields,
-                        list_include,
-                        list_exclude,
-                        operations,
-                        initial_state,
-                    )
-                    .await?
-                }
-                None => None,
-            };
+            let pom_ux =
+                ux_spec_from_inputs(db, config, project, schema_title, &domain, &ux_inputs).await?;
             pom = Some(PomCtx::build(
                 &module_name,
                 &domain,
@@ -638,37 +942,7 @@ impl EntityGenerator for UiE2eTestGenerator {
             ));
         }
 
-        // Media fields with an app-plane route (issue #633): the entity's
-        // media reference features, resolved through the domain plan. The
-        // upload control lives on the remote-functions detail page, so the
-        // spec family rides that flag (the flag-off client plane has no
-        // control to drive — a recorded deferral).
-        let media_fields: Vec<super::context::E2eMediaFieldCtx> =
-            if project.codegen.entity_remote_functions {
-                let field_names =
-                    crate::media::plan::media_route_fields(db, config, &domain, schema_title)
-                        .await?;
-                let media_cfg = config.domains.get(&domain).and_then(|d| d.media.as_ref());
-                match (field_names.is_empty(), media_cfg) {
-                    (false, Some(media)) => field_names
-                        .into_iter()
-                        .map(|field| super::context::E2eMediaFieldCtx {
-                            pascal: codegraph_naming::to_pascal_case(&field),
-                            field,
-                            accept_first: media
-                                .accept
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| "application/octet-stream".to_string()),
-                            accept: media.accept.clone(),
-                            max_bytes: media.max_bytes,
-                        })
-                        .collect(),
-                    _ => Vec::new(),
-                }
-            } else {
-                Vec::new()
-            };
+        let media_fields = resolve_media_fields(db, config, project, &domain, schema_title).await?;
 
         // The media spec's create fixture — the shared test-data projection
         // (build_test_data_json), so a required field can never drift.
@@ -719,174 +993,8 @@ impl EntityGenerator for UiE2eTestGenerator {
             pom,
         };
 
-        let tests_dir = self
-            .output_dir
-            .join("ui")
-            .join("tests")
-            .join("generated")
-            .join(&domain);
-
-        let mut files = Vec::new();
-
-        // Shared POM kernel — entity-independent content, emitted ONCE per
-        // generation run (first spec-emitting entity wins the flag). Always
-        // rewritten, stable bytes, imported from every `{domain}/` depth.
-        if ctx.pom.is_some()
-            && self
-                .kernel_emitted
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-        {
-            let content =
-                render_template_with_project(tera, "ui/test/_pom_kernel.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: self
-                    .output_dir
-                    .join("ui")
-                    .join("tests")
-                    .join("generated")
-                    .join("_support")
-                    .join("pom.ts"),
-                content,
-            });
-        }
-
-        // Per-entity page class (`{seg}.page.ts`) — every spec family
-        // drives UI interaction through it.
-        if ctx.pom.is_some() {
-            let content = render_template_with_project(tera, "ui/test/page.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.page.ts", path_segment)),
-                content,
-            });
-        }
-
-        // CRUD test
-        if has_list || has_create || has_read || has_update || has_delete {
-            let content =
-                render_template_with_project(tera, "ui/test/crud.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.api.crud.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // Validation test
-        if has_create {
-            let content =
-                render_template_with_project(tera, "ui/test/validation.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.validation.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // Workflow test
-        if has_workflow {
-            let content =
-                render_template_with_project(tera, "ui/test/workflow.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.workflow.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // Persona-based tests
-        if has_list || has_create || has_read || has_update || has_delete {
-            let content =
-                render_template_with_project(tera, "ui/test/owner_crud.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.owner.crud.test.ts", path_segment)),
-                content,
-            });
-
-            let content = render_template_with_project(
-                tera,
-                "ui/test/employee_view.test.tera",
-                &ctx,
-                project,
-            )?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.employee.view.test.ts", path_segment)),
-                content,
-            });
-
-            let content = render_template_with_project(
-                tera,
-                "ui/test/manager_team.test.tera",
-                &ctx,
-                project,
-            )?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.manager.team.test.ts", path_segment)),
-                content,
-            });
-
-            let content =
-                render_template_with_project(tera, "ui/test/isolation.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.isolation.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // Search tests (only for FTS-enabled entities)
-        if has_fts && has_list {
-            let content =
-                render_template_with_project(tera, "ui/test/search.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.search.test.ts", path_segment)),
-                content,
-            });
-
-            let content = render_template_with_project(
-                tera,
-                "ui/test/search_isolation.test.tera",
-                &ctx,
-                project,
-            )?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.search.isolation.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // Include test
-        if ctx.e2e_include.is_some() && has_read {
-            let content =
-                render_template_with_project(tera, "ui/test/include.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.include.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // UX list-rendering spec (issue #302) — first-class alongside the
-        // crud/validation/workflow specs, gated per feature.
-        if ctx.ux_spec.is_some() {
-            let content =
-                render_template_with_project(tera, "ui/test/ux.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.ux.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        // Media round-trip spec (issue #633): emitted ONLY when the entity
-        // has media fields with an app-plane route — upload → reference
-        // round-trip → display → remove, plus the rejection legs. Every
-        // interaction goes through the page class (zero raw testids). The
-        // fixture needs a create op and the control lives on the detail
-        // page, so read too.
-        if !ctx.media_fields.is_empty() && ctx.has_create && ctx.has_read {
-            let content =
-                render_template_with_project(tera, "ui/test/media.test.tera", &ctx, project)?;
-            files.push(GeneratedFile {
-                path: tests_dir.join(format!("{}.media.test.ts", path_segment)),
-                content,
-            });
-        }
-
-        Ok(files)
+        // Spec-file fan-out: POM kernel, page class, and the per-family
+        // specs (`emit_spec_files`, issue #751).
+        self.emit_spec_files(tera, project, &ctx, &path_segment)
     }
 }
