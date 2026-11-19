@@ -63,6 +63,257 @@ async fn sort_columns_for_tree(
     Ok((has_sort_plan, sort_columns))
 }
 
+/// Per-segment resolved include metadata (extracted from `emit`,
+/// issue #751): one entry per segment per include path.
+struct IncludeSegments {
+    dto_fields: Vec<Vec<Vec<String>>>,
+    col_fields: Vec<Vec<Vec<String>>>,
+    is_structured: Vec<Vec<Vec<bool>>>,
+    is_codelist: Vec<Vec<Vec<bool>>>,
+    dto_rust_types: Vec<Vec<Vec<Option<String>>>>,
+    is_nullable: Vec<Vec<Vec<bool>>>,
+    col_rust_types: Vec<Vec<Vec<String>>>,
+}
+
+/// Everything the include-path emission needs (extracted from `emit`,
+/// issue #751); replaces a >6-argument helper signature.
+struct IncludeEmitContext<'a> {
+    db: &'a dyn GraphQuerier,
+    config: &'a DomainConfig,
+    project: &'a ProjectConfig,
+    domain: &'a str,
+    tree: &'a EntityTree,
+    include_paths: &'a [ResolvedIncludePath],
+    segments: &'a IncludeSegments,
+}
+
+/// Resolve scalar fields for each include path segment using resolve_field()
+/// so that both the DTO side and entity Model side use rust_field_name.
+/// EntityReference fields get _id appended; CodelistReference fields get _code
+/// stripped. Extracted verbatim from `emit` (issue #751).
+async fn resolve_include_segments(
+    db: &dyn GraphQuerier,
+    include_paths: &[ResolvedIncludePath],
+) -> Result<IncludeSegments> {
+    let all_props = db.list_all_properties().await?;
+    let mut include_segment_dto_fields: Vec<Vec<Vec<String>>> = Vec::new();
+    let mut include_segment_col_fields: Vec<Vec<Vec<String>>> = Vec::new();
+    let mut include_segment_is_structured: Vec<Vec<Vec<bool>>> = Vec::new();
+    let mut include_segment_is_codelist: Vec<Vec<Vec<bool>>> = Vec::new();
+    let mut include_segment_dto_rust_types: Vec<Vec<Vec<Option<String>>>> = Vec::new();
+    let mut include_segment_is_nullable: Vec<Vec<Vec<bool>>> = Vec::new();
+    let mut include_segment_col_rust_types: Vec<Vec<Vec<String>>> = Vec::new();
+    for path in include_paths {
+        let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
+        let mut per_seg_col: Vec<Vec<String>> = Vec::new();
+        let mut per_seg_is_structured: Vec<Vec<bool>> = Vec::new();
+        let mut per_seg_is_codelist: Vec<Vec<bool>> = Vec::new();
+        let mut per_seg_dto_rust_types: Vec<Vec<Option<String>>> = Vec::new();
+        let mut per_seg_is_nullable: Vec<Vec<bool>> = Vec::new();
+        let mut per_seg_col_rust_types: Vec<Vec<String>> = Vec::new();
+        for (seg_idx, seg) in path.segments.iter().enumerate() {
+            // Use schema_title directly — include_path.rs already resolves
+            // it to the canonical title for each segment. The fallback graph
+            // query could return the wrong properties from a shared parent
+            // when schema inheritance is involved.
+            // Query consumed fields once per segment — fields consumed by
+            // composite range columns (e.g. start/end) that don't exist as
+            // direct columns on the entity Model.
+            let consumed_fields: std::collections::HashSet<String> = db
+                .get_consumed_fields(&seg.schema_title)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(p, _)| p.name)
+                .collect();
+            let mut dto_fields: Vec<String> = Vec::new();
+            let mut col_fields: Vec<String> = Vec::new();
+            let mut is_structured: Vec<bool> = Vec::new();
+            let mut is_codelist: Vec<bool> = Vec::new();
+            let mut dto_rust_types: Vec<Option<String>> = Vec::new();
+            let mut is_nullable: Vec<bool> = Vec::new();
+            let mut col_rust_types: Vec<String> = Vec::new();
+            // When the segment has a child table override (VO→entity), use
+            // the VO's properties instead of the entity's properties.
+            let props_key = seg
+                .child_table_override
+                .as_ref()
+                .map_or(&seg.schema_title, |over| &over.vo_title);
+            if let Some(props) = all_props.get(props_key) {
+                let mut seen = std::collections::HashSet::new();
+                for prop in props {
+                    // Skip entity reference properties that match the next
+                    // segment's module_name — the nested field (e.g.,
+                    // {position: leaf_dto}) is added separately in the
+                    // dot-fetch method.  Matches DTO builder's skip at
+                    // build_include_dtos (dto.rs:1127-1131).
+                    if seg_idx < path.segments.len() - 1 {
+                        let next_module = &path.segments[seg_idx + 1].module_name;
+                        // Skip entity reference FK columns that match a leaf
+                        // segment — the combined DTO excludes these since the
+                        // enriched type has a nested field for the leaf entity
+                        // instead. Match both raw rust_field_name and with _id
+                        // suffix, since entity generators may differ in naming.
+                        if matches!(
+                            prop.effective_kind(),
+                            Some(RefClassificationKind::EntityReference)
+                        ) && (prop.rust_field_name == *next_module
+                            || prop.rust_field_name == format!("{}_id", next_module))
+                        {
+                            continue;
+                        }
+                    }
+                    // Skip properties that don't map to database columns —
+                    // the entity Model won't have them as Rust fields.
+                    if prop.pg_column_name.is_empty() {
+                        continue;
+                    }
+                    // Skip array properties — the entity generator expands
+                    // these into separate child tables, not direct Model fields.
+                    if prop.is_array {
+                        continue;
+                    }
+                    if consumed_fields.contains(&prop.name) {
+                        continue;
+                    }
+                    // Skip composite/media wrappers — expanded into sub-columns.
+                    if matches!(
+                        prop.effective_kind(),
+                        Some(
+                            RefClassificationKind::CompositeWrapper
+                                | RefClassificationKind::MediaWrapper
+                        )
+                    ) {
+                        continue;
+                    }
+                    if prop.rust_field_name == "id"
+                        || prop.rust_field_name == "created_at"
+                        || prop.rust_field_name == "updated_at"
+                    {
+                        continue;
+                    }
+                    // Only include properties that produce a single direct
+                    // column on the entity Model — matching the entity
+                    // generator's match arm logic.
+                    match prop.effective_kind() {
+                        Some(
+                            RefClassificationKind::PrimitiveWrapper
+                            | RefClassificationKind::StructuredWrapper
+                            | RefClassificationKind::CodelistReference
+                            | RefClassificationKind::CodelistCheck
+                            | RefClassificationKind::EntityReference
+                            | RefClassificationKind::RangeWrapper
+                            | RefClassificationKind::InlineEnum,
+                        ) => {}
+                        _ => continue,
+                    }
+                    // Skip properties whose direct $ref target is a
+                    // force_value_object — the entity generator skips
+                    // composed/inherited properties from allOf chains,
+                    // so the Model doesn't have these columns.
+                    if prop.effective_kind().is_some()
+                        && let Ok(Some(target)) = db
+                            .get_property_ref_target(&prop.name, &seg.schema_title)
+                            .await
+                        && (!target.is_entity || target.pg_table_name.is_empty())
+                    {
+                        continue;
+                    }
+                    let fd = codegraph_core::types::resolve_field(prop);
+                    // Deduplicate by rust_field_name — list_all_properties()
+                    // can return duplicate entries from interface inheritance.
+                    if seen.insert(fd.rust_field_name.clone()) {
+                        // DTO side uses resolve_field().rust_field_name (with _id for
+                        // entity refs) — consistent with both base entity DTO
+                        // (build_dto_context) and include-path compound DTO
+                        // (build_include_dtos).
+                        dto_fields.push(fd.rust_field_name.clone());
+                        // Entity Model side uses column_name so it matches
+                        // config-specified FK column names (e.g. person_type_id).
+                        col_fields.push(fd.column_name.clone());
+                        // Type conversion flags for emit_field_assignments_typed.
+                        is_structured.push(matches!(
+                            prop.effective_kind(),
+                            Some(RefClassificationKind::StructuredWrapper)
+                        ));
+                        is_codelist.push(matches!(
+                            prop.effective_kind(),
+                            Some(RefClassificationKind::CodelistReference)
+                                | Some(RefClassificationKind::CodelistCheck)
+                        ));
+                        // Entity model column rust type — the same rule the
+                        // entity generator (entity.rs) and the tree context
+                        // (context.rs) apply: FK columns are Uuid, codelists
+                        // String, structured wrappers JSONB; everything else
+                        // keeps the graph-declared type.
+                        let col_rust_type = match prop.effective_kind() {
+                            Some(RefClassificationKind::EntityReference) => "Uuid".to_string(),
+                            Some(
+                                RefClassificationKind::CodelistReference
+                                | RefClassificationKind::CodelistCheck,
+                            ) => "String".to_string(),
+                            Some(RefClassificationKind::StructuredWrapper) => {
+                                "serde_json::Value".to_string()
+                            }
+                            _ => prop.rust_field_type.clone(),
+                        };
+                        // The DTO field type the Response template renders:
+                        // entity refs are uuid::Uuid, codelists the enum name,
+                        // everything else the graph-declared type (bare —
+                        // nullability rides is_nullable). Recorded only when it
+                        // differs from the column type so the hydrator adapts
+                        // (issue #459) without touching matching-type output.
+                        let dto_rust_type = match prop.effective_kind() {
+                            Some(
+                                RefClassificationKind::CodelistReference
+                                | RefClassificationKind::CodelistCheck,
+                            ) => crate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target),
+                            Some(RefClassificationKind::EntityReference) => {
+                                Some("Uuid".to_string())
+                            }
+                            _ => {
+                                let raw = prop.rust_field_type.as_str();
+                                let bare = raw
+                                    .strip_prefix("Option<")
+                                    .and_then(|r| r.strip_suffix('>'))
+                                    .unwrap_or(raw);
+                                (bare != col_rust_type).then(|| bare.to_string())
+                            }
+                        };
+                        dto_rust_types.push(dto_rust_type);
+                        is_nullable.push(prop.is_nullable);
+                        col_rust_types.push(col_rust_type);
+                    }
+                }
+            }
+            per_seg_dto.push(dto_fields);
+            per_seg_col.push(col_fields);
+            per_seg_is_structured.push(is_structured);
+            per_seg_is_codelist.push(is_codelist);
+            per_seg_dto_rust_types.push(dto_rust_types);
+            per_seg_is_nullable.push(is_nullable);
+            per_seg_col_rust_types.push(col_rust_types);
+        }
+        include_segment_dto_fields.push(per_seg_dto);
+        include_segment_col_fields.push(per_seg_col);
+        include_segment_is_structured.push(per_seg_is_structured);
+        include_segment_is_codelist.push(per_seg_is_codelist);
+        include_segment_dto_rust_types.push(per_seg_dto_rust_types);
+        include_segment_is_nullable.push(per_seg_is_nullable);
+        include_segment_col_rust_types.push(per_seg_col_rust_types);
+    }
+
+    Ok(IncludeSegments {
+        dto_fields: include_segment_dto_fields,
+        col_fields: include_segment_col_fields,
+        is_structured: include_segment_is_structured,
+        is_codelist: include_segment_is_codelist,
+        dto_rust_types: include_segment_dto_rust_types,
+        is_nullable: include_segment_is_nullable,
+        col_rust_types: include_segment_col_rust_types,
+    })
+}
+
 impl RepositoryImplEmitter {
     /// Resolve whether `find_tree` returns JOINed `serde_json::Value` rows
     /// (tree_include configured AND resolvable) versus typed `{Entity}Response`
@@ -86,7 +337,6 @@ impl RepositoryImplEmitter {
     // Issue #167 Phase 1 will restructure this API (resolver + renderer
     // split), at which point the argument list collapses into the model.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub async fn emit(
         &self,
         db: &dyn GraphQuerier,
@@ -196,235 +446,53 @@ impl RepositoryImplEmitter {
         self.emit_design_finders(&tree, &mut code);
         self.emit_footer(&mut code);
 
-        // Resolve scalar fields for each include path segment using resolve_field()
-        // so that both the DTO side and entity Model side use rust_field_name.
-        // EntityReference fields get _id appended; CodelistReference fields get _code stripped.
-        let all_props = db.list_all_properties().await?;
-        let mut include_segment_dto_fields: Vec<Vec<Vec<String>>> = Vec::new();
-        let mut include_segment_col_fields: Vec<Vec<Vec<String>>> = Vec::new();
-        let mut include_segment_is_structured: Vec<Vec<Vec<bool>>> = Vec::new();
-        let mut include_segment_is_codelist: Vec<Vec<Vec<bool>>> = Vec::new();
-        let mut include_segment_dto_rust_types: Vec<Vec<Vec<Option<String>>>> = Vec::new();
-        let mut include_segment_is_nullable: Vec<Vec<Vec<bool>>> = Vec::new();
-        let mut include_segment_col_rust_types: Vec<Vec<Vec<String>>> = Vec::new();
-        for path in &include_paths {
-            let mut per_seg_dto: Vec<Vec<String>> = Vec::new();
-            let mut per_seg_col: Vec<Vec<String>> = Vec::new();
-            let mut per_seg_is_structured: Vec<Vec<bool>> = Vec::new();
-            let mut per_seg_is_codelist: Vec<Vec<bool>> = Vec::new();
-            let mut per_seg_dto_rust_types: Vec<Vec<Option<String>>> = Vec::new();
-            let mut per_seg_is_nullable: Vec<Vec<bool>> = Vec::new();
-            let mut per_seg_col_rust_types: Vec<Vec<String>> = Vec::new();
-            for (seg_idx, seg) in path.segments.iter().enumerate() {
-                // Use schema_title directly — include_path.rs already resolves
-                // it to the canonical title for each segment. The fallback graph
-                // query could return the wrong properties from a shared parent
-                // when schema inheritance is involved.
-                // Query consumed fields once per segment — fields consumed by
-                // composite range columns (e.g. start/end) that don't exist as
-                // direct columns on the entity Model.
-                let consumed_fields: std::collections::HashSet<String> = db
-                    .get_consumed_fields(&seg.schema_title)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(p, _)| p.name)
-                    .collect();
-                let mut dto_fields: Vec<String> = Vec::new();
-                let mut col_fields: Vec<String> = Vec::new();
-                let mut is_structured: Vec<bool> = Vec::new();
-                let mut is_codelist: Vec<bool> = Vec::new();
-                let mut dto_rust_types: Vec<Option<String>> = Vec::new();
-                let mut is_nullable: Vec<bool> = Vec::new();
-                let mut col_rust_types: Vec<String> = Vec::new();
-                // When the segment has a child table override (VO→entity), use
-                // the VO's properties instead of the entity's properties.
-                let props_key = seg
-                    .child_table_override
-                    .as_ref()
-                    .map_or(&seg.schema_title, |over| &over.vo_title);
-                if let Some(props) = all_props.get(props_key) {
-                    let mut seen = std::collections::HashSet::new();
-                    for prop in props {
-                        // Skip entity reference properties that match the next
-                        // segment's module_name — the nested field (e.g.,
-                        // {position: leaf_dto}) is added separately in the
-                        // dot-fetch method.  Matches DTO builder's skip at
-                        // build_include_dtos (dto.rs:1127-1131).
-                        if seg_idx < path.segments.len() - 1 {
-                            let next_module = &path.segments[seg_idx + 1].module_name;
-                            // Skip entity reference FK columns that match a leaf
-                            // segment — the combined DTO excludes these since the
-                            // enriched type has a nested field for the leaf entity
-                            // instead. Match both raw rust_field_name and with _id
-                            // suffix, since entity generators may differ in naming.
-                            if matches!(
-                                prop.effective_kind(),
-                                Some(RefClassificationKind::EntityReference)
-                            ) && (prop.rust_field_name == *next_module
-                                || prop.rust_field_name == format!("{}_id", next_module))
-                            {
-                                continue;
-                            }
-                        }
-                        // Skip properties that don't map to database columns —
-                        // the entity Model won't have them as Rust fields.
-                        if prop.pg_column_name.is_empty() {
-                            continue;
-                        }
-                        // Skip array properties — the entity generator expands
-                        // these into separate child tables, not direct Model fields.
-                        if prop.is_array {
-                            continue;
-                        }
-                        if consumed_fields.contains(&prop.name) {
-                            continue;
-                        }
-                        // Skip composite/media wrappers — expanded into sub-columns.
-                        if matches!(
-                            prop.effective_kind(),
-                            Some(
-                                RefClassificationKind::CompositeWrapper
-                                    | RefClassificationKind::MediaWrapper
-                            )
-                        ) {
-                            continue;
-                        }
-                        if prop.rust_field_name == "id"
-                            || prop.rust_field_name == "created_at"
-                            || prop.rust_field_name == "updated_at"
-                        {
-                            continue;
-                        }
-                        // Only include properties that produce a single direct
-                        // column on the entity Model — matching the entity
-                        // generator's match arm logic.
-                        match prop.effective_kind() {
-                            Some(
-                                RefClassificationKind::PrimitiveWrapper
-                                | RefClassificationKind::StructuredWrapper
-                                | RefClassificationKind::CodelistReference
-                                | RefClassificationKind::CodelistCheck
-                                | RefClassificationKind::EntityReference
-                                | RefClassificationKind::RangeWrapper
-                                | RefClassificationKind::InlineEnum,
-                            ) => {}
-                            _ => continue,
-                        }
-                        // Skip properties whose direct $ref target is a
-                        // force_value_object — the entity generator skips
-                        // composed/inherited properties from allOf chains,
-                        // so the Model doesn't have these columns.
-                        if prop.effective_kind().is_some()
-                            && let Ok(Some(target)) = db
-                                .get_property_ref_target(&prop.name, &seg.schema_title)
-                                .await
-                            && (!target.is_entity || target.pg_table_name.is_empty())
-                        {
-                            continue;
-                        }
-                        let fd = codegraph_core::types::resolve_field(prop);
-                        // Deduplicate by rust_field_name — list_all_properties()
-                        // can return duplicate entries from interface inheritance.
-                        if seen.insert(fd.rust_field_name.clone()) {
-                            // DTO side uses resolve_field().rust_field_name (with _id for
-                            // entity refs) — consistent with both base entity DTO
-                            // (build_dto_context) and include-path compound DTO
-                            // (build_include_dtos).
-                            dto_fields.push(fd.rust_field_name.clone());
-                            // Entity Model side uses column_name so it matches
-                            // config-specified FK column names (e.g. person_type_id).
-                            col_fields.push(fd.column_name.clone());
-                            // Type conversion flags for emit_field_assignments_typed.
-                            is_structured.push(matches!(
-                                prop.effective_kind(),
-                                Some(RefClassificationKind::StructuredWrapper)
-                            ));
-                            is_codelist.push(matches!(
-                                prop.effective_kind(),
-                                Some(RefClassificationKind::CodelistReference)
-                                    | Some(RefClassificationKind::CodelistCheck)
-                            ));
-                            // Entity model column rust type — the same rule the
-                            // entity generator (entity.rs) and the tree context
-                            // (context.rs) apply: FK columns are Uuid, codelists
-                            // String, structured wrappers JSONB; everything else
-                            // keeps the graph-declared type.
-                            let col_rust_type = match prop.effective_kind() {
-                                Some(RefClassificationKind::EntityReference) => "Uuid".to_string(),
-                                Some(
-                                    RefClassificationKind::CodelistReference
-                                    | RefClassificationKind::CodelistCheck,
-                                ) => "String".to_string(),
-                                Some(RefClassificationKind::StructuredWrapper) => {
-                                    "serde_json::Value".to_string()
-                                }
-                                _ => prop.rust_field_type.clone(),
-                            };
-                            // The DTO field type the Response template renders:
-                            // entity refs are uuid::Uuid, codelists the enum name,
-                            // everything else the graph-declared type (bare —
-                            // nullability rides is_nullable). Recorded only when it
-                            // differs from the column type so the hydrator adapts
-                            // (issue #459) without touching matching-type output.
-                            let dto_rust_type = match prop.effective_kind() {
-                                Some(
-                                    RefClassificationKind::CodelistReference
-                                    | RefClassificationKind::CodelistCheck,
-                                ) => crate::ddd::dto::codelist_enum_name_from_ref(&prop.ref_target),
-                                Some(RefClassificationKind::EntityReference) => {
-                                    Some("Uuid".to_string())
-                                }
-                                _ => {
-                                    let raw = prop.rust_field_type.as_str();
-                                    let bare = raw
-                                        .strip_prefix("Option<")
-                                        .and_then(|r| r.strip_suffix('>'))
-                                        .unwrap_or(raw);
-                                    (bare != col_rust_type).then(|| bare.to_string())
-                                }
-                            };
-                            dto_rust_types.push(dto_rust_type);
-                            is_nullable.push(prop.is_nullable);
-                            col_rust_types.push(col_rust_type);
-                        }
-                    }
-                }
-                per_seg_dto.push(dto_fields);
-                per_seg_col.push(col_fields);
-                per_seg_is_structured.push(is_structured);
-                per_seg_is_codelist.push(is_codelist);
-                per_seg_dto_rust_types.push(dto_rust_types);
-                per_seg_is_nullable.push(is_nullable);
-                per_seg_col_rust_types.push(col_rust_types);
-            }
-            include_segment_dto_fields.push(per_seg_dto);
-            include_segment_col_fields.push(per_seg_col);
-            include_segment_is_structured.push(per_seg_is_structured);
-            include_segment_is_codelist.push(per_seg_is_codelist);
-            include_segment_dto_rust_types.push(per_seg_dto_rust_types);
-            include_segment_is_nullable.push(per_seg_is_nullable);
-            include_segment_col_rust_types.push(per_seg_col_rust_types);
-        }
+        // Per-segment include metadata + the include emission block live in
+        // their own helpers (issue #751); evaluation order is unchanged.
+        let segments = resolve_include_segments(db, &include_paths).await?;
 
         if !include_paths.is_empty() {
+            let ctx = IncludeEmitContext {
+                db,
+                config,
+                project,
+                domain,
+                tree: &tree,
+                include_paths: &include_paths,
+                segments: &segments,
+            };
+            self.emit_include_block(&ctx, &mut code).await?;
+        }
+
+        Ok(code.into_string())
+    }
+
+    /// Emit the include-path import surface and the `fetch_*_for_*` methods
+    /// (extracted verbatim from `emit`, issue #751). The caller gates on
+    /// non-empty include paths.
+    async fn emit_include_block(
+        &self,
+        ctx: &IncludeEmitContext<'_>,
+        code: &mut CodeWriter,
+    ) -> Result<()> {
+        if !ctx.include_paths.is_empty() {
             // Add import statements for cross-entity types referenced by include paths.
             // These types (e.g. PersonResponse) live in other entity modules and need
             // use crate::domain::{domain}::{module}::dto_response::TypeName imports.
             // Issue #268: under namespace_layout the CALLER's own module
             // path runs through the namespace segments (self-import
             // detection must agree with dto.rs's registered paths).
-            let caller_ns = crate::namespace_rust_prefix(tree.namespace.as_deref(), project);
+            let caller_ns =
+                crate::namespace_rust_prefix(ctx.tree.namespace.as_deref(), ctx.project);
             let caller_base: Vec<String> = match &caller_ns {
-                Some(ns) => format!("crate::domain::{ns}::{}", tree.module_name)
+                Some(ns) => format!("crate::domain::{ns}::{}", ctx.tree.module_name)
                     .split("::")
                     .map(str::to_string)
                     .collect(),
                 None => vec![
                     "crate".into(),
                     "domain".into(),
-                    domain.into(),
-                    tree.module_name.clone(),
+                    ctx.domain.into(),
+                    ctx.tree.module_name.clone(),
                 ],
             };
             let caller_base = {
@@ -440,17 +508,17 @@ impl RepositoryImplEmitter {
             // child response struct names to the import resolution below — the
             // include-fetch child reads reference them.
             let mut include_target_trees: Vec<Option<EntityTree>> = Vec::new();
-            for path in &include_paths {
+            for path in ctx.include_paths {
                 let last = path.segments.last().unwrap();
                 let ttree = self
-                    .query_entity_tree(db, &last.schema_title, &last.domain, config, None)
+                    .query_entity_tree(ctx.db, &last.schema_title, &last.domain, ctx.config, None)
                     .await
                     .ok();
                 include_target_trees.push(ttree);
             }
 
             let mut include_type_names: Vec<String> = Vec::new();
-            for path in &include_paths {
+            for path in ctx.include_paths {
                 include_type_names.push(path.response_rust_type.clone());
                 if path.segments.len() > 1
                     && let Some(last_seg) = path.segments.last()
@@ -469,7 +537,7 @@ impl RepositoryImplEmitter {
             // dropped depending on emission order. Registration is
             // idempotent for identical paths (register_type ignores
             // conflicts), so a warm registry wins and this only fills gaps.
-            for (idx, path) in include_paths.iter().enumerate() {
+            for (idx, path) in ctx.include_paths.iter().enumerate() {
                 let Some(last_seg) = path.segments.last() else {
                     continue;
                 };
@@ -478,7 +546,7 @@ impl RepositoryImplEmitter {
                         .get(idx)
                         .and_then(|t| t.as_ref())
                         .and_then(|t| t.namespace.as_deref()),
-                    project,
+                    ctx.project,
                 );
                 let mut module: Vec<String> = match ns {
                     Some(ns) => format!("crate::domain::{ns}")
@@ -518,7 +586,7 @@ impl RepositoryImplEmitter {
             // (`use super::dto_response::…` and the target-tree block below)
             // are skipped to keep E0252 away.
             let mut already_imported_children: std::collections::HashSet<String> =
-                flatten_child_tables(&tree.child_tables)
+                flatten_child_tables(&ctx.tree.child_tables)
                     .into_iter()
                     .map(|c| format!("{}Response", c.struct_name))
                     .collect();
@@ -527,7 +595,7 @@ impl RepositoryImplEmitter {
                     already_imported_children.insert(format!("{}Response", child.struct_name));
                 }
             }
-            for path in &include_paths {
+            for path in ctx.include_paths {
                 if path.segments.len() != 1 {
                     continue;
                 }
@@ -547,13 +615,13 @@ impl RepositoryImplEmitter {
                     .strip_suffix(&["repository_impl".to_string()][..])
                     .map(|b| b.join("::"))
                     .unwrap_or_default();
-                let is_self_target = path.segments[0].domain == domain
+                let is_self_target = path.segments[0].domain == ctx.domain
                     // Compare module names (pg_table_name), not rust type
                     // names: the two can diverge (rust_type_name vs schema
                     // title) while naming the same module, and the header
                     // already imports self-module dto types wholesale via
                     // `use super::dto_response::…`.
-                    && path.segments[0].module_name == tree.module_name;
+                    && path.segments[0].module_name == ctx.tree.module_name;
                 if resolved_names.insert(resp.clone())
                     && resp.ends_with("Response")
                     && !is_self_target
@@ -571,7 +639,7 @@ impl RepositoryImplEmitter {
             // `use super::dto_included::Type;` for the same module is an E0252
             // "defined multiple times" compile error.
             let mut seen_enriched = std::collections::HashSet::new();
-            for path in &include_paths {
+            for path in ctx.include_paths {
                 if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone())
                 {
                     let already_imported = !type_registry::resolve_imports(
@@ -617,7 +685,7 @@ impl RepositoryImplEmitter {
                         walk_child_imports(nested, base, seen, out);
                     }
                 }
-                for (idx, path) in include_paths.iter().enumerate() {
+                for (idx, path) in ctx.include_paths.iter().enumerate() {
                     let Some(Some(ttree)) = include_target_trees.get(idx) else {
                         continue;
                     };
@@ -632,7 +700,7 @@ impl RepositoryImplEmitter {
                     // duplicate. Compare entity identity by domain and
                     // module name: formatted paths can diverge under
                     // namespace_layout while naming the same module.
-                    if last.domain == domain && last.module_name == tree.module_name {
+                    if last.domain == ctx.domain && last.module_name == ctx.tree.module_name {
                         continue;
                     }
                     // Issue #268: namespace-derived target module path
@@ -643,7 +711,7 @@ impl RepositoryImplEmitter {
                             .get(idx)
                             .and_then(|t| t.as_ref())
                             .and_then(|t| t.namespace.as_deref()),
-                        project,
+                        ctx.project,
                     ) {
                         Some(ns) => format!("crate::domain::{ns}::{}::", last.module_name),
                         None => {
@@ -655,13 +723,15 @@ impl RepositoryImplEmitter {
                     // very module — the header's `use super::dto_response::…`
                     // already imports everything; emitting the full-path form
                     // again is an E0252 duplicate.
-                    let own_base =
-                        match crate::namespace_rust_prefix(tree.namespace.as_deref(), project) {
-                            Some(ns) => format!("crate::domain::{ns}::{}::", tree.module_name),
-                            None => {
-                                format!("crate::domain::{}::{}::", domain, tree.module_name)
-                            }
-                        };
+                    let own_base = match crate::namespace_rust_prefix(
+                        ctx.tree.namespace.as_deref(),
+                        ctx.project,
+                    ) {
+                        Some(ns) => format!("crate::domain::{ns}::{}::", ctx.tree.module_name),
+                        None => {
+                            format!("crate::domain::{}::{}::", ctx.domain, ctx.tree.module_name)
+                        }
+                    };
                     if base == own_base {
                         continue;
                     }
@@ -680,24 +750,24 @@ impl RepositoryImplEmitter {
             }
 
             wln!(code);
-            wln!(code, "impl {}RepositoryImpl {{", tree.entity_name);
+            wln!(code, "impl {}RepositoryImpl {{", ctx.tree.entity_name);
             self.emit_include_fetch_methods(
-                &tree,
-                &mut code,
-                &include_paths,
+                ctx.tree,
+                code,
+                ctx.include_paths,
                 &include_target_trees,
-                &include_segment_dto_fields,
-                &include_segment_col_fields,
-                &include_segment_is_structured,
-                &include_segment_is_codelist,
-                &include_segment_dto_rust_types,
-                &include_segment_is_nullable,
-                &include_segment_col_rust_types,
+                &ctx.segments.dto_fields,
+                &ctx.segments.col_fields,
+                &ctx.segments.is_structured,
+                &ctx.segments.is_codelist,
+                &ctx.segments.dto_rust_types,
+                &ctx.segments.is_nullable,
+                &ctx.segments.col_rust_types,
             );
             wln!(code, "}}");
         }
 
-        Ok(code.into_string())
+        Ok(())
     }
 
     pub async fn query_entity_tree(
