@@ -876,11 +876,21 @@ own-record field".
     (`==` initial / `!=` non-initial).
   - **Unverifiable** → the leg is OMITTED with the documented header (the
     `Body { may_refuse }` precedent): any comparison the collector does
-    not fully understand — negation, `||` composition, non-machine
-    injected fields, non-name/date literals, field-to-field. The
-    collector only pushes comparisons under PLAIN AND from the root (a
-    failing one there decides the whole guard); `!(X)` and `X || Y`
-    subtrees are not pushed and mark the condition undecided.
+    not fully understand. The collector only pushes comparisons under
+    PLAIN AND from the root AND machine-decidable at collect time — a
+    non-machine Eq/Ne conjunct's fresh value is fixture-seeded (required
+    ints seed 42, strings seed `contract-{table}`, codelists seed
+    values[0]) — so ordering comparisons, same-scope field-to-field,
+    exotic literals, non-machine fields, negation (`!(X)` flips
+    polarity), and `||` (the guard may pass via the own-record side) all
+    mark the condition undecided. MIXED guards never mis-verdict: a
+    failing machine-decided conjunct under plain AND is still provable
+    Denied even beside undecided siblings (the failing conjunct decides
+    the conjunction); everything else with an undecided part omits.
+    Pure own-record leaf comparisons are skipped without marking (the
+    own-machine state is the existing state-aware planner's input; a
+    non-transition op's own-record conjunct naming a non-initial state
+    pinning 200 is the documented pre-#663 surface).
 - **Workers topology**: an injected guard REFUSES under
   `deployment_topology = "workers"` (named generation error) — the #590
   action handlers run in per-domain worker crates whose `AppState`
@@ -890,11 +900,19 @@ own-record field".
   until the worker async-AppState story exists (the #338 "guards stay
   doc-only under workers" conservatism). `BodyRenderContext::
   workers_topology` rides `from_project` so every `routes_for_entity`
-  caller sees it.
+  caller sees it, and the refusal reaches the PRE-GENERATION pass:
+  `ValidationPass::run_with_topology` (the driver threads
+  `build_plan.deployment_topology`; the plan-less `generate` path
+  validates monolith) — without it the refusal was invisible to
+  validation and a workers run exited 0 with the action surface
+  silently missing.
 - **Gates**: `cargo test -p codegraph --test service_ops_tests` (27:
   the guard end-to-end + the refusal classes + the multi-machine pin +
-  the workers refusal), `cargo test -p codegraph-generate --lib --
-  ddd::service_ops` (38, incl. the fresh-fixture-verdict KATs),
+  the workers refusal incl. the threaded-validation pin),
+  `cargo test -p codegraph-generate --lib -- ddd::service_ops` (39, incl.
+  the fresh-fixture-verdict KATs and the
+  mixed-machine-and-undecidable KAT — both round-2 review
+  counterexamples),
   `--test ddd_ingest_tests`, `--test artifact_kit_tests` (the bump),
   `--test service_ops_injected_guard_gate -- --ignored` (its own test
   BINARY — the #551 pin: the emitted async handler must compile; the
@@ -915,7 +933,12 @@ own-record field".
   `check_service_op_guards` (both run `routes_for_entity`; identical
   text, different check names); the child-op-with-injected-path refusal
   branch is defensive (the upstream compiler rejects injected paths in a
-  `children` block — no service means no injections to resolve).
+  `children` block — no service means no injections to resolve —
+  verified in the pinned phero-driver, `child_ops.rs` conditions with
+  `injections: &[]`); an op whose OWN-RECORD `when` conjunct names a
+  non-initial state on a non-transition route can still pin 200 while
+  the handler 403s — the pre-#663 own-record surface, unchanged by #663
+  (the injected planner reasons only about injected conjuncts).
 
 ### Aggregate child operations (issue #661)
 

@@ -2177,29 +2177,24 @@ fn injected_guard_facts(
     // guess).
     let mut fully_understood = true;
     collect_injected_comparisons(&ast, scopes, &mut comparisons, &mut fully_understood, true);
-    let mut machine_decided: Vec<bool> = Vec::with_capacity(comparisons.len());
-    for (scope_index, field, op, literal) in &comparisons {
-        let Some(machine) = scopes[*scope_index].machine.as_ref() else {
-            // No machine on the injected class: the fresh value of any
-            // field is fixture-seeded, not derivable.
-            machine_decided.push(false);
-            continue;
-        };
-        let field_names = [machine.field.as_str(), &to_snake_case(&machine.field)];
-        if !field_names.contains(&field.as_str()) {
-            machine_decided.push(false);
-            continue;
-        }
-        machine_decided.push(match op {
-            BinOp::Eq => literal == &machine.initial,
-            BinOp::Ne => literal != &machine.initial,
-            _ => false,
-        });
-    }
-    if let Some(false_value) = machine_decided.iter().find(|passes| !**passes) {
-        let _ = false_value;
-        // A machine-decided comparison FAILS on the fresh row: under AND
-        // composition (the only composition collected) the guard is false.
+    // Every pushed comparison is machine-decidable (the collector filters);
+    // a decided comparison FAILING on the fresh row means, under AND
+    // composition (the only composition collected), the guard is false.
+    let machine_decided: Vec<bool> = comparisons
+        .iter()
+        .map(|(scope_index, _, op, literal)| {
+            let machine = scopes[*scope_index]
+                .machine
+                .as_ref()
+                .expect("the collector only pushes machine-decidable comparisons");
+            match op {
+                BinOp::Eq => literal == &machine.initial,
+                BinOp::Ne => literal != &machine.initial,
+                _ => false,
+            }
+        })
+        .collect();
+    if machine_decided.iter().any(|passes| !passes) {
         return verdict(FreshFixtureGuard::Denied);
     }
     if !fully_understood || comparisons.is_empty() {
@@ -2210,12 +2205,20 @@ fn injected_guard_facts(
 
 /// The `(scope index, field, operator, literal)` triples of every injected
 /// eq/ne comparison the planner can decide. ONLY comparisons under PLAIN
-/// AND from the root are pushed (a failing one there decides the whole
-/// guard); anything else — negation, `||` composition, non-machine
-/// comparisons, non-name literals, field-to-field — sets
-/// `fully_understood = false` and is not pushed: the planner's verdict
-/// becomes Unverifiable and the contract OMITS the leg — a guess in
-/// either direction fails the suite just as hard.
+/// AND from the root are pushed, and ONLY machine-decidable ones (the
+/// scope carries a machine and the field is its machine field): anything
+/// else in a plain-AND context — ordering comparisons (`hours > 100`),
+/// same-scope field-to-field, float/bool/date literals, non-machine
+/// fields — is a conjunct that can fail on the fresh row while the
+/// collected set reads Satisfied, so it sets `fully_understood = false`
+/// and the planner's verdict becomes Unverifiable: the contract OMITS the
+/// leg — a guess in either direction fails the suite just as hard.
+/// Negation flips polarity and `||` may pass via the own-record side, so
+/// their whole subtrees are undecided too. Pure own-record leaf
+/// comparisons are skipped without marking: the planner's injected
+/// verdict does not reason about them (the own-machine state is the
+/// existing state-aware planner's input; a non-transition op's own-record
+/// conjuncts are the documented pre-#663 surface).
 #[allow(clippy::too_many_arguments)]
 fn collect_injected_comparisons(
     expr: &Expr,
@@ -2224,52 +2227,83 @@ fn collect_injected_comparisons(
     fully_understood: &mut bool,
     plain_and: bool,
 ) {
+    // A decidable literal is a bare name (an enum member), a string, or an
+    // integer — everything else (floats, bools, dates, arithmetic) leaves
+    // the fresh value undecidable.
+    let literal_side = |e: &Expr| -> Option<String> {
+        match &e.kind {
+            ExprKind::Name(name) => Some(name.clone()),
+            ExprKind::String(text) => Some(text.clone()),
+            ExprKind::Int(value) => Some(value.to_string()),
+            _ => None,
+        }
+    };
+    // Machine-decidable at COLLECT time: the scope carries a machine and
+    // the field is its machine field. A non-machine Eq/Ne conjunct's fresh
+    // value is fixture-seeded (required ints seed 42, strings seed
+    // `contract-{table}`, codelists seed values[0]) — deciding it at the
+    // fold would guess.
+    let machine_decidable = |index: usize, field: &str| -> bool {
+        scopes[index].machine.as_ref().is_some_and(|machine| {
+            let snake = to_snake_case(&machine.field);
+            let names = [machine.field.as_str(), snake.as_str()];
+            names.contains(&field)
+        })
+    };
     match &expr.kind {
         ExprKind::Binary { op, lhs, rhs } => {
-            if plain_and && matches!(*op, BinOp::Eq | BinOp::Ne) {
-                let injected_side = |e: &Expr| -> Option<(usize, String)> {
-                    let ExprKind::FeatureAccess {
-                        receiver,
-                        name,
-                        optional_safe: false,
-                    } = &e.kind
-                    else {
-                        return None;
-                    };
-                    let ExprKind::Name(root) = &receiver.kind else {
-                        return None;
-                    };
-                    let index = scopes.iter().position(|scope| &scope.root == root)?;
-                    Some((index, name.value.clone()))
-                };
-                // A decidable literal is a bare name (an enum member), a
-                // string, or an integer — everything else (floats, bools,
-                // dates, arithmetic) leaves the fresh value undecidable.
-                let literal_side = |e: &Expr| -> Option<String> {
-                    match &e.kind {
-                        ExprKind::Name(name) => Some(name.clone()),
-                        ExprKind::String(text) => Some(text.clone()),
-                        ExprKind::Int(value) => Some(value.to_string()),
-                        _ => None,
+            let lhs_injected = injected_scope_of(lhs, scopes);
+            let rhs_injected = injected_scope_of(rhs, scopes);
+            let touches = lhs_injected.is_some() || rhs_injected.is_some();
+            if plain_and && matches!(*op, BinOp::Eq | BinOp::Ne) && touches {
+                // An injected-side Eq/Ne conjunct under plain AND: it can
+                // decide the whole guard — understand it or mark undecided.
+                // The operands of a comparison are values, not conjuncts —
+                // nothing more to collect either way.
+                if let (Some((index, field)), Some(literal)) = (lhs_injected, literal_side(rhs)) {
+                    if machine_decidable(index, &field) {
+                        out.push((index, field, *op, literal));
+                    } else {
+                        *fully_understood = false;
                     }
-                };
-                if let (Some((index, field)), Some(literal)) =
-                    (injected_side(lhs), literal_side(rhs))
-                {
-                    out.push((index, field, *op, literal));
                     return;
                 }
-                if let (Some(literal), Some((index, field))) =
-                    (literal_side(lhs), injected_side(rhs))
-                {
+                if let (Some(literal), Some((index, field))) = (literal_side(lhs), rhs_injected) {
                     // Flip so the literal is compared against the field.
                     let flipped = match op {
                         BinOp::Eq => BinOp::Eq,
                         _ => BinOp::Ne,
                     };
-                    out.push((index, field, flipped, literal));
+                    if machine_decidable(index, &field) {
+                        out.push((index, field, flipped, literal));
+                    } else {
+                        *fully_understood = false;
+                    }
                     return;
                 }
+                // An injected comparison the collector cannot represent —
+                // ordering, same-scope field-to-field, float/bool/date
+                // literals, cross-scope pairs — is a dropped conjunct that
+                // can fail on the fresh row while the collected set reads
+                // Satisfied. Undecided, never dropped-silent.
+                *fully_understood = false;
+                return;
+            }
+            if plain_and && touches {
+                // An ordering (or otherwise non-Eq/Ne) injected-side
+                // conjunct under plain AND: the fresh value may be derivable
+                // (required ints seed 42) but the planner does not model it
+                // — undecided, never dropped-silent. The operands are
+                // values, not conjuncts — nothing more to collect.
+                *fully_understood = false;
+                return;
+            }
+            if !touches && !matches!(*op, BinOp::And | BinOp::Or) {
+                // A pure own-record LEAF comparison (its operands are
+                // values — nothing injected anywhere in it): skip without
+                // marking. AND/OR nodes always recurse: their operands ARE
+                // the conjuncts.
+                return;
             }
             match op {
                 // `||`: the guard may pass via the own-record side — the
@@ -2294,6 +2328,24 @@ fn collect_injected_comparisons(
         }
         _ => {}
     }
+}
+
+/// The injected scope `expr`'s FEATURE-ACCESS root names, if it is a bare
+/// `Root.field` chain (the collect shape).
+fn injected_scope_of(expr: &Expr, scopes: &[InjectedScope]) -> Option<(usize, String)> {
+    let ExprKind::FeatureAccess {
+        receiver,
+        name,
+        optional_safe: false,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let ExprKind::Name(root) = &receiver.kind else {
+        return None;
+    };
+    let index = scopes.iter().position(|scope| &scope.root == root)?;
+    Some((index, name.value.clone()))
 }
 
 /// Whether the entity's config declares it a nested child of `parent_title`
@@ -3713,6 +3765,7 @@ pub async fn body_refusals(
 pub async fn guard_refusals(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
+    workers_topology: bool,
 ) -> Result<Vec<String>, GraphError> {
     let models = db.get_ddd_models().await?;
     if models.iter().all(|model| {
@@ -3760,9 +3813,11 @@ pub async fn guard_refusals(
         if !config.domains.contains_key(domain.as_str()) {
             continue;
         }
-        if let Err(reason) =
-            routes_for_entity(db, config, &domain, &title, &BodyRenderContext::default()).await
-        {
+        let body = BodyRenderContext {
+            workers_topology,
+            ..Default::default()
+        };
+        if let Err(reason) = routes_for_entity(db, config, &domain, &title, &body).await {
             refusals.push(reason);
         }
     }
@@ -5294,6 +5349,47 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
         assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
         // No injected scopes at all → no guard facts.
         assert!(injected_guard_facts(&guard_op("payRunStatus == Draft"), &[]).is_none());
+    }
+
+    #[test]
+    fn mixed_machine_and_undecidable_conjuncts_never_misverdict() {
+        // Round-2 review counterexamples: a machine comparison MIXED with
+        // an undecidable one must not let the decided side guess the
+        // verdict for the whole condition.
+        let scopes = vec![injected_scope(false)];
+        // Non-machine Eq/Ne conjunct: the fresh `hours` is fixture-seeded
+        // (42) — `!= 8` PASSES on the fresh row, so a Denied fold would
+        // pin 403 while the handler 200s (the reviewer's exact case).
+        let facts = injected_guard_facts(
+            &guard_op(
+                "TimecardRepository.timecardStatus == Pending && TimecardRepository.hours != 8",
+            ),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // An ORDERING conjunct dropped beside a passing machine comparison:
+        // fresh `hours` = 42 fails `> 100`, so a Satisfied fold would pin
+        // 200 while the handler 403s.
+        let facts = injected_guard_facts(
+            &guard_op(
+                "TimecardRepository.timecardStatus == Pending && TimecardRepository.hours > 100",
+            ),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // A failing machine conjunct beside an undecided sibling is still
+        // PROVABLE: under plain AND the failing conjunct decides the whole
+        // guard — Denied stands.
+        let facts = injected_guard_facts(
+            &guard_op(
+                "TimecardRepository.timecardStatus == Approved && TimecardRepository.hours > 8",
+            ),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Denied);
     }
 
     #[test]

@@ -1052,7 +1052,14 @@ pub async fn run_with_graph_cache(
         pc.integration.has_extension_points = ext_config.is_some();
     }
 
-    run_validation(be.querier(), &domain_config).await?;
+    run_validation(
+        be.querier(),
+        &domain_config,
+        build_plan.as_ref().is_some_and(|plan| {
+            plan.deployment_topology == codegraph_generate::profile::DeploymentTopology::Workers
+        }),
+    )
+    .await?;
 
     // Function bindings (issue #450): unknown function names are hard
     // config errors naming the offender; `sql` bindings are refused on
@@ -1666,7 +1673,7 @@ pub async fn generate(
 
     // generate uses a pre-populated backend; schema base dir is unknown here.
     // Pass an empty path so UiCodelistGenerator skips gracefully.
-    run_validation(be.querier(), &config).await?;
+    run_validation(be.querier(), &config, false).await?;
     let ifml_component_mappings =
         load_ifml_component_mappings(ifml_components, ifml_design_system)?;
     // Issue #293: plan-less run (no BuildPlan) — a CLI ux-rules file still
@@ -1876,8 +1883,10 @@ pub async fn classify(
 async fn run_validation(
     querier: &dyn codegraph_core::traits::GraphQuerier,
     config: &codegraph_config::DomainConfig,
+    workers_topology: bool,
 ) -> Result<()> {
-    let issues = crate::validate::ValidationPass::run(querier, config).await;
+    let issues =
+        crate::validate::ValidationPass::run_with_topology(querier, config, workers_topology).await;
     let errors: Vec<_> = issues
         .iter()
         .filter(|i| matches!(i.severity, crate::validate::Severity::Error))

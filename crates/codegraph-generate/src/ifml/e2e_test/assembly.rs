@@ -1286,8 +1286,14 @@ impl IfmlE2eTestGenerator {
                 &domain,
                 &schema.title,
                 &service_ops::BodyRenderContext {
+                    domain_types_crate: service_ops::BodyRenderContext::default()
+                        .domain_types_crate,
                     dto_casing: self.dto_casing,
-                    ..Default::default()
+                    // The IFML e2e planner is topology-blind by
+                    // construction (no ProjectConfig reaches this layer;
+                    // injected-guard action legs are a recorded #663
+                    // deferral) — the monolith default.
+                    workers_topology: false,
                 },
             )
             .await

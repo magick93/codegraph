@@ -19,7 +19,23 @@ pub struct ValidationIssue {
 pub struct ValidationPass;
 
 impl ValidationPass {
+    /// The validation pass at the MONOLITH topology (the default; the 12
+    /// node-free test callers). See [`Self::run_with_topology`].
     pub async fn run(db: &dyn GraphQuerier, config: &DomainConfig) -> Vec<ValidationIssue> {
+        Self::run_with_topology(db, config, false).await
+    }
+
+    /// The validation pass with the deployment topology threaded (issue
+    /// #663 review): the injected-scope `when` refusal is a
+    /// topology-dependent check, and the pre-generation pass must see it
+    /// or a workers + injected-guard run fails validation, collects the
+    /// refusal non-fatally in the domain phase, and exits 0 with the
+    /// modeled action surface silently missing.
+    pub async fn run_with_topology(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        workers_topology: bool,
+    ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
         let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15) = tokio::join!(
             Self::check_codelists(db),
@@ -36,7 +52,7 @@ impl ValidationPass {
             Self::check_repository_queries(db),
             Self::check_service_op_bodies(db, config),
             Self::check_transition_bindings(db, config),
-            Self::check_service_op_guards(db, config),
+            Self::check_service_op_guards(db, config, workers_topology),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -90,8 +106,11 @@ impl ValidationPass {
     async fn check_service_op_guards(
         db: &dyn GraphQuerier,
         config: &DomainConfig,
+        workers_topology: bool,
     ) -> Vec<ValidationIssue> {
-        let Ok(refusals) = codegraph_generate::ddd::service_ops::guard_refusals(db, config).await
+        let Ok(refusals) =
+            codegraph_generate::ddd::service_ops::guard_refusals(db, config, workers_topology)
+                .await
         else {
             return Vec::new();
         };

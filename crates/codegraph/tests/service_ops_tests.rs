@@ -1188,6 +1188,28 @@ async fn injected_guards_refuse_under_workers_topology() {
             .any(|route| route.authorize_async && route.injected_guard.is_some()),
         "the monolith leg must keep the async guard: {routes:?}"
     );
+    // The refusal rides the PRE-GENERATION validation pass (issue #663
+    // review round 2): with the topology threaded, `run_with_topology`
+    // hard-fails BEFORE any tree is written; without it the pass is blind
+    // and a workers run would exit 0 with the action surface missing.
+    let issues =
+        codegraph::validate::ValidationPass::run_with_topology(&engine, &config, true).await;
+    assert!(
+        issues.iter().any(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+                && i.message.contains("workers")
+        }),
+        "the threaded validation pass must surface the workers refusal: {issues:?}"
+    );
+    let issues =
+        codegraph::validate::ValidationPass::run_with_topology(&engine, &config, false).await;
+    assert!(
+        !issues
+            .iter()
+            .any(|i| i.check == "service_op_guard" && i.message.contains("workers")),
+        "the monolith pass must not refuse: {issues:?}"
+    );
 }
 
 #[tokio::test]
