@@ -12,7 +12,6 @@ use super::registry::keys;
 use crate::engine::GrafeoEngine;
 
 impl GrafeoEngine {
-    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub(super) async fn insert_edge(
         &self,
         from_id: &str,
@@ -61,29 +60,74 @@ impl GrafeoEngine {
                 .await;
         }
 
-        // ── Registry fast path (issue #482) ──
-        // When both endpoints were ingested THIS run, their NodeIds are
-        // known and the edge is written via the direct session API: zero
-        // GQL, no parse/plan/MATCH. Any miss (pre-existing node, unknown
-        // key form) falls through to the original GQL statements below
-        // verbatim — never an error, never a mis-link.
-        if let Some((src_key, dst_key)) = registry_keys(&edge_type, from_id, to_id) {
+        if self.try_registry_fast_path(&edge_type, from_id, to_id, props)? {
+            return Ok(());
+        }
+
+        if self.insert_hot_path_edge(&session, &edge_type, from_id, to_id, props)? {
+            return Ok(());
+        }
+
+        // ── Remaining edge types: format!()-based (lower frequency) ──
+        let label = edge_label(&edge_type);
+
+        let match_clause = self.remaining_edge_match_clause(&edge_type, from_id, to_id)?;
+
+        let props_str = build_edge_props_string(props);
+        let write = if matches!(edge_type, EdgeType::HasParameter) {
+            "MERGE"
+        } else {
+            "INSERT"
+        };
+        let gql = format!("{match_clause} {write} (a)-[:{label}{props_str}]->(b)");
+        session
+            .execute(&gql)
+            .map_err(|e| GraphError::Ingest(format!("ingest_edge {label} failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Registry fast path (issue #482): when both endpoints were ingested
+    /// THIS run, their NodeIds are known and the edge is written via the
+    /// direct session API — zero GQL, no parse/plan/MATCH. Any miss
+    /// (pre-existing node, unknown key form) falls through to the GQL
+    /// statements below verbatim — never an error, never a mis-link.
+    ///
+    /// Returns `Ok(true)` when the edge was created here (the inline
+    /// original returned early); `Ok(false)` falls through to the
+    /// parameterized hot path.
+    fn try_registry_fast_path(
+        &self,
+        edge_type: &EdgeType,
+        from_id: &str,
+        to_id: &str,
+        props: Option<&EdgeProperties>,
+    ) -> Result<bool, GraphError> {
+        if let Some((src_key, dst_key)) = registry_keys(edge_type, from_id, to_id) {
             if let (Some(src), Some(dst)) = (self.lookup_node(&src_key), self.lookup_node(&dst_key))
             {
                 crate::perf::bump_registry_edge_hit();
-                self.create_edge_direct(
-                    src,
-                    dst,
-                    edge_label(&edge_type),
-                    &edge_props_pairs(props),
-                )?;
-                return Ok(());
+                self.create_edge_direct(src, dst, edge_label(edge_type), &edge_props_pairs(props))?;
+                return Ok(true);
             }
             crate::perf::bump_registry_edge_miss();
         }
+        Ok(false)
+    }
 
-        // ── Hot-path edge types: parameterized queries for plan caching ──
-        match &edge_type {
+    /// Hot-path edge types: parameterized queries for plan caching. Each
+    /// claiming arm executes its statement and returns `Ok(true)` (the
+    /// inline original returned early); the trailing `_` arm returns
+    /// `Ok(false)` so the caller falls through to the format!()-based
+    /// statements below.
+    fn insert_hot_path_edge(
+        &self,
+        session: &CountingSession,
+        edge_type: &EdgeType,
+        from_id: &str,
+        to_id: &str,
+        props: Option<&EdgeProperties>,
+    ) -> Result<bool, GraphError> {
+        match edge_type {
             EdgeType::HasProperty => {
                 let (prop_name, schema_title) = split_compound_id(to_id, "HasProperty")?;
                 let gql = "MATCH (a:Schema {title: $from_title}), (b:Property {name: $prop_name, _schema_title: $prop_schema_title}) \
@@ -99,7 +143,7 @@ impl GrafeoEngine {
                 session.execute_with_params(gql, params).map_err(|e| {
                     GraphError::Ingest(format!("ingest_edge HasProperty failed: {e}"))
                 })?;
-                return Ok(());
+                return Ok(true);
             }
             EdgeType::ReferencesSchema => {
                 let (prop_name, schema_title) = split_compound_id(from_id, "ReferencesSchema")?;
@@ -116,7 +160,7 @@ impl GrafeoEngine {
                 session.execute_with_params(gql, params).map_err(|e| {
                     GraphError::Ingest(format!("ingest_edge ReferencesSchema failed: {e}"))
                 })?;
-                return Ok(());
+                return Ok(true);
             }
             EdgeType::ItemsOf => {
                 let (prop_name, schema_title) = split_compound_id(from_id, "ItemsOf")?;
@@ -133,10 +177,10 @@ impl GrafeoEngine {
                 session
                     .execute_with_params(gql, params)
                     .map_err(|e| GraphError::Ingest(format!("ingest_edge ItemsOf failed: {e}")))?;
-                return Ok(());
+                return Ok(true);
             }
             EdgeType::ExtendsSchema | EdgeType::DependsOn => {
-                let label_str = match &edge_type {
+                let label_str = match edge_type {
                     EdgeType::ExtendsSchema => "ExtendsSchema",
                     _ => "DependsOn",
                 };
@@ -153,15 +197,44 @@ impl GrafeoEngine {
                 session.execute_with_params(&gql, params).map_err(|e| {
                     GraphError::Ingest(format!("ingest_edge {label_str} failed: {e}"))
                 })?;
-                return Ok(());
+                return Ok(true);
             }
             _ => {}
         }
+        Ok(false)
+    }
 
-        // ── Remaining edge types: format!()-based (lower frequency) ──
-        let label = edge_label(&edge_type);
+    /// Remaining edge types: the format!()-based MATCH-clause builder
+    /// (lower frequency). The planes are tried in the original single
+    /// match's arm order — the first plane claiming the type wins.
+    fn remaining_edge_match_clause(
+        &self,
+        edge_type: &EdgeType,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<String, GraphError> {
+        if let Some(clause) = self.match_clause_schema_plane(edge_type, from_id, to_id)? {
+            return Ok(clause);
+        }
+        if let Some(clause) = self.match_clause_ifml_plane(edge_type, from_id, to_id)? {
+            return Ok(clause);
+        }
+        if let Some(clause) = self.match_clause_tail_plane(edge_type, from_id, to_id)? {
+            return Ok(clause);
+        }
+        unreachable!("every EdgeType is claimed by one of the plane helpers")
+    }
 
-        let match_clause = match &edge_type {
+    /// MATCH clauses for the core schema/codelist/composite plane
+    /// (`HasEnumValue` .. `DomainDepends`). `Ok(None)` = the type belongs
+    /// to a later plane.
+    fn match_clause_schema_plane(
+        &self,
+        edge_type: &EdgeType,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<Option<String>, GraphError> {
+        let clause = match edge_type {
             EdgeType::HasEnumValue => {
                 let (value, codelist) = split_compound_id(to_id, "HasEnumValue")?;
                 format!(
@@ -244,6 +317,23 @@ impl GrafeoEngine {
                 )
             }
 
+            _ => return Ok(None),
+        };
+        Ok(Some(clause))
+    }
+
+    /// MATCH clauses for the IFML plane (`ContainsViewContainer` ..
+    /// `HasConditionalExpr`) — simple MATCH on node label + name. The
+    /// chart-plane binding arms (issue #577) live verbatim inside this
+    /// plane too, as in the original single match. `Ok(None)` = the type
+    /// belongs to a later plane.
+    fn match_clause_ifml_plane(
+        &self,
+        edge_type: &EdgeType,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<Option<String>, GraphError> {
+        let clause = match edge_type {
             // IFML edge types — simple MATCH on node label + name
             EdgeType::ContainsViewContainer => {
                 format!(
@@ -384,6 +474,24 @@ impl GrafeoEngine {
                     escape_gql(strip_ifml_prefix(to_id)),
                 )
             }
+            _ => return Ok(None),
+        };
+        Ok(Some(clause))
+    }
+
+    /// MATCH clauses for the tail planes: API metamodel, namespace, DDD,
+    /// AT Protocol, persistence/authorization, computation and rule. The
+    /// early-returned types are listed for parity with the original
+    /// exhaustive match; anything else reaching the trailing catch-all is
+    /// a variant added to `EdgeType` without a MATCH clause (the
+    /// pre-split single match made that a compile-time error).
+    fn match_clause_tail_plane(
+        &self,
+        edge_type: &EdgeType,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<Option<String>, GraphError> {
+        let clause = match edge_type {
             // API metamodel edges. Name-bearing nodes (ApiResource,
             // ApiOperation, Pipeline, Permission, ErrorDefinition) store plain
             // names; Interaction/HttpEndpoint store the full prefixed id as
@@ -606,19 +714,9 @@ impl GrafeoEngine {
             | EdgeType::HasRuleSource
             | EdgeType::CorpusInBody
             | EdgeType::DerivesFrom => unreachable!(),
+            _ => unreachable!("edge type without a MATCH clause"),
         };
-
-        let props_str = build_edge_props_string(props);
-        let write = if matches!(edge_type, EdgeType::HasParameter) {
-            "MERGE"
-        } else {
-            "INSERT"
-        };
-        let gql = format!("{match_clause} {write} (a)-[:{label}{props_str}]->(b)");
-        session
-            .execute(&gql)
-            .map_err(|e| GraphError::Ingest(format!("ingest_edge {label} failed: {e}")))?;
-        Ok(())
+        Ok(Some(clause))
     }
 
     /// `InNamespace` (issue #482) — ONE edge type shared by TWO planes:
