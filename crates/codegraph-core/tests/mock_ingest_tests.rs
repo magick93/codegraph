@@ -370,6 +370,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
                 body_receiver: None,
                 transition: None,
                 child_scope: None,
+                condition_paths: Vec::new(),
             }],
             ordinal: 0,
         }],

@@ -23,6 +23,15 @@
 //! ```text
 //! cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
 //! ```
+//!
+//! The injected-scope `when` leg (issue #663) lives in its OWN test binary
+//! (`service_ops_injected_guard_gate.rs`): the process-global
+//! `TYPE_REGISTRY` (type_registry.rs) is shared by every `driver::run` in
+//! one process, and this file's legs run the PAYROLL fixture — a second,
+//! different-domain fixture declaring the same class titles
+//! (`PayRunType`) would resolve the first registrant's module paths.
+//! TODO(#746): per-run type registry (the process-global is a concurrency
+//! hazard for any two parallel generations).
 
 #[path = "service_ops_fixture.rs"]
 mod fixture;

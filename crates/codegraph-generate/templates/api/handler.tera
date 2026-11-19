@@ -1313,7 +1313,11 @@ pub async fn {{ op.fn_name }}(
         .ok_or_else(|| AppError::not_found({% if role == "child" %}format!("{{ entity_name }} { {{- param_name -}} } not found under parent {parent_id}"){% else %}"{{ entity_name }} not found"{% endif %}).with_correlation_id(correlation_id))?;
 {% endif %}
 {% if op.authorize_fn | default(value="") | length > 0 %}
+{% if op.authorize_async | default(value=false) %}
+    if let Err(reason) = {{ op.fn_name }}_authorize(&state, &api_key_info, &response).await {
+{% else %}
     if let Err(reason) = {{ op.fn_name }}_authorize(api_key_info.role.as_str(){% if op.record_load | default(value=true) %}, &response{% endif %}) {
+{% endif %}
         return Err(AppError::forbidden(reason).with_correlation_id(correlation_id));
     }
 {% endif %}

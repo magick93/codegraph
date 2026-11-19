@@ -810,6 +810,136 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   block's `{% endif %}` so it adds no newline) and the actions contract is
   unchanged for parameter-less ops.
 
+### Injected-scope `when` guards (issue #663, `condition_paths`)
+
+pherolang#180's `ServiceOperation.condition_paths` — the resolved field
+paths of a `when` condition, split `OwnRecord` / `Injected { repository,
+class }` — is the guard plane's cross-entity arm: `submit =>
+PayRunRepository.save when (payRunStatus == Draft &&
+TimecardRepository.timecardStatus == Approved)` lowers into a REAL guard
+instead of the generation error "field access …, which is not an
+own-record field".
+
+- **Ingest**: `DddServiceOperation.condition_paths`
+  (`DddConditionScope`/`DddConditionPath` typed mirrors — the
+  `DddTransitionRef` discipline), mapped in `service_operation_node`;
+  **`GRAPH_FORMAT_VERSION` 10 → 11** at that bump (the cache inputs hash
+  does not cover the codegraph rev — see "Format bump discipline").
+- **Lowering** (`ddd/service_ops.rs::lower_when_scoped`): the scope table
+  carries one `InjectedScope` per distinct (repository, class) in
+  declaration order. A dotted path whose ROOT names the declared
+  dependency name (the upstream `PathScan` contract — `inject
+  TimecardRepository;` ⇒ root `TimecardRepository`) lowers over the
+  LOADED RELATED RECORD; own-record bare names lower over `response`
+  exactly as before (byte-identical). The emitted authorize fn becomes
+  `async fn service_op_{snake}_authorize(&AppState, &ApiKeyInfo,
+  &response)` ONLY when injected paths exist: it extracts the id from the
+  own-record scalar entity-ref FK (exactly ONE such reference — zero,
+  ambiguous, child-role, unread, or schema-missing shapes are NAMED
+  generation errors), loads the injected aggregate through the sibling
+  domain's query slot (`state.{domain}_{module}_queries.find_by_id`, RLS
+  -scoped by the session context, auditable arity included), then
+  evaluates — Option-aware, `Display`-based for codelists/dates, the
+  own-record idiom. The enum-literal namespace is module-global: the
+  injected machines' states bind as bare names beside the op entity's.
+  `handler.tera`'s call site gains the gated async variant
+  (`op.authorize_async`).
+- **Closed subset, hard-error policy** (never a silently broader guard):
+  dotted chains deeper than ONE segment under an injected root refuse
+  naming the full path; cross-scope field-to-field comparisons refuse; a
+  child op carrying an injected path refuses (the child row IS its
+  guard's record); `guard_refusals` rides `ValidationPass::
+  check_service_op_guards` (the `body_refusals` posture) so nothing is
+  half-written. STILL REFUSED (unchanged): arithmetic, `?.`, lambdas,
+  collection algebra, `let`/`if`, non-scalar comparisons, ordering on
+  codelist/date fields — every pre-#663 refusal that does not involve an
+  injected path.
+- **Multi-machine modules**: an op-level `when` on a module with several
+  machine-bearing designs lowers (the restriction lived upstream and is
+  lifted at the 4f497e1 pin; ambiguous bare names are upstream E0354 and
+  never reach the lowering). The `condition_paths` OWN-record entries
+  (emitted exactly where the owning machine is not a priori derivable)
+  are the acceptance evidence; the lowering itself keeps the re-parse
+  path and needs no paths for own-record resolution.
+- **hurl** (`api/hurl_contract.rs::state_aware_legs`): the guard's
+  fresh-fixture verdict is a THREE-value model — never a guess, because a
+  mis-pinned leg fails the suite as hard in either direction (a guessed
+  403 that comes back 200 is a false positive, not a safe fallback):
+  - **Denied** → pin 403: PROVABLE failure on a fresh row — some scope's
+    FK is OPTIONAL (the create body omits nullable props, so the fresh
+    FK is NULL and the gate denies before evaluating), or a
+    machine-decided comparison fails on the related record's initial
+    state (`==` non-initial / `!=` initial) under plain AND from the
+    root. The machine stream does not advance.
+  - **Satisfied** → normal legs: every scope's FK is REQUIRED and every
+    comparison is machine-decided and passing on the fresh row
+    (`==` initial / `!=` non-initial).
+  - **Unverifiable** → the leg is OMITTED with the documented header (the
+    `Body { may_refuse }` precedent): any comparison the collector does
+    not fully understand. The collector only pushes comparisons under
+    PLAIN AND from the root AND machine-decidable at collect time — a
+    non-machine Eq/Ne conjunct's fresh value is fixture-seeded (required
+    ints seed 42, strings seed `contract-{table}`, codelists seed
+    values[0]) — so ordering comparisons, same-scope field-to-field,
+    exotic literals, non-machine fields, negation (`!(X)` flips
+    polarity), and `||` (the guard may pass via the own-record side) all
+    mark the condition undecided. MIXED guards never mis-verdict: a
+    failing machine-decided conjunct under plain AND is still provable
+    Denied even beside undecided siblings (the failing conjunct decides
+    the conjunction); everything else with an undecided part omits.
+    Pure own-record leaf comparisons are skipped without marking (the
+    own-machine state is the existing state-aware planner's input; a
+    non-transition op's own-record conjunct naming a non-initial state
+    pinning 200 is the documented pre-#663 surface).
+- **Workers topology**: an injected guard REFUSES under
+  `deployment_topology = "workers"` (named generation error) — the #590
+  action handlers run in per-domain worker crates whose `AppState`
+  carries only its OWN domain's query slots, so a cross-domain injected
+  load renders a field no worker crate has (E0599 at consumer build,
+  silently). Same-domain loads would compile, but the plane refuses both
+  until the worker async-AppState story exists (the #338 "guards stay
+  doc-only under workers" conservatism). `BodyRenderContext::
+  workers_topology` rides `from_project` so every `routes_for_entity`
+  caller sees it, and the refusal reaches the PRE-GENERATION pass:
+  `ValidationPass::run_with_topology` (the driver threads
+  `build_plan.deployment_topology`; the plan-less `generate` path
+  validates monolith) — without it the refusal was invisible to
+  validation and a workers run exited 0 with the action surface
+  silently missing.
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (27:
+  the guard end-to-end + the refusal classes + the multi-machine pin +
+  the workers refusal incl. the threaded-validation pin),
+  `cargo test -p codegraph-generate --lib -- ddd::service_ops` (39, incl.
+  the fresh-fixture-verdict KATs and the
+  mixed-machine-and-undecidable KAT — both round-2 review
+  counterexamples),
+  `--test ddd_ingest_tests`, `--test artifact_kit_tests` (the bump),
+  `--test service_ops_injected_guard_gate -- --ignored` (its own test
+  BINARY — the #551 pin: the emitted async handler must compile; the
+  process-global `TYPE_REGISTRY` (#746) forced the isolation after its
+  first runs caught the design-op override missing rust-name lookups),
+  plus the standing canaries (flag-off byte-identical, no re-bless).
+- **Deferred**: a class-typed service-parameter arm as the id source
+  (today's source is the own-record FK only); `db/expr_sql.rs` policy-
+  plane cross-table predicates (the #663 issue scopes them OUT — the
+  policy plane keeps `expr_sql`'s own-record subset); injected guards
+  under the workers topology (the refusal above is the recorded
+  deferral); the IFML action e2e planner's injected-guard legs (the hurl
+  contract carries them; the guard fixture is not an IFML fixture);
+  `DddConditionPath.field_type` rides the graph unread (the documented
+  lowering contract for consumers — the lowering re-parses the source);
+  a mixed entity (bodied op + injected-guarded op) can surface one
+  refusal twice through `check_service_op_bodies` +
+  `check_service_op_guards` (both run `routes_for_entity`; identical
+  text, different check names); the child-op-with-injected-path refusal
+  branch is defensive (the upstream compiler rejects injected paths in a
+  `children` block — no service means no injections to resolve —
+  verified in the pinned phero-driver, `child_ops.rs` conditions with
+  `injections: &[]`); an op whose OWN-RECORD `when` conjunct names a
+  non-initial state on a non-transition route can still pin 200 while
+  the handler 403s — the pre-#663 own-record surface, unchanged by #663
+  (the injected planner reasons only about injected conjuncts).
+
 ### Aggregate child operations (issue #661)
 
 Upstream proposal 004 (`Design.child_operations` + `ServiceOperation.
@@ -895,14 +1025,15 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   action-spec leg, and a modeled child op over a cross-domain child.
 - **Deferred**: delegation breadth beyond the lowered set
   (service-to-service, `search`); api_key capability enforcement
-  (JWT-only policy gates); ddd op-`condition` beyond machine-bearing
-  modules (typed lifecycles, pherolang #114); hurl 403 legs over JWT
+  (JWT-only policy gates); hurl 403 legs over JWT
   personas; register-class properties (issue Ask 4, upstream pherolang
   #83); a collection-add POM/action-spec leg. **Landed, no longer
   deferred** (the ledger drifted): the live `service_ops_hurl_gate`
   (WS1, state-aware contract + psql proofs), the IFML action-op e2e spec
-  category + POM surface (WS6 via the #591 manifest), and the doctor
-  WARN for entity-unbound ops (WS5, `codegraph doctor --ddd-files`).
+  category + POM surface (WS6 via the #591 manifest), the doctor
+  WARN for entity-unbound ops (WS5, `codegraph doctor --ddd-files`), and
+  op-level `when` beyond machine-bearing modules (pherolang #114 lifted
+  upstream; #663 pins the acceptance + the qualified form).
   #662 body plane — domain-op calls (`self.<op>`) + collection mutation
   (refused by name, mox-arena coupling), body-assigned machine state vs the
   designed transitions (`TODO(#662)`), `codegraph doctor --ddd-files` body
@@ -969,7 +1100,7 @@ the op's name and are demoted to a **no-binding fallback**:
   nightly gate exercises the primary path.
 - **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 at that bump (the artifact
   kit fixture was renamed `graph_document_v7.md` → `v8.md` then; it is
-  `graph_document_v10.md` now, and the `format_version_too_new` case pins a
+  `graph_document_v11.md` now, and the `format_version_too_new` case pins a
   LITERAL next version that every bump must move by hand — see "Format bump
   discipline + doctor signal" for the current constant) — the binding
   rides the serde-serialized `operations_json` blob, so a warm cache would
@@ -3643,8 +3774,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `10` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v10.md`.
+  `11` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v11.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -3658,7 +3789,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 11` while the constant is 10), NOT derived from
+  (`formatVersion 12` while the constant is 11), NOT derived from
   `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
@@ -3668,14 +3799,15 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   introduced …"), never the current value (the recorded lineage: 1→2
   op-level `when`, 3→4 WS6 manifest, 4→5 pherolang 0.3, 6→7 service
   bodies, 7→8 transition binding, 8→9 mox tables/register classes, 9→10
-  aggregate child ops — the 2→3 and 5→6 steps were never written up, so
-  the lineage is only partially recorded). `GRAFEO_STORAGE_GENERATION`
+  aggregate child ops, 10→11 service-op condition paths (#663) — the 2→3
+  and 5→6 steps were never written up, so the lineage is only partially
+  recorded). `GRAFEO_STORAGE_GENERATION`
   versions the engine's on-disk format; bump it on every grafeo minor
   that changes the file
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v10 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v11 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.
@@ -5011,7 +5143,7 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
   generation, **not** the compiler rev, so without the bump a warm
   `.graph-cache/` would silently serve the pre-upgrade graph. At that
   upgrade the artifact kit fixture was `graph_document_v5.md` (five bumps
-  older than the current `graph_document_v10.md` — see "Format bump
+  older than the current `graph_document_v11.md` — see "Format bump
   discipline + doctor signal" for the live constant).
 - **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
   byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use
@@ -5054,13 +5186,14 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
 **Landed from the epic's P5/P6 list** (each has its own section above and
 its gates green): typed repository queries **#659**, the authored
 `transition` binding **#660**, aggregate child operations **#661**,
-executable statement bodies **#662**, and explicit `table "…"` names +
+executable statement bodies **#662**, injected-scope `when` guards
+(**#663** — `condition_paths`, see the service-op section below), and
+explicit `table "…"` names +
 `register` classes + the compiler word tables **#668**. The upgrade PR
 itself carried none of them — they landed as their own slices, which is
 what the "never ride the upgrade PR" rule was for.
 
-**Still deferred** from that list: injected-scope `when` beyond
-machine-bearing modules (#663's `condition_paths` consumer), collection
+**Still deferred** from that list: collection
 sets (#664), the declared error vocabulary + `throws` (#665), invariants +
 authored aggregate boundaries (#666), modeled DTO boundaries (#667), the
 tree-sitter `.mox` grammar + LSP for the new syntax (#669), session-kind

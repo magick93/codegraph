@@ -107,6 +107,7 @@ ops-service-ops-compile:
     # (mox_plane/media/workers_gateway/wrapper/planless/grpc compile tests,
     # ignored ops_generator_tests) still need it.
     cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
+    cargo test -p codegraph --test service_ops_injected_guard_gate -- --ignored --nocapture
 
 ops-service-ops-hurl:
     #!/usr/bin/env bash

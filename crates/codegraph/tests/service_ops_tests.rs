@@ -24,9 +24,11 @@ use codegraph_core::traits::GraphQuerier;
 use tempfile::TempDir;
 
 use fixture::{
-    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, ingest, ingest_binding,
-    ingest_child_ops, read, run_generation, tempdir, write_binding_fixture,
-    write_child_ops_fixture, write_child_ops_fixture_with, write_fixture_in,
+    DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, RELEASE_DDD,
+    guard_fixture_with_ambiguous_fk, guard_fixture_with_deep_path, guard_fixture_without_fk,
+    ingest, ingest_binding, ingest_child_ops, ingest_guard, read, run_generation, tempdir,
+    write_binding_fixture, write_binding_fixture_with, write_child_ops_fixture,
+    write_child_ops_fixture_with, write_fixture_in, write_guard_fixture,
     write_mox_first_fixture_in,
 };
 
@@ -873,6 +875,340 @@ async fn validation_pass_warns_on_dead_surface_and_status_bypass() {
                 && i.message.contains("bypassable via scaffold CRUD")
         }),
         "the bare-String status field must warn: {issues:?}"
+    );
+}
+
+#[tokio::test]
+async fn injected_scope_when_guards_load_the_related_record_and_deny() {
+    // Issue #663: an op-level `when` over an INJECTED repository's field
+    // lowers to a real guard — the handler loads the related record through
+    // the repository plane's own query and denies with the rule named.
+    let fixture = write_guard_fixture();
+    let engine = ingest_guard(&fixture).await;
+
+    // The resolved condition paths survive ingest: the injected scope names
+    // the declared dependency (`TimecardRepository`) and the class its
+    // design binds.
+    let models = engine.get_ddd_models().await.unwrap();
+    let op = models
+        .iter()
+        .flat_map(|m| &m.services)
+        .flat_map(|s| &s.operations)
+        .find(|op| op.name == "submit")
+        .expect("submit op");
+    assert!(
+        !op.condition_paths.is_empty(),
+        "the injected-scope guard must carry condition_paths"
+    );
+    let injected = op
+        .condition_paths
+        .iter()
+        .find(|p| {
+            matches!(
+                p.scope,
+                codegraph_core::types::DddConditionScope::Injected { .. }
+            )
+        })
+        .expect("an injected-scope path");
+    let codegraph_core::types::DddConditionScope::Injected { repository, class } = &injected.scope
+    else {
+        unreachable!("found above");
+    };
+    assert_eq!(repository, "TimecardRepository");
+    assert!(class.ends_with("TimecardType"), "class: {class}");
+    assert_eq!(injected.field, "timecardStatus");
+
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(
+        !report.has_errors(),
+        "the injected-scope guard must lower: {report:?}"
+    );
+
+    // ── handler: the async authorize fn loads the related record ──
+    let handler = read(&out.path().join("src/api/guardpay/pay_run_handler.rs"));
+    // The injected load makes the gate async and hands it the state +
+    // session (the sibling domain's query slot and the RLS context).
+    assert!(
+        handler.contains("async fn service_op_submit_authorize"),
+        "the injected guard makes the authorize fn async:\n{handler}"
+    );
+    let start = handler
+        .find("fn service_op_submit_authorize")
+        .expect("submit authorize fn");
+    assert!(
+        handler.contains("state: &AppState"),
+        "the gate takes AppState for the sibling query slot:\n{}",
+        &handler[start..]
+    );
+    // The own-record FK carries the id (scalar `refers` → `timecard_id`).
+    assert!(
+        handler.contains("response.timecard_id"),
+        "the id comes from the own-record FK:\n{}",
+        &handler[start..]
+    );
+    // The load rides the INJECTED entity's own query slot.
+    assert!(
+        handler.contains("state.guardpay_timecard_queries"),
+        "the load rides the sibling query slot:\n{}",
+        &handler[start..]
+    );
+    // The comparison is codelist-Display-based over the RELATED record.
+    assert!(
+        handler.contains(r#"timecard_repository.timecard_status.to_string() == "Approved""#),
+        "the injected comparison lowers over the loaded record:\n{}",
+        &handler[start..]
+    );
+    // Business semantics apply to every session: the guard precedes the
+    // api_key bypass (the #590 contract).
+    let guard_pos = handler[start..]
+        .find("op-level `when` transition guard")
+        .expect("guard comment");
+    let bypass_pos = handler[start..]
+        .find(r#"if role == "api_key""#)
+        .expect("api_key bypass");
+    assert!(
+        guard_pos < bypass_pos,
+        "the injected guard must precede the api_key bypass:\n{}",
+        &handler[start..]
+    );
+    // The route still wires the transition (the guard composes, it does not
+    // replace the machine).
+    assert!(
+        handler.contains("fn service_op_submit("),
+        "the route handler exists:\n{handler}"
+    );
+
+    // ── hurl: the fresh fixture cannot drive the Timecard past its
+    // initial state, so the contract pins the conservative denial leg and
+    // says why.
+    let actions_dir = out.path().join("hurl");
+    let mut actions = None;
+    let entries = std::fs::read_dir(&actions_dir).expect("hurl dir");
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("hurl")
+            && std::fs::read_to_string(&path)
+                .map(|c| c.contains("/actions/submit"))
+                .unwrap_or(false)
+        {
+            actions = Some(std::fs::read_to_string(path).expect("actions file"));
+        }
+    }
+    let actions = actions.expect("the submit actions contract");
+    // The leg's comment (the `note`) renders ABOVE the POST line — the
+    // whole-file search finds it; the status pins inside the leg slice.
+    assert!(
+        actions.contains("injected-scope `when` guard"),
+        "the leg's comment must say why the denial is pinned:\n{actions}"
+    );
+    assert!(
+        actions.contains("TimecardRepository.timecardStatus == Approved"),
+        "the leg's comment must name the guard it pins:\n{actions}"
+    );
+    let leg = actions
+        .find("/actions/submit")
+        .map(|pos| &actions[pos..])
+        .expect("submit leg");
+    assert!(
+        leg.contains("HTTP 403"),
+        "the fresh fixture cannot satisfy the injected guard — the contract \
+         pins the denial:\n{actions}"
+    );
+}
+
+#[tokio::test]
+async fn multi_machine_module_accepts_op_level_when() {
+    // Issue #663: the single-machine-module restriction on op-level `when`
+    // lifted upstream (pherolang#180) — a module with two machine-bearing
+    // designs accepts an op-level `when`, whose own-record path rides the
+    // machine field the entity owns.
+    let source = RELEASE_DDD.replace(
+        "prepareRelease => ReleaseRepository.save transition ReleaseStatus.SignOff;",
+        "prepareRelease => ReleaseRepository.save transition ReleaseStatus.SignOff when (releaseStatus == Held);",
+    );
+    let fixture = write_binding_fixture_with(&source);
+    let engine = ingest_binding(&fixture).await;
+
+    // Multi-machine module: the op's condition_paths carry the own-record
+    // machine field (the upstream contract — own-record paths are emitted
+    // exactly where the owning machine is not a priori derivable).
+    let models = engine.get_ddd_models().await.unwrap();
+    let op = models
+        .iter()
+        .flat_map(|m| &m.services)
+        .flat_map(|s| &s.operations)
+        .find(|op| op.name == "prepareRelease")
+        .expect("prepareRelease op");
+    assert!(
+        op.condition_paths.iter().any(|p| matches!(
+            p.scope,
+            codegraph_core::types::DddConditionScope::OwnRecord
+        ) && p.field == "releaseStatus"),
+        "the own-record machine path must ride condition_paths: {:?}",
+        op.condition_paths
+    );
+
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(
+        !report.has_errors(),
+        "a multi-machine module must accept the op-level `when`: {report:?}"
+    );
+    let handler = read(&out.path().join("src/api/release/release_handler.rs"));
+    assert!(
+        handler.contains(r#"release_status.to_string() == "Held""#),
+        "the own-record guard lowers over the loaded record:\n{handler}"
+    );
+}
+
+#[tokio::test]
+async fn injected_guard_without_fk_is_a_named_generation_error() {
+    // The injected root names a class the op entity does not reference:
+    // the guard has no id source. A named HARD validation error — never a
+    // load of an unresolvable record, never a silently narrower guard.
+    let fixture = guard_fixture_without_fk();
+    let engine = ingest_guard(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let refusal = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+        })
+        .unwrap_or_else(|| panic!("the missing FK must hard-fail validation: {issues:?}"));
+    assert!(
+        refusal.message.contains("TimecardRepository") && refusal.message.contains("no id source"),
+        "the error must name the injection and the missing FK feature: {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn injected_guard_with_ambiguous_fk_is_a_named_generation_error() {
+    let fixture = guard_fixture_with_ambiguous_fk();
+    let engine = ingest_guard(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let refusal = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+        })
+        .unwrap_or_else(|| panic!("the ambiguous FK must hard-fail validation: {issues:?}"));
+    assert!(
+        refusal.message.contains("timecard_id") && refusal.message.contains("review_timecard_id"),
+        "the error must name both candidate FK fields: {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn injected_guard_with_dotted_path_is_a_named_generation_error() {
+    // `TimecardRepository.holder.name == "Ada"` compiles upstream (each
+    // segment is a stored field, the refer required so R3 is satisfied) but
+    // is OUTSIDE the lowering's closed subset: one segment under the
+    // injected root only.
+    let fixture = guard_fixture_with_deep_path();
+    let engine = ingest_guard(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let refusal = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+        })
+        .unwrap_or_else(|| panic!("the dotted path must hard-fail validation: {issues:?}"));
+    assert!(
+        refusal.message.contains("holder.name"),
+        "the error must name the construct: {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn injected_guards_refuse_under_workers_topology() {
+    // Issue #663 review fix: under `deployment_topology = "workers"` the
+    // #590 action handlers run in per-domain worker crates whose AppState
+    // carries only its OWN domain's query slots — a cross-domain injected
+    // load renders a field no worker crate has (E0599 at consumer build,
+    // silently). The plane refuses (named error) instead of breaking the
+    // worker; the monolith keeps lowering (the sibling test).
+    let fixture = write_guard_fixture();
+    let engine = ingest_guard(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let body = codegraph_generate::ddd::service_ops::BodyRenderContext {
+        workers_topology: true,
+        ..Default::default()
+    };
+    let err = codegraph_generate::ddd::service_ops::routes_for_entity(
+        &engine,
+        &config,
+        "guardpay",
+        "PayRunType",
+        &body,
+    )
+    .await
+    .expect_err("the workers topology must refuse injected guards");
+    assert!(
+        err.contains("workers") && err.contains("injected-scope `when` guard"),
+        "the refusal must name the topology and the guard: {err}"
+    );
+    // The monolith (default context) lowers.
+    let routes = codegraph_generate::ddd::service_ops::routes_for_entity(
+        &engine,
+        &config,
+        "guardpay",
+        "PayRunType",
+        &Default::default(),
+    )
+    .await
+    .expect("the monolith lowers the injected guard");
+    assert!(
+        routes
+            .iter()
+            .any(|route| route.authorize_async && route.injected_guard.is_some()),
+        "the monolith leg must keep the async guard: {routes:?}"
+    );
+    // The refusal rides the PRE-GENERATION validation pass (issue #663
+    // review round 2): with the topology threaded, `run_with_topology`
+    // hard-fails BEFORE any tree is written; without it the pass is blind
+    // and a workers run would exit 0 with the action surface missing.
+    let issues =
+        codegraph::validate::ValidationPass::run_with_topology(&engine, &config, true).await;
+    assert!(
+        issues.iter().any(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "service_op_guard"
+                && i.message.contains("workers")
+        }),
+        "the threaded validation pass must surface the workers refusal: {issues:?}"
+    );
+    let issues =
+        codegraph::validate::ValidationPass::run_with_topology(&engine, &config, false).await;
+    assert!(
+        !issues
+            .iter()
+            .any(|i| i.check == "service_op_guard" && i.message.contains("workers")),
+        "the monolith pass must not refuse: {issues:?}"
     );
 }
 

@@ -335,6 +335,58 @@ pub struct ServiceOpRoute {
     /// route body still 501s (no record ⇒ no `read`/`delete` lowering),
     /// so nothing flows past the seam.
     pub record_load: bool,
+    /// The gate is `async` and takes `(&AppState, &ApiKeyInfo, &response)`
+    /// (issue #663): the op's `when` guard references an injected
+    /// repository, and the rendered fn loads the related records before
+    /// evaluating. `false` keeps today's synchronous
+    /// `(role, &response)` shape — byte-identical flag-off output.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub authorize_async: bool,
+    /// The op's injected-scope `when` guard, resolved at generation time
+    /// (issue #663). `None` for own-record-only guards — the hurl
+    /// contract's state planner pins the conservative denial leg when a
+    /// guard is present but not provably satisfied by a fresh fixture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub injected_guard: Option<InjectedGuard>,
+}
+
+/// The compact injected-scope guard facts the hurl contract's planner
+/// needs (issue #663) — a THREE-VERDICT model, never a guess, because a
+/// mis-pinned contract leg fails the suite as hard in EITHER direction
+/// (a guessed 403 that comes back 200 is a false positive, not a safe
+/// fallback):
+///
+/// - [`FreshFixtureGuard::Satisfied`] — every scope's FK is REQUIRED and
+///   every injected comparison targets its machine field with a value the
+///   machine's initial state decides, and every decided comparison PASSES
+///   on a fresh row → the guard provably holds; the contract keeps the
+///   normal legs.
+/// - [`FreshFixtureGuard::Denied`] — provable denial: some scope's FK is
+///   OPTIONAL (the create body omits nullable props, so the fresh row's FK
+///   is NULL and the rendered gate denies BEFORE evaluating), or some
+///   machine-decided comparison FAILS on the fresh row → pin 403.
+/// - [`FreshFixtureGuard::Unverifiable`] — any comparison the collector
+///   does not fully understand (negation, `||` composition, non-machine
+///   fields, non-name/date literals, field-to-field) or an unparseable
+///   condition → the contract OMITS the leg with the documented header
+///   (the `Body { may_refuse }` precedent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshFixtureGuard {
+    Satisfied,
+    Denied,
+    Unverifiable,
+}
+
+/// The compact guard facts a route carries for the hurl contract's
+/// planner (issue #663).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InjectedGuard {
+    /// The guard's condition source, verbatim — the comment the emitted
+    /// contract pins.
+    pub condition: String,
+    /// The fresh-fixture verdict (see [`FreshFixtureGuard`]).
+    pub fresh_fixture: FreshFixtureGuard,
 }
 
 // ── Field knowledge ────────────────────────────────────────────────────
@@ -457,6 +509,7 @@ pub(crate) fn lower_when_to_rust(
 /// to the string literal the codelist/string comparison path consumes.
 /// Unknown names fail closed with a diagnostic naming both the fields and
 /// the declared states.
+#[cfg(test)]
 pub(crate) fn lower_when_to_rust_with_states(
     source: &str,
     capability: &str,
@@ -464,9 +517,28 @@ pub(crate) fn lower_when_to_rust_with_states(
     fields: &HashMap<String, FieldInfo>,
     states: &[String],
 ) -> Result<String, String> {
+    lower_when_scoped(source, capability, entity, fields, states, &[])
+}
+
+/// [`lower_when_to_rust_with_states`] over a scope table that may carry
+/// injected repositories (issue #663): an injected path
+/// (`TimecardRepository.timecardStatus`) lowers over the loaded related
+/// record the rendered gate binds. The closed subset is unchanged — a
+/// dotted chain deeper than one segment under an injected root, or a root
+/// that names no injected scope, is refused with the construct named.
+pub(crate) fn lower_when_scoped(
+    source: &str,
+    capability: &str,
+    entity: &str,
+    fields: &HashMap<String, FieldInfo>,
+    states: &[String],
+    injected: &[InjectedScope],
+) -> Result<String, String> {
     let parsed = phero_expr::parse(source);
     match parsed.ast {
-        Some(ast) if parsed.errors.is_empty() => lower(&ast, capability, entity, fields, states),
+        Some(ast) if parsed.errors.is_empty() => {
+            lower_scoped(&ast, capability, entity, fields, states, injected)
+        }
         _ => Err(format!(
             "capability `{capability}`: `when` condition is not valid \
              pherolang expression syntax: {source:?}"
@@ -474,20 +546,143 @@ pub(crate) fn lower_when_to_rust_with_states(
     }
 }
 
-fn lower(
+/// One injected scope a `when` lowering may reference (issue #663),
+/// resolved at generation time from the op's `condition_paths`.
+#[derive(Debug, Clone)]
+pub(crate) struct InjectedScope {
+    /// The injection root exactly as authored — the declared dependency
+    /// name (`TimecardRepository`), which is the condition path's first
+    /// segment.
+    pub root: String,
+    /// The Rust local the rendered gate binds (`to_snake_case(root)`).
+    pub local: String,
+    /// The AppState query slot prefix (`{domain}_{module}`) of the injected
+    /// entity's query plane.
+    pub slot: String,
+    /// The injected plane's auditable flag — `find_by_id`'s
+    /// include-deleted arity.
+    pub auditable: bool,
+    /// The own-record FK field carrying the injected id (the response's
+    /// Rust field name, e.g. `timecard_id`).
+    pub fk_field: String,
+    /// Whether the FK is `Option` (an optional `refers`).
+    pub fk_optional: bool,
+    /// The injected class's fields — the comparison domain over the loaded
+    /// record.
+    pub fields: HashMap<String, FieldInfo>,
+    /// The injected class's machine when the class carries one — the hurl
+    /// planner's fresh-fixture reasoning and (via its states) the guard's
+    /// enum-literal namespace.
+    pub machine: Option<InjectedMachine>,
+}
+
+/// One injected class's designed machine (issue #663).
+#[derive(Debug, Clone)]
+pub struct InjectedMachine {
+    /// The machine's field as authored (`timecardStatus`).
+    pub field: String,
+    /// The machine's initial state (`Pending`) — a fresh fixture row sits
+    /// here.
+    pub initial: String,
+    /// Every declared state — the enum literals the guard may compare
+    /// against (the module's enum namespace is global upstream).
+    pub states: Vec<String>,
+}
+
+/// Resolve one operand to its scope root and field: `None` for a
+/// non-field operand (literal), the own record (`response`) for a bare
+/// entity field, the scope's local for a one-segment injected path.
+fn resolve_operand(
+    scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
+    expr: &Expr,
+    capability: &str,
+) -> Result<Option<(String, FieldInfo)>, String> {
+    let (entity, fields, injected) = scopes;
+    match &expr.kind {
+        ExprKind::Name(name) => match fields.get(name) {
+            Some(field) => Ok(Some(("response".to_string(), field.clone()))),
+            None => {
+                // A bare name that is not a field is a literal operand (a
+                // declared machine state, most often) — `lower` already
+                // validated or lowered it; the comparison rendering treats
+                // it as the literal side, exactly as the pre-#663
+                // `operand_field` did.
+                let _ = entity;
+                Ok(None)
+            }
+        },
+        ExprKind::FeatureAccess {
+            receiver,
+            name,
+            optional_safe,
+        } => {
+            if *optional_safe {
+                return Err(format!(
+                    "capability `{capability}`: `when` condition uses `?.` \
+                     (safe navigation), which cannot be lowered"
+                ));
+            }
+            let ExprKind::Name(root) = &receiver.kind else {
+                return Err(format!(
+                    "capability `{capability}`: `when` condition uses field \
+                     access `{}`, which cannot be lowered — a dotted chain \
+                     under an injected repository is one segment deep at most",
+                    write_path(expr)
+                ));
+            };
+            let Some(scope) = injected.iter().find(|scope| &scope.root == root) else {
+                return Err(format!(
+                    "capability `{capability}`: `when` condition uses field \
+                     access `{root}`.{}, which is not an own-record field; \
+                     only bare field references and one segment under an \
+                     injected repository are supported",
+                    name.value
+                ));
+            };
+            match scope
+                .fields
+                .get(&name.value)
+                .or_else(|| scope.fields.get(&to_snake_case(&name.value)))
+            {
+                Some(field) => Ok(Some((scope.local.clone(), field.clone()))),
+                None => Err(format!(
+                    "capability `{capability}`: `when` condition references \
+                     `{root}`.{}, which is not a field of the injected \
+                     repository's class",
+                    name.value
+                )),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+fn lower_scoped(
     expr: &Expr,
     capability: &str,
     entity: &str,
     fields: &HashMap<String, FieldInfo>,
     states: &[String],
+    injected: &[InjectedScope],
 ) -> Result<String, String> {
+    let scopes = (entity, fields, injected);
+    lower(expr, capability, &scopes, states)
+}
+
+fn lower(
+    expr: &Expr,
+    capability: &str,
+    scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
+    states: &[String],
+) -> Result<String, String> {
+    let (entity, fields, _injected) = scopes;
     let reject = |construct: &str| {
         Err(format!(
             "capability `{capability}`: `when` condition uses {construct}, \
              which cannot be lowered to a Rust guard on `{entity}`; the \
-             supported subset is own-record field refs, string/number/\
-             boolean/date literals, comparisons, && || !, parentheses, and \
-             null comparisons"
+             supported subset is own-record field refs, one segment under \
+             an injected repository, string/number/boolean/date literals, \
+             comparisons, && || !, parentheses, and null comparisons"
         ))
     };
     match &expr.kind {
@@ -512,7 +707,7 @@ fn lower(
         }
         ExprKind::Name(name) => {
             if let Some(field) = fields.get(name) {
-                return Ok(field_ref(field));
+                return Ok(field_ref("response", field));
             }
             // A bare name that is a declared machine state lowers to the
             // enum value's wire spelling: the codelist/string comparison
@@ -534,7 +729,7 @@ fn lower(
             ))
         }
         ExprKind::Unary { op, expr } => {
-            let inner = lower(expr, capability, entity, fields, states)?;
+            let inner = lower(expr, capability, scopes, states)?;
             match op {
                 UnOp::Not => Ok(format!("(!({inner}))")),
                 UnOp::Neg => match &expr.kind {
@@ -561,17 +756,20 @@ fn lower(
                 } else {
                     lhs
                 };
-                // The non-null operand must be a bare field ref for the
+                // The non-null operand must be a field ref for the
                 // Option check to be honest; a required field's null
                 // comparison is vacuous and lowers to a literal.
-                let ExprKind::Name(name) = &field_expr_expr.kind else {
-                    return reject("a null comparison against a non-field");
-                };
-                let field = field_for(name, capability, entity, fields)?;
+                let (root, field) = resolve_operand(scopes, field_expr_expr, capability)?
+                    .ok_or_else(|| {
+                        format!(
+                            "capability `{capability}`: `when` condition uses \
+                             a null comparison against a non-field"
+                        )
+                    })?;
                 return Ok(match (op, field.optional) {
-                    (BinOp::Eq, true) => format!("(response.{}.is_none())", field.rust_name),
+                    (BinOp::Eq, true) => format!("({root}.{}.is_none())", field.rust_name),
                     (BinOp::Ne, true) => {
-                        format!("(!(response.{}.is_none()))", field.rust_name)
+                        format!("(!({root}.{}.is_none()))", field.rust_name)
                     }
                     (BinOp::Eq, false) => "false".to_string(),
                     (BinOp::Ne, false) => "true".to_string(),
@@ -593,12 +791,11 @@ fn lower(
             };
             comparison(
                 op,
-                &lower(lhs, capability, entity, fields, states)?,
-                &lower(rhs, capability, entity, fields, states)?,
+                &lower(lhs, capability, scopes, states)?,
+                &lower(rhs, capability, scopes, states)?,
                 rust_op,
                 capability,
-                entity,
-                fields,
+                scopes,
                 lhs,
                 rhs,
             )
@@ -611,12 +808,17 @@ fn lower(
             if *optional_safe {
                 return reject("`?.` (safe navigation)");
             }
-            reject(&format!(
-                "field access `{}`.{}, which is not an own-record field; \
-                 only bare field references are supported",
-                write_path(receiver),
-                name.value
-            ))
+            // A dotted path lowers ONLY through an injected scope; every
+            // other receiver is the own-record dotted-navigation refusal.
+            match resolve_operand(scopes, expr, capability) {
+                Ok(Some((root, field))) => Ok(field_ref(&root, &field)),
+                Ok(None) => reject(&format!(
+                    "field access on a non-field receiver (`{}`.{})",
+                    write_path(receiver),
+                    name.value
+                )),
+                Err(message) => Err(message),
+            }
         }
         ExprKind::Coalesce { .. } => reject("`?:`"),
         ExprKind::Call { .. } | ExprKind::FunctionCall { .. } => reject("an operation call"),
@@ -631,7 +833,9 @@ fn lower(
 /// Render a comparison. Field-vs-literal comparisons unwrap `Option`
 /// fields honestly; field-vs-field comparisons require matching
 /// requiredness (mixed requiredness cannot compare without a policy
-/// decision the model does not make).
+/// decision the model does not make). Cross-scope comparisons (an own
+/// field against an injected field) are refused: no root is honest for
+/// both sides.
 #[allow(clippy::too_many_arguments)]
 fn comparison(
     op: &BinOp,
@@ -639,20 +843,27 @@ fn comparison(
     rhs_text: &str,
     rust_op: &str,
     capability: &str,
-    entity: &str,
-    fields: &HashMap<String, FieldInfo>,
+    scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
     lhs: &Expr,
     rhs: &Expr,
 ) -> Result<String, String> {
     let is_ordering = matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
-    let lhs_field = operand_field(lhs, fields);
-    let rhs_field = operand_field(rhs, fields);
+    let lhs_field = resolve_operand(scopes, lhs, capability)?;
+    let rhs_field = resolve_operand(scopes, rhs, capability)?;
     match (lhs_field, rhs_field) {
-        (Some(field), None) => {
+        (Some((root, field)), None) => {
             let literal = strip_parens(rhs_text);
-            field_vs_literal(&field, &literal, rust_op, is_ordering, capability, entity)
+            field_vs_literal(
+                &root,
+                &field,
+                &literal,
+                rust_op,
+                is_ordering,
+                capability,
+                scopes.0,
+            )
         }
-        (None, Some(field)) => {
+        (None, Some((root, field))) => {
             let literal = strip_parens(lhs_text);
             // Flip the ordering operator so the field stays on the left.
             let flipped = match op {
@@ -668,9 +879,26 @@ fn comparison(
                     unreachable!("arithmetic is rejected before comparison rendering")
                 }
             };
-            field_vs_literal(&field, &literal, flipped, is_ordering, capability, entity)
+            field_vs_literal(
+                &root,
+                &field,
+                &literal,
+                flipped,
+                is_ordering,
+                capability,
+                scopes.0,
+            )
         }
-        (Some(a), Some(b)) => {
+        (Some((lhs_root, a)), Some((rhs_root, b))) => {
+            if lhs_root != rhs_root {
+                return Err(format!(
+                    "capability `{capability}`: comparison between `{}` and `{}` across \
+                     different records (an own-record field vs an injected field, or two \
+                     injected scopes) cannot be lowered faithfully — compare each side \
+                     against a literal instead",
+                    a.rust_name, b.rust_name
+                ));
+            }
             if is_ordering && (a.optional || b.optional || a.kind != b.kind) {
                 return Err(format!(
                     "capability `{capability}`: ordering comparison between \
@@ -686,7 +914,7 @@ fn comparison(
                 ));
             }
             Ok(format!(
-                "(response.{} {rust_op} response.{})",
+                "({lhs_root}.{} {rust_op} {rhs_root}.{})",
                 a.rust_name, b.rust_name
             ))
         }
@@ -695,6 +923,7 @@ fn comparison(
 }
 
 fn field_vs_literal(
+    root: &str,
     field: &FieldInfo,
     literal: &str,
     rust_op: &str,
@@ -703,14 +932,15 @@ fn field_vs_literal(
     entity: &str,
 ) -> Result<String, String> {
     let name = &field.rust_name;
+    let root = root.to_string();
     match field.kind {
         FieldKind::String => match field.optional {
-            false => Ok(format!("(response.{name} {rust_op} {literal})")),
+            false => Ok(format!("({root}.{name} {rust_op} {literal})")),
             true if is_ordering => Ok(format!(
-                "(response.{name}.as_deref().is_some_and(|v| v {rust_op} {literal}))"
+                "({root}.{name}.as_deref().is_some_and(|v| v {rust_op} {literal}))"
             )),
             true => Ok(format!(
-                "(response.{name}.as_deref() {} Some({literal}))",
+                "({root}.{name}.as_deref() {} Some({literal}))",
                 eq_op(rust_op)
             )),
         },
@@ -722,20 +952,20 @@ fn field_vs_literal(
                 ));
             }
             match field.optional {
-                false => Ok(format!("(response.{name} {rust_op} {literal})")),
+                false => Ok(format!("({root}.{name} {rust_op} {literal})")),
                 true => Ok(format!(
-                    "(response.{name} {} Some({literal}))",
+                    "({root}.{name} {} Some({literal}))",
                     eq_op(rust_op)
                 )),
             }
         }
         FieldKind::Integer | FieldKind::Float => match field.optional {
-            false => Ok(format!("(response.{name} {rust_op} {literal})")),
+            false => Ok(format!("({root}.{name} {rust_op} {literal})")),
             true if is_ordering => Ok(format!(
-                "(response.{name}.is_some_and(|v| v {rust_op} {literal}))"
+                "({root}.{name}.is_some_and(|v| v {rust_op} {literal}))"
             )),
             true => Ok(format!(
-                "(response.{name} {} Some({literal}))",
+                "({root}.{name} {} Some({literal}))",
                 eq_op(rust_op)
             )),
         },
@@ -752,9 +982,9 @@ fn field_vs_literal(
                 ));
             }
             match field.optional {
-                false => Ok(format!("(response.{name}.to_string() {rust_op} {literal})")),
+                false => Ok(format!("({root}.{name}.to_string() {rust_op} {literal})")),
                 true => Ok(format!(
-                    "(response.{name}.as_ref().map(|v| v.to_string()).as_deref() {} Some({literal}))",
+                    "({root}.{name}.as_ref().map(|v| v.to_string()).as_deref() {} Some({literal}))",
                     eq_op(rust_op)
                 )),
             }
@@ -773,31 +1003,10 @@ fn eq_op(rust_op: &str) -> &'static str {
     }
 }
 
-/// The field an operand refers to, when it is a bare field ref.
-fn operand_field(expr: &Expr, fields: &HashMap<String, FieldInfo>) -> Option<FieldInfo> {
-    match &expr.kind {
-        ExprKind::Name(name) => field_for(name, "", "", fields).ok(),
-        _ => None,
-    }
-}
-
-fn field_for(
-    name: &str,
-    capability: &str,
-    entity: &str,
-    fields: &HashMap<String, FieldInfo>,
-) -> Result<FieldInfo, String> {
-    fields.get(name).cloned().ok_or_else(|| {
-        format!(
-            "capability `{capability}`: `when` condition references \
-                 `{name}`, which is not a field of `{entity}`"
-        )
-    })
-}
-
-/// Render one field reference (the bare-ref arm of `lower`).
-fn field_ref(field: &FieldInfo) -> String {
-    format!("response.{}", field.rust_name)
+/// Render one field reference over its scope root (`response` for the own
+/// record, the injected scope's local otherwise).
+fn field_ref(root: &str, field: &FieldInfo) -> String {
+    format!("{root}.{}", field.rust_name)
 }
 
 fn strip_parens(text: &str) -> String {
@@ -999,10 +1208,63 @@ pub(crate) fn render_authorize_fn_with_states(
     record_available: bool,
     machine_states: &[String],
 ) -> Result<Option<String>, String> {
+    render_authorize_fn_with_injected(
+        snake,
+        op_name,
+        service,
+        capabilities,
+        condition,
+        response_type_path,
+        surface,
+        fields,
+        entity,
+        record_available,
+        machine_states,
+        &[],
+    )
+}
+
+/// [`render_authorize_fn_with_states`] with the op's injected-scope
+/// `when` paths resolved (issue #663): the gate becomes `async`, takes the
+/// `AppState` (the sibling query slot) and the session, loads every
+/// injected scope through the repository plane's own query, then evaluates
+/// the guard over the loaded records. `record_available` must hold — the
+/// injected ids ride the loaded response — and is refused otherwise.
+/// Empty `injected` renders byte-identically to
+/// [`render_authorize_fn_with_states`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_authorize_fn_with_injected(
+    snake: &str,
+    op_name: &str,
+    service: &str,
+    capabilities: &[String],
+    condition: Option<&str>,
+    response_type_path: &str,
+    surface: Option<&PolicySurface>,
+    fields: &HashMap<String, FieldInfo>,
+    entity: &str,
+    record_available: bool,
+    machine_states: &[String],
+    injected: &[InjectedScope],
+) -> Result<Option<String>, String> {
+    // The enum-literal namespace is module-global upstream: the injected
+    // machines' declared states bind as bare names exactly like the
+    // op entity's own (`TimecardRepository.timecardStatus == Approved`
+    // lowers `Approved` as the Timecard machine's literal).
+    let mut all_states: Vec<String> = machine_states.to_vec();
+    for scope in injected {
+        if let Some(machine) = &scope.machine {
+            for state in &machine.states {
+                if !all_states.contains(state) {
+                    all_states.push(state.clone());
+                }
+            }
+        }
+    }
     let lowered_condition = condition
         .map(|source| {
             let lowered =
-                lower_when_to_rust_with_states(source, op_name, entity, fields, machine_states)?;
+                lower_when_scoped(source, op_name, entity, fields, &all_states, injected)?;
             Ok::<_, String>((lowered, source.to_string()))
         })
         .transpose()?;
@@ -1042,53 +1304,127 @@ pub(crate) fn render_authorize_fn_with_states(
              refuses to emit an unguarded route"
         ));
     }
+    // An injected guard loads the related records off the response —
+    // without a record load there is no honest id source (fail closed,
+    // the same posture as the `when`-without-read refusal above).
+    if !injected.is_empty() && !record_available {
+        return Err(format!(
+            "service op `{op_name}` carries an injected-scope `when` guard, \
+             but its bound entity `{entity}` has no record load (its design \
+             surface exposes no `read`) — the guard's id source is the \
+             loaded record, so generation refuses"
+        ));
+    }
     let mut out = String::new();
-    // Without a record the gate is capability membership only: no
-    // response parameter to evaluate `when`s over (there are none —
-    // `needs_record` refused those above).
-    let response_param = if record_available {
-        format!("    response: &{response_type_path},\n")
-    } else {
-        String::new()
-    };
-    out.push_str(&format!(
-        "/// Authorization gate for `{op_name}` (service `{service}`, issue #590).\n\
-         ///\n\
-         /// Encodes the actor policy at generation time: capability\n\
-         /// membership{membership_note}\n\
-         /// API-key sessions bypass the policy gates (RLS scopes still\n\
-         /// apply) so contract suites and service callers keep working.\n\
-         #[allow(clippy::result_large_err)]\n\
-         fn service_op_{snake}_authorize(\n    \
-             role: &str,\n{response_param}\
-         ) -> Result<(), String> {{\n",
-        membership_note = if record_available {
-            ", `never_both` separation-of-duties conflicts, and\n\
-             /// per-grant `when` conditions evaluated over the loaded record."
+    let mut body = String::new();
+    if injected.is_empty() {
+        // Without a record the gate is capability membership only: no
+        // response parameter to evaluate `when`s over (there are none —
+        // `needs_record` refused those above).
+        let response_param = if record_available {
+            format!("    response: &{response_type_path},\n")
         } else {
-            " and\n\
-             /// `never_both` separation-of-duties conflicts (no record load — \
-             the bound\n\
-             /// entity exposes no `read`, so `when` conditions cannot be \
-             evaluated; the\n\
-             /// op body is a 501 seam regardless)."
-        },
-        response_param = response_param,
-    ));
-    if let (Some((lowered, _)), Some(message)) = (&lowered_condition, &condition_message) {
+            String::new()
+        };
         out.push_str(&format!(
+            "/// Authorization gate for `{op_name}` (service `{service}`, issue #590).\n\
+             ///\n\
+             /// Encodes the actor policy at generation time: capability\n\
+             /// membership{membership_note}\n\
+             /// API-key sessions bypass the policy gates (RLS scopes still\n\
+             /// apply) so contract suites and service callers keep working.\n\
+             #[allow(clippy::result_large_err)]\n\
+             fn service_op_{snake}_authorize(\n    \
+                 role: &str,\n{response_param}\
+             ) -> Result<(), String> {{\n",
+            membership_note = if record_available {
+                ", `never_both` separation-of-duties conflicts, and\n\
+                 /// per-grant `when` conditions evaluated over the loaded record."
+            } else {
+                " and\n\
+                 /// `never_both` separation-of-duties conflicts (no record load — \
+                 the bound\n\
+                 /// entity exposes no `read`, so `when` conditions cannot be \
+                 evaluated; the\n\
+                 /// op body is a 501 seam regardless)."
+            },
+            response_param = response_param,
+        ));
+    } else {
+        out.push_str(&format!(
+            "/// Authorization gate for `{op_name}` (service `{service}`, issue #590).\n\
+             ///\n\
+             /// Encodes the actor policy at generation time: capability\n\
+             /// membership, `never_both` separation-of-duties conflicts, and\n\
+             /// per-grant `when` conditions evaluated over the loaded record —\n\
+             /// plus the injected-scope `when` guard (issue #663): every\n\
+             /// injected scope loads through the repository plane's own query\n\
+             /// (RLS-scoped by the session context) before the guard evaluates.\n\
+             /// API-key sessions bypass the policy gates (RLS scopes still\n\
+             /// apply) so contract suites and service callers keep working.\n\
+             #[allow(clippy::result_large_err)]\n\
+             async fn service_op_{snake}_authorize(\n    \
+                 state: &AppState,\n    \
+                 api_key_info: &ApiKeyInfo,\n    \
+                 response: &{response_type_path},\n\
+             ) -> Result<(), String> {{\n    \
+                 let role = api_key_info.role.as_str();\n"
+        ));
+        for scope in injected {
+            let message = condition_message.as_deref().unwrap_or("\"guard denied\"");
+            // The own-record FK carries the injected id; an optional `refers`
+            // with no related row cannot satisfy the guard — the denial IS
+            // the guard's answer.
+            if scope.fk_optional {
+                body.push_str(&format!(
+                    "    let Some({local}_id) = response.{fk} else {{\n        \
+                         return Err({message}.to_string());\n    \
+                     }};\n",
+                    local = scope.local,
+                    fk = scope.fk_field,
+                    message = message,
+                ));
+            } else {
+                body.push_str(&format!(
+                    "    let {local}_id = response.{fk};\n",
+                    local = scope.local,
+                    fk = scope.fk_field,
+                ));
+            }
+            let auditable_clause = if scope.auditable { " false," } else { "" };
+            body.push_str(&format!(
+                "    // The guard reads `{root}.*` — load the related record through\n    \
+                     // the repository plane's own query (issue #663).\n    \
+                     let {local} = state.{slot}_queries\n        \
+                     .find_by_id({local}_id,{aud} api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())\n        \
+                     .await\n        \
+                     .map_err(|e| e.to_string())?;\n    \
+                     let Some({local}) = {local} else {{\n        \
+                         return Err({message}.to_string());\n    \
+                     }};\n",
+                root = scope.root,
+                local = scope.local,
+                slot = scope.slot,
+                aud = auditable_clause,
+                message = message,
+            ));
+        }
+    }
+    if let (Some((lowered, _)), Some(message)) = (&lowered_condition, &condition_message) {
+        body.push_str(&format!(
             "    // op-level `when` transition guard — business semantics apply \
              to every session\n\
              if !({lowered}) {{\n                \
                  return Err({message}.to_string());\n            }}\n"
         ));
     }
-    out.push_str(
+    body.push_str(
         "    if role == \"api_key\" {\n                \
              return Ok(());\n            \
          }\n\
          match role {\n",
     );
+    out.push_str(&body);
     let conflicts = surface
         .map(|policy| policy.sod_conflicts(capabilities))
         .unwrap_or_default();
@@ -1142,12 +1478,13 @@ pub(crate) fn render_authorize_fn_with_states(
                     break;
                 }
                 for when in whens.iter().flatten() {
-                    let lowered = lower_when_to_rust_with_states(
+                    let lowered = lower_when_scoped(
                         when,
                         capability,
                         entity,
                         fields,
                         machine_states,
+                        injected,
                     )?;
                     conditions.push(lowered);
                 }
@@ -1203,6 +1540,15 @@ pub struct BodyRenderContext {
     pub domain_types_crate: String,
     /// The Update-DTO wire-key casing.
     pub dto_casing: DtoKeyCasing,
+    /// The deployment topology is `workers` (issue #663): an injected-scope
+    /// `when` guard refuses. The #590 action handlers run in per-domain
+    /// worker crates whose `AppState` carries only its OWN domain's query
+    /// slots, so a cross-domain injected load (`state.{other_domain}_…`)
+    /// renders a field no worker crate has — E0599 at consumer build time,
+    /// silently. Same-domain loads would compile, but the plane refuses
+    /// both until the worker media/async story exists (#338's "guards stay
+    /// doc-only under workers" conservatism). Default `false`.
+    pub workers_topology: bool,
 }
 
 impl Default for BodyRenderContext {
@@ -1213,6 +1559,7 @@ impl Default for BodyRenderContext {
         Self {
             domain_types_crate: "domain_types".to_string(),
             dto_casing: DtoKeyCasing::default(),
+            workers_topology: false,
         }
     }
 }
@@ -1224,6 +1571,7 @@ impl BodyRenderContext {
         Self {
             domain_types_crate: project.identity.domain_types_crate.clone(),
             dto_casing: project.codegen.dto_key_casing,
+            workers_topology: project.is_workers_topology(),
         }
     }
 }
@@ -1378,7 +1726,39 @@ pub async fn routes_for_entity(
                 // #595 follow-up). `when`-conditioned ops on such entities
                 // are a generation error (fail closed).
                 let record_load = surface_ops.iter().any(|o| o == "read");
-                let authorize_fn = render_authorize_fn_with_states(
+                // Issue #663: resolve the op's injected-scope `when` paths
+                // into the per-scope plans the rendered gate loads (schema,
+                // domain, query slot, FK) plus the class fields the
+                // comparison lowers over. Unresolvable shapes are named
+                // generation errors — never a silently narrower guard.
+                let injected =
+                    resolve_injected_scopes(db, config, entity_title, op, &props, &design_surface)
+                        .await?;
+                // Issue #663, workers topology: the #590 action handlers
+                // run in per-domain worker crates whose AppState carries
+                // only its own domain's query slots — a cross-domain
+                // injected load renders a field no worker crate has
+                // (E0599 at consumer build, silently). The plane refuses
+                // both scopes until the worker async-AppState story
+                // exists (the #338 "guards stay doc-only under workers"
+                // conservatism).
+                if body.workers_topology && !injected.is_empty() {
+                    return Err(format!(
+                        "service op `{}` carries an injected-scope `when` guard, but the \
+                         deployment topology is `workers`: the action handlers run in \
+                         per-domain worker crates whose AppState carries only its own \
+                         domain's query slots, so the injected load cannot address the \
+                         `{}` aggregate — use the monolith topology for injected guards \
+                         (a recorded #663 deferral, not a silent break)",
+                        op.name,
+                        injected
+                            .first()
+                            .map(|scope| scope.root.as_str())
+                            .unwrap_or("injected")
+                    ));
+                }
+                let injected_guard = injected_guard_facts(op, &injected);
+                let authorize_fn = render_authorize_fn_with_injected(
                     &snake,
                     &op.name,
                     &service.name,
@@ -1392,6 +1772,7 @@ pub async fn routes_for_entity(
                     entity_title,
                     record_load,
                     &machine_states,
+                    &injected,
                 )?;
                 let params = if op.bodies.is_empty() {
                     Vec::new()
@@ -1433,6 +1814,8 @@ pub async fn routes_for_entity(
                     authorize_fn,
                     execution,
                     record_load,
+                    authorize_async: !injected.is_empty(),
+                    injected_guard,
                 });
             }
         }
@@ -1531,6 +1914,25 @@ pub async fn routes_for_entity(
                     }
                 };
                 let execution = child_execution(op, action, scope, &surface_ops, record_load);
+                // Issue #663: injected-scope guards are a SERVICE-op plane
+                // lowering — a child op's `when` types against the CHILD
+                // class as `self`, so an injected path there has no id
+                // source (the child's own path is the route anchor). A
+                // named generation error, never a silently narrower guard.
+                if op.condition_paths.iter().any(|path| {
+                    matches!(
+                        path.scope,
+                        codegraph_core::types::DddConditionScope::Injected { .. }
+                    )
+                }) {
+                    return Err(format!(
+                        "child operation `{}` of `{}` carries an injected-scope \
+                         `when` path — the child plane lowers own-record guards \
+                         only (the child row IS the guard's record); bind the \
+                         cross-entity guard on a root service operation instead",
+                        op.name, design.class
+                    ));
+                }
                 // The policy surface (capability membership + the op-level
                 // `when`, which types against the CHILD class as `self`).
                 // `add` carries no loaded record, so a guard there was seamed
@@ -1572,12 +1974,386 @@ pub async fn routes_for_entity(
                     authorize_fn,
                     execution,
                     record_load,
+                    authorize_async: false,
+                    injected_guard: None,
                 });
             }
         }
     }
 
     Ok(routes)
+}
+
+// ── Injected-scope `when` guards (issue #663) ──────────────────────────
+
+/// Resolve an op's injected-scope `when` paths (issue #663) into the
+/// per-scope plans the rendered gate loads: the injected class's schema
+/// (exact → `+type_suffix`), its owning domain and query slot, the
+/// auditable `find_by_id` arity, and the own-record FK carrying the id.
+/// Every unresolvable shape is a named generation error — the closed
+/// subset refuses, it never silently narrows. An op with no injected
+/// paths resolves to an empty vec without touching the graph again.
+#[allow(clippy::too_many_arguments)]
+async fn resolve_injected_scopes(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    entity_title: &str,
+    op: &codegraph_core::types::DddServiceOperation,
+    props: &[PropertyNode],
+    design_surface: &Option<DddDesignSurface>,
+) -> Result<Vec<InjectedScope>, String> {
+    let type_suffix = config.defaults.type_suffix.clone();
+    // Distinct injected scopes, in the condition's declaration order.
+    let mut requested: Vec<(String, String)> = Vec::new();
+    for path in &op.condition_paths {
+        if let codegraph_core::types::DddConditionScope::Injected { repository, class } =
+            &path.scope
+            && !requested.iter().any(|(r, c)| r == repository && c == class)
+        {
+            requested.push((repository.clone(), class.clone()));
+        }
+    }
+    if requested.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut scopes = Vec::with_capacity(requested.len());
+    for (repository, class) in &requested {
+        let Some(title) = schema_title_for_class(db, class, &type_suffix).await else {
+            return Err(format!(
+                "service op `{}`: the `when` guard's injected path `{repository}.…` names \
+                 class `{class}`, which resolves to no schema in the graph — the injected \
+                 repository's design must bind a modeled class",
+                op.name
+            ));
+        };
+        let Some(injected_schema) = db.get_schema(&title).await.map_err(|e| e.to_string())? else {
+            return Err(format!(
+                "service op `{}`: the injected class `{class}` resolved to `{title}`, \
+                 which is not in the graph",
+                op.name
+            ));
+        };
+        let Some(injected_domain) = injected_schema.domain.clone() else {
+            return Err(format!(
+                "service op `{}`: the injected class `{class}` (`{title}`) carries no \
+                 domain on its schema — the AppState query slot cannot be resolved",
+                op.name
+            ));
+        };
+        // A child-role injected entity exposes no plain `find_by_id` (its
+        // plane is parent-scoped) — refuse with the modeling fix named.
+        let injected_cfg = config
+            .domains
+            .get(&injected_domain)
+            .and_then(|entry| entry.get_entity_config(&title));
+        if injected_cfg.and_then(|cfg| cfg.role.as_deref()) == Some("child") {
+            return Err(format!(
+                "service op `{}`: the injected repository `{repository}` binds `{title}`, a \
+                 child-role entity whose query plane is parent-scoped (`find_by_id_scoped`) — \
+                 an injected `when` path cannot address it; bind the guard on the root \
+                 aggregate's service operation instead",
+                op.name
+            ));
+        }
+        // The injected plane must expose `read` — the guard's load rides
+        // the repository plane's own query (the #449 invariant).
+        let surface_ops = design_surface
+            .as_ref()
+            .and_then(|s| s.operations_for(&title))
+            .unwrap_or_default();
+        if !surface_ops.iter().any(|o| o == "read") {
+            return Err(format!(
+                "service op `{}`: the injected repository `{repository}` binds `{title}`, \
+                 whose design surface exposes no `read` — the guard's load has no query to \
+                 ride; declare `findById` on the injected repository",
+                op.name
+            ));
+        }
+        // The id source: exactly ONE scalar entity-ref feature on the op's
+        // entity targeting the injected class. Zero or ambiguous is a
+        // named error — the guard has no honest record to load.
+        let class_leaf = short_class_name(class);
+        let fks: Vec<&PropertyNode> = props
+            .iter()
+            .filter(|p| {
+                !p.is_array
+                    && p.effective_kind()
+                        == Some(codegraph_type_contracts::RefClassificationKind::EntityReference)
+                    && p.ref_target.as_deref().is_some_and(|target| {
+                        target == title
+                            || target == class_leaf
+                            || format!("{class_leaf}{type_suffix}") == target
+                    })
+            })
+            .collect();
+        let fk = match fks.as_slice() {
+            [] => {
+                return Err(format!(
+                    "service op `{}`: the `when` guard reads `{repository}.…` (class \
+                     `{class_leaf}`), but its bound entity `{entity_title}` carries no \
+                     `{class_leaf}`-typed reference — the guard has no id source; add a \
+                     `refers {class_leaf} timecard`-style feature to `{entity_title}`",
+                    op.name
+                ));
+            }
+            [only] => (only.rust_field_name.clone(), only.is_nullable),
+            many => {
+                let names: Vec<String> = many.iter().map(|p| p.rust_field_name.clone()).collect();
+                return Err(format!(
+                    "service op `{}`: `{entity_title}` carries more than one \
+                     `{class_leaf}`-typed reference (`{}`) — the injected guard's id source is \
+                     ambiguous; point the guard at exactly one reference (or a dedicated \
+                     service parameter, a recorded follow-up)",
+                    op.name,
+                    names.join("`, `")
+                ));
+            }
+        };
+        let injected_fields = db.get_properties(&title).await.map_err(|e| e.to_string())?;
+        let machine = design_surface.as_ref().and_then(|s| s.machine_for(&title));
+        scopes.push(InjectedScope {
+            root: repository.clone(),
+            local: to_snake_case(repository),
+            slot: format!("{injected_domain}_{}", injected_schema.pg_table_name),
+            auditable: super::super::api::handler::resolve_is_auditable(
+                db,
+                &title,
+                config,
+                &injected_domain,
+            )
+            .await
+            .map_err(|e| e.to_string())?,
+            fk_field: fk.0,
+            fk_optional: fk.1,
+            fields: fields_for(&injected_fields),
+            machine: machine.map(|m| InjectedMachine {
+                states: m.states().into_iter().map(str::to_string).collect(),
+                field: m.field,
+                initial: m.initial,
+            }),
+        });
+    }
+    Ok(scopes)
+}
+
+/// The compact guard facts the hurl contract's planner needs (issue #663):
+/// the THREE-verdict model — [`FreshFixtureGuard::Satisfied`] (every
+/// comparison machine-decided and passing on a fresh row), [`FreshFixtureGuard::Denied`]
+/// (an optional FK — the fresh row's FK is NULL and the gate denies before
+/// evaluating — or a machine-decided comparison failing on the fresh row),
+/// or [`FreshFixtureGuard::Unverifiable`] (any comparison the collector
+/// does not fully understand). `None` when the op carries no injected
+/// scopes.
+fn injected_guard_facts(
+    op: &codegraph_core::types::DddServiceOperation,
+    scopes: &[InjectedScope],
+) -> Option<InjectedGuard> {
+    if scopes.is_empty() {
+        return None;
+    }
+    let source = op.condition.as_deref()?;
+    let verdict = |fresh: FreshFixtureGuard| {
+        Some(InjectedGuard {
+            condition: source.to_string(),
+            fresh_fixture: fresh,
+        })
+    };
+    // An optional FK denies BEFORE any comparison is evaluated: the create
+    // body omits nullable props, so the fresh row's FK is NULL and the
+    // rendered `let Some(..) else` fires. Provable 403 regardless of the
+    // condition's content.
+    if scopes.iter().any(|scope| scope.fk_optional) {
+        return verdict(FreshFixtureGuard::Denied);
+    }
+    let parsed = phero_expr::parse(source);
+    let Some(ast) = parsed.ast.filter(|_| parsed.errors.is_empty()) else {
+        return verdict(FreshFixtureGuard::Unverifiable);
+    };
+    let mut comparisons = Vec::new();
+    // Only comparisons under PLAIN AND from the root are collected (a
+    // failing one there decides the whole guard); negation, `||`
+    // composition and arithmetic set `fully_understood = false` and their
+    // subtrees are not pushed — uncollected ⇒ Unverifiable (omit, never
+    // guess).
+    let mut fully_understood = true;
+    collect_injected_comparisons(&ast, scopes, &mut comparisons, &mut fully_understood, true);
+    // Every pushed comparison is machine-decidable (the collector filters);
+    // a decided comparison FAILING on the fresh row means, under AND
+    // composition (the only composition collected), the guard is false.
+    let machine_decided: Vec<bool> = comparisons
+        .iter()
+        .map(|(scope_index, _, op, literal)| {
+            let machine = scopes[*scope_index]
+                .machine
+                .as_ref()
+                .expect("the collector only pushes machine-decidable comparisons");
+            match op {
+                BinOp::Eq => literal == &machine.initial,
+                BinOp::Ne => literal != &machine.initial,
+                _ => false,
+            }
+        })
+        .collect();
+    if machine_decided.iter().any(|passes| !passes) {
+        return verdict(FreshFixtureGuard::Denied);
+    }
+    if !fully_understood || comparisons.is_empty() {
+        return verdict(FreshFixtureGuard::Unverifiable);
+    }
+    verdict(FreshFixtureGuard::Satisfied)
+}
+
+/// The `(scope index, field, operator, literal)` triples of every injected
+/// eq/ne comparison the planner can decide. ONLY comparisons under PLAIN
+/// AND from the root are pushed, and ONLY machine-decidable ones (the
+/// scope carries a machine and the field is its machine field): anything
+/// else in a plain-AND context — ordering comparisons (`hours > 100`),
+/// same-scope field-to-field, float/bool/date literals, non-machine
+/// fields — is a conjunct that can fail on the fresh row while the
+/// collected set reads Satisfied, so it sets `fully_understood = false`
+/// and the planner's verdict becomes Unverifiable: the contract OMITS the
+/// leg — a guess in either direction fails the suite just as hard.
+/// Negation flips polarity and `||` may pass via the own-record side, so
+/// their whole subtrees are undecided too. Pure own-record leaf
+/// comparisons are skipped without marking: the planner's injected
+/// verdict does not reason about them (the own-machine state is the
+/// existing state-aware planner's input; a non-transition op's own-record
+/// conjuncts are the documented pre-#663 surface).
+#[allow(clippy::too_many_arguments)]
+fn collect_injected_comparisons(
+    expr: &Expr,
+    scopes: &[InjectedScope],
+    out: &mut Vec<(usize, String, BinOp, String)>,
+    fully_understood: &mut bool,
+    plain_and: bool,
+) {
+    // A decidable literal is a bare name (an enum member), a string, or an
+    // integer — everything else (floats, bools, dates, arithmetic) leaves
+    // the fresh value undecidable.
+    let literal_side = |e: &Expr| -> Option<String> {
+        match &e.kind {
+            ExprKind::Name(name) => Some(name.clone()),
+            ExprKind::String(text) => Some(text.clone()),
+            ExprKind::Int(value) => Some(value.to_string()),
+            _ => None,
+        }
+    };
+    // Machine-decidable at COLLECT time: the scope carries a machine and
+    // the field is its machine field. A non-machine Eq/Ne conjunct's fresh
+    // value is fixture-seeded (required ints seed 42, strings seed
+    // `contract-{table}`, codelists seed values[0]) — deciding it at the
+    // fold would guess.
+    let machine_decidable = |index: usize, field: &str| -> bool {
+        scopes[index].machine.as_ref().is_some_and(|machine| {
+            let snake = to_snake_case(&machine.field);
+            let names = [machine.field.as_str(), snake.as_str()];
+            names.contains(&field)
+        })
+    };
+    match &expr.kind {
+        ExprKind::Binary { op, lhs, rhs } => {
+            let lhs_injected = injected_scope_of(lhs, scopes);
+            let rhs_injected = injected_scope_of(rhs, scopes);
+            let touches = lhs_injected.is_some() || rhs_injected.is_some();
+            if plain_and && matches!(*op, BinOp::Eq | BinOp::Ne) && touches {
+                // An injected-side Eq/Ne conjunct under plain AND: it can
+                // decide the whole guard — understand it or mark undecided.
+                // The operands of a comparison are values, not conjuncts —
+                // nothing more to collect either way.
+                if let (Some((index, field)), Some(literal)) = (lhs_injected, literal_side(rhs)) {
+                    // NOTE: `literal` may be any bare Name — including an
+                    // OWN-record field when a future relaxation lifts the
+                    // cross-scope field-to-field refusal (the lowering
+                    // refuses that pair today, so this push is unreachable
+                    // for it). If that refusal ever lifts, re-derive the
+                    // freshness reasoning here — a decided-but-meaningless
+                    // comparison would silently mis-verdict (#749's
+                    // follow-up ledger).
+                    if machine_decidable(index, &field) {
+                        out.push((index, field, *op, literal));
+                    } else {
+                        *fully_understood = false;
+                    }
+                    return;
+                }
+                if let (Some(literal), Some((index, field))) = (literal_side(lhs), rhs_injected) {
+                    // Flip so the literal is compared against the field.
+                    let flipped = match op {
+                        BinOp::Eq => BinOp::Eq,
+                        _ => BinOp::Ne,
+                    };
+                    if machine_decidable(index, &field) {
+                        out.push((index, field, flipped, literal));
+                    } else {
+                        *fully_understood = false;
+                    }
+                    return;
+                }
+                // An injected comparison the collector cannot represent —
+                // ordering, same-scope field-to-field, float/bool/date
+                // literals, cross-scope pairs — is a dropped conjunct that
+                // can fail on the fresh row while the collected set reads
+                // Satisfied. Undecided, never dropped-silent.
+                *fully_understood = false;
+                return;
+            }
+            if plain_and && touches {
+                // An ordering (or otherwise non-Eq/Ne) injected-side
+                // conjunct under plain AND: the fresh value may be derivable
+                // (required ints seed 42) but the planner does not model it
+                // — undecided, never dropped-silent. The operands are
+                // values, not conjuncts — nothing more to collect.
+                *fully_understood = false;
+                return;
+            }
+            if !touches && !matches!(*op, BinOp::And | BinOp::Or) {
+                // A pure own-record LEAF comparison (its operands are
+                // values — nothing injected anywhere in it): skip without
+                // marking. AND/OR nodes always recurse: their operands ARE
+                // the conjuncts.
+                return;
+            }
+            match op {
+                // `||`: the guard may pass via the own-record side — the
+                // collected set no longer decides the whole condition, and
+                // nothing under it is plain-AND from the root.
+                BinOp::Or => *fully_understood = false,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => *fully_understood = false,
+                _ => {}
+            }
+            let child_and = plain_and && matches!(*op, BinOp::And);
+            collect_injected_comparisons(lhs, scopes, out, fully_understood, child_and);
+            collect_injected_comparisons(rhs, scopes, out, fully_understood, child_and);
+        }
+        ExprKind::Unary { op, expr } => {
+            // Negation flips polarity: an un-negated collect would decide
+            // the comparison upside down, and nothing under it is
+            // plain-AND from the root.
+            if matches!(op, UnOp::Not) {
+                *fully_understood = false;
+            }
+            collect_injected_comparisons(expr, scopes, out, fully_understood, false);
+        }
+        _ => {}
+    }
+}
+
+/// The injected scope `expr`'s FEATURE-ACCESS root names, if it is a bare
+/// `Root.field` chain (the collect shape).
+fn injected_scope_of(expr: &Expr, scopes: &[InjectedScope]) -> Option<(usize, String)> {
+    let ExprKind::FeatureAccess {
+        receiver,
+        name,
+        optional_safe: false,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let ExprKind::Name(root) = &receiver.kind else {
+        return None;
+    };
+    let index = scopes.iter().position(|scope| &scope.root == root)?;
+    Some((index, name.value.clone()))
 }
 
 /// Whether the entity's config declares it a nested child of `parent_title`
@@ -2988,6 +3764,76 @@ pub async fn body_refusals(
     Ok(refusals)
 }
 
+/// Injected-scope `when` guards (issue #663): every guarded operation's
+/// injected paths must resolve (schema, domain, query slot, exactly-one
+/// FK id source) and the whole condition must lower. The same refusal
+/// class the generation path raises — this pre-generation pass is what
+/// makes it fail BEFORE any tree is written (the `body_refusals`
+/// precedent).
+pub async fn guard_refusals(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    workers_topology: bool,
+) -> Result<Vec<String>, GraphError> {
+    let models = db.get_ddd_models().await?;
+    if models.iter().all(|model| {
+        model.services.iter().all(|service| {
+            service.operations.iter().all(|op| {
+                !op.condition_paths.iter().any(|path| {
+                    matches!(
+                        path.scope,
+                        codegraph_core::types::DddConditionScope::Injected { .. }
+                    )
+                })
+            })
+        })
+    }) {
+        return Ok(Vec::new());
+    }
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                let guarded = op.condition_paths.iter().any(|path| {
+                    matches!(
+                        path.scope,
+                        codegraph_core::types::DddConditionScope::Injected { .. }
+                    )
+                });
+                if !guarded || op.is_protected {
+                    continue;
+                }
+                if let Some(title) = bind_entity(model, op, db, &type_suffix).await {
+                    titles.insert(title);
+                }
+            }
+        }
+    }
+    let mut refusals = Vec::new();
+    for title in titles {
+        let Ok(Some(schema)) = db.get_schema(&title).await else {
+            continue;
+        };
+        let Some(domain) = schema.domain.clone() else {
+            continue;
+        };
+        if !config.domains.contains_key(domain.as_str()) {
+            continue;
+        }
+        let body = BodyRenderContext {
+            workers_topology,
+            ..Default::default()
+        };
+        if let Err(reason) = routes_for_entity(db, config, &domain, &title, &body).await {
+            refusals.push(reason);
+        }
+    }
+    refusals.sort();
+    refusals.dedup();
+    Ok(refusals)
+}
+
 /// The Ask 1 diagnostic: service operations that emit no API surface —
 /// `protected` ops and ops that bind no entity. Returned strings are
 /// human-readable warnings (empty = clean).
@@ -3512,6 +4358,7 @@ postgres_schema = "payroll"
                 body_receiver: None,
                 transition: None,
                 child_scope: None,
+                condition_paths: Vec::new(),
                 ordinal: 0,
             }
         };
@@ -3610,6 +4457,7 @@ postgres_schema = "payroll"
             body_receiver: None,
             transition: None,
             child_scope: None,
+            condition_paths: Vec::new(),
             ordinal: 0,
         }
     }
@@ -4268,6 +5116,7 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             body_receiver: None,
             transition: None,
             child_scope: None,
+            condition_paths: Vec::new(),
             ordinal: 0,
         }
     }
@@ -4370,5 +5219,219 @@ workflow = { status_field = "run_status", initial_state = "Draft" }
             Some("PayRunType"),
             "param-typed signature"
         );
+    }
+
+    // ── Injected-scope guard facts (issue #663) ────────────────────────
+
+    fn injected_scope(fk_optional: bool) -> InjectedScope {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "timecardStatus".to_string(),
+            FieldInfo {
+                rust_name: "timecard_status".to_string(),
+                kind: FieldKind::Codelist,
+                optional: false,
+            },
+        );
+        fields.insert(
+            "hours".to_string(),
+            FieldInfo {
+                rust_name: "hours".to_string(),
+                kind: FieldKind::Integer,
+                optional: false,
+            },
+        );
+        InjectedScope {
+            root: "TimecardRepository".to_string(),
+            local: "timecard_repository".to_string(),
+            slot: "guardpay_timecard".to_string(),
+            auditable: false,
+            fk_field: "timecard_id".to_string(),
+            fk_optional,
+            fields,
+            machine: Some(InjectedMachine {
+                field: "timecardStatus".to_string(),
+                states: vec![
+                    "Pending".to_string(),
+                    "Approved".to_string(),
+                    "Rejected".to_string(),
+                ],
+                initial: "Pending".to_string(),
+            }),
+        }
+    }
+
+    fn guard_op(condition: &str) -> codegraph_core::types::DddServiceOperation {
+        codegraph_core::types::DddServiceOperation {
+            name: "submit".to_string(),
+            return_type: None,
+            return_multiplicity: None,
+            params: Vec::new(),
+            delegation_target: None,
+            delegation_operation: None,
+            capabilities: Vec::new(),
+            is_protected: false,
+            condition: Some(condition.to_string()),
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
+            transition: None,
+            child_scope: None,
+            condition_paths: Vec::new(),
+            ordinal: 0,
+        }
+    }
+
+    #[test]
+    fn fresh_fixture_verdicts_are_provable_never_guessed() {
+        let scopes = vec![injected_scope(false)];
+        // eq with the machine's initial state: the fresh row PASSES → the
+        // contract keeps the normal legs.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus == Pending"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Satisfied);
+        // ne with a NON-initial state: `Pending != Approved` holds on the
+        // fresh row → Satisfied.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus != Approved"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Satisfied);
+        // eq with a non-initial state: the fresh row (initial `Pending`)
+        // FAILS the comparison → provable denial, pin 403.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus == Approved"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Denied);
+        // An OPTIONAL FK denies BEFORE any comparison is evaluated (the
+        // create body omits nullable props → the fresh FK is NULL): 403
+        // regardless of the comparison's content — including an
+        // eq-initial comparison that would otherwise read `Satisfied`
+        // (the exact reviewer case: planner 200 vs handler 403).
+        let optional = vec![injected_scope(true)];
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.timecardStatus == Pending"),
+            &optional,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Denied);
+    }
+
+    #[test]
+    fn undecided_comparisons_omit_the_leg_never_guess() {
+        let scopes = vec![injected_scope(false)];
+        // A NON-machine injected field (`hours > 8`): the fresh value
+        // (fixture-seeded 42) is derivable but the planner does not model
+        // it — Unverifiable, and the contract OMITS the leg (a guessed
+        // 403 would come back 200; a guessed 200 would come back 403 —
+        // a wrong pin fails the suite in either direction).
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Draft && TimecardRepository.hours > 8"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // Negation flips polarity: an un-negated collect would decide the
+        // comparison upside down — Unverifiable.
+        let facts = injected_guard_facts(
+            &guard_op("!(TimecardRepository.timecardStatus == Approved)"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // `||` composition: the guard may pass via the own-record side —
+        // the collected set no longer decides the whole condition.
+        let facts = injected_guard_facts(
+            &guard_op("payRunStatus == Posted || TimecardRepository.timecardStatus == Approved"),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // No injected scopes at all → no guard facts.
+        assert!(injected_guard_facts(&guard_op("payRunStatus == Draft"), &[]).is_none());
+    }
+
+    #[test]
+    fn mixed_machine_and_undecidable_conjuncts_never_misverdict() {
+        // Round-2 review counterexamples: a machine comparison MIXED with
+        // an undecidable one must not let the decided side guess the
+        // verdict for the whole condition.
+        let scopes = vec![injected_scope(false)];
+        // Non-machine Eq/Ne conjunct: the fresh `hours` is fixture-seeded
+        // (42) — `!= 8` PASSES on the fresh row, so a Denied fold would
+        // pin 403 while the handler 200s (the reviewer's exact case).
+        let facts = injected_guard_facts(
+            &guard_op(
+                "TimecardRepository.timecardStatus == Pending && TimecardRepository.hours != 8",
+            ),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // An ORDERING conjunct dropped beside a passing machine comparison:
+        // fresh `hours` = 42 fails `> 100`, so a Satisfied fold would pin
+        // 200 while the handler 403s.
+        let facts = injected_guard_facts(
+            &guard_op(
+                "TimecardRepository.timecardStatus == Pending && TimecardRepository.hours > 100",
+            ),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Unverifiable);
+        // A failing machine conjunct beside an undecided sibling is still
+        // PROVABLE: under plain AND the failing conjunct decides the whole
+        // guard — Denied stands.
+        let facts = injected_guard_facts(
+            &guard_op(
+                "TimecardRepository.timecardStatus == Approved && TimecardRepository.hours > 8",
+            ),
+            &scopes,
+        )
+        .expect("facts");
+        assert_eq!(facts.fresh_fixture, FreshFixtureGuard::Denied);
+    }
+
+    #[test]
+    fn cross_scope_field_comparisons_refuse() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "status".to_string(),
+            FieldInfo {
+                rust_name: "status".to_string(),
+                kind: FieldKind::String,
+                optional: false,
+            },
+        );
+        let mut own = scopes_for_test(&fields);
+        let scopes = vec![injected_scope(false)];
+        let _ = &mut own;
+        // An own-record field vs an injected field: no honest root for
+        // both sides — named refusal (the message covers two injected
+        // scopes too).
+        let err = lower_when_scoped(
+            "status == TimecardRepository.timecardStatus",
+            "SubmitPayRun",
+            "PayRunType",
+            &fields,
+            &[],
+            &scopes,
+        )
+        .unwrap_err();
+        assert!(err.contains("across different records"), "{err}");
+    }
+
+    fn scopes_for_test(
+        fields: &HashMap<String, FieldInfo>,
+    ) -> (&str, &HashMap<String, FieldInfo>, &[InjectedScope]) {
+        ("PayRunType", fields, &[])
     }
 }

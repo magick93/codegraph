@@ -271,8 +271,56 @@ pub struct DddServiceOperation {
     /// operation serializes exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_scope: Option<DddChildRef>,
+    /// The resolved field paths of the `when` condition (phero-ir
+    /// `condition_paths`, issue pherolang#180 / #663): injected-scope paths
+    /// always (the repository→class binding is design knowledge), own-record
+    /// paths only in a module with several machine-bearing designs.
+    /// Serde-defaulted and omitted when empty, so every pre-#663 operation
+    /// serializes exactly as before. A warm graph cache persisted before
+    /// this field existed serves none — hence the GRAPH_FORMAT_VERSION
+    /// bump that cold-re-ingests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub condition_paths: Vec<DddConditionPath>,
     /// Declaration order within the service.
     pub ordinal: usize,
+}
+
+/// The resolved scope of one [`DddConditionPath`] (phero-ir
+/// `ConditionScope`, issue pherolang#180 / #663): a field of the op's own
+/// record, or a field reached through an injected repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DddConditionScope {
+    /// A field of the op's bound entity.
+    OwnRecord,
+    /// A field reached through an injected repository: the injection name
+    /// exactly as declared (`inject TimecardRepository;` — the condition
+    /// path's root) and the class the repository design binds,
+    /// package-qualified.
+    Injected {
+        /// The injection name exactly as declared.
+        repository: String,
+        /// The class the repository design binds (package-qualified).
+        class: String,
+    },
+}
+
+/// One resolved field path of an operation's `when` condition (phero-ir
+/// `ConditionPath`, issue pherolang#180 / #663): where the path resolves,
+/// the field the dotted remainder names, and the field's declared type.
+/// The lowering contract consumers build on, so they never re-parse the
+/// condition source string.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DddConditionPath {
+    /// Where the path resolves.
+    pub scope: DddConditionScope,
+    /// The field path — one segment (`timecardStatus`) or a dotted chain
+    /// (`holder.name`) under the scope's root.
+    pub field: String,
+    /// The field's declared type as phero-ir `TypeRef` JSON. The payload
+    /// stays OPAQUE here (codegraph-core may not depend on phero-ir);
+    /// generation rehydrates it when it needs the slot type.
+    pub field_type: serde_json::Value,
 }
 
 /// The child-scoped target of a `children <Class>` operation (phero-ir

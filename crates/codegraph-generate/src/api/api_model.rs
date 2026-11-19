@@ -199,10 +199,21 @@ pub async fn resolve_entity_operations(
     // (crewbase compile gate: `no method 'delete' on CommandHandler`).
     // Designs are authored against mox classes, whose titles equal their
     // rust type names.
-    if let Ok(surface) = crate::ddd::design::DddDesignSurface::from_graph(querier).await
-        && let Some(design_ops) = surface.operations_for(entity_name)
-    {
-        return design_ops;
+    if let Ok(surface) = crate::ddd::design::DddDesignSurface::from_graph(querier).await {
+        if let Some(design_ops) = surface.operations_for(entity_name) {
+            return design_ops;
+        }
+        // The surface is keyed by resolved TITLE; rust-name-keyed callers
+        // (handlers, routers, openapi pass `rust_type_name`) miss when the
+        // mox bridge's `Type` suffix separates the two, and the fallback
+        // silently re-adds operations the design's repository does not
+        // implement — the crewbase class again, hit by the #663 guard
+        // fixture whose Timecard design declares no `delete`. The
+        // rust-name alias resolves INSIDE the surface (the api-model
+        // resource plane is entities-keyed and empty in mox-first runs).
+        if let Some(design_ops) = surface.operations_for_rust_name(entity_name) {
+            return design_ops;
+        }
     }
 
     resolved

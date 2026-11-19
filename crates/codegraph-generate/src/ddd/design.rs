@@ -225,6 +225,43 @@ impl DddDesignSurface {
         self.repositories.get(schema_title)
     }
 
+    /// The design-mapped operation set for an entity addressed by its RUST
+    /// type name — the title with the mox bridge's `Type` suffix stripped
+    /// ONCE and PascalCased (`Timecard` for `TimecardType`), the same rule
+    /// the ingest applies to build `rust_type_name`
+    /// (`sanitize_rust_type_name(strip_suffix(title, suffix))`; the
+    /// sanitize step's leading-digit strip and 200-char cap apply to a
+    /// handful of exotic titles and are not replicated here — those titles
+    /// miss the alias and fall back exactly as before). Handlers, routers,
+    /// and the OpenAPI plane key entities by the rust name while the
+    /// surface is keyed by resolved TITLE; a miss here would silently fall
+    /// back to the config defaults and re-add operations the design's
+    /// repository does not implement (the crewbase compile-gate class, hit
+    /// again by the #663 guard fixture whose Timecard design declares no
+    /// `delete`). Exact titles still win; the alias candidates resolve in
+    /// sorted-title order (deterministic — a genuine two-titles-one-rust-
+    /// name collision picks the alphabetically first, documented).
+    pub fn operations_for_rust_name(&self, rust_name: &str) -> Option<Vec<String>> {
+        if let Some(ops) = self.operations_for(rust_name) {
+            return Some(ops);
+        }
+        let mut candidates: Vec<&String> = self
+            .designs
+            .keys()
+            .filter(|title| {
+                // `strip_suffix` strips ONCE — `trim_end_matches` (the
+                // resource-name convention) would over-strip repeated
+                // suffixes (`TaskTypeType` → `Task`, whose rust name is
+                // `TaskType`).
+                let stripped = title.strip_suffix("Type").unwrap_or(title);
+                codegraph_naming::to_pascal_case(stripped) == rust_name
+            })
+            .collect();
+        candidates.sort();
+        let title = candidates.first()?;
+        self.operations_for(title)
+    }
+
     /// The search definition over the entity with this schema title.
     pub fn search_for(&self, schema_title: &str) -> Option<&DddSearchNode> {
         self.searches.get(schema_title)
@@ -1261,6 +1298,52 @@ mod tests {
         let ops = surface.operations_for("BookType").expect("design exists");
         assert!(ops.is_empty());
         assert!(surface.operations_for("Unknown").is_none());
+    }
+
+    #[test]
+    fn rust_name_keyed_callers_resolve_the_type_suffixed_design() {
+        // Issue #663 compile-gate finding (the crewbase class): handlers,
+        // routers, and openapi key entities by `rust_type_name` — the title
+        // with the mox bridge's `Type` suffix stripped (`Timecard` for
+        // `TimecardType`) — while the surface is keyed by TITLE. A miss
+        // falls back to the config defaults and silently re-adds operations
+        // the design's repository does not implement (its Timecard design
+        // declares no `delete`, yet the emitted DELETE handler called a
+        // command plane that gated it out — E0599).
+        let surface = DddDesignSurface::from_models(&[model(
+            vec![design("Timecard", Some("TimecardType"), "entity")],
+            vec![repository(
+                "TimecardRepository",
+                "Timecard",
+                vec![
+                    builtin("findById", "findById", 0),
+                    builtin("findAll", "findAll", 1),
+                    builtin("save", "save", 2),
+                ],
+            )],
+            vec![],
+        )]);
+        // The exact-title lookup still wins.
+        assert_eq!(
+            surface.operations_for("TimecardType"),
+            Some(vec![
+                "create".to_string(),
+                "update".to_string(),
+                "read".to_string(),
+                "list".to_string()
+            ])
+        );
+        // The rust name resolves the same design — NO `delete` (the
+        // design's repository declares none).
+        let ops = surface
+            .operations_for_rust_name("Timecard")
+            .expect("the rust-name alias resolves the design");
+        assert!(
+            !ops.contains(&"delete".to_string()),
+            "the design's op set must gate the route plane: {ops:?}"
+        );
+        // A rust name no design claims stays `None` (defaults flow).
+        assert!(surface.operations_for_rust_name("Shelf").is_none());
     }
 
     #[test]

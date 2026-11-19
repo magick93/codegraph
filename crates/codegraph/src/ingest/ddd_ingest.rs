@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    DddApplicationNode, DddChildRef, DddDesignFlags, DddDesignNode, DddDocumentField,
-    DddModelGraph, DddModuleNode, DddPagination, DddParam, DddRepositoryNode,
-    DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation,
-    DddTransitionRef,
+    DddApplicationNode, DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags,
+    DddDesignNode, DddDocumentField, DddModelGraph, DddModuleNode, DddPagination, DddParam,
+    DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode,
+    DddServiceOperation, DddTransitionRef,
 };
 use phero_driver::{CompileInputs, DomainImports, SchemaImports, SigilImports, compile_ddd_str};
 
@@ -610,6 +610,27 @@ fn service_operation_node(
             class: scope.class.clone(),
             action: scope.action.clone(),
         }),
+        // Issue #663 (pherolang#180): the resolved field paths of the
+        // `when` condition, mirrored typed→typed (the `DddTransitionRef`
+        // discipline — codegraph-core may not name phero-ir types). The
+        // field's declared type rides as opaque `TypeRef` JSON.
+        condition_paths: op
+            .condition_paths
+            .iter()
+            .map(|path| DddConditionPath {
+                scope: match &path.scope {
+                    phero_ir::ddd::ConditionScope::OwnRecord => DddConditionScope::OwnRecord,
+                    phero_ir::ddd::ConditionScope::Injected { repository, class } => {
+                        DddConditionScope::Injected {
+                            repository: repository.clone(),
+                            class: class.clone(),
+                        }
+                    }
+                },
+                field: path.field.clone(),
+                field_type: to_json(&path.field_type),
+            })
+            .collect(),
         ordinal,
     }
 }
