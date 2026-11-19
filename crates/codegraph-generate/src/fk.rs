@@ -101,6 +101,19 @@ pub async fn resolve_parent_fk_column_same_domain(
     if let Some(fk) = entity_cfg.and_then(|ec| ec.parent_ref.clone()) {
         return Some(fk);
     }
+    // 1.5 AUTHORED aggregate membership (issue #666 slice 4b): a design
+    // carrying an authored membership nests the entity under its authored
+    // root even without config — the FK column is the refers-derived
+    // candidate pointing AT the authored parent (config still owned the FK
+    // column above). Derived memberships never re-route: without an
+    // authored clause the helper answers None and the role gate below
+    // decides exactly as before.
+    if let Some(authored) =
+        crate::ddd::aggregate::authored_routing_parent(db, config, domain, schema_title).await
+    {
+        return Some(authored.fk_column);
+    }
+    // If manual config says role=child with a parent, derive FK from parent name
     if let Some(ec) = entity_cfg
         && ec.role.as_deref() == Some("child")
         && let Some(ref parent_title) = ec.parent

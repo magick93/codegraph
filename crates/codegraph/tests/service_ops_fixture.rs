@@ -284,6 +284,13 @@ pub fn write_child_ops_fixture() -> Fixture {
 /// [`write_child_ops_fixture`] with a caller-supplied config — the
 /// fail-closed variant (no `role = "child"`) needs the SAME model.
 pub fn write_child_ops_fixture_with(config_text: &str) -> Fixture {
+    write_child_ops_fixture_with_sources(config_text, CHILD_OPS_DDD)
+}
+
+/// [`write_child_ops_fixture_with`] with a caller-supplied design source —
+/// the authored-boundary variants (issue #666 slice 4b) re-declare the same
+/// module with `root` / `aggregate <Root>` clauses.
+pub fn write_child_ops_fixture_with_sources(config_text: &str, ddd_source: &str) -> Fixture {
     let dir = TempDir::new().unwrap();
     let root = dir.path().to_path_buf();
     std::mem::forget(dir); // the fixture outlives the guard on purpose
@@ -292,7 +299,7 @@ pub fn write_child_ops_fixture_with(config_text: &str) -> Fixture {
     let mox = root.join("childops.mox");
     fs::write(&mox, CHILD_OPS_MOX).unwrap();
     let ddd = root.join("childops.ddd");
-    fs::write(&ddd, CHILD_OPS_DDD).unwrap();
+    fs::write(&ddd, ddd_source).unwrap();
     let actor = root.join("policy.actor");
     fs::write(&actor, CHILD_OPS_ACTOR).unwrap();
     let config = root.join("domains.toml");
@@ -304,6 +311,255 @@ pub fn write_child_ops_fixture_with(config_text: &str) -> Fixture {
         actor,
         config,
     }
+}
+
+// ── Issue #666 slice 4b: authored aggregate boundaries ─────────────────
+
+/// [`CHILD_OPS_DDD`] with the AUTHORED boundary clauses (DD4): `root` on
+/// the root design and `aggregate PayRunType` on the child design. Upstream
+/// Rule 6 forbids a repository on a NON-ROOT design ("only aggregate roots
+/// may declare a repository" — the sweep pins the same rule), so the
+/// authored member carries NO repository: its op set is empty by design.
+/// The routing/warning facts (authored origin, nesting verdict) survive on
+/// the graph mirror; a REPOSITORY-bearing authored member — the full child
+/// plane — is exercised by [`authored_boundary_graph`] (the slice-1 mirror
+/// contract slice 4b consumes).
+pub fn child_ops_ddd_with_authored_boundary() -> String {
+    CHILD_OPS_DDD
+        .replace(
+            "        entity PayRunType scaffold repository PayRunRepository {",
+            "        entity PayRunType scaffold root repository PayRunRepository {",
+        )
+        .replace(
+            "        entity PayRunLineType scaffold repository PayRunLineRepository {\n            findById;\n            findAll;\n            save;\n            delete;\n        }",
+            "        entity PayRunLineType aggregate PayRunType",
+        )
+        // The cross-aggregate seam op delegated to the child's repository,
+        // which Rule 6 just removed — the authored variants don't exercise
+        // it (the CHILD_OPS fixture keeps its own).
+        .replace(
+            "            addUnscoped => PayRunLineRepository.save capability AddUnscopedLine;\n",
+            "",
+        )
+}
+
+/// The authored-boundary config: mox-first with NO `role = "child"` — the
+/// design's authored membership is the ONLY nesting declaration, so slice
+/// 4b's routing preference is the whole surface.
+pub const AUTHORED_BOUNDARY_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+"#;
+
+/// The authored child with a config parent DISAGREEMENT (slice 4b WARN
+/// iii): the design authors `aggregate PayRunType` while config declares
+/// `parent = "PayRunLineAdjustmentType"`. Authored wins for routing (the
+/// child nests under the pay run); the WARN records the override.
+pub const AUTHORED_BOUNDARY_MISMATCH_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+
+[domains.payroll.entity_config.PayRunLineType]
+role = "child"
+parent = "PayRunLineAdjustmentType"
+parent_ref = "pay_run_id"
+"#;
+
+/// The authored ROOT vs config child disagreement (slice 4b WARN ii): the
+/// child's design authors `aggregate PayRunType` — proving `PayRunType` an
+/// aggregate root by its member's declaration — while config declares
+/// `PayRunType` itself a child of the adjustment entity. Authored wins:
+/// the pay run stays a top-level root.
+pub const AUTHORED_ROOT_VS_CONFIG_CHILD_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "model-schemas"
+postgres_schema = "payroll"
+
+[domains.payroll.entity_config.PayRunType]
+role = "child"
+parent = "PayRunLineAdjustmentType"
+parent_ref = "pay_run_line_adjustment_id"
+"#;
+
+/// The REPOSITORY-bearing authored member as a HAND-BUILT graph mirror
+/// (issue #666 slice 4b). Upstream Rule 6 forbids a repository on a
+/// non-root design ("only aggregate roots may declare a repository"), so
+/// the compiler front door can never produce this shape — but the slice-1
+/// mirror contract (`DddDesignNode.aggregate_boundary` + repositories)
+/// carries it for stale graphs, hand-built artifacts, and future compiler
+/// evolution, and slice 4b's consumers MUST consume the MIRROR. Built from
+/// [`CHILD_OPS_MOX`]'s schemas (the refers pair projects the real
+/// `pay_run_id` FK + parent candidates) plus:
+/// - the root design: `is_root = Some(true)`, a full repository, and the
+///   `children PayRunType` child ops (add/save/remove with `child_scope`);
+/// - the member design: `is_root = Some(false)`, an `Authored` membership
+///   naming `PayRunType`, and its own full repository.
+pub fn authored_boundary_graph() -> codegraph_core::types::DddModelGraph {
+    use codegraph_core::types::{
+        DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddChildRef,
+        DddServiceOperation,
+    };
+
+    let class_json = |name: &str| {
+        serde_json::json!({
+            "type": "class",
+            "value": {"package": "payroll", "name": name}
+        })
+    };
+    let design = |class: &str, title: &str, boundary: Option<DddAggregateBoundary>| {
+        codegraph_core::types::DddDesignNode {
+            application: "Payroll".to_string(),
+            module: "payroll".to_string(),
+            class: class.to_string(),
+            resolved_title: Some(title.to_string()),
+            stereotype: "entity".to_string(),
+            is_abstract: false,
+            flags: codegraph_core::types::DddDesignFlags {
+                scaffold: true,
+                ..Default::default()
+            },
+            machine_json: None,
+            child_operations: Vec::new(),
+            aggregate_boundary: boundary,
+            invariants: Vec::new(),
+            ordinal: 0,
+        }
+    };
+    let builtin =
+        |name: &str, builtin: &str, ordinal: usize| codegraph_core::types::DddRepositoryOperation {
+            name: name.to_string(),
+            builtin: Some(builtin.to_string()),
+            return_type: None,
+            return_multiplicity: None,
+            params: Vec::new(),
+            ordinal,
+            is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
+        };
+    let repository = |name: &str, class: &str| codegraph_core::types::DddRepositoryNode {
+        application: "Payroll".to_string(),
+        name: name.to_string(),
+        design_class: class.to_string(),
+        operations: vec![
+            builtin("findById", "findById", 0),
+            builtin("findAll", "findAll", 1),
+            builtin("save", "save", 2),
+            builtin("delete", "delete", 3),
+        ],
+    };
+    let child_op = |name: &str, action: &str, ordinal: usize| DddServiceOperation {
+        name: name.to_string(),
+        return_type: Some(serde_json::json!({"type": "primitive", "value": "boolean"})),
+        return_multiplicity: None,
+        params: vec![codegraph_core::types::DddParam {
+            name: "line".to_string(),
+            type_json: class_json("PayRunLineType"),
+            multiplicity: None,
+        }],
+        delegation_target: None,
+        delegation_operation: None,
+        capabilities: Vec::new(),
+        is_protected: false,
+        condition: None,
+        emits: Vec::new(),
+        invokes: Vec::new(),
+        throws: Vec::new(),
+        bodies: Default::default(),
+        body_receiver: None,
+        transition: None,
+        child_scope: Some(DddChildRef {
+            feature: "lines".to_string(),
+            class: "payroll.PayRunLineType".to_string(),
+            action: action.to_string(),
+        }),
+        condition_paths: Vec::new(),
+        ordinal,
+    };
+
+    let mut root = design(
+        "PayRunType",
+        "PayRunType",
+        Some(DddAggregateBoundary {
+            is_root: Some(true),
+            membership: None,
+        }),
+    );
+    root.child_operations = vec![
+        child_op("addLine", "add", 0),
+        child_op("saveLine", "save", 1),
+        child_op("removeLine", "remove", 2),
+    ];
+    let member = design(
+        "PayRunLineType",
+        "PayRunLineType",
+        Some(DddAggregateBoundary {
+            is_root: Some(false),
+            membership: Some(DddAggregateMembership {
+                root_json: class_json("PayRunType"),
+                origin: DddAggregateOrigin::Authored,
+            }),
+        }),
+    );
+
+    codegraph_core::types::DddModelGraph {
+        source_path: "authored_boundary.ddd".to_string(),
+        application: codegraph_core::types::DddApplicationNode {
+            name: "Payroll".to_string(),
+            base: Some("payroll".to_string()),
+            source_path: "authored_boundary.ddd".to_string(),
+        },
+        modules: vec![codegraph_core::types::DddModuleNode {
+            application: "Payroll".to_string(),
+            name: "payroll".to_string(),
+            ordinal: 0,
+        }],
+        designs: vec![root, member],
+        repositories: vec![
+            repository("PayRunRepository", "PayRunType"),
+            repository("PayRunLineRepository", "PayRunLineType"),
+        ],
+        services: Vec::new(),
+        searches: Vec::new(),
+    }
+}
+
+/// Ingest the hand-built authored-boundary graph over the mox-bridged
+/// schemas: the bridge projects the real classes/properties/parent
+/// candidates, the mirror carries the authored boundaries + repositories.
+pub async fn ingest_authored_boundary_graph(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
+    let engine = codegraph_grafeo::GrafeoEngine::in_memory().unwrap();
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+    let mox_stats = codegraph::ingest::mox_ingest::ingest_mox_files(
+        &engine,
+        &engine,
+        std::slice::from_ref(&fixture.mox),
+        &config,
+        &config.defaults.type_suffix,
+    )
+    .await
+    .unwrap()
+    .stats;
+    assert_eq!(mox_stats.skipped, 0, "mox classes must bridge the schemas");
+    engine
+        .ingest_ddd_model(&authored_boundary_graph())
+        .await
+        .expect("the hand-built authored-boundary graph ingests");
+    engine
 }
 
 /// Ingest the aggregate-child fixture: mox bridge → `.ddd` design → actor

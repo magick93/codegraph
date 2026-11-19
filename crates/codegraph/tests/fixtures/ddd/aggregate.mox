@@ -1,0 +1,23 @@
+package nz.example.shelf
+
+enum ShelfState {
+    Open = 0
+    Sealed = 1
+}
+
+class ShelfType {
+    String shelfId
+    ShelfState state
+    contains BookType[] books
+}
+
+class BookType {
+    String bookId
+    String [0..1] title
+}
+
+class BookmarkType {
+    String bookmarkId
+    int position
+    refers ShelfType[0..1] shelf
+}

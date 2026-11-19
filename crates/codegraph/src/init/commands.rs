@@ -860,7 +860,10 @@ fn check_rosetta_files(
 /// Error-severity diagnostics (or a missing artifact) are hard failures
 /// with the per-file rendered output; warnings count as soft. Returns the
 /// (hard_failures, soft_warnings) contributed.
-fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
+fn check_ddd_files(
+    ddd_files: &[PathBuf],
+    domain_config: Option<&codegraph_config::DomainConfig>,
+) -> (usize, usize) {
     let mut hard = 0;
     let mut soft = 0;
     for path in ddd_files {
@@ -942,6 +945,21 @@ fn check_ddd_files(ddd_files: &[PathBuf]) -> (usize, usize) {
                                 }
                             }
                         }
+                    }
+                    // Authored aggregate boundaries vs domains.toml (issue
+                    // #666 slice 4b, the run path's `aggregate_boundary`
+                    // WARN parity): doctor holds the COMPILED model and the
+                    // config — never the graph — so the compiled-model
+                    // predicate warns on the config-side disagreements
+                    // (authored member vs config parent; proven root vs
+                    // config child). WARN only, never hard.
+                    for warning in
+                        codegraph_generate::ddd::aggregate::aggregate_boundary_warnings_from_compiled_model(
+                            model, domain_config,
+                        )
+                    {
+                        soft += 1;
+                        println!("WARN ddd — {warning}");
                     }
                 }
             }
@@ -1881,7 +1899,7 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
     // each design when provided (issue #449). Not a model-source check, so
     // it never feeds model_warnings.
     if !args.ddd_files.is_empty() {
-        let (hard, soft) = check_ddd_files(&args.ddd_files);
+        let (hard, soft) = check_ddd_files(&args.ddd_files, domain_config.as_ref().ok());
         hard_failures += hard;
         soft_warnings += soft;
     }

@@ -684,6 +684,94 @@ emission rides the `rules` generator's plan membership (a plan without
 `rules` carries no invariant predicates — slice 4's call sites must gate
 on the same membership).
 
+**Slice 4b — authored boundaries warn on disagreement and drive child
+routing (landed)**: `ddd/aggregate.rs` (codegraph-generate) is the
+graph-only consumer plane for the slice-1 mirrors. One resolver answers
+every consumer: `AuthoredBoundaryIndex::from_graph` (authored member →
+in-domain-resolved root title + the root's domain; a class PROVEN root by
+a member's authored declaration; contradictory member-proven-root graphs
+keep the ROOT verdict — upstream E0386 — and authored chains deeper than
+one routed level degrade deterministically), `authored_routing_parent`
+(parent title + FK column — config `parent_ref` still owns the FK when it
+names one, else the refers-derived candidate pointing AT the authored
+parent), and `authored_root_proven` (the per-entity root proof).
+
+- **The WARN classes** (`aggregate_boundary_warnings`, Warning severity,
+  the `dead_surface_warnings` posture; wired as check #18
+  `check_aggregate_boundaries` in `validate.rs`'s `run_with_topology` —
+  the tuple widened r17 → r18): (i) authored member whose route plane
+  keeps a top-level (root) surface while it carries its own repository;
+  (ii) authored ROOT vs config `role = "child"`; (iii) authored member vs
+  a config `parent` that is not the authored root (authored WINS for
+  routing; the WARN records the override); (iv) the authored root class
+  resolving to no schema. Every WARN names the class, the authored fact,
+  and the derived fact; `Derived` memberships NEVER warn.
+- **Authored-root detection is the member-authored proof, deliberately**:
+  the phero-ir artifact records the origin of a ROOT verdict nowhere
+  (roots carry `isAggregateRoot` alone; only a non-root's membership
+  carries `origin`), so "authored root" is keyed on a sibling design
+  authoring `aggregate <ThisClass>` — the detectable subset that never
+  fires on the containment-derived verdict most entities carry.
+- **Routing preference order** (all planes read ONE resolver, so they
+  cannot drift): authored member > config `role = "child"` + `parent` >
+  graph parent candidates; a proven root overrides a config child
+  declaration (top-level root); undecided means EXACTLY today's
+  derivation, byte-identical (every gate is `is_empty()`/`None` on models
+  without authored boundaries). Consumption sites: the ROUTER's Source 0
+  in BOTH `build_router_context` copies (`apply_authored_nesting`, setting
+  role/parent/children with the FK column; Source 1 skips proven roots);
+  the HANDLER topology (`apply_authored_parent` between the config and
+  graph arms — re-points the parent, clears it on the root override);
+  `fk.rs::resolve_parent_fk_column_same_domain` step 1.5 (the authored
+  FK feeds the query/command/repository/cornucopia/media planes in ONE
+  place — `find_by_id_scoped` exists for authored children, matching the
+  nested two-uuid handlers); the service-op plane (`routes_for_entity`'s
+  `scoped` + the child-op nesting gate `is_nested_child_of` + the
+  injected-scope child refusal); and the hurl-side twin
+  `resolve_nesting_chain` (authored hop when config is silent, same fk
+  resolution — the contract cannot disagree with the router). The #692
+  `child_parent_load` needs NO change: it reads the parent through the
+  declaring root design, and the fail-closed gate consumes the parent's
+  parent_ref from the same helper.
+- **Doctor parity**: `check_ddd_files` (now taking the config) warns via
+  `aggregate_boundary_warnings_from_compiled_model` — the compiled-model
+  half of (ii) and (iii) only (doctor holds no graph, so (iv)/(i) stay
+  run-path-only). WARN only, never hard.
+- **Upstream Rule 6 shapes the fixtures**: only aggregate roots may
+  declare a repository, so a compiler-legal authored member carries NO
+  repository (and no `scaffold`) — its op set is empty by design and the
+  authored clauses are exactly `entity X root …` / `entity Y aggregate X`
+  (a bare design body is a dto-member-block parse error). The
+  repository-bearing authored member — the full child plane with child
+  ops + parent load — is reachable ONLY through the slice-1 graph mirror:
+  `service_ops_fixture.rs::authored_boundary_graph` hand-builds the
+  `DddModelGraph` over the mox-bridged schemas and slice 4b consumes the
+  MIRROR (stale graphs / hand-built artifacts / future compiler
+  evolution). Compiler-legal fixtures: `tests/fixtures/ddd/aggregate.{mox,ddd}`
+  (sweep compiles them clean + the sweep pin asserts the artifact origins)
+  and `child_ops_ddd_with_authored_boundary` (authored clauses over the
+  child-ops fixture for the WARN/router pins).
+- **Byte identity**: no authored boundary means zero movement everywhere
+  (the fk/router/handler/service-op/hurl arms are all `None`-gated).
+  Gates: `cargo test -p codegraph --test service_ops_tests` (33, incl.
+  the mirror-origin, routing+parent-load, and both WARN-over-router pins)
+  + `--test init_tests ::
+  doctor_warns_on_aggregate_boundary_config_disagreements` (the
+  baseline-delta doctor pin) + the in-crate `ddd::aggregate` KATs (10:
+  root_json parsing, index extraction, chain degradation, contradiction,
+  MockEngine WARN walker) + `--test pherolang_fixture_sweep` + the
+  standing canaries re-verified green with no re-bless.
+- **Deferred to the enforcement slices**: depth-2 authored chains (the
+  depth cap degrades them to one routed level; the depth-2 authored
+  handler surface is the recorded follow-up); slice 4d's enforcement (its
+  handler call sites must consume `ddd::aggregate`'s resolver, NOT
+  re-derive); slice 4e's hurl legs. The authored root of an entity is
+  cheapest at handler-build time via
+  `crate::ddd::aggregate::authored_routing_parent(db, config, domain,
+  title)` — one cached `get_ddd_models` read; on the compiled-model side,
+  `authored_root_class_name` over the membership's `root_json`
+  (`{"type":"class","value":{…,"name":…}}`, the `value.name` leaf).
+
 ## Service ops lower to API surface (issue #590)
 
 `.ddd` service operations are the application surface, not documentation:

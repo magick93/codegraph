@@ -153,8 +153,28 @@ pub async fn routes_for_entity(
     let id_param = crate::api::router::param_name_from_path_segment(
         &crate::api::api_model::resolve_path_segment(entity_cfg, &schema),
     );
-    let scoped =
-        (entity_cfg.and_then(|cfg| cfg.role.as_deref()) == Some("child")).then_some("parent_id");
+    // The route's parent anchor mirrors the ROUTER's Source-0/Source-1
+    // precedence (issue #666 slice 4b): an authored member nests under its
+    // authored root (authored wins over a config parent); a class PROVEN
+    // root by a member's authored declaration stays top-level even when
+    // config declares it a child. Undecided boundaries keep the config
+    // shape exactly.
+    let authored_routing =
+        crate::ddd::aggregate::authored_routing_parent(db, config, domain, entity_title).await;
+    let authored_proven_root = authored_routing.is_none()
+        && crate::ddd::aggregate::authored_root_proven(
+            db,
+            &config.defaults.type_suffix,
+            entity_title,
+        )
+        .await;
+    let scoped = if authored_proven_root {
+        None
+    } else if authored_routing.is_some() {
+        Some("parent_id")
+    } else {
+        (entity_cfg.and_then(|cfg| cfg.role.as_deref()) == Some("child")).then_some("parent_id")
+    };
     let auditable = crate::api::handler::resolve_is_auditable(db, entity_title, config, domain)
         .await
         .map_err(|e| e.to_string())?;
@@ -377,12 +397,21 @@ pub async fn routes_for_entity(
                     continue;
                 }
                 // The child's plane only nests under the parent when the
-                // MODEL says so (config `role = "child"` + `parent` +
-                // `parent_ref`): the parent ownership load, the two-uuid
-                // path, and the scoped read all derive from it. Without it
-                // there is no aggregated route to emit — warn (never a
-                // top-level route that silently drops the parent anchor).
-                if !is_nested_child_of(entity_cfg, parent_title, &design.class, &type_suffix) {
+                // MODEL says so: config `role = "child"` + `parent` +
+                // `parent_ref`, or — since issue #666 slice 4b — the AUTHORED
+                // aggregate boundary (an authored membership naming this
+                // root; authored wins over config). The parent ownership
+                // load, the two-uuid path, and the scoped read all derive
+                // from it. Without either there is no aggregated route to
+                // emit — warn (never a top-level route that silently drops
+                // the parent anchor).
+                if !is_nested_child_of(
+                    entity_cfg,
+                    parent_title,
+                    &design.class,
+                    &type_suffix,
+                    authored_routing.as_ref().map(|p| p.parent_title.as_str()),
+                ) {
                     crate::ddd::design::warn_once(
                         &format!("child-op-nesting:{}::{}", design.class, op.name),
                         &format!(
@@ -572,11 +601,19 @@ async fn resolve_injected_scopes(
         };
         // A child-role injected entity exposes no plain `find_by_id` (its
         // plane is parent-scoped) — refuse with the modeling fix named.
+        // The AUTHORED child (issue #666 slice 4b) is parent-scoped too:
+        // its query plane carries the parent-scoped read through the same
+        // authored nesting the router and handler consume.
         let injected_cfg = config
             .domains
             .get(&injected_domain)
             .and_then(|entry| entry.get_entity_config(&title));
-        if injected_cfg.and_then(|cfg| cfg.role.as_deref()) == Some("child") {
+        let injected_authored =
+            crate::ddd::aggregate::authored_routing_parent(db, config, &injected_domain, &title)
+                .await;
+        if injected_cfg.and_then(|cfg| cfg.role.as_deref()) == Some("child")
+            || injected_authored.is_some()
+        {
             return Err(format!(
                 "service op `{}`: the injected repository `{repository}` binds `{title}`, a \
                  child-role entity whose query plane is parent-scoped (`find_by_id_scoped`) — \
@@ -886,15 +923,23 @@ fn injected_scope_of(expr: &Expr, scopes: &[InjectedScope]) -> Option<(usize, St
     Some((index, name.value.clone()))
 }
 
-/// Whether the entity's config declares it a nested child of `parent_title`
-/// (config `role = "child"`, `parent` naming the root, `parent_ref` naming
-/// the back-ref column) — the WS4 nesting contract.
+/// Whether the entity nests under `parent_title`: config `role = "child"`
+/// with `parent` and `parent_ref` (the WS4 contract), or — since issue
+/// #666 slice 4b — the design's AUTHORED aggregate membership naming this
+/// root. Authored WINS over config; an authored parent that names a
+/// DIFFERENT root leaves the config check to decide, and the WARN walker
+/// records the disagreement.
 fn is_nested_child_of(
     entity_cfg: Option<&codegraph_config::EntityConfig>,
     parent_title: &str,
     parent_class: &str,
     type_suffix: &str,
+    authored_parent_title: Option<&str>,
 ) -> bool {
+    // Authored first: the authored root title is pre-resolved in-domain.
+    if authored_parent_title == Some(parent_title) {
+        return true;
+    }
     let Some(cfg) = entity_cfg else {
         return false;
     };

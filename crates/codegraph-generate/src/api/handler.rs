@@ -430,6 +430,7 @@ impl EntityGenerator for HandlerGenerator {
             config,
             &domain,
             &entity_name,
+            schema_title,
             stripped_title,
             entity_cfg,
             &self.parent_candidates,
@@ -666,11 +667,13 @@ impl Default for HandlerTopology {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // TODO(#751): gather the title spellings into one param struct
 async fn resolve_handler_topology(
     db: &dyn GraphQuerier,
     config: &DomainConfig,
     domain: &str,
     entity_name: &str,
+    schema_title: &str,
     stripped_title: &str,
     entity_cfg: Option<&EntityConfig>,
     parent_candidates: &[ParentCandidate],
@@ -685,6 +688,13 @@ async fn resolve_handler_topology(
 
     // 1. Check manual config for parent (takes priority over graph)
     apply_config_parent(db, config, domain, entity_cfg, &mut topo).await;
+
+    // 1.5 AUTHORED aggregate membership (issue #666 slice 4b): the design's
+    // authored boundary wins over config for the parent — an authored
+    // member re-points under its authored root; a class PROVEN root by a
+    // member's authored declaration drops a config child role back to a
+    // top-level root. Undecided boundaries change nothing.
+    apply_authored_parent(db, config, domain, schema_title, &mut topo).await;
 
     // 2. Fall back to graph parent_candidates if manual config didn't resolve parent.
     // Only nest when the parent is in the same domain (matching router behavior).
@@ -764,6 +774,54 @@ async fn apply_config_parent(
             topo.parent_domain = Some(domain.to_string());
         }
         topo.role = "child".to_string();
+    }
+}
+
+/// Issue #666 slice 4b: the AUTHORED aggregate boundary wins over config
+/// for the handler's parent topology. An authored member re-points under
+/// its authored root (config still owns the FK column when it names one —
+/// `parent_ref` is seeded before this runs and preserved); a class PROVEN
+/// root by a member's authored declaration drops a config child role back
+/// to a top-level root. Undecided boundaries change nothing.
+async fn apply_authored_parent(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    topo: &mut HandlerTopology,
+) {
+    let type_suffix = config.defaults.type_suffix.clone();
+    if let Some(authored) =
+        crate::ddd::aggregate::authored_routing_parent(db, config, domain, schema_title).await
+    {
+        if let Ok(Some(parent_schema)) = db
+            .get_schema_in_domain(&authored.parent_title, domain)
+            .await
+        {
+            topo.parent_path_segment = Some(resolve_path_segment(None, &parent_schema));
+            topo.parent_module_name = Some(parent_schema.pg_table_name.clone());
+            topo.parent_domain = Some(domain.to_string());
+        } else {
+            let parent_name = super::router::strip_suffix(&authored.parent_title, &type_suffix);
+            topo.parent_path_segment = Some(codegraph_naming::to_kebab_case(parent_name));
+            topo.parent_module_name = Some(codegraph_naming::to_snake_case(parent_name));
+            topo.parent_domain = Some(domain.to_string());
+        }
+        if topo.parent_ref.is_none() {
+            topo.parent_ref = Some(authored.fk_column);
+        }
+        topo.role = "child".to_string();
+        return;
+    }
+    // Authored-root override: proven root + config child → top-level root.
+    if topo.role == "child"
+        && crate::ddd::aggregate::authored_root_proven(db, &type_suffix, schema_title).await
+    {
+        topo.role = "root".to_string();
+        topo.parent_path_segment = None;
+        topo.parent_module_name = None;
+        topo.parent_domain = None;
+        topo.parent_ref = None;
     }
 }
 

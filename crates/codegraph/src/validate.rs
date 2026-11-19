@@ -37,8 +37,7 @@ impl ValidationPass {
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17) =
-            tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -56,6 +55,7 @@ impl ValidationPass {
             Self::check_service_op_guards(db, config, workers_topology),
             Self::check_invariants(db, config),
             Self::check_child_add_parent_load(db, config),
+            Self::check_aggregate_boundaries(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -75,6 +75,7 @@ impl ValidationPass {
         issues.extend(r15);
         issues.extend(r16);
         issues.extend(r17);
+        issues.extend(r18);
         issues
     }
 
@@ -152,6 +153,28 @@ impl ValidationPass {
                 severity: Severity::Error,
                 entity: "(child op parent load)".to_string(),
                 check: "child_op_parent_load",
+                message,
+            })
+            .collect()
+    }
+
+    /// Authored aggregate boundaries (DD4, issue #666 slice 4b): the
+    /// authored verdict and the config/route plane disagree — WARN only
+    /// (the `dead_surface_warnings` posture; the routing itself consumes
+    /// the authored verdict, so the WARN records the override or the
+    /// unresolvable shape, it never blocks).
+    async fn check_aggregate_boundaries(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let warnings =
+            codegraph_generate::ddd::aggregate::aggregate_boundary_warnings(db, config).await;
+        warnings
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(aggregate boundary)".to_string(),
+                check: "aggregate_boundary",
                 message,
             })
             .collect()

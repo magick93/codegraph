@@ -1213,12 +1213,27 @@ async fn resolve_nesting_chain(
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(&current.title));
-        let Some(parent_title) = ec.and_then(|e| e.parent.clone()) else {
+        // The parent hop's source: config (role = "child" + parent) first,
+        // then the AUTHORED aggregate boundary (issue #666 slice 4b) when
+        // config is silent — the same precedence the router's Source 0/1
+        // apply, so the contract cannot disagree with the router.
+        let mut parent_title = ec.and_then(|e| e.parent.clone());
+        let mut fk_json_name = ec.and_then(|e| e.parent_ref.clone());
+        if parent_title.is_none() || ec.and_then(|e| e.role.as_deref()) != Some("child") {
+            parent_title = None;
+            fk_json_name = None;
+        }
+        if parent_title.is_none()
+            && let Some(authored) =
+                crate::ddd::aggregate::authored_routing_parent(db, config, domain, &current.title)
+                    .await
+        {
+            parent_title = Some(authored.parent_title);
+            fk_json_name = Some(authored.fk_column);
+        }
+        let Some(parent_title) = parent_title else {
             break;
         };
-        if ec.and_then(|e| e.role.as_deref()) != Some("child") {
-            break;
-        }
         let parent = match db.get_schema_in_domain(&parent_title, domain).await {
             Ok(Some(parent)) => parent,
             _ => break,
@@ -1226,7 +1241,7 @@ async fn resolve_nesting_chain(
         if !visited.insert(parent.title.clone()) {
             break; // cycle — stop walking
         }
-        let fk_json_name = ec.and_then(|e| e.parent_ref.clone()).unwrap_or_else(|| {
+        let fk_json_name = fk_json_name.unwrap_or_else(|| {
             format!(
                 "{}_id",
                 codegraph_naming::to_snake_case(parent.rust_type_name.as_str())

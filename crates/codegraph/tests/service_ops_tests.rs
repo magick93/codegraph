@@ -26,9 +26,10 @@ use tempfile::TempDir;
 use fixture::{
     DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, RELEASE_DDD,
     guard_fixture_with_ambiguous_fk, guard_fixture_with_deep_path, guard_fixture_without_fk,
-    ingest, ingest_binding, ingest_child_ops, ingest_guard, read, run_generation,
-    run_generation_result, tempdir, write_binding_fixture, write_binding_fixture_with,
-    write_child_ops_fixture, write_child_ops_fixture_with, write_fixture_in, write_guard_fixture,
+    ingest, ingest_authored_boundary_graph, ingest_binding, ingest_child_ops, ingest_guard, read,
+    run_generation, run_generation_result, tempdir, write_binding_fixture,
+    write_binding_fixture_with, write_child_ops_fixture, write_child_ops_fixture_with,
+    write_child_ops_fixture_with_sources, write_fixture_in, write_guard_fixture,
     write_mox_first_fixture_in,
 };
 
@@ -2003,4 +2004,340 @@ async fn child_add_without_a_parent_by_id_load_fails_closed_naming_the_parent() 
         rendered.contains("addLine") && rendered.contains("find_by_id"),
         "the generation error must name the child op and the missing query: {rendered}"
     );
+}
+
+// ── Issue #666 slice 4b: authored aggregate boundaries ─────────────────
+
+/// The AUTHORED verdict rides the graph: `root` on the root design and
+/// `aggregate PayRunType` on the child mirror as `is_root` + an
+/// `Authored`-origin membership (slice 1) — the origin field is what the
+/// slice 4b consumers key on.
+#[tokio::test]
+async fn authored_aggregate_boundary_mirrors_with_its_origin() {
+    let fixture = write_child_ops_fixture_with_sources(
+        fixture::AUTHORED_BOUNDARY_DOMAINS_TOML,
+        &fixture::child_ops_ddd_with_authored_boundary(),
+    );
+    let engine = ingest_child_ops(&fixture).await;
+    let models = engine.get_ddd_models().await.unwrap();
+
+    let root = models[0]
+        .designs
+        .iter()
+        .find(|d| d.class == "PayRunType")
+        .expect("the root design");
+    let root_boundary = root.aggregate_boundary.as_ref().expect("root verdict");
+    assert_eq!(root_boundary.is_root, Some(true), "root verdict mirrors");
+    assert!(
+        root_boundary.membership.is_none(),
+        "a root carries no membership"
+    );
+
+    let child = models[0]
+        .designs
+        .iter()
+        .find(|d| d.class == "PayRunLineType")
+        .expect("the child design");
+    let child_boundary = child.aggregate_boundary.as_ref().expect("member verdict");
+    assert_eq!(child_boundary.is_root, Some(false));
+    let membership = child_boundary
+        .membership
+        .as_ref()
+        .expect("the authored membership");
+    assert_eq!(
+        membership.origin,
+        codegraph_core::types::DddAggregateOrigin::Authored,
+        "the authored clause is the origin slice 4b keys on"
+    );
+    assert_eq!(
+        membership.root_json.get("type").and_then(|t| t.as_str()),
+        Some("class"),
+        "the root rides as the adjacently tagged TypeRef JSON"
+    );
+    assert_eq!(
+        membership
+            .root_json
+            .pointer("/value/name")
+            .and_then(|n| n.as_str()),
+        Some("PayRunType"),
+        "the authored root class name is the value.name leaf"
+    );
+
+    // The unauthored twin: a design without an authored clause never
+    // carries an Authored membership (the derived origin is informational).
+    let fixture2 = write_child_ops_fixture();
+    let engine2 = ingest_child_ops(&fixture2).await;
+    let models2 = engine2.get_ddd_models().await.unwrap();
+    let line = models2[0]
+        .designs
+        .iter()
+        .find(|d| d.class == "PayRunLineType")
+        .expect("the unauthored child design");
+    assert!(
+        line.aggregate_boundary.as_ref().is_none_or(|b| b
+            .membership
+            .as_ref()
+            .is_none_or(|m| m.origin != codegraph_core::types::DddAggregateOrigin::Authored)),
+        "a design without an authored clause never carries an Authored membership"
+    );
+}
+
+/// (a) The authored membership is the ONLY nesting declaration: with NO
+/// config `role = "child"`, the child-op routes still emit (the nesting
+/// gate consumes the authored verdict) with the collection-add parent load
+/// resolved, the router plane nests the child under the authored root, and
+/// the generated tree carries the nested handler surface. The
+/// repository-bearing authored member rides the HAND-BUILT graph mirror —
+/// upstream Rule 6 forbids a member repository, so the compiler front door
+/// cannot produce this shape (see [`fixture::authored_boundary_graph`]);
+/// the mirror is the slice-1 contract slice 4b consumes.
+#[tokio::test]
+async fn authored_boundary_nests_the_child_and_resolves_the_parent_load() {
+    let fixture = write_child_ops_fixture_with_sources(
+        fixture::AUTHORED_BOUNDARY_DOMAINS_TOML,
+        &fixture::child_ops_ddd_with_authored_boundary(),
+    );
+    let engine = ingest_authored_boundary_graph(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+
+    // The service-op plane: the child ops emit with the add's parent load
+    // resolved (issue #692 facts ride the same nesting verdict).
+    let routes = codegraph_generate::ddd::service_ops::routes_for_entity(
+        &engine,
+        &config,
+        "payroll",
+        "PayRunLineType",
+        &codegraph_generate::ddd::service_ops::BodyRenderContext::default(),
+    )
+    .await
+    .expect("routes resolve");
+    let add = routes
+        .iter()
+        .find(|r| r.op_name == "addLine")
+        .expect("the authored nesting must emit the add route");
+    let codegraph_generate::ddd::service_ops::ExecutionKind::ChildOp {
+        action,
+        parent_load,
+        ..
+    } = &add.execution
+    else {
+        panic!("expected a ChildOp execution, got: {:?}", add.execution)
+    };
+    assert_eq!(
+        *action,
+        codegraph_generate::ddd::service_ops::ChildAction::Add
+    );
+    let load = parent_load
+        .as_ref()
+        .expect("the collection add must resolve the parent load from the authored verdict");
+    assert_eq!(load.module, "pay_run", "the parent's query slot resolves");
+    assert_eq!(load.domain, "payroll", "same-domain by construction");
+
+    // The router plane nests the child under the authored root with the
+    // refers-derived FK column.
+    let project = codegraph_generate::ProjectConfig::default();
+    let parent_candidates = engine.get_parent_candidates().await.expect("candidates");
+    let ctx = codegraph_generate::api::router::build_router_context(
+        &engine,
+        "payroll",
+        &[
+            "PayRunType".to_string(),
+            "PayRunLineType".to_string(),
+            "PayRunLineAdjustmentType".to_string(),
+        ],
+        &config,
+        &parent_candidates,
+        &project,
+    )
+    .await
+    .expect("router context");
+    let line = ctx
+        .entities
+        .iter()
+        .find(|e| e.module_name == "pay_run_line")
+        .expect("the child entity");
+    assert_eq!(line.role, "child", "the authored member routes as a child");
+    let parent = line.parent.as_ref().expect("authored parent assignment");
+    assert_eq!(parent.module_name, "pay_run");
+    assert_eq!(parent.fk_column, "pay_run_id");
+    let root = ctx
+        .entities
+        .iter()
+        .find(|e| e.module_name == "pay_run")
+        .expect("the root entity");
+    assert_eq!(root.role, "root", "the authored root stays top-level");
+    assert!(
+        root.children
+            .iter()
+            .any(|c| c.module_name == "pay_run_line"),
+        "the parent gains the authored child"
+    );
+
+    // The generated tree carries the nested surface: the handler extracts
+    // the two-uuid path and loads the record through the parent-scoped
+    // read; the router nests the child fn under the parent.
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+    let router = read(&out.path().join("src/api/payroll/router.rs"));
+    let root_router = &router[router.find("fn pay_run_routes()").expect("root routes fn")..];
+    assert!(
+        root_router.contains(".nest(\"/{pay_run_id}/pay-run-line\", pay_run_line_routes())"),
+        "the authored child must nest under the parent:\n{root_router}"
+    );
+    let handler = read(&out.path().join("src/api/payroll/pay_run_line_handler.rs"));
+    assert!(
+        handler.contains("Path((parent_id, pay_run_line_id)): Path<(Uuid, Uuid)>"),
+        "the authored child handler extracts the parent anchor:\n{handler}"
+    );
+    assert!(
+        handler.contains("find_by_id_scoped(pay_run_line_id, parent_id"),
+        "the authored child's query plane carries the parent-scoped read:\n{handler}"
+    );
+    let add_at = handler
+        .find("fn service_op_add_line")
+        .expect("the add handler emits");
+    let add_arm = &handler[add_at..];
+    let load_at = add_arm
+        .find("state.payroll_pay_run_queries")
+        .expect("the collection add still loads the parent first (issue #692)");
+    let create_at = add_arm.find("_commands.create(").expect("the child create");
+    assert!(
+        load_at < create_at,
+        "the parent load must precede the create under the authored nesting:\n{add_arm}"
+    );
+}
+
+/// (iii) Authored member vs config parent disagreement: the design authors
+/// `aggregate PayRunType` while config declares
+/// `parent = "PayRunLineAdjustmentType"`. The WARN records the override
+/// (naming the class, the authored root, and config's parent), and the
+/// routing still nests under the AUTHORED root.
+#[tokio::test]
+async fn authored_member_overrides_a_config_parent_disagreement_with_a_warning() {
+    let fixture = write_child_ops_fixture_with_sources(
+        fixture::AUTHORED_BOUNDARY_MISMATCH_DOMAINS_TOML,
+        &fixture::child_ops_ddd_with_authored_boundary(),
+    );
+    let engine = ingest_child_ops(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let issue = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Warning)
+                && i.check == "aggregate_boundary"
+        })
+        .unwrap_or_else(|| panic!("expected an aggregate-boundary WARN, got: {issues:?}"));
+    assert!(
+        issue.message.contains("PayRunLineType"),
+        "the WARN names the class: {issue:?}"
+    );
+    assert!(
+        issue.message.contains("PayRunType"),
+        "the WARN names the authored root: {issue:?}"
+    );
+    assert!(
+        issue.message.contains("PayRunLineAdjustmentType"),
+        "the WARN names config's overridden parent: {issue:?}"
+    );
+
+    // Authored wins for routing: the child nests under the pay run.
+    let project = codegraph_generate::ProjectConfig::default();
+    let parent_candidates = engine.get_parent_candidates().await.expect("candidates");
+    let ctx = codegraph_generate::api::router::build_router_context(
+        &engine,
+        "payroll",
+        &[
+            "PayRunType".to_string(),
+            "PayRunLineType".to_string(),
+            "PayRunLineAdjustmentType".to_string(),
+        ],
+        &config,
+        &parent_candidates,
+        &project,
+    )
+    .await
+    .expect("router context");
+    let line = ctx
+        .entities
+        .iter()
+        .find(|e| e.module_name == "pay_run_line")
+        .expect("the child entity");
+    let parent = line.parent.as_ref().expect("authored parent assignment");
+    assert_eq!(
+        parent.module_name, "pay_run",
+        "config's parent is overridden by the authored verdict"
+    );
+}
+
+/// (ii) Authored root vs config child: the member's authored declaration
+/// proves `PayRunType` an aggregate root while config declares IT a child.
+/// The WARN names both facts, and the routing keeps the pay run a
+/// top-level root (the derived-only shape never warns).
+#[tokio::test]
+async fn authored_root_beats_a_config_child_declaration_with_a_warning() {
+    let fixture = write_child_ops_fixture_with_sources(
+        fixture::AUTHORED_ROOT_VS_CONFIG_CHILD_DOMAINS_TOML,
+        &fixture::child_ops_ddd_with_authored_boundary(),
+    );
+    let engine = ingest_child_ops(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let issue = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Warning)
+                && i.check == "aggregate_boundary"
+                && i.message.contains("PayRunType")
+        })
+        .unwrap_or_else(|| panic!("expected an authored-root WARN, got: {issues:?}"));
+    assert!(
+        issue.message.contains("root"),
+        "the WARN names the authored root verdict: {issue:?}"
+    );
+    assert!(
+        issue.message.contains("PayRunLineAdjustmentType"),
+        "the WARN names config's child declaration: {issue:?}"
+    );
+
+    // Authored wins: the pay run stays a top-level root even though config
+    // declares it a child.
+    let project = codegraph_generate::ProjectConfig::default();
+    let parent_candidates = engine.get_parent_candidates().await.expect("candidates");
+    let ctx = codegraph_generate::api::router::build_router_context(
+        &engine,
+        "payroll",
+        &[
+            "PayRunType".to_string(),
+            "PayRunLineType".to_string(),
+            "PayRunLineAdjustmentType".to_string(),
+        ],
+        &config,
+        &parent_candidates,
+        &project,
+    )
+    .await
+    .expect("router context");
+    let root = ctx
+        .entities
+        .iter()
+        .find(|e| e.module_name == "pay_run")
+        .expect("the root entity");
+    assert_eq!(
+        root.role, "root",
+        "the authored root verdict overrides the config child role"
+    );
+    assert!(root.parent.is_none());
 }

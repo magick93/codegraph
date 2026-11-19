@@ -177,6 +177,42 @@ fn sweep_ddd() {
             "{} produced no design artifact",
             file.display()
         );
+        // The authored-aggregate fixture (issue #666 slice 4b): the DD4
+        // artifact carries the effective verdict on every entity design,
+        // and an authored `aggregate <Root>` membership lands with
+        // `origin = "authored"` naming the authored root class.
+        if file.file_name().and_then(|n| n.to_str()) == Some("aggregate.ddd") {
+            let model = compiled.compilation.model.as_ref().unwrap();
+            let designs: Vec<_> = model
+                .modules
+                .iter()
+                .flat_map(|m| m.designs.iter())
+                .collect();
+            let shelf = designs
+                .iter()
+                .find(|d| d.class.as_deref() == Some("ShelfType"))
+                .expect("the ShelfType design");
+            assert_eq!(shelf.is_aggregate_root, Some(true), "authored root");
+            let book = designs
+                .iter()
+                .find(|d| d.class.as_deref() == Some("BookType"))
+                .expect("the BookType design");
+            assert_eq!(book.is_aggregate_root, Some(false), "authored member");
+            let membership = book.aggregate.as_ref().expect("the membership");
+            assert_eq!(
+                membership.origin,
+                phero_ir::ddd::AggregateOrigin::Authored,
+                "an authored clause outranks the containment derivation"
+            );
+            assert_eq!(
+                membership.root,
+                phero_ir::TypeRef::Class {
+                    package: "nz.example.shelf".to_string(),
+                    name: "ShelfType".to_string(),
+                },
+                "the membership names the authored root class"
+            );
+        }
     }
 }
 
