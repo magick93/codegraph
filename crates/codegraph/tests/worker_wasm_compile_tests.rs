@@ -645,12 +645,10 @@ fn stub_query_fns() -> Vec<String> {
     names
 }
 
-#[tokio::test]
-#[ignore = "compiles a generated workers workspace for native + wasm32: downloads crates.io deps, ~3-6 min cold (needs the wasm32-unknown-unknown target)"]
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
-async fn generated_worker_wasm_check_is_in_ci() {
-    // ── Fixture: workers topology + extension points, cornucopia provider ──
-    let pay_run = codegraph_core::types::SchemaNode {
+/// The fixture's root entity schema (`pay_run`) — the push-covered entity
+/// with a required and a nullable text column.
+fn pay_run_schema() -> codegraph_core::types::SchemaNode {
+    codegraph_core::types::SchemaNode {
         namespace: None,
         schema_id: "compensation/json/PayRunType.json".to_string(),
         title: ENTITY_TITLE.to_string(),
@@ -676,8 +674,12 @@ async fn generated_worker_wasm_check_is_in_ci() {
         custom_annotations: Default::default(),
         access: None,
         annotations: None,
-    };
-    let text_prop = |name: &str, nullable: bool| codegraph_core::types::PropertyNode {
+    }
+}
+
+/// The fixture's text-property constructor (the former `text_prop` closure).
+fn fixture_text_prop(name: &str, nullable: bool) -> codegraph_core::types::PropertyNode {
+    codegraph_core::types::PropertyNode {
         is_id: false,
         name: name.to_string(),
         prop_type: "string".to_string(),
@@ -708,12 +710,14 @@ async fn generated_worker_wasm_check_is_in_ci() {
         ui_override_form: None,
         ui_override_inline: None,
         type_expr: None,
-    };
-    let props = vec![text_prop("name", false), text_prop("notes", true)];
-    // WS4: the refers-linked CHILD entity — `role = "child"` config with a
-    // synthetic parent FK (`parent_ref`), exercising the child service-op
-    // plane's scoped load + nested routes under the workers topology.
-    let pay_run_line = codegraph_core::types::SchemaNode {
+    }
+}
+
+// WS4: the refers-linked CHILD entity — `role = "child"` config with a
+// synthetic parent FK (`parent_ref`), exercising the child service-op
+// plane's scoped load + nested routes under the workers topology.
+fn pay_run_line_schema() -> codegraph_core::types::SchemaNode {
+    codegraph_core::types::SchemaNode {
         namespace: None,
         schema_id: "compensation/json/PayRunLineType.json".to_string(),
         title: "PayRunLineType".to_string(),
@@ -739,20 +743,344 @@ async fn generated_worker_wasm_check_is_in_ci() {
         custom_annotations: Default::default(),
         access: None,
         annotations: None,
-    };
-    let line_props = vec![text_prop("line_id", false), text_prop("notes", true)];
-    let mock = codegraph_core::mock::MockEngine::builder()
-        .with_schema(pay_run)
-        .with_properties(ENTITY_TITLE, props)
-        .with_schema(pay_run_line)
-        .with_properties("PayRunLineType", line_props)
-        .build();
+    }
+}
 
+fn fixture_mock() -> codegraph_core::mock::MockEngine {
+    let props = vec![
+        fixture_text_prop("name", false),
+        fixture_text_prop("notes", true),
+    ];
+    let line_props = vec![
+        fixture_text_prop("line_id", false),
+        fixture_text_prop("notes", true),
+    ];
+    codegraph_core::mock::MockEngine::builder()
+        .with_schema(pay_run_schema())
+        .with_properties(ENTITY_TITLE, props)
+        .with_schema(pay_run_line_schema())
+        .with_properties("PayRunLineType", line_props)
+        .build()
+}
+
+fn fixture_child_operations() -> Vec<codegraph_core::types::DddServiceOperation> {
+    vec![
+        codegraph_core::types::DddServiceOperation {
+            name: "addLine".to_string(),
+            return_type: None,
+            return_multiplicity: None,
+            params: vec![codegraph_core::types::DddParam {
+                name: "line".to_string(),
+                type_json: serde_json::json!({"dto": "PayRunLineDraft"}),
+                multiplicity: None,
+            }],
+            delegation_target: None,
+            delegation_operation: None,
+            capabilities: Vec::new(),
+            is_protected: false,
+            condition: None,
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
+            transition: None,
+            child_scope: Some(codegraph_core::types::DddChildRef {
+                feature: "lines".to_string(),
+                class: "compilecheck.PayRunLine".to_string(),
+                action: "add".to_string(),
+            }),
+            condition_paths: Vec::new(),
+            ordinal: 0,
+        },
+        codegraph_core::types::DddServiceOperation {
+            name: "saveLine".to_string(),
+            return_type: None,
+            return_multiplicity: None,
+            params: Vec::new(),
+            delegation_target: None,
+            delegation_operation: None,
+            capabilities: Vec::new(),
+            is_protected: false,
+            condition: None,
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
+            transition: None,
+            child_scope: Some(codegraph_core::types::DddChildRef {
+                feature: "lines".to_string(),
+                class: "compilecheck.PayRunLine".to_string(),
+                action: "save".to_string(),
+            }),
+            condition_paths: Vec::new(),
+            ordinal: 1,
+        },
+        codegraph_core::types::DddServiceOperation {
+            name: "removeLine".to_string(),
+            return_type: None,
+            return_multiplicity: None,
+            params: Vec::new(),
+            delegation_target: None,
+            delegation_operation: None,
+            capabilities: Vec::new(),
+            is_protected: false,
+            condition: None,
+            emits: Vec::new(),
+            invokes: Vec::new(),
+            throws: Vec::new(),
+            bodies: Default::default(),
+            body_receiver: None,
+            transition: None,
+            child_scope: Some(codegraph_core::types::DddChildRef {
+                feature: "lines".to_string(),
+                class: "compilecheck.PayRunLine".to_string(),
+                action: "remove".to_string(),
+            }),
+            condition_paths: Vec::new(),
+            ordinal: 2,
+        },
+    ]
+}
+
+fn fixture_pay_run_repository() -> codegraph_core::types::DddRepositoryNode {
+    codegraph_core::types::DddRepositoryNode {
+        application: "Compilecheck".to_string(),
+        name: "PayRunRepository".to_string(),
+        design_class: "PayRun".to_string(),
+        operations: vec![
+            codegraph_core::types::DddRepositoryOperation {
+                name: "findById".to_string(),
+                builtin: Some("findById".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 0,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            codegraph_core::types::DddRepositoryOperation {
+                name: "findAll".to_string(),
+                builtin: Some("findAll".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 1,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            codegraph_core::types::DddRepositoryOperation {
+                name: "save".to_string(),
+                builtin: Some("save".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 2,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            codegraph_core::types::DddRepositoryOperation {
+                name: "delete".to_string(),
+                builtin: Some("delete".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 3,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            // DD9 (issue #659): a typed query on the worker fixture —
+            // the cornucopia SQL + adapter it emits must compile on
+            // native AND wasm32 (the #550 gate's whole point).
+            codegraph_core::types::DddRepositoryOperation {
+                name: "recentByName".to_string(),
+                builtin: None,
+                return_type: Some(serde_json::json!({
+                    "type": "class",
+                    "value": {"package": "compilecheck", "name": "PayRun"}
+                })),
+                return_multiplicity: Some(serde_json::json!({
+                    "lower": 0,
+                    "upper": "unbounded"
+                })),
+                params: vec![codegraph_core::types::DddParam {
+                    name: "targetName".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "primitive",
+                        "value": "string"
+                    }),
+                    multiplicity: None,
+                }],
+                ordinal: 4,
+                is_protected: false,
+                query_json: Some(serde_json::json!({
+                    "predicate": "self.name == targetName && self.notes != null",
+                    "sort": [{
+                        "field": "name",
+                        "fieldType": {"type": "primitive", "value": "string"},
+                        "direction": "asc",
+                    }],
+                    "pagination": {"limit": 20, "max": 100, "cursor": false},
+                    "readOnly": true,
+                })),
+                capabilities: vec!["ReadPayRuns".to_string()],
+            },
+        ],
+    }
+}
+
+fn fixture_pay_run_line_repository() -> codegraph_core::types::DddRepositoryNode {
+    codegraph_core::types::DddRepositoryNode {
+        application: "Compilecheck".to_string(),
+        name: "PayRunLineRepository".to_string(),
+        design_class: "PayRunLine".to_string(),
+        operations: vec![
+            codegraph_core::types::DddRepositoryOperation {
+                name: "findById".to_string(),
+                builtin: Some("findById".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 0,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            codegraph_core::types::DddRepositoryOperation {
+                name: "findAll".to_string(),
+                builtin: Some("findAll".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 1,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            codegraph_core::types::DddRepositoryOperation {
+                name: "save".to_string(),
+                builtin: Some("save".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 2,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+            codegraph_core::types::DddRepositoryOperation {
+                name: "delete".to_string(),
+                builtin: Some("delete".to_string()),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                ordinal: 3,
+                is_protected: false,
+                query_json: None,
+                capabilities: Vec::new(),
+            },
+        ],
+    }
+}
+
+fn fixture_services() -> Vec<codegraph_core::types::DddServiceNode> {
+    vec![
+        codegraph_core::types::DddServiceNode {
+            application: "Compilecheck".to_string(),
+            module: "compensation".to_string(),
+            name: "PayRunService".to_string(),
+            description: None,
+            dependencies: vec!["PayRunRepository".to_string()],
+            decision_dependencies: Vec::new(),
+            operations: vec![codegraph_core::types::DddServiceOperation {
+                name: "approve".to_string(),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                delegation_target: Some("PayRunRepository".to_string()),
+                delegation_operation: Some("delete".to_string()),
+                capabilities: vec!["ApprovePayRun".to_string()],
+                is_protected: false,
+                condition: None,
+                emits: Vec::new(),
+                invokes: Vec::new(),
+                throws: Vec::new(),
+                bodies: Default::default(),
+                body_receiver: None,
+                transition: None,
+                child_scope: None,
+                condition_paths: Vec::new(),
+                ordinal: 0,
+            }],
+            ordinal: 0,
+        },
+        // WS4: the child service — save + delete delegations lower via
+        // the child command plane over the parent-scoped load.
+        codegraph_core::types::DddServiceNode {
+            application: "Compilecheck".to_string(),
+            module: "compensation".to_string(),
+            name: "PayRunLineService".to_string(),
+            description: None,
+            dependencies: vec!["PayRunLineRepository".to_string()],
+            decision_dependencies: Vec::new(),
+            operations: vec![
+                codegraph_core::types::DddServiceOperation {
+                    name: "adjust".to_string(),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    delegation_target: Some("PayRunLineRepository".to_string()),
+                    delegation_operation: Some("save".to_string()),
+                    capabilities: Vec::new(),
+                    is_protected: false,
+                    condition: None,
+                    emits: Vec::new(),
+                    invokes: Vec::new(),
+                    throws: Vec::new(),
+                    bodies: Default::default(),
+                    body_receiver: None,
+                    transition: None,
+                    child_scope: None,
+                    condition_paths: Vec::new(),
+                    ordinal: 0,
+                },
+                codegraph_core::types::DddServiceOperation {
+                    name: "remove".to_string(),
+                    return_type: None,
+                    return_multiplicity: None,
+                    params: Vec::new(),
+                    delegation_target: Some("PayRunLineRepository".to_string()),
+                    delegation_operation: Some("delete".to_string()),
+                    capabilities: Vec::new(),
+                    is_protected: false,
+                    condition: None,
+                    emits: Vec::new(),
+                    invokes: Vec::new(),
+                    throws: Vec::new(),
+                    bodies: Default::default(),
+                    body_receiver: None,
+                    transition: None,
+                    child_scope: None,
+                    condition_paths: Vec::new(),
+                    ordinal: 1,
+                },
+            ],
+            ordinal: 1,
+        },
+    ]
+}
+
+fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
     // The service-op plane (issue #590): one capability-gated delegation op
     // on the fixture entity. The worker handlers + routes must compile on
     // native AND wasm32 with the rest of the crate — the same
     // provider-agnostic queries/commands API the mox-ops plane rides.
-    let ddd_graph = codegraph_core::types::DddModelGraph {
+    codegraph_core::types::DddModelGraph {
         source_path: "fixture.ddd".to_string(),
         application: codegraph_core::types::DddApplicationNode {
             name: "Compilecheck".to_string(),
@@ -773,84 +1101,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
                 // Issue #661: the aggregate's `children PayRun` block — the
                 // child action handlers (create/update/delete through the
                 // child's plane) must compile natively AND on wasm32.
-                child_operations: vec![
-                    codegraph_core::types::DddServiceOperation {
-                        name: "addLine".to_string(),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: vec![codegraph_core::types::DddParam {
-                            name: "line".to_string(),
-                            type_json: serde_json::json!({"dto": "PayRunLineDraft"}),
-                            multiplicity: None,
-                        }],
-                        delegation_target: None,
-                        delegation_operation: None,
-                        capabilities: Vec::new(),
-                        is_protected: false,
-                        condition: None,
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                        throws: Vec::new(),
-                        bodies: Default::default(),
-                        body_receiver: None,
-                        transition: None,
-                        child_scope: Some(codegraph_core::types::DddChildRef {
-                            feature: "lines".to_string(),
-                            class: "compilecheck.PayRunLine".to_string(),
-                            action: "add".to_string(),
-                        }),
-                        condition_paths: Vec::new(),
-                        ordinal: 0,
-                    },
-                    codegraph_core::types::DddServiceOperation {
-                        name: "saveLine".to_string(),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        delegation_target: None,
-                        delegation_operation: None,
-                        capabilities: Vec::new(),
-                        is_protected: false,
-                        condition: None,
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                        throws: Vec::new(),
-                        bodies: Default::default(),
-                        body_receiver: None,
-                        transition: None,
-                        child_scope: Some(codegraph_core::types::DddChildRef {
-                            feature: "lines".to_string(),
-                            class: "compilecheck.PayRunLine".to_string(),
-                            action: "save".to_string(),
-                        }),
-                        condition_paths: Vec::new(),
-                        ordinal: 1,
-                    },
-                    codegraph_core::types::DddServiceOperation {
-                        name: "removeLine".to_string(),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        delegation_target: None,
-                        delegation_operation: None,
-                        capabilities: Vec::new(),
-                        is_protected: false,
-                        condition: None,
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                        throws: Vec::new(),
-                        bodies: Default::default(),
-                        body_receiver: None,
-                        transition: None,
-                        child_scope: Some(codegraph_core::types::DddChildRef {
-                            feature: "lines".to_string(),
-                            class: "compilecheck.PayRunLine".to_string(),
-                            action: "remove".to_string(),
-                        }),
-                        condition_paths: Vec::new(),
-                        ordinal: 2,
-                    },
-                ],
+                child_operations: fixture_child_operations(),
                 ordinal: 0,
             },
             // WS4: the child entity's own design + repository — the child
@@ -869,231 +1120,19 @@ async fn generated_worker_wasm_check_is_in_ci() {
             },
         ],
         repositories: vec![
-            codegraph_core::types::DddRepositoryNode {
-                application: "Compilecheck".to_string(),
-                name: "PayRunRepository".to_string(),
-                design_class: "PayRun".to_string(),
-                operations: vec![
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "findById".to_string(),
-                        builtin: Some("findById".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 0,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "findAll".to_string(),
-                        builtin: Some("findAll".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 1,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "save".to_string(),
-                        builtin: Some("save".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 2,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "delete".to_string(),
-                        builtin: Some("delete".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 3,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    // DD9 (issue #659): a typed query on the worker fixture —
-                    // the cornucopia SQL + adapter it emits must compile on
-                    // native AND wasm32 (the #550 gate's whole point).
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "recentByName".to_string(),
-                        builtin: None,
-                        return_type: Some(serde_json::json!({
-                            "type": "class",
-                            "value": {"package": "compilecheck", "name": "PayRun"}
-                        })),
-                        return_multiplicity: Some(serde_json::json!({
-                            "lower": 0,
-                            "upper": "unbounded"
-                        })),
-                        params: vec![codegraph_core::types::DddParam {
-                            name: "targetName".to_string(),
-                            type_json: serde_json::json!({
-                                "type": "primitive",
-                                "value": "string"
-                            }),
-                            multiplicity: None,
-                        }],
-                        ordinal: 4,
-                        is_protected: false,
-                        query_json: Some(serde_json::json!({
-                            "predicate": "self.name == targetName && self.notes != null",
-                            "sort": [{
-                                "field": "name",
-                                "fieldType": {"type": "primitive", "value": "string"},
-                                "direction": "asc",
-                            }],
-                            "pagination": {"limit": 20, "max": 100, "cursor": false},
-                            "readOnly": true,
-                        })),
-                        capabilities: vec!["ReadPayRuns".to_string()],
-                    },
-                ],
-            },
-            codegraph_core::types::DddRepositoryNode {
-                application: "Compilecheck".to_string(),
-                name: "PayRunLineRepository".to_string(),
-                design_class: "PayRunLine".to_string(),
-                operations: vec![
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "findById".to_string(),
-                        builtin: Some("findById".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 0,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "findAll".to_string(),
-                        builtin: Some("findAll".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 1,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "save".to_string(),
-                        builtin: Some("save".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 2,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                    codegraph_core::types::DddRepositoryOperation {
-                        name: "delete".to_string(),
-                        builtin: Some("delete".to_string()),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        ordinal: 3,
-                        is_protected: false,
-                        query_json: None,
-                        capabilities: Vec::new(),
-                    },
-                ],
-            },
+            fixture_pay_run_repository(),
+            fixture_pay_run_line_repository(),
         ],
-        services: vec![
-            codegraph_core::types::DddServiceNode {
-                application: "Compilecheck".to_string(),
-                module: "compensation".to_string(),
-                name: "PayRunService".to_string(),
-                description: None,
-                dependencies: vec!["PayRunRepository".to_string()],
-                decision_dependencies: Vec::new(),
-                operations: vec![codegraph_core::types::DddServiceOperation {
-                    name: "approve".to_string(),
-                    return_type: None,
-                    return_multiplicity: None,
-                    params: Vec::new(),
-                    delegation_target: Some("PayRunRepository".to_string()),
-                    delegation_operation: Some("delete".to_string()),
-                    capabilities: vec!["ApprovePayRun".to_string()],
-                    is_protected: false,
-                    condition: None,
-                    emits: Vec::new(),
-                    invokes: Vec::new(),
-                    throws: Vec::new(),
-                    bodies: Default::default(),
-                    body_receiver: None,
-                    transition: None,
-                    child_scope: None,
-                    condition_paths: Vec::new(),
-                    ordinal: 0,
-                }],
-                ordinal: 0,
-            },
-            // WS4: the child service — save + delete delegations lower via
-            // the child command plane over the parent-scoped load.
-            codegraph_core::types::DddServiceNode {
-                application: "Compilecheck".to_string(),
-                module: "compensation".to_string(),
-                name: "PayRunLineService".to_string(),
-                description: None,
-                dependencies: vec!["PayRunLineRepository".to_string()],
-                decision_dependencies: Vec::new(),
-                operations: vec![
-                    codegraph_core::types::DddServiceOperation {
-                        name: "adjust".to_string(),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        delegation_target: Some("PayRunLineRepository".to_string()),
-                        delegation_operation: Some("save".to_string()),
-                        capabilities: Vec::new(),
-                        is_protected: false,
-                        condition: None,
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                        throws: Vec::new(),
-                        bodies: Default::default(),
-                        body_receiver: None,
-                        transition: None,
-                        child_scope: None,
-                        condition_paths: Vec::new(),
-                        ordinal: 0,
-                    },
-                    codegraph_core::types::DddServiceOperation {
-                        name: "remove".to_string(),
-                        return_type: None,
-                        return_multiplicity: None,
-                        params: Vec::new(),
-                        delegation_target: Some("PayRunLineRepository".to_string()),
-                        delegation_operation: Some("delete".to_string()),
-                        capabilities: Vec::new(),
-                        is_protected: false,
-                        condition: None,
-                        emits: Vec::new(),
-                        invokes: Vec::new(),
-                        throws: Vec::new(),
-                        bodies: Default::default(),
-                        body_receiver: None,
-                        transition: None,
-                        child_scope: None,
-                        condition_paths: Vec::new(),
-                        ordinal: 1,
-                    },
-                ],
-                ordinal: 1,
-            },
-        ],
+        services: fixture_services(),
         searches: Vec::new(),
-    };
+    }
+}
+
+/// The full ingested fixture: schemas + properties, the DDD design surface
+/// (service ops, repositories, child operations), and the actor policy.
+async fn build_worker_fixture() -> codegraph_core::mock::MockEngine {
+    let mock = fixture_mock();
+    let ddd_graph = fixture_ddd_graph();
     use codegraph_core::traits::GraphIngestor;
     mock.ingest_ddd_model(&ddd_graph).await.unwrap();
     mock.ingest_actor_policy(&codegraph_core::types::ActorPolicyModel {
@@ -1125,7 +1164,11 @@ async fn generated_worker_wasm_check_is_in_ci() {
     })
     .await
     .unwrap();
-    let config = codegraph_config::config::parse_domain_config_str(
+    mock
+}
+
+fn worker_domain_config() -> codegraph_config::config::DomainConfig {
+    codegraph_config::config::parse_domain_config_str(
         r#"
 [defaults]
 operations = ["create", "read", "update", "delete", "list"]
@@ -1142,18 +1185,11 @@ parent = "PayRunType"
 parent_ref = "pay_run_id"
 "#,
     )
-    .unwrap();
-    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
-    let tera = template_engine::create_tera(&template_dir).unwrap();
+    .unwrap()
+}
 
-    let root = tree_root();
-    let _ = fs::remove_dir_all(&root);
-    let output_dir = root.join("app");
-    let domain_types_base = output_dir.join("domain-types");
-    let hooks_tmp = root.join("hooks");
-    fs::create_dir_all(&hooks_tmp).unwrap();
-
-    let ext = codegraph_ext_points::parse_extension_points_str(
+fn worker_extension_points() -> codegraph_ext_points::ExtensionPointsConfig {
+    codegraph_ext_points::parse_extension_points_str(
         r#"
 [payroll-sync]
 name = "Payroll Sync"
@@ -1163,19 +1199,24 @@ entities = ["compensation.pay_run"]
 directions = ["push"]
 "#,
     )
-    .unwrap();
+    .unwrap()
+}
 
-    // The workers workspace manifest path-depends on the repo's
-    // codegraph-workflow / codegraph-type-contracts crates; Cargo resolves
-    // the whole workspace when writing its lockfile, so point them at the
-    // real checkout (absolute paths pass through `resolve_path` unchanged).
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+// The workers workspace manifest path-depends on the repo's
+// codegraph-workflow / codegraph-type-contracts crates; Cargo resolves
+// the whole workspace when writing its lockfile, so point them at the
+// real checkout (absolute paths pass through `resolve_path` unchanged).
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
-        .unwrap();
+        .unwrap()
+        .to_path_buf()
+}
 
-    let project = codegraph::generate::ProjectConfig {
+fn worker_project_config(repo: &Path) -> codegraph::generate::ProjectConfig {
+    codegraph::generate::ProjectConfig {
         identity: codegraph::generate::IdentityConfig {
             app_name: APP_NAME.to_string(),
             domain_types_crate: "domain_types".to_string(),
@@ -1208,9 +1249,11 @@ directions = ["push"]
             ..Default::default()
         },
         ..Default::default()
-    };
+    }
+}
 
-    let plan = BuildPlan {
+fn worker_build_plan() -> BuildPlan {
+    BuildPlan {
         entity_form: false,
         ui_live_queries: false,
         ifml_tanstack_forms: false,
@@ -1275,39 +1318,10 @@ directions = ["push"]
         structural_gates: false,
         public_operations_rls: false,
         features: toml::Table::new(),
-    };
+    }
+}
 
-    let report =
-        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
-            integration_manifests: None,
-            db: &mock,
-            config: &config,
-            output_dir: &output_dir,
-            tera: &tera,
-            ui_overrides: &Default::default(),
-            ui_domains: &Default::default(),
-            schema_base_dir: Path::new(""),
-            domain_types_base: Some(&domain_types_base),
-            hooks_base: Some(&hooks_tmp),
-            ext_points: Some(&ext),
-            seed_config: None,
-            build_plan: Some(&plan),
-            profile_name: "default",
-            ifml_frameworks: vec![],
-            ifml_components: None,
-            ux_rules: None,
-            project_config: Some(&project),
-            emdash_plugins: None,
-            domain_config_dir: None,
-        })
-        .await
-        .unwrap();
-    assert!(
-        !report.has_errors(),
-        "generation should succeed: {}",
-        report.summary()
-    );
-
+fn assert_generated_surface(output_dir: &Path) {
     // The issue's minimum surface must be on disk: the per-worker module
     // tree (integration_dispatch, app_state, the command modules) plus the
     // gateway catalog surface.
@@ -1403,10 +1417,12 @@ directions = ["push"]
         let path = output_dir.join(required);
         assert!(path.exists(), "missing generated file: {}", path.display());
     }
+}
 
-    // ── Replace the generated cornucopia-queries skeleton with the stub ──
-    // (see module doc): no live-Postgres codegen, same trait surface plus
-    // the fixture's query modules.
+// ── Replace the generated cornucopia-queries skeleton with the stub ──
+// (see module doc): no live-Postgres codegen, same trait surface plus
+// the fixture's query modules.
+fn install_cornucopia_stub(output_dir: &Path) {
     let queries_dir = output_dir.join("cornucopia-queries");
     fs::write(
         queries_dir.join("Cargo.toml"),
@@ -1424,15 +1440,77 @@ directions = ["push"]
     )
     .unwrap();
     fs::write(queries_dir.join("src").join("queries.rs"), QUERIES_RS).unwrap();
+}
 
-    // ── Tripwire: the stub's function set is pinned to the emitted SQL ──
-    let sql_fns = emitted_query_fns(&output_dir);
+// ── Tripwire: the stub's function set is pinned to the emitted SQL ──
+fn assert_stub_tripwire(output_dir: &Path) {
+    let sql_fns = emitted_query_fns(output_dir);
     let stub_fns = stub_query_fns();
     assert_eq!(
         sql_fns, stub_fns,
         "the stub query surface must cover EXACTLY the emitted `--!` annotations \
          (update QUERIES_RS when the fixture or the SQL emitter changes)"
     );
+}
+
+#[tokio::test]
+#[ignore = "compiles a generated workers workspace for native + wasm32: downloads crates.io deps, ~3-6 min cold (needs the wasm32-unknown-unknown target)"]
+async fn generated_worker_wasm_check_is_in_ci() {
+    // ── Fixture: workers topology + extension points, cornucopia provider ──
+    let mock = build_worker_fixture().await;
+    let config = worker_domain_config();
+    let template_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let tera = template_engine::create_tera(&template_dir).unwrap();
+
+    let root = tree_root();
+    let _ = fs::remove_dir_all(&root);
+    let output_dir = root.join("app");
+    let domain_types_base = output_dir.join("domain-types");
+    let hooks_tmp = root.join("hooks");
+    fs::create_dir_all(&hooks_tmp).unwrap();
+
+    let ext = worker_extension_points();
+    let repo = repo_root();
+    let project = worker_project_config(&repo);
+    let plan = worker_build_plan();
+
+    let report =
+        codegraph::generate::run_generators_with_opts(codegraph::generate::GeneratorOpts {
+            integration_manifests: None,
+            db: &mock,
+            config: &config,
+            output_dir: &output_dir,
+            tera: &tera,
+            ui_overrides: &Default::default(),
+            ui_domains: &Default::default(),
+            schema_base_dir: Path::new(""),
+            domain_types_base: Some(&domain_types_base),
+            hooks_base: Some(&hooks_tmp),
+            ext_points: Some(&ext),
+            seed_config: None,
+            build_plan: Some(&plan),
+            profile_name: "default",
+            ifml_frameworks: vec![],
+            ifml_components: None,
+            ux_rules: None,
+            project_config: Some(&project),
+            emdash_plugins: None,
+            domain_config_dir: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        !report.has_errors(),
+        "generation should succeed: {}",
+        report.summary()
+    );
+
+    assert_generated_surface(&output_dir);
+
+    let worker_src = output_dir.join("workers").join(DOMAIN).join("src");
+
+    install_cornucopia_stub(&output_dir);
+    assert_stub_tripwire(&output_dir);
 
     // ── Phase 1: native-green first (whole package: lib + bin) ──────────
     // The bin target is where the #537 module-gap class (worker_main's
