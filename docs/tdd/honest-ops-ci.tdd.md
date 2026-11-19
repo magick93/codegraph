@@ -134,3 +134,18 @@ lives in `idempotency_tests.rs`. Green lane, zero band coverage.
 | `just ops-db-integration` vs Supabase image | 7 passed, zero skips, gate exported |
 | `just ci-local` | see the PR's final gate run |
 | canaries | unmoved (no templates touched) |
+
+## En-route finds on the image (the lane earns its keep)
+
+1. **A Postgres backend segfault in the Supabase image (#757)**:
+   `GRANT <role> TO CURRENT_USER` — three lines of psql, zero codegraph
+   SQL — crashes the backend deterministically; the instance
+   crash-recovers for ~30-60s. The hooks-cornucopia runtime test's
+   harness DDL was the one lane surface using that spelling (generated
+   SQL never does); it now names the role explicitly (#757 has the repro
+   and the image-bump re-test note).
+2. **Two lint-strictness fixes**: the shared-gate swap orphaned a
+   `psql_query` import (`-D unused-imports`), and the workers-live-gate
+   const swap left a dangling doc block (`empty_line_after_doc_comments`).
+   Both caught by the lane's own `lint` leg within minutes — the
+   discipline working as designed.
