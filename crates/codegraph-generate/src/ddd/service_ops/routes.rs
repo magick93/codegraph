@@ -13,7 +13,8 @@ use super::policy::{
 };
 use super::transitions::short_class_name;
 use super::types::{
-    ChildAction, ExecutionKind, FreshFixtureGuard, InjectedGuard, ServiceOpRoute, fields_for,
+    ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard, InjectedGuard, ServiceOpRoute,
+    fields_for,
 };
 use super::when_lower::{InjectedMachine, InjectedScope};
 
@@ -401,6 +402,48 @@ pub async fn routes_for_entity(
                     }
                 };
                 let execution = child_execution(op, action, scope, &surface_ops, record_load);
+                // Issue #692: a lowered collection-level `add` resolves the
+                // parent's by-id load at planning — the handler renders a
+                // parent load-or-404 before the create, so the plan must
+                // carry the parent's query slot, auditable arity and the
+                // fail-closed proof that the method exists (a parent whose
+                // query plane exposes no plain `find_by_id`, and a
+                // cross-domain parent, are NAMED generation errors raised
+                // by `child_parent_load` — never a handler referencing a
+                // method that does not exist). Seamed adds render the 501
+                // arm and never reach the create, so they pay no parent
+                // resolution.
+                let execution = match execution {
+                    ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        ..
+                    } if action == ChildAction::Add => ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        parent_load: Some(
+                            child_parent_load(db, config, domain, parent_title, &op.name).await?,
+                        ),
+                    },
+                    ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        ..
+                    } => ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        parent_load: None,
+                    },
+                    other => other,
+                };
                 // Issue #663: injected-scope guards are a SERVICE-op plane
                 // lowering — a child op's `when` types against the CHILD
                 // class as `self`, so an injected path there has no id
@@ -949,7 +992,113 @@ fn child_execution(
         feature: scope.feature.clone(),
         child_class: scope.class.clone(),
         read_back: surface_ops.iter().any(|o| o == "read"),
+        // The parent load rides the child-op loop in `routes_for_entity`
+        // (issue #692) — it resolves the parent's query slot with graph
+        // access this sync lowering does not have, and only for a LOWERED
+        // add (a seamed add renders the 501 arm, never the create).
+        parent_load: None,
     }
+}
+
+/// The parent load-or-404 plan for one lowered collection-level child
+/// `add` (issue #692). The `add` writes the child row with the parent's FK
+/// taken from the path, so the handler renders a parent load-or-404 BEFORE
+/// the create: the parent's own RLS-scoped query plane answers `None` for
+/// a bogus or foreign-org parent, and the route turns that into 404 —
+/// never Postgres `23503` as a 500 (the domain error classifier maps only
+/// scope/role/RLS markers).
+///
+/// Fail closed, the #663 refusal posture: the plan resolves the parent's
+/// query slot AT GENERATION TIME with the exact rule the query plane uses
+/// to emit `find_by_id` (`has_create or (has_read and not parent_ref)` —
+/// the `uses_find_by_id` computation in `templates/ddd/query.tera`). A
+/// parent whose resolved op set exposes no plain by-id load, and a
+/// cross-domain parent (child ops are same-domain by construction), are
+/// NAMED generation errors — never a handler that references a method the
+/// query plane does not carry.
+async fn child_parent_load(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    parent_title: &str,
+    op_name: &str,
+) -> Result<super::types::ChildParentLoad, String> {
+    let Some(parent_schema) = db
+        .get_schema(parent_title)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Err(format!(
+            "child operation `{op_name}`: the aggregate root `{parent_title}` resolves to no \
+             schema in the graph — the collection add's parent load has no query slot to ride"
+        ));
+    };
+    let parent_domain = parent_schema
+        .domain
+        .clone()
+        .unwrap_or_else(|| domain.to_string());
+    if parent_domain != domain {
+        return Err(format!(
+            "child operation `{op_name}`: the aggregate root `{parent_title}` lives in domain \
+             `{parent_domain}`, but the child op routes in `{domain}` — child ops are \
+             same-domain by construction, and the worker AppState carries only its own \
+             domain's query slots (the #663 posture); declare the child under the root's \
+             domain"
+        ));
+    }
+    // The parent's resolved op set — the SAME resolver the query plane's
+    // context builds from (`resolve_entity_operations`, which applies the
+    // #449 design-surface override internally, title- and rust-name-keyed).
+    let parent_ops = crate::api::api_model::resolve_entity_operations(
+        db,
+        config,
+        &parent_domain,
+        &parent_schema.title,
+    )
+    .await;
+    let parent_cfg = config
+        .domains
+        .get(&parent_domain)
+        .and_then(|entry| entry.get_entity_config(&parent_schema.title));
+    let parent_candidates = db
+        .get_parent_candidates()
+        .await
+        .map_err(|e| e.to_string())?;
+    let parent_ref = crate::fk::resolve_parent_fk_column_same_domain(
+        &parent_schema.title,
+        &parent_candidates,
+        parent_cfg,
+        &parent_domain,
+        config,
+        db,
+    )
+    .await;
+    let has_find_by_id = parent_ops.iter().any(|o| o == "create")
+        || (parent_ops.iter().any(|o| o == "read") && parent_ref.is_none());
+    if !has_find_by_id {
+        return Err(format!(
+            "child operation `{op_name}`: the collection add loads the parent aggregate \
+             `{}` before its create (a bogus or foreign-org parent must answer 404, never \
+             a 500), but the parent `{parent_title}`'s query plane exposes no plain \
+             `find_by_id` — it emits only when the parent resolves `create`, or `read` \
+             without a parent-scoped FK. Declare `findById` (or `save`) on the parent's \
+             repository",
+            parent_schema.rust_type_name
+        ));
+    }
+    Ok(ChildParentLoad {
+        entity: parent_schema.rust_type_name.clone(),
+        module: parent_schema.pg_table_name.clone(),
+        domain: parent_domain.clone(),
+        auditable: crate::api::handler::resolve_is_auditable(
+            db,
+            &parent_schema.title,
+            config,
+            &parent_domain,
+        )
+        .await
+        .map_err(|e| e.to_string())?,
+    })
 }
 
 /// Whether a child operation's parameter is a request-body carrier: the

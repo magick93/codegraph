@@ -97,7 +97,10 @@ pub(crate) struct ViewPom {
 
 /// One action op on one component (WS6): the button the #559 markup
 /// renders (`{comp}-action-{op_kebab}`), the handler the page wires
-/// (`call_{op_snake}`), and the service-op route the POST targets.
+/// (`call_{op_snake}`), and the service-op route the POST targets. A
+/// collection-level child `add` (issue #692) renders NO button — there is
+/// none — so it carries [`PomCollectionAdd`] and renders the
+/// `add{Child}(payload, parentId)` POST method instead.
 #[derive(Debug, Clone)]
 pub(crate) struct PomAction {
     /// The component carrying the action event (`info`).
@@ -108,6 +111,21 @@ pub(crate) struct PomAction {
     pub op_snake: String,
     /// The kebab name the button testid embeds (`escalate`).
     pub op_kebab: String,
+    /// The collection-add shape (issue #692): the POM method POSTs the
+    /// child payload to the parent-scoped COLLECTION route through
+    /// `page.request` and returns `{ ok, status, id }`. `None` keeps the
+    /// button accessor + click method, byte-identical.
+    pub collection: Option<PomCollectionAdd>,
+}
+
+/// The collection-add POM method's facts (issue #692).
+#[derive(Debug, Clone)]
+pub(crate) struct PomCollectionAdd {
+    /// The method name (`addPayRunLine`).
+    pub method: String,
+    /// The TS request-URL expression with `${parentId}` interpolated —
+    /// ``apiUrl(`/api/v1/payroll/pay-run/${parentId}/pay-run-line/actions/add_line`)``.
+    pub route_expr: String,
 }
 
 /// One wizard step: a nested container of an xor view and the component

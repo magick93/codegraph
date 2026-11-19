@@ -262,6 +262,20 @@ parent = "PayRunType"
 parent_ref = "pay_run_id"
 "#;
 
+/// [`CHILD_OPS_DDD`] with the PARENT's repository narrowed to `findAll`
+/// (issue #692 fail-closed): the parent's design surface then replaces its
+/// op set with `list` only, so the parent's query plane exposes no plain
+/// `find_by_id` (the query.tera rule: `has_create or (has_read and not
+/// parent_ref)`) — the collection `add`'s load-or-404 has no query to ride
+/// and route planning must fail closed naming the fix, never emit a
+/// handler that references a method that does not exist.
+pub fn child_ops_ddd_without_parent_find_by_id() -> String {
+    CHILD_OPS_DDD.replace(
+        "        entity PayRunType scaffold repository PayRunRepository {\n            findById;\n            findAll;\n            save;\n            delete;\n        }",
+        "        entity PayRunType scaffold repository PayRunRepository {\n            findAll;\n        }",
+    )
+}
+
 /// Write the aggregate-child fixture (issue #661).
 pub fn write_child_ops_fixture() -> Fixture {
     write_child_ops_fixture_with(CHILD_OPS_DOMAINS_TOML)
@@ -1025,6 +1039,21 @@ pub async fn run_generation(
     domain_types_dir: &Path,
     hooks_tmp: &Path,
 ) -> codegraph_generate::report::GenerationReport {
+    run_generation_result(engine, fixture, output_dir, domain_types_dir, hooks_tmp)
+        .await
+        .unwrap()
+}
+
+/// [`run_generation`] without the unwrap: a generation that refuses (a
+/// fail-closed plane — e.g. the #692 parent-load errors) surfaces as the
+/// driver's `Error` instead of a report, and the caller asserts on it.
+pub async fn run_generation_result(
+    engine: &codegraph_grafeo::GrafeoEngine,
+    fixture: &Fixture,
+    output_dir: &Path,
+    domain_types_dir: &Path,
+    hooks_tmp: &Path,
+) -> Result<codegraph_generate::report::GenerationReport, codegraph_core::error::Error> {
     let tera = codegraph::generate::template_engine::create_tera(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("templates"),
     )
@@ -1091,7 +1120,6 @@ pub async fn run_generation(
         domain_config_dir: None,
     })
     .await
-    .unwrap()
 }
 
 pub fn read(path: &Path) -> String {

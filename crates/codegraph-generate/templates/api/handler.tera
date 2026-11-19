@@ -1345,6 +1345,21 @@ pub async fn {{ op.fn_name }}(
     // CHILD's plane, under the parent's aggregate path, so the element can
     // never land under another parent.
 {% if op.execution.action == "add" %}
+{% if op.execution.parent_load %}
+    // Issue #692: the parent load is the route's 404 contract. The create
+    // below writes the parent FK from the path, so it only runs for a
+    // parent the session can see — the RLS-scoped query plane answers None
+    // for a bogus or foreign-org parent, and the route answers 404 (never
+    // Postgres 23503 as a 500).
+    state.{{ op.execution.parent_load.domain }}_{{ op.execution.parent_load.module }}_queries
+        .find_by_id(parent_id{% if op.execution.parent_load.auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())
+        .await
+        .map_err(|e: {{ domain | pascal_case }}Error| {
+            AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find {{ op.execution.parent_load.entity }}")
+                .with_correlation_id(correlation_id)
+        })?
+        .ok_or_else(|| AppError::not_found(format!("{{ op.execution.parent_load.entity }} {parent_id} not found")).with_correlation_id(correlation_id))?;
+{% endif %}
     let item = match body {
         Create{{ entity_name }}Body::Single(item) => item,
         Create{{ entity_name }}Body::Bulk(_) => {

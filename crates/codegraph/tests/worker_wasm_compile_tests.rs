@@ -1383,6 +1383,19 @@ fn assert_generated_surface(output_dir: &Path) {
         child_handler.contains("find_by_id_scoped(pay_run_line_id, parent_id"),
         "the child record load must be parent-scoped in the worker crate:\n{child_handler}"
     );
+    // Issue #692: the collection-level `add` loads the PARENT through the
+    // same-domain query slot before the create (the worker AppState
+    // carries only its own domain's slots, so the same-domain fact is
+    // load-bearing for the compilation this gate proves). The parent
+    // design's hand-built flags are auditable=false, so the load carries
+    // no include-deleted argument.
+    assert!(
+        child_handler.contains(
+            "state.compensation_pay_run_queries\n        .find_by_id(parent_id, api_key_info.api_key_id,"
+        ),
+        "the collection add must load the parent through the same-domain query \
+         slot before its create:\n{child_handler}"
+    );
     assert!(
         child_handler.contains("service_op_adjust"),
         "the child service op handler must emit:\n{child_handler}"

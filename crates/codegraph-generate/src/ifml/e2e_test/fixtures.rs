@@ -67,6 +67,14 @@ impl Fixture {
         self.literal_for(&entries, None)
     }
 
+    /// The fixture body with the dep placeholders rewritten under
+    /// `prefix` — the collection-add spec (issue #692) renders the child
+    /// create body with the `add` prefix so its dep variables bind inside
+    /// the consuming test alongside the [`Fixture::dep_setup_js`] posts.
+    pub(crate) fn data_literal_prefixed(&self, prefix: &str) -> String {
+        self.data_literal_with(Some(prefix))
+    }
+
     fn literal_for(&self, entries: &[(String, String)], prefix: Option<&str>) -> String {
         let inner = entries
             .iter()

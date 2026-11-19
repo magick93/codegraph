@@ -209,7 +209,9 @@ pub struct ActionSpec {
 
 /// One action op's spec: seed a record through the fixture plane (the
 /// click-through pattern), open the view, and drive each leg in order
-/// through the POM's `action{Comp}{Op}()` click method.
+/// through the POM's `action{Comp}{Op}()` click method. A collection-add
+/// test (issue #692) seeds the PARENT aggregate instead and drives the
+/// POM's `add{Child}(payload, parentId)` method.
 #[derive(Debug)]
 pub struct ActionTest {
     /// Deterministic test title carrying the leg statuses, e.g.
@@ -220,10 +222,46 @@ pub struct ActionTest {
     pub component: String,
     /// The op snake name (the route segment).
     pub op_snake: String,
-    /// The record seed (base_path + typed entries + required-FK deps).
+    /// The record seed (base_path + typed entries + required-FK deps). A
+    /// collection-add test seeds the PARENT aggregate (the collection
+    /// route's address); the child payload rides
+    /// [`ActionCollectionAdd::child_body`].
     pub fixture: Fixture,
     /// The legs in drive order (deterministic; see the planner).
     pub acts: Vec<ActionAct>,
+    /// The collection-add shape (issue #692) — `Some` exactly when the op
+    /// is a lowered aggregate child `add`: the spec drives the POM's
+    /// `add{Child}(payload, parentId)` method (POST the collection route
+    /// under the seeded parent) instead of a button click. `None` keeps
+    /// the item-addressed click rendering byte-identical.
+    pub collection_add: Option<ActionCollectionAdd>,
+}
+
+/// The collection-add payload (issue #692): everything the action spec and
+/// the POM method need to drive a collection-level child `add` — the
+/// parent-seeded id, the child create body, and the route. Legs are SOUND:
+/// the ok leg posts under the SEEDED parent (200, the created id
+/// capturable); the failure leg posts under a parent id that provably does
+/// not exist (the zero uuid) and pins the parent load's 404 — never a
+/// guessed status.
+#[derive(Debug)]
+pub struct ActionCollectionAdd {
+    /// The POM method name (`addPayRunLine`).
+    pub method: String,
+    /// The TS request-URL expression with `${parentId}` interpolated —
+    /// e.g. ``apiUrl(`/api/v1/payroll/pay-run/${parentId}/pay-run-line/actions/add_line`)``.
+    pub route_expr: String,
+    /// The child body's dep-POST statements (empty when the child carries
+    /// no required FK deps) — rendered before the add calls, bound under
+    /// the `add` variable prefix so the body's placeholders resolve inside
+    /// the consuming test.
+    pub child_dep_setup: String,
+    /// The child's create body as a JS object literal (wire-keyed;
+    /// dep-wired entries carry the `add`-prefix placeholders).
+    pub child_body: String,
+    /// The bogus parent id the 404 leg posts under (the zero uuid —
+    /// provably nonexistent, so the parent load answers None → 404).
+    pub bogus_parent_id: String,
 }
 
 /// One click + its assertion. Every leg asserts through the POM (the
@@ -248,6 +286,10 @@ pub enum ActionActKind {
     /// 403 FORBIDDEN: the op-level `when` guard denies (authorize runs
     /// before execution, so API-key sessions still hit it).
     Forbidden,
+    /// 404 NOT_FOUND: a bogus parent id under a collection-level child
+    /// `add` (issue #692) — the parent load-or-404 is the route's
+    /// existence contract.
+    NotFound,
     /// 501 NOT_IMPLEMENTED: the seam op names the gap.
     NotImplemented,
 }
@@ -260,12 +302,15 @@ impl ActionActKind {
             Self::Ok => "200",
             Self::Conflict => "409",
             Self::Forbidden => "403",
+            Self::NotFound => "404",
             Self::NotImplemented => "501",
         }
     }
 
     /// The stable error-text fragment the leg asserts (all planes surface
     /// the server's message verbatim in the action error span).
+    /// `None` for legs that assert a STATUS on the returned response
+    /// instead (the collection add's direct POST carries no UI error span).
     #[must_use]
     pub fn error_fragment(self) -> Option<&'static str> {
         match self {
@@ -275,6 +320,7 @@ impl ActionActKind {
             // ("operation `approve`: `when` condition not met (...)") — a
             // fragment on either side of the quotes only.
             Self::Forbidden => Some("condition not met"),
+            Self::NotFound => None,
             Self::NotImplemented => Some("no executable lowering"),
         }
     }

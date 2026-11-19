@@ -26,9 +26,9 @@ use tempfile::TempDir;
 use fixture::{
     DOMAINS_TOML, Fixture, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, RELEASE_DDD,
     guard_fixture_with_ambiguous_fk, guard_fixture_with_deep_path, guard_fixture_without_fk,
-    ingest, ingest_binding, ingest_child_ops, ingest_guard, read, run_generation, tempdir,
-    write_binding_fixture, write_binding_fixture_with, write_child_ops_fixture,
-    write_child_ops_fixture_with, write_fixture_in, write_guard_fixture,
+    ingest, ingest_binding, ingest_child_ops, ingest_guard, read, run_generation,
+    run_generation_result, tempdir, write_binding_fixture, write_binding_fixture_with,
+    write_child_ops_fixture, write_child_ops_fixture_with, write_fixture_in, write_guard_fixture,
     write_mox_first_fixture_in,
 };
 
@@ -1760,6 +1760,27 @@ async fn child_scoped_operations_lower_to_nested_child_action_routes() {
         actions.contains("added_add_line_id: jsonpath \"$.data.id\""),
         "the add leg must capture the created element:\n{actions}"
     );
+    // Issue #692: the bogus-parent 404 failure leg — the SAME collection
+    // URL with the ZERO-UUID PARENT segment, the child's create body,
+    // expect 404 (the parent load is the route's 404 contract; before the
+    // fix a bogus parent reached the FK and answered 500).
+    let bogus_parent_url = "{{base_url}}/api/v1/payroll/pay-run/00000000-0000-0000-0000-000000000000/pay-run-line/actions/add_line";
+    assert!(
+        actions.contains(bogus_parent_url),
+        "the add failure leg must probe a bogus parent through the collection route:\n{actions}"
+    );
+    assert_eq!(
+        status_after(
+            &actions,
+            "pay-run/00000000-0000-0000-0000-000000000000/pay-run-line/actions/add_line"
+        ),
+        Some(404),
+        "the bogus-parent leg must pin 404:\n{actions}"
+    );
+    assert!(
+        actions.contains("bogus parent answers 404"),
+        "the bogus-parent leg must be labelled as the parent-load failure leg:\n{actions}"
+    );
     // The read-back proves the element landed and is readable under the parent.
     assert!(
         actions.contains(
@@ -1852,5 +1873,134 @@ postgres_schema = "payroll"
     assert!(
         !handler.contains("service_op_add_line"),
         "an un-nested child must emit no child action handler:\n{handler}"
+    );
+}
+
+/// Issue #692: the collection-level `add` proves the parent row exists
+/// BEFORE the create — a parent load-or-404 through the parent's own
+/// RLS-scoped `find_by_id` query slot, so a bogus or foreign-org
+/// `parent_id` answers 404 instead of surfacing Postgres `23503` as a 500
+/// (the domain error classifier maps only scope/role/RLS markers).
+#[tokio::test]
+async fn child_collection_add_loads_the_parent_before_the_create() {
+    let fixture = write_child_ops_fixture();
+    let engine = ingest_child_ops(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    let handler = read(&out.path().join("src/api/payroll/pay_run_line_handler.rs"));
+    let add_at = handler
+        .find("fn service_op_add_line")
+        .expect("the add handler emits");
+    let add_arm = &handler[add_at..];
+    // (a) The parent load rides the PARENT's own query slot (same domain,
+    // the parent's module stem), carrying the parent's auditable arity,
+    // and PRECEDES the child create command.
+    let load_needle = "state.payroll_pay_run_queries\n        .find_by_id(parent_id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone())";
+    let load_at = add_arm.find(load_needle).unwrap_or_else(|| {
+        panic!("the parent load-or-404 must ride the parent's RLS-scoped query slot:\n{add_arm}")
+    });
+    let create_at = add_arm
+        .find("_commands.create(")
+        .expect("the child create call");
+    assert!(
+        load_at < create_at,
+        "the parent load must precede the create command (the FK write only runs \
+         for a parent the session can see):\n{add_arm}"
+    );
+    // (b) The load-or-404 shape: a miss (a bogus or foreign-org parent —
+    // the query plane is RLS-scoped) answers 404 naming the parent
+    // aggregate, never 403, never 500.
+    assert!(
+        add_arm.contains(r#"AppError::not_found(format!("PayRun {parent_id} not found"))"#),
+        "the load-or-404 must answer 404 naming the parent aggregate:\n{add_arm}"
+    );
+    // The item-level actions keep their scoped child load — no parent
+    // reload there (the scoped load IS the parent-ownership contract).
+    let save_arm = &handler[handler.find("fn service_op_save_line").expect("save arm")..];
+    assert!(
+        save_arm.contains("find_by_id_scoped(pay_run_line_id, parent_id")
+            && !save_arm.contains("pay_run_queries"),
+        "the save arm must keep the scoped child load and gain no parent reload:\n{save_arm}"
+    );
+}
+
+/// Issue #692, fail closed: a parent whose resolved op set exposes NO
+/// by-id load (the design surface narrowed to `findAll` — the query.tera
+/// rule `has_create or (has_read and not parent_ref)` answers false) is a
+/// NAMED generation error at route planning, both through the
+/// pre-generation validation pass and the generation path itself. Never a
+/// handler that references a query method that does not exist.
+#[tokio::test]
+async fn child_add_without_a_parent_by_id_load_fails_closed_naming_the_parent() {
+    let fixture = write_child_ops_fixture();
+    fs::write(
+        &fixture.ddd,
+        fixture::child_ops_ddd_without_parent_find_by_id(),
+    )
+    .unwrap();
+    let engine = ingest_child_ops(&fixture).await;
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+
+    // The direct collector (the run path's source).
+    let refusals =
+        codegraph_generate::ddd::service_ops::child_parent_load_refusals(&engine, &config)
+            .await
+            .unwrap();
+    let refusal = refusals
+        .iter()
+        .find(|r| r.contains("addLine"))
+        .unwrap_or_else(|| panic!("expected a parent-load refusal naming `addLine`: {refusals:?}"));
+    assert!(
+        refusal.contains("PayRunType"),
+        "the refusal must name the parent aggregate: {refusal}"
+    );
+    assert!(
+        refusal.contains("find_by_id"),
+        "the refusal must name the missing query: {refusal}"
+    );
+
+    // The pre-generation validation pass turns it into an Error issue.
+    let issues = codegraph::validate::ValidationPass::run(&engine, &config).await;
+    let issue = issues
+        .iter()
+        .find(|i| {
+            matches!(i.severity, codegraph::validate::Severity::Error)
+                && i.check == "child_op_parent_load"
+        })
+        .unwrap_or_else(|| panic!("expected a hard parent-load validation error, got: {issues:?}"));
+    assert!(
+        issue.message.contains("addLine"),
+        "the validation error must name the child op: {issue:?}"
+    );
+
+    // The generation path refuses too — the driver fails closed with the
+    // named Config error (a tree that would not compile is never written).
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let error = run_generation_result(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await
+    .expect_err("the parent-less parent load must fail generation");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("addLine") && rendered.contains("find_by_id"),
+        "the generation error must name the child op and the missing query: {rendered}"
     );
 }

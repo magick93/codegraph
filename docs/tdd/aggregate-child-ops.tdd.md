@@ -33,7 +33,7 @@ lowers onto `Design.child_operations`; each op carries
 | Task | RED evidence | GREEN evidence | What the passing tests guarantee |
 |---|---|---|---|
 | T1 graph mirror + ingest | `aggregate_child_operations_ingest_with_their_child_scope` FAILED (`child_operations` did not exist on the node) | `service_ops_tests`: 1 passed | `children PayRunType` lowers onto the design in declaration order with `childScope { feature: "lines", class: "payroll.PayRunLineType", action: "add" }`; service operations carry NO child scope; the DTO parameter rides the mirror |
-| T2 lowering + handler/router/hurl | `child_scoped_operations_lower_to_nested_child_action_routes` FAILED (no child action routes at all — the pre-#661 silent drop) | `service_ops_tests`: 1 passed | The child's routes fn carries `/actions/add_line` (COLLECTION level) + `/{pay_run_line_id}/actions/{save_line,remove_line}`; the parent `.nest(…)` mounts it (WS4 shape reused, no second nesting); `add` → `commands.create(item, parent_id, …)`, `save` → `commands.update(…)`, `remove` → `commands.delete(…)`; item actions load through `find_by_id_scoped(child, parent)`; no seam for the three actions; openapi registers all three through the child's module |
+| T2 lowering + handler/router/hurl | `child_scoped_operations_lower_to_nested_child_action_routes` FAILED (no child action routes at all — the pre-#661 silent drop) | `service_ops_tests`: 1 passed | The child's routes fn carries `/actions/add_line` (COLLECTION level) + `/{pay_run_line_id}/actions/{save_line,remove_line}`; the parent `.nest(…)` mounts it (WS4 shape reused, no second nesting); `add` → the parent load-or-404 (`state.{domain}_pay_run_queries.find_by_id(parent_id, …)`, issue #692) THEN `commands.create(item, parent_id, …)`, `save` → `commands.update(…)`, `remove` → `commands.delete(…)`; item actions load through `find_by_id_scoped(child, parent)`; no seam for the three actions; openapi registers all three through the child's module |
 | T3 the retained seam (acceptance 2) | same test, seam assertions | same | An op WITHOUT `child_scope` whose delegation targets the child's repository stays a 501 whose message names `children PayRunType`, `childScope`, and "Refusing to patch the parent row silently" |
 | T4 hurl contract (acceptance 3) | same test, hurl assertions FAILED (`{{item_url_base}}` leaked into the read-back leg as a hurl variable) | same | add leg posts the create body collection-level, captures `added_add_line_id`, read-back `GET …/{added}` pins 200 + `$.data.id exists`; `save`/`remove` ride the item route; failure legs pin 422 (create DTO `deny_unknown_fields`) and 404 (unknown id under the parent); `remove` is deferred LAST (it deletes the captured row) |
 | T5 fail-closed nesting | `child_operations_without_a_nested_child_declaration_emit_nothing` written with the impl | `service_ops_tests`: 1 passed | The SAME model without `role = "child"` emits zero child action routes + handlers (WARN naming the config fix) — never a top-level route that drops the parent anchor |
@@ -125,7 +125,17 @@ declared-table suites (`mox_table_name_tests` 2, `module_collision_tests`
   read, so an element of another parent 404s before any write (proven live
   by the two-parent probe). A collection-level `add` writes the child's
   parent back-ref from the PATH (`commands.create(item, parent_id, …)`), so
-  the element can never land under a parent the route did not name.
+  the element can never land under a parent the route did not name. Since
+  issue #692 the `add` ALSO proves the parent row exists first: the handler
+  renders a parent load-or-404 (`state.{domain}_{parent_module}_queries
+  .find_by_id(parent_id, …)` → `AppError::not_found`) before the create, so
+  a bogus or foreign-org `parent_id` answers 404 through the RLS-scoped
+  query plane — never Postgres `23503` as a 500. The plan resolves the
+  parent's query slot at generation time (the query.tera
+  `has_create or (has_read and not parent_ref)` rule); a parent with no
+  plain by-id load, and a cross-domain parent, are NAMED generation errors
+  (`child_parent_load_refusals` / the `child_op_parent_load` validation
+  check) — never a handler referencing a method that does not exist.
 - **Aggregate contract.** `remove` deletes the child row through the child
   plane (the aggregate's ownership pair is the child-side back-ref FK);
   `save` updates the parent-scoped row. A junction-only link (`refers T[]`
@@ -155,8 +165,35 @@ declared-table suites (`mox_table_name_tests` 2, `module_collision_tests`
 - Contained-VO child ops (upstream Rule 6 forbids a standalone repository).
 - M:N junction link/unlink for an aggregate whose only child link is a
   junction table.
-- A collection-add POM/action-spec leg for the IFML plane (the POM action
-  surface is item-addressed; `add` stays unbuilt there).
+- ~~A collection-add POM/action-spec leg for the IFML plane~~ — **retired by
+  issue #692**: the POM gained the `add{Child}(payload, parentId)`
+  collection POST method and the action spec gained sound
+  `200 then 404` legs (the parent fixture seeds first; the 404 leg posts
+  under the zero-uuid parent).
 - Cross-domain child entities (the lowering assumes the child's
-  commands/queries live in the parent's domain crate).
+  commands/queries live in the parent's domain crate — since #692 a
+  cross-domain parent is additionally a NAMED generation error).
 - Grandchild generalization beyond the depth-2 route already emitted.
+
+## Issue #692 follow-up (collection-add parent gate + IFML legs)
+
+`ws/692-child-add-404`: the collection-level `add` no longer writes
+through a bogus/foreign parent.
+
+- **Handler**: the `add` sub-arm renders a parent load-or-404 BEFORE the
+  create (the `record_load` block's whitespace/shape). Pins:
+  `child_collection_add_loads_the_parent_before_the_create`.
+- **Fail closed**: `child_parent_load` (routes.rs) resolves the parent's
+  query slot with the query.tera `uses_find_by_id` rule; the refusals ride
+  `child_parent_load_refusals` + the `child_op_parent_load` ValidationPass
+  check. Pin: `child_add_without_a_parent_by_id_load_fails_closed_naming_the_parent`
+  (a parent design narrowed to `findAll` — no `create`/`read`).
+- **hurl**: the add contract gains the bogus-parent leg (the collection
+  URL with the zero-uuid PARENT segment, the child's create body, 404)
+  via `OpLeg.full_url` + `zero_uuid_parent_base`.
+- **IFML**: `ActionActKind::NotFound`, the `ActionCollectionAdd` payload
+  (`build_collection_add`), the POM `add{Child}(payload, parentId)` method
+  (`PomAction::collection`), and the collection-add spec arm in
+  `render_action_spec` — zero raw testids, sound legs only.
+- **Live gate**: the `CHILD_OWNERSHIP_PROBE` gains the bogus-parent 404
+  leg and `assert_child_emitted_surface` pins the emitted contract leg.
