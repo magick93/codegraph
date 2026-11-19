@@ -1663,6 +1663,21 @@ pub fn cmd_doctor(args: &DoctorArgs) -> Result<DoctorSummary> {
         }
     }
 
+    // Issue #702: the domain key is the single Postgres schema source of
+    // truth; a divergent `postgres_schema` is a hard failure — the same
+    // predicate the generation-time gate enforces, so doctor and generation
+    // cannot drift.
+    if let Ok(config) = &domain_config {
+        for divergence in codegraph_generate::consistency::postgres_schema_alignments(config) {
+            hard_failures += 1;
+            println!("FAIL domain-schemas — {divergence}");
+            println!(
+                "     hint: set postgres_schema equal to the domain key (the init scaffold \
+                 emits them already equal)"
+            );
+        }
+    }
+
     // Media storage (issue #625 PR-A): the provider capability matrix and
     // the key template need no graph — doctor runs the same check the run
     // path runs (generate::media::validate_media_matrix_and_template), so

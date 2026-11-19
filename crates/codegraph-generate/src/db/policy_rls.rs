@@ -286,12 +286,10 @@ async fn resolve_policy(
         if !schema.is_entity || schema.pg_table_name.is_empty() {
             return Err(Error::Validation(class_not_mapped_error(name, &class)));
         }
-        let pg_schema = schema
-            .domain
-            .as_deref()
-            .and_then(|domain| config.domains.get(domain))
-            .map(|entry| entry.postgres_schema.clone())
-            .unwrap_or_else(|| schema.domain.clone().unwrap_or_default());
+        // Issue #702: the domain key is the single Postgres schema source
+        // of truth — the schema the DDL created the table in. The declared
+        // `postgres_schema` is validated equal to it (the consistency gate).
+        let pg_schema = schema.domain.clone().unwrap_or_default();
 
         let mut ordered_predicates: Vec<String> = grants.predicates.iter().cloned().collect();
         ordered_predicates.sort();

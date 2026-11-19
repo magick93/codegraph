@@ -780,7 +780,8 @@ async fn media_child_statements_filter_on_the_exact_session_tenant() {
     );
     // The tenancy rule is three copies that must move together (not "one
     // rule the gate and the table cannot disagree about"), and the schema
-    // source divergence is #702.
+    // source is RESOLVED (#702): the domain key is the single Postgres
+    // schema source of truth, and `postgres_schema` is validated equal.
     for copy in ["db/entity.rs", "db/ddl/query.rs", "persistence.rs"] {
         assert!(
             module.contains(copy),
@@ -792,8 +793,43 @@ async fn media_child_statements_filter_on_the_exact_session_tenant() {
         "the old overclaim is gone:\n{module}"
     );
     assert!(
-        module.contains("#702"),
-        "the schema-source divergence names its issue:\n{module}"
+        !module.contains("the divergence is silent today"),
+        "the pre-#702 divergence doc is retired:\n{module}"
+    );
+    assert!(
+        module.contains("validated equal"),
+        "the doc states the #702 resolution (domain key authoritative, \
+         postgres_schema validated equal):\n{module}"
+    );
+}
+
+/// Issue #702: the domain key is the single Postgres schema source of truth.
+/// Even when `postgres_schema` names a DIFFERENT schema, the media session
+/// SQL and the PARENT_TABLE/CHILD_TABLE consts must qualify with the DOMAIN
+/// key — the schema the DDL actually created the tables in.
+#[tokio::test]
+async fn media_route_qualifies_with_the_domain_key_not_postgres_schema() {
+    let engine = GrafeoEngine::in_memory().expect("engine");
+    ingest_model(&engine).await;
+    let divergent = media_toml("supabase", "through-app").replace(
+        "postgres_schema = \"core\"",
+        "postgres_schema = \"core_legacy\"",
+    );
+    let config = parse_domain_config_str(&divergent).expect("toml");
+    let modules = run_media_route_generator(&engine, &config).await;
+    let module = &modules[0];
+
+    assert!(
+        module.contains("const PARENT_TABLE: &str = \"core.person\";"),
+        "the owning table must qualify with the DOMAIN key schema:\n{module}"
+    );
+    assert!(
+        module.contains("const CHILD_TABLE: &str = \"core.person_avatar\";"),
+        "the child table must qualify with the DOMAIN key schema:\n{module}"
+    );
+    assert!(
+        !module.contains("core_legacy"),
+        "the declared postgres_schema spelling must not leak into the session SQL:\n{module}"
     );
 }
 

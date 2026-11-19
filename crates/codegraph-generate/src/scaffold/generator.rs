@@ -373,7 +373,15 @@ pub async fn build_scaffold_domains(
             Some(ScaffoldDomain {
                 name: name.clone(),
                 label: entry.label.clone(),
-                postgres_schema: entry.postgres_schema.clone(),
+                // Issue #702: the DOMAIN key is the single Postgres schema
+                // source of truth. The struct field (and the
+                // `db/app_user_grants.tera` variable) keep the name
+                // `postgres_schema`, but the value is the domain key — the
+                // schema the DDL actually created the tables in, so the
+                // grants cannot drift onto a schema no migration created.
+                // The declared `postgres_schema` is validated equal to it
+                // (the consistency gate + `codegraph doctor`).
+                postgres_schema: name.clone(),
                 entities,
                 has_custom_routes: entry.custom_routes,
                 atproto_nsids: domain_nsids.remove(name.as_str()).unwrap_or_default(),
@@ -851,5 +859,45 @@ mod tests {
         )
         .unwrap();
         assert!(sql.contains("REVOKE UPDATE, DELETE ON core.case_status_changed FROM app_user"));
+    }
+}
+
+#[cfg(test)]
+mod postgres_schema_source_tests {
+    use super::*;
+
+    /// Issue #702: the domain key is the single Postgres schema source of
+    /// truth. The scaffold context's `postgres_schema` field keeps its name
+    /// (template variable unchanged), but it is populated from the DOMAIN
+    /// key — the grants SQL must grant on the schema the DDL actually
+    /// created the tables in.
+    #[tokio::test]
+    async fn scaffold_domains_carry_the_domain_key_as_the_postgres_schema() {
+        let config: DomainConfig = toml::from_str(
+            r#"
+[domains.core]
+label = "Core"
+schema_dir = "core"
+postgres_schema = "core_legacy"
+custom_routes = true
+"#,
+        )
+        .expect("config");
+        let engine = codegraph_core::mock::MockEngine::builder().build();
+        let empty: Vec<GenerationEntry> = vec![];
+
+        let domains = build_scaffold_domains(&engine, &config, &empty)
+            .await
+            .expect("scaffold domains");
+        let core = domains
+            .iter()
+            .find(|d| d.name == "core")
+            .expect("the custom-routes domain is included");
+        assert_eq!(
+            core.postgres_schema, "core",
+            "the DOMAIN key wins (#702) — the grants plane must not grant on a schema \
+             the DDL never created"
+        );
+        assert_ne!(core.postgres_schema, "core_legacy");
     }
 }

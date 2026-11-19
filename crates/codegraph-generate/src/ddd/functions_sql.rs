@@ -75,7 +75,8 @@ pub struct SqlFnPlan {
     pub definition: Option<String>,
     /// snake_case function name on both sides.
     pub fn_name: String,
-    /// Postgres schema (the domain's `postgres_schema`).
+    /// Postgres schema — the DOMAIN key (issue #702; the declared
+    /// `postgres_schema` is validated equal to it).
     pub schema: String,
     pub params: Vec<SqlParam>,
     /// `(rust_name, rust_type, pg_type)` of the declared output.
@@ -856,14 +857,19 @@ pub async fn collect_sql_plans(
                 node.name
             ))
         })?;
-        let entry = config.domains.get(&domain).ok_or_else(|| {
-            Error::Config(format!(
+        // Existence gate only: the schema spelled `domain` below IS the
+        // domain key (issue #702) — the declared `postgres_schema` is
+        // validated equal to it by the consistency gate.
+        if !config.domains.contains_key(&domain) {
+            return Err(Error::Config(format!(
                 "function '{}': domain '{domain}' is not configured in domains.toml",
                 node.name
-            ))
-        })?;
-        let plan =
-            plan_sql_function(&node, &entry.postgres_schema, &codelists).map_err(Error::Config)?;
+            )));
+        }
+        // Issue #702: the DOMAIN key is the Postgres schema source of truth
+        // — the schema the DDL and every other plane use. The declared
+        // `postgres_schema` is validated equal to it (the consistency gate).
+        let plan = plan_sql_function(&node, &domain, &codelists).map_err(Error::Config)?;
         out.push((domain, plan));
     }
     Ok(out)
@@ -920,6 +926,8 @@ impl GlobalGenerator for FunctionsSqlGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codegraph_core::traits::GraphIngestor;
+    use codegraph_core::types::{FunctionInput, FunctionOperation};
 
     fn scope() -> HashMap<String, String> {
         HashMap::from([
@@ -977,5 +985,71 @@ mod tests {
         let expanded = expand_aliases(&payload, &aliases, 0, "F").unwrap();
         let sql = lower_expr(&expanded, &scope()).unwrap();
         assert_eq!(sql, "p_amount + 2.0");
+    }
+
+    fn sql_function(domain: &str) -> FunctionNode {
+        FunctionNode {
+            name: "AddVat".to_string(),
+            domain: Some(domain.to_string()),
+            definition: None,
+            dispatch: None,
+            inputs: vec![FunctionInput {
+                name: "amount".to_string(),
+                type_ref: "number".to_string(),
+                is_array: false,
+                is_optional: false,
+            }],
+            output: Some(FunctionInput {
+                name: "result".to_string(),
+                type_ref: "number".to_string(),
+                is_array: false,
+                is_optional: false,
+            }),
+            aliases: vec![],
+            operations: vec![FunctionOperation {
+                is_add: false,
+                assign_root: "result".to_string(),
+                path: vec![],
+                expr_json: r#"{"kind":"Binary","op":"+","left":{"kind":"SymbolReference","symbol":"amount"},"right":{"kind":"Number","text":"1.0"}}"#.to_string(),
+            }],
+            post_conditions: vec![],
+            extends: None,
+            transform_annotations: vec![],
+            properties: serde_json::Value::Null,
+        }
+    }
+
+    fn sql_binding_config(pg_schema: &str) -> DomainConfig {
+        toml::from_str(&format!(
+            r#"
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "{pg_schema}"
+
+[functions.AddVat]
+implementation = "sql"
+"#
+        ))
+        .expect("config")
+    }
+
+    /// Issue #702: the sql-function migration must be created in the DOMAIN
+    /// key's schema — the schema the DDL and every other plane use — even
+    /// when `postgres_schema` names a different schema.
+    #[tokio::test]
+    async fn sql_function_schema_comes_from_the_domain_key_not_postgres_schema() {
+        let engine = codegraph_core::mock::MockEngine::builder().build();
+        engine
+            .ingest_function(&sql_function("payroll"))
+            .await
+            .expect("ingest");
+        let config = sql_binding_config("payroll_legacy");
+
+        let plans = collect_sql_plans(&engine, &config).await.expect("plans");
+        assert_eq!(plans.len(), 1, "the sql-bound function must plan");
+        let schema = &plans[0].1.schema;
+        assert_eq!(schema, "payroll", "the DOMAIN key wins (#702)");
+        assert_ne!(schema, "payroll_legacy");
     }
 }
