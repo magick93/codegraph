@@ -16,7 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use codegraph_ops::db::{psql_exec, psql_exec_file, psql_query};
+use codegraph_ops::db::{psql_exec, psql_exec_file};
 use codegraph_ops::env::ensure_psql;
 use codegraph_ops::pg::PgTarget;
 
