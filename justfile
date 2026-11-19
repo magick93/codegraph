@@ -26,11 +26,12 @@ ci-local: lint test audit ops
 
 default: ci-local
 
-# CI lint job: check + fmt --check + clippy -D warnings.
+# CI lint job: check + fmt --check + clippy -D warnings (including the
+# #751 file/function size lint — the thresholds live in clippy.toml).
 lint:
     cargo check --workspace
     cargo fmt --all -- --check
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings -D clippy::too_many_lines
 
 # CI test job: workspace tests under CI's RUSTFLAGS. AGENTS.md mandates
 # local full-suite runs mirror the flag — without it every test binary
