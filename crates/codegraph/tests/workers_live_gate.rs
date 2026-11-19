@@ -74,22 +74,22 @@ pub const EXPECTED_DOMAINS: [&str; 10] = [
 pub const SUPABASE_DB_PORT: u16 = 54340;
 pub const SUPABASE_HEALTH_URL: &str = "http://localhost:54341/auth/v1/health";
 
-/// The Supabase CLI version this gate pins (issue #729). Bare `npx supabase`
-/// resolves whatever npm `latest` happens to be, and the runner's resolved
-/// CLI fatally rejected the fixture config's legacy key. Both halves are
-/// load-bearing and verified on the pinned CLI: `supabase@3.2.0` accepts
-/// `[local_smtp]` and rejects `[inbucket]` (`inbucket in supabase/config.toml
-/// is no longer supported. Use local_smtp instead.`), while `supabase@2.105.0`
-/// still accepts `[inbucket]` — so the pin kills `latest` drift AND the
-/// fixture's rename is what gets `start` past config load. EVERY CLI
-/// invocation in this suite names this version, and
-/// `.github/workflows/workers-gate.yml`'s prefetch names the same literal —
-/// the node-free lockstep pin below fails (naming the mismatch) when the two
-/// drift apart.
-///
-/// The constant itself lives in `codegraph_ops::supabase` (issue #743):
-/// the ops harness's own `npx supabase` spawns import the same value, so
-/// the harness and this gate cannot pin different CLIs.
+// The Supabase CLI version this gate pins (issue #729). Bare `npx supabase`
+// resolves whatever npm `latest` happens to be, and the runner's resolved
+// CLI fatally rejected the fixture config's legacy key. Both halves are
+// load-bearing and verified on the pinned CLI: `supabase@3.2.0` accepts
+// `[local_smtp]` and rejects `[inbucket]` (`inbucket in supabase/config.toml
+// is no longer supported. Use local_smtp instead.`), while `supabase@2.105.0`
+// still accepts `[inbucket]` — so the pin kills `latest` drift AND the
+// fixture's rename is what gets `start` past config load. EVERY CLI
+// invocation in this suite names this version, and
+// `.github/workflows/workers-gate.yml`'s prefetch names the same literal —
+// the node-free lockstep pin below fails (naming the mismatch) when the two
+// drift apart.
+//
+// The constant itself lives in `codegraph_ops::supabase` (issue #743):
+// the ops harness's own `npx supabase` spawns import the same value, so
+// the harness and this gate cannot pin different CLIs.
 
 /// The fixture's local SMTP port (`[local_smtp].port`) — inside the 54340+
 /// block the fixture owns, and part of what the lockstep pin holds (issue
