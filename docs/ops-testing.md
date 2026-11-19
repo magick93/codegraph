@@ -84,7 +84,7 @@ Requires a `[[supabase]]` manifest section and `database.e2e`.
 | Fast doctor (e2e subset) | npx, pnpm, supabase CLI, chromium, api+ui ports, disk. No DB probe. Marker: `Fast doctor`. |
 | Port preflight | api + ui ports resolved through the services registry (takeover / `--reuse`). |
 | E2E 0. freshness (pre-check, --skip-build) | With `--skip-build` only: fail a stale binary in seconds instead of after ~10 minutes of supabase/DB work. |
-| E2E 1. Supabase | `npx supabase start` (or detect running), then `pre_e2e` hooks (e.g. the pgmq patch). |
+| E2E 1. Supabase | The PINNED CLI `npx --yes supabase@3.2.0 start` (or detect running), then `pre_e2e` hooks (e.g. the pgmq patch). |
 | E2E 2. Generate | Build the graph binary (release), regenerate, output-tree check, generation-error gate (`--allow-gen-errors`), generator-rev check. |
 | E2E 3. Database | Migration symlink + `supabase db reset` + seed (~2 min at consumer scale), `post_migrate` hooks, API-key provisioning. |
 | E2E 4. Build | Build the app binary, then the post-build freshness check. |
@@ -369,6 +369,7 @@ listed for completeness:
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | exported | Playwright env, from the manifest `[[supabase]]` keys or the local-dev defaults. |
 | `SUPABASE_JWT_SECRET` | exported | App server boot env (api + e2e suites). |
 | `DATABASE_URL` | exported | App server boot (api or e2e db target) and Playwright env (when `database.e2e` is configured). |
+| `CODEGRAPH_REQUIRE_SUPABASE` | read | When `1`/`true`, a db target lacking the Supabase band (`auth` schema, pgmq, pg_tle, http) is a FAIL naming what is missing and the image to point at — never a skip (issue #708). Unset, plain-Postgres targets keep the historical skip behaviour. CI's `test-ops-integration` exports it; `just ops-db-integration` sets it automatically when the reachable target serves the band. |
 | `APP_DATABASE_URL` | exported (unless set) | The `app_user` serving pool for the generated server; defaults to the migration's `app_user` password. Set it yourself to override. |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | read + exported | Override for the chromium binary; the e2e suite exports it when a system chromium is found, otherwise falls back to `npx playwright install chromium`. |
 | `CODEGRAPH_ROOT` | exported via `--codegraph-root` | Inherited by hooks, cargo, and the generated app; lets manifests reference the codegraph checkout via `{env:CODEGRAPH_ROOT}`. |
@@ -415,9 +416,38 @@ this suite — issue #640), with metrics export:
 cargo run -p testkit -- api --metrics ci.tsv
 ```
 
-The codegraph repo's own `test-ops-integration` job (postgres service +
-the `--ignored` integration tests) is the reference pattern; see the
-"Ops Harness" section of `AGENTS.md` for the consumer integration guide.
+**Which mode CI uses (issue #709, shape B):** the suite probes the
+configured `[database.api]` target with the shared Supabase-compatibility
+predicate (`codegraph_ops::supabase::compatibility_gate` — the same probe
+the `db_integration` band tests use) and, when it already serves the band,
+**skips `supabase start` entirely and runs against it** — no manifest
+`[[supabase]]` section is needed in this mode (there is no stack to
+start). Point the job's service at
+`public.ecr.aws/supabase/postgres:17.6.1.132` and the suite is
+shape-B from the first request. The stack-startup path (the pinned
+`npx --yes supabase@3.2.0 start`, issue #743) remains the fallback for a
+down stack. Shape A — `npx supabase start` inside the CI job — is a
+recorded alternative, deliberately out of scope: it needs Docker-in-Docker
+and 1–2 minutes of stack boot per PR.
+
+**What this mode does NOT exercise:** GoTrue and PostgREST are not
+installed by the postgres image and are not required by the suite's core
+legs (migrate → app boot → hurl contracts → curl smoke → RLS; the hurl
+contracts authenticate with API keys against the generated axum app, and
+the 401 leg is served by axum itself). The persona/auth legs — JWT login
+flows, Supabase client auth, browser sessions — are **shadowed** in this
+lane; they remain the consumer `testkit e2e` lane's job.
+
+**CI lane status:** the codegraph repo's own CI does **not yet** run the
+testkit api lane — wiring it surfaced issue #756 (a generated app without
+the admin CLI cannot boot over an already-applied band: the boot re-seed
+hits the #700 tenant trigger with no session org). The lane steps land
+with the #756 fix; until then the contract pin
+(`ops_ci_lane_contract::the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile`)
+is ignore-marked naming it. The codegraph repo's `test-ops-integration`
+job (Supabase-image service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE`
+gate, issue #708) is the reference pattern for the DB tier; see the "Ops
+Harness" section of `AGENTS.md` for the consumer integration guide.
 
 ---
 

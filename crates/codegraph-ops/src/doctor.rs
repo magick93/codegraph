@@ -347,7 +347,11 @@ pub async fn run_doctor(config: &OpsConfig) -> OpsResult<()> {
             "npx",
             &["--no-install", "supabase", "--version"],
             config.supabase_dir.as_deref(),
-            "the e2e suite drives `npx supabase` — install the CLI (brew install supabase/tap)",
+            &format!(
+                "the e2e suite drives the pinned Supabase CLI (`npx --yes {}`, \
+                 issue #743) — install it (brew install supabase/tap)",
+                crate::supabase::pinned_cli_spec()
+            ),
             false,
         );
     }
@@ -668,7 +672,11 @@ async fn run_fast_doctor_with(
                     "npx",
                     &["--no-install", "supabase", "--version"],
                     config.supabase_dir.as_deref(),
-                    "install the supabase CLI — `npx supabase start` drives the e2e stack",
+                    &format!(
+                        "install the supabase CLI — the pinned `npx --yes {}` \
+                         (issue #743) drives the e2e stack",
+                        crate::supabase::pinned_cli_spec()
+                    ),
                     true,
                 );
             }

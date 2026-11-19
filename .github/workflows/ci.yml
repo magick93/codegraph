@@ -72,22 +72,42 @@ jobs:
     # Pinned: ubuntu-latest moved to 26.04 (resolute), whose archive no
     # longer ships the `libxml2` the hurl .deb depends on ("not installable").
     # 24.04 (noble) installs it cleanly; everything else in this job is
-    # runner-agnostic (postgres:15 service, dtolnay toolchain, rust-cache).
+    # runner-agnostic (supabase-postgres service, dtolnay toolchain,
+    # rust-cache).
     runs-on: ubuntu-24.04
+    # Issue #708: the job exists to exercise the full generated platform
+    # band (basejump + pgmq + extensions), so the service must BE the
+    # Supabase postgres image — the same image ifml-gate.yml /
+    # entity-gate.yml / test_framework/postgres.rs run. A vanilla
+    # postgres:<n> made the two band tests skip themselves and the job
+    # stayed green while the band was never applied.
+    #
+    # POSTGRES_USER must be supabase_admin: the image's
+    # /docker-entrypoint-initdb.d/migrate.sh runs `psql -U supabase_admin`
+    # BEFORE that role exists, so the bootstrap only completes when
+    # supabase_admin is the init user (with POSTGRES_USER=postgres the
+    # container exits 2 — the IFML/entity gates' comments carry the full
+    # story). The tests still connect as `postgres` (DATABASE_URL
+    # unchanged): the image creates that role too.
     services:
       postgres:
-        image: postgres:15
+        image: public.ecr.aws/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-          POSTGRES_DB: postgres
+          POSTGRES_USER: supabase_admin
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      # Issue #708: fail closed in this lane — a missing Supabase
+      # capability FAILS naming the image instead of silently skipping the
+      # band tests. Local plain-Postgres runs keep today's skip behaviour
+      # (the env stays unset there).
+      CODEGRAPH_REQUIRE_SUPABASE: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

@@ -16,7 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use codegraph_ops::db::{psql_exec, psql_exec_file, psql_query};
+use codegraph_ops::db::{psql_exec, psql_exec_file};
 use codegraph_ops::env::ensure_psql;
 use codegraph_ops::pg::PgTarget;
 
@@ -243,23 +243,21 @@ fn skip_if_no_pg_dump() -> bool {
     !ok
 }
 
-/// True when the target looks like a Supabase-compatible Postgres: the
-/// generated platform band (basejump via pg_tle, pgmq queues, the `http`
-/// extension) needs them. A vanilla `postgres:16` container — e.g. the CI
-/// fallback on 127.0.0.1:15432 — lacks them and the test skips.
-async fn supabase_compatible(t: &PgTarget) -> bool {
-    let out = psql_query(
-        t,
-        "SELECT \
-         EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pgmq') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_tle') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'http') AND \
-         EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'uuid-ossp');",
-    )
-    .await
-    .unwrap_or_default();
-    out.trim() == "t"
+/// Probe the target through the SHARED fail-closed gate
+/// (`codegraph_ops::supabase`, issue #708): under
+/// `CODEGRAPH_REQUIRE_SUPABASE=1` a missing capability is a FAIL naming
+/// what is missing and the image; unset, the caller skips as before.
+/// Returns false when the caller should skip (the reason is printed).
+async fn band_gate(t: &PgTarget) -> bool {
+    use codegraph_ops::supabase::{CompatibilityGate, compatibility_gate};
+    match compatibility_gate(t).await {
+        CompatibilityGate::Run => true,
+        CompatibilityGate::Skip { reason } => {
+            eprintln!("skipping: {reason}");
+            false
+        }
+        CompatibilityGate::Fail { reason } => panic!("{reason}"),
+    }
 }
 
 async fn recreate_database(admin: &PgTarget, db: &str) {
@@ -346,8 +344,7 @@ async fn migrate_twice_schema_fingerprint_is_equal() {
         return;
     }
     let admin = target();
-    if !supabase_compatible(&admin).await {
-        eprintln!("skipping: target lacks Supabase-compatible auth schema / pgmq / pg_tle / http");
+    if !band_gate(&admin).await {
         return;
     }
 

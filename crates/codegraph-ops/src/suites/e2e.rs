@@ -182,16 +182,23 @@ pub fn freshness_precheck_required(skip_build: bool) -> bool {
 }
 
 /// Ensure the Supabase CLI stack is running: health check first, then
-/// `npx supabase start` when down. Every suite (e2e, api, workers) targets
-/// the same Supabase-provisioned database, so they all run this before any
+/// `npx --yes supabase@{SUPABASE_CLI_VERSION} start` when down (the pinned
+/// spec — issue #743). Every suite (e2e, api, workers) targets the same
+/// Supabase-provisioned database, so they all run this before any
 /// DB-touching stage.
 pub(crate) async fn supabase_ensure_up(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
     let health_url = supabase_health_url(config);
     if http_ok(&health_url).await {
         output::ok(format!("Supabase already running ({health_url})"));
     } else {
-        output::info("Starting Supabase (npx supabase start)...");
-        run_blocking("supabase", "npx", &["supabase", "start"], supabase_dir)?;
+        let args = ["start"];
+        output::info(format!(
+            "Starting Supabase ({})...",
+            crate::supabase::npx_supabase_display(&args)
+        ));
+        let argv = crate::supabase::npx_supabase_args(&args);
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        run_blocking("supabase", "npx", &argv, supabase_dir)?;
         output::ok("Supabase started");
     }
     Ok(())
@@ -282,14 +289,15 @@ async fn e2e_migrate(config: &OpsConfig, supabase_dir: &Path) -> OpsResult<()> {
                 app_migrations.display()
             ));
         }
-        output::info("Resetting database (npx supabase db reset)...");
-        run_blocking(
-            "supabase",
-            "npx",
-            &["supabase", "db", "reset"],
-            supabase_dir,
-        )
-        .map_err(|e| OpsError::TestFailure(format!("supabase db reset failed: {e}")))?;
+        let args = ["db", "reset"];
+        output::info(format!(
+            "Resetting database ({})...",
+            crate::supabase::npx_supabase_display(&args)
+        ));
+        let argv = crate::supabase::npx_supabase_args(&args);
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        run_blocking("supabase", "npx", &argv, supabase_dir)
+            .map_err(|e| OpsError::TestFailure(format!("supabase db reset failed: {e}")))?;
         output::ok("Database reset with migrations");
 
         let seed = supabase_dir.join("supabase").join("seed.sql");

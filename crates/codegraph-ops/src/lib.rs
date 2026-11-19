@@ -43,6 +43,7 @@ pub mod replay;
 pub mod results;
 pub mod storage;
 pub mod suites;
+pub mod supabase;
 pub mod wait;
 
 pub use config::OpsConfig;

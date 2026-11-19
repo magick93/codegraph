@@ -165,16 +165,34 @@ pub async fn run_api(config: &OpsConfig, args: &ApiArgs) -> OpsResult<()> {
     let mut hook_failures: Vec<String> = Vec::new();
     hook_failures.extend(run_hooks(config, "pre_api", HookPolicy::PerHook).await?);
     // The api suite targets the same Supabase-provisioned database as e2e
-    // ([database.api] == [database.e2e]): the stack must be up before any
-    // DB-touching stage. pre_db hooks (e.g. the pgmq after-create patch)
-    // need the container running, so they fire right after it is up.
+    // ([database.api] == [database.e2e]). Shape B (issue #709): when the
+    // configured target ALREADY serves the Supabase band — CI's
+    // supabase-postgres service, a pre-started local stack — run against
+    // it and skip the `supabase start` spawn entirely; no manifest
+    // [[supabase]] section is needed in this mode (there is no stack to
+    // start). Same predicate the db_integration band tests use (no second
+    // one). pre_db hooks (e.g. the pgmq after-create patch) fire either
+    // way.
     output::section("Supabase stack");
     config.metrics.begin("Supabase");
-    let ensured = match config.supabase_dir.as_ref() {
-        Some(dir) => crate::suites::e2e::supabase_ensure_up(config, dir).await,
-        None => Err(OpsError::TestFailure(
-            "[supabase] dir missing in manifest — the api suite needs the stack".into(),
-        )),
+    let already_up = matches!(
+        crate::supabase::compatibility_gate(&config.api_db).await,
+        crate::supabase::CompatibilityGate::Run
+    );
+    let ensured = if already_up {
+        output::info(format!(
+            "Supabase-compatible Postgres already answering at {}:{} — \
+             skipping stack startup (shape B, issue #709)",
+            config.api_db.host, config.api_db.port
+        ));
+        Ok(())
+    } else {
+        match config.supabase_dir.as_ref() {
+            Some(dir) => crate::suites::e2e::supabase_ensure_up(config, dir).await,
+            None => Err(OpsError::TestFailure(
+                "[supabase] dir missing in manifest — the api suite needs the stack".into(),
+            )),
+        }
     };
     config.metrics.end();
     ensured?;
