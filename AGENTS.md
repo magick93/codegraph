@@ -3454,7 +3454,8 @@ cargo test -p codegraph-ops            # 238 harness tests (suites, proc, db, mi
 cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
 cargo clippy -p codegraph-ops --all-targets         # must be warning-free
 
-# Ignored integration tests (run in CI's test-ops-integration job with a postgres:15 service)
+# Ignored integration tests (run in CI's test-ops-integration job with the
+# Supabase postgres image — issue #708)
 cargo test -p codegraph-ops --test db_integration -- --ignored --nocapture   # needs DATABASE_URL (default postgres://postgres:postgres@localhost:5432/postgres)
 cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture  # slow: compiles the emitted testkit crate
 cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture  # #550: worker plane wasm32 gate (needs the wasm32-unknown-unknown target; DB-free — stubbed cornucopia-queries)
@@ -3996,7 +3997,7 @@ and extensions.
 | Layer | Location | Notes |
 |-------|----------|-------|
 | **Manifest types** | `crates/codegraph-config/src/ops_manifest.rs` | `OpsManifest` (serde TOML): app name, servers/ports, db targets, supabase, capabilities, hurl, hooks, extensions, smoke entity, api version |
-| **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`, `run_streaming` labeled streaming), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `suites/*` (api, cli, ui, e2e, workers, smoke, quality), `ext.rs` (extension protocol + hooks + `HookPolicy`), `metrics.rs` (stage TSV/JSON export), `doctor.rs` (state report + stage-0 fast-doctor subsets), `registry.rs` (`.testkit/services.json` advisory services registry), `freshness.rs` (generator-rev check), `results.rs` (`--results` JSON writers), `bundle.rs` (failure artifact bundles), `pwcache.rs` (Playwright transpile-cache hygiene), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
+| **Harness crate** | `crates/codegraph-ops/` | Runtime: `cli.rs` (clap), `config.rs` (`OpsConfig` resolution), `proc.rs` (SIGTERM→SIGKILL supervision, `Supervisor`, `run_streaming` labeled streaming), `db.rs` (psql wrapper, extension validation), `migrate.rs` (phased migrations, supabase symlinks), `supabase.rs` (the pinned Supabase CLI spec + postgres image, issues #743/#708; the shared `compatibility_gate` probe — one predicate for the `db_integration` band tests, the idempotency twin, and the api suite's shape-B already-up check), `suites/*` (api, cli, ui, e2e, workers, smoke, quality), `ext.rs` (extension protocol + hooks + `HookPolicy`), `metrics.rs` (stage TSV/JSON export), `doctor.rs` (state report + stage-0 fast-doctor subsets), `registry.rs` (`.testkit/services.json` advisory services registry), `freshness.rs` (generator-rev check), `results.rs` (`--results` JSON writers), `bundle.rs` (failure artifact bundles), `pwcache.rs` (Playwright transpile-cache hygiene), `wait.rs`, `env.rs`, `pg.rs` (`PgTarget`) |
 | **Generator** | `crates/codegraph-generate/src/ops.rs` | Global generator `ops` — emits `codegraph-ops.toml` + `testkit/` crate into generated output |
 | **Templates** | `crates/codegraph-generate/templates/ops/` | `testkit_cargo.tera`, `testkit_main.tera` (shadowable via `--template-dir`) |
 | **Profile gating** | `profiles.toml` + `profile/capabilities.rs` | `ops_backend` feature; `cap("ops", Global, Common, &["ops_backend"], &[])` |
@@ -4006,6 +4007,9 @@ and extensions.
 
 ```
 cargo run -p testkit -- api        # preflight, migrate, hurl, curl smoke, RLS, shutdown
+                                   # shape B (issue #709): a target that already serves the Supabase band
+                                   # (compatibility_gate == Run) is used as-is — no `supabase start` spawn,
+                                   # no manifest [[supabase]] needed in that mode
 cargo run -p testkit -- cli        # CLI e2e (starts API first)
 cargo run -p testkit -- e2e        # Supabase → generate → migrate → build → Playwright
 cargo run -p testkit -- ui         # Playwright only (API must be running)
@@ -4202,10 +4206,18 @@ workers fixture + Postgres).
    Consumers upgrading from pre-#357 manifests: hooks that previously failed
    without aborting (blanket warn-only) now need explicit `fatal = false`.
    Hooks stream under `[hook:<name>]` and are timed as separate metrics rows.
-6. CI wiring: run `cargo run -p testkit -- api --metrics ci.tsv` in a job with
-   a Postgres service. The codegraph repo's own `test-ops-integration` job
-   (postgres:15 service + the `--ignored` integration tests in `.github/workflows/ci.yml`,
-   CI triggers on push to `develop` and `master`) is the reference pattern.
+6. CI wiring: run `cargo run -p testkit -- api --metrics ci.tsv` in a job whose
+   Postgres service IS the Supabase postgres image
+   (`public.ecr.aws/supabase/postgres:17.6.1.132` — a plain `postgres:<n>`
+   cannot serve the band; issue #640/#708). The suite is shape-B (issue
+   #709): a target that already serves the band is used as-is, no stack
+   startup, no `[[supabase]]` manifest section needed. GoTrue/PostgREST are
+   NOT exercised — the persona/auth legs stay the `testkit e2e` lane's job.
+   The codegraph repo's own `test-ops-integration` job (Supabase-image
+   service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE` gate) is the
+   reference pattern for the DB tier; the api-suite CI lane itself is
+   blocked upstream on issue #756 (CLI-less generated apps cannot boot over
+   an already-applied band) — see `docs/ops-testing.md` §7.
 
 ### Platform support & prerequisites
 

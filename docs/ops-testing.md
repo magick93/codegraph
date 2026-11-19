@@ -416,9 +416,38 @@ this suite — issue #640), with metrics export:
 cargo run -p testkit -- api --metrics ci.tsv
 ```
 
-The codegraph repo's own `test-ops-integration` job (postgres service +
-the `--ignored` integration tests) is the reference pattern; see the
-"Ops Harness" section of `AGENTS.md` for the consumer integration guide.
+**Which mode CI uses (issue #709, shape B):** the suite probes the
+configured `[database.api]` target with the shared Supabase-compatibility
+predicate (`codegraph_ops::supabase::compatibility_gate` — the same probe
+the `db_integration` band tests use) and, when it already serves the band,
+**skips `supabase start` entirely and runs against it** — no manifest
+`[[supabase]]` section is needed in this mode (there is no stack to
+start). Point the job's service at
+`public.ecr.aws/supabase/postgres:17.6.1.132` and the suite is
+shape-B from the first request. The stack-startup path (the pinned
+`npx --yes supabase@3.2.0 start`, issue #743) remains the fallback for a
+down stack. Shape A — `npx supabase start` inside the CI job — is a
+recorded alternative, deliberately out of scope: it needs Docker-in-Docker
+and 1–2 minutes of stack boot per PR.
+
+**What this mode does NOT exercise:** GoTrue and PostgREST are not
+installed by the postgres image and are not required by the suite's core
+legs (migrate → app boot → hurl contracts → curl smoke → RLS; the hurl
+contracts authenticate with API keys against the generated axum app, and
+the 401 leg is served by axum itself). The persona/auth legs — JWT login
+flows, Supabase client auth, browser sessions — are **shadowed** in this
+lane; they remain the consumer `testkit e2e` lane's job.
+
+**CI lane status:** the codegraph repo's own CI does **not yet** run the
+testkit api lane — wiring it surfaced issue #756 (a generated app without
+the admin CLI cannot boot over an already-applied band: the boot re-seed
+hits the #700 tenant trigger with no session org). The lane steps land
+with the #756 fix; until then the contract pin
+(`ops_ci_lane_contract::the_testkit_api_lane_is_wired_into_ci_and_mirrored_in_the_justfile`)
+is ignore-marked naming it. The codegraph repo's `test-ops-integration`
+job (Supabase-image service + the fail-closed `CODEGRAPH_REQUIRE_SUPABASE`
+gate, issue #708) is the reference pattern for the DB tier; see the "Ops
+Harness" section of `AGENTS.md` for the consumer integration guide.
 
 ---
 
