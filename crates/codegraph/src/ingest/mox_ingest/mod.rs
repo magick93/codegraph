@@ -61,9 +61,7 @@ use codegraph_classifier::projection_builder::ProjectionBuilder;
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    CodeList, EdgeProperties, EdgeType, EnumValue, Incompleteness, MoxDerivedFeatureNode,
-    MoxDomainModel, MoxEntry, MoxFacet, MoxOperationNode, MoxPackageNode, MoxParam,
-    MoxVocabularyNode, NamespaceNode, PropertyNode, SchemaNode,
+    EdgeProperties, EdgeType, Incompleteness, NamespaceNode, PropertyNode, SchemaNode,
 };
 use codegraph_naming::{escape_rust_keyword, strip_suffix, to_kebab_case, to_snake_case};
 use codegraph_type_contracts::{DddFieldProjection, PgType, RefClassificationKind, TypeExpr};
@@ -72,6 +70,10 @@ use phero_ir::{ClassKind, DefaultValue, FeatureKind, PrimitiveType, TypeRef};
 
 use crate::error::{Error, Result};
 use crate::ingest::async_ingest::{sanitize_description, sanitize_rust_type_name};
+
+mod bridge;
+
+use bridge::MoxBridge;
 
 /// Counters for one `ingest_mox_files` run.
 ///
@@ -393,7 +395,6 @@ pub(crate) fn collect_schema_imports(
 /// and alias-typed features on [`MoxIngestOutcome::pending_alias_refs`] for
 /// the post-schema-pass wiring step ([`wire_alias_refs`]).
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
-#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn ingest_mox_files(
     ingestor: &dyn GraphIngestor,
     querier: &dyn GraphQuerier,
@@ -401,9 +402,102 @@ pub async fn ingest_mox_files(
     domain_config: &DomainConfig,
     type_suffix: &str,
 ) -> Result<MoxIngestOutcome> {
+    let mut stats = MoxIngestStats::default();
+    let Some(scanned) = scan_mox_files(mox_paths, domain_config, &mut stats)? else {
+        return Ok(MoxIngestOutcome {
+            stats,
+            imported_files: Vec::new(),
+            pending_alias_refs: Vec::new(),
+        });
+    };
+    stats.imported_files = scanned
+        .imported_files
+        .iter()
+        .map(|i| {
+            i.abs_path
+                .canonicalize()
+                .unwrap_or_else(|_| i.abs_path.clone())
+                .display()
+                .to_string()
+        })
+        .collect::<HashSet<_>>()
+        .len();
+    let import_names: HashSet<String> = scanned
+        .imported_files
+        .iter()
+        .map(|i| i.alias.clone())
+        .collect();
+
+    let imports = DomainImports {
+        schemas: scanned.schema_imports,
+        sigil: phero_driver::SigilImports::new(),
+    };
+    let compilation = compile_files(&scanned.sources, &imports);
+    for (path, diagnostic) in &compilation.diagnostics {
+        eprintln!("Warning: mox diagnostic in {path}: {}", diagnostic.message);
+    }
+    // A compile that lowers NO model is a hard error, not a skip: every
+    // class, enum and vocabulary would silently vanish and the run would
+    // happily generate an empty app (the WS5 failure mode). Individual
+    // file-level problems that still leave a partial model keep the warn
+    // path above — this is the total-failure case only.
+    let Some(model) = compilation.model else {
+        let reason = render_mox_compile_failure(&scanned.sources, &compilation.diagnostics);
+        stats.skipped += scanned.sources.len();
+        return Err(Error::MoxModel { reason });
+    };
+
+    // Schema entities already in the graph: mox classes attach by NAME
+    // (schema title or entity name). Warn on mismatch, never fail.
+    let schemas = querier.list_schemas(None).await.unwrap_or_default();
+    let known_titles: HashSet<String> = schemas.iter().map(|s| s.title.clone()).collect();
+    let json_schema_ids: HashMap<String, String> = schemas
+        .iter()
+        .map(|s| (s.title.clone(), s.schema_id.clone()))
+        .collect();
+
+    let mut bridge = MoxBridge::new(
+        &model,
+        ingestor,
+        domain_config,
+        type_suffix,
+        import_names,
+        known_titles,
+        json_schema_ids,
+        stats,
+    );
+    bridge.bridge_namespaces().await?;
+    bridge.scan_class_universe();
+    bridge.scan_enum_universe();
+    bridge.scan_containment_targets();
+    bridge.bridge_enum_codelists().await?;
+    bridge.bridge_register_codelists().await?;
+    bridge.build_domain_model();
+    bridge.bridge_class_schemas().await?;
+    bridge.bridge_enum_schemas().await?;
+    bridge.emit_in_namespace_edges().await?;
+    bridge.bridge_class_properties().await?;
+    bridge.finish().await?;
+    Ok(bridge.into_outcome(scanned.imported_files))
+}
+
+/// Read and dedupe the `.mox` sources, collecting each file's `import schema`
+/// declarations (issue #230) along the way. Returns `None` when no source
+/// could be read (the historical empty-run outcome).
+/// The scanned `.mox` sources plus their collected `import schema` tables.
+struct ScannedMoxFiles {
+    sources: Vec<(String, String)>,
+    imported_files: Vec<MoxSchemaImport>,
+    schema_imports: SchemaImports,
+}
+
+fn scan_mox_files(
+    mox_paths: &[PathBuf],
+    domain_config: &DomainConfig,
+    stats: &mut MoxIngestStats,
+) -> Result<Option<ScannedMoxFiles>> {
     let mut sources: Vec<(String, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    let mut stats = MoxIngestStats::default();
     let mut imported_files: Vec<MoxSchemaImport> = Vec::new();
     let mut schema_imports = SchemaImports::new();
     for path in mox_paths {
@@ -439,549 +533,13 @@ pub async fn ingest_mox_files(
         }
     }
     if sources.is_empty() {
-        return Ok(MoxIngestOutcome {
-            stats,
-            imported_files,
-            pending_alias_refs: Vec::new(),
-        });
+        return Ok(None);
     }
-    stats.imported_files = imported_files
-        .iter()
-        .map(|i| {
-            i.abs_path
-                .canonicalize()
-                .unwrap_or_else(|_| i.abs_path.clone())
-                .display()
-                .to_string()
-        })
-        .collect::<HashSet<_>>()
-        .len();
-    let import_names: HashSet<String> = imported_files.iter().map(|i| i.alias.clone()).collect();
-
-    let imports = DomainImports {
-        schemas: schema_imports,
-        sigil: phero_driver::SigilImports::new(),
-    };
-    let compilation = compile_files(&sources, &imports);
-    for (path, diagnostic) in &compilation.diagnostics {
-        eprintln!("Warning: mox diagnostic in {path}: {}", diagnostic.message);
-    }
-    // A compile that lowers NO model is a hard error, not a skip: every
-    // class, enum and vocabulary would silently vanish and the run would
-    // happily generate an empty app (the WS5 failure mode). Individual
-    // file-level problems that still leave a partial model keep the warn
-    // path above — this is the total-failure case only.
-    let Some(model) = compilation.model else {
-        let reason = render_mox_compile_failure(&sources, &compilation.diagnostics);
-        stats.skipped += sources.len();
-        return Err(Error::MoxModel { reason });
-    };
-
-    // Schema entities already in the graph: mox classes attach by NAME
-    // (schema title or entity name). Warn on mismatch, never fail.
-    let schemas = querier.list_schemas(None).await.unwrap_or_default();
-    let known_titles: HashSet<String> = schemas.iter().map(|s| s.title.clone()).collect();
-    let json_schema_ids: HashMap<String, String> = schemas
-        .iter()
-        .map(|s| (s.title.clone(), s.schema_id.clone()))
-        .collect();
-
-    // ── Namespace bridge (issue #268): `package <dotted.name>` declarations
-    // become NamespaceNodes (source="mox") with the dotted parent chain as
-    // NamespaceParent edges. Namespace-less models contribute nothing, so
-    // their graph (and generated output) stays byte-identical.
-    let mut namespace_fqns: BTreeMap<String, String> = BTreeMap::new();
-    for package in &model.packages {
-        if let Some(ns) = non_empty_namespace(&package.name) {
-            namespace_fqns
-                .entry(ns)
-                .or_insert_with(|| MOX_NAMESPACE_SOURCE.to_string());
-        }
-    }
-    stats.namespaces = ingest_namespaces_deduped(ingestor, &namespace_fqns).await?;
-
-    // ── Class bridge (#229): collect the class universe first so entity vs
-    // value-object is decided from the whole model, not per package.
-    let mut class_index: Vec<ClassEntry> = Vec::new();
-    let mut seen_classes: HashSet<String> = HashSet::new();
-    let mut class_schema_ids: HashMap<String, String> = HashMap::new();
-    let mut datatype_formats: HashMap<(String, String), String> = HashMap::new();
-    for package in &model.packages {
-        for datatype in &package.datatypes {
-            if let Some(ref format) = datatype.format {
-                datatype_formats.insert(
-                    (package.name.clone(), datatype.name.clone()),
-                    format.clone(),
-                );
-            }
-        }
-        for class in &package.classes {
-            // Imported schemas lower to nominal feature-less classes in
-            // their package (upstream v1 is opaque). The JSON pipeline owns
-            // their graph nodes — the bridge never creates them (issue #230).
-            if import_names.contains(&class.name) {
-                continue;
-            }
-            if !seen_classes.insert(class.name.clone()) {
-                eprintln!(
-                    "Warning: mox class '{}' declared in multiple packages — keeping the first",
-                    class.name
-                );
-                stats.skipped += 1;
-                continue;
-            }
-            let (domain, _) = resolve_domain(domain_config, &package.name);
-            let schema_id = format!("{}/{}", package.name, class.name);
-            class_schema_ids.insert(class.name.clone(), schema_id.clone());
-            class_index.push(ClassEntry {
-                class,
-                domain,
-                schema_id,
-                namespace: non_empty_namespace(&package.name),
-            });
-        }
-    }
-
-    // Enum universe: enums bridge to codelist Schema nodes (issue #233) so
-    // the graph carries the same shapes the JSON codelist path produces.
-    let mut enum_index: Vec<EnumEntry> = Vec::new();
-    let mut seen_enums: HashSet<String> = HashSet::new();
-    for package in &model.packages {
-        for enum_def in &package.enums {
-            if !seen_enums.insert(enum_def.name.clone()) {
-                continue;
-            }
-            let (domain, _) = resolve_domain(domain_config, &package.name);
-            let schema_id = format!("{}/{}", package.name, enum_def.name);
-            enum_index.push(EnumEntry {
-                enum_def,
-                domain,
-                schema_id,
-                namespace: non_empty_namespace(&package.name),
-            });
-        }
-    }
-
-    // Contained-only classes become value objects: a class that is targeted
-    // exclusively by `contains` features has its rows nested in the owner's
-    // child tables, never referenced by FK. `refers` wins on conflict.
-    let mut contains_targets: HashSet<String> = HashSet::new();
-    let mut refers_targets: HashSet<String> = HashSet::new();
-    for entry in &class_index {
-        for feature in &entry.class.features {
-            if feature.is_derived {
-                continue;
-            }
-            if let TypeRef::Class { name, .. } = &feature.type_ {
-                match feature.kind {
-                    FeatureKind::Containment => {
-                        contains_targets.insert(name.clone());
-                    }
-                    FeatureKind::CrossReference => {
-                        refers_targets.insert(name.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    // Enums → CodeList + EnumValue nodes (declaration order, per package).
-    for package in &model.packages {
-        for enum_def in &package.enums {
-            let codelist = CodeList {
-                name: enum_def.name.clone(),
-                description: enum_def.description.as_deref().map(sanitize_description),
-                pg_table_name: to_snake_case(&strip_suffix(&enum_def.name, type_suffix)),
-                render_as: "codelist".to_string(),
-                check_expression: None,
-            };
-            ingestor
-                .ingest_codelist(&codelist)
-                .await
-                .map_err(Error::Graph)?;
-            stats.enums += 1;
-            for literal in &enum_def.literals {
-                let ev = EnumValue {
-                    value: literal.name.clone(),
-                    display_name: literal.label.clone(),
-                    sort_order: literal.value.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-                };
-                ingestor
-                    .ingest_enum_value(&enum_def.name, &ev)
-                    .await
-                    .map_err(Error::Graph)?;
-            }
-        }
-    }
-
-    // Register classes → the reference-data (codelist/seed-table) plane
-    // (issue #668). A `register` is a flat org/role noun space: attributes
-    // only, no relations, no `extends`, no table annotation. codegraph's
-    // reference-data plane is the codelist/seed-table one (a
-    // `common.{table}` seed migration + the codelist Rust enum, owned by the
-    // codelist generators, never a transactional aggregate), so a register
-    // gets a `CodeList` node here and a codelist-classified `SchemaNode` in
-    // the bridge pass below. Generation ordering skips register schemas
-    // (`codegraph_generate::ordering`), which is what keeps them off the
-    // entity/CRUD plane — no table module, no repository, no handlers.
-    // Registers declare no literals, so there are no `EnumValue` rows: the
-    // rows are consumer data, seeded by migration/ops (the existing
-    // `empty_enum.tera` shape covers the zero-variant Rust enum).
-    for entry in &class_index {
-        if !entry.is_register() {
-            continue;
-        }
-        let codelist = CodeList {
-            name: entry.class.name.clone(),
-            description: entry.class.description.as_deref().map(sanitize_description),
-            pg_table_name: class_table_name(entry.class, type_suffix),
-            render_as: "codelist".to_string(),
-            check_expression: None,
-        };
-        ingestor
-            .ingest_codelist(&codelist)
-            .await
-            .map_err(Error::Graph)?;
-        stats.registers += 1;
-    }
-
-    let mut mox = MoxDomainModel::default();
-    let mut unmatched_with_behavior: Vec<String> = Vec::new();
-    let mut pending_alias_refs: Vec<PendingAliasRef> = Vec::new();
-    for package in &model.packages {
-        mox.packages.push(MoxPackageNode {
-            name: package.name.clone(),
-        });
-        for vocab in &package.vocabularies {
-            mox.vocabularies.push(MoxVocabularyNode {
-                name: vocab.name.clone(),
-                package: package.name.clone(),
-                source: vocab.source.clone(),
-                version: vocab.version.clone(),
-                key_facet: vocab.key.clone(),
-                facets: vocab
-                    .facets
-                    .iter()
-                    .map(|f| MoxFacet {
-                        name: f.name.clone(),
-                        type_: f.type_.to_string(),
-                    })
-                    .collect(),
-                entries: vocab
-                    .entries
-                    .iter()
-                    .map(|e| MoxEntry {
-                        key: e.key.clone(),
-                        facets: e
-                            .facets
-                            .iter()
-                            .map(|(name, value)| (name.clone(), default_value_json(value)))
-                            .collect(),
-                    })
-                    .collect(),
-            });
-            stats.vocabularies += 1;
-        }
-        for class in &package.classes {
-            let mut attached = false;
-            for op in &class.operations {
-                mox.operations.push(MoxOperationNode {
-                    name: op.name.clone(),
-                    class: class.name.clone(),
-                    package: package.name.clone(),
-                    description: op.description.clone(),
-                    return_type: type_ref_name(&op.return_type),
-                    params: op
-                        .params
-                        .iter()
-                        .map(|p| MoxParam {
-                            name: p.name.clone(),
-                            type_: type_ref_name(&p.type_),
-                        })
-                        .collect(),
-                    bodies: op.bodies.clone(),
-                });
-                stats.operations += 1;
-                attached = true;
-            }
-            for feature in &class.features {
-                if !feature.is_derived {
-                    continue;
-                }
-                mox.derived_features.push(MoxDerivedFeatureNode {
-                    name: feature.name.clone(),
-                    class: class.name.clone(),
-                    package: package.name.clone(),
-                    type_ref: type_ref_name(&feature.type_),
-                    expr: feature.bodies.get("expr").cloned(),
-                });
-                stats.derived_features += 1;
-                attached = true;
-            }
-            if attached {
-                if known_titles.contains(&class.name) {
-                    mox.class_links
-                        .push((class.name.clone(), class.name.clone()));
-                } else {
-                    eprintln!(
-                        "Warning: mox class '{}' matches no ingested schema entity — \
-                         its schema nodes are created from the mox definition and its \
-                         operations/derived features attach there",
-                        class.name
-                    );
-                    stats.skipped += 1;
-                    // The bridge (below) creates the schema node for this
-                    // class in this run; link once it exists.
-                    unmatched_with_behavior.push(class.name.clone());
-                }
-            }
-        }
-    }
-
-    // ── Bridge pass 1: SchemaNodes for classes matching no ingested schema.
-    let mut bridged: HashSet<String> = HashSet::new();
-    for entry in &class_index {
-        let class = entry.class;
-        if known_titles.contains(&class.name) {
-            // The JSON node owns this title (the bridge never overrides it),
-            // so a mox-only storage decision on the class cannot take effect.
-            // Say so — a silently ignored declaration is the failure mode
-            // this issue exists to delete.
-            if let Some(declared) = &class.table_name {
-                eprintln!(
-                    "Warning: mox class '{}' declares table \"{declared}\" but the title is \
-                     owned by an ingested JSON schema — the declaration is ignored (the JSON \
-                     node keeps its own table)",
-                    class.name
-                );
-            }
-            if entry.is_register() {
-                eprintln!(
-                    "Warning: mox register '{}' matches an ingested JSON schema — the JSON node \
-                     wins, so the class stays an entity rather than a reference-data table",
-                    class.name
-                );
-            }
-            continue;
-        }
-        let bridge = if entry.is_register() {
-            ClassBridge::Register
-        } else {
-            ClassBridge::Class {
-                is_entity: !contains_targets.contains(&class.name)
-                    || refers_targets.contains(&class.name),
-            }
-        };
-        let node = class_schema_node(entry, bridge, type_suffix);
-        ingestor.ingest_schema(&node).await.map_err(Error::Graph)?;
-        bridged.insert(class.name.clone());
-        stats.bridged_titles.push(class.name.clone());
-        stats.classes += 1;
-    }
-
-    // ── Bridge pass 1b: codelist SchemaNodes for enums (issue #233). The
-    // JSON path models an enum-valued schema as a `Schema` node with
-    // `classification=codelist`; codelist DDL, codelist FK resolution
-    // (`resolve_fk_target` routes codelist targets to the `common` schema
-    // through `ts.is_codelist`), link generation, and the per-entity
-    // artifact set all key on that node. Titles already owned by JSON
-    // schemas (or colliding with a bridged class) keep the existing node.
-    let mut bridged_enum_schema_ids: HashMap<String, String> = HashMap::new();
-    for entry in &enum_index {
-        let enum_def = entry.enum_def;
-        if known_titles.contains(&enum_def.name) || bridged.contains(&enum_def.name) {
-            continue;
-        }
-        let node = enum_schema_node(entry, type_suffix);
-        ingestor.ingest_schema(&node).await.map_err(Error::Graph)?;
-        bridged_enum_schema_ids.insert(enum_def.name.clone(), entry.schema_id.clone());
-        stats.bridged_titles.push(enum_def.name.clone());
-        stats.enum_schemas += 1;
-    }
-
-    // ── Bridge pass 1c: InNamespace edges for bridged schemas (issue #268).
-    // Written after the nodes exist (endpoints MATCH at execute time).
-    // Namespace-less entries contribute nothing.
-    for entry in &class_index {
-        if !bridged.contains(entry.class.name.as_str()) {
-            continue;
-        }
-        emit_schema_namespace_edge(ingestor, &entry.schema_id, entry.namespace.as_deref()).await?;
-    }
-    for entry in &enum_index {
-        if !bridged_enum_schema_ids.contains_key(&entry.enum_def.name) {
-            continue;
-        }
-        emit_schema_namespace_edge(ingestor, &entry.schema_id, entry.namespace.as_deref()).await?;
-    }
-
-    // ── Bridge pass 2: properties + reference edges per bridged class.
-    // Features are ingested in the JSON path's allOf-canonical order
-    // (inherited features before own features, each group name-sorted) so
-    // property insertion order — and thus the CachingQuerier's warm-cache
-    // ordering — matches the JSON path byte-for-byte (issue #233).
-    let class_map: HashMap<&str, &phero_ir::ClassDef> = class_index
-        .iter()
-        .map(|entry| (entry.class.name.as_str(), entry.class))
-        .collect();
-    for entry in &class_index {
-        let class = entry.class;
-        if !bridged.contains(&class.name) {
-            // Owned by a JSON schema (never overridden) or a duplicate
-            // declaration that was dropped.
-            continue;
-        }
-        // Identity mapping rule (issue #522): a class with exactly one `id`
-        // feature treats it as the surrogate identity (forced Uuid below);
-        // multiple `id` features are a composite natural key whose parts
-        // keep their declared type mappings. Counted over the same stored
-        // feature set the loop below ingests (derived/container features
-        // produce no column).
-        let features = ordered_bridge_features(class, &class_map, &bridged);
-        let sole_identity = features
-            .iter()
-            .filter(|f| f.is_id && !f.is_derived && f.kind != FeatureKind::Container)
-            .count()
-            == 1;
-        for feature in features {
-            if feature.is_derived || feature.kind == FeatureKind::Container {
-                continue;
-            }
-            let Some(prop) = feature_property(
-                feature,
-                &class.name,
-                &datatype_formats,
-                sole_identity,
-                &mut stats,
-            ) else {
-                continue;
-            };
-            ingestor
-                .ingest_property(&class.name, &entry.schema_id, &prop)
-                .await
-                .map_err(Error::Graph)?;
-            stats.properties += 1;
-
-            // Class-targeted features carry a graph edge to the target
-            // schema (enum/vocabulary targets keep only the ref_target —
-            // they are CodeList/Vocabulary nodes, not Schema nodes — except
-            // bridged enum schemas, which exist as codelist Schema nodes).
-            if let (
-                FeatureKind::Containment | FeatureKind::CrossReference,
-                TypeRef::Class { name, .. },
-            ) = (&feature.kind, &feature.type_)
-            {
-                // JSON-owned targets keep their own schema_id; bridged
-                // targets use the mox-authored node's id.
-                let target_schema_id = json_schema_ids
-                    .get(name)
-                    .cloned()
-                    .or_else(|| class_schema_ids.get(name).cloned());
-                let Some(target_schema_id) = target_schema_id else {
-                    // Import aliases resolve after the schema pass — their
-                    // graph node does not exist yet (issue #230). Anything
-                    // else keeps the master behavior: silently no edge.
-                    if import_names.contains(name) {
-                        pending_alias_refs.push(PendingAliasRef {
-                            schema_title: class.name.clone(),
-                            prop_name: prop.name.clone(),
-                            alias: name.clone(),
-                            is_array: prop.is_array,
-                        });
-                    }
-                    continue;
-                };
-                let edge_type = if prop.is_array {
-                    EdgeType::ItemsOf
-                } else {
-                    EdgeType::ReferencesSchema
-                };
-                ingestor
-                    .ingest_edge(
-                        &format!("{}::{}", prop.name, class.name),
-                        &target_schema_id,
-                        edge_type,
-                        Some(&EdgeProperties {
-                            ref_path: Some(name.clone()),
-                            ..Default::default()
-                        }),
-                    )
-                    .await
-                    .map_err(Error::Graph)?;
-                stats.edges += 1;
-            } else if let TypeRef::Enum { name, .. } = &feature.type_ {
-                // Enum features reference the bridged codelist Schema node
-                // with the same ReferencesSchema/ItemsOf edges the JSON path
-                // creates for $ref properties — `resolve_fk_target` needs
-                // the edge to emit the `REFERENCES common.<codelist>(code)`
-                // constraint. Vocabulary targets have no Schema node (no
-                // JSON counterpart) and keep the ref_target only.
-                if let Some(target_schema_id) = bridged_enum_schema_ids.get(name) {
-                    let edge_type = if prop.is_array {
-                        EdgeType::ItemsOf
-                    } else {
-                        EdgeType::ReferencesSchema
-                    };
-                    ingestor
-                        .ingest_edge(
-                            &format!("{}::{}", prop.name, class.name),
-                            target_schema_id,
-                            edge_type,
-                            Some(&EdgeProperties {
-                                ref_path: Some(name.clone()),
-                                ..Default::default()
-                            }),
-                        )
-                        .await
-                        .map_err(Error::Graph)?;
-                    stats.edges += 1;
-                }
-            }
-        }
-
-        // `extends` → ExtendsSchema edges (allOf composition), mirroring
-        // Pass 4 of the JSON path.
-        for parent in &class.extends {
-            if let TypeRef::Class { name, .. } = parent {
-                let parent_exists = known_titles.contains(name) || bridged.contains(name.as_str());
-                if !parent_exists {
-                    continue;
-                }
-                ingestor
-                    .ingest_edge(
-                        &class.name,
-                        name,
-                        EdgeType::ExtendsSchema,
-                        Some(&EdgeProperties {
-                            composition_type: Some("allOf".to_string()),
-                            ..Default::default()
-                        }),
-                    )
-                    .await
-                    .map_err(Error::Graph)?;
-                stats.edges += 1;
-            }
-        }
-    }
-
-    // Operations/derived features of bridged classes attach to the freshly
-    // created schema nodes.
-    for class in &unmatched_with_behavior {
-        if bridged.contains(class) {
-            mox.class_links.push((class.clone(), class.clone()));
-        }
-    }
-
-    ingestor
-        .ingest_mox_domain(&mox)
-        .await
-        .map_err(Error::Graph)?;
-    Ok(MoxIngestOutcome {
-        stats,
+    Ok(Some(ScannedMoxFiles {
+        sources,
         imported_files,
-        pending_alias_refs,
-    })
+        schema_imports,
+    }))
 }
 
 /// Post-schema-pass wiring for alias-typed features (issue #230): resolve
@@ -1060,27 +618,27 @@ pub async fn wire_alias_refs(
 /// One mox class flattened for ingestion: its definition, owning package,
 /// resolved domain, namespace (the package name — `None` when package-less),
 /// and the `schema_id` used for its graph node.
-struct ClassEntry<'a> {
-    class: &'a phero_ir::ClassDef,
-    domain: String,
-    schema_id: String,
-    namespace: Option<String>,
+pub(super) struct ClassEntry<'a> {
+    pub(super) class: &'a phero_ir::ClassDef,
+    pub(super) domain: String,
+    pub(super) schema_id: String,
+    pub(super) namespace: Option<String>,
 }
 
 impl ClassEntry<'_> {
     /// `true` for a `register` declaration (issue #668): a plain class on the
     /// wire carrying the upstream `ClassKind::Register` marker.
-    fn is_register(&self) -> bool {
+    pub(super) fn is_register(&self) -> bool {
         self.class.kind == ClassKind::Register
     }
 }
 
 /// One mox enum flattened for ingestion (same shape as [`ClassEntry`]).
-struct EnumEntry<'a> {
-    enum_def: &'a phero_ir::EnumDef,
-    domain: String,
-    schema_id: String,
-    namespace: Option<String>,
+pub(super) struct EnumEntry<'a> {
+    pub(super) enum_def: &'a phero_ir::EnumDef,
+    pub(super) domain: String,
+    pub(super) schema_id: String,
+    pub(super) namespace: Option<String>,
 }
 
 /// Map a mox package name to a domain: an exact `domains.toml` key wins,
@@ -1102,7 +660,7 @@ pub(crate) fn resolve_domain(domain_config: &DomainConfig, package: &str) -> (St
 /// The namespace FQN for a mox package: `None` when the model is
 /// package-less (empty package name) — namespace-less models must stay
 /// byte-identical (issue #268).
-fn non_empty_namespace(package: &str) -> Option<String> {
+pub(super) fn non_empty_namespace(package: &str) -> Option<String> {
     (!package.trim().is_empty()).then(|| package.trim().to_string())
 }
 
@@ -1178,7 +736,7 @@ pub(crate) async fn emit_schema_namespace_edge(
 
 /// How a bridged mox class lands on the graph (issue #668).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClassBridge {
+pub(super) enum ClassBridge {
     /// `class` — an entity or a contained value object (author-declared: a
     /// class targeted only by `contains` is a VO, `refers` wins).
     Class { is_entity: bool },
@@ -1196,7 +754,7 @@ enum ClassBridge {
 /// declared `"PayRunRows"`/`"pay-run"` must land on one legal, consistent
 /// identifier. A normalization that changes the spelling warns — never
 /// silently.
-fn class_table_name(class: &phero_ir::ClassDef, type_suffix: &str) -> String {
+pub(super) fn class_table_name(class: &phero_ir::ClassDef, type_suffix: &str) -> String {
     match class.table_name.as_deref() {
         Some(declared) => {
             let normalized = to_snake_case(declared);
@@ -1216,7 +774,11 @@ fn class_table_name(class: &phero_ir::ClassDef, type_suffix: &str) -> String {
 
 /// Build the `SchemaNode` for a mox class, mirroring the JSON path's field
 /// population (`ingest_schema_node` in async_ingest).
-fn class_schema_node(entry: &ClassEntry<'_>, bridge: ClassBridge, type_suffix: &str) -> SchemaNode {
+pub(super) fn class_schema_node(
+    entry: &ClassEntry<'_>,
+    bridge: ClassBridge,
+    type_suffix: &str,
+) -> SchemaNode {
     let class = entry.class;
     let stripped = strip_suffix(&class.name, type_suffix);
     let mut custom_annotations = HashMap::new();
@@ -1273,7 +835,7 @@ fn class_schema_node(entry: &ClassEntry<'_>, bridge: ClassBridge, type_suffix: &
 /// Build the codelist `SchemaNode` for a mox enum, mirroring the JSON path's
 /// enum-valued schema (`classification=codelist`, `is_codelist=true`): the
 /// node codelist DDL, FK resolution, and link generation key on.
-fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
+pub(super) fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
     let enum_def = entry.enum_def;
     let stripped = strip_suffix(&enum_def.name, type_suffix);
     let mut custom_annotations = HashMap::new();
@@ -1318,7 +880,7 @@ fn enum_schema_node(entry: &EnumEntry<'_>, type_suffix: &str) -> SchemaNode {
 /// name-sorted map order. `list_all_properties` (the CachingQuerier warm
 /// path) has no `ORDER BY`, so insertion order is output field order and
 /// must match the JSON path byte-for-byte (issue #233).
-fn ordered_bridge_features<'a>(
+pub(super) fn ordered_bridge_features<'a>(
     class: &'a phero_ir::ClassDef,
     class_map: &HashMap<&str, &'a phero_ir::ClassDef>,
     bridged: &HashSet<String>,
@@ -1369,7 +931,7 @@ fn collect_ancestor_features<'a>(
 /// Map one stored feature onto a `PropertyNode`, mirroring the JSON path's
 /// classification and type-string conventions. Returns `None` for features
 /// that produce no stored column (interfaces).
-fn feature_property(
+pub(super) fn feature_property(
     feature: &phero_ir::Feature,
     schema_title: &str,
     datatype_formats: &HashMap<(String, String), String>,
@@ -1714,7 +1276,7 @@ pub(crate) fn strip_code_suffix(name: &str) -> String {
 
 /// Render a resolved [`TypeRef`] as a plain name: primitives use their
 /// mox-level name (`"string"`, `"int"`), everything else its qualified name.
-fn type_ref_name(type_ref: &TypeRef) -> String {
+pub(super) fn type_ref_name(type_ref: &TypeRef) -> String {
     match type_ref {
         TypeRef::Primitive(p) => p.to_string(),
         other => other.qualified_name().unwrap_or_default(),
@@ -1723,7 +1285,7 @@ fn type_ref_name(type_ref: &TypeRef) -> String {
 
 /// Convert a pherolang [`DefaultValue`] (vocabulary facet values) to a plain JSON
 /// value for graph storage.
-fn default_value_json(value: &DefaultValue) -> serde_json::Value {
+pub(super) fn default_value_json(value: &DefaultValue) -> serde_json::Value {
     match value {
         DefaultValue::String(s) => serde_json::Value::String(s.clone()),
         DefaultValue::Int(i) => serde_json::json!(i),
