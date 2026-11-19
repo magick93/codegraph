@@ -650,7 +650,12 @@ END $$;
 GRANT USAGE ON SCHEMA rsvp TO app_user;
 GRANT INSERT, SELECT, UPDATE, DELETE ON TABLE rsvp.rsvp TO app_user;
 GRANT INSERT, SELECT ON TABLE rsvp.hook_marker TO app_user;
-GRANT app_user TO CURRENT_USER;
+-- `GRANT app_user TO CURRENT_USER` (the same grant — the harness DDL runs
+-- as the postgres superuser) SEGFAULTS the Supabase postgres image's
+-- backend (public.ecr.aws/supabase/postgres:17.6.1.132, the lane's image
+-- since #708): three-line psql repro, no codegraph SQL involved. Name the
+-- role explicitly.
+GRANT app_user TO postgres;
 ";
 
 async fn admin_client() -> tokio_postgres::Client {
