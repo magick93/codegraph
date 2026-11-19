@@ -55,10 +55,23 @@ impl GrafeoEngine {
             // always written, `[]` for an extend-less design, so a readback
             // never has to tell "absent" from "empty".
             let child_operations_json = json_string(&design.child_operations)?;
+            // DD4/DD5 (issue #666): the authored aggregate boundary and the
+            // design invariants ride as their own serde-serialized blobs.
+            // `aggregate_json` is absent when BOTH halves are undecided, and
+            // `invariants_json` is always written (`[]` for an invariant-less
+            // design, the `child_operations_json` precedent) — a readback
+            // never has to tell "absent" from "empty".
+            let aggregate_json = design
+                .aggregate_boundary
+                .as_ref()
+                .map(json_string)
+                .transpose()?;
+            let invariants_json = json_string(&design.invariants)?;
             let gql = format!(
                 "INSERT (:DddDesign {{ application: '{}', module: '{}', class: '{}', \
                  resolved_title: {}, stereotype: '{}', is_abstract: {}, \
-                 flags_json: '{}', machine_json: {}, child_operations_json: '{}', ordinal: {} }})",
+                 flags_json: '{}', machine_json: {}, child_operations_json: '{}', \
+                 aggregate_json: {}, invariants_json: '{}', ordinal: {} }})",
                 escape_gql(&design.application),
                 escape_gql(&design.module),
                 escape_gql(&design.class),
@@ -68,6 +81,8 @@ impl GrafeoEngine {
                 escape_gql(&flags_json),
                 opt_str(&machine_json),
                 escape_gql(&child_operations_json),
+                opt_str(&aggregate_json),
+                escape_gql(&invariants_json),
                 design.ordinal,
             );
             session

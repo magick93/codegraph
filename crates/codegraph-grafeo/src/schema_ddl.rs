@@ -68,7 +68,21 @@
 /// `children PayRun { addLine => lines.add }` block would silently emit
 /// nothing (the pre-#661 silent-drop) instead of its nested action route.
 /// Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 11;
+///
+/// Bumped to 11 for injected-scope `when` guards (issue #663):
+/// `DddServiceOperation.condition_paths` rides the `operations_json` blob,
+/// so a cached graph persisted by a pre-#663 binary deserializes it as
+/// EMPTY and silently keeps refusing every cross-entity guard. Cold
+/// re-ingest instead.
+///
+/// Bumped to 12 for authored aggregate boundaries and design invariants
+/// (DD4/DD5, issue #666): `DddDesignNode.aggregate_boundary` and
+/// `.invariants` are new nullable props (`aggregate_json`/
+/// `invariants_json`). A cached graph persisted by a pre-#666 binary
+/// serves an UNDECIDED boundary and no invariants — the authored facts a
+/// later slice's enforcement plane consumes are exactly the ones it
+/// silently lacks. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 12;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -599,6 +613,8 @@ const DDD_NODE_DDL: &[&str] = &[
             flags_json STRING NOT NULL,
             machine_json STRING,
             child_operations_json STRING,
+            aggregate_json STRING,
+            invariants_json STRING,
             ordinal INTEGER NOT NULL
         )",
     "CREATE NODE TYPE IF NOT EXISTS DddRepository (

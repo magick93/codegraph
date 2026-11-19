@@ -580,6 +580,8 @@ fn pay_run_model(
             flags: codegraph_core::types::DddDesignFlags::default(),
             machine_json: None,
             child_operations: Vec::new(),
+            aggregate_boundary: None,
+            invariants: Vec::new(),
             ordinal: 0,
         }],
         repositories: vec![codegraph_core::types::DddRepositoryNode {
@@ -863,6 +865,8 @@ fn second_machine_design() -> codegraph_core::types::DddDesignNode {
         flags: codegraph_core::types::DddDesignFlags::default(),
         machine_json: Some(serde_json::to_value(machine).unwrap()),
         child_operations: Vec::new(),
+        aggregate_boundary: None,
+        invariants: Vec::new(),
         ordinal: 1,
     }
 }

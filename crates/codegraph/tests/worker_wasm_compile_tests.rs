@@ -1102,6 +1102,8 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
                 // child action handlers (create/update/delete through the
                 // child's plane) must compile natively AND on wasm32.
                 child_operations: fixture_child_operations(),
+                aggregate_boundary: None,
+                invariants: Vec::new(),
                 ordinal: 0,
             },
             // WS4: the child entity's own design + repository — the child
@@ -1116,6 +1118,8 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
                 flags: codegraph_core::types::DddDesignFlags::default(),
                 machine_json: None,
                 child_operations: Vec::new(),
+                aggregate_boundary: None,
+                invariants: Vec::new(),
                 ordinal: 1,
             },
         ],

@@ -1550,6 +1550,20 @@ fn ddd_fixture() -> DddModelGraph {
                 },
                 machine_json: None,
                 child_operations: Vec::new(),
+                // DD4/DD5 (issue #666): an authored root with two
+                // invariants — the round-trip pin covers both blobs.
+                aggregate_boundary: Some(DddAggregateBoundary {
+                    is_root: Some(true),
+                    membership: None,
+                }),
+                invariants: vec![
+                    DddInvariant {
+                        expression: "self.title != null".to_string(),
+                    },
+                    DddInvariant {
+                        expression: "self.copies >= 0".to_string(),
+                    },
+                ],
                 ordinal: 0,
             },
             DddDesignNode {
@@ -1562,6 +1576,8 @@ fn ddd_fixture() -> DddModelGraph {
                 flags: DddDesignFlags::default(),
                 machine_json: None,
                 child_operations: Vec::new(),
+                aggregate_boundary: None,
+                invariants: Vec::new(),
                 ordinal: 1,
             },
             DddDesignNode {
@@ -1579,6 +1595,8 @@ fn ddd_fixture() -> DddModelGraph {
                 },
                 machine_json: None,
                 child_operations: Vec::new(),
+                aggregate_boundary: None,
+                invariants: Vec::new(),
                 ordinal: 2,
             },
             DddDesignNode {
@@ -1594,6 +1612,17 @@ fn ddd_fixture() -> DddModelGraph {
                 },
                 machine_json: None,
                 child_operations: Vec::new(),
+                // DD4: an authored member — the membership's root rides as
+                // phero-ir `TypeRef` JSON and the origin exercises the
+                // `Derived` arm (Book above pins the blob-present shape).
+                aggregate_boundary: Some(DddAggregateBoundary {
+                    is_root: Some(false),
+                    membership: Some(DddAggregateMembership {
+                        root_json: book_ref.clone(),
+                        origin: DddAggregateOrigin::Derived,
+                    }),
+                }),
+                invariants: Vec::new(),
                 ordinal: 0,
             },
         ],

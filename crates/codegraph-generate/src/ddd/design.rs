@@ -1140,6 +1140,8 @@ mod tests {
             flags: DddDesignFlags::default(),
             machine_json: None,
             child_operations: Vec::new(),
+            aggregate_boundary: None,
+            invariants: Vec::new(),
             ordinal: 0,
         }
     }

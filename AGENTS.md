@@ -619,6 +619,31 @@ docs: `docs/DDD.md` upstream; driver contract `phero_driver::compile_ddd_str`.
   Postgres FTS + document projections; per-field analyzers/boosts in the
   FTS plumbing; ddd on the classify/ifml-generate paths; LSP for `.ddd`.
 
+### Authored aggregate boundaries + design invariants (DD4/DD5, issue #666 — slice 1: ingest mirrors)
+
+pherolang 0.3's DD4/DD5 payloads ingest NOW (the enforcement plane is the
+#666 epic's later slices): `DddDesignNode.aggregate_boundary`
+(`Option<DddAggregateBoundary>` — ONE typed blob carrying BOTH the
+aggregate-root verdict `is_root` and the member's `membership { root_json,
+origin }`, the `AggregateOrigin::{Authored, Derived}` enum mirrored as
+`DddAggregateOrigin`) and `DddDesignNode.invariants` (`Vec<DddInvariant>`,
+verbatim expressions in declaration order — no name/index upstream). The
+root `TypeRef` serializes at the ingest boundary (`root_json`, codegraph-core
+takes no phero-* deps); both node fields are serde-defaulted/skip-if-absent
+so a design with neither serializes exactly as before. Grafeo: the `:DddDesign`
+node gains `aggregate_json` + `invariants_json` nullable props (`aggregate_json`
+is NULL ⇔ the undecided boundary; `invariants_json` is always written, `[]`
+empty — the `child_operations_json` precedent), and
+**`GRAPH_FORMAT_VERSION`
+11 → 12** (a warm pre-#666 cache would serve an UNDECIDED boundary and no
+invariants — the authored facts the enforcement plane consumes; artifact-kit
+fixture now `graph_document_v12.md`). Gates: `cargo test -p codegraph --test
+ddd_ingest_tests` (8: conversion mirrors incl. both origin arms + the
+MockEngine round-trip pin) + `cargo test -p codegraph-grafeo --test
+grafeo_query_tests` (deep Grafeo round-trip over both blobs) +
+`--test artifact_kit_tests --test artifact_tests`. Byte identity: no `.ddd`
+input change ⇒ zero generated-output movement (the canaries hold).
+
 ## Service ops lower to API surface (issue #590)
 
 `.ddd` service operations are the application surface, not documentation:
@@ -1100,7 +1125,7 @@ the op's name and are demoted to a **no-binding fallback**:
   nightly gate exercises the primary path.
 - **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 at that bump (the artifact
   kit fixture was renamed `graph_document_v7.md` → `v8.md` then; it is
-  `graph_document_v11.md` now, and the `format_version_too_new` case pins a
+  `graph_document_v12.md` now, and the `format_version_too_new` case pins a
   LITERAL next version that every bump must move by hand — see "Format bump
   discipline + doctor signal" for the current constant) — the binding
   rides the serde-serialized `operations_json` blob, so a warm cache would
@@ -3785,8 +3810,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `11` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v11.md`.
+  `12` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v12.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -3800,7 +3825,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 12` while the constant is 11), NOT derived from
+  (`formatVersion 13` while the constant is 12), NOT derived from
   `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
@@ -3810,7 +3835,9 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   introduced …"), never the current value (the recorded lineage: 1→2
   op-level `when`, 3→4 WS6 manifest, 4→5 pherolang 0.3, 6→7 service
   bodies, 7→8 transition binding, 8→9 mox tables/register classes, 9→10
-  aggregate child ops, 10→11 service-op condition paths (#663) — the 2→3
+  aggregate child ops, 10→11 service-op condition paths (#663), 11→12
+  DD4/DD5 authored aggregate boundaries + design invariants (#666) —
+  the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
   versions the engine's on-disk format; bump it on every grafeo minor
@@ -3818,7 +3845,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v11 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v12 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.
@@ -5169,8 +5196,8 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
   inputs hash covers model/config contents + graph format + storage
   generation, **not** the compiler rev, so without the bump a warm
   `.graph-cache/` would silently serve the pre-upgrade graph. At that
-  upgrade the artifact kit fixture was `graph_document_v5.md` (five bumps
-  older than the current `graph_document_v11.md` — see "Format bump
+  upgrade the artifact kit fixture was `graph_document_v5.md` (seven bumps
+  older than the current `graph_document_v12.md` — see "Format bump
   discipline + doctor signal" for the live constant).
 - **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
   byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use
@@ -5214,15 +5241,18 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
 its gates green): typed repository queries **#659**, the authored
 `transition` binding **#660**, aggregate child operations **#661**,
 executable statement bodies **#662**, injected-scope `when` guards
-(**#663** — `condition_paths`, see the service-op section below), and
+(**#663** — `condition_paths`, see the service-op section below), authored
+aggregate boundaries + design invariants **#666** (slice 1 landed: the
+ingest mirrors + the graph format bump — enforcement lands with the
+#666 epic), and
 explicit `table "…"` names +
 `register` classes + the compiler word tables **#668**. The upgrade PR
 itself carried none of them — they landed as their own slices, which is
 what the "never ride the upgrade PR" rule was for.
 
 **Still deferred** from that list: collection
-sets (#664), the declared error vocabulary + `throws` (#665), invariants +
-authored aggregate boundaries (#666), modeled DTO boundaries (#667), the
+sets (#664), the declared error vocabulary + `throws` (#665), modeled DTO
+boundaries (#667), the
 tree-sitter `.mox` grammar + LSP for the new syntax (#669), session-kind
 grants in `policy_rls` (#670, decision-gated); plus the `.dmn` plane
 (#671), the `.uc`/`.cmmn` assessment (#672), the upstream semantic-graph
