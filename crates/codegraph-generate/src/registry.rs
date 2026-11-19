@@ -172,6 +172,17 @@ pub(crate) fn build_entity_generators(
             .map(|targets| targets.contains(&ctx.current_target))
             .unwrap_or(true)
     })
+    // Media routes are a MONOLITH surface (issue #703): the emitted module
+    // imports `crate::app_state::AppState` and calls
+    // `crate::media::session::begin_scoped` — root-crate paths the
+    // per-domain worker crates do not carry (`worker_lib.tera` declares no
+    // `pub mod media;`, `worker_app_state.tera` has no media slot), so a
+    // routed media module is an uncompilable worker. The DELETE handler's
+    // media cleanup block carries the matching `!workers` gate; the route
+    // tree is gated HERE at the construction site, and the router's media
+    // surface is emptied under workers (api/router.rs) so nothing references
+    // modules that were never emitted.
+    .filter(|generator| !(ctx.workers_topology && generator.name() == "media_route"))
     .collect::<Vec<_>>()
 }
 
