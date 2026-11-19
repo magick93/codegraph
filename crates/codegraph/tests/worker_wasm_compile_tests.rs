@@ -647,6 +647,7 @@ fn stub_query_fns() -> Vec<String> {
 
 #[tokio::test]
 #[ignore = "compiles a generated workers workspace for native + wasm32: downloads crates.io deps, ~3-6 min cold (needs the wasm32-unknown-unknown target)"]
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 async fn generated_worker_wasm_check_is_in_ci() {
     // ── Fixture: workers topology + extension points, cornucopia provider ──
     let pay_run = codegraph_core::types::SchemaNode {

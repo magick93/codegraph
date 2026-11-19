@@ -1,0 +1,397 @@
+use std::collections::HashMap;
+
+use codegraph_core::types::PropertyNode;
+use codegraph_naming::to_snake_case;
+
+// ── Route model ────────────────────────────────────────────────────────
+
+/// A machine state name (declaration spelling, e.g. `AwaitingApproval`).
+///
+/// A newtype keeps state names from being confused with trigger names,
+/// wire keys, or arbitrary prose at call sites.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct StateName(String);
+
+impl StateName {
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for StateName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A normalized machine trigger name (snake_case, e.g. `submit`).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct TriggerName(String);
+
+impl TriggerName {
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TriggerName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// An Update-DTO wire key carrying the machine state field.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[serde(transparent)]
+pub struct WireKey(String);
+
+impl WireKey {
+    #[must_use]
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for WireKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// One machine transition reduced to the wire-relevant `(from, to)` pair.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ServiceOpTransition {
+    pub from: StateName,
+    pub to: StateName,
+}
+
+/// The machine-field binding an executable save/update delegation carries
+/// (P0.5/P0): the state field on the response, its DTO wire key, the
+/// machine's initial state, and the transitions this operation may apply.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ServiceOpState {
+    /// Rust expression producing the record's current state as a `String`
+    /// (codelist/string aware, optional-aware).
+    pub current_expr: String,
+    /// The Update-DTO key carrying the state field (DTO casing applied).
+    pub wire_key: WireKey,
+    /// The machine's declared initial state — the hurl contract's starting
+    /// point when simulating the action sequence.
+    pub initial: StateName,
+    /// Every machine transition — the body-driven target whitelist when the
+    /// op has no name/guard/capability binding.
+    pub all: Vec<ServiceOpTransition>,
+    /// The transitions this op applies, selected at runtime by the current
+    /// state. Empty = the op performs no state transition of its own.
+    pub op: Vec<ServiceOpTransition>,
+}
+
+/// The executable lowering for one service op.
+///
+/// Replaces the former `is_delete`/`is_read`/`is_update` boolean pack (which
+/// could represent invalid combinations) with an exhaustive tagged enum.
+/// `#[non_exhaustive]` lets new lowerings land without breaking external
+/// matches — internal matches must stay exhaustive.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ExecutionKind {
+    /// Delegates to the bound repository's `delete` builtin.
+    Delete,
+    /// Delegates to `findById` and returns the loaded record.
+    Read,
+    /// Delegates to `save`/`update` and patches the loaded row. `state` is
+    /// present when the entity carries a machine (transition binding or
+    /// body-driven target whitelist).
+    Update {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        state: Option<ServiceOpState>,
+    },
+    /// A checked `.ddd` statement body (issue #662): `plan.block` is the
+    /// pre-rendered executable region (the author's `let`/`guard`/`assign`/
+    /// `if`/`return` statements lowered over the loaded aggregate), and
+    /// `plan.state` carries the inferred machine transition when the body
+    /// leaves the state field alone.
+    Body {
+        plan: Box<crate::ddd::body_lower::BodyPlan>,
+    },
+    /// A modeled aggregate CHILD operation (issue #661): a
+    /// `children <Root> { <op> => <feature>.<action> }` operation lowers to
+    /// a real route against the CHILD's command plane, nested under the
+    /// parent's aggregate path (`POST …/{parent}/{parent_id}/{child}/
+    /// actions/{op}` for `add`, `…/{child_id}/actions/{op}` for
+    /// `remove`/`save`).
+    ChildOp {
+        /// The validated child action (`add`/`remove`/`save`).
+        action: ChildAction,
+        /// The root's child feature, as authored (`lines`).
+        feature: String,
+        /// The child class, package-qualified as authored.
+        child_class: String,
+        /// Whether the child exposes `read` — the `add` leg's read-back
+        /// contract rides it (the created row is fetched by id).
+        read_back: bool,
+    },
+    /// No executable lowering; the route answers 501 naming the gap.
+    Seam { reason: String },
+}
+
+/// The closed child-action vocabulary of `children <Root>` operations
+/// (phero-ir `ChildRef.action`, validated upstream).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildAction {
+    /// Append one element to the root's child collection.
+    Add,
+    /// Remove one element from it.
+    Remove,
+    /// Persist one element (insert or replace).
+    Save,
+}
+
+impl ChildAction {
+    /// Map the authored action string; `None` for anything outside the
+    /// closed set (the upstream compiler already rejects those).
+    #[must_use]
+    pub fn from_scope(action: &str) -> Option<Self> {
+        match action {
+            "add" => Some(Self::Add),
+            "remove" => Some(Self::Remove),
+            "save" => Some(Self::Save),
+            _ => None,
+        }
+    }
+
+    /// The action's wire spelling (`add`/`remove`/`save`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Add => "add",
+            Self::Remove => "remove",
+            Self::Save => "save",
+        }
+    }
+}
+
+impl ExecutionKind {
+    /// Whether the route answers 501 for an unlowered op.
+    #[must_use]
+    pub fn is_seam(&self) -> bool {
+        matches!(self, Self::Seam { .. })
+    }
+
+    /// The machine transition this lowering applies, if any — the hurl and
+    /// e2e planners simulate the machine off it (a bodied op that leaves the
+    /// state field alone carries the same shape as the `save`/`update` leg).
+    #[must_use]
+    pub fn transition_state(&self) -> Option<&ServiceOpState> {
+        match self {
+            Self::Update { state } => state.as_ref(),
+            Self::Body { plan } => plan.state.as_ref(),
+            Self::Delete | Self::Read | Self::ChildOp { .. } | Self::Seam { .. } => None,
+        }
+    }
+
+    /// The child action this lowering drives, when it is an aggregate child
+    /// operation (issue #661).
+    #[must_use]
+    pub fn child_action(&self) -> Option<ChildAction> {
+        match self {
+            Self::ChildOp { action, .. } => Some(*action),
+            _ => None,
+        }
+    }
+}
+
+/// One service operation lowered to a route on one entity.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ServiceOpRoute {
+    /// The owning service name.
+    pub service: String,
+    /// Operation name as authored.
+    pub op_name: String,
+    /// Route path segment and handler-fn suffix (`to_snake_case(op_name)`).
+    pub snake: String,
+    /// Handler fn name (`service_op_{snake}`).
+    pub fn_name: String,
+    /// Actor capability names guarding the op, as authored. Empty = ungated.
+    pub capabilities: Vec<String>,
+    /// Pre-rendered authorization fn (the whole item, doc comment
+    /// included). `None` = ungated: no capabilities, or no actor policy in
+    /// the graph.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorize_fn: Option<String>,
+    /// The executable lowering (delete / read / update / 501 seam).
+    pub execution: ExecutionKind,
+    /// `true` when the bound entity's query plane carries `find_by_id`
+    /// (the #449 invariant: the design surface exposes `read`). When
+    /// `false` — a capability bound to a non-root entity — the route
+    /// renders without the record load, and the authorize fn (if any)
+    /// takes no response parameter: capability membership only. The
+    /// route body still 501s (no record ⇒ no `read`/`delete` lowering),
+    /// so nothing flows past the seam.
+    pub record_load: bool,
+    /// The gate is `async` and takes `(&AppState, &ApiKeyInfo, &response)`
+    /// (issue #663): the op's `when` guard references an injected
+    /// repository, and the rendered fn loads the related records before
+    /// evaluating. `false` keeps today's synchronous
+    /// `(role, &response)` shape — byte-identical flag-off output.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub authorize_async: bool,
+    /// The op's injected-scope `when` guard, resolved at generation time
+    /// (issue #663). `None` for own-record-only guards — the hurl
+    /// contract's state planner pins the conservative denial leg when a
+    /// guard is present but not provably satisfied by a fresh fixture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub injected_guard: Option<InjectedGuard>,
+}
+
+/// The compact injected-scope guard facts the hurl contract's planner
+/// needs (issue #663) — a THREE-VERDICT model, never a guess, because a
+/// mis-pinned contract leg fails the suite as hard in EITHER direction
+/// (a guessed 403 that comes back 200 is a false positive, not a safe
+/// fallback):
+///
+/// - [`FreshFixtureGuard::Satisfied`] — every scope's FK is REQUIRED and
+///   every injected comparison targets its machine field with a value the
+///   machine's initial state decides, and every decided comparison PASSES
+///   on a fresh row → the guard provably holds; the contract keeps the
+///   normal legs.
+/// - [`FreshFixtureGuard::Denied`] — provable denial: some scope's FK is
+///   OPTIONAL (the create body omits nullable props, so the fresh row's FK
+///   is NULL and the rendered gate denies BEFORE evaluating), or some
+///   machine-decided comparison FAILS on the fresh row → pin 403.
+/// - [`FreshFixtureGuard::Unverifiable`] — any comparison the collector
+///   does not fully understand (negation, `||` composition, non-machine
+///   fields, non-name/date literals, field-to-field) or an unparseable
+///   condition → the contract OMITS the leg with the documented header
+///   (the `Body { may_refuse }` precedent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FreshFixtureGuard {
+    Satisfied,
+    Denied,
+    Unverifiable,
+}
+
+/// The compact guard facts a route carries for the hurl contract's
+/// planner (issue #663).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InjectedGuard {
+    /// The guard's condition source, verbatim — the comment the emitted
+    /// contract pins.
+    pub condition: String,
+    /// The fresh-fixture verdict (see [`FreshFixtureGuard`]).
+    pub fresh_fixture: FreshFixtureGuard,
+}
+
+// ── Field knowledge ────────────────────────────────────────────────────
+
+/// How a record field compares in the Rust lowering (the `when` guards and,
+/// since issue #662, the statement-body expressions).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    String,
+    Bool,
+    Integer,
+    Float,
+    Date,
+    Codelist,
+    Unsupported,
+}
+
+/// One entity property as the Rust lowering sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldInfo {
+    pub(crate) rust_name: String,
+    pub(crate) kind: FieldKind,
+    pub(crate) optional: bool,
+}
+
+fn field_kind_for(prop: &PropertyNode) -> FieldKind {
+    if prop.is_array {
+        return FieldKind::Unsupported;
+    }
+    if matches!(
+        prop.effective_kind(),
+        Some(codegraph_type_contracts::RefClassificationKind::CodelistReference)
+            | Some(codegraph_type_contracts::RefClassificationKind::CodelistCheck)
+    ) {
+        return FieldKind::Codelist;
+    }
+    match prop.rust_field_type.as_str() {
+        "String" => FieldKind::String,
+        "bool" => FieldKind::Bool,
+        "chrono::NaiveDate" => FieldKind::Date,
+        other => {
+            let (numeric, integer) = numeric_class(other);
+            if integer {
+                FieldKind::Integer
+            } else if numeric {
+                FieldKind::Float
+            } else {
+                FieldKind::Unsupported
+            }
+        }
+    }
+}
+
+/// `(numeric, integer)` — the `rules.rs` classification, minus the
+/// collection unwrap (arrays are refused above).
+fn numeric_class(rust_field_type: &str) -> (bool, bool) {
+    let integer = matches!(
+        rust_field_type,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "isize"
+    );
+    let numeric = integer || matches!(rust_field_type, "f32" | "f64");
+    (numeric, integer)
+}
+
+pub(super) fn fields_for(props: &[PropertyNode]) -> HashMap<String, FieldInfo> {
+    let mut fields = HashMap::new();
+    for p in props {
+        let info = FieldInfo {
+            rust_name: p.rust_field_name.clone(),
+            kind: field_kind_for(p),
+            optional: p.is_nullable,
+        };
+        fields.insert(p.name.clone(), info);
+        // The authored name may be camelCase; the DTO field is snake_case.
+        let snake = to_snake_case(&p.name);
+        fields.entry(snake).or_insert_with(|| FieldInfo {
+            rust_name: p.rust_field_name.clone(),
+            kind: field_kind_for(p),
+            optional: p.is_nullable,
+        });
+    }
+    fields
+}

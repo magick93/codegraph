@@ -66,6 +66,7 @@ pub struct ProtoServiceMethod {
 }
 
 impl ProtoContext {
+    #[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
     pub async fn build(
         db: &dyn GraphQuerier,
         schema_title: &str,

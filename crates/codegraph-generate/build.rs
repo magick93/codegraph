@@ -56,7 +56,11 @@ fn main() {
 
         writeln!(
             out,
-            "pub fn add_embedded_templates(tera: &mut tera::Tera) -> std::result::Result<(), tera::Error> {{"
+            // One huge generated function (every template inline). Not
+            // hand-maintained — split-template pressure belongs to the
+            // template tree, not to this file (issue #751 lane C).
+            "#[allow(clippy::too_many_lines)]\n\
+             pub fn add_embedded_templates(tera: &mut tera::Tera) -> std::result::Result<(), tera::Error> {{"
         )
         .unwrap();
 

@@ -425,6 +425,7 @@ fn flatten_child_dtos(children: Vec<ChildDtoContext>) -> Vec<ChildDtoContext> {
 
 /// Build the template context for DTO generation. Shared between the app DTO generator
 /// and the domain-types DTO generator.
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn build_dto_context(
     db: &dyn GraphQuerier,
     schema_title: &str,

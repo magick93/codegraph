@@ -127,6 +127,7 @@ pub fn indexed_properties() -> Vec<&'static str> {
     ]
 }
 
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 fn node_type_ddl() -> Vec<&'static str> {
     vec![
         // AtprotoNamespace — AT Protocol repo namespaces. Renamed from

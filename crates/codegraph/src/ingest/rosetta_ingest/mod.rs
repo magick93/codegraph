@@ -232,6 +232,7 @@ pub struct RosettaIngestOutcome {
 /// [`Error::RosettaModel`] (codes/spans surfaced) — a broken model never
 /// half-ingests, mirroring the `MoxSchemaImport` precedent.
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+#[allow(clippy::too_many_lines)] // TODO(#751): split this function (tracked follow-up — do not grow it)
 pub async fn ingest_rosetta_files(
     ingestor: &dyn GraphIngestor,
     querier: &dyn GraphQuerier,

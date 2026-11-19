@@ -64,7 +64,7 @@ mapping (String→TEXT, wraps-String→TEXT, `format "uuid"`→UUID, dates→DAT
 table "pay_run_rows"` (upstream pherolang#177 `ClassDef::table_name`) is the
 effective storage table on EVERY plane — the mox bridge writes the declared
 spelling into `SchemaNode.pg_table_name`, the ONE field the DDL
-(`db/ddl/query.rs`), the SeaORM entity (`db/entity.rs`), the repository
+(`db/ddl/query/`), the SeaORM entity (`db/entity.rs`), the repository
 emitter, the filters and the hurl/openapi naming all read, so the planes
 cannot drift (`SchemaNode::declares_table_name`/`derived_table_name` tell a
 declaration from a derived default). The declared spelling is
@@ -635,7 +635,7 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
 (RLS scopes still apply) so hurl contracts and persona keys keep working
 — documented v1 semantics.
 
-- **Module** (`codegraph-generate/src/ddd/service_ops.rs`): entity-binding
+- **Module** (`codegraph-generate/src/ddd/service_ops/`): entity-binding
   resolution (capability class → schema title exact/`+Type`; delegation
   to a repository of the model; class-typed signature), `PolicySurface`
   (BaseJump role → capability → grant `when` sources via
@@ -825,7 +825,7 @@ own-record field".
   `DddTransitionRef` discipline), mapped in `service_operation_node`;
   **`GRAPH_FORMAT_VERSION` 10 → 11** at that bump (the cache inputs hash
   does not cover the codegraph rev — see "Format bump discipline").
-- **Lowering** (`ddd/service_ops.rs::lower_when_scoped`): the scope table
+- **Lowering** (`ddd/service_ops/when_lower.rs::lower_when_scoped`): the scope table
   carries one `InjectedScope` per distinct (repository, class) in
   declaration order. A dotted path whose ROOT names the declared
   dependency name (the upstream `PathScan` contract — `inject
@@ -959,7 +959,7 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   literal 11 there); that rename produced the fixture name that is CURRENT
   today — for the live constant and fixture see "Format bump discipline +
   doctor signal".
-- **Lowering** (`ddd/service_ops.rs::routes_for_entity`): a child op is
+- **Lowering** (`ddd/service_ops/routes.rs::routes_for_entity`): a child op is
   declared on the ROOT's design but ACTS on the child, so `routes_for_entity
   (CHILD)` collects the ops whose `childScope.class` resolves to it and
   reuses the WS4 nested shape verbatim — the parent's `.nest(…)` mounts the
@@ -1053,7 +1053,7 @@ That binding is now the **PRIMARY** selector for the operation's machine
 transition — the heuristics the plane shipped with infer the same thing from
 the op's name and are demoted to a **no-binding fallback**:
 
-- **Resolution** (`ddd/service_ops.rs::resolved_transitions` →
+- **Resolution** (`ddd/service_ops/transitions.rs::resolved_transitions` →
   `resolve_transition_binding`): the trigger must be one the machine bound to
   the entity declares — an explicit `via` name **or** a bare arrow's derived
   lowerCamel target (`-> Posted` ⇒ `posted`); the optional qualifier is the
@@ -2920,7 +2920,7 @@ A parent soft-deleted through the normal CRUD path (the auditable default)
 keeps its row, so the media gate's `id` + tenant lookup still matched it: the
 CRUD routes 404'd while `display` served the reference and `remove`
 destructively deleted it. `MediaFieldPlan.parent_soft_delete` carries the
-DDL's own auditable decision (`db/ddl/query.rs`: the domain's `auditable`
+DDL's own auditable decision (`db/ddl/query/`: the domain's `auditable`
 flag — default ON — and NOT append-only, i.e. the explicit entity flag OR the
 operations inference), resolved LAZILY per media field in `media/plan.rs`
 (never per entity: `resolve_entity_operations` is uncached and the builder
@@ -5086,6 +5086,11 @@ decision-gated.
 - When adding new template files for a dialect, place them in `templates/db/<dialect>/` and the generator selects the right template path based on `database_target`.
 - The `project.database_target` and `project.persistence_provider` variables are available in all Tera templates via `ProjectConfig`.
 
+### Size budgets (issue #751)
+
+- **Files ≤ 2,000 lines.** Enforced by `crates/codegraph/tests/file_length_contract.rs` — a plain test in the CI `test` job (clippy has no file-length lint) walking `crates/*/src/**/*.rs`. Seven pre-existing over-limit files are allow-listed in that test as tracked follow-ups; a stale allow entry (its file now under the limit) FAILS the test, so the list can only shrink. Integration-test directories (`crates/*/tests/`) and nested fixture src trees (`crates/review/generated-candidate/**`, `crates/*/tests/fixtures/**`) are out of scope (generator output, not hand-maintained source). When a file outgrows the limit, split it into a directory module — `ddd/service_ops/` and `db/ddl/query/` are the reference shapes (mod.rs re-exports preserve every public path).
+- **Functions ≤ 400 lines.** `clippy::too_many_lines` is enforced via `-D clippy::too_many_lines` in the CI lint job, with `too-many-lines-threshold = 400` in the workspace `clippy.toml` (the default 100 flags ~500 functions here; 300 flags 17). The pre-existing sites carry `#[allow(clippy::too_many_lines)] // TODO(#751)` markers — split them, never grow them. The build-script-generated `embedded_templates.rs` carries its allow at generation time (`crates/codegraph-generate/build.rs`).
+
 ## Dependency policy (#426)
 
 - **Cadence**: monthly Tier-0 lockfile refresh (`cargo update`, lockfile-only PR — the #418 shape); quarterly review of Tier-3 majors against the #417 table. Majors are deliberate epic work — no drive-by major bumps.
@@ -5280,7 +5285,7 @@ Three fixes work together:
    root in `get_composition_tree()`. Removes duplicate columns and children
    at the source.
 
-2. **`db/ddl/query.rs`** — ForeignKey and ColumnComment deduplication in
+2. **`db/ddl/query/`** — ForeignKey and ColumnComment deduplication in
    `query_ddl_context()`. FKs deduped by `column_name`, comments by `column`.
 
 3. **`ordering.rs`** — `seen_titles` HashSet in `compute_generation_order()`
@@ -5431,7 +5436,7 @@ Key files:
 | `crates/codegraph-classifier/src/classify.rs` | Classification: ValueObject vs StructuredWrapper vs Entity vs Codelist |
 | `crates/codegraph-core/src/types/composition.rs` | `CompositionNode`, `CompositionTree`, `dedup_fields()` |
 | `crates/codegraph-grafeo/src/querier/` | `build_composition_node()`, `get_composition_tree()`, `get_properties()` |
-| `crates/codegraph-generate/src/db/ddl/query.rs` | `query_ddl_context()`, `column_info_to_ddl()`, `composition_node_to_child_table()`, FK/Comment dedup |
+| `crates/codegraph-generate/src/db/ddl/query/` | `query_ddl_context()` (context.rs), `column_info_to_ddl()` (columns.rs), `composition_node_to_child_table()` (children.rs), keywords/artifacts/enrich splits, FK/Comment dedup |
 | `crates/codegraph-generate/src/ordering.rs` | `compute_generation_order()`, domain-level entity dedup |
 | `crates/codegraph-generate/templates/db/table.tera` | PostgreSQL DDL template with child table rendering |
 
