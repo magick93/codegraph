@@ -389,11 +389,7 @@ async fn cleanup_full_set(t: &PgTarget) {
         "DROP EXTENSION IF EXISTS \"basejump@basejump_core\" CASCADE;",
     )
     .await;
-    let _ = psql_exec(
-        t,
-        "DROP SCHEMA IF EXISTS basejump CASCADE;",
-    )
-    .await;
+    let _ = psql_exec(t, "DROP SCHEMA IF EXISTS basejump CASCADE;").await;
 }
 
 #[tokio::test]
