@@ -144,6 +144,77 @@ fn entity_to_dto_jsonb_array_nullable() {
     );
 }
 
+// --- issue #459: the MAIN hydrator adapts uuid↔String, mirroring the
+// include-fetch emitter's `emit_field_assignments_typed` arms (tree.rs) ---
+
+/// A Uuid entity column hydrating a String DTO field (the mox unformatted
+/// datatype drift shape) must adapt with `.to_string()` — the old fallback
+/// emitted `.parse()` (no such method on Uuid) or a bare E0308 copy.
+#[test]
+fn entity_to_dto_converts_uuid_column_to_string_dto() {
+    let col = make_column("org_id", "Uuid", false, Some("String"), false, false);
+    let mut code = CodeWriter::new();
+    emit_entity_to_dto_field(&mut code, &col, "row", "    ");
+    assert_eq!(
+        code.as_str(),
+        "    org_id: row.org_id.to_string(),\n",
+        "uuid column → String DTO must emit .to_string(). Got:\n{}",
+        code.as_str()
+    );
+}
+
+#[test]
+fn entity_to_dto_converts_nullable_uuid_column_to_string_dto() {
+    let col = make_column("org_id", "Uuid", true, Some("String"), false, false);
+    let mut code = CodeWriter::new();
+    emit_entity_to_dto_field(&mut code, &col, "row", "    ");
+    assert_eq!(
+        code.as_str(),
+        "    org_id: row.org_id.map(|v| v.to_string()),\n",
+        "nullable uuid column → String DTO must emit .map(|v| v.to_string()). Got:\n{}",
+        code.as_str()
+    );
+}
+
+/// A String entity column hydrating a non-String DTO field keeps the
+/// `.parse()` conversion the include-fetch emitter spells.
+#[test]
+fn entity_to_dto_parses_string_column_to_uuid_dto() {
+    let col = make_column("duty_id", "String", false, Some("Uuid"), false, false);
+    let mut code = CodeWriter::new();
+    emit_entity_to_dto_field(&mut code, &col, "row", "    ");
+    assert_eq!(
+        code.as_str(),
+        "    duty_id: row.duty_id.parse().unwrap_or_default(),\n",
+        "String column → non-String DTO must emit .parse().unwrap_or_default(). Got:\n{}",
+        code.as_str()
+    );
+}
+
+#[test]
+fn entity_to_dto_parses_nullable_string_column_to_uuid_dto() {
+    let col = make_column("duty_id", "String", true, Some("Uuid"), false, false);
+    let mut code = CodeWriter::new();
+    emit_entity_to_dto_field(&mut code, &col, "row", "    ");
+    assert_eq!(
+        code.as_str(),
+        "    duty_id: row.duty_id.and_then(|v| v.parse().ok()),\n",
+        "nullable String column → non-String DTO must emit .and_then(parse). Got:\n{}",
+        code.as_str()
+    );
+}
+
+/// Matching types (the entity-ref shape: Uuid column, no DTO override)
+/// keep the byte-identical plain assignment.
+#[test]
+fn entity_to_dto_keeps_plain_assignment_for_matching_types() {
+    let col = make_column("duty_id", "Uuid", false, None, false, false);
+    let mut code = CodeWriter::new();
+    emit_entity_to_dto_field(&mut code, &col, "row", "    ");
+    assert_eq!(code.as_str(), "    duty_id: row.duty_id,\n");
+    assert!(!code.as_str().contains(".to_string()"), "{}", code.as_str());
+}
+
 // --- emit_child_field_population tests ---
 
 #[test]

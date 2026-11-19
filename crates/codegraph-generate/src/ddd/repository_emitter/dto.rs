@@ -6,7 +6,10 @@ use super::{ChildTableInfo, EntityTree, TreeColumn};
 
 /// Emit the mapping expression for a single entity column → DTO field.
 ///
-/// Handles codelist enum parsing, JSONB deserialization, and plain copy.
+/// Handles codelist enum parsing, JSONB deserialization, plain copy, and —
+/// when the entity column's rust type differs from the DTO field type
+/// (issue #459) — the uuid↔String adaptation the include-fetch emitter
+/// spells (`.to_string()` / `.parse()`), nullable-aware.
 /// `pad` is the indentation prefix (e.g. `"            "`).
 /// `row_var` is the variable name holding the entity row (e.g. `"row"`).
 pub(crate) fn emit_entity_to_dto_field(
@@ -32,32 +35,46 @@ pub(crate) fn emit_entity_to_dto_field(
                 "{pad}{dto_field}: serde_json::from_value({row_var}.{entity_field}).unwrap_or_default(),",
             );
         }
-    } else if col.dto_rust_type.is_some() {
-        if col.is_array {
-            if col.is_nullable {
-                wln!(
-                    code,
-                    "{pad}{dto_field}: {row_var}.{entity_field}.map(|v| v.into_iter().filter_map(|x| x.parse().ok()).collect()),",
-                );
-            } else {
-                wln!(
-                    code,
-                    "{pad}{dto_field}: {row_var}.{entity_field}.into_iter().filter_map(|v| v.parse().ok()).collect(),",
-                );
-            }
-        } else if col.is_nullable {
+    } else if col.is_array && col.dto_rust_type.is_some() {
+        if col.is_nullable {
             wln!(
                 code,
-                "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| v.parse().ok()),",
+                "{pad}{dto_field}: {row_var}.{entity_field}.map(|v| v.into_iter().filter_map(|x| x.parse().ok()).collect()),",
             );
         } else {
             wln!(
                 code,
-                "{pad}{dto_field}: {row_var}.{entity_field}.parse().unwrap_or_default(),",
+                "{pad}{dto_field}: {row_var}.{entity_field}.into_iter().filter_map(|v| v.parse().ok()).collect(),",
             );
         }
     } else {
-        wln!(code, "{pad}{dto_field}: {row_var}.{entity_field},");
+        // Scalar column: adapt when the entity column's rust type differs
+        // from the DTO field type (issue #459 — e.g. a Uuid FK column
+        // hydrating a TEXT-mapped String DTO field), mirroring the
+        // include-fetch emitter's `emit_field_assignments_typed`. Matching
+        // types keep the plain assignment (no adaptation fires).
+        let col_ty = Some(col.rust_type.as_str());
+        let dto_ty = col.dto_rust_type.as_deref().or(col_ty);
+        let nullable = col.is_nullable;
+        match (col_ty, dto_ty) {
+            (Some("Uuid"), Some("String")) if nullable => wln!(
+                code,
+                "{pad}{dto_field}: {row_var}.{entity_field}.map(|v| v.to_string()),",
+            ),
+            (Some("Uuid"), Some("String")) => wln!(
+                code,
+                "{pad}{dto_field}: {row_var}.{entity_field}.to_string(),",
+            ),
+            (Some("String"), Some(other)) if other != "String" && nullable => wln!(
+                code,
+                "{pad}{dto_field}: {row_var}.{entity_field}.and_then(|v| v.parse().ok()),",
+            ),
+            (Some("String"), Some(other)) if other != "String" => wln!(
+                code,
+                "{pad}{dto_field}: {row_var}.{entity_field}.parse().unwrap_or_default(),",
+            ),
+            _ => wln!(code, "{pad}{dto_field}: {row_var}.{entity_field},"),
+        }
     }
 }
 

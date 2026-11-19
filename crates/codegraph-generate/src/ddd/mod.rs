@@ -3,6 +3,7 @@ pub mod command;
 pub mod cornucopia_repo;
 pub mod design;
 pub mod dto;
+mod dto_fields;
 pub mod errors;
 pub mod event;
 pub mod functions;
