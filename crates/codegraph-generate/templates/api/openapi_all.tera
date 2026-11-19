@@ -37,6 +37,12 @@ use utoipa::OpenApi;
         crate::api::{{ domain.name }}::media_{{ entity.module_name }}_{{ mf }}::display,
         crate::api::{{ domain.name }}::media_{{ entity.module_name }}_{{ mf }}::remove,
 {% endfor %}{% endfor %}
+{%- for function in domain.functions %}
+        crate::api::{{ domain.name }}::functions_api::{{ function.fn_name }},
+{%- endfor %}
+{%- for op in domain.service_ops %}
+        crate::api::{{ domain.name }}::{{ op.module }}_handler::{{ op.fn_name }},
+{%- endfor %}
 {% endfor %}
     ),
     components(schemas(
@@ -55,6 +61,10 @@ use utoipa::OpenApi;
 {% for mf in entity.media_fields %}{% if entity.media_mode_presigned %}
         crate::api::{{ domain.name }}::media_{{ entity.module_name }}_{{ mf }}::PresignRequest,
 {% endif %}{% endfor %}{% endfor %}
+{%- for function in domain.functions %}
+        crate::api::{{ domain.name }}::functions_api::{{ function.request }},
+        crate::api::{{ domain.name }}::functions_api::{{ function.response }},
+{%- endfor %}
 {% endfor %}
         crate::error::ErrorResponse,
         crate::error::ErrorBody,
