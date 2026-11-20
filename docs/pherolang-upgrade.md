@@ -317,8 +317,10 @@ Each item **deletes** a heuristic or seam we wrote as a workaround.
 - ~~Upstream `GraphModel` + `graph query` analytics (separation-of-duty, dead
   capabilities, reachability) as a validation plane over our graph~~ — **LANDED
   as issue #673**; the coverage matrix is below.
-- `pherolang artifact check` / `verify` receipts as CI gates over committed
-  artifacts.
+- `pherolang artifact check` over committed artifacts — **LANDED as issue
+  #674** (in-process, artifact-alone; the section below). `verify` receipts
+  stay deferred: receipt generation is a `phero-cli` path and the CLI is
+  binary-only (see the deferral rationale below).
 
 ### P6 landed — the semantic-graph analytics as a validation plane (#673)
 
@@ -359,6 +361,92 @@ ignored compile gate covered the Doctor arm). Presence-gated: no policy
 artifacts, no reachability queries, no artifact mode, no `--emit-graph` ⇒
 the stage is silent and existing doctor output is byte-identical.
 
+### P6 landed — `artifact check` as a PR-CI gate (#674); receipts deferred
+
+`crates/codegraph/tests/artifact_check_tests.rs` validates every committed
+artifact fixture from the artifact alone, in-process, node-free and DB-free:
+`tests/fixtures/ddd/library.ddd.json` (DDD design),
+`tests/fixtures/evt/orders.evt.json` (event contract), and
+`tests/fixtures/graph_analytics/sod.json` (actor policy — the third committed
+artifact; a coverage test walks `tests/fixtures/` for any JSON root carrying
+`formatVersion` and fails by name when one is not in the covered list, so the
+gate cannot be quietly outgrown).
+
+**Why it is a reimplementation.** `phero-cli` is a **binary-only** crate
+(`[[bin]] name = "pherolang"`, no `[lib]` target), so `pherolang artifact
+check` has no library entry point; calling it would make a PR-CI gate depend
+on a `cargo install` + subprocess. The test lifts the check onto the crates
+we already depend on:
+
+1. **Rule 0, verbatim** — a 0.2-era document (the pre-rename provenance key
+   `rexVersion`, or the pre-rename instance discriminator `rex.instance`) is
+   rejected with upstream's exact message, before shape-sniffing:
+   `0.2-era rexlang artifact — regenerate with pherolang 0.3`. A stale
+   committed artifact therefore fails CI with a migration instruction, not a
+   diff wall.
+2. **Shape classification** in upstream's documented precedence (`decisions`
+   before `views`; `views` before `application`/`modules`; `nodes` before
+   `applications`; the marker-only form falls through to the actor artifact).
+3. **The version gate** — the root's `formatVersion` is compared against
+   `phero-ir`'s own marker const for the classified kind
+   (`DDD_MODEL_FORMAT_VERSION`, `EVENT_MODEL_FORMAT_VERSION`,
+   `ACTOR_MODEL_FORMAT_VERSION`, …), and the document then round-trips through
+   that kind's versioned `from_json`, so this gate and the ingest reader
+   cannot disagree. A mismatch reports the reader's wording
+   (`unsupported artifact formatVersion: found N, expected M`).
+4. **Provenance** — a contract-complete DDD design must carry a non-empty
+   `pheroVersion`; the other artifact roots do not carry the key at all
+   (`formatVersion` remains the only *gate*, `pheroVersion` is provenance).
+
+Not reimplemented: `phero_backend_ddd::check_contract` (the deep
+artifact-only DDD contract — resolved companions, aligned parallel lists,
+value semantics, DTO boundaries). That crate is not a codegraph dependency,
+and the ingest path already refuses a broken design with `Error::DddModel`
+(pinned by `ddd_golden_tests`).
+
+**Regenerating a consumable artifact.** Upstream documents exactly one
+command for its own artifacts: `PHERO_UPDATE_FIXTURES=1 cargo test
+--workspace` (then *read the diff* — goldens are the spec, not an output).
+The three fixtures we commit are codegraph-owned, so they re-bless through
+their own golden gates in the same spirit: `DDD_GOLDEN_BLESS=1 cargo test -p
+codegraph --test ddd_golden_tests` and `EVT_GOLDEN_BLESS=1 cargo test -p
+codegraph --test evt_golden_tests` (`sod.json` is a hand-authored policy
+fixture — it has no compiler source and no bless flag).
+
+**The four-word register vocabulary.** Upstream's verification receipts report
+the proof-obligation register's statuses and nothing else. The closed set is
+four words — `proved`, `tested`, `argued`, `assumed` — each carried verbatim
+with the evidence pointers that back it (`docs/RECEIPTS.md` upstream):
+
+| Status | Meaning |
+|---|---|
+| `proved` | SMT-discharged by Creusot/Why3 for all inputs (needs a `proof` or `mirror` evidence entry) |
+| `tested` | Covered by executing tests, not by a proof (needs a `test` evidence entry) |
+| `argued` | Reasoned about, not proved and not (fully) tested; carries a `trigger` and an ISO review date |
+| `assumed` | Deliberately trusted, with the shrinking path recorded |
+
+**Why a receipt never says "verified".** It is the epic's non-goal and the
+document's spine: a receipt is **not a verdict**. It does not upgrade an
+`argued` row, does not merge statuses and does not summarize — it carries the
+rows. The word `verified` is not in the closed vocabulary and
+`phero_evidence::receipt::check` rejects it **by name**. Anything stronger
+would let a machine-generated file launder an `argued` obligation into a
+claim nobody discharged.
+
+**Why the receipt half of #674 is deferred.** Receipt *generation* lives in
+the CLI (`pherolang verify … -o <receipt>`: compile the surfaces, hash the
+source closure, re-hash every artifact against its committed golden, embed
+the register), and `phero-cli` is binary-only — so a codegraph-side receipt
+emitter would reimplement the hashing contract instead of consuming it.
+`phero_evidence::receipt::check` *is* a library and could validate a receipt,
+but `--check-fresh` (the CI freshness gate) re-derives the receipt from its
+own `inputs`, which is again a CLI-only path. Adopting receipts therefore
+needs either a pinned `pherolang` binary in the CI lane (a toolchain
+dependency for a node-free/DB-free job) or an upstream `phero-evidence`/
+`phero-verify` library entry point for emission. Tracked as
+[#772](https://github.com/magick93/codegraph/issues/772) rather than guessed
+at here; nothing about this gate depends on it.
+
 ---
 
 ## 4. Gates
@@ -370,6 +458,7 @@ the stage is silent and existing doctor output is byte-identical.
 | P3 (nightly lane) | `ifml_codegen_gate`, `entity_codegen_gate`, `service_ops_compile_gate`, `service_ops_hurl_gate`, `worker_wasm_compile_tests`, `workers_gateway_compile_tests`, `review_api_suite`, `workers_live_gate`, `events_runtime_tests`, `hooks_cornucopia_runtime_tests` |
 | P4 | `cargo test -p codegraph --test wrapper_drift_tests`, `doctor` smoke |
 | P5 | per-item gates in each issue |
+| P6 | `cargo test -p codegraph --test artifact_check_tests` (every committed artifact, artifact-alone), `graph_analytics_tests` (#673), `artifact_kit_tests` |
 
 Local full-suite runs must mirror CI's `RUSTFLAGS: -C debuginfo=0` (see
 AGENTS.md "Testing").
