@@ -523,7 +523,10 @@ impl EntityGenerator for HandlerGenerator {
         // members-only root also carries) — the dedup must follow the SAME
         // predicate, not the entity's own plans.
         let documents_invariant_409 = !invariant_blocks.create_block.is_empty();
-        if !invariant_enforcement.is_empty() {
+        // The two arms run INDEPENDENTLY: a root with no own invariants whose
+        // aggregate MEMBERS carry them still renders the create block (and its
+        // 409), and a members-only root has no transition block to attach.
+        {
             for route in service_ops.iter_mut() {
                 // Issue #767: a create-shaped action splices the same create
                 // invariant block, and the template documents the 409 beside
@@ -537,10 +540,12 @@ impl EntityGenerator for HandlerGenerator {
                 {
                     route.raise_responses.retain(|raise| raise.status != 409);
                 }
-                if matches!(
-                    route.execution,
-                    crate::ddd::service_ops::ExecutionKind::Update { .. }
-                ) && route.record_load
+                if !invariant_enforcement.is_empty()
+                    && matches!(
+                        route.execution,
+                        crate::ddd::service_ops::ExecutionKind::Update { .. }
+                    )
+                    && route.record_load
                 {
                     route.invariant_block = Some(build_transition_invariant_block(
                         &domain,
