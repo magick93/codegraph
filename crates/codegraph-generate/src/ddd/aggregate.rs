@@ -732,6 +732,7 @@ mod tests {
                 name: "Payroll".to_string(),
                 base: None,
                 source_path: "authored.ddd".to_string(),
+                errors: Vec::new(),
             },
             modules: Vec::new(),
             designs,

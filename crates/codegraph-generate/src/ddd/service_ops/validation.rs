@@ -275,6 +275,68 @@ pub async fn body_refusals(
     Ok(refusals)
 }
 
+/// Declared `throws` vocabularies (DD7, issue #665): every operation's
+/// `throws` entry must resolve against the shared error derivation — a
+/// prelude name or a declared variant the generated `{Domain}Error` plane
+/// carries. An entry naming nothing is a NAMED refusal (the
+/// `body_refusals` posture): re-running `routes_for_entity` per
+/// throws-carrying entity surfaces the exact op and entry before any tree
+/// is written.
+pub async fn throws_refusals(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Result<Vec<String>, GraphError> {
+    let models = db.get_ddd_models().await?;
+    if models.iter().all(|model| {
+        model
+            .services
+            .iter()
+            .all(|service| service.operations.iter().all(|op| op.throws.is_empty()))
+            && model.designs.iter().all(|design| {
+                design
+                    .child_operations
+                    .iter()
+                    .all(|op| op.throws.is_empty())
+            })
+    }) {
+        return Ok(Vec::new());
+    }
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for model in &models {
+        for service in &model.services {
+            for op in &service.operations {
+                if op.throws.is_empty() || op.is_protected {
+                    continue;
+                }
+                if let Some(title) = bind_entity(model, op, db, &type_suffix).await {
+                    titles.insert(title);
+                }
+            }
+        }
+    }
+    let mut refusals = Vec::new();
+    for title in titles {
+        let Ok(Some(schema)) = db.get_schema(&title).await else {
+            continue;
+        };
+        let Some(domain) = schema.domain.clone() else {
+            continue;
+        };
+        if !config.domains.contains_key(domain.as_str()) {
+            continue;
+        }
+        if let Err(reason) =
+            routes_for_entity(db, config, &domain, &title, &BodyRenderContext::default()).await
+        {
+            refusals.push(reason);
+        }
+    }
+    refusals.sort();
+    refusals.dedup();
+    Ok(refusals)
+}
+
 /// Injected-scope `when` guards (issue #663): every guarded operation's
 /// injected paths must resolve (schema, domain, query slot, exactly-one
 /// FK id source) and the whole condition must lower. The same refusal

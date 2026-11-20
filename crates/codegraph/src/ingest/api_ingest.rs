@@ -309,6 +309,23 @@ pub async fn ingest_api_model(
             stats.errors += 1;
         }
 
+        for (code, def) in &_domain_entry.errors {
+            // Per-domain DD7 overrides (issue #665): keyed by the declared
+            // error name, they seed the same ErrorDefinition nodes the
+            // entity-level config uses, so the shared derivation folds
+            // them ahead of the `.ddd` declarations.
+            let node = ErrorDefinitionNode {
+                code: code.clone(),
+                description: def.description.clone(),
+                http_status: def.http_status,
+                domain: Some(domain_name.clone()),
+            };
+            if let Err(e) = db.ingest_error_definition(&node).await {
+                tracing::warn!(domain = %domain_name, error_code = %code, "failed to ingest domain error override: {e}");
+            }
+            stats.errors += 1;
+        }
+
         for entity_name in &_domain_entry.entities {
             if let Some(ec) = _domain_entry.get_entity_config(entity_name) {
                 for (code, def) in &ec.errors {

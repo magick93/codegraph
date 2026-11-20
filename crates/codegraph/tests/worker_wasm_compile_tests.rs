@@ -1086,6 +1086,7 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
             name: "Compilecheck".to_string(),
             base: None,
             source_path: "fixture.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: Vec::new(),
         designs: vec![

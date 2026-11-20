@@ -284,11 +284,13 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
             name: "Library".to_string(),
             base: Some("nz.example.library".to_string()),
             source_path: "model/library.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: vec![DddModuleNode {
             application: "Library".to_string(),
             name: "catalogue".to_string(),
             ordinal: 0,
+            errors: Vec::new(),
         }],
         designs: vec![DddDesignNode {
             application: "Library".to_string(),

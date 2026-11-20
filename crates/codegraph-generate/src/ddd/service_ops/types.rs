@@ -306,6 +306,20 @@ pub struct ServiceOpRoute {
     /// byte-identical arm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invariant_block: Option<String>,
+    /// The op's declared `throws` set (DD7, issue #665), authored error
+    /// names. Empty ⇒ the op declares no vocabulary — every consumer
+    /// (utoipa documentation, hurl planning) renders nothing, byte-
+    /// identical to the pre-#665 shape.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub throws: Vec<String>,
+    /// The declared statuses the action path documents (issue #665): the
+    /// op's `throws` resolved through the shared error derivation, MINUS
+    /// the statuses the surface's own base set already documents (404 for
+    /// a record load, 409 for a machine-bound update, 422 for a child
+    /// payload, 501 for a seam). A `Body` execution documents its raises
+    /// through the #662 plan instead, so this stays empty there.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub raise_responses: Vec<crate::ddd::body_lower::BodyRaiseResponse>,
 }
 
 /// The compact injected-scope guard facts the hurl contract's planner

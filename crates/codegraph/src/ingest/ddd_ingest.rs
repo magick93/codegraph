@@ -16,9 +16,9 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,
     DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags, DddDesignNode,
-    DddDocumentField, DddInvariant, DddModelGraph, DddModuleNode, DddPagination, DddParam,
-    DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode,
-    DddServiceOperation, DddTransitionRef,
+    DddDocumentField, DddErrorDecl, DddInvariant, DddModelGraph, DddModuleNode, DddPagination,
+    DddParam, DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode,
+    DddServiceNode, DddServiceOperation, DddTransitionRef,
 };
 use phero_driver::{CompileInputs, DomainImports, SchemaImports, SigilImports, compile_ddd_str};
 
@@ -388,6 +388,8 @@ pub fn ddd_model_graph_from_phero(
             application: app_name.clone(),
             name: module.name.clone(),
             ordinal: module_ordinal,
+            // DD7 (issue #665): the module's private error vocabulary.
+            errors: module.errors.iter().map(error_decl_node).collect(),
         });
 
         for (ordinal, design) in module.designs.iter().enumerate() {
@@ -588,12 +590,35 @@ pub fn ddd_model_graph_from_phero(
             name: app_name,
             base,
             source_path: source_path.to_string(),
+            // DD7 (issue #665): the application's declared error
+            // vocabulary (phero-ir `DddModel.errors`, application scope),
+            // visible to every module of the application.
+            errors: model.errors.iter().map(error_decl_node).collect(),
         },
         modules,
         designs,
         repositories,
         services,
         searches,
+    }
+}
+
+/// Convert one phero-ir [`phero_ir::ddd::ErrorDecl`] into its graph mirror
+/// (DD7, issue #665). Payload fields reuse the operation-parameter
+/// conversion, so every type rides as phero-ir JSON.
+fn error_decl_node(decl: &phero_ir::ddd::ErrorDecl) -> DddErrorDecl {
+    DddErrorDecl {
+        name: decl.name.clone(),
+        description: decl.description.clone(),
+        fields: decl
+            .fields
+            .iter()
+            .map(|p| DddParam {
+                name: p.name.clone(),
+                type_json: to_json(&p.type_),
+                multiplicity: opt_json(p.multiplicity.as_ref()),
+            })
+            .collect(),
     }
 }
 

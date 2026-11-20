@@ -81,10 +81,91 @@ async fn raise_table(
                 variant: error.variant_name,
                 code: error.code,
                 status: error.http_status.max(0) as u16,
+                fields: error
+                    .fields
+                    .iter()
+                    .map(|field| crate::ddd::body_lower::DeclaredErrorField {
+                        name: field.name.clone(),
+                    })
+                    .collect(),
             },
         );
     }
     Ok(table)
+}
+
+/// The declared statuses one action surface's utoipa base set already
+/// documents (issue #665): 403 (policy) and 404 (record load) on every
+/// action route, 409 for a machine-bound update, 422 for a child payload,
+/// 501 for a seam. A declared status inside this set needs NO extra utoipa
+/// entry (duplicate statuses are not documented twice).
+pub(super) fn covered_statuses(execution: &ExecutionKind) -> Vec<u16> {
+    let mut covered = vec![403u16, 404];
+    match execution {
+        ExecutionKind::Seam { .. } => covered.push(501),
+        ExecutionKind::ChildOp { .. } => covered.push(422),
+        _ => {}
+    }
+    if execution
+        .transition_state()
+        .is_some_and(|state| !state.op.is_empty())
+    {
+        covered.push(409);
+    }
+    covered
+}
+
+/// Resolve one op's `throws` set against the shared error derivation (DD7,
+/// issue #665): every entry must name a prelude error or a declared
+/// variant the generated `{Domain}Error` plane actually carries — the
+/// closed-subset posture, surfaced as a named refusal. Returns the
+/// documented responses (one per DISTINCT status, base-set-covered
+/// statuses filtered out).
+pub(super) fn throws_responses(
+    table: &crate::ddd::body_lower::RaiseTable,
+    op_name: &str,
+    service_name: &str,
+    throws: &[String],
+    covered: &[u16],
+) -> Result<Vec<crate::ddd::body_lower::BodyRaiseResponse>, String> {
+    let mut responses: Vec<crate::ddd::body_lower::BodyRaiseResponse> = Vec::new();
+    for name in throws {
+        let Some((status, declared_name)) = table.resolve_entry(name) else {
+            let declared = if table.declared.is_empty() {
+                "no declared errors are in scope".to_string()
+            } else {
+                format!(
+                    "declared: {}",
+                    table
+                        .declared
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            return Err(format!(
+                "service op `{op_name}` of service `{service_name}`: `throws` names \
+                 `{name}`, which maps to no generated error (the prelude is \
+                 `NotFound`/`Conflict`; {declared}) — declare it with \
+                 `error {name}` in the `.ddd` model or drop the entry"
+            ));
+        };
+        if covered.contains(&status) {
+            continue;
+        }
+        match responses.iter_mut().find(|entry| entry.status == status) {
+            Some(entry) => {
+                entry.errors.push_str(", ");
+                entry.errors.push_str(&declared_name);
+            }
+            None => responses.push(crate::ddd::body_lower::BodyRaiseResponse {
+                status,
+                errors: declared_name,
+            }),
+        }
+    }
+    Ok(responses)
 }
 
 /// Resolve a class name (possibly `pkg::Name` or `pkg.Name`) to a schema
@@ -197,13 +278,22 @@ pub async fn routes_for_entity(
         .map(|m| m.states().into_iter().map(str::to_string).collect())
         .unwrap_or_default();
     // The declared raise vocabulary a statement body lowers against (issue
-    // #662). Read only when a bodied op exists — a model without bodies pays
-    // no extra graph read.
+    // #662). Read only when a bodied op exists OR any op (service or
+    // aggregate-child, issue #665) declares a `throws` vocabulary — a
+    // throws-only model still needs the declared-error table to resolve
+    // its vocabulary against. Otherwise the model pays no extra graph read.
     let raises = if models.iter().any(|model| {
-        model
-            .services
-            .iter()
-            .any(|service| service.operations.iter().any(|op| !op.bodies.is_empty()))
+        model.services.iter().any(|service| {
+            service
+                .operations
+                .iter()
+                .any(|op| !op.bodies.is_empty() || !op.throws.is_empty())
+        }) || model.designs.iter().any(|design| {
+            design
+                .child_operations
+                .iter()
+                .any(|op| !op.throws.is_empty())
+        })
     }) {
         raise_table(db, domain).await?
     } else {
@@ -313,6 +403,9 @@ pub async fn routes_for_entity(
                     throws: &throws,
                 };
                 let execution = execution_for(op, model, config, &service.name, &shape)?;
+                let covered = covered_statuses(&execution);
+                let raise_responses =
+                    throws_responses(&raises, &op.name, &service.name, &throws, &covered)?;
                 routes.push(ServiceOpRoute {
                     service: service.name.clone(),
                     op_name: op.name.clone(),
@@ -325,6 +418,8 @@ pub async fn routes_for_entity(
                     authorize_async: !injected.is_empty(),
                     injected_guard,
                     invariant_block: None,
+                    throws,
+                    raise_responses,
                 });
             }
         }
@@ -522,6 +617,15 @@ pub async fn routes_for_entity(
                     None
                 };
                 let snake = to_snake_case(&op.name);
+                let throws: Vec<String> = op
+                    .throws
+                    .iter()
+                    .filter_map(|json| json.get("name").and_then(serde_json::Value::as_str))
+                    .map(str::to_string)
+                    .collect();
+                let covered = covered_statuses(&execution);
+                let raise_responses =
+                    throws_responses(&raises, &op.name, &design.class, &throws, &covered)?;
                 routes.push(ServiceOpRoute {
                     // The declaration site: a child op's `service` names the
                     // aggregate ROOT design whose `children` block declared
@@ -537,6 +641,8 @@ pub async fn routes_for_entity(
                     authorize_async: false,
                     injected_guard: None,
                     invariant_block: None,
+                    throws,
+                    raise_responses,
                 });
             }
         }

@@ -1522,17 +1522,44 @@ fn ddd_fixture() -> DddModelGraph {
             name: "Library".to_string(),
             base: Some("nz.example.library".to_string()),
             source_path: "model/library.ddd".to_string(),
+            // DD7 (issue #665): the deep round-trip proves the error
+            // vocabulary survives its blob — payload fields included.
+            errors: vec![DddErrorDecl {
+                name: "PaymentDeclined".to_string(),
+                description: None,
+                fields: vec![codegraph_core::types::DddParam {
+                    name: "reason".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "enum",
+                        "value": {"package": "nz.example.library", "name": "DeclineReason"}
+                    }),
+                    multiplicity: None,
+                }],
+            }],
         },
         modules: vec![
             DddModuleNode {
                 application: "Library".to_string(),
                 name: "catalogue".to_string(),
                 ordinal: 0,
+                errors: Vec::new(),
             },
             DddModuleNode {
                 application: "Library".to_string(),
                 name: "lending".to_string(),
                 ordinal: 1,
+                errors: vec![DddErrorDecl {
+                    name: "LineLocked".to_string(),
+                    description: None,
+                    fields: vec![codegraph_core::types::DddParam {
+                        name: "reason".to_string(),
+                        type_json: serde_json::json!({
+                            "type": "primitive",
+                            "value": "string"
+                        }),
+                        multiplicity: None,
+                    }],
+                }],
             },
         ],
         designs: vec![
@@ -1927,6 +1954,7 @@ async fn test_ddd_models_sorted_by_application_name() {
             name: "Aardvark".to_string(),
             base: None,
             source_path: "model/aardvark.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: vec![],
         designs: vec![],

@@ -155,6 +155,7 @@ fn domain_config_with_postgres_schema(pg_schema: &str) -> DomainConfig {
             postgres_schema: pg_schema.into(),
             depends_on: vec!["common".into()],
             dependencies: Vec::new(),
+            errors: HashMap::new(),
             entities: vec!["CandidateType".into()],
             entity_config: HashMap::new(),
             auto_discover: None,

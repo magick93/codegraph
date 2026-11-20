@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 pub enum {{ domain | pascal_case }}Error {
 {% for error in errors %}
     #[error("{{ error.code }}: {{ error.description }}")]
-    {{ error.variant_name }},
+    {{ error.variant_decl }}
 {% endfor %}
     #[error("Conflict")]
     Conflict,
@@ -23,7 +23,7 @@ impl {{ domain | pascal_case }}Error {
     pub fn code(&self) -> &'static str {
         match self {
 {% for error in errors %}
-            Self::{{ error.variant_name }} => "{{ error.code }}",
+            {{ error.code_arm }}
 {% endfor %}
             Self::Conflict => "CONFLICT",
             Self::NotFound => "NOT_FOUND",
@@ -35,7 +35,7 @@ impl {{ domain | pascal_case }}Error {
     pub fn http_status(&self) -> StatusCode {
         match self {
 {% for error in errors %}
-            Self::{{ error.variant_name }} => StatusCode::from_u16({{ error.http_status }}).unwrap(),
+            {{ error.status_arm }}
 {% endfor %}
             Self::Conflict => StatusCode::CONFLICT,
             Self::NotFound => StatusCode::NOT_FOUND,
