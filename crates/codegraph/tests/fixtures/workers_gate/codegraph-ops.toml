@@ -75,10 +75,13 @@ org_id_b = "00000000-0000-0000-0000-000000000002"
 # The GATE wipes the generated hurl dir with the rest of the generated tree
 # (issue #694: a contract left by an older generation is still discovered by
 # the suite and hurl'd against the new app), so the hand-authored workflow-409
-# contract rides every gate regeneration by being re-seeded here. A CONSUMER
-# `testkit api --workers` run does not wipe it — `codegraph-ops`
-# `suites/workers.rs` `REGEN_WIPE` omitting `hurl` is the recorded follow-up on
-# #694, which is exactly why the seed must stay unconditional.
+# contract rides every gate regeneration by being re-seeded here. The harness
+# wipe (`codegraph-ops` `suites/workers.rs` `REGEN_WIPE`) covers `hurl` too:
+# the wipe is generation-root-wide and the harness cannot know which hurl
+# files are hand-authored, so consumers re-seed theirs via a `post_generate`
+# hook — exactly this pattern — and snapshot-restore is deliberately not
+# used (it resurrects stale numbered contracts, the #687 class). The seed
+# must stay unconditional.
 [[hooks]]
 name = "seed-hand-authored-hurl"
 exec = "cp hurl/90_workflow_transition_409.hurl generated-workers/hurl/90_workflow_transition_409.hurl"
