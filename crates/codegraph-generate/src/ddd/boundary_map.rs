@@ -287,9 +287,8 @@ fn is_required_class_ref(member: &codegraph_core::types::DddDtoMember) -> bool {
     {
         return false;
     }
-    let is_class = serde_json::from_value::<phero_ir::TypeRef>(member.type_json.clone())
-        .is_ok_and(|t| matches!(t, phero_ir::TypeRef::Class { .. }));
-    is_class
+    serde_json::from_value::<phero_ir::TypeRef>(member.type_json.clone())
+        .is_ok_and(|t| matches!(t, phero_ir::TypeRef::Class { .. }))
 }
 
 /// Render the named refusal for a member/field type disagreement — BOTH

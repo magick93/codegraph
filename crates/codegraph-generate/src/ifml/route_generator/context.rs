@@ -2342,7 +2342,11 @@ pub(super) async fn page_component_context(
                             crate::ddd::service_ops::ExecutionKind::Create { .. }
                         )
                     })
-                    .map(|route| route.op_name)
+                    // `.ifml` action targets are PascalCase while the modeled
+                    // op is not (`action("RegisterBook")` → `registerBook`), and
+                    // the binding convention is ASCII-case-insensitive — so
+                    // the membership probe normalizes both sides.
+                    .map(|route| action_target_key(&route.op_name))
                     .collect(),
                     None => Default::default(),
                 }
@@ -2356,7 +2360,7 @@ pub(super) async fn page_component_context(
             .filter(|e| {
                 e.action_kind == "action"
                     && !e.target.is_empty()
-                    && !collection_level_ops.contains(&e.target)
+                    && !collection_level_ops.contains(&codegraph_naming::to_snake_case(&e.target))
             })
             .map(|e| {
                 let op_snake = codegraph_naming::to_snake_case(&e.target);
@@ -2672,5 +2676,32 @@ impl FetchState {
             }
         }
         claim
+    }
+}
+
+/// The one spelling an `.ifml` action target and a modeled op name are
+/// compared by (issue #767 review): `.ifml` authors PascalCase targets
+/// (`action("RegisterBook")`) while the modeled op is `registerBook`, and the
+/// binding convention is ASCII-case-insensitive — so a raw set probe would
+/// miss and re-emit a dead button.
+pub(super) fn action_target_key(name: &str) -> String {
+    codegraph_naming::to_snake_case(name)
+}
+
+#[cfg(test)]
+mod action_target_key_tests {
+    use super::action_target_key;
+
+    #[test]
+    fn ifml_pascal_case_targets_match_the_modeled_op_spelling() {
+        assert_eq!(
+            action_target_key("RegisterBook"),
+            action_target_key("registerBook")
+        );
+        assert_eq!(action_target_key("Inspect"), action_target_key("inspect"));
+        assert_ne!(
+            action_target_key("RegisterBook"),
+            action_target_key("ImportBook")
+        );
     }
 }

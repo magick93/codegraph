@@ -519,16 +519,22 @@ impl EntityGenerator for HandlerGenerator {
                  builtins)"
             )));
         }
+        // The template's 409 line is gated on the PRE-RENDERED block (which a
+        // members-only root also carries) — the dedup must follow the SAME
+        // predicate, not the entity's own plans.
+        let documents_invariant_409 = !invariant_blocks.create_block.is_empty();
         if !invariant_enforcement.is_empty() {
             for route in service_ops.iter_mut() {
                 // Issue #767: a create-shaped action splices the same create
                 // invariant block, and the template documents the 409 beside
                 // the 201 — so a declared `throws Conflict` must not
                 // double-document it (the Update arm's rule, one plane over).
-                if matches!(
-                    route.execution,
-                    crate::ddd::service_ops::ExecutionKind::Create { .. }
-                ) {
+                if documents_invariant_409
+                    && matches!(
+                        route.execution,
+                        crate::ddd::service_ops::ExecutionKind::Create { .. }
+                    )
+                {
                     route.raise_responses.retain(|raise| raise.status != 409);
                 }
                 if matches!(

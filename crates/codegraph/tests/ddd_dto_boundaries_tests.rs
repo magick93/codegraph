@@ -1043,6 +1043,12 @@ async fn update_body_mapping_wraps_required_members_and_passes_optionals() {
             multiplicity_json: Some(serde_json::json!({"lower": 0, "upper": {"finite": 1}})),
             ..member("subtitle", "declared", string_type())
         },
+        // The many-valued member is the case the base-type comparison got
+        // wrong: `String` vs the field's `Vec<String>`.
+        DddDtoMember {
+            multiplicity_json: Some(serde_json::json!({"lower": 0, "upper": "unbounded"})),
+            ..member("tags", "declared", string_type())
+        },
     ]);
     let plan = plan_kind(&engine, &shape, RequestDtoKind::Update)
         .await
@@ -1058,9 +1064,12 @@ async fn update_body_mapping_wraps_required_members_and_passes_optionals() {
         plan.construct
     );
     assert!(
-        plan.construct.contains("play_length: None,")
-            && plan.construct.contains("isbn: None,")
-            && plan.construct.contains("tags: None,"),
+        plan.construct.contains("tags: Some(payload.tags),"),
+        "a many-valued member compares against the field's Vec, not its base: {}",
+        plan.construct
+    );
+    assert!(
+        plan.construct.contains("play_length: None,") && plan.construct.contains("isbn: None,"),
         "uncovered update fields default to None: {}",
         plan.construct
     );

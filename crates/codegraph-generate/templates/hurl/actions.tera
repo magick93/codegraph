@@ -10,7 +10,12 @@
 # valid from the record's CURRENT state (the CREATE above starts at the
 # machine's initial state); an out-of-order op pins 409, and one transition
 # is replayed after the sequence to prove the wrong-state contract. Ops with
-# no executable lowering pin 501.{% if has_statement_bodies %}
+# no executable lowering pin 501.{% if omitted_legs | default(value=[]) | length > 0 %}
+# Omitted legs: a payload that carries a REQUIRED entity reference cannot be
+# seeded by this contract (it cannot create the target row) — seed one by hand
+# to exercise:
+{% for op in omitted_legs %}#   - {{ op }}
+{% endfor %}{% endif %}{% if has_statement_bodies %}
 # A lowered `.ddd` statement body (issue #662) pins 200 with its declared
 # parameters as the action body; a body carrying a declared 4xx raise has no
 # deterministic expected status and emits no leg (the live gate drives it
