@@ -4,8 +4,33 @@
 -- Uses get_current_org_id() which reads app.organization_id session var.
 -- This is set by the Axum middleware for BOTH API key and JWT auth,
 -- so one policy set works for all auth modes.
+--
+-- Child tenancy (issue #700): every writer of a child row — the SeaORM
+-- `child_insert_sql`, the cornucopia `insert_{entity}_{child}` /
+-- `link_{junction}` queries, and the media handler until #690 — omitted
+-- `platform_organization_id`, so the DDL's zero default was persisted and
+-- the zero-tolerant predicate below exposed those rows to EVERY
+-- organization. The child now carries the parent's
+-- set_org_id_from_session trigger (see the parent's trigger migration), and
+-- this file repairs the rows written before it existed — then stops
+-- tolerating zeros. The backfill rides a NO FORCE window so the migration
+-- owner can see (and rewrite) rows the PREVIOUS policy would otherwise
+-- reject when no session org is set; it is idempotent, so every run of this
+-- migration is also the upgrade migration. Deliberately unguarded and
+-- unindexed: after the first run the predicate matches nothing, and a
+-- permanent index on the tenant column to serve a one-time repair is the
+-- worse trade — the cost is one sequential scan per child table per
+-- `migrate` run.
 
 ALTER TABLE events.public_event_eventbasetype ENABLE ROW LEVEL SECURITY;
+ALTER TABLE events.public_event_eventbasetype NO FORCE ROW LEVEL SECURITY;
+
+UPDATE events.public_event_eventbasetype AS c
+   SET platform_organization_id = p.platform_organization_id
+  FROM events.public_event AS p
+ WHERE c.public_event_id = p.id
+   AND c.platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid;
+
 ALTER TABLE events.public_event_eventbasetype FORCE ROW LEVEL SECURITY;
 
 -- Drop all existing policies (clean slate on regeneration)
@@ -20,28 +45,23 @@ END $$;
 -- Org isolation: SELECT
 CREATE POLICY "org_isolation_select" ON events.public_event_eventbasetype
   FOR SELECT
-  USING ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  USING ((platform_organization_id = public.get_current_org_id()));
 
 -- Org isolation: INSERT
 CREATE POLICY "org_isolation_insert" ON events.public_event_eventbasetype
   FOR INSERT
-  WITH CHECK ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  WITH CHECK ((platform_organization_id = public.get_current_org_id()));
 
 -- Org isolation: UPDATE
 CREATE POLICY "org_isolation_update" ON events.public_event_eventbasetype
   FOR UPDATE
-  USING ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid))
-  WITH CHECK ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  USING ((platform_organization_id = public.get_current_org_id()))
+  WITH CHECK ((platform_organization_id = public.get_current_org_id()));
 
 -- Org isolation: DELETE
 CREATE POLICY "org_isolation_delete" ON events.public_event_eventbasetype
   FOR DELETE
-  USING ((platform_organization_id = public.get_current_org_id()
-    OR platform_organization_id = '00000000-0000-0000-0000-000000000000'::uuid));
+  USING ((platform_organization_id = public.get_current_org_id()));
 
 
 

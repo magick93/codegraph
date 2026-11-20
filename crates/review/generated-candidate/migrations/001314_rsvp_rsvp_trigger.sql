@@ -53,3 +53,29 @@ CREATE TRIGGER trg_rsvp_event_personbasetype_updated_at
     EXECUTE FUNCTION rsvp.set_updated_at();
 
 
+
+-- Auto-set platform_organization_id from the session on child INSERT (issue #700).
+-- No writer binds the column (SeaORM child inserts, cornucopia VO/junction
+-- inserts, the media handler until #690), so before this trigger the DDL
+-- default leaked
+-- a zeros tenant that every organization's RLS predicate tolerated. The
+-- parent's function is reused; child tables live in the parent's schema.
+DROP TRIGGER IF EXISTS trg_rsvp_event_set_org_id ON rsvp.rsvp_event;
+CREATE TRIGGER trg_rsvp_event_set_org_id
+    BEFORE INSERT ON rsvp.rsvp_event
+    FOR EACH ROW
+    EXECUTE FUNCTION rsvp.set_org_id_from_session();
+
+
+-- Auto-set platform_organization_id from the session on child INSERT (issue #700).
+-- No writer binds the column (SeaORM child inserts, cornucopia VO/junction
+-- inserts, the media handler until #690), so before this trigger the DDL
+-- default leaked
+-- a zeros tenant that every organization's RLS predicate tolerated. The
+-- parent's function is reused; child tables live in the parent's schema.
+DROP TRIGGER IF EXISTS trg_rsvp_event_personbasetype_set_org_id ON rsvp.rsvp_event_personbasetype;
+CREATE TRIGGER trg_rsvp_event_personbasetype_set_org_id
+    BEFORE INSERT ON rsvp.rsvp_event_personbasetype
+    FOR EACH ROW
+    EXECUTE FUNCTION rsvp.set_org_id_from_session();
+
