@@ -43,6 +43,24 @@ fn fixture_dir() -> PathBuf {
     review_api_suite_regen::fixture_dir()
 }
 
+/// Seed the hand-authored eligibility exercise into the regenerated fixture
+/// (issue #775). The canonical copy lives OUTSIDE the generated tree —
+/// `tests/fixtures/review_gate/hurl/`, the workers gate's
+/// `90_workflow_transition_409.hurl` post_generate precedent — because no
+/// recipe produces the file, no #694 ledger owns it, and the #747 drift pin
+/// holds the committed fixture to the flag-OFF recipe's output, which cannot
+/// carry it. Seeding is therefore the gate's job; every run overwrites, so a
+/// stale or wiped copy self-heals.
+fn seed_eligibility_hurl(fixture: &Path) {
+    let canonical = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/review_gate/hurl/90_eligibility_rule_403.hurl");
+    let dst = fixture.join("hurl/90_eligibility_rule_403.hurl");
+    std::fs::create_dir_all(dst.parent().expect("hurl dir has a parent"))
+        .expect("create the fixture hurl dir");
+    std::fs::copy(&canonical, &dst)
+        .unwrap_or_else(|e| panic!("seed {}: {e}", canonical.display()));
+}
+
 fn logs_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/rules-guard-gate/logs")
 }
@@ -215,6 +233,7 @@ async fn eligibility_rule_blocks_the_gated_operation_over_http() {
     gate.provision()
         .await
         .expect("fixture regeneration must succeed");
+    seed_eligibility_hurl(&fixture_dir());
     assert_guard_surface(&fixture_dir());
 
     let db = GateDb::create(base).await.expect("scratch database");

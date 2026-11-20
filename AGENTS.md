@@ -307,13 +307,14 @@ search row-filtering stay a documented follow-up).
   fixture by the shared regen (which now ingests the rosetta model and
   runs the driver's auto-classify pass). The checked-in fixture tree is
   regenerated (enumerated: the grant entity plane, rules.rs, the guarded
-  handler, hurl renumbering). **Known gap**: the hand-authored
-  `hurl/90_eligibility_rule_403.hurl` the gate asserts is NOT committed
-  (verified against HEAD and origin/master) — a pre-existing fixture defect, so
-  `rules_guard_api_gate` cannot pass on a clean checkout until it lands
-  (tracked by issue #775). It is not produced by any recipe and there is no
-  `post_generate` seed for it (the workers fixture's 409 contract is the
-  precedent for the fix).
+  handler, hurl renumbering). The gate's hand-authored
+  `hurl/90_eligibility_rule_403.hurl` is committed OUTSIDE the generated
+  tree (`tests/fixtures/review_gate/hurl/` — the workers fixture's
+  409-contract precedent) and the gate seeds it into the regenerated
+  fixture's hurl dir before its assertions: no recipe produces it, so the
+  #694 ledger sweep and the #747 drift pin neither own nor reject it, and
+  the seed self-heals after `grafeo_candidate_inspect_output`'s wholesale
+  wipe (issue #775).
 - Gates: `cargo test -p codegraph --test template_harness ::
   rules_guards` (8, node-free PR-CI) + the updated
   `rosetta_rule_tests` golden (record-typed signatures + import + new
