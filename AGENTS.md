@@ -1176,29 +1176,53 @@ never reached the graph. #667 makes the boundary a plane:
   the payload plane's one mapping (`payload_field_rust_type`: `int`→`i32`,
   `long`→`i64`, `float`→`f32`, `double`→`f64`) — the boundary generator's
   members were re-pointed at it, so a boundary member and the column it fills
-  agree by construction. Refusals are NAMED pre-generation errors (the
-  `check_service_op_bodies` posture): a member with no request field, a type
-  disagreement (both spellings named), a boundary that omits a REQUIRED field.
+  agree by construction. (`short`/`byte` columns project `i16` while the
+  payload mapping says `i32`, so such a member REFUSES by name — the mapping
+  never casts silently.) Refusals are NAMED pre-generation errors — the
+  `body_refusals` walk now covers ops carrying a modeled-boundary parameter
+  (not only bodied ops) AND the child-op target titles, so a mapping refusal
+  fails the run BEFORE any tree: a member with no request field, a type
+  disagreement (both spellings named), a boundary that omits a REQUIRED field,
+  an OPTIONAL (`0..1`) boundary parameter (a create body is always present),
+  and a required boundary parameter whose minimal body is unrepresentable (a
+  member codelist with ZERO values ⇒ a variantless enum).
   Uncovered OPTIONAL fields default to `None` and are documented on the op.
   The route runs the CRUD create's own gates (eligibility guards + design
-  invariants, compensation included). **Child aggregate ops** declaring a
+  invariants, compensation included) and documents 201/403/422 (+409 when the
+  entity carries enforceable invariants). A boundary payload extracts through
+  the VALIDATION-shaped extraction (422 + a `FieldError`), matching the DTO
+  plane rather than the #667 body's bare 400. A payload carrying a REQUIRED
+  entity reference emits no hurl create leg (a generated contract cannot seed
+  an arbitrary target row, so the leg would post the nil uuid and 500) — the
+  ownership failure legs still emit. **Child aggregate ops** declaring a
   boundary whose source class resolves to the child now CONSTRUCT the child's
   `Create`/`Update{Child}Request` from it (the handler deserializes the
   boundary, so the hurl legs send the boundary sample) instead of the
   `child-dto-payload` WARN; a boundary for another class keeps the WARN and the
   child's own request DTO. A nested child entity's create-shaped op is NOT
-  collection-level (the child-op plane owns that anchor) and keeps its seam.
+  collection-level (the child-op plane owns that anchor) and keeps its seam,
+  and so does an op carrying an op-level `when` guard (a guard evaluates over
+  the LOADED record; a guard over the created record is the CRUD create's
+  eligibility plane, and doing it here is a recorded follow-up). The IFML
+  runtime action button / remote command surface SKIPS a create-shaped op (it
+  is item-addressed; a button would POST the old item URL) until the POM gains
+  a collection-add mode.
   A `save` DELEGATION is accepted by the predicate too, but the pinned
   compiler cannot express one — a delegating service member declares no
   parameter list — so that arm is reachable only through a hand-built
-  artifact. The boundary index is memoized per generation pass
-  (`BoundaryIndexCache` on the generator instances: handler/router/hurl/
-  openapi), `from_models` no longer precomputes samples (OpenAPI never reads
-  them), and a REQUIRED boundary parameter whose minimal body is
-  unrepresentable (a member codelist with ZERO values ⇒ a variantless enum) is
-  refused by name rather than shipped as a guaranteed 422. The IFML/POM
+  artifact, and the reclassification is WARNed per op so it is visible. The
+  boundary index is memoized per generation pass (`BoundaryIndexCache` on the
+  handler/router/hurl/openapi generator instances — the free
+  `build_router_context` still rebuilds it per call), and `from_models` no
+  longer precomputes samples (OpenAPI never reads them). The IFML/POM
   collection-add action surface stays the recorded #661 follow-up — the action
   planner leaves `Create` unbuilt rather than guessing a drive sequence.
+  Byte identity: every branch is gated, but a child-op handler whose carrier is
+  NOT a modeled boundary gains a few BLANK lines from the new `{% if payload %}`
+  nesting (formatting only — no canary or golden covers service-op handlers;
+  enumerated in PR #771). A required VO-array (`contains T[]`) child can never
+  be carried by a boundary (structured classes are refused), so an entity with
+  one makes every create-shaped op a named refusal.
 - **Deferred (filed)**: **#768** — projections as read models (derived-member
   arithmetic lowering + the real read endpoint); the POM collection-add
   surface (#661).

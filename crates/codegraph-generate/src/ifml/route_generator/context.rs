@@ -2303,10 +2303,61 @@ pub(super) async fn page_component_context(
     // ...)`) render an action-control button POSTing the conventional
     // `{base}/{id}/actions/{op}` route. Gated on the component's API
     // surface + the view's id param — row-scoped op routes stay deferred.
+    // Issue #767: a create-shaped service op is COLLECTION-level, and THIS
+    // surface is item-addressed — a button bound to one would POST
+    // `/{id}/actions/{op}` at a route that no longer exists (the #559
+    // dead-button class). Skip those ops until the POM/action surface gains a
+    // collection-add mode (the recorded #661 follow-up). A refusal here is
+    // already a hard error in the validation pass, so swallowing it only
+    // avoids a duplicate diagnostic.
+    let collection_level_ops: std::collections::HashSet<String> = {
+        let has_actions = events
+            .iter()
+            .any(|e| e.action_kind == "action" && !e.target.is_empty());
+        match (c.entity.as_deref(), has_actions) {
+            (Some(entity), true) => {
+                let domain = db
+                    .get_schema(entity)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|schema| schema.domain);
+                match domain {
+                    Some(domain) => crate::ddd::service_ops::routes_for_entity(
+                        db,
+                        config,
+                        &domain,
+                        entity,
+                        &crate::ddd::service_ops::BodyRenderContext {
+                            dto_casing,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|route| {
+                        matches!(
+                            route.execution,
+                            crate::ddd::service_ops::ExecutionKind::Create { .. }
+                        )
+                    })
+                    .map(|route| route.op_name)
+                    .collect(),
+                    None => Default::default(),
+                }
+            }
+            _ => Default::default(),
+        }
+    };
     let action_buttons: Vec<RenderActionButton> = if api.is_some() && id_param.is_some() {
         events
             .iter()
-            .filter(|e| e.action_kind == "action" && !e.target.is_empty())
+            .filter(|e| {
+                e.action_kind == "action"
+                    && !e.target.is_empty()
+                    && !collection_level_ops.contains(&e.target)
+            })
             .map(|e| {
                 let op_snake = codegraph_naming::to_snake_case(&e.target);
                 let op_kebab = codegraph_naming::to_kebab_case(&e.target);

@@ -424,6 +424,11 @@ fn state_aware_legs(
                     },
                 }
             }
+            // Issue #767: a payload carrying a REQUIRED entity reference
+            // cannot be seeded by a generated contract (the target row is not
+            // created here), so the leg would post the nil uuid and 500 —
+            // omit it and record the omission in the contract header.
+            ExecutionKind::Create { plan } if !plan.required_class_refs.is_empty() => continue,
             // Issue #767: a create-shaped op is COLLECTION-level and answers
             // 201 with the created record (the entity create's own contract).
             ExecutionKind::Create { .. } => OpLeg {
@@ -1813,6 +1818,7 @@ entities = ["TaskType"]
             defaulted: Vec::new(),
             request_body: None,
             sample: serde_json::json!({"marker": "boundary-shape"}),
+            required_class_refs: Vec::new(),
         };
         let route = crate::ddd::service_ops::ServiceOpRoute {
             service: "PayRunType".to_string(),

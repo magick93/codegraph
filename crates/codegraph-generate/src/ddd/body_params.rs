@@ -84,6 +84,41 @@ pub(crate) fn param_extraction_with(param: &BodyParam, binding: &str) -> String 
     }
 }
 
+/// The handler-side extraction of one action-body parameter for a
+/// REQUEST-DTO construction site (issue #767).
+///
+/// The plain [`param_extraction_with`] answers `400 Bad Request` on a decode
+/// failure — fine for #667's direct-body action, but a request DTO plane
+/// answers `422 VALIDATION_ERROR` with a field detail (the
+/// `json_body_rejection` shape the hurl contracts pin and the UI's
+/// `fieldErrors` mapping reads). A boundary payload therefore extracts through
+/// THIS variant: a missing or malformed body is an `AppError::validation`
+/// naming the body, never a bare 400.
+pub(crate) fn param_extraction_validation(param: &BodyParam, binding: &str) -> String {
+    let ty = &param.rust_type;
+    let inner = if param.optional {
+        param
+            .rust_type
+            .strip_prefix("Option<")
+            .and_then(|inner| inner.strip_suffix('>'))
+            .unwrap_or(&param.rust_type)
+    } else {
+        &param.rust_type
+    };
+    let required = format!(
+        "    let {binding}: {ty} = match body.as_ref() {{\n        Some(value) => \n            serde_json::from_value::<{inner}>(value.0.clone()).map_err(|e| {{\n                AppError::validation(\n                    \"Invalid request body\",\n                    vec![crate::error::FieldError {{\n                        field: \"body\".to_string(),\n                        message: e.to_string(),\n                    }}],\n                )\n                .with_correlation_id(correlation_id)\n            }})?,\n        None => {{\n            return Err(AppError::validation(\n                \"Invalid request body\",\n                vec![crate::error::FieldError {{\n                    field: \"body\".to_string(),\n                    message: \"the request body is required\".to_string(),\n                }}],\n            )\n            .with_correlation_id(correlation_id));\n        }}\n    }};\n"
+    );
+    if param.optional {
+        // Unreachable for the #767 planes (an optional boundary is refused by
+        // name), kept total for future callers: deserialize the INNER type.
+        format!(
+            "    let {binding}: {ty} = body\n        .as_ref()\n        .and_then(|value| serde_json::from_value::<{inner}>(value.0.clone()).ok());\n"
+        )
+    } else {
+        required
+    }
+}
+
 /// The action-body parameter list of one operation, with the Rust types the
 /// handler binds and the sample values the hurl contract sends.
 ///

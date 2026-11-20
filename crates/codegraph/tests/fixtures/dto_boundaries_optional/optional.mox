@@ -1,0 +1,8 @@
+package nz.example.library
+
+// Issue #767 negative fixture: a create-shaped op whose boundary parameter is
+// OPTIONAL. Its own top-level group so the compiler sweep unions it alone.
+class Book {
+    String title
+    String isbn
+}

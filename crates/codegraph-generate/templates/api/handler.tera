@@ -1275,7 +1275,9 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
 {% if op.execution.kind == "create" %}
         (status = 201, description = "Created", body = {{ entity_name }}Response),
         (status = 403, description = "Denied by the actor policy"),
-{% else %}
+        (status = 422, description = "Invalid request body, or a failed validation"),
+{% if create_invariant_block | default(value="") | length > 0 %}        (status = 409, description = "Denied by a design invariant (INVARIANT_VIOLATION)"),
+{% endif %}{% else %}
         (status = 200, description = "Accepted"),
         (status = 403, description = "Denied by the actor policy"),
         (status = 404, description = "Not found"),

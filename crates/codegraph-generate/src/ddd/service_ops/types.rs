@@ -158,6 +158,11 @@ pub struct BoundaryPayloadPlan {
     pub request_body: Option<String>,
     /// The minimal valid body the hurl contract sends (the boundary sample).
     pub sample: serde_json::Value,
+    /// Required ENTITY-reference members. A generated contract cannot seed an
+    /// arbitrary target row, so the hurl planner omits the leg for such a
+    /// payload rather than posting the nil uuid (a guaranteed FK 500).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required_class_refs: Vec<String>,
 }
 
 /// The executable lowering for one service op.

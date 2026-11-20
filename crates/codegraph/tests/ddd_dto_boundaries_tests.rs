@@ -854,6 +854,11 @@ async fn mapping_engine() -> MockEngine {
         stored("isbn", "String", "TEXT", true),
         stored("play_length", "i32", "INTEGER", true),
         stored("subtitle", "String", "TEXT", false),
+        PropertyNode {
+            is_array: true,
+            prop_type: "array".to_string(),
+            ..stored("tags", "String", "TEXT", false)
+        },
     ] {
         engine
             .ingest_property("BookType", "library/BookType", &prop)
@@ -891,6 +896,14 @@ async fn plan(
     engine: &MockEngine,
     shape: &DddDtoShapeNode,
 ) -> Result<codegraph_generate::ddd::boundary_map::BoundaryRequestPlan, String> {
+    plan_kind(engine, shape, RequestDtoKind::Create).await
+}
+
+async fn plan_kind(
+    engine: &MockEngine,
+    shape: &DddDtoShapeNode,
+    kind: RequestDtoKind,
+) -> Result<codegraph_generate::ddd::boundary_map::BoundaryRequestPlan, String> {
     let shapes = std::collections::BTreeMap::from([(shape.name.clone(), shape.clone())]);
     let module_of = std::collections::BTreeMap::from([(shape.name.clone(), "catalog".to_string())]);
     plan_boundary_request(
@@ -905,7 +918,7 @@ async fn plan(
             shapes: &shapes,
             module_of: &module_of,
         },
-        RequestDtoKind::Create,
+        kind,
         &draft_param(),
     )
     .await
@@ -932,7 +945,7 @@ async fn create_body_mapping_refuses_a_member_with_no_request_field() {
         "the refusal names the member and the DTO: {err}"
     );
     assert!(
-        err.contains("accepted: isbn, play_length, subtitle, title"),
+        err.contains("accepted: isbn, play_length, subtitle, tags, title"),
         "the refusal lists the accepted fields: {err}"
     );
 }
@@ -987,9 +1000,158 @@ async fn create_body_mapping_defaults_an_uncovered_optional_field() {
         plan.construct
     );
     assert!(
-        plan.construct.contains("subtitle: None,") && plan.defaulted == vec!["subtitle"],
+        plan.construct.contains("subtitle: None,")
+            && plan.defaulted == vec!["subtitle".to_string(), "tags".to_string()],
         "an optional field the boundary omits defaults to None (documented): {} / {:?}",
         plan.construct,
         plan.defaulted
+    );
+}
+
+/// An OPTIONAL array column keeps `Option<Vec<T>>` in the create DTO while the
+/// boundary's `[0..*]` is a plain `Vec<T>` — the mapping wraps it in `Some`
+/// rather than refusing a legitimate model (issue #767 review).
+#[tokio::test]
+async fn create_body_mapping_wraps_an_optional_array_member() {
+    let engine = mapping_engine().await;
+    let shape = draft(vec![
+        member("title", "declared", string_type()),
+        member("isbn", "declared", string_type()),
+        int_member("playLength"),
+        DddDtoMember {
+            multiplicity_json: Some(serde_json::json!({"lower": 0, "upper": "unbounded"})),
+            ..member("tags", "declared", string_type())
+        },
+    ]);
+    let plan = plan(&engine, &shape).await.expect("maps");
+    assert!(
+        plan.construct.contains("tags: Some(payload.tags),"),
+        "an optional array column wraps the member: {}",
+        plan.construct
+    );
+}
+
+/// The UPDATE arm wraps every mapped member in `Some(..)` (the update DTO's
+/// `Option<T>` shape) and passes an already-optional member through — the
+/// comparison unit is the member WITHOUT its own `Option` (issue #767 review).
+#[tokio::test]
+async fn update_body_mapping_wraps_required_members_and_passes_optionals() {
+    let engine = mapping_engine().await;
+    let shape = draft(vec![
+        member("title", "declared", string_type()),
+        DddDtoMember {
+            multiplicity_json: Some(serde_json::json!({"lower": 0, "upper": {"finite": 1}})),
+            ..member("subtitle", "declared", string_type())
+        },
+    ]);
+    let plan = plan_kind(&engine, &shape, RequestDtoKind::Update)
+        .await
+        .expect("maps");
+    assert!(
+        plan.construct.contains("title: Some(payload.title),"),
+        "a required member fills the Option update slot: {}",
+        plan.construct
+    );
+    assert!(
+        plan.construct.contains("subtitle: payload.subtitle,"),
+        "an optional member IS the Option update slot: {}",
+        plan.construct
+    );
+    assert!(
+        plan.construct.contains("play_length: None,")
+            && plan.construct.contains("isbn: None,")
+            && plan.construct.contains("tags: None,"),
+        "uncovered update fields default to None: {}",
+        plan.construct
+    );
+}
+
+/// The UPDATE arm seals the member universe like the DTO template does: an
+/// immutable field is not accepted (it is absent from the update DTO), so a
+/// boundary carrying one is refused by name rather than silently dropped.
+#[tokio::test]
+async fn update_body_mapping_refuses_a_member_the_update_dto_omits() {
+    let engine = mapping_engine().await;
+    let shape = draft(vec![member("bogus", "declared", string_type())]);
+    let err = plan_kind(&engine, &shape, RequestDtoKind::Update)
+        .await
+        .expect_err("must refuse");
+    assert!(
+        err.contains("member `bogus` matches no `UpdateBookRequest` field"),
+        "the refusal names the update DTO: {err}"
+    );
+}
+
+/// Issue #767: a create-shaped op whose boundary parameter is OPTIONAL is a
+/// NAMED hard refusal, and it fires BEFORE any tree is written (the
+/// pre-generation validation walk — a refusal surfacing only in the
+/// non-fatal generator phase would exit 0 with the action surface missing).
+#[tokio::test]
+async fn optional_create_body_is_refused_before_any_tree() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dto_boundaries_optional");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let output = temp.path().join("out");
+    let config = temp.path().join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.library]
+label = "Library"
+schema_dir = "schemas/library"
+postgres_schema = "library"
+"#,
+    )
+    .unwrap();
+    let mox_files = vec![fixture.join("optional.mox")];
+    let ddd_files = vec![fixture.join("optional.ddd")];
+
+    let err = codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(PathBuf::from("definitely-absent-profiles.toml")),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        rosetta_files: &[],
+        ddd_files: &ddd_files,
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect_err("an optional create body must fail the run");
+
+    // `Error::Validation` carries the finding COUNT; the named refusal is
+    // printed by the run path (and the mapping/predicate KATs pin its
+    // wording). What this pin proves is the part #1 of the review asked for:
+    // the run FAILS, and it fails before any tree exists.
+    let message = format!("{err}");
+    assert!(
+        message.contains("Validation error"),
+        "the optional create body must fail the validation pass: {message}"
+    );
+    assert!(
+        !output.join("src").exists(),
+        "a refusal must fire BEFORE any tree is written (no src/ dir)"
     );
 }

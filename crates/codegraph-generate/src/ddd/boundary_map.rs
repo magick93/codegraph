@@ -36,7 +36,7 @@ use codegraph_config::DomainConfig;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_core::types::DddDtoShapeNode;
 
-use crate::ddd::body_params::{BodyParam, param_extraction_with};
+use crate::ddd::body_params::{BodyParam, param_extraction_validation};
 use crate::ddd::dto::build_dto_context;
 use crate::ddd::dto_boundaries::{MemberTypeResolution, wrap_multiplicity};
 
@@ -85,6 +85,11 @@ pub struct BoundaryRequestPlan {
     /// Request fields the boundary does not carry and the plan defaults to
     /// `None` (documented in the emitted op, never silent).
     pub defaulted: Vec<String>,
+    /// Required ENTITY-reference members (a stored FK the boundary carries as
+    /// a `uuid::Uuid`). A generated contract cannot seed an arbitrary target
+    /// row, so the hurl planner omits the leg for such a payload instead of
+    /// posting the nil uuid (a guaranteed 23503 → 500) — issue #767 review.
+    pub required_class_refs: Vec<String>,
 }
 
 /// The entity a boundary fills the request DTO of, plus the graph/config
@@ -136,6 +141,7 @@ pub async fn plan_boundary_request(
 
     let fields = request_fields(&ctx, kind);
     let mut covered: Vec<String> = Vec::new();
+    let mut required_class_refs: Vec<String> = Vec::new();
     let mut lines: Vec<String> = Vec::new();
 
     for member in &boundary.members {
@@ -176,7 +182,15 @@ pub async fn plan_boundary_request(
 
         match kind {
             RequestDtoKind::Create => {
-                if member_type != field.rust_type {
+                if member_type == field.rust_type {
+                    lines.push(format!("        {name}: {BOUNDARY_BINDING}.{name},"));
+                } else if !member_optional && field.rust_type == format!("Option<{member_type}>") {
+                    // An optional COLUMN of a many-valued member: the DTO keeps
+                    // `Option<Vec<T>>` while the boundary's `[0..*]` is a plain
+                    // `Vec<T>` — an absent list and an empty one are the same
+                    // wire meaning, so the mapping wraps it.
+                    lines.push(format!("        {name}: Some({BOUNDARY_BINDING}.{name}),"));
+                } else {
                     return Err(type_mismatch(
                         boundary,
                         member,
@@ -187,14 +201,25 @@ pub async fn plan_boundary_request(
                         &ctx.entity_name,
                     ));
                 }
-                lines.push(format!("        {name}: {BOUNDARY_BINDING}.{name},"));
             }
             RequestDtoKind::Update => {
-                if resolved.rust_type != field.inner_type {
+                // The Update DTO wraps EVERY accepted field in `Option`, so the
+                // comparison unit is the member WITHOUT its own `Option` (a
+                // many-valued member keeps its `Vec<…>`).
+                let member_inner = if member_optional {
+                    member_type
+                        .strip_prefix("Option<")
+                        .and_then(|inner| inner.strip_suffix('>'))
+                        .unwrap_or(&member_type)
+                        .to_string()
+                } else {
+                    member_type.clone()
+                };
+                if member_inner != field.inner_type {
                     return Err(type_mismatch(
                         boundary,
                         member,
-                        &resolved.rust_type,
+                        &member_inner,
                         &name,
                         field,
                         kind,
@@ -207,6 +232,9 @@ pub async fn plan_boundary_request(
                     lines.push(format!("        {name}: Some({BOUNDARY_BINDING}.{name}),"));
                 }
             }
+        }
+        if is_required_class_ref(member) {
+            required_class_refs.push(name.clone());
         }
         covered.push(name);
     }
@@ -237,14 +265,31 @@ pub async fn plan_boundary_request(
     defaulted.sort();
 
     Ok(BoundaryRequestPlan {
-        extraction: param_extraction_with(param, BOUNDARY_BINDING),
+        extraction: param_extraction_validation(param, BOUNDARY_BINDING),
         construct: if lines.is_empty() {
             String::new()
         } else {
             format!("{}\n", lines.join("\n"))
         },
         defaulted,
+        required_class_refs,
     })
+}
+
+/// `true` for an entity-reference member the caller cannot omit (a required
+/// stored FK — the contract would have to create the target row).
+fn is_required_class_ref(member: &codegraph_core::types::DddDtoMember) -> bool {
+    if member
+        .multiplicity_json
+        .as_ref()
+        .and_then(|json| serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok())
+        .is_some_and(|m| m.lower == 0)
+    {
+        return false;
+    }
+    let is_class = serde_json::from_value::<phero_ir::TypeRef>(member.type_json.clone())
+        .is_ok_and(|t| matches!(t, phero_ir::TypeRef::Class { .. }));
+    is_class
 }
 
 /// Render the named refusal for a member/field type disagreement — BOTH

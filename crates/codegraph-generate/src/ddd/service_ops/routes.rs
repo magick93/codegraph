@@ -451,6 +451,23 @@ pub async fn routes_for_entity(
                     params: &params,
                     throws: &throws,
                 };
+                if create_shape && op.delegation_target.is_some() {
+                    // The predicate's widened `save`-delegation arm changes the
+                    // op's lowering from an item-addressed update to a
+                    // collection-level create; name it so a consumer can see
+                    // the reclassification (unreachable through the pinned
+                    // compiler, reachable through a hand-built artifact).
+                    crate::ddd::design::warn_once(
+                        &format!("create-shape:{}::{}", service.name, op.name),
+                        &format!(
+                            "service op `{}` returns the bound entity with a lone input \
+                             boundary and delegates to `save` — it lowers as a \
+                             COLLECTION-level create (201) rather than an item-addressed \
+                             update",
+                            op.name
+                        ),
+                    );
+                }
                 let execution = if create_shape {
                     create_execution(
                         db,
@@ -504,6 +521,8 @@ pub async fn routes_for_entity(
             machine_states: &machine_states,
             raises: &raises,
             boundaries: &boundary_index,
+            domain_types_crate: &body.domain_types_crate,
+            dto_casing: body.dto_casing,
             authored_parent: authored_routing.as_ref(),
             surface_ops: &surface_ops,
         },
@@ -956,14 +975,23 @@ fn is_nested_child_of(
 /// declares no parameter list (`name => Repository.save;`), so the shape is
 /// reachable only through a hand-built/stale artifact. The arm stays for that
 /// class rather than silently lowering it as an update.
-fn create_shape_candidate(
+pub(super) fn create_shape_candidate(
     op: &codegraph_core::types::DddServiceOperation,
     model: &codegraph_core::types::DddModelGraph,
     entity_title: &str,
     surface_ops: &[String],
     scoped: Option<&str>,
 ) -> bool {
-    if !op.bodies.is_empty() || op.transition.is_some() || scoped.is_some() {
+    if !op.bodies.is_empty()
+        || op.transition.is_some()
+        || op.condition.is_some()
+        || scoped.is_some()
+    {
+        // A `when` guard evaluates over the LOADED record; a collection-level
+        // create has none, so a guarded op keeps its pre-#767 item-addressed
+        // 501 seam instead of becoming a hard authorize-lowering error (a
+        // guard over the CREATED record — what the CRUD create's eligibility
+        // plane does — is a recorded follow-up).
         return false;
     }
     if !surface_ops.iter().any(|o| o == "create") {
@@ -1031,6 +1059,18 @@ async fn create_execution(
             op.name
         ));
     }
+    if param.optional {
+        // An optional boundary extracts to `Option<Boundary>`, and the mapped
+        // construction reads the boundary's FIELDS — a create body is always
+        // present by definition, so an optional one is refused by name rather
+        // than emitting a handler that dereferences an Option.
+        return Err(format!(
+            "service op `{}` is create-shaped and its boundary parameter is OPTIONAL \
+             (`0..1`); a collection-level create body is always present — declare the \
+             parameter required",
+            op.name
+        ));
+    }
     let boundary_name = crate::ddd::signature::signature_type(&op.params[0].type_json)
         .dto_name()
         .unwrap_or_default()
@@ -1066,6 +1106,7 @@ async fn create_execution(
             defaulted: plan.defaulted,
             request_body: param.request_body.clone(),
             sample: param.sample.clone(),
+            required_class_refs: plan.required_class_refs,
         },
     })
 }
@@ -1085,6 +1126,8 @@ async fn child_execution(
     child_title: &str,
     type_suffix: &str,
     boundaries: &crate::ddd::dto_boundaries::DtoBoundaryIndex,
+    domain_types_crate: &str,
+    dto_casing: crate::project_config::DtoKeyCasing,
     op: &codegraph_core::types::DddServiceOperation,
     action: ChildAction,
     scope: &codegraph_core::types::DddChildRef,
@@ -1156,6 +1199,24 @@ async fn child_execution(
             None => false,
         };
         if let (true, Some(shape)) = (resolves_to_child, shape) {
+            // An optional carrier extracts to `Option<Boundary>`, which the
+            // mapped construction cannot read (it accesses the boundary's
+            // fields). Refuse by name.
+            let optional = param
+                .multiplicity
+                .as_ref()
+                .and_then(|json| {
+                    serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok()
+                })
+                .is_some_and(|m| m.lower == 0);
+            if optional {
+                return Err(format!(
+                    "child operation `{}` of `{}`: the modeled boundary parameter is \
+                     OPTIONAL (`0..1`); a child action's payload is always present — \
+                     declare the parameter required",
+                    op.name, scope.class
+                ));
+            }
             let kind = match action {
                 ChildAction::Add => crate::ddd::boundary_map::RequestDtoKind::Create,
                 _ => crate::ddd::boundary_map::RequestDtoKind::Update,
@@ -1164,11 +1225,8 @@ async fn child_execution(
                 &op.name,
                 &op.params,
                 boundaries,
-                // The child's request DTO lives in the domain-types crate; the
-                // crate name only matters for a DTO-typed SLOT, which the
-                // single-carrier rule above already rules out beside a boundary.
-                "domain_types",
-                crate::project_config::DtoKeyCasing::default(),
+                domain_types_crate,
+                dto_casing,
             )
             .map_err(|refusal| refusal.0)?;
             let Some(param) = params.first() else {
@@ -1207,6 +1265,7 @@ async fn child_execution(
                 defaulted: plan.defaulted,
                 request_body: param.request_body.clone(),
                 sample: param.sample.clone(),
+                required_class_refs: plan.required_class_refs,
             });
         } else {
             crate::ddd::design::warn_once(
@@ -1489,6 +1548,8 @@ struct ChildOpCtx<'a> {
     machine_states: &'a [String],
     raises: &'a crate::ddd::body_lower::RaiseTable,
     boundaries: &'a crate::ddd::dto_boundaries::DtoBoundaryIndex,
+    domain_types_crate: &'a str,
+    dto_casing: crate::project_config::DtoKeyCasing,
     authored_parent: Option<&'a crate::ddd::aggregate::AuthoredParent>,
     surface_ops: &'a [String],
 }
@@ -1516,6 +1577,8 @@ async fn child_op_routes(
         machine_states,
         raises,
         boundaries,
+        domain_types_crate,
+        dto_casing,
         authored_parent,
         surface_ops,
     } = ctx;
@@ -1626,6 +1689,8 @@ async fn child_op_routes(
                     entity_title,
                     type_suffix,
                     boundaries,
+                    domain_types_crate,
+                    dto_casing,
                     op,
                     action,
                     scope,
