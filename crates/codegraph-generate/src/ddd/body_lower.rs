@@ -1012,9 +1012,19 @@ impl<'a> Lowerer<'a> {
         let expected = match target {
             RaiseTarget::NotFound => 2,
             RaiseTarget::Conflict => 1,
-            // A declared error's payload arity is the model's own; every
-            // argument renders positionally into the message.
-            RaiseTarget::Declared(_) => args.len(),
+            // A declared error's payload arity is the model's own. When
+            // the payload fields are known (the DD7 graph vocabulary),
+            // they ENFORCE it: fewer arguments than fields would silently
+            // truncate the `details` entries (issue #665 review N3), so a
+            // mismatch is a refusal. An unknown payload (a hand-built
+            // table) keeps the argument count.
+            RaiseTarget::Declared(error) => {
+                if error.fields.is_empty() {
+                    args.len()
+                } else {
+                    error.fields.len()
+                }
+            }
         };
         if args.len() != expected {
             return Err(self.refuse(&format!(

@@ -304,6 +304,26 @@ pub async fn throws_refusals(
     let type_suffix = config.defaults.type_suffix.clone();
     let mut titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for model in &models {
+        // DD7 (issue #665, review N4): a throws-carrying CHILD op refuses
+        // through the child's own entity — the child pass of
+        // `routes_for_entity` collects and resolves its vocabulary. The
+        // service-op loop below cannot see that title, so the child scope
+        // resolves it here.
+        for design in &model.designs {
+            for op in &design.child_operations {
+                if op.throws.is_empty() || op.is_protected {
+                    continue;
+                }
+                let Some(scope) = op.child_scope.as_ref() else {
+                    continue;
+                };
+                if let Some(title) =
+                    super::routes::schema_title_for_class(db, &scope.class, &type_suffix).await
+                {
+                    titles.insert(title);
+                }
+            }
+        }
         for service in &model.services {
             for op in &service.operations {
                 if op.throws.is_empty() || op.is_protected {

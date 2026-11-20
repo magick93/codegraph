@@ -1,6 +1,6 @@
 use std::fmt;
 
-use codegraph_config::config::DomainConfig;
+use codegraph_config::config::{DomainConfig, ErrorDefConfig};
 use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     ApiOperationNode, ApiResourceNode, EdgeType, ErrorDefinitionNode, HttpEndpointNode,
@@ -314,16 +314,7 @@ pub async fn ingest_api_model(
             // error name, they seed the same ErrorDefinition nodes the
             // entity-level config uses, so the shared derivation folds
             // them ahead of the `.ddd` declarations.
-            let node = ErrorDefinitionNode {
-                code: code.clone(),
-                description: def.description.clone(),
-                http_status: def.http_status,
-                domain: Some(domain_name.clone()),
-            };
-            if let Err(e) = db.ingest_error_definition(&node).await {
-                tracing::warn!(domain = %domain_name, error_code = %code, "failed to ingest domain error override: {e}");
-            }
-            stats.errors += 1;
+            seed_domain_error_override(db, domain_name, code, def, &mut stats).await;
         }
 
         for entity_name in &_domain_entry.entities {
@@ -345,4 +336,36 @@ pub async fn ingest_api_model(
     }
 
     Ok(stats)
+}
+
+/// Seed ONE per-domain DD7 error override (`[domains.<d>.errors]`) as an
+/// `ErrorDefinitionNode` — the same node family the entity-level config
+/// and the standard errors use, so the shared `declared_error_defs`
+/// derivation folds it ahead of the `.ddd` declarations (issue #665).
+/// Extracted from the `ingest_api_model` walk so the contract has a
+/// direct pin (issue #665 review N5): the override merge test seeds the
+/// node by hand, and without this pin a rename/serde drift here would
+/// silently disable every override. `pub` so the codegraph test binary
+/// can pin it directly; not part of the driver's public surface.
+pub async fn seed_domain_error_override(
+    db: &dyn GraphIngestor,
+    domain_name: &str,
+    code: &str,
+    def: &ErrorDefConfig,
+    stats: &mut ApiModelIngestStats,
+) {
+    let node = ErrorDefinitionNode {
+        code: code.to_string(),
+        description: def.description.clone(),
+        http_status: def.http_status,
+        domain: Some(domain_name.to_string()),
+    };
+    if let Err(e) = db.ingest_error_definition(&node).await {
+        tracing::warn!(
+            domain = %domain_name,
+            error_code = %code,
+            "failed to ingest domain error override: {e}"
+        );
+    }
+    stats.errors += 1;
 }

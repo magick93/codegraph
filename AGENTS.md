@@ -4282,8 +4282,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `12` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v12.md`.
+  `13` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v13.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -4297,7 +4297,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 13` while the constant is 12), NOT derived from
+  (`formatVersion 14` while the constant is 13), NOT derived from
   `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
@@ -4308,7 +4308,9 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   op-level `when`, 3→4 WS6 manifest, 4→5 pherolang 0.3, 6→7 service
   bodies, 7→8 transition binding, 8→9 mox tables/register classes, 9→10
   aggregate child ops, 10→11 service-op condition paths (#663), 11→12
-  DD4/DD5 authored aggregate boundaries + design invariants (#666) —
+  DD4/DD5 authored aggregate boundaries + design invariants (#666), 12→13
+  the DD7 declared error vocabulary (`errors_json` on the application +
+  module nodes, #665) —
   the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
@@ -4317,7 +4319,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v12 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v13 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.

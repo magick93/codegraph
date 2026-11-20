@@ -26,7 +26,7 @@ pub struct ErrorDef {
 
 /// One payload field of a declared error (DD7, issue #665), resolved to
 /// the Rust type the generated variant carries.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ErrorFieldDef {
     /// The field name as declared (also the `details` entry's `field`).
     pub name: String,
@@ -40,10 +40,15 @@ pub struct ErrorFieldDef {
 /// Resolve one declared error's payload fields to Rust types (DD7,
 /// issue #665). Closed subset, the #517 slot posture: primitives map like
 /// the action-body plane (the shared `body_lower` mapping, so the two
-/// planes cannot drift), enums map onto the generated codelist enum, class
-/// references take the `{Class}Id` `Uuid` slot; every other slot type
-/// (collections, wraps datatypes, DTO boundaries, unresolvable payloads)
-/// is a NAMED refusal — never a silent widening.
+/// planes cannot drift), enums map onto `crate::codelist::{Enum}` BY NAME
+/// and class references take the `{Class}Id` `Uuid` slot — neither is
+/// membership-verified here (the function has no graph access; the pinned
+/// compiler guarantees every mox enum bridges to a codelist, so the
+/// unverified-name class is reachable only from a stale/hand-built graph,
+/// where the emitted `errors.rs` fails to compile — the compile pin
+/// arbitrates). Every other slot type (collections, wraps datatypes, DTO
+/// boundaries, unresolvable payloads) IS a NAMED refusal — never a silent
+/// widening.
 pub fn error_field_defs(
     error_name: &str,
     params: &[codegraph_core::types::DddParam],
@@ -190,6 +195,23 @@ pub async fn declared_error_defs(db: &dyn GraphQuerier, domain: &str) -> Result<
             {
                 // A domains.toml override authored this variant: keep its
                 // description/status, adopt the model's payload fields.
+                // Two DECLARATIONS colliding on one variant name (two
+                // applications hosting modules in one domain — names are
+                // application-wide unique upstream, not globally) resolve
+                // last-wins by readback order; warn so the collision is
+                // visible (issue #665 review N2 — the ordering.rs
+                // precedent).
+                if !existing.fields.is_empty()
+                    && existing.fields != fields
+                    && existing.code == codegraph_naming::to_snake_case(&decl.name).to_uppercase()
+                {
+                    tracing::warn!(
+                        domain = %domain,
+                        variant = %variant_name,
+                        "declared error `{}` collides across applications in domain `{domain}` — the last-read declaration's payload wins",
+                        decl.name
+                    );
+                }
                 existing.fields = fields;
                 continue;
             }

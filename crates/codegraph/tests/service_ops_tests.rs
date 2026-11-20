@@ -2567,3 +2567,40 @@ async fn domain_error_override_keeps_status_and_adopts_fields() {
         "the documented status must follow the override:\n{handler}"
     );
 }
+
+/// The `[domains.<d>.errors]` → ErrorDefinitionNode seeding walk has a
+/// DIRECT pin (issue #665 review N5): the override merge test seeds the
+/// node by hand, so a rename/serde drift in the walk itself would
+/// otherwise silently disable every override.
+#[tokio::test]
+async fn domain_error_override_walk_seeds_the_shared_node() {
+    use codegraph_core::traits::GraphQuerier;
+
+    // Parse an override the way `ingest_api_model`'s walk receives it.
+    let mut overrides = std::collections::HashMap::new();
+    overrides.insert(
+        "PaymentDeclined".to_string(),
+        codegraph_config::config::ErrorDefConfig {
+            description: "declined by the processor".to_string(),
+            http_status: 409,
+        },
+    );
+
+    let engine = codegraph_core::mock::MockEngine::builder().build();
+    let mut stats = codegraph::ingest::api_ingest::ApiModelIngestStats::default();
+    for (code, def) in &overrides {
+        codegraph::ingest::api_ingest::seed_domain_error_override(
+            &engine, "payroll", code, def, &mut stats,
+        )
+        .await;
+    }
+    assert_eq!(stats.errors, 1, "one override seeded");
+
+    let seeded = engine.get_error_definitions().await.unwrap();
+    let node = seeded
+        .iter()
+        .find(|n| n.code == "PaymentDeclined" && n.domain.as_deref() == Some("payroll"))
+        .expect("the override node");
+    assert_eq!(node.http_status, 409);
+    assert_eq!(node.description, "declined by the processor");
+}

@@ -98,7 +98,10 @@ async fn raise_table(
 /// documents (issue #665): 403 (policy) and 404 (record load) on every
 /// action route, 409 for a machine-bound update, 422 for a child payload,
 /// 501 for a seam. A declared status inside this set needs NO extra utoipa
-/// entry (duplicate statuses are not documented twice).
+/// entry (duplicate statuses are not documented twice). The #666
+/// invariant-409 arm documents 409 too, but its block attaches only at the
+/// handler's construction site — that site filters `raise_responses`
+/// itself (handler.rs), so this list stays the routes-level truth.
 pub(super) fn covered_statuses(execution: &ExecutionKind) -> Vec<u16> {
     let mut covered = vec![403u16, 404];
     match execution {
