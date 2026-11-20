@@ -796,7 +796,9 @@ the suite as hard in either direction). The evaluator lives in
   text). Silent for every entity without invariants — byte-identical
   contract (`hurl_contract_tests` goldens hold, no re-bless).
 - **The live gate** `ddd_invariants_live_gate` (ignored, OWN test binary
-  — the #663 TYPE_REGISTRY isolation precedent, TODO(#746); modeled on
+  — its fixture must not collide with `review_api_suite`'s shared review
+  fixture; since #746 this is a fixture-ownership reason, not a
+  type-registry one); modeled on
   `service_ops_hurl_gate`): own fixture (the review fixture is shared
   with `review_api_suite` and must not move), persistent gate dir with
   the generated SOURCE deleted first (#687), driver regen → GateDb
@@ -1297,10 +1299,11 @@ own-record field".
   mixed-machine-and-undecidable KAT — both round-2 review
   counterexamples),
   `--test ddd_ingest_tests`, `--test artifact_kit_tests` (the bump),
-  `--test service_ops_injected_guard_gate -- --ignored` (its own test
-  BINARY — the #551 pin: the emitted async handler must compile; the
-  process-global `TYPE_REGISTRY` (#746) forced the isolation after its
-  first runs caught the design-op override missing rust-name lookups),
+  `--test service_ops_compile_gate -- --ignored` (the #551 pin: the emitted
+  async handler must compile in the SAME binary as the payroll/release
+  legs — the injected-guard leg declares `PayRunType` in a different
+  domain, proving the per-run type registry (#746); its first runs caught
+  the design-op override missing rust-name lookups),
   plus the standing canaries (flag-off byte-identical, no re-bless).
 - **Deferred**: a class-typed service-parameter arm as the id source
   (today's source is the own-record FK only); `db/expr_sql.rs` policy-
