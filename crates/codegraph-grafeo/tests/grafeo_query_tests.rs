@@ -1507,6 +1507,64 @@ fn count_edges(engine: &GrafeoEngine, label: &str) -> usize {
 /// (phero-ir TypeRef/Multiplicity JSON payloads), services with delegation +
 /// capabilities, and a search with text/filters/sorts/document/ranking/
 /// pagination. Vecs are in canonical order (ordinals, repository names).
+/// The modeled DTO boundary fixtures (DD3, issue #667): a projection with a
+/// derived member and a standalone input boundary.
+fn dto_shape_fixtures() -> Vec<DddDtoShapeNode> {
+    vec![
+        DddDtoShapeNode {
+            application: "Library".to_string(),
+            module: "lending".to_string(),
+            name: "BookSummary".to_string(),
+            source_json: Some(serde_json::json!({
+                "type": "class",
+                "value": {"package": "nz.example.library", "name": "Book"}
+            })),
+            direction: "output".to_string(),
+            members: vec![
+                DddDtoMember {
+                    name: "title".to_string(),
+                    kind: "select".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "primitive",
+                        "value": "string"
+                    }),
+                    multiplicity_json: None,
+                    path: vec!["title".to_string()],
+                    expression: None,
+                },
+                DddDtoMember {
+                    name: "minutes".to_string(),
+                    kind: "derive".to_string(),
+                    type_json: serde_json::json!({
+                        "type": "primitive",
+                        "value": "int"
+                    }),
+                    multiplicity_json: None,
+                    path: Vec::new(),
+                    expression: Some("playLength / 60".to_string()),
+                },
+            ],
+            ordinal: 2,
+        },
+        DddDtoShapeNode {
+            application: "Library".to_string(),
+            module: "lending".to_string(),
+            name: "CreateBookRequest".to_string(),
+            source_json: None,
+            direction: "input".to_string(),
+            members: vec![DddDtoMember {
+                name: "isbn".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({"type": "primitive", "value": "string"}),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            }],
+            ordinal: 3,
+        },
+    ]
+}
+
 fn ddd_fixture() -> DddModelGraph {
     let book_ref = serde_json::json!({
         "type": "class",
@@ -1905,59 +1963,7 @@ fn ddd_fixture() -> DddModelGraph {
             capabilities: vec!["SearchBooks".to_string()],
             ordinal: 0,
         }],
-        dto_shapes: vec![
-            DddDtoShapeNode {
-                application: "Library".to_string(),
-                module: "lending".to_string(),
-                name: "BookSummary".to_string(),
-                source_json: Some(serde_json::json!({
-                    "type": "class",
-                    "value": {"package": "nz.example.library", "name": "Book"}
-                })),
-                direction: "output".to_string(),
-                members: vec![
-                    DddDtoMember {
-                        name: "title".to_string(),
-                        kind: "select".to_string(),
-                        type_json: serde_json::json!({
-                            "type": "primitive",
-                            "value": "string"
-                        }),
-                        multiplicity_json: None,
-                        path: vec!["title".to_string()],
-                        expression: None,
-                    },
-                    DddDtoMember {
-                        name: "minutes".to_string(),
-                        kind: "derive".to_string(),
-                        type_json: serde_json::json!({
-                            "type": "primitive",
-                            "value": "int"
-                        }),
-                        multiplicity_json: None,
-                        path: Vec::new(),
-                        expression: Some("playLength / 60".to_string()),
-                    },
-                ],
-                ordinal: 2,
-            },
-            DddDtoShapeNode {
-                application: "Library".to_string(),
-                module: "lending".to_string(),
-                name: "CreateBookRequest".to_string(),
-                source_json: None,
-                direction: "input".to_string(),
-                members: vec![DddDtoMember {
-                    name: "isbn".to_string(),
-                    kind: "declared".to_string(),
-                    type_json: serde_json::json!({"type": "primitive", "value": "string"}),
-                    multiplicity_json: None,
-                    path: Vec::new(),
-                    expression: None,
-                }],
-                ordinal: 3,
-            },
-        ],
+        dto_shapes: dto_shape_fixtures(),
     }
 }
 
