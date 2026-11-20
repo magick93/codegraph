@@ -553,6 +553,39 @@ async fn boundary_sample_matches_the_generated_wire_contract() {
                 path: Vec::new(),
                 expression: None,
             },
+            DddDtoMember {
+                name: "amount".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({
+                    "type": "datatype",
+                    "value": {"package": "", "name": "Decimal"}
+                }),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            },
+            DddDtoMember {
+                name: "publishedAt".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({
+                    "type": "datatype",
+                    "value": {"package": "", "name": "DateTime"}
+                }),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            },
+            DddDtoMember {
+                name: "dueOn".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({
+                    "type": "datatype",
+                    "value": {"package": "", "name": "Date"}
+                }),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            },
         ],
         ordinal: 0,
     };
@@ -576,7 +609,10 @@ async fn boundary_sample_matches_the_generated_wire_contract() {
             "tags": ["contract-sample"],
             "colour": "CRIMSON",
             "extras": [],
-            "token": "00000000-0000-0000-0000-000000000000"
+            "token": "00000000-0000-0000-0000-000000000000",
+            "amount": "1.0",
+            "published_at": "2026-01-01T00:00:00Z",
+            "due_on": "2026-01-01"
         })),
         "snake keys, arrays for many members, the first codelist value, empty lower-0 list, datatype sample, optional omitted"
     );
@@ -587,7 +623,10 @@ async fn boundary_sample_matches_the_generated_wire_contract() {
             "tags": ["contract-sample"],
             "colour": "CRIMSON",
             "extras": [],
-            "token": "00000000-0000-0000-0000-000000000000"
+            "token": "00000000-0000-0000-0000-000000000000",
+            "amount": "1.0",
+            "publishedAt": "2026-01-01T00:00:00Z",
+            "dueOn": "2026-01-01"
         })),
         "camel casing applies to every key"
     );
