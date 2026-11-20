@@ -1,6 +1,7 @@
 pub mod aggregate;
 pub mod body_lower;
 pub mod body_params;
+pub mod boundary_derive;
 pub mod boundary_map;
 pub mod command;
 pub mod cornucopia_repo;

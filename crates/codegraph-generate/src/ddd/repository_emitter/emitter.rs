@@ -1341,6 +1341,20 @@ impl RepositoryImplEmitter {
             "use super::dto_response::{}Response;",
             tree.entity_name
         );
+        // Projection boundary types (issue #768): re-exported by the
+        // response module, spelled beside `{Entity}Response`.
+        {
+            let mut projection_names: Vec<&str> = tree
+                .design_finders
+                .iter()
+                .filter_map(|finder| finder.projection.as_ref().map(|p| p.name.as_str()))
+                .collect();
+            projection_names.sort_unstable();
+            projection_names.dedup();
+            for name in projection_names {
+                wln!(code, "use super::dto_response::{name};");
+            }
+        }
         // Import child DTO response types (including nested children)
         let all_children = flatten_child_tables(&tree.child_tables);
         let mut imported = std::collections::HashSet::new();

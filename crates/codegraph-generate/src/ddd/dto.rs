@@ -53,6 +53,23 @@ pub struct DtoContext {
     /// response fields with computed accessors (issue #501 slice 1). Empty
     /// when no mox was ingested — output stays byte-identical.
     pub mox_derived_extras: Vec<MoxDerivedExtra>,
+    /// Projection boundaries of this entity (issue #768): the domain-types
+    /// boundary types the app's response module re-exports so the
+    /// repository trait/impl can spell them beside `{Entity}Response` with
+    /// the same `super::dto_response` import rule. Empty when no `.ddd`
+    /// dto design projects onto the entity — byte-identical output.
+    #[serde(default)]
+    pub projection_imports: Vec<ProjectionImport>,
+}
+
+/// One projection-boundary re-export of an entity's response module
+/// (issue #768).
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectionImport {
+    /// The boundary module's file stem (`catalog`).
+    pub module: String,
+    /// The boundary type name (`BookSummary`).
+    pub name: String,
 }
 
 /// One non-stored mox derived feature, ready for response-DTO emission.
@@ -313,6 +330,11 @@ pub async fn build_dto_context(
 
     let structured_imports = collect_structured_imports(db, schema_title, &props, config).await;
 
+    // Issue #768: the projection boundaries of this entity, re-exported by
+    // the response module so the repository plane spells them beside
+    // `{Entity}Response` (one `super::dto_response` import rule).
+    let projection_imports = projection_imports_for(db, &schema, config).await;
+
     let (derived_fields, mox_derived_extras) =
         resolve_mox_derived(db, schema_title, &entity_name, &fields).await?;
     for name in &derived_fields {
@@ -345,7 +367,44 @@ pub async fn build_dto_context(
         has_validate: true,
         derived_fields,
         mox_derived_extras,
+        projection_imports,
     })
+}
+
+/// The projection boundaries of one entity (issue #768): output-direction
+/// boundary shapes whose source class resolves to this schema (exact or the
+/// configured `+type_suffix`). The app response module re-exports their
+/// types so the repository plane spells them beside `{Entity}Response`.
+async fn projection_imports_for(
+    db: &dyn codegraph_core::traits::GraphQuerier,
+    schema: &codegraph_core::types::SchemaNode,
+    config: &DomainConfig,
+) -> Vec<ProjectionImport> {
+    let Ok(models) = db.get_ddd_models().await else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for model in &models {
+        for shape in &model.dto_shapes {
+            if shape.direction != "output" {
+                continue;
+            }
+            let Some(class) = crate::ddd::boundary_derive::shape_source_class(shape) else {
+                continue;
+            };
+            let leaf = crate::ddd::design::leaf_name(&class);
+            if leaf != schema.title && leaf != config.defaults.strip_suffix(&schema.title) {
+                continue;
+            }
+            out.push(ProjectionImport {
+                module: codegraph_naming::to_snake_case(&shape.module),
+                name: shape.name.clone(),
+            });
+        }
+    }
+    out.sort_by(|a, b| (&a.module, &a.name).cmp(&(&b.module, &b.name)));
+    out.dedup_by(|a, b| a.module == b.module && a.name == b.name);
+    out
 }
 
 /// Synthetic hierarchy fields: the self-referential FK column the DDL

@@ -53,6 +53,33 @@ struct BoundaryCtx {
     /// are Option/Vec; mirrored by `has_default` below).
     has_default: bool,
     fields: Vec<BoundaryFieldCtx>,
+    /// The `from_row` read-model constructor (issue #768) — projections only
+    /// (a boundary whose source class resolves to an entity).
+    constructor: Option<BoundaryConstructorCtx>,
+}
+
+/// The pre-rendered `from_row` construction of one projection boundary
+/// (issue #768): one construction site the finder and the endpoint share.
+#[derive(Debug, Serialize)]
+struct BoundaryConstructorCtx {
+    /// The source entity's Response struct (`BookResponse`).
+    entity_response: String,
+    /// The Response's domain segment in the domain-types crate.
+    domain: String,
+    /// The Response's module segment (the pg table stem).
+    module: String,
+    /// Field assignments, pre-indented for a struct literal body.
+    construct: String,
+    /// The response fields the constructor reads (drift-checkable).
+    reads: Vec<String>,
+}
+
+/// One import of an entity Response a projection constructor reads.
+#[derive(Debug, Serialize)]
+struct ResponseImportCtx {
+    domain: String,
+    module: String,
+    name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +109,8 @@ struct BoundaryFileCtx {
     has_structs: bool,
     codelist_imports: Vec<String>,
     boundary_imports: Vec<BoundaryImportCtx>,
+    /// Entity Response imports the projection constructors read (issue #768).
+    response_imports: Vec<ResponseImportCtx>,
     boundaries: Vec<BoundaryCtx>,
 }
 
@@ -566,6 +595,11 @@ impl GlobalGenerator for DddDtoBoundariesGenerator {
         let src_dir = &self.src_dir;
         let mut files = Vec::new();
         let mut index_modules = Vec::new();
+        // Issue #768: the generation order owns every entity title→domain
+        // assignment, so the projection constructors resolve their source
+        // Response module through it (one rule with the entity plane).
+        let projection_sources =
+            crate::ddd::boundary_derive::projection_source_index(config, generation_order);
 
         for (module, module_shapes) in &by_module {
             let module_file = codegraph_naming::to_snake_case(module);
@@ -573,12 +607,33 @@ impl GlobalGenerator for DddDtoBoundariesGenerator {
             let mut boundaries = Vec::new();
             let mut codelist_imports: BTreeSet<String> = BTreeSet::new();
             let mut boundary_imports: BTreeMap<(String, String), ()> = BTreeMap::new();
+            let mut response_imports: BTreeMap<(String, String, String), ()> = BTreeMap::new();
 
             for shape in module_shapes {
+                let constructor = projection_constructor(
+                    db,
+                    config,
+                    shape,
+                    &shape_by_name,
+                    &module_of,
+                    &projection_sources,
+                )
+                .await?;
+                if let Some(plan) = &constructor {
+                    response_imports.insert(
+                        (
+                            plan.domain.clone(),
+                            plan.module.clone(),
+                            plan.entity_response.clone(),
+                        ),
+                        (),
+                    );
+                }
                 let ctx = self
                     .boundary_context(
                         project,
                         shape,
+                        constructor,
                         &mut MemberLookup {
                             db,
                             config,
@@ -601,6 +656,14 @@ impl GlobalGenerator for DddDtoBoundariesGenerator {
                 boundary_imports: boundary_imports
                     .into_keys()
                     .map(|(module, name)| BoundaryImportCtx { module, name })
+                    .collect(),
+                response_imports: response_imports
+                    .into_keys()
+                    .map(|(domain, module, name)| ResponseImportCtx {
+                        domain,
+                        module,
+                        name,
+                    })
                     .collect(),
                 boundaries,
             };
@@ -641,6 +704,7 @@ impl DddDtoBoundariesGenerator {
         &self,
         project: &ProjectConfig,
         shape: &DddDtoShapeNode,
+        constructor: Option<BoundaryConstructorCtx>,
         lookup: &mut MemberLookup<'_>,
     ) -> Result<BoundaryCtx> {
         let camel_case =
@@ -682,11 +746,12 @@ impl DddDtoBoundariesGenerator {
         Ok(BoundaryCtx {
             name: shape.name.clone(),
             direction: shape.direction.clone(),
-            source_note: shape_class_name(shape),
+            source_note: crate::ddd::boundary_derive::shape_source_class(shape),
             camel_case,
             deny_unknown: shape.direction == "input",
             has_default,
             fields,
+            constructor,
         })
     }
 
@@ -887,15 +952,59 @@ async fn reserved_dto_names(
     names
 }
 
-/// The authored source class name of a boundary (`nz.example.library.Book` →
-/// `Book`), for doc comments.
-fn shape_class_name(shape: &DddDtoShapeNode) -> Option<String> {
-    let source = shape.source_json.as_ref()?;
-    let value = source.get("value")?;
-    value
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
+/// Plan one projection boundary's `from_row` constructor (issue #768).
+///
+/// `None` for every shape that is not a projection (no source class, or a
+/// source class the generation order does not own — a WARN names it, since
+/// such a boundary silently cannot become a read model). A shape whose
+/// source RESOLVES is planned HARD: a derive expression outside the
+/// arithmetic subset is an `Error::Config` naming the boundary + member.
+async fn projection_constructor(
+    db: &dyn codegraph_core::traits::GraphQuerier,
+    config: &codegraph_config::DomainConfig,
+    shape: &DddDtoShapeNode,
+    shapes: &BTreeMap<String, DddDtoShapeNode>,
+    module_of: &BTreeMap<String, String>,
+    sources: &BTreeMap<String, crate::ddd::boundary_derive::ProjectionSource>,
+) -> Result<Option<BoundaryConstructorCtx>> {
+    let Some(class) = crate::ddd::boundary_derive::shape_source_class(shape) else {
+        return Ok(None);
+    };
+    // A read model is an OUTPUT boundary (any derived member is output-only
+    // upstream); an input boundary with a source is a mirror-as-request
+    // shape and gains no constructor.
+    if shape.direction != "output" {
+        return Ok(None);
+    }
+    let Some(source) = sources.get(&class) else {
+        crate::ddd::design::warn_once(
+            &format!("projection-source:{}::{}", shape.module, shape.name),
+            &format!(
+                "modeled DTO boundary `{}` derives from `{class}`, which resolves to no \
+                 entity in the generation order — no read-model constructor is emitted \
+                 for it",
+                shape.name
+            ),
+        );
+        return Ok(None);
+    };
+    let plan = crate::ddd::boundary_derive::plan_projection_from_row(
+        db, config, shape, shapes, module_of, source,
+    )
+    .await
+    .map_err(|reason| {
+        Error::Config(format!(
+            "ddd — modeled DTO boundary `{}`: {reason}",
+            shape.name
+        ))
+    })?;
+    Ok(Some(BoundaryConstructorCtx {
+        entity_response: plan.entity_response,
+        domain: plan.source_module.0,
+        module: plan.source_module.1,
+        construct: plan.construct,
+        reads: plan.reads,
+    }))
 }
 
 /// Wrap a base type by the phero-ir multiplicity: `[0..1]` → `Option<T>`,

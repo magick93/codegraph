@@ -8,6 +8,11 @@ application Library {
             findAll;
             save;
             delete;
+            // Issue #768: projection READS on the repository plane — the
+            // equality finders return the read model and construct it
+            // through the boundary's `from_row`.
+            BookSummary summaryById(Uuid id);
+            BookSummary[0..*] summariesByTitle(String title);
         }
 
         // DD3 (issue #667): a modeled standalone input boundary used as an
@@ -25,7 +30,7 @@ application Library {
             minutes = playLength / 60;
         }
 
-        // Issue #767: a standalone input boundary that IS the collection-level
+        // Issue #768: a standalone input boundary that IS the collection-level
         // create body. `registerBook` is abstract (no statement body, no
         // delegation), returns the bound entity, and takes exactly one input
         // boundary — the create-shaped predicate. The two negative pins below
@@ -34,6 +39,13 @@ application Library {
         // repository `save` with no parameter list — which the pinned
         // compiler REQUIRES of a delegating member, making the predicate's
         // `save`-delegation arm reachable only through a hand-built artifact.
+        //
+        // Issue #768: `summarise` is the record-scoped projection READ — a
+        // public abstract op whose return slot is a projection boundary of the
+        // bound entity, addressed by a class-typed parameter naming it. It
+        // lowers to the item-addressed projection endpoint. `allSummaries` is
+        // the collection-addressed twin: no parameters, a `Vec` projection
+        // return over the RLS-scoped collection.
         dto NewBookDraft {
             String title;
             String isbn;
@@ -49,7 +61,8 @@ application Library {
             Book registerBook(NewBookDraft input);
             Book importBook(String title);
             archive => BookRepository.save;
-            protected BookSummary summarise(Book book);
+            BookSummary summarise(Book book);
+            BookSummary[0..*] allSummaries();
         }
     }
 }

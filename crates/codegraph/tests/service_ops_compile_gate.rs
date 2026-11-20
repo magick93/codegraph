@@ -593,3 +593,115 @@ postgres_schema = "library"
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with a collection-level create body must compile");
 }
+
+/// Issue #768: the PROJECTION READ plane compiles — the item-addressed and
+/// collection-addressed endpoints (handlers constructing the read model
+/// through the boundary's `from_row`), the collection router mount, the
+/// finder plane, and the OpenAPI `body = domain_types::dto::…` spell all
+/// compile together with the rest of the app. The dto_boundaries fixture
+/// carries both shapes (`summarise(Book book)` + `BookSummary[0..*]
+/// allSummaries();`) over the same `BookSummary from Book` boundary the
+/// node-free pins drive.
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_projection_reads_compiles() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = manifest_dir.join("tests/fixtures/dto_boundaries");
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = out_dir.path().to_path_buf();
+    let config = fixture_root.join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.library]
+label = "Library"
+schema_dir = "schemas/library"
+postgres_schema = "library"
+"#,
+    )
+    .unwrap();
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &[fixture.join("dto_boundaries.mox")],
+        rosetta_files: &[],
+        ddd_files: &[fixture.join("dto_boundaries.ddd")],
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the dto_boundaries fixture must succeed");
+
+    // The endpoints must be ON DISK before any build spend: both handlers
+    // construct through the boundary constructor, the collection route
+    // mounts at the collection level, and the actions contract asserts the
+    // derived member against the seeded row.
+    let handler = fs::read_to_string(output.join("src/api/library/book_handler.rs"))
+        .expect("the book handler must emit");
+    assert!(
+        handler.contains("service_op_summarise"),
+        "the item projection read must emit:\n{handler}"
+    );
+    assert!(
+        handler.contains("BookSummary::from_row(&response)"),
+        "the item read must construct through from_row:\n{handler}"
+    );
+    assert!(
+        handler.contains("service_op_all_summaries"),
+        "the collection projection read must emit:\n{handler}"
+    );
+    assert!(
+        handler.contains("rows.iter().map(domain_types::dto::catalog::BookSummary::from_row)"),
+        "the collection read must map the collection through from_row:\n{handler}"
+    );
+    let router = fs::read_to_string(output.join("src/api/library/router.rs"))
+        .expect("the library router must emit");
+    assert!(
+        router.contains("/{book_id}/actions/summarise"),
+        "the item read route must mount item-addressed:\n{router}"
+    );
+    assert!(
+        router.contains("/actions/all_summaries"),
+        "the collection read route must mount at the collection level:\n{router}"
+    );
+    let hurl_dir = output.join("hurl");
+    let actions = fs::read_dir(&hurl_dir)
+        .expect("the generated hurl dir must exist")
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.to_string_lossy().ends_with("_library_book_actions.hurl"))
+        .expect("the book actions contract must emit");
+    let actions = fs::read_to_string(actions).unwrap();
+    assert!(
+        actions.contains("\"$.data.minutes\" == 0"),
+        "the derived member must be asserted against the seeded row (play_length seeds 42; \
+         integer division 42/60 = 0):\n{actions}"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with projection reads must compile");
+}

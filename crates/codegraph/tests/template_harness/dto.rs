@@ -154,6 +154,7 @@ async fn dto_create_template_omits_garde_when_disabled() {
         has_validate: false,
         derived_fields: vec![],
         mox_derived_extras: vec![],
+        projection_imports: Vec::new(),
     };
 
     let create = codegraph::generate::render_template_with_project(

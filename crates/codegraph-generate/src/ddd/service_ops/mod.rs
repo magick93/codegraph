@@ -77,6 +77,7 @@
 
 mod execution;
 mod policy;
+mod projection;
 mod routes;
 mod transitions;
 mod types;
@@ -84,9 +85,13 @@ mod validation;
 mod when_lower;
 
 #[cfg(test)]
+mod predicate_tests;
+#[cfg(test)]
 mod tests;
 
 pub use execution::RouteShape;
+pub use projection::projection_shape_candidate_public;
+pub(crate) use routes::bind_entity;
 pub use routes::{BodyRenderContext, routes_for_entity};
 pub use types::{
     BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard,
@@ -126,4 +131,4 @@ use execution::execution_for;
 #[cfg(test)]
 use policy::basejump_role_actors;
 #[cfg(test)]
-use routes::{bind_entity, injected_guard_facts};
+use routes::injected_guard_facts;

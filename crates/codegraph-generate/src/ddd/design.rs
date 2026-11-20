@@ -114,6 +114,13 @@ pub struct DesignFinder {
     /// their store's query from it; the equality finders leave it `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub query: Option<QueryPlan>,
+    /// The projection return slot (issue #768): `Some` when the finder
+    /// returns a projection boundary of the designing entity and constructs
+    /// it through the boundary's `from_row`. The trait renders the
+    /// projection type in the return slot; the impl maps the loaded
+    /// response(s) through the constructor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projection: Option<FinderProjection>,
 }
 
 /// Per-application index of the ingested `.ddd` design models, keyed by
@@ -387,10 +394,17 @@ impl DddDesignSurface {
                         design_class_leaf,
                         entity_name,
                         features,
+                        &self.dto_shapes,
                     )?);
                     continue;
                 }
-                match lower_finder(op, design_class_leaf, entity_name, features) {
+                match lower_finder(
+                    op,
+                    design_class_leaf,
+                    entity_name,
+                    features,
+                    &self.dto_shapes,
+                ) {
                     Ok(mut finder) => {
                         finder.kind = FinderKind::Declared;
                         finders.push(finder);
@@ -543,6 +557,9 @@ impl DddDesignSurface {
 /// resolve are skipped here (the ingest already warned).
 pub async fn query_refusals(db: &dyn GraphQuerier) -> Result<Vec<String>> {
     let models = db.get_ddd_models().await?;
+    // Issue #768: the projection-return acceptance reads the boundary shapes,
+    // so the refusals walker sees the SAME signature rules the generator does.
+    let surface = DddDesignSurface::from_models(&models);
     let mut refusals = Vec::new();
     for model in &models {
         for repo in &model.repositories {
@@ -560,9 +577,14 @@ pub async fn query_refusals(db: &dyn GraphQuerier) -> Result<Vec<String>> {
             let features = EntityFeatures::from_graph(db, title).await?;
             let design_class_leaf = leaf_name(&design.class);
             for op in repo.operations.iter().filter(|op| op.query_json.is_some()) {
-                if let Err(error) =
-                    lower_query_op(op, &repo.name, design_class_leaf, title, &features)
-                {
+                if let Err(error) = lower_query_op(
+                    op,
+                    &repo.name,
+                    design_class_leaf,
+                    title,
+                    &features,
+                    &surface.dto_shapes,
+                ) {
                     refusals.push(match error {
                         crate::error::Error::Config(message) => message,
                         other => other.to_string(),
@@ -575,7 +597,7 @@ pub async fn query_refusals(db: &dyn GraphQuerier) -> Result<Vec<String>> {
 }
 
 /// The last segment of an authored (possibly package-qualified) class name.
-fn leaf_name(class: &str) -> &str {
+pub(crate) fn leaf_name(class: &str) -> &str {
     class.rsplit(['.', ':']).next().unwrap_or(class)
 }
 
@@ -627,12 +649,35 @@ pub async fn design_filter_fields(
     Ok(fields)
 }
 
+/// The projection return slot of a finder (issue #768): the boundary's
+/// generated module stem + name. Consumers render the full path as
+/// `{domain_types_crate}::dto::{module}::{name}` — one rule with the
+/// boundary generator's file layout.
+#[derive(Debug, Clone, Serialize)]
+pub struct FinderProjection {
+    /// The `.ddd` module's generated file stem (`catalog`).
+    pub module: String,
+    /// The boundary name (`BookSummary`).
+    pub name: String,
+}
+
+impl FinderProjection {
+    /// The Rust type path inside the app/domain-types consumer crate.
+    #[must_use]
+    pub fn rust_path(&self, domain_types_crate: &str) -> String {
+        format!("{domain_types_crate}::dto::{}::{}", self.module, self.name)
+    }
+}
+
 /// The designing entity's resolved signature shape shared by the equality
 /// finders and the DD9 query plane: the declared return cardinality and the
 /// mapped parameters.
 struct FinderSignature {
     params: Vec<FinderParam>,
     returns_many: bool,
+    /// `Some(boundary)` when the return slot is a projection boundary of the
+    /// designing entity (issue #768).
+    projection: Option<FinderProjection>,
 }
 
 /// Resolve a declared operation's return type (the designing entity) and
@@ -642,6 +687,7 @@ fn resolve_finder_signature(
     design_class_leaf: &str,
     features: &EntityFeatures,
     signature_word: &str,
+    dto_shapes: &HashMap<String, codegraph_core::types::DddDtoShapeNode>,
 ) -> std::result::Result<FinderSignature, String> {
     // The return type must resolve to the designing entity.
     let Some(return_json) = &op.return_type else {
@@ -649,25 +695,58 @@ fn resolve_finder_signature(
     };
     // DD3: the slot is a `DddTypeRef` — a domain type or a DTO boundary.
     let return_slot = crate::ddd::signature::signature_type(return_json);
-    let Some(return_type) = return_slot.as_domain() else {
-        return Err(format!(
-            "return type is a {} — a {signature_word} must return the designing entity",
-            return_slot.describe()
-        ));
-    };
-    let class_name = match return_type {
-        phero_ir::TypeRef::Class { name, .. } => name.clone(),
-        _ => {
+    // Issue #768: a projection boundary whose source class IS the designing
+    // entity is a legal return slot — the finder returns the read model and
+    // constructs it through the boundary's `from_row`.
+    if let Some(boundary) = return_slot.dto_name() {
+        let Some(shape) = dto_shapes.get(boundary) else {
             return Err(format!(
-                "return type `{}` does not resolve to the designing entity",
-                return_type.qualified_name().unwrap_or_default()
+                "return type is DTO boundary `{boundary}`, which the model does not declare"
+            ));
+        };
+        let source_ok = crate::ddd::boundary_derive::shape_source_class(shape)
+            .map(|class| leaf_name(&class) == design_class_leaf)
+            .unwrap_or(false);
+        // A read model is an OUTPUT boundary (the constructor plane emits
+        // `from_row` for output shapes only) — an input mirror-as-request
+        // shape refuses by name like every sibling shape.
+        if shape.direction != "output" {
+            return Err(format!(
+                "return type is DTO boundary `{boundary}`, which is an INPUT boundary — \
+                 a read model is an output (projection) boundary; declare the members on \
+                 an output shape"
             ));
         }
-    };
-    if class_name != design_class_leaf {
-        return Err(format!(
-            "return type `{class_name}` does not resolve to the designing entity `{design_class_leaf}`"
-        ));
+        if !source_ok {
+            let source = crate::ddd::boundary_derive::shape_source_class(shape)
+                .unwrap_or_else(|| "(no source class)".to_string());
+            return Err(format!(
+                "return type is DTO boundary `{boundary}`, which derives from `{source}` — \
+                 a {signature_word} must return the designing entity `{design_class_leaf}` \
+                 (or a projection boundary of it)"
+            ));
+        }
+    } else {
+        let Some(return_type) = return_slot.as_domain() else {
+            return Err(format!(
+                "return type is a {} — a {signature_word} must return the designing entity",
+                return_slot.describe()
+            ));
+        };
+        let class_name = match return_type {
+            phero_ir::TypeRef::Class { name, .. } => name.clone(),
+            _ => {
+                return Err(format!(
+                    "return type `{}` does not resolve to the designing entity",
+                    return_type.qualified_name().unwrap_or_default()
+                ));
+            }
+        };
+        if class_name != design_class_leaf {
+            return Err(format!(
+                "return type `{class_name}` does not resolve to the designing entity `{design_class_leaf}`"
+            ));
+        }
     }
 
     let returns_many = op
@@ -677,6 +756,16 @@ fn resolve_finder_signature(
         .transpose()
         .map_err(|e| format!("unresolvable return multiplicity ({e})"))?
         .unwrap_or(false);
+
+    let projection = return_slot.dto_name().map(|boundary| {
+        let shape = dto_shapes.get(boundary);
+        FinderProjection {
+            module: shape
+                .map(|s| codegraph_naming::to_snake_case(&s.module))
+                .unwrap_or_default(),
+            name: boundary.to_string(),
+        }
+    });
 
     let mut params = Vec::with_capacity(op.params.len());
     for param in &op.params {
@@ -731,6 +820,7 @@ fn resolve_finder_signature(
     Ok(FinderSignature {
         params,
         returns_many,
+        projection,
     })
 }
 
@@ -745,21 +835,31 @@ fn lower_finder(
     design_class_leaf: &str,
     entity_name: &str,
     features: &EntityFeatures,
+    dto_shapes: &HashMap<String, codegraph_core::types::DddDtoShapeNode>,
 ) -> std::result::Result<DesignFinder, String> {
-    let signature = resolve_finder_signature(op, design_class_leaf, features, "finder")?;
+    let signature =
+        resolve_finder_signature(op, design_class_leaf, features, "finder", dto_shapes)?;
     if signature.params.is_empty() {
         return Err("no parameters declared".to_string());
     }
 
+    let projection = signature.projection;
     Ok(DesignFinder {
         method_name: codegraph_naming::to_snake_case(&op.name),
         name: op.name.clone(),
         entity_name: entity_name.to_string(),
         params: signature.params,
         returns_many: signature.returns_many,
-        return_rust_type: format!("{entity_name}Response"),
+        // A projection return renders the boundary NAME — the app response
+        // module re-exports it beside `{Entity}Response` (issue #768), so
+        // the trait's `super::dto_response` import rule resolves it.
+        return_rust_type: projection
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("{entity_name}Response")),
         kind: FinderKind::Declared,
         query: None,
+        projection,
     })
 }
 
@@ -774,6 +874,7 @@ fn lower_query_op(
     design_class_leaf: &str,
     entity_name: &str,
     features: &EntityFeatures,
+    dto_shapes: &HashMap<String, codegraph_core::types::DddDtoShapeNode>,
 ) -> Result<DesignFinder> {
     let label = format!("query `{repository}.{}`", op.name);
     let fail = |reason: String| crate::error::Error::Config(format!("{label}: {reason}"));
@@ -784,8 +885,8 @@ fn lower_query_op(
     // carries no phero-ir dependency); rehydrate it here.
     let spec: phero_ir::ddd::QuerySpec = serde_json::from_value(query_json.clone())
         .map_err(|e| fail(format!("the query block is not a valid QuerySpec ({e})")))?;
-    let signature =
-        resolve_finder_signature(op, design_class_leaf, features, "query").map_err(&fail)?;
+    let signature = resolve_finder_signature(op, design_class_leaf, features, "query", dto_shapes)
+        .map_err(&fail)?;
     for reserved in ["limit", "offset"] {
         if signature.params.iter().any(|param| param.name == reserved) {
             return Err(fail(format!(
@@ -802,15 +903,22 @@ fn lower_query_op(
         &features.query_columns,
     )
     .map_err(crate::error::Error::Config)?;
+    let projection = signature.projection;
     Ok(DesignFinder {
         method_name: codegraph_naming::to_snake_case(&op.name),
         name: op.name.clone(),
         entity_name: entity_name.to_string(),
         params: signature.params,
         returns_many: signature.returns_many,
-        return_rust_type: format!("{entity_name}Response"),
+        // A projection return renders the boundary NAME (the re-export
+        // resolves it) — issue #768.
+        return_rust_type: projection
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| format!("{entity_name}Response")),
         kind: FinderKind::Query,
         query: Some(plan),
+        projection,
     })
 }
 
@@ -1050,6 +1158,7 @@ fn keys_finder(
         return_rust_type: format!("{entity_name}Response"),
         kind: FinderKind::FindByKeys,
         query: None,
+        projection: None,
     })
 }
 
@@ -1082,6 +1191,7 @@ fn example_finder(
         return_rust_type: format!("{entity_name}Response"),
         kind: FinderKind::FindByExample,
         query: None,
+        projection: None,
     })
 }
 
@@ -1637,8 +1747,14 @@ mod tests {
             query_json: None,
             capabilities: Vec::new(),
         };
-        let reason = lower_finder(&dto_return, "Book", "Book", &features("Book"))
-            .expect_err("a DTO return type cannot lower to a finder");
+        let reason = lower_finder(
+            &dto_return,
+            "Book",
+            "Book",
+            &features("Book"),
+            &HashMap::new(),
+        )
+        .expect_err("a DTO return type cannot lower to a finder");
         assert!(
             reason.contains("DTO boundary `BookSummary`"),
             "reason must name the boundary: {reason}"
@@ -1655,12 +1771,117 @@ mod tests {
             query_json: None,
             capabilities: Vec::new(),
         };
-        let reason = lower_finder(&dto_param, "Book", "Book", &features("Book"))
-            .expect_err("a DTO parameter cannot lower to a finder");
+        let reason = lower_finder(
+            &dto_param,
+            "Book",
+            "Book",
+            &features("Book"),
+            &HashMap::new(),
+        )
+        .expect_err("a DTO parameter cannot lower to a finder");
         assert!(
             reason.contains("DTO boundary `BookSummary`"),
             "reason must name the boundary: {reason}"
         );
+    }
+
+    #[test]
+    fn finder_with_a_projection_return_lowers_to_the_read_model() {
+        // Issue #768: a projection boundary whose source class IS the
+        // designing entity is a legal return slot — the finder returns the
+        // read model and constructs it through the boundary's `from_row`.
+        let dto = || serde_json::json!({ "dto": "BookSummary" });
+        let shape = |source: &str| codegraph_core::types::DddDtoShapeNode {
+            application: "Library".to_string(),
+            module: "catalog".to_string(),
+            name: "BookSummary".to_string(),
+            source_json: Some(class_json(source)),
+            direction: "output".to_string(),
+            members: Vec::new(),
+            ordinal: 1,
+        };
+        let op = DddRepositoryOperation {
+            name: "summaryById".to_string(),
+            builtin: None,
+            return_type: Some(dto()),
+            return_multiplicity: None,
+            params: vec![param("id", class_json("Uuid"))],
+            ordinal: 9,
+            is_protected: false,
+            query_json: None,
+            capabilities: Vec::new(),
+        };
+
+        // The accepting shape: source == the designing entity.
+        let mut surface = DddDesignSurface::from_models(&[model(
+            vec![design("Book", Some("BookType"), "entity")],
+            vec![repository("BookRepository", "Book", vec![op.clone()])],
+            vec![],
+        )]);
+        surface
+            .dto_shapes
+            .insert("BookSummary".to_string(), shape("Book"));
+        let finders = surface
+            .finders_for("BookType", "Book", &features("Book"))
+            .expect("the projection finder lowers");
+        assert_eq!(finders.len(), 1, "{finders:?}");
+        assert_eq!(finders[0].return_rust_type, "BookSummary");
+        assert_eq!(
+            finders[0].projection.as_ref().map(|p| p.name.as_str()),
+            Some("BookSummary")
+        );
+        assert_eq!(
+            finders[0].projection.as_ref().map(|p| p.module.as_str()),
+            Some("catalog")
+        );
+
+        // A boundary deriving from ANOTHER class still refuses, naming both.
+        let mut wrong = DddDesignSurface::from_models(&[model(
+            vec![design("Book", Some("BookType"), "entity")],
+            vec![repository("BookRepository", "Book", vec![op.clone()])],
+            vec![],
+        )]);
+        wrong
+            .dto_shapes
+            .insert("BookSummary".to_string(), shape("Movie"));
+        let reason = lower_finder(
+            &DddRepositoryOperation {
+                name: "summaryAgain".to_string(),
+                ..op.clone()
+            },
+            "Book",
+            "Book",
+            &features("Book"),
+            &wrong.dto_shapes,
+        )
+        .expect_err("a foreign-source projection must refuse");
+        assert!(reason.contains("derives from `Movie`"), "{reason}");
+        assert!(reason.contains("`Book`"), "{reason}");
+
+        // An INPUT-direction boundary is never a read model (the constructor
+        // plane emits from_row for output shapes only).
+        let mut input = wrong.dto_shapes.get("BookSummary").cloned().unwrap();
+        input.direction = "input".to_string();
+        let mut input_surface = DddDesignSurface::from_models(&[model(
+            vec![design("Book", Some("BookType"), "entity")],
+            vec![repository("BookRepository", "Book", vec![op.clone()])],
+            vec![],
+        )]);
+        input_surface
+            .dto_shapes
+            .insert("BookSummary".to_string(), input);
+        let reason = lower_finder(
+            &DddRepositoryOperation {
+                name: "summaryOnceMore".to_string(),
+                ..op
+            },
+            "Book",
+            "Book",
+            &features("Book"),
+            &input_surface.dto_shapes,
+        )
+        .expect_err("an input-direction boundary must refuse as a return slot");
+        assert!(reason.contains("INPUT boundary"), "{reason}");
     }
 
     #[test]

@@ -365,14 +365,14 @@ impl super::RepositoryImplEmitter {
         if finder.returns_many {
             wln!(
                 code,
-                "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
-                tree.entity_name
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                finder.return_rust_type
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
-                tree.entity_name
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                finder.return_rust_type
             );
         }
 
@@ -482,7 +482,18 @@ impl super::RepositoryImplEmitter {
             wln!(code, "            }});");
             wln!(code, "        }}");
             wln!(code);
-            wln!(code, "        Ok(results)");
+            match &finder.projection {
+                Some(projection) => {
+                    wln!(
+                        code,
+                        "        Ok(results.iter().map({}::from_row).collect())",
+                        projection.name
+                    );
+                }
+                None => {
+                    wln!(code, "        Ok(results)");
+                }
+            }
             wln!(code, "    }}");
         } else {
             wln!(code, "        let row = query.one(db)");
@@ -496,7 +507,12 @@ impl super::RepositoryImplEmitter {
             // finder's scope (its parameters are the declared ones). The
             // shared construction helper closes the fn itself (the
             // `find_by_id` contract) — do not close again.
-            emit_response_construction_for(code, tree, "row.id");
+            emit_response_construction_for(
+                code,
+                tree,
+                "row.id",
+                finder.projection.as_ref().map(|p| p.name.as_str()),
+            );
         }
     }
 
@@ -545,14 +561,14 @@ impl super::RepositoryImplEmitter {
         if finder.returns_many {
             wln!(
                 code,
-                "    ) -> Result<Vec<{}Response>, Box<dyn std::error::Error>> {{",
-                tree.entity_name
+                "    ) -> Result<Vec<{}>, Box<dyn std::error::Error>> {{",
+                finder.return_rust_type
             );
         } else {
             wln!(
                 code,
-                "    ) -> Result<Option<{}Response>, Box<dyn std::error::Error>> {{",
-                tree.entity_name
+                "    ) -> Result<Option<{}>, Box<dyn std::error::Error>> {{",
+                finder.return_rust_type
             );
         }
 
@@ -786,7 +802,18 @@ impl super::RepositoryImplEmitter {
             wln!(code, "            }});");
             wln!(code, "        }}");
             wln!(code);
-            wln!(code, "        Ok(results)");
+            match &finder.projection {
+                Some(projection) => {
+                    wln!(
+                        code,
+                        "        Ok(results.iter().map({}::from_row).collect())",
+                        projection.name
+                    );
+                }
+                None => {
+                    wln!(code, "        Ok(results)");
+                }
+            }
             wln!(code, "    }}");
         } else {
             wln!(code, "        let row = query.one(db)");
@@ -800,7 +827,12 @@ impl super::RepositoryImplEmitter {
             // finder's scope (its parameters are the declared ones). The
             // shared construction helper closes the fn itself (the
             // `find_by_id` contract) — do not close again.
-            emit_response_construction_for(code, tree, "row.id");
+            emit_response_construction_for(
+                code,
+                tree,
+                "row.id",
+                finder.projection.as_ref().map(|p| p.name.as_str()),
+            );
         }
     }
 }
@@ -859,6 +891,7 @@ mod tests {
             method_name: "find_by_thing".to_string(),
             name: "findByThing".to_string(),
             entity_name: "Book".to_string(),
+            projection: None,
             params: params
                 .into_iter()
                 .map(|(name, rust_type)| FinderParam {

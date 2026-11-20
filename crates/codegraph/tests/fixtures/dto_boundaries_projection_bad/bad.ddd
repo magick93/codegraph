@@ -1,0 +1,25 @@
+import "bad.mox";
+
+application Library {
+    base nz.example.library
+    module catalog {
+        // Issue #768 review: NO findById/findAll — with no `read` op the
+        // derive-refusal fixture also stays honest about the read-model
+        // planes (the op-set arm of the walker is pinned by the mock KAT,
+        // which needs a service op this fixture deliberately does not carry).
+        entity Book scaffold repository BookRepository {
+            save;
+            delete;
+        }
+
+        // Issue #768 negative: a STRING-typed DERIVE member is legal
+        // upstream (the compiler infers the type from the expression) but
+        // the read-path derive subset computes arithmetic over NUMERIC
+        // members only. Generation must refuse by name — the boundary +
+        // member — BEFORE any tree is written.
+        dto BookSummary from Book {
+            title;
+            label = title + "!";
+        }
+    }
+}

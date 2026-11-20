@@ -1,0 +1,9 @@
+package nz.example.library
+
+// Issue #768 negative fixture: a projection whose derive expression is not
+// computable in the read-path arithmetic subset. Its own top-level group so
+// the compiler sweep unions it alone.
+class Book {
+    String title
+    int playLength
+}

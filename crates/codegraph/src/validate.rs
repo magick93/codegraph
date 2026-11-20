@@ -37,7 +37,28 @@ impl ValidationPass {
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19) = tokio::join!(
+        let (
+            r1,
+            r2,
+            r3,
+            r4,
+            r5,
+            r6,
+            r7,
+            r8,
+            r9,
+            r10,
+            r11,
+            r12,
+            r13,
+            r14,
+            r15,
+            r16,
+            r17,
+            r18,
+            r19,
+            r20,
+        ) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -57,6 +78,7 @@ impl ValidationPass {
             Self::check_child_add_parent_load(db, config),
             Self::check_aggregate_boundaries(db, config),
             Self::check_service_op_throws(db, config),
+            Self::check_projection_boundaries(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -78,6 +100,7 @@ impl ValidationPass {
         issues.extend(r17);
         issues.extend(r18);
         issues.extend(r19);
+        issues.extend(r20);
         issues
     }
 
@@ -125,6 +148,31 @@ impl ValidationPass {
                 severity: Severity::Error,
                 entity: "(service op body)".to_string(),
                 check: "service_op_body",
+                message,
+            })
+            .collect()
+    }
+
+    /// Projection read models (issue #768): every projection boundary's
+    /// `from_row` constructor must plan — a select that matches no response
+    /// field, a derive expression outside the arithmetic subset, or a lossy
+    /// adaptation is a HARD error naming the boundary + member, before any
+    /// tree is written.
+    async fn check_projection_boundaries(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) =
+            codegraph_generate::ddd::boundary_derive::projection_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(projection boundary)".to_string(),
+                check: "projection_boundary",
                 message,
             })
             .collect()
