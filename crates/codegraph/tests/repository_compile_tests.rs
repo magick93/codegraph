@@ -19,7 +19,21 @@
 //! Teeth (validated à la #550 — break the emitter, the pin must fail):
 //! emitting an unresolvable import or a broken fetch method fails
 //! `cargo check`; skipping the emission of `repository_impl.rs` fails the
-//! presence guards below.
+//! presence guards below. The media variant's teeth (issue #719): removing
+//! the `if child.is_media { continue; }` skip from the emitter's child
+//! INSERT path re-binds the media child against the request DTO that omits
+//! it — the pin's presence guard fails first naming the defect ("the
+//! repository must never write the media child"), and the emitted binding
+//! (`if let Some(ref item) = cmd.photo` on a `CreateAssetRequest` with no
+//! `photo` member) is the E0609 the compile layer rejects if the guard text
+//! is bypassed. Reverted. The DELETE guard's teeth (teeth run #2): narrowing
+//! that skip to the INSERT half only — `crud.rs`'s replace loop then emits
+//! the media child's delete-and-replace DELETE with no re-insert — fails the
+//! DELETE guard first (the INSERT skip in `child.rs` keeps
+//! `INSERT INTO assets.asset_photo` structurally unemittable), naming the
+//! same #707 TRAP the shipped skip exists to prevent. Reverted. The media
+//! leg's mox fixture root is pid-suffixed so concurrent checkouts building
+//! the pin cannot cross-contaminate the fixture input.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -116,6 +130,50 @@ postgres_schema = "recruiting"
 label = "Staff"
 schema_dir = "staff"
 postgres_schema = "staff"
+"#;
+
+/// Media-plane fixture (issue #719, the #707 shape): one entity with ONE
+/// contained media reference. Through-app is deliberate — it is the only
+/// upload mode whose route OWNS the reference row
+/// (`media_upload_owned_fields` returns the field only there), so the
+/// request DTO pair must omit the member and the repository's child
+/// insert/replace loops must skip the media child. `media_classes` defaults
+/// to `["MediaReference"]`, so no explicit declaration is needed.
+const MEDIA_MOX: &str = r#"
+package assets
+
+class MediaReference {
+    String url
+    String mimeType
+}
+
+class Asset {
+    String name
+    contains MediaReference[0..1] photo
+}
+"#;
+
+/// Config for the media fixture's `assets` package. `r2` + `through-app`
+/// (the `media_runtime` fixture's provider/mode pair — a combination the
+/// capability matrix admits) with the default `{org}/…` key template.
+const MEDIA_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.assets]
+label = "Assets"
+schema_dir = "assets"
+postgres_schema = "assets"
+
+[domains.assets.media]
+provider = "r2"
+upload_mode = "through-app"
+bucket = "repository-pin-media"
+max_bytes = 1024
+accept = ["image/png"]
+
+[domains.assets.media.r2]
+binding = "MEDIA_BUCKET"
 "#;
 
 /// Fixed materialization root (the #550 convention): survives a failed run
@@ -624,5 +682,94 @@ async fn design_finder_emission_compiles() {
 
     let ws = tree_root("finders").join("ws");
     assemble_workspace(&app_dir, &domain_types_dir, &ws);
+    cargo_check(&ws);
+}
+
+/// Media-plane variant (issue #719, the #707 shape): a `[media]` through-app
+/// domain whose entity carries a contained media reference. The repository
+/// plane must compile WITH the #707 exclusions in place — the media child
+/// struct never exists on the request DTO pair (the through-app upload
+/// handler is the reference's only writer), the response DTO keeps the
+/// member, and the repository's child insert/replace loops skip the media
+/// child table (`assets.asset_photo`) while the read path still hydrates it.
+///
+/// Native only, deliberately: the repository plane is SeaORM and does not
+/// link wasm32 (the cornucopia/wasm coverage rides
+/// `worker_wasm_compile_tests`), and the route module the upload handler
+/// writes through is `media_compile_tests`' pin — this pin covers the
+/// planes #707 actually rewrote: the DTO pair and the repository impl.
+#[tokio::test]
+async fn media_repository_plane_compiles() {
+    // The mox fixture lives OUTSIDE the materialization root —
+    // `generate_tree` wipes that root at the start of every run. The root is
+    // pid-suffixed (unlike the pre-existing legs' shared roots): two
+    // checkouts building this pin concurrently must not cross-contaminate
+    // the fixture input, which `write_file` overwrites in place.
+    let mox_root =
+        std::env::temp_dir().join(format!("repository-pin-media-{}", std::process::id()));
+    write_file(&mox_root.join("model.mox"), MEDIA_MOX);
+    let (app_dir, domain_types_dir) = generate_tree(
+        "media",
+        Some(MEDIA_DOMAINS_TOML),
+        false,
+        Some(&[mox_root.join("model.mox")]),
+        None,
+    )
+    .await;
+
+    // ── Presence guards (fail BEFORE cargo check — template drift must be
+    //    named, not buried in a compile error). ──
+    let impl_path = app_dir.join("src/domain/assets/asset/repository_impl.rs");
+    assert!(
+        impl_path.exists(),
+        "the media fixture must emit the asset repository impl:\n{:?}",
+        app_dir.join("src/domain")
+    );
+    let impl_src = fs::read_to_string(&impl_path).unwrap();
+    // Issue #707: the media child is WRITE-excluded — no child INSERT and
+    // no delete-and-replace may reference the media child table.
+    assert!(
+        !impl_src.contains("INSERT INTO assets.asset_photo"),
+        "the repository must never write the media child (the upload route \
+         owns the row):\n{impl_src}"
+    );
+    assert!(
+        !impl_src.contains("DELETE FROM assets.asset_photo"),
+        "the update path must not delete-and-replace the media child:\n{impl_src}"
+    );
+    // … but READ-included: the fetch still hydrates the reference.
+    assert!(
+        impl_src.contains("asset_photo"),
+        "the read path must keep hydrating the media child:\n{impl_src}"
+    );
+
+    // The DTO pair lives in the domain-types crate (single source of truth;
+    // the app-side files are re-export shims). Request DTOs omit the
+    // reference entirely; the response DTO keeps the member + struct.
+    let dt_root = domain_types_dir.join("src").join("assets").join("asset");
+    let create =
+        fs::read_to_string(dt_root.join("dto_create.rs")).expect("domain-types dto_create");
+    let update =
+        fs::read_to_string(dt_root.join("dto_update.rs")).expect("domain-types dto_update");
+    let response =
+        fs::read_to_string(dt_root.join("dto_response.rs")).expect("domain-types dto_response");
+    for (name, src) in [("create", &create), ("update", &update)] {
+        assert!(
+            !src.contains("AssetMediaReference"),
+            "the {name} request DTO must omit the media reference (neither the \
+             member nor the child struct may exist):\n{src}"
+        );
+    }
+    assert!(
+        response.contains("pub photo: Option<AssetMediaReferenceResponse>"),
+        "the response DTO must keep the media reference member:\n{response}"
+    );
+
+    let ws = tree_root("media").join("ws");
+    let impls = assemble_workspace(&app_dir, &domain_types_dir, &ws);
+    assert!(
+        impls >= 1,
+        "the media fixture must emit at least one repository impl, got {impls}"
+    );
     cargo_check(&ws);
 }

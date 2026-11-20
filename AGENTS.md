@@ -3575,7 +3575,7 @@ their runtime substitute.
 | Plane | Pin | Notes |
 |-------|-----|-------|
 | mox plane (`mox_types` + ops) | `mox_plane_compile_tests` | native + wasm32, sea_orm-free (#517) |
-| SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere) |
+| SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**, **media child exclusion (#719)**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere); the `media_repository_plane_compiles` leg carries a `[media]` through-app fixture pinning the #707 shape — request DTO pair omits the reference, response DTO keeps it, the child insert/replace loops skip the media child while reads hydrate it — and no wasm32 leg (SeaORM; cornucopia/wasm rides #550) |
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
@@ -3943,7 +3943,7 @@ cargo test -p codegraph --test pherolang_fixture_sweep
 
 # Compile-pin policy (#551) — node-free PR-CI pins (scratch-crate cargo check)
 cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native + wasm32 (#517)
-cargo test -p codegraph --test repository_compile_tests  # 3, SeaORM repository impl + design finders
+cargo test -p codegraph --test repository_compile_tests  # 5, SeaORM repository impl + design finders + media DTO/repository (#719)
 cargo test -p codegraph --test command_compile_tests     # 1, command/query + dispatcher + hooks types
 
 # Ops harness tests (codegraph-ops + ops generator)
