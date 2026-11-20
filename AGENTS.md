@@ -3949,6 +3949,16 @@ cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native +
 cargo test -p codegraph --test repository_compile_tests  # 5, SeaORM repository impl + design finders + media DTO/repository (#719)
 cargo test -p codegraph --test command_compile_tests     # 1, command/query + dispatcher + hooks types
 
+# Committed review fixture drift pin (#747) — node-free PR-CI; holds the
+# committed `crates/review/generated-candidate` bytes to the flag-OFF
+# recipe's output. A stale tree, a wiped whitelisted tree, or a
+# machine-path dep fails here instead of surfacing as an unexplained dirty
+# tree in a later session. Refresh: `cargo test -p codegraph --test
+# review_fixture_drift_tests -- --ignored --nocapture
+# regenerate_committed_fixture_in_place`, review the diff, commit it
+# enumerated.
+cargo test -p codegraph --test review_fixture_drift_tests
+
 # Ops harness tests (codegraph-ops + ops generator)
 cargo test -p codegraph-ops            # 238 harness tests (suites, proc, db, migrate, ext, metrics, doctor, bundle, registry, freshness, results)
 cargo test -p codegraph --test ops_generator_tests  # 7 tests + 1 ignored compile test (manifest + testkit emission, OpsConfig::load contract)
