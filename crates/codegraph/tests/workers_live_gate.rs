@@ -709,9 +709,10 @@ fn tail(text: &str, n: usize) -> String {
 
 /// The entries the workers gate wipes before regenerating. It drives the
 /// regeneration itself (see the skip-generate note on the live test), so this
-/// list is the gate's own — the harness's `workers.rs` `REGEN_WIPE` covers the
-/// first eight roots, and its remaining gap (`hurl`) is recorded as a follow-up
-/// on #694: the gate must not inherit it just because it mirrors the harness.
+/// list is the gate's own — it matches the harness's `workers.rs` `REGEN_WIPE`
+/// through `hurl` (the #694 follow-up landed in the harness too), then adds
+/// the fixture-specific `gate-domain-types` crate and `testkit` (whose cargo
+/// cache is stash-renamed around the wipe below).
 ///
 /// Issue #694: `hurl`, `gate-domain-types`, `testkit` and the run manifest are
 /// generated output too. Leaving the hurl dir out (the pre-#694 shape, on the

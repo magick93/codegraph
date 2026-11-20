@@ -111,8 +111,23 @@ const DEFAULT_HURL_SKIPS: &[(&str, &str)] = &[
 ];
 
 /// Generated output entries wiped before regeneration (mirrors dual-test.sh
-/// B1). The manifest's `clean-generated` pre_generate hook only targets the
-/// monolith `generated-candidate/` paths, so the workers output is wiped here.
+/// B1, plus `hurl` per issue #694). The manifest's `clean-generated`
+/// pre_generate hook only targets the monolith `generated-candidate/` paths,
+/// so the workers output is wiped here.
+///
+/// The wipe is generation-root-wide, which includes the generated hurl
+/// contracts. A consumer with HAND-AUTHORED hurl files re-seeds them via a
+/// `post_generate` hook (the workers gate fixture's
+/// `90_workflow_transition_409.hurl` seed is the reference pattern) — the
+/// harness cannot know which hurl files are hand-authored, and
+/// snapshot-restore is deliberately NOT used: restoring the pre-wipe dir
+/// resurrects stale numbered contracts from an older generation, which the
+/// suite then hurl's against the new app (the #687 class).
+///
+/// The `testkit` crate is deliberately NOT wiped: regeneration rewrites its
+/// files identically and leaving it untouched preserves its `target/` cargo
+/// cache across every run (the workers gate, whose own wipe covers
+/// `testkit`, stash-renames that cache around the wipe to the same effect).
 const REGEN_WIPE: &[&str] = &[
     "src",
     "workers",
@@ -121,6 +136,7 @@ const REGEN_WIPE: &[&str] = &[
     "cornucopia-queries",
     "cli",
     "ui",
+    "hurl",
     "Cargo.toml",
 ];
 
@@ -321,14 +337,7 @@ async fn run_workers_inner(config: &OpsConfig, args: &WorkersArgs) -> OpsResult<
         run_hooks(config, "pre_generate", HookPolicy::PerHook).await?;
         // The manifest's clean-generated hook targets generated-candidate
         // paths, so wipe the workers output here (dual-test.sh B1).
-        for rel in REGEN_WIPE {
-            let path = workers_out.join(rel);
-            if path.is_dir() {
-                std::fs::remove_dir_all(&path)?;
-            } else if path.is_file() {
-                std::fs::remove_file(&path)?;
-            }
-        }
+        wipe_stale_output(&workers_out)?;
         output::info(format!(
             "Wiped stale workers output under {}",
             workers_out.display()
@@ -745,6 +754,22 @@ pub fn worker_ports() -> impl Iterator<Item = u16> {
     (0..WORKER_DOMAINS.len() as u16).map(worker_port)
 }
 
+/// Wipe the regeneration-listed entries under the workers output dir (stage 2,
+/// dual-test.sh B1 + the #694 hurl addition). Only the listed roots/files are
+/// removed — everything else under `workers_out` (the `testkit` crate's cargo
+/// cache in particular) survives untouched.
+fn wipe_stale_output(workers_out: &Path) -> std::io::Result<()> {
+    for rel in REGEN_WIPE {
+        let path = workers_out.join(rel);
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else if path.is_file() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Regenerate the workers output via `cargo run --release -p {graph} -- run`,
 /// forcing the workers profile + output dir regardless of the manifest's
 /// monolith settings. Returns (success, combined output).
@@ -1021,6 +1046,57 @@ mod tests {
         for domain in WORKER_DOMAINS {
             assert!(!domain.contains('-'), "bindings assume no dashes: {domain}");
         }
+    }
+
+    #[test]
+    fn regen_wipe_covers_the_generated_hurl_tree() {
+        // The #694/#687 class: a hurl contract left by an OLDER generation
+        // sits in the same dir the suite scans for contract files, so
+        // omitting `hurl` from the wipe lets a stale numbered contract be
+        // hurl'd against the newly generated app. The workers live gate
+        // fixed this for itself (its own REGEN_WIPE carries `hurl`); the
+        // harness must not reintroduce the gap.
+        assert!(
+            REGEN_WIPE.contains(&"hurl"),
+            "REGEN_WIPE must cover the generated hurl tree — a contract \
+             surviving regeneration runs against the new app"
+        );
+    }
+
+    #[test]
+    fn wipe_stale_output_preserves_the_testkit_cargo_cache() {
+        // `testkit/target` is the most expensive thing to rebuild on a
+        // re-run and has nothing to do with the regeneration. The harness
+        // never lists `testkit` (regeneration rewrites the crate's files
+        // identically), so the cache survives by construction; if someone
+        // later copies the gate's wipe list wholesale — the gate DOES wipe
+        // `testkit` and stash-renames its cache — this pin fails before a
+        // consumer loses the cache.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path();
+        std::fs::create_dir_all(out.join("src")).unwrap();
+        std::fs::write(out.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::create_dir_all(out.join("hurl")).unwrap();
+        std::fs::write(out.join("hurl/10_old_contract.hurl"), "stale").unwrap();
+        std::fs::create_dir_all(out.join("testkit/target/debug")).unwrap();
+        std::fs::write(out.join("testkit/target/debug/marker"), "cache").unwrap();
+        std::fs::write(out.join("Cargo.toml"), "[workspace]").unwrap();
+
+        wipe_stale_output(out).unwrap();
+
+        assert!(!out.join("hurl").exists(), "stale hurl tree must be wiped");
+        assert!(
+            !out.join("src").exists(),
+            "listed source roots must be wiped"
+        );
+        assert!(
+            !out.join("Cargo.toml").exists(),
+            "the listed Cargo.toml file entry must be wiped (regeneration rewrites it)"
+        );
+        assert!(
+            out.join("testkit/target/debug/marker").is_file(),
+            "the testkit cargo cache must survive the wipe untouched"
+        );
     }
 
     #[test]
