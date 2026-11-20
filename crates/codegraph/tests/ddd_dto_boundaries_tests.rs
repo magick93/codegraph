@@ -217,19 +217,23 @@ fn file<'a>(
 }
 
 #[tokio::test]
-async fn mirror_boundary_aliases_the_source_entity_response() {
+async fn mirror_boundary_emits_its_own_members_not_the_whole_response() {
+    // DD3 review finding: a mirror's members are every stored feature, but a
+    // projection of the SAME shape must never widen into the entity response
+    // (an alias would). Every boundary emits the exact modeled members.
     let files = generate(book_shapes()).await;
     let catalog = file(&files, "src/dto/catalog.rs");
+    let mirror = catalog
+        .content
+        .split("pub struct BookMirror {")
+        .nth(1)
+        .expect("BookMirror struct");
+    assert!(mirror.contains("pub title: String,"), "{mirror}");
+    assert!(mirror.contains("pub isbn: String,"), "{mirror}");
     assert!(
-        catalog
-            .content
-            .contains("pub type BookMirror = crate::library::book::dto_response::BookResponse;"),
-        "{}",
+        !catalog.content.contains("pub type BookMirror"),
+        "no alias onto the entity response: {}",
         catalog.content
-    );
-    assert!(
-        !catalog.content.contains("pub struct BookMirror"),
-        "the mirror form must not duplicate the response struct"
     );
 }
 
@@ -450,4 +454,191 @@ postgres_schema = "library"
         domain_doc.contains("domain_types::dto::catalog::NewBookInput"),
         "the per-domain OpenAPI document must register the boundary: {domain_doc}"
     );
+}
+
+/// Issue #667 review: the hurl contract body must be VALID for the struct it
+/// addresses — project wire casing, arrays for many-valued members, and the
+/// first codelist value (resolved through the graph) rather than a guess.
+#[tokio::test]
+async fn boundary_sample_matches_the_generated_wire_contract() {
+    use codegraph_core::traits::GraphIngestor;
+    use codegraph_core::types::{CodeList, EnumValue};
+
+    let engine = MockEngine::builder().build();
+    engine
+        .ingest_codelist(&CodeList {
+            name: "Colour".to_string(),
+            description: None,
+            pg_table_name: "colour".to_string(),
+            render_as: "select".to_string(),
+            check_expression: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .ingest_enum_value(
+            "Colour",
+            &EnumValue {
+                value: "CRIMSON".to_string(),
+                display_name: None,
+                sort_order: 0,
+            },
+        )
+        .await
+        .unwrap();
+
+    let shape = DddDtoShapeNode {
+        application: "Library".to_string(),
+        module: "catalog".to_string(),
+        name: "PaintInput".to_string(),
+        source_json: None,
+        direction: "input".to_string(),
+        members: vec![
+            DddDtoMember {
+                name: "playLength".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({"type": "primitive", "value": "int"}),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            },
+            DddDtoMember {
+                name: "tags".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({"type": "primitive", "value": "string"}),
+                multiplicity_json: Some(serde_json::json!({"lower": 1, "upper": "unbounded"})),
+                path: Vec::new(),
+                expression: None,
+            },
+            DddDtoMember {
+                name: "colour".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({
+                    "type": "enum",
+                    "value": {"package": "nz.example.library", "name": "Colour"}
+                }),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            },
+            DddDtoMember {
+                name: "note".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({"type": "primitive", "value": "string"}),
+                multiplicity_json: Some(serde_json::json!({"lower": 0, "upper": {"finite": 1}})),
+                path: Vec::new(),
+                expression: None,
+            },
+        ],
+        ordinal: 0,
+    };
+    engine
+        .ingest_ddd_model(&DddModelGraph {
+            dto_shapes: vec![shape],
+            ..model(Vec::new())
+        })
+        .await
+        .unwrap();
+
+    let index =
+        codegraph_generate::ddd::dto_boundaries::DtoBoundaryIndex::from_graph(&engine, &config())
+            .await
+            .expect("index");
+
+    assert_eq!(
+        index.sample("PaintInput", false).cloned(),
+        Some(serde_json::json!({
+            "play_length": 42,
+            "tags": ["contract-sample"],
+            "colour": "CRIMSON"
+        })),
+        "snake keys, arrays for many members, the first codelist value, optional omitted"
+    );
+    assert_eq!(
+        index.sample("PaintInput", true).cloned(),
+        Some(serde_json::json!({
+            "playLength": 42,
+            "tags": ["contract-sample"],
+            "colour": "CRIMSON"
+        })),
+        "camel casing applies to every key"
+    );
+}
+
+/// Issue #667 review: a class-typed member is a `Uuid` only when it resolves
+/// to an ENTITY (a stored FK). A contained value object is refused by name —
+/// typing an object as a Uuid silently produced a 400 at runtime.
+#[tokio::test]
+async fn class_members_resolve_entities_to_uuid_and_refuse_value_objects() {
+    use codegraph_core::traits::GraphIngestor;
+    let engine = MockEngine::builder().build();
+    let mut address = schema("Address", "library");
+    address.classification = "value_object".to_string();
+    address.is_entity = false;
+    engine.ingest_schema(&address).await.unwrap();
+    engine
+        .ingest_schema(&schema("BookType", "library"))
+        .await
+        .unwrap();
+
+    let shape = |member_class: &str| DddDtoShapeNode {
+        application: "Library".to_string(),
+        module: "catalog".to_string(),
+        name: "Card".to_string(),
+        source_json: None,
+        direction: "input".to_string(),
+        members: vec![DddDtoMember {
+            name: "target".to_string(),
+            kind: "declared".to_string(),
+            type_json: serde_json::json!({
+                "type": "class",
+                "value": {"package": "nz.example.library", "name": member_class}
+            }),
+            multiplicity_json: None,
+            path: Vec::new(),
+            expression: None,
+        }],
+        ordinal: 0,
+    };
+
+    for (class, expect_uuid) in [("Book", true), ("Address", false)] {
+        engine
+            .ingest_ddd_model(&DddModelGraph {
+                dto_shapes: vec![shape(class)],
+                ..model(Vec::new())
+            })
+            .await
+            .unwrap();
+        let base = tempfile::tempdir().expect("tempdir");
+        let generator = DddDtoBoundariesGenerator::new_with_base(base.path().to_path_buf());
+        let order = vec![GenerationEntry {
+            schema_title: "BookType".to_string(),
+            domain: "library".to_string(),
+            pg_schema: "library".to_string(),
+            is_cyclic: false,
+        }];
+        let result = generator
+            .generate(
+                &engine,
+                &config(),
+                &order,
+                &tera(),
+                &ProjectConfig::default(),
+            )
+            .await;
+        if expect_uuid {
+            let files = result.expect("entity ref resolves");
+            assert!(
+                file(&files, "src/dto/catalog.rs")
+                    .content
+                    .contains("pub target: uuid::Uuid,"),
+                "entity refs are stored FK ids"
+            );
+        } else {
+            let err = result.expect_err("value object must refuse");
+            let text = err.to_string();
+            assert!(text.contains("non-entity class `Address`"), "{text}");
+            assert!(text.contains("Card"), "{text}");
+        }
+    }
 }

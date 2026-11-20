@@ -1131,27 +1131,34 @@ never reached the graph. #667 makes the boundary a plane:
 - **Generation** (`ddd/dto_boundaries.rs`, global `dto_boundaries` capability,
   presence-gated): one file per `.ddd` module at
   `{domain_types_base}/src/dto/{module}.rs` + the index, in the SHARED
-  domain-types crate (worker action handlers must reach the same type). A
-  **mirror** (every member a same-name selection of a resolvable source class)
-  is a type ALIAS onto `{Entity}Response`; **projection/standalone** boundaries
-  are structs (snake_case fields, project dto casing, `deny_unknown_fields` on
-  inputs, derived members documented with their expression). Member typing:
-  primitives via `phero_type_to_rust`, class refs → `uuid::Uuid`, codelists →
-  the generated enum, nested boundaries imported across modules, multiplicity →
-  `Option`/`Vec`. Named refusals: interface/unresolvable member, undeclared
-  nested boundary, derivation without source, boundary name colliding with a
-  generated entity DTO type. The domain-types scaffold declares `pub mod dto;`
-  only when the graph carries shapes.
-- **Payload slots**: `DtoBoundaryIndex` + `boundary_sample` live beside the
-  generator; `body_lower::body_params` resolves a `DddTypeRef::Dto` parameter to
+  domain-types crate (worker action handlers must reach the same type). EVERY
+  boundary (mirror, projection, standalone) is a STRUCT carrying exactly its
+  modeled members (snake_case fields, project dto casing,
+  `deny_unknown_fields` on inputs, derived members documented with their
+  expression). **Deviation from the issue's "mirror → the existing
+  `{Entity}Response`"**: review proved an alias widens a subset projection into
+  the full response (extra fields, lax unknown-field handling) and breaks on
+  `table "…"` renames (the alias target was derived from the title, not the
+  emitted `pg_table_name`); the exact-member struct is the honest contract.
+  Member typing: primitives via `phero_type_to_rust`, ENTITY class refs →
+  `uuid::Uuid`, codelists → the generated enum, nested boundaries imported
+  across modules, multiplicity → `Option`/`Vec`. Named refusals:
+  interface/unresolvable member, a non-entity (value-object/structured) class
+  ref, an unresolved class, an undeclared nested boundary, derivation without
+  source, boundary name colliding with a generated entity DTO type. The
+  domain-types scaffold declares `pub mod dto;` only when the graph carries
+  shapes.
+- **Payload slots** (`ddd/body_params.rs` — split out of the #751 over-limit
+  `body_lower.rs`): `DtoBoundaryIndex` (with graph-backed `sample`s: project
+  wire casing, arrays for many-valued members, the FIRST codelist value) lives
+  beside the generator; `body_params` resolves a `DddTypeRef::Dto` parameter to
   `{domain_types_crate}::dto::{module}::{Name}`, and a LONE boundary parameter
   makes the endpoint body the DTO itself (`BodyParam.direct_body`, honoured by
-  the pre-rendered extraction `serde_json::from_value::<T>(value.0.clone())`
-  and by the hurl action body). Output-only boundaries (any derived member) and
-  unknown boundaries are named refusals riding
-  `ValidationPass::check_service_op_bodies`; a body-less op with a DTO param
-  still emits no body block. Both OpenAPI documents register every boundary as
-  a component schema.
+  the pre-rendered extraction — an optional one deserializes the INNER type —
+  by the hurl action body, and by the handler's utoipa `request_body`).
+  Output-only boundaries (any derived member) and unknown boundaries are named
+  refusals riding `ValidationPass::check_service_op_bodies`. Both OpenAPI
+  documents register every boundary as a component schema.
 - **Deferred (filed)**: **#767** — a modeled input boundary as the
   COLLECTION-level create body (mapping onto `Create{Entity}Request` + the
   create-shaped route) and the child-op boundary payload (today one WARN per op

@@ -15,16 +15,12 @@ pub use crate::dto::{{ import.module }}::{{ import.name }};
 {%- endfor %}
 {% endif %}
 {%- for boundary in boundaries %}
-{%- if boundary.is_alias %}
-
-/// Modeled DTO boundary `{{ boundary.name }}` (DD3) — the mirror form, which
-/// is the source entity's response model.
-pub type {{ boundary.name }} = {{ boundary.alias_target }};
-{%- else %}
 
 /// Modeled {{ boundary.direction }} DTO boundary `{{ boundary.name }}` (DD3).
 {%- if boundary.source_note %}
-/// Built from `{{ boundary.source_note }}`.
+/// Built from `{{ boundary.source_note }}`. The boundary carries exactly the
+/// modeled members (not the whole entity response): a subset projection must
+/// not widen into fields the author did not declare.
 {%- endif %}
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema{% if boundary.has_default %}, Default{% endif %})]
 {%- if boundary.camel_case %}
@@ -44,5 +40,4 @@ pub struct {{ boundary.name }} {
     pub {{ field.name }}: {{ field.rust_type }},
 {%- endfor %}
 }
-{%- endif %}
 {%- endfor %}

@@ -212,7 +212,9 @@ pub async fn routes_for_entity(
     let type_suffix = config.defaults.type_suffix.clone();
     // DD3 (issue #667): the body plane resolves a DTO-typed action parameter
     // to the generated boundary type; one index for the whole pass.
-    let boundary_index = crate::ddd::dto_boundaries::DtoBoundaryIndex::from_models(&models);
+    let boundary_index = crate::ddd::dto_boundaries::DtoBoundaryIndex::from_graph(db, config)
+        .await
+        .map_err(|e| e.to_string())?;
     let props = db
         .get_properties(entity_title)
         .await
@@ -386,6 +388,7 @@ pub async fn routes_for_entity(
                         &op.params,
                         &boundary_index,
                         &body.domain_types_crate,
+                        body.dto_casing,
                     )
                     .map_err(|refusal| refusal.0)?
                 };

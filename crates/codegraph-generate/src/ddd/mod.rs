@@ -1,5 +1,6 @@
 pub mod aggregate;
 pub mod body_lower;
+pub mod body_params;
 pub mod command;
 pub mod cornucopia_repo;
 pub mod design;
