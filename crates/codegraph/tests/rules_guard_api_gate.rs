@@ -51,14 +51,21 @@ fn fixture_dir() -> PathBuf {
 /// holds the committed fixture to the flag-OFF recipe's output, which cannot
 /// carry it. Seeding is therefore the gate's job; every run overwrites, so a
 /// stale or wiped copy self-heals.
+///
+/// The seeded copy REMAINS in `crates/review/generated-candidate/` after the
+/// run as an untracked file — that git-status dirt is expected, by design:
+/// the #694 sweep never deletes it (no ledger owns it) and the #747 drift pin
+/// is hermetic to working-tree state (it compares `git archive HEAD`). A
+/// later `review_api_suite` in the same checkout will run the leftover
+/// contract as part of `testkit api` — it passes there too (same recipe,
+/// same guards).
 fn seed_eligibility_hurl(fixture: &Path) {
     let canonical = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/review_gate/hurl/90_eligibility_rule_403.hurl");
     let dst = fixture.join("hurl/90_eligibility_rule_403.hurl");
     std::fs::create_dir_all(dst.parent().expect("hurl dir has a parent"))
         .expect("create the fixture hurl dir");
-    std::fs::copy(&canonical, &dst)
-        .unwrap_or_else(|e| panic!("seed {}: {e}", canonical.display()));
+    std::fs::copy(&canonical, &dst).unwrap_or_else(|e| panic!("seed {}: {e}", canonical.display()));
 }
 
 fn logs_dir() -> PathBuf {
