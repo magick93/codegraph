@@ -73,3 +73,6 @@ anyhow = "1"
 insta = { version = "1", features = ["glob", "yaml"] }
 syn = { version = "2", features = ["full", "parsing"] }
 proc-macro2 = "1"
+# The ONE structural-key corpus for the artifact snake_case-shadow detector
+# (issue #674) — see the workspace pin's comment for the closure.
+phero-backend-common = { workspace = true }

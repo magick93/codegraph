@@ -108,6 +108,11 @@ phero-driver = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4
 phero-syntax = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
 phero-expr = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
 phero-ifml = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
+# `phero-backend-common` owns the ONE structural-key corpus (`STRUCTURAL_KEYS`)
+# and its inverse `camel_case` — the snake_case-shadow detector in
+# `artifact_check_tests` binary-searches exactly that list (issue #674), so
+# the corpus is not hand-copied. Dependency closure is anyhow + serde_json only.
+phero-backend-common = { git = "https://github.com/yestechgroup/pherolang.git", rev = "4f497e17a73ad94ba47d3a2ad2349b23e6aa6257" }
 # Sigil (Rune DSL / .rosetta) — issue #255. Pinned by rev like the pherolang
 # crates; depended on from `crates/codegraph` ONLY (no sigil deps may leak
 # into codegraph-generate / codegraph-core). Pinned to the SAME rev pherolang
