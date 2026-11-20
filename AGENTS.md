@@ -1199,7 +1199,10 @@ never reached the graph. #667 makes the boundary a plane:
   `Create`/`Update{Child}Request` from it (the handler deserializes the
   boundary, so the hurl legs send the boundary sample) instead of the
   `child-dto-payload` WARN; a boundary for another class keeps the WARN and the
-  child's own request DTO. A nested child entity's create-shaped op is NOT
+  child's own request DTO. The handler deserializes the BOUNDARY, so a
+  boundary-carrying child action takes the FULL boundary as its body (a partial
+  update-DTO patch is refused 422 with a field detail — the live gate's
+  hand-authored ownership probe pins both legs). A nested child entity's create-shaped op is NOT
   collection-level (the child-op plane owns that anchor) and keeps its seam,
   and so does an op carrying an op-level `when` guard (a guard evaluates over
   the LOADED record; a guard over the created record is the CRUD create's
