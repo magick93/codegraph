@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::ifml;
 use crate::ifml::IfmlQuerier;
 use crate::manifest;
-use crate::ordering::{all_domains_for_generation, compute_generation_order};
+use crate::ordering::all_domains_for_generation;
 use crate::output::{
     MigrationSeq, clean_generated_output, clean_stale_ifml_routes, generate_mod_files,
     generate_test_mod_files, is_api_entity_generator, prefix_migration_path, prune_entity_mod,
@@ -139,7 +139,10 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     let manifest_root_paths = build_manifest_roots(&ctx);
     let manifest_roots: Vec<&Path> = manifest_root_paths.iter().map(|p| p.as_path()).collect();
 
-    let order = compute_generation_order(ctx.db(), ctx.config).await?;
+    // The context computes the deterministic generation order once (the
+    // entity-type pre-registration needs the same title-claim precedence);
+    // the pipeline reuses it instead of re-querying the graph.
+    let order = ctx.generation_order();
     let mut report = report::GenerationReport::new();
 
     // Clean stale generated files from the output directory before generators
@@ -149,7 +152,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // them up and emit broken `pub mod` declarations.
     clean_generated_output(
         ctx.output_dir,
-        &order,
+        order,
         &ctx.config.defaults.type_suffix,
         ctx.workers_topology,
     );
@@ -193,8 +196,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // stays), monolith-only for the same reason.
     if entity_gens.iter().any(|g| g.name() == "ddl") {
         let collisions =
-            crate::consistency::check_entity_module_collisions(ctx.db(), ctx.config, &order)
-                .await?;
+            crate::consistency::check_entity_module_collisions(ctx.db(), ctx.config, order).await?;
         if !collisions.is_empty() {
             return Err(Error::Config(format!(
                 "entity-producing title collision: titles in one domain strip to the \
@@ -207,7 +209,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // Per-entity generators — run entities sequentially so this run's type
     // registry is populated for earlier entities before later entities
     // reference their types.
-    let entity_results = run_entity_phase(&ctx, &mut entity_gens, &parent_candidates, &order).await;
+    let entity_results = run_entity_phase(&ctx, &mut entity_gens, &parent_candidates, order).await;
 
     // Issue #460: the cross-plane consistency sweep — every table the
     // repository plane writes or reads must be created by the DDL plane.
@@ -220,7 +222,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         let divergences = crate::consistency::check_child_table_consistency(
             ctx.db(),
             ctx.config,
-            &order,
+            order,
             &parent_candidates,
         )
         .await?;
@@ -236,9 +238,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     write_entity_results(entity_results, &mut report)?;
 
     // Codelists are not entities — SQL migrations + Rust enums run separately.
-    run_codelist_generators(&ctx, &order, &mut report).await?;
+    run_codelist_generators(&ctx, order, &mut report).await?;
 
-    let domains_with_entities = all_domains_for_generation(ctx.config, &order);
+    let domains_with_entities = all_domains_for_generation(ctx.config, order);
     run_domain_phase(
         &ctx,
         &monolith_domain_gens,
@@ -248,7 +250,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     )
     .await?;
 
-    run_global_phase(&ctx, &global_gens, &order, &mut report).await?;
+    run_global_phase(&ctx, &global_gens, order, &mut report).await?;
 
     // Codelist Rust enum re-exports (the generated app re-exports from the
     // domain-types crate). Runs AFTER the global phase: the events plane
@@ -314,7 +316,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     // above already runs post-global.
     if ctx.workers_topology {
         let worker_codelist_gen = codelist::rust_enum::RustCodelistGenerator::new(ctx.output_dir);
-        for (domain, _entity_titles) in all_domains_for_generation(ctx.config, &order) {
+        for (domain, _entity_titles) in all_domains_for_generation(ctx.config, order) {
             let worker_base = ctx.output_dir.join("workers").join(&domain);
             match worker_codelist_gen
                 .generate_reexport_mod_for(ctx.db(), &worker_base, ctx.project)
@@ -338,7 +340,7 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
     }
 
     // Validate that every entity in the generation order has entity-specific files
-    report.validate_consistency(&order, &ctx.config.defaults.type_suffix);
+    report.validate_consistency(order, &ctx.config.defaults.type_suffix);
 
     // Generate mod.rs files for all directories under src/.
     write_mod_files(&ctx, &domains_with_entities, &mut report)?;

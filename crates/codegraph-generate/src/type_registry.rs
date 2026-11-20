@@ -19,7 +19,17 @@
 //!   generators directly (`HandlerGenerator::new(..)`), and the `new()`
 //!   constructors default to the ambient handle so that flow keeps
 //!   working. **The pipeline never reads it** — a pipeline run always uses
-//!   its own per-run handle.
+//!   its own per-run handle. This is a semantic change from pre-#746: a
+//!   consumer that calls [`init_type_registry`] or the ambient
+//!   [`register_type`] and then runs `driver::run` no longer gets those
+//!   registrations into the run (the deprecated `init_type_registry` is a
+//!   compile-only no-op, and the pipeline warns visibly when the ambient
+//!   registry is non-empty at the start of a run).
+//!
+//! Registration conflicts are **visible**: the first registration wins and
+//! a `warning: type-registry: …` line on stderr names both module paths,
+//! once per conflicting name ([`TypeRegistryHandle::conflict_messages`]
+//! keeps the same diagnostics programmatically).
 //!
 //! `InMemoryTypeRegistry` itself stays public and usable directly (tests
 //! build one and exercise `imports_needed`).
@@ -142,6 +152,19 @@ impl Default for InMemoryTypeRegistry {
 // Per-run handle + ambient compatibility shims
 // ---------------------------------------------------------------------------
 
+/// Conflict diagnostics recorded by one handle (issue #746 F2).
+///
+/// `reported` dedupes the VISIBLE warning to once per conflicting name — a
+/// registry that re-registers the same conflicting pair per entity would
+/// otherwise flood stderr. `messages` keeps every reported conflict so tests
+/// (and interested callers) can assert on the diagnostics instead of
+/// scraping stderr.
+#[derive(Default)]
+struct ConflictLog {
+    reported: std::collections::HashSet<String>,
+    messages: Vec<String>,
+}
+
 /// Cheap cloneable handle to one type registry (issue #746).
 ///
 /// The pipeline creates one per `run_generators_with_opts` and threads it
@@ -150,12 +173,18 @@ impl Default for InMemoryTypeRegistry {
 /// generator's registrations resolve in the handler generator of the same
 /// run, while a different run's handle is a different registry.
 #[derive(Clone)]
-pub struct TypeRegistryHandle(Arc<Mutex<InMemoryTypeRegistry>>);
+pub struct TypeRegistryHandle {
+    registry: Arc<Mutex<InMemoryTypeRegistry>>,
+    conflicts: Arc<Mutex<ConflictLog>>,
+}
 
 impl TypeRegistryHandle {
     /// An empty registry.
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(InMemoryTypeRegistry::new())))
+        Self {
+            registry: Arc::new(Mutex::new(InMemoryTypeRegistry::new())),
+            conflicts: Arc::new(Mutex::new(ConflictLog::default())),
+        }
     }
 
     /// An empty registry pre-seeded with the framework types
@@ -179,17 +208,29 @@ impl TypeRegistryHandle {
     ///
     /// Re-registering the same name with the same path is idempotent. A
     /// DIFFERENT path is a real modeling conflict: the first registration
-    /// wins and a warning names both paths (issue #746 — this used to be
-    /// swallowed silently, which let two apps in one process resolve each
-    /// other's modules).
+    /// wins and a **visible** `warning:` line names both module paths, once
+    /// per conflicting name (issue #746 — this used to be swallowed
+    /// silently, which let two apps in one process resolve each other's
+    /// modules). The message is also recorded on the handle
+    /// ([`Self::conflict_messages`]) so tests pin it without stderr scraping.
     pub fn register_type(&self, name: &str, module_path: Vec<String>) {
         let type_ref = TypeRef {
             name: name.to_string(),
             module_path,
         };
         let mut reg = self.lock();
-        if let Err(conflict) = reg.register(type_ref) {
-            tracing::warn!("type-registry conflict: {conflict}");
+        let Err(conflict) = reg.register(type_ref) else {
+            return;
+        };
+        drop(reg);
+        // Generation diagnostics use the repo's visible channel (`eprintln!`,
+        // the `ddd/design.rs` convention): `tracing::warn!` is invisible
+        // unless the consumer sets RUST_LOG (the CLI only installs a
+        // subscriber then).
+        let mut log = self.lock_conflicts();
+        if log.reported.insert(name.to_string()) {
+            eprintln!("warning: type-registry: {conflict}");
+            log.messages.push(conflict);
         }
     }
 
@@ -206,10 +247,22 @@ impl TypeRegistryHandle {
         }
     }
 
+    /// Conflict diagnostics recorded by this handle, one entry per
+    /// conflicting name (whether or not the handle was checked directly).
+    pub fn conflict_messages(&self) -> Vec<String> {
+        self.lock_conflicts().messages.clone()
+    }
+
     fn lock(&self) -> MutexGuard<'_, InMemoryTypeRegistry> {
         // A panic while holding the lock must not poison every later
         // generation in the process — the registry is best-effort metadata.
-        self.0
+        self.registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn lock_conflicts(&self) -> MutexGuard<'_, ConflictLog> {
+        self.conflicts
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -240,6 +293,30 @@ static AMBIENT_TYPE_REGISTRY: OnceLock<TypeRegistryHandle> = OnceLock::new();
 fn ambient_handle() -> &'static TypeRegistryHandle {
     AMBIENT_TYPE_REGISTRY.get_or_init(TypeRegistryHandle::new)
 }
+
+/// Number of registrations held by the AMBIENT registry, or `None` when it
+/// was never initialised.
+///
+/// The pipeline uses this to warn once per run when a caller seeded the
+/// ambient registry (the pre-#746 contract) — those registrations are
+/// deliberately invisible to pipeline runs, which thread their own handle.
+pub(crate) fn ambient_registration_count() -> Option<usize> {
+    AMBIENT_TYPE_REGISTRY
+        .get()
+        .map(|handle| handle.lock().map.len())
+}
+
+/// No-op retained for source compatibility (issue #746 F4).
+///
+/// Before #746 this reset the process-global registry at pipeline start.
+/// Pipeline runs now create a per-run [`TypeRegistryHandle`] and never read
+/// the ambient registry, so there is nothing to reset. Calling this still
+/// compiles, but it has no effect; registrations made through the free
+/// [`register_type`] shim do NOT reach a pipeline run.
+#[deprecated(
+    note = "no-op since #746: each pipeline run owns a per-run type registry; ambient registrations do not affect pipeline runs"
+)]
+pub fn init_type_registry() {}
 
 /// Register a type by name and module path in the AMBIENT registry.
 ///
@@ -541,6 +618,25 @@ mod tests {
         assert_eq!(
             registry.resolve_imports(&["SharedResponse".into()], &[]),
             vec!["use crate::domain::a::shared::dto_response::SharedResponse;"]
+        );
+        // F2: the conflict is VISIBLE (recorded), once per conflicting name —
+        // a repeat registration must not flood the diagnostics.
+        registry.register_type(
+            "SharedResponse",
+            ["crate", "domain", "c", "shared", "dto_response"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        let conflicts = registry.conflict_messages();
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "one entry per conflicting name: {conflicts:?}"
+        );
+        assert!(
+            conflicts[0].contains("crate::domain::a::shared::dto_response")
+                && conflicts[0].contains("crate::domain::b::shared::dto_response"),
+            "the diagnostic must name BOTH module paths: {conflicts:?}"
         );
     }
 
