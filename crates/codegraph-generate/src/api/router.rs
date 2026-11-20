@@ -149,6 +149,7 @@ pub struct RouterEntity {
 pub struct RouterGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
+    boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache,
 }
 
 /// Derive a named path parameter from a URL path segment.
@@ -214,6 +215,7 @@ pub(crate) fn calculate_nesting_depth(
 impl RouterGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
+            boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache::new(),
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
         }
@@ -351,7 +353,10 @@ impl DomainGenerator for RouterGenerator {
                     config,
                     domain,
                     title,
-                    &crate::ddd::service_ops::BodyRenderContext::from_project(project),
+                    // Free function (no generator instance): builds the index per
+                    // call. The monolith path above memoizes it per pass.
+                    &crate::ddd::service_ops::BodyRenderContext::from_project(project)
+                        .with_boundary_cache(self.boundaries.clone()),
                 )
                 .await
                 .map_err(|e| {
@@ -748,6 +753,8 @@ pub async fn build_router_context(
                 config,
                 domain,
                 title,
+                // Free function (no generator instance): the boundary index is
+                // rebuilt per call here; the monolith router path memoizes it.
                 &crate::ddd::service_ops::BodyRenderContext::from_project(project),
             )
             .await

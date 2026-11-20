@@ -69,11 +69,13 @@ pub struct HurlContractGenerator {
     /// the `RulesGenerator` runs, so the invariant-denied legs resolve
     /// their verdicts only under the same flag the handler uses.
     rules_guards: bool,
+    boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache,
 }
 
 impl HurlContractGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
+            boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache::new(),
             output_dir: output_dir.to_path_buf(),
             rules_guards: false,
         }
@@ -198,6 +200,10 @@ struct OpLeg {
 /// parameter (`{}` when the op declares none). Empty string ⇒ no body line.
 fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
     use crate::ddd::service_ops::ExecutionKind;
+    // Issue #767: a create-shaped op's body IS the modeled boundary object.
+    if let ExecutionKind::Create { plan } = &route.execution {
+        return plan.sample.to_string();
+    }
     let ExecutionKind::Body { plan } = &route.execution else {
         return String::new();
     };
@@ -418,6 +424,25 @@ fn state_aware_legs(
                     },
                 }
             }
+            // Issue #767: a payload carrying a REQUIRED entity reference
+            // cannot be seeded by a generated contract (the target row is not
+            // created here), so the leg would post the nil uuid and 500 —
+            // omit it and record the omission in the contract header.
+            ExecutionKind::Create { plan } if !plan.required_class_refs.is_empty() => continue,
+            // Issue #767: a create-shaped op is COLLECTION-level and answers
+            // 201 with the created record (the entity create's own contract).
+            ExecutionKind::Create { .. } => OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 201,
+                seam: false,
+                seam_reason: "collection-level create".to_string(),
+                wrong_state: false,
+                collection: true,
+                body: op_body_json(op),
+                ..Default::default()
+            },
             _ => OpLeg {
                 op_name: op.op_name.clone(),
                 service: op.service.clone(),
@@ -443,6 +468,7 @@ fn state_aware_legs(
                 op.execution,
                 ExecutionKind::Seam { .. }
                     | ExecutionKind::Body { .. }
+                    | ExecutionKind::Create { .. }
                     | ExecutionKind::ChildOp { .. }
             )
         {
@@ -514,22 +540,40 @@ fn child_action_legs(
     use crate::ddd::service_ops::ChildAction;
 
     let base = &op.service;
+    // Issue #767: when the operation declares a modeled INPUT boundary whose
+    // source class IS the child, the handler deserializes THAT type (its own
+    // `deny_unknown_fields`), not the child's generated request DTO — so the
+    // contract must send the boundary's sample, or every leg would 422 on a
+    // key the boundary does not declare.
+    let payload = op.execution.child_payload();
+    let payload_body = payload.map(|plan| plan.sample.to_string());
+    let add_body = payload_body
+        .clone()
+        .unwrap_or_else(|| child_bodies.0.to_string());
+    let save_body = payload_body.unwrap_or_else(|| child_bodies.1.to_string());
+    // A required entity reference in the boundary payload cannot be seeded by
+    // a generated contract (the target row is not created here), so a payload
+    // leg would post the nil uuid and 500 — the same rule the collection-level
+    // create leg follows. The ownership / unknown-field failure legs stay.
+    let payload_unseedable = payload.is_some_and(|plan| !plan.required_class_refs.is_empty());
     let mut legs = Vec::new();
     match action {
         ChildAction::Add => {
             let capture = format!("added_{}_id", op.snake);
-            legs.push(OpLeg {
-                op_name: op.op_name.clone(),
-                service: base.clone(),
-                snake: op.snake.clone(),
-                expect: 200,
-                body: child_bodies.0.to_string(),
-                collection: true,
-                capture: capture.clone(),
-                note: "aggregate child `add` — create-and-link under the parent".to_string(),
-                ..Default::default()
-            });
-            if read_back {
+            if !payload_unseedable {
+                legs.push(OpLeg {
+                    op_name: op.op_name.clone(),
+                    service: base.clone(),
+                    snake: op.snake.clone(),
+                    expect: 200,
+                    body: add_body.clone(),
+                    collection: true,
+                    capture: capture.clone(),
+                    note: "aggregate child `add` — create-and-link under the parent".to_string(),
+                    ..Default::default()
+                });
+            }
+            if read_back && !payload_unseedable {
                 legs.push(OpLeg {
                     op_name: format!("{} (read-back)", op.op_name),
                     service: base.clone(),
@@ -567,7 +611,7 @@ fn child_action_legs(
                     zero_uuid_parent_base(item_url_base),
                     op.snake
                 ),
-                body: child_bodies.0.to_string(),
+                body: add_body.clone(),
                 note: "failure leg: a bogus parent answers 404 through the parent \
                        load-or-404 — never a 500"
                     .to_string(),
@@ -575,15 +619,17 @@ fn child_action_legs(
             });
         }
         ChildAction::Save => {
-            legs.push(OpLeg {
-                op_name: op.op_name.clone(),
-                service: base.clone(),
-                snake: op.snake.clone(),
-                expect: 200,
-                body: child_bodies.1.to_string(),
-                note: "aggregate child `save` — update the parent-scoped element".to_string(),
-                ..Default::default()
-            });
+            if !payload_unseedable {
+                legs.push(OpLeg {
+                    op_name: op.op_name.clone(),
+                    service: base.clone(),
+                    snake: op.snake.clone(),
+                    expect: 200,
+                    body: save_body.clone(),
+                    note: "aggregate child `save` — update the parent-scoped element".to_string(),
+                    ..Default::default()
+                });
+            }
             legs.push(child_failure_leg(op));
         }
         ChildAction::Remove => {
@@ -659,6 +705,10 @@ struct ActionsContractCtx {
     create_asserts: &'static str,
     item_url_base: String,
     ops: Vec<OpLeg>,
+    /// Ops whose payload leg is omitted because the boundary carries a
+    /// REQUIRED entity reference (a generated contract cannot seed the target
+    /// row). Rendered in the header so the omission is never silent.
+    omitted_legs: Vec<String>,
     /// Whether the entity carries a lowered `.ddd` statement body (issue
     /// #662) — gates the body-plane doc line so a body-less model's contract
     /// stays byte-identical.
@@ -843,7 +893,8 @@ impl DomainGenerator for HurlContractGenerator {
                 config,
                 domain,
                 title,
-                &crate::ddd::service_ops::BodyRenderContext::from_project(project),
+                &crate::ddd::service_ops::BodyRenderContext::from_project(project)
+                    .with_boundary_cache(self.boundaries.clone()),
             )
             .await
             .map_err(codegraph_core::error::Error::Config)?;
@@ -870,6 +921,25 @@ impl DomainGenerator for HurlContractGenerator {
                             crate::ddd::service_ops::ExecutionKind::Body { .. }
                         )
                     }),
+                    omitted_legs: ops
+                        .iter()
+                        .filter(|op| match &op.execution {
+                            crate::ddd::service_ops::ExecutionKind::Create { plan } => {
+                                !plan.required_class_refs.is_empty()
+                            }
+                            crate::ddd::service_ops::ExecutionKind::ChildOp {
+                                payload: Some(plan),
+                                ..
+                            } => !plan.required_class_refs.is_empty(),
+                            _ => false,
+                        })
+                        .map(|op| {
+                            format!(
+                                "{} (payload carries a required entity reference)",
+                                op.op_name
+                            )
+                        })
+                        .collect(),
                     ops: legs,
                 };
                 files.push(GeneratedFile {
@@ -1763,6 +1833,163 @@ entities = ["TaskType"]
         assert!(
             update.join("\n").contains("\"status\": \"Posted\""),
             "the PUT roundtrip moves to the second enum code"
+        );
+    }
+    /// Issue #767: a child op that binds a modeled boundary sends THE
+    /// BOUNDARY's sample — its own `deny_unknown_fields` would reject the
+    /// child's generated request-DTO body whenever the two shapes differ, so
+    /// the contract must follow the handler's binding, not the entity's.
+    #[test]
+    fn child_op_boundary_payload_drives_the_contract_body() {
+        let plan = crate::ddd::service_ops::BoundaryPayloadPlan {
+            dto_prefix: "Create".to_string(),
+            extraction: String::new(),
+            construct: String::new(),
+            defaulted: Vec::new(),
+            request_body: None,
+            sample: serde_json::json!({"marker": "boundary-shape"}),
+            required_class_refs: Vec::new(),
+        };
+        let route = crate::ddd::service_ops::ServiceOpRoute {
+            service: "PayRunType".to_string(),
+            op_name: "addLine".to_string(),
+            snake: "add_line".to_string(),
+            fn_name: "service_op_add_line".to_string(),
+            capabilities: Vec::new(),
+            authorize_fn: None,
+            execution: crate::ddd::service_ops::ExecutionKind::ChildOp {
+                action: crate::ddd::service_ops::ChildAction::Add,
+                feature: "lines".to_string(),
+                child_class: "payroll.PayRunLineType".to_string(),
+                read_back: true,
+                parent_load: None,
+                payload: Some(plan),
+            },
+            record_load: false,
+            authorize_async: false,
+            injected_guard: None,
+            invariant_block: None,
+            throws: Vec::new(),
+            raise_responses: Vec::new(),
+        };
+        let legs = child_action_legs(
+            &route,
+            crate::ddd::service_ops::ChildAction::Add,
+            true,
+            ("{\"entity_body\":true}", "{}"),
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line",
+        );
+        let add = legs.first().expect("the add leg");
+        assert!(
+            add.body.contains("boundary-shape"),
+            "the boundary sample must drive the body: {}",
+            add.body
+        );
+        assert!(
+            !add.body.contains("entity_body"),
+            "the child's request-DTO body must NOT be sent beside a boundary: {}",
+            add.body
+        );
+    }
+    /// Issue #767 review: a create-shaped payload whose boundary carries a
+    /// REQUIRED entity reference emits NO create leg (the contract cannot seed
+    /// an arbitrary target row — the leg would post the nil uuid and 500).
+    #[test]
+    fn create_payload_with_a_required_entity_ref_emits_no_create_leg() {
+        let plan = crate::ddd::service_ops::BoundaryPayloadPlan {
+            dto_prefix: "Create".to_string(),
+            extraction: String::new(),
+            construct: String::new(),
+            defaulted: Vec::new(),
+            request_body: None,
+            sample: serde_json::json!({"author_id": "00000000-0000-0000-0000-000000000000"}),
+            required_class_refs: vec!["author_id".to_string()],
+        };
+        let route = crate::ddd::service_ops::ServiceOpRoute {
+            service: "Catalog".to_string(),
+            op_name: "registerBook".to_string(),
+            snake: "register_book".to_string(),
+            fn_name: "service_op_register_book".to_string(),
+            capabilities: Vec::new(),
+            authorize_fn: None,
+            execution: crate::ddd::service_ops::ExecutionKind::Create { plan },
+            record_load: false,
+            authorize_async: false,
+            injected_guard: None,
+            invariant_block: None,
+            throws: Vec::new(),
+            raise_responses: Vec::new(),
+        };
+        let legs = state_aware_legs(&[route], ("{}", "{}"), "{{base_url}}/api/v1/library/book");
+        assert!(
+            legs.iter().all(|leg| leg.expect != 201),
+            "no create leg may be emitted for an unseedable payload: {names:?}",
+            names = legs
+                .iter()
+                .map(|l| (l.op_name.as_str(), l.expect))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The same rule for an aggregate child `add`: the payload-driven success
+    /// and read-back legs are omitted, while the ownership / unknown-field
+    /// failure legs stay (they do not need the payload to be valid).
+    #[test]
+    fn child_payload_with_a_required_entity_ref_keeps_the_failure_footprint() {
+        let plan = crate::ddd::service_ops::BoundaryPayloadPlan {
+            dto_prefix: "Create".to_string(),
+            extraction: String::new(),
+            construct: String::new(),
+            defaulted: Vec::new(),
+            request_body: None,
+            sample: serde_json::json!({"line_id": "x", "approver_id": "00000000-0000-0000-0000-000000000000"}),
+            required_class_refs: vec!["approver_id".to_string()],
+        };
+        let route = crate::ddd::service_ops::ServiceOpRoute {
+            service: "PayRunType".to_string(),
+            op_name: "addLine".to_string(),
+            snake: "add_line".to_string(),
+            fn_name: "service_op_add_line".to_string(),
+            capabilities: Vec::new(),
+            authorize_fn: None,
+            execution: crate::ddd::service_ops::ExecutionKind::ChildOp {
+                action: crate::ddd::service_ops::ChildAction::Add,
+                feature: "lines".to_string(),
+                child_class: "payroll.PayRunLineType".to_string(),
+                read_back: true,
+                parent_load: None,
+                payload: Some(plan),
+            },
+            record_load: false,
+            authorize_async: false,
+            injected_guard: None,
+            invariant_block: None,
+            throws: Vec::new(),
+            raise_responses: Vec::new(),
+        };
+        let legs = child_action_legs(
+            &route,
+            crate::ddd::service_ops::ChildAction::Add,
+            true,
+            ("{\"entity_body\":true}", "{}"),
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line",
+        );
+        assert!(
+            legs.iter().all(|leg| leg.expect != 200),
+            "an unseedable payload emits no 200 leg: {names:?}",
+            names = legs
+                .iter()
+                .map(|l| (l.op_name.as_str(), l.expect))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            legs.iter()
+                .any(|leg| leg.expect == 404 && leg.full_url.contains("00000000")),
+            "the bogus-parent 404 leg (which never reads the body) stays: {names:?}",
+            names = legs
+                .iter()
+                .map(|l| (l.op_name.as_str(), l.expect))
+                .collect::<Vec<_>>()
         );
     }
 }

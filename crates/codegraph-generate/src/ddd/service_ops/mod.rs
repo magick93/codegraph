@@ -89,8 +89,9 @@ mod tests;
 pub use execution::RouteShape;
 pub use routes::{BodyRenderContext, routes_for_entity};
 pub use types::{
-    ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard, InjectedGuard, ServiceOpRoute,
-    ServiceOpState, ServiceOpTransition, StateName, TriggerName, WireKey,
+    BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionKind, FreshFixtureGuard,
+    InjectedGuard, ServiceOpRoute, ServiceOpState, ServiceOpTransition, StateName, TriggerName,
+    WireKey,
 };
 pub use validation::{
     body_refusals, child_parent_load_refusals, dead_surface_warnings, guard_refusals,

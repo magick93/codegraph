@@ -1384,6 +1384,7 @@ async fn collection_add_plans_ok_then_not_found_legs() {
             child_class: "payroll.PayRunLineType".to_string(),
             read_back: true,
             parent_load: None,
+            payload: None,
         },
         record_load: false,
         authorize_async: false,

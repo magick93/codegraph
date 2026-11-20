@@ -1716,6 +1716,22 @@ async fn child_scoped_operations_lower_to_nested_child_action_routes() {
             && !handler.contains("child operation `saveLine`"),
         "the modeled child actions must lower, not seam:\n{handler}"
     );
+    // Issue #767: the fixture's `PayRunLineDraft` boundary is a CHILD carrier
+    // whose source class IS this child, so `add` constructs the child's
+    // Create request from it and `save` its Update request — no longer the
+    // `child-dto-payload` WARN, and no longer the child's own wire DTO bound
+    // raw.
+    assert!(
+        handler.contains("let item = CreatePayRunLineRequest {")
+            && handler.contains("line_id: payload.line_id,")
+            && handler.contains("quantity: payload.quantity,"),
+        "child `add` must construct the child's Create request from the boundary:\n{handler}"
+    );
+    assert!(
+        handler.contains("UpdatePayRunLineRequest {")
+            && handler.contains("line_id: Some(payload.line_id),"),
+        "child `save` must construct the child's Update request from the boundary:\n{handler}"
+    );
     // The RETAINED cross-aggregate seam carries the improved message naming
     // the modeling construct (acceptance 2) — it rides the ROOT handler.
     let root_handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));

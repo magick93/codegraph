@@ -1,0 +1,27 @@
+import "optional.mox";
+
+application Library {
+    base nz.example.library
+    module catalog {
+        entity Book scaffold repository BookRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        dto NewBookDraft {
+            String title;
+            String isbn;
+        }
+
+        service Catalog {
+            inject BookRepository;
+            // The create-shaped predicate matches (returns the bound entity,
+            // no body, no delegation, one modeled boundary parameter) but the
+            // parameter is `0..1`: the construction would read fields off an
+            // `Option`. Generation must REFUSE by name, before any tree.
+            Book registerBook(NewBookDraft[0..1] input);
+        }
+    }
+}

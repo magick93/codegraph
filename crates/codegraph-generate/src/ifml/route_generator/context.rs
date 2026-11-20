@@ -2303,10 +2303,65 @@ pub(super) async fn page_component_context(
     // ...)`) render an action-control button POSTing the conventional
     // `{base}/{id}/actions/{op}` route. Gated on the component's API
     // surface + the view's id param — row-scoped op routes stay deferred.
+    // Issue #767: a create-shaped service op is COLLECTION-level, and THIS
+    // surface is item-addressed — a button bound to one would POST
+    // `/{id}/actions/{op}` at a route that no longer exists (the #559
+    // dead-button class). Skip those ops until the POM/action surface gains a
+    // collection-add mode (the recorded #661 follow-up). A refusal here is
+    // already a hard error in the validation pass, so swallowing it only
+    // avoids a duplicate diagnostic.
+    let collection_level_ops: std::collections::HashSet<String> = {
+        let has_actions = events
+            .iter()
+            .any(|e| e.action_kind == "action" && !e.target.is_empty());
+        match (c.entity.as_deref(), has_actions) {
+            (Some(entity), true) => {
+                let domain = db
+                    .get_schema(entity)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|schema| schema.domain);
+                match domain {
+                    Some(domain) => crate::ddd::service_ops::routes_for_entity(
+                        db,
+                        config,
+                        &domain,
+                        entity,
+                        &crate::ddd::service_ops::BodyRenderContext {
+                            dto_casing,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|route| {
+                        matches!(
+                            route.execution,
+                            crate::ddd::service_ops::ExecutionKind::Create { .. }
+                        )
+                    })
+                    // `.ifml` action targets are PascalCase while the modeled
+                    // op is not (`action("RegisterBook")` → `registerBook`), and
+                    // the binding convention is ASCII-case-insensitive — so
+                    // the membership probe normalizes both sides.
+                    .map(|route| action_target_key(&route.op_name))
+                    .collect(),
+                    None => Default::default(),
+                }
+            }
+            _ => Default::default(),
+        }
+    };
     let action_buttons: Vec<RenderActionButton> = if api.is_some() && id_param.is_some() {
         events
             .iter()
-            .filter(|e| e.action_kind == "action" && !e.target.is_empty())
+            .filter(|e| {
+                e.action_kind == "action"
+                    && !e.target.is_empty()
+                    && !collection_level_ops.contains(&codegraph_naming::to_snake_case(&e.target))
+            })
             .map(|e| {
                 let op_snake = codegraph_naming::to_snake_case(&e.target);
                 let op_kebab = codegraph_naming::to_kebab_case(&e.target);
@@ -2621,5 +2676,32 @@ impl FetchState {
             }
         }
         claim
+    }
+}
+
+/// The one spelling an `.ifml` action target and a modeled op name are
+/// compared by (issue #767 review): `.ifml` authors PascalCase targets
+/// (`action("RegisterBook")`) while the modeled op is `registerBook`, and the
+/// binding convention is ASCII-case-insensitive — so a raw set probe would
+/// miss and re-emit a dead button.
+pub(super) fn action_target_key(name: &str) -> String {
+    codegraph_naming::to_snake_case(name)
+}
+
+#[cfg(test)]
+mod action_target_key_tests {
+    use super::action_target_key;
+
+    #[test]
+    fn ifml_pascal_case_targets_match_the_modeled_op_spelling() {
+        assert_eq!(
+            action_target_key("RegisterBook"),
+            action_target_key("registerBook")
+        );
+        assert_eq!(action_target_key("Inspect"), action_target_key("inspect"));
+        assert_ne!(
+            action_target_key("RegisterBook"),
+            action_target_key("ImportBook")
+        );
     }
 }

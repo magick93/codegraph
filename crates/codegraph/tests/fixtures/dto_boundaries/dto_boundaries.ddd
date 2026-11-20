@@ -25,12 +25,30 @@ application Library {
             minutes = playLength / 60;
         }
 
+        // Issue #767: a standalone input boundary that IS the collection-level
+        // create body. `registerBook` is abstract (no statement body, no
+        // delegation), returns the bound entity, and takes exactly one input
+        // boundary — the create-shaped predicate. The two negative pins below
+        // keep their pre-#767 lowerings: `importBook` takes a PRIMITIVE
+        // parameter (still a 501 seam) and `archive` delegates to the
+        // repository `save` with no parameter list — which the pinned
+        // compiler REQUIRES of a delegating member, making the predicate's
+        // `save`-delegation arm reachable only through a hand-built artifact.
+        dto NewBookDraft {
+            String title;
+            String isbn;
+            int playLength;
+        }
+
         service Catalog {
             inject BookRepository;
             Book createBook(NewBookInput input) throws NotFound => BookRepository {
                 let book = self.findById("current") else error NotFound("Book", "current");
                 return book;
             }
+            Book registerBook(NewBookDraft input);
+            Book importBook(String title);
+            archive => BookRepository.save;
             protected BookSummary summarise(Book book);
         }
     }

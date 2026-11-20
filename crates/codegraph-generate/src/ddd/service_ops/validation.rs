@@ -231,12 +231,33 @@ pub async fn body_refusals(
     config: &DomainConfig,
 ) -> Result<Vec<String>, GraphError> {
     let models = db.get_ddd_models().await?;
-    if models.iter().all(|model| {
+    // Issue #767: a create-shaped op declares NO statement body, so the
+    // body-only gate would skip the very plane whose refusals must fail the
+    // run BEFORE any tree is written. Any op carrying a modeled-boundary
+    // parameter is relevant too (body params, the create body, the child
+    // planes), and a child op's payload maps through the same code.
+    let relevant = |op: &codegraph_core::types::DddServiceOperation| {
+        !op.bodies.is_empty()
+            || op.params.iter().any(|param| {
+                crate::ddd::signature::signature_type(&param.type_json)
+                    .dto_name()
+                    .is_some()
+            })
+    };
+    let child_ops_exist = models.iter().any(|model| {
         model
-            .services
+            .designs
             .iter()
-            .all(|service| service.operations.iter().all(|op| op.bodies.is_empty()))
-    }) {
+            .any(|design| !design.child_operations.is_empty())
+    });
+    if !child_ops_exist
+        && models.iter().all(|model| {
+            model
+                .services
+                .iter()
+                .all(|service| service.operations.iter().all(|op| !relevant(op)))
+        })
+    {
         return Ok(Vec::new());
     }
     let type_suffix = config.defaults.type_suffix.clone();
@@ -244,10 +265,24 @@ pub async fn body_refusals(
     for model in &models {
         for service in &model.services {
             for op in &service.operations {
-                if op.bodies.is_empty() || op.is_protected {
+                if op.is_protected || !relevant(op) {
                     continue;
                 }
                 if let Some(title) = bind_entity(model, op, db, &type_suffix).await {
+                    titles.insert(title);
+                }
+            }
+        }
+        // A child op is declared on the ROOT's design but lowers into the
+        // CHILD's routes; the child title is what `routes_for_entity` must
+        // walk to surface a payload refusal (an `add`-only child is covered
+        // by `check_child_add_parent_load`, a `save`-only child would not be).
+        for design in &model.designs {
+            for op in &design.child_operations {
+                let Some(scope) = op.child_scope.as_ref() else {
+                    continue;
+                };
+                if let Some(title) = schema_title_for_class(db, &scope.class, &type_suffix).await {
                     titles.insert(title);
                 }
             }

@@ -889,16 +889,33 @@ Authorization: Bearer {{api_key}}
 
 HTTP 200
 
-# `save` under A — an item-level update
+# `save` under A — an item-level update. Since issue #767 the child op's
+# declared payload IS the modeled `PayRunLineDraft` boundary, so the body is a
+# FULL boundary (its `lineId` member is required) rather than a partial
+# update-DTO patch — and the mapped field really lands.
 POST {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{child_a}}/actions/save_line
 Authorization: Bearer {{api_key}}
 {
+  "line_id": "ws661-saved-line",
   "quantity": 7
 }
 
 HTTP 200
 [Asserts]
 jsonpath "$.data.quantity" == 7
+jsonpath "$.data.line_id" == "ws661-saved-line"
+
+# ... and a PARTIAL body is refused by the boundary's own deserialization with
+# the DTO plane's 422 + field detail (never a silent patch of the old row).
+POST {{base_url}}/api/v1/payroll/pay-run/{{parent_a}}/pay-run-line/{{child_a}}/actions/save_line
+Authorization: Bearer {{api_key}}
+{
+  "quantity": 9
+}
+
+HTTP 422
+[Asserts]
+jsonpath "$.error.code" == "VALIDATION_ERROR"
 
 # parent ownership: parent B cannot read the child
 GET {{base_url}}/api/v1/payroll/pay-run/{{parent_b}}/pay-run-line/{{child_a}}

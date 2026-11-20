@@ -146,6 +146,7 @@ pub struct ApiCatalogDomain {
 
 pub struct OpenApiGenerator {
     output_dir: PathBuf,
+    boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache,
 }
 
 /// The media route surface an entity DOCUMENTS (issue #704): the publisher's
@@ -172,6 +173,7 @@ async fn resolve_media_surface(
 impl OpenApiGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
+            boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache::new(),
             output_dir: output_dir.to_path_buf(),
         }
     }
@@ -229,7 +231,8 @@ impl GlobalGenerator for OpenApiGenerator {
                 config,
                 &entry.domain,
                 &entry.schema_title,
-                &crate::ddd::service_ops::BodyRenderContext::from_project(project),
+                &crate::ddd::service_ops::BodyRenderContext::from_project(project)
+                    .with_boundary_cache(self.boundaries.clone()),
             )
             .await
             .map_err(codegraph_core::error::Error::Config)?

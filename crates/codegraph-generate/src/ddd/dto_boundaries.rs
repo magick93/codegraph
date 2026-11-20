@@ -96,6 +96,13 @@ pub struct DtoBoundaryIndex {
     snake_samples: BTreeMap<String, serde_json::Value>,
     /// Minimal valid INPUT bodies in the camelCase wire contract.
     camel_samples: BTreeMap<String, serde_json::Value>,
+    /// The `.ddd` module file stem each boundary lives in (the generated
+    /// `dto/{module}` path segment).
+    module_of: BTreeMap<String, String>,
+    /// Boundaries whose sample is NOT wire-valid: some member's codelist
+    /// declares zero values upstream, so the generated enum has no variants
+    /// and no JSON value can deserialize into it (issue #767 review).
+    invalid_samples: BTreeSet<String>,
 }
 
 impl DtoBoundaryIndex {
@@ -108,18 +115,15 @@ impl DtoBoundaryIndex {
             .flat_map(|model| model.dto_shapes.iter())
             .map(|shape| (shape.name.clone(), shape.clone()))
             .collect();
-        let mut index = Self {
+        let module_of = shapes
+            .values()
+            .map(|s| (s.name.clone(), codegraph_naming::to_snake_case(&s.module)))
+            .collect();
+        Self {
             shapes,
+            module_of,
             ..Default::default()
-        };
-        let names: Vec<String> = index.shapes.keys().cloned().collect();
-        for name in names {
-            for camel in [false, true] {
-                let sample = blocking_sample(&index.shapes, &name, camel, None, 0);
-                index.store_sample(&name, camel, sample);
-            }
         }
-        index
     }
 
     /// Build the index with graph-backed samples (codelist values resolved
@@ -134,18 +138,28 @@ impl DtoBoundaryIndex {
             .flat_map(|model| model.dto_shapes.iter())
             .map(|shape| (shape.name.clone(), shape.clone()))
             .collect();
+        let module_of = shapes
+            .values()
+            .map(|s| (s.name.clone(), codegraph_naming::to_snake_case(&s.module)))
+            .collect();
         let mut index = Self {
             shapes,
+            module_of,
             ..Default::default()
         };
         let names: Vec<String> = index.shapes.keys().cloned().collect();
         for name in names {
+            let mut valid = true;
             for camel in [false, true] {
-                let sample = index
+                let (sample, sample_valid) = index
                     .graph_sample(&name, camel, db, config, 0)
                     .await
-                    .unwrap_or(serde_json::Value::Null);
+                    .unwrap_or((serde_json::Value::Null, true));
+                valid &= sample_valid;
                 index.store_sample(&name, camel, sample);
+            }
+            if !valid {
+                index.invalid_samples.insert(name);
             }
         }
         Ok(index)
@@ -169,6 +183,9 @@ impl DtoBoundaryIndex {
         }
     }
 
+    /// One minimal INPUT body plus whether every value in it is WIRE-VALID
+    /// (issue #767 review: a codelist declaring zero values generates an enum
+    /// with no variants, so no sample can deserialize).
     async fn graph_sample(
         &self,
         name: &str,
@@ -176,11 +193,12 @@ impl DtoBoundaryIndex {
         db: &dyn GraphQuerier,
         config: &DomainConfig,
         depth: usize,
-    ) -> std::result::Result<serde_json::Value, codegraph_core::error::GraphError> {
+    ) -> std::result::Result<(serde_json::Value, bool), codegraph_core::error::GraphError> {
         let Some(shape) = self.shapes.get(name) else {
-            return Ok(serde_json::Value::Null);
+            return Ok((serde_json::Value::Null, true));
         };
         let mut object = serde_json::Map::new();
+        let mut valid = true;
         for member in &shape.members {
             if member.kind == "derive" {
                 continue;
@@ -197,40 +215,46 @@ impl DtoBoundaryIndex {
             {
                 continue;
             }
-            let Ok(one) = async {
+            let Ok((one, member_valid)) = async {
                 use crate::ddd::signature::{DddSignatureType, signature_type};
                 match signature_type(&member.type_json) {
                     DddSignatureType::Domain(phero_ir::TypeRef::Primitive(primitive)) => {
-                        Ok(primitive_sample(&primitive))
+                        Ok((primitive_sample(&primitive), true))
                     }
-                    DddSignatureType::Domain(phero_ir::TypeRef::Class { name, .. }) => {
-                        Ok(class_sample(db, config, &name).await)
+                    DddSignatureType::Domain(phero_ir::TypeRef::Class { .. }) => {
+                        Ok((class_sample(), true))
                     }
                     DddSignatureType::Domain(phero_ir::TypeRef::Enum { name, .. })
                     | DddSignatureType::Domain(phero_ir::TypeRef::Vocabulary { name, .. }) => {
                         let values = db.get_enum_values(&name).await?;
-                        Ok(values
-                            .first()
-                            .map(|v| serde_json::json!(v.value))
-                            .unwrap_or(serde_json::json!("contract-sample")))
+                        // Zero declared values ⇒ no variant can deserialize.
+                        let valid = !values.is_empty();
+                        Ok((
+                            values
+                                .first()
+                                .map(|v| serde_json::json!(v.value))
+                                .unwrap_or(serde_json::json!("contract-sample")),
+                            valid,
+                        ))
                     }
                     DddSignatureType::Domain(phero_ir::TypeRef::Datatype { name, .. }) => {
-                        Ok(named_sample(&name))
+                        Ok((named_sample(&name), true))
                     }
-                    DddSignatureType::Domain(_) => Ok(serde_json::json!("contract-sample")),
+                    DddSignatureType::Domain(_) => Ok((serde_json::json!("contract-sample"), true)),
                     DddSignatureType::Dto(nested) => {
                         if depth >= 4 || nested == shape.name {
-                            return Ok(serde_json::json!({}));
+                            return Ok((serde_json::json!({}), true));
                         }
                         Box::pin(self.graph_sample(&nested, camel, db, config, depth + 1)).await
                     }
-                    DddSignatureType::Unresolvable(_) => Ok(serde_json::Value::Null),
+                    DddSignatureType::Unresolvable(_) => Ok((serde_json::Value::Null, true)),
                 }
             }
             .await
             else {
                 continue;
             };
+            valid &= member_valid;
             let value = match multiplicity.as_ref() {
                 Some(m) if m.is_many() && m.lower == 0 => serde_json::json!([]),
                 Some(m) if m.is_many() => serde_json::json!([one]),
@@ -238,7 +262,24 @@ impl DtoBoundaryIndex {
             };
             object.insert(wire_key(&member.name, camel), value);
         }
-        Ok(serde_json::Value::Object(object))
+        Ok((serde_json::Value::Object(object), valid))
+    }
+
+    /// Every boundary by name (the member-type resolver's shape set).
+    pub(crate) fn shape_map(&self) -> &BTreeMap<String, DddDtoShapeNode> {
+        &self.shapes
+    }
+
+    /// The `.ddd` module file stem each boundary lives in.
+    pub(crate) fn module_of(&self) -> &BTreeMap<String, String> {
+        &self.module_of
+    }
+
+    /// `false` when the boundary's minimal body cannot be represented at all
+    /// (a member codelist declares zero values — no enum variant exists).
+    #[must_use]
+    pub fn sample_is_wire_valid(&self, name: &str) -> bool {
+        !self.invalid_samples.contains(name)
     }
 
     /// The boundary with this name, when the model declares one.
@@ -256,6 +297,64 @@ impl DtoBoundaryIndex {
         self.shapes.is_empty()
     }
 
+    /// Sync sample builder over bare shapes (no graph): codelist values fall back
+    /// to a string, nested boundaries recurse with a depth guard.
+    #[cfg(test)]
+    fn blocking_sample(
+        shapes: &BTreeMap<String, DddDtoShapeNode>,
+        name: &str,
+        camel: bool,
+        depth: usize,
+    ) -> serde_json::Value {
+        let Some(shape) = shapes.get(name) else {
+            return serde_json::Value::Null;
+        };
+        let mut object = serde_json::Map::new();
+        for member in &shape.members {
+            if member.kind == "derive" {
+                continue;
+            }
+            let multiplicity = member.multiplicity_json.as_ref().and_then(|json| {
+                serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok()
+            });
+            if multiplicity
+                .as_ref()
+                .is_some_and(|m| m.lower == 0 && !m.is_many())
+            {
+                continue;
+            }
+            use crate::ddd::signature::{DddSignatureType, signature_type};
+            let one = match signature_type(&member.type_json) {
+                DddSignatureType::Domain(phero_ir::TypeRef::Primitive(primitive)) => {
+                    primitive_sample(&primitive)
+                }
+                DddSignatureType::Domain(phero_ir::TypeRef::Class { .. }) => {
+                    serde_json::json!("00000000-0000-0000-0000-000000000000")
+                }
+                DddSignatureType::Domain(phero_ir::TypeRef::Datatype { name, .. }) => {
+                    named_sample(&name)
+                }
+                DddSignatureType::Domain(_) | DddSignatureType::Unresolvable(_) => {
+                    serde_json::json!("contract-sample")
+                }
+                DddSignatureType::Dto(nested) => {
+                    if depth >= 4 || nested == shape.name {
+                        serde_json::json!({})
+                    } else {
+                        Self::blocking_sample(shapes, &nested, camel, depth + 1)
+                    }
+                }
+            };
+            let value = match multiplicity.as_ref() {
+                Some(m) if m.is_many() && m.lower == 0 => serde_json::json!([]),
+                Some(m) if m.is_many() => serde_json::json!([one]),
+                _ => one,
+            };
+            object.insert(wire_key(&member.name, camel), value);
+        }
+        serde_json::Value::Object(object)
+    }
+
     /// A direct index over shapes — crate-internal unit-test constructor.
     #[cfg(test)]
     pub(crate) fn for_tests(shapes: Vec<DddDtoShapeNode>) -> Self {
@@ -270,7 +369,7 @@ impl DtoBoundaryIndex {
         let names: Vec<String> = index.shapes.keys().cloned().collect();
         for name in names {
             for camel in [false, true] {
-                let sample = blocking_sample(&index.shapes, &name, camel, None, 0);
+                let sample = Self::blocking_sample(&index.shapes, &name, camel, 0);
                 index.store_sample(&name, camel, sample);
             }
         }
@@ -329,72 +428,8 @@ fn named_sample(name: &str) -> serde_json::Value {
 /// A class-reference sample: an entity ref is the FK id; an unresolvable
 /// class is still a Uuid (generation refuses non-entity refs, so only an
 /// entity can reach a contract).
-async fn class_sample(
-    db: &dyn GraphQuerier,
-    config: &DomainConfig,
-    class: &str,
-) -> serde_json::Value {
-    let _ = (db, config, class);
+fn class_sample() -> serde_json::Value {
     serde_json::json!("00000000-0000-0000-0000-000000000000")
-}
-
-/// Sync sample builder over bare shapes (no graph): codelist values fall back
-/// to a string, nested boundaries recurse with a depth guard.
-fn blocking_sample(
-    shapes: &BTreeMap<String, DddDtoShapeNode>,
-    name: &str,
-    camel: bool,
-    _db: Option<&dyn GraphQuerier>,
-    depth: usize,
-) -> serde_json::Value {
-    let Some(shape) = shapes.get(name) else {
-        return serde_json::Value::Null;
-    };
-    let mut object = serde_json::Map::new();
-    for member in &shape.members {
-        if member.kind == "derive" {
-            continue;
-        }
-        let multiplicity = member
-            .multiplicity_json
-            .as_ref()
-            .and_then(|json| serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok());
-        if multiplicity
-            .as_ref()
-            .is_some_and(|m| m.lower == 0 && !m.is_many())
-        {
-            continue;
-        }
-        use crate::ddd::signature::{DddSignatureType, signature_type};
-        let one = match signature_type(&member.type_json) {
-            DddSignatureType::Domain(phero_ir::TypeRef::Primitive(primitive)) => {
-                primitive_sample(&primitive)
-            }
-            DddSignatureType::Domain(phero_ir::TypeRef::Class { .. }) => {
-                serde_json::json!("00000000-0000-0000-0000-000000000000")
-            }
-            DddSignatureType::Domain(phero_ir::TypeRef::Datatype { name, .. }) => {
-                named_sample(&name)
-            }
-            DddSignatureType::Domain(_) | DddSignatureType::Unresolvable(_) => {
-                serde_json::json!("contract-sample")
-            }
-            DddSignatureType::Dto(nested) => {
-                if depth >= 4 || nested == shape.name {
-                    serde_json::json!({})
-                } else {
-                    blocking_sample(shapes, &nested, camel, _db, depth + 1)
-                }
-            }
-        };
-        let value = match multiplicity.as_ref() {
-            Some(m) if m.is_many() && m.lower == 0 => serde_json::json!([]),
-            Some(m) if m.is_many() => serde_json::json!([one]),
-            _ => one,
-        };
-        object.insert(wire_key(&member.name, camel), value);
-    }
-    serde_json::Value::Object(object)
 }
 
 /// Resolution context for one boundary file: the sibling shapes a member can
@@ -404,10 +439,56 @@ struct MemberLookup<'a> {
     db: &'a dyn GraphQuerier,
     config: &'a DomainConfig,
     module_file: &'a str,
-    shape_by_name: &'a BTreeMap<String, &'a DddDtoShapeNode>,
+    shape_by_name: &'a BTreeMap<String, DddDtoShapeNode>,
     module_of: &'a BTreeMap<String, String>,
     codelist_imports: &'a mut BTreeSet<String>,
     boundary_imports: &'a mut BTreeMap<(String, String), ()>,
+}
+
+/// A per-generation-pass memo for the boundary index (issue #767 review).
+///
+/// `routes_for_entity` resolves the index — including the graph-backed
+/// codelist samples — for every entity it is called for, and a run calls it
+/// once per entity per generator. The memo lives on the GENERATOR instance
+/// (built once per run), never in process state: the graph is immutable
+/// during generation, so first-read-wins is as safe here as the #746 per-run
+/// type registry.
+#[derive(Clone, Default)]
+pub struct BoundaryIndexCache {
+    cell: std::sync::Arc<tokio::sync::Mutex<Option<std::sync::Arc<DtoBoundaryIndex>>>>,
+}
+
+impl std::fmt::Debug for BoundaryIndexCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BoundaryIndexCache")
+    }
+}
+
+impl BoundaryIndexCache {
+    /// A fresh, empty memo.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The index for this generation pass, building it on first use.
+    ///
+    /// # Errors
+    /// The graph read failure (a broken graph is a hard generation error).
+    pub async fn get(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> std::result::Result<std::sync::Arc<DtoBoundaryIndex>, codegraph_core::error::GraphError>
+    {
+        let mut guard = self.cell.lock().await;
+        if let Some(index) = guard.as_ref() {
+            return Ok(std::sync::Arc::clone(index));
+        }
+        let index = std::sync::Arc::new(DtoBoundaryIndex::from_graph(db, config).await?);
+        *guard = Some(std::sync::Arc::clone(&index));
+        Ok(index)
+    }
 }
 
 /// Generates the modeled DTO boundaries into the domain-types crate.
@@ -475,8 +556,12 @@ impl GlobalGenerator for DddDtoBoundariesGenerator {
             .iter()
             .map(|s| (s.name.clone(), codegraph_naming::to_snake_case(&s.module)))
             .collect();
-        let shape_by_name: BTreeMap<String, &DddDtoShapeNode> =
-            shapes.iter().map(|s| (s.name.clone(), *s)).collect();
+        // The member-type resolver takes an owned shape map (one type for
+        // both its callers — issue #767).
+        let shape_by_name: BTreeMap<String, DddDtoShapeNode> = shapes
+            .iter()
+            .map(|s| (s.name.clone(), (*s).clone()))
+            .collect();
 
         let src_dir = &self.src_dir;
         let mut files = Vec::new();
@@ -612,91 +697,148 @@ impl DddDtoBoundariesGenerator {
         member: &codegraph_core::types::DddDtoMember,
         lookup: &mut MemberLookup<'_>,
     ) -> Result<String> {
-        use crate::ddd::signature::{DddSignatureType, signature_type};
-        let refuse = |what: &str| {
-            Error::Config(format!(
-                "ddd — modeled DTO boundary `{boundary}` member `{}` types {what}, which \
-                 the boundary generator cannot express; use a primitive, a codelist, a \
-                 class reference, or another modeled boundary",
-                member.name
-            ))
-        };
-        match signature_type(&member.type_json) {
-            DddSignatureType::Domain(type_ref) => {
-                match &type_ref {
-                    phero_ir::TypeRef::Primitive(_) => {}
-                    // A class reference to an ENTITY is a stored FK: the
-                    // boundary carries the id, exactly like the generated
-                    // DTOs' `_id` columns. A contained value object/structured
-                    // class is NOT a scalar id — refuse it by name rather
-                    // than silently typing an object as a Uuid.
-                    phero_ir::TypeRef::Class { name, .. } => {
-                        match resolve_class_schema(lookup.db, lookup.config, name).await {
-                            Some(schema) if schema.is_entity => {
-                                return Ok("uuid::Uuid".to_string());
-                            }
-                            Some(schema) => {
-                                return Err(refuse(&format!(
-                                    "the non-entity class `{}` ({}) — a contained value object \
-                                     needs its own boundary shape",
-                                    name, schema.classification
-                                )));
-                            }
-                            None => {
-                                return Err(refuse(&format!(
-                                    "the class `{name}`, which resolves to no ingested schema"
-                                )));
-                            }
-                        }
-                    }
-                    // A codelist/vocabulary renders the generated enum.
-                    phero_ir::TypeRef::Enum { name, .. }
-                    | phero_ir::TypeRef::Vocabulary { name, .. } => {
-                        lookup.codelist_imports.insert(name.clone());
-                        return Ok(name.clone());
-                    }
-                    phero_ir::TypeRef::Interface { .. } => {
-                        return Err(refuse("an interface"));
-                    }
-                    phero_ir::TypeRef::Datatype { .. } => {}
+        let resolved = resolve_member_type(
+            boundary,
+            member,
+            lookup.db,
+            lookup.config,
+            lookup.module_file,
+            lookup.shape_by_name,
+            lookup.module_of,
+        )
+        .await?;
+        if let Some(import) = resolved.codelist_import {
+            lookup.codelist_imports.insert(import);
+        }
+        if let Some(import) = resolved.boundary_import {
+            lookup.boundary_imports.insert(import, ());
+        }
+        Ok(resolved.rust_type)
+    }
+}
+
+/// One member's resolved base Rust type plus the imports its module needs.
+pub(crate) struct MemberTypeResolution {
+    /// The base type before multiplicity wrapping.
+    pub rust_type: String,
+    /// The generated codelist enum the member names (the file imports it).
+    pub codelist_import: Option<String>,
+    /// A nested boundary in ANOTHER module — `(module_file, boundary_name)`.
+    pub boundary_import: Option<(String, String)>,
+}
+
+/// Resolve one boundary member's base Rust type (before multiplicity
+/// wrapping). ONE derivation shared by the boundary generator (which also
+/// collects the imports) and the request-DTO mapping (issue #767), so the
+/// two planes cannot disagree about a member's type.
+pub(crate) async fn resolve_member_type(
+    boundary: &str,
+    member: &codegraph_core::types::DddDtoMember,
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    module_file: &str,
+    shape_by_name: &BTreeMap<String, DddDtoShapeNode>,
+    module_of: &BTreeMap<String, String>,
+) -> Result<MemberTypeResolution> {
+    use crate::ddd::signature::{DddSignatureType, signature_type};
+    let refuse = |what: &str| {
+        Error::Config(format!(
+            "ddd — modeled DTO boundary `{boundary}` member `{}` types {what}, which \
+             the boundary generator cannot express; use a primitive, a codelist, a \
+             class reference, or another modeled boundary",
+            member.name
+        ))
+    };
+    let base = |rust_type: String| MemberTypeResolution {
+        rust_type,
+        codelist_import: None,
+        boundary_import: None,
+    };
+    match signature_type(&member.type_json) {
+        DddSignatureType::Domain(type_ref) => {
+            match &type_ref {
+                // Issue #767: primitives map through the PAYLOAD plane's one
+                // mapping (`payload_field_rust_type`), so a boundary member
+                // and the entity DTO field it fills unify exactly
+                // (`int`/`short`/`byte`→`i32`, `long`→`i64`, `float`→`f32`,
+                // `double`→`f64`). `phero_type_to_rust` maps Int→i64 — right
+                // for the finder/event planes, wrong beside `Create*Request`.
+                phero_ir::TypeRef::Primitive(primitive) => {
+                    return crate::ddd::body_params::payload_field_rust_type(
+                        &phero_ir::TypeRef::Primitive(*primitive),
+                    )
+                    .map(base)
+                    .ok_or_else(|| refuse("a primitive with no payload mapping"));
                 }
-                crate::ddd::design::phero_type_to_rust(&type_ref)
-                    .map(|rust| match rust.as_str() {
+                // A class reference to an ENTITY is a stored FK: the
+                // boundary carries the id, exactly like the generated
+                // DTOs' `_id` columns. A contained value object/structured
+                // class is NOT a scalar id — refuse it by name rather
+                // than silently typing an object as a Uuid.
+                phero_ir::TypeRef::Class { name, .. } => {
+                    return match resolve_class_schema(db, config, name).await {
+                        Some(schema) if schema.is_entity => Ok(base("uuid::Uuid".to_string())),
+                        Some(schema) => Err(refuse(&format!(
+                            "the non-entity class `{}` ({}) — a contained value object \
+                             needs its own boundary shape",
+                            name, schema.classification
+                        ))),
+                        None => Err(refuse(&format!(
+                            "the class `{name}`, which resolves to no ingested schema"
+                        ))),
+                    };
+                }
+                // A codelist/vocabulary renders the generated enum.
+                phero_ir::TypeRef::Enum { name, .. }
+                | phero_ir::TypeRef::Vocabulary { name, .. } => {
+                    return Ok(MemberTypeResolution {
+                        rust_type: name.clone(),
+                        codelist_import: Some(name.clone()),
+                        boundary_import: None,
+                    });
+                }
+                phero_ir::TypeRef::Interface { .. } => {
+                    return Err(refuse("an interface"));
+                }
+                phero_ir::TypeRef::Datatype { .. } => {}
+            }
+            crate::ddd::design::phero_type_to_rust(&type_ref)
+                .map(|rust| {
+                    base(match rust.as_str() {
                         // The shared map returns these two BARE (the trait
                         // plane imports them); the boundary module does not.
                         "Uuid" => "uuid::Uuid".to_string(),
                         "NaiveDate" => "chrono::NaiveDate".to_string(),
                         _ => rust,
                     })
-                    .ok_or_else(|| {
-                        refuse(&format!(
-                            "the datatype `{}`",
-                            type_ref.qualified_name().unwrap_or_default()
-                        ))
-                    })
-            }
-            DddSignatureType::Dto(name) => {
-                if !lookup.shape_by_name.contains_key(&name) {
-                    return Err(Error::Config(format!(
-                        "ddd — modeled DTO boundary member `{}` references boundary `{name}`, \
-                         which the model does not declare",
-                        member.name
-                    )));
-                }
-                let target_module = lookup.module_of.get(&name).cloned().unwrap_or_default();
-                if target_module == lookup.module_file {
-                    Ok(name)
-                } else {
-                    lookup
-                        .boundary_imports
-                        .insert((target_module, name.clone()), ());
-                    Ok(name)
-                }
-            }
-            DddSignatureType::Unresolvable(reason) => Err(refuse(&format!(
-                "an unresolvable signature slot ({reason})"
-            ))),
+                })
+                .ok_or_else(|| {
+                    refuse(&format!(
+                        "the datatype `{}`",
+                        type_ref.qualified_name().unwrap_or_default()
+                    ))
+                })
         }
+        DddSignatureType::Dto(name) => {
+            if !shape_by_name.contains_key(&name) {
+                return Err(Error::Config(format!(
+                    "ddd — modeled DTO boundary member `{}` references boundary `{name}`, \
+                     which the model does not declare",
+                    member.name
+                )));
+            }
+            let target_module = module_of.get(&name).cloned().unwrap_or_default();
+            let boundary_import =
+                (target_module != module_file).then(|| (target_module.clone(), name.clone()));
+            Ok(MemberTypeResolution {
+                rust_type: name,
+                codelist_import: None,
+                boundary_import,
+            })
+        }
+        DddSignatureType::Unresolvable(reason) => Err(refuse(&format!(
+            "an unresolvable signature slot ({reason})"
+        ))),
     }
 }
 
@@ -758,7 +900,7 @@ fn shape_class_name(shape: &DddDtoShapeNode) -> Option<String> {
 
 /// Wrap a base type by the phero-ir multiplicity: `[0..1]` → `Option<T>`,
 /// a collection → `Vec<T>`, a plain single → `T`.
-fn wrap_multiplicity(
+pub(crate) fn wrap_multiplicity(
     base: &str,
     multiplicity_json: Option<&serde_json::Value>,
 ) -> std::result::Result<(String, bool), String> {

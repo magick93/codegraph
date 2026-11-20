@@ -512,3 +512,84 @@ async fn generated_app_with_injected_guard_compiles() {
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with an injected-scope guard must compile");
 }
+
+/// Issue #767: the COLLECTION-LEVEL create body compiles. The dto-boundary
+/// fixture's `registerBook(NewBookDraft)` is create-shaped — it lowers to
+/// `POST …/{entity}/actions/{op}` whose body IS the modeled boundary — and the
+/// handler CONSTRUCTS `CreateBookRequest` from it field by field. A misspelt
+/// DTO field, a wrong `payload` type, or a stale create-command arity is a
+/// compile error here, not a silent runtime 422 (the #551 policy: this plane
+/// emits Rust, so it ships a test that compiles it).
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_a_collection_level_create_body_compiles() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dto_boundaries");
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    // The fixture carries no domains.toml of its own (the pipeline test writes
+    // its config inline); the gate does the same.
+    let config = out_dir.path().join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.library]
+label = "Library"
+schema_dir = "schemas/library"
+postgres_schema = "library"
+"#,
+    )
+    .unwrap();
+    let profiles_path = write_profiles(out_dir.path());
+    let mox_files = vec![fixture.join("dto_boundaries.mox")];
+    let ddd_files = vec![fixture.join("dto_boundaries.ddd")];
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        rosetta_files: &[],
+        ddd_files: &ddd_files,
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the dto-boundary fixture must succeed");
+
+    // Pin the emission before the build spend.
+    let handler = fs::read_to_string(output.join("src/api/library/book_handler.rs"))
+        .expect("the Book handler must emit");
+    assert!(
+        handler.contains("/library/book/actions/register_book"),
+        "the create-shaped route must be collection-level:\n{handler}"
+    );
+    assert!(
+        handler.contains("let item = CreateBookRequest {")
+            && handler.contains("title: payload.title,")
+            && handler.contains("play_length: payload.play_length,"),
+        "the boundary must construct the create DTO field by field:\n{handler}"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with a collection-level create body must compile");
+}

@@ -132,6 +132,39 @@ pub struct ChildParentLoad {
     pub auditable: bool,
 }
 
+/// The pre-rendered construction of an entity request DTO from a modeled
+/// input boundary (issue #767).
+///
+/// A create-shaped op's body IS the modeled boundary, but the entity's
+/// command plane takes `Create{Entity}Request` — so the handler deserializes
+/// the boundary and CONSTRUCTS the request from it, field by field. The plan
+/// is pre-rendered at generation time (the #338/#662 pattern), so the
+/// template only splices text and the mapping refusals fire before any tree
+/// is written.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BoundaryPayloadPlan {
+    /// `Create` / `Update` — the request DTO prefix the handler constructs.
+    pub dto_prefix: String,
+    /// The handler-side extraction of the lone boundary parameter.
+    pub extraction: String,
+    /// The pre-rendered struct-literal field assignments.
+    pub construct: String,
+    /// Request fields the boundary does not carry, defaulted to `None` —
+    /// documented in the emitted operation, never silent.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub defaulted: Vec<String>,
+    /// The modeled boundary's Rust path — the utoipa `request_body` type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<String>,
+    /// The minimal valid body the hurl contract sends (the boundary sample).
+    pub sample: serde_json::Value,
+    /// Required ENTITY-reference members. A generated contract cannot seed an
+    /// arbitrary target row, so the hurl planner omits the leg for such a
+    /// payload rather than posting the nil uuid (a guaranteed FK 500).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub required_class_refs: Vec<String>,
+}
+
 /// The executable lowering for one service op.
 ///
 /// Replaces the former `is_delete`/`is_read`/`is_update` boolean pack (which
@@ -153,6 +186,12 @@ pub enum ExecutionKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         state: Option<ServiceOpState>,
     },
+    /// A create-shaped operation (issue #767): no statement body, no
+    /// record-scoped load, a return slot resolving to the bound entity, and
+    /// exactly one modeled INPUT boundary parameter. The route is
+    /// COLLECTION-level (`POST …/{entity}/actions/{op}`) and its body IS the
+    /// boundary; `plan` carries the request-DTO construction.
+    Create { plan: BoundaryPayloadPlan },
     /// A checked `.ddd` statement body (issue #662): `plan.block` is the
     /// pre-rendered executable region (the author's `let`/`guard`/`assign`/
     /// `if`/`return` statements lowered over the loaded aggregate), and
@@ -186,6 +225,13 @@ pub enum ExecutionKind {
         /// never reaches the create).
         #[serde(skip_serializing_if = "Option::is_none")]
         parent_load: Option<ChildParentLoad>,
+        /// Issue #767: the operation declares a modeled INPUT boundary whose
+        /// source class IS this child, so the handler constructs the child's
+        /// request DTO from the boundary (the same field-by-field mapping the
+        /// collection-level create uses). `None` keeps the operation on the
+        /// child's own generated request DTO — byte-identical.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<BoundaryPayloadPlan>,
     },
     /// No executable lowering; the route answers 501 naming the gap.
     Seam { reason: String },
@@ -243,7 +289,21 @@ impl ExecutionKind {
         match self {
             Self::Update { state } => state.as_ref(),
             Self::Body { plan } => plan.state.as_ref(),
-            Self::Delete | Self::Read | Self::ChildOp { .. } | Self::Seam { .. } => None,
+            Self::Delete
+            | Self::Read
+            | Self::Create { .. }
+            | Self::ChildOp { .. }
+            | Self::Seam { .. } => None,
+        }
+    }
+
+    /// The modeled-boundary payload an aggregate child operation binds
+    /// (issue #767), when it declares one.
+    #[must_use]
+    pub fn child_payload(&self) -> Option<&BoundaryPayloadPlan> {
+        match self {
+            Self::ChildOp { payload, .. } => payload.as_ref(),
+            _ => None,
         }
     }
 
