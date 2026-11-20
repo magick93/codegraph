@@ -167,6 +167,10 @@ pub struct BodyParam {
     pub rust_type: String,
     /// `true` for an optional (`0..1`) parameter.
     pub optional: bool,
+    /// `true` when the endpoint body IS this value (a lone modeled DTO
+    /// parameter) rather than an object keyed by [`Self::name`] (issue #667).
+    #[serde(default)]
+    pub direct_body: bool,
     /// The value the emitted hurl contract sends for it.
     pub sample: serde_json::Value,
 }
@@ -1631,15 +1635,22 @@ fn collect_assigned_roots(stmts: &[Stmt], out: &mut Vec<String>) {
 /// Render the handler-side extraction of one action-body parameter.
 fn param_extraction_with(param: &BodyParam, binding: &str) -> String {
     let key = &param.name;
-    let fetch = format!(
-        "body.as_ref().and_then(|value| value.get(\"{key}\")).cloned().and_then(|value| serde_json::from_value(value).ok())"
-    );
-    if param.optional {
-        format!("    let {binding}: {ty} = {fetch};\n", ty = param.rust_type)
+    let ty = &param.rust_type;
+    let fetch = if param.direct_body {
+        // Issue #667: a lone modeled DTO parameter IS the request body.
+        format!(
+            "body.as_ref().and_then(|value| serde_json::from_value::<{ty}>(value.0.clone()).ok())"
+        )
     } else {
         format!(
-            "    let {binding}: {ty} = {fetch}\n        .ok_or_else(|| AppError::bad_request(\"missing or invalid parameter `{key}`\").with_correlation_id(correlation_id))?;\n",
-            ty = param.rust_type
+            "body.as_ref().and_then(|value| value.get(\"{key}\")).cloned().and_then(|value| serde_json::from_value(value).ok())"
+        )
+    };
+    if param.optional {
+        format!("    let {binding}: {ty} = {fetch};\n")
+    } else {
+        format!(
+            "    let {binding}: {ty} = {fetch}\n        .ok_or_else(|| AppError::bad_request(\"missing or invalid parameter `{key}`\").with_correlation_id(correlation_id))?;\n"
         )
     }
 }
@@ -1647,16 +1658,88 @@ fn param_extraction_with(param: &BodyParam, binding: &str) -> String {
 /// The action-body parameter list of one operation, with the Rust types the
 /// handler binds and the sample values the hurl contract sends.
 ///
+/// A modeled DTO boundary (DD3, issue #667) resolves to the generated
+/// boundary type in the domain-types crate, and a LONE boundary parameter
+/// makes the endpoint body the DTO itself. Output-only boundaries (any
+/// derived member) are refused: the caller cannot supply a derived value.
+///
 /// # Errors
 /// [`Refusal`] when a parameter type is not a primitive the action body can
-/// carry (a class reference needs a DTO the body plane does not generate).
+/// carry, or a DTO boundary is unknown/output-only.
 pub fn body_params(
     op_name: &str,
     params: &[codegraph_core::types::DddParam],
+    boundaries: &crate::ddd::dto_boundaries::DtoBoundaryIndex,
+    domain_types_crate: &str,
 ) -> Result<Vec<BodyParam>, Refusal> {
     let mut out = Vec::with_capacity(params.len());
+    let mut dto_params = 0usize;
     for param in params {
         let slot = crate::ddd::signature::signature_type(&param.type_json);
+        let multiplicity = param
+            .multiplicity
+            .as_ref()
+            .and_then(|json| serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok());
+        if let Some(boundary_name) = slot.dto_name() {
+            let Some(shape) = boundaries.get(boundary_name) else {
+                return Err(Refusal(format!(
+                    "service op `{op_name}`: parameter `{}` references DTO boundary \
+                     `{boundary_name}`, which the model does not declare",
+                    param.name
+                )));
+            };
+            if shape.direction == "output" {
+                let derived: Vec<&str> = shape
+                    .members
+                    .iter()
+                    .filter(|member| member.kind == "derive")
+                    .map(|member| member.name.as_str())
+                    .collect();
+                let detail = if derived.is_empty() {
+                    "derived members".to_string()
+                } else {
+                    derived.join(", ")
+                };
+                return Err(Refusal(format!(
+                    "service op `{op_name}`: parameter `{}` is the output-only DTO boundary \
+                     `{boundary_name}` ({detail} cannot be supplied by a caller); use an \
+                     input-capable boundary",
+                    param.name
+                )));
+            }
+            let Some(path) = boundaries.rust_path(boundary_name, domain_types_crate) else {
+                return Err(Refusal(format!(
+                    "service op `{op_name}`: parameter `{}` references DTO boundary \
+                     `{boundary_name}`, which has no generated Rust type",
+                    param.name
+                )));
+            };
+            let optional = multiplicity.as_ref().is_some_and(|m| m.lower == 0);
+            if multiplicity.as_ref().is_some_and(|m| m.is_many()) {
+                return Err(Refusal(format!(
+                    "service op `{op_name}`: parameter `{}` is a collection of DTO boundary \
+                     `{boundary_name}` — an action body cannot bind one",
+                    param.name
+                )));
+            }
+            dto_params += 1;
+            out.push(BodyParam {
+                name: param.name.clone(),
+                rust_type: if optional {
+                    format!("Option<{path}>")
+                } else {
+                    path
+                },
+                optional,
+                direct_body: false,
+                sample: if optional {
+                    serde_json::Value::Null
+                } else {
+                    crate::ddd::dto_boundaries::boundary_sample(shape)
+                },
+            });
+            continue;
+        }
         let Some(type_ref) = slot.as_domain() else {
             return Err(Refusal(format!(
                 "service op `{op_name}`: parameter `{}` is {}, which the action \
@@ -1673,10 +1756,6 @@ pub fn body_params(
                 slot.describe()
             )));
         };
-        let multiplicity = param
-            .multiplicity
-            .as_ref()
-            .and_then(|json| serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok());
         let (rust_type, optional) = match &multiplicity {
             None => (base.clone(), false),
             Some(multiplicity) => {
@@ -1703,8 +1782,16 @@ pub fn body_params(
             name: param.name.clone(),
             rust_type,
             optional,
+            direct_body: false,
             sample,
         });
+    }
+    // A lone modeled DTO parameter is the request body itself (issue #667).
+    if dto_params == 1
+        && out.len() == 1
+        && let Some(param) = out.first_mut()
+    {
+        param.direct_body = true;
     }
     Ok(out)
 }
@@ -1850,6 +1937,7 @@ mod tests {
             name: "total".to_string(),
             rust_type: "i32".to_string(),
             optional: false,
+            direct_body: false,
             sample: serde_json::json!(1),
         }
     }
@@ -2215,6 +2303,106 @@ mod tests {
         );
     }
 
+    /// DD3 (issue #667): a DTO-typed action parameter resolves to the
+    /// generated boundary type, a LONE one becomes the request body itself,
+    /// and output-only / unknown boundaries are named refusals.
+    #[test]
+    fn body_params_resolve_modeled_dto_boundaries() {
+        use codegraph_core::types::{DddDtoMember, DddDtoShapeNode};
+        let shape = |name: &str, direction: &str, members: Vec<DddDtoMember>| DddDtoShapeNode {
+            application: "Library".to_string(),
+            module: "catalog".to_string(),
+            name: name.to_string(),
+            source_json: None,
+            direction: direction.to_string(),
+            members,
+            ordinal: 0,
+        };
+        let member =
+            |name: &str, kind: &str, type_json: serde_json::Value, optional: bool| DddDtoMember {
+                name: name.to_string(),
+                kind: kind.to_string(),
+                type_json,
+                multiplicity_json: optional
+                    .then(|| serde_json::json!({"lower": 0, "upper": {"finite": 1}})),
+                path: Vec::new(),
+                expression: (kind == "derive").then(|| "1 + 1".to_string()),
+            };
+        let index = crate::ddd::dto_boundaries::DtoBoundaryIndex::for_tests(vec![
+            shape(
+                "NewBookInput",
+                "input",
+                vec![
+                    member(
+                        "title",
+                        "declared",
+                        serde_json::json!({"type": "primitive", "value": "string"}),
+                        false,
+                    ),
+                    member(
+                        "isbn",
+                        "declared",
+                        serde_json::json!({"type": "primitive", "value": "string"}),
+                        true,
+                    ),
+                ],
+            ),
+            shape(
+                "BookSummary",
+                "output",
+                vec![member(
+                    "minutes",
+                    "derive",
+                    serde_json::json!({"type": "primitive", "value": "int"}),
+                    false,
+                )],
+            ),
+        ]);
+        let dto_param = |name: &str, boundary: &str| codegraph_core::types::DddParam {
+            name: name.to_string(),
+            type_json: serde_json::json!({"dto": boundary}),
+            multiplicity: None,
+        };
+
+        let params = body_params(
+            "createBook",
+            &[dto_param("input", "NewBookInput")],
+            &index,
+            "domain_types",
+        )
+        .expect("input boundary binds");
+        assert_eq!(params.len(), 1);
+        assert_eq!(
+            params[0].rust_type,
+            "domain_types::dto::catalog::NewBookInput"
+        );
+        assert!(params[0].direct_body, "a lone DTO param is the body");
+        assert_eq!(
+            params[0].sample,
+            serde_json::json!({"title": "contract-sample"}),
+            "the minimal body omits optional members"
+        );
+
+        let output = body_params(
+            "summarise",
+            &[dto_param("summary", "BookSummary")],
+            &index,
+            "domain_types",
+        )
+        .expect_err("output-only boundary refuses");
+        assert!(output.0.contains("output-only"), "{}", output.0);
+        assert!(output.0.contains("BookSummary"), "{}", output.0);
+
+        let unknown = body_params(
+            "createBook",
+            &[dto_param("input", "NotDeclared")],
+            &index,
+            "domain_types",
+        )
+        .expect_err("unknown boundary refuses");
+        assert!(unknown.0.contains("does not declare"), "{}", unknown.0);
+    }
+
     /// Action-body parameters: primitives only, collections refused, and an
     /// optional parameter binds `Option<T>`.
     #[test]
@@ -2238,7 +2426,8 @@ mod tests {
                 Some(serde_json::json!({"lower": 0, "upper": {"finite": 1}})),
             ),
         ];
-        let params = body_params("applyPayRun", &params).expect("params");
+        let params = body_params("applyPayRun", &params, &Default::default(), "domain_types")
+            .expect("params");
         assert_eq!(params[0].rust_type, "i32");
         assert!(!params[0].optional);
         assert_eq!(params[1].rust_type, "Option<String>");
@@ -2249,7 +2438,8 @@ mod tests {
             serde_json::json!({"type": "class", "value": {"package": "payroll", "name": "Audit"}}),
             None,
         )];
-        let refusal = body_params("applyPayRun", &class).expect_err("class param");
+        let refusal = body_params("applyPayRun", &class, &Default::default(), "domain_types")
+            .expect_err("class param");
         assert!(refusal.0.contains("primitives only"), "{}", refusal.0);
 
         let many = vec![json(
@@ -2257,7 +2447,8 @@ mod tests {
             serde_json::json!({"type": "primitive", "value": "string"}),
             Some(serde_json::json!({"lower": 0, "upper": "unbounded"})),
         )];
-        let refusal = body_params("applyPayRun", &many).expect_err("collection param");
+        let refusal = body_params("applyPayRun", &many, &Default::default(), "domain_types")
+            .expect_err("collection param");
         assert!(refusal.0.contains("collection"), "{}", refusal.0);
     }
 

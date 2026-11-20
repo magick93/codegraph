@@ -10,7 +10,7 @@
 
 use codegraph_config::config::{DomainConfig, parse_domain_config_str};
 use codegraph_core::mock::MockEngine;
-use codegraph_core::traits::{GraphIngestor, GraphQuerier};
+use codegraph_core::traits::GraphIngestor;
 use codegraph_core::types::{
     DddApplicationNode, DddDtoMember, DddDtoShapeNode, DddModelGraph, DddModuleNode, SchemaNode,
 };
@@ -345,4 +345,109 @@ async fn unresolvable_member_type_refuses_naming_the_boundary_and_member() {
     let text = err.to_string();
     assert!(text.contains("NewBookInput"), "{text}");
     assert!(text.contains("weird"), "{text}");
+}
+
+/// End-to-end: a `.ddd` with a standalone input boundary + a projection runs
+/// through the real pipeline, generates the boundary module in the
+/// domain-types crate, and binds the action payload to it (direct body).
+#[tokio::test]
+async fn pipeline_generates_boundaries_and_binds_the_action_payload() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ddd/dto_boundaries");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let output = temp.path().join("out");
+    let config = temp.path().join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.library]
+label = "Library"
+schema_dir = "schemas/library"
+postgres_schema = "library"
+"#,
+    )
+    .unwrap();
+
+    let mox_files = vec![fixture.join("dto_boundaries.mox")];
+    let ddd_files = vec![fixture.join("dto_boundaries.ddd")];
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(PathBuf::from("definitely-absent-profiles.toml")),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: &mox_files,
+        rosetta_files: &[],
+        ddd_files: &ddd_files,
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("pipeline run");
+
+    let boundary = fs::read_to_string(output.join("crates/domain-types/src/dto/catalog.rs"))
+        .expect("generated boundary module");
+    assert!(boundary.contains("pub struct NewBookInput {"), "{boundary}");
+    assert!(boundary.contains("pub struct BookSummary {"), "{boundary}");
+    assert!(
+        boundary.contains("/// Computed: `playLength / 60`"),
+        "{boundary}"
+    );
+
+    let domain_types_lib =
+        fs::read_to_string(output.join("crates/domain-types/src/lib.rs")).unwrap();
+    assert!(
+        domain_types_lib.contains("pub mod dto;"),
+        "the crate index must declare the boundary module: {domain_types_lib}"
+    );
+
+    // The action handler binds the modeled boundary as the REQUEST BODY.
+    let handler = fs::read_to_string(output.join("src/api/library/book_handler.rs"))
+        .expect("generated handler");
+    assert!(
+        handler.contains("domain_types::dto::catalog::NewBookInput"),
+        "the payload must resolve to the generated boundary type: {handler}"
+    );
+    assert!(
+        handler.contains(
+            "serde_json::from_value::<domain_types::dto::catalog::NewBookInput>(value.0.clone())"
+        ),
+        "a lone DTO parameter must bind the request body directly: {handler}"
+    );
+
+    // The boundary is documented as a component schema in BOTH documents.
+    let all_doc = fs::read_to_string(output.join("src/api/openapi/all.rs")).unwrap();
+    assert!(
+        all_doc.contains("domain_types::dto::catalog::NewBookInput"),
+        "the combined OpenAPI document must register the boundary: {all_doc}"
+    );
+    assert!(
+        all_doc.contains("domain_types::dto::catalog::BookSummary"),
+        "the projection must register too: {all_doc}"
+    );
+    let domain_doc = fs::read_to_string(output.join("src/api/openapi/library.rs")).unwrap();
+    assert!(
+        domain_doc.contains("domain_types::dto::catalog::NewBookInput"),
+        "the per-domain OpenAPI document must register the boundary: {domain_doc}"
+    );
 }

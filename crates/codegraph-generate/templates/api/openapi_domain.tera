@@ -62,6 +62,9 @@ use utoipa::OpenApi;
         crate::api::{{ domain_name }}::functions_api::{{ function.request }},
         crate::api::{{ domain_name }}::functions_api::{{ function.response }},
 {%- endfor %}
+{%- for boundary in dto_boundaries %}
+        {{ project.domain_types_crate }}::dto::{{ boundary.module }}::{{ boundary.name }},
+{%- endfor %}
     )),
     security(("ApiKeyAuth" = [])),
     tags(

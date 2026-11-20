@@ -85,6 +85,120 @@ struct BoundaryFileCtx {
     boundaries: Vec<BoundaryCtx>,
 }
 
+/// Index of the graph's modeled DTO boundaries by boundary name (DD3, issue
+/// #667). Boundary names are application-unique upstream, so one map is
+/// enough; consumers resolve a `DddTypeRef::Dto` slot to the generated Rust
+/// path without re-reading the models.
+#[derive(Debug, Default, Clone)]
+pub struct DtoBoundaryIndex {
+    shapes: BTreeMap<String, DddDtoShapeNode>,
+}
+
+impl DtoBoundaryIndex {
+    /// Build the index from every ingested `.ddd` model.
+    pub fn from_models(models: &[codegraph_core::types::DddModelGraph]) -> Self {
+        let mut shapes = BTreeMap::new();
+        for model in models {
+            for shape in &model.dto_shapes {
+                shapes.insert(shape.name.clone(), shape.clone());
+            }
+        }
+        Self { shapes }
+    }
+
+    /// The boundary with this name, when the model declares one.
+    pub fn get(&self, name: &str) -> Option<&DddDtoShapeNode> {
+        self.shapes.get(name)
+    }
+
+    /// Every declared boundary, in deterministic (name) order.
+    pub fn shapes(&self) -> impl Iterator<Item = &DddDtoShapeNode> {
+        self.shapes.values()
+    }
+
+    /// `true` when the model declares no boundaries.
+    pub fn is_empty(&self) -> bool {
+        self.shapes.is_empty()
+    }
+
+    /// A direct index over shapes — crate-internal unit-test constructor.
+    #[cfg(test)]
+    pub(crate) fn for_tests(shapes: Vec<DddDtoShapeNode>) -> Self {
+        Self {
+            shapes: shapes
+                .into_iter()
+                .map(|shape| (shape.name.clone(), shape))
+                .collect(),
+        }
+    }
+
+    /// The fully-qualified Rust path of the generated boundary type in the
+    /// domain-types crate (`{crate}::dto::{module}::{Name}`).
+    pub fn rust_path(&self, name: &str, domain_types_crate: &str) -> Option<String> {
+        let shape = self.get(name)?;
+        Some(format!(
+            "{domain_types_crate}::dto::{}::{}",
+            codegraph_naming::to_snake_case(&shape.module),
+            shape.name
+        ))
+    }
+}
+
+/// A representative JSON value for a boundary's INPUT payload — what the
+/// generated hurl contract sends. Optional members are omitted (the minimal
+/// valid body), derived members cannot occur on an input boundary.
+pub fn boundary_sample(shape: &DddDtoShapeNode) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    for member in &shape.members {
+        if member.kind == "derive" {
+            continue;
+        }
+        let optional = member
+            .multiplicity_json
+            .as_ref()
+            .and_then(|json| serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok())
+            .is_some_and(|multiplicity| multiplicity.lower == 0);
+        if optional {
+            continue;
+        }
+        object.insert(member.name.clone(), member_sample(&member.type_json));
+    }
+    serde_json::Value::Object(object)
+}
+
+fn member_sample(type_json: &serde_json::Value) -> serde_json::Value {
+    use crate::ddd::signature::{DddSignatureType, signature_type};
+    match signature_type(type_json) {
+        DddSignatureType::Domain(phero_ir::TypeRef::Primitive(primitive)) => {
+            use phero_ir::PrimitiveType;
+            match primitive {
+                PrimitiveType::String | PrimitiveType::Char => {
+                    serde_json::json!("contract-sample")
+                }
+                PrimitiveType::Boolean => serde_json::json!(true),
+                PrimitiveType::Int | PrimitiveType::Short | PrimitiveType::Byte => {
+                    serde_json::json!(42)
+                }
+                PrimitiveType::Long => serde_json::json!(42),
+                PrimitiveType::Float | PrimitiveType::Double => serde_json::json!(42.0),
+                PrimitiveType::Date => serde_json::json!("2026-01-01"),
+            }
+        }
+        // A class reference is a stored FK id.
+        DddSignatureType::Domain(phero_ir::TypeRef::Class { .. }) => {
+            serde_json::json!("00000000-0000-0000-0000-000000000000")
+        }
+        // Codelist/vocabulary values are closed sets the model does not
+        // expose here; the create-DTO precedent seeds the first value, and a
+        // string keeps the contract parseable. The caller's own fixtures own
+        // the real value.
+        DddSignatureType::Domain(_) | DddSignatureType::Dto(_) => {
+            serde_json::json!("contract-sample")
+        }
+        DddSignatureType::Unresolvable(_) => serde_json::Value::Null,
+    }
+}
+
 /// Generates the modeled DTO boundaries into the domain-types crate.
 pub struct DddDtoBoundariesGenerator {
     src_dir: PathBuf,

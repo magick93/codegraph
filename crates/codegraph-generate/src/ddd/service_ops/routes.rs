@@ -210,6 +210,9 @@ pub async fn routes_for_entity(
         return Ok(Vec::new());
     }
     let type_suffix = config.defaults.type_suffix.clone();
+    // DD3 (issue #667): the body plane resolves a DTO-typed action parameter
+    // to the generated boundary type; one index for the whole pass.
+    let boundary_index = crate::ddd::dto_boundaries::DtoBoundaryIndex::from_models(&models);
     let props = db
         .get_properties(entity_title)
         .await
@@ -378,8 +381,13 @@ pub async fn routes_for_entity(
                 let params = if op.bodies.is_empty() {
                     Vec::new()
                 } else {
-                    crate::ddd::body_lower::body_params(&op.name, &op.params)
-                        .map_err(|refusal| refusal.0)?
+                    crate::ddd::body_lower::body_params(
+                        &op.name,
+                        &op.params,
+                        &boundary_index,
+                        &body.domain_types_crate,
+                    )
+                    .map_err(|refusal| refusal.0)?
                 };
                 let throws: Vec<String> = op
                     .throws
@@ -1125,6 +1133,27 @@ fn child_execution(
             param.name,
             body_carrier_hint(&param.type_json)
         ));
+    }
+    // DD3 (issue #667): a modeled DTO boundary is an accepted carrier, but the
+    // child plane still binds the child's GENERATED create/update DTO. Say so
+    // once per op instead of silently ignoring the modeled payload type —
+    // wiring the boundary through the child command plane is the recorded
+    // follow-up (TODO(#667)).
+    if let Some(param) = op.params.first()
+        && let Some(boundary) = param
+            .type_json
+            .get("dto")
+            .and_then(serde_json::Value::as_str)
+    {
+        crate::ddd::design::warn_once(
+            &format!("child-dto-payload:{}::{}", scope.class, op.name),
+            &format!(
+                "child operation `{}` declares modeled DTO boundary `{boundary}` as its \
+                 payload; the child plane still binds the child's generated request DTO \
+                 (the modeled payload is a recorded #667 follow-up)",
+                op.name
+            ),
+        );
     }
     if op.condition.is_some() {
         if action == ChildAction::Add {

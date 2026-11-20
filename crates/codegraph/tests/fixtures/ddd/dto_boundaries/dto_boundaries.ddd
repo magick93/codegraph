@@ -1,0 +1,35 @@
+import "dto_boundaries.mox";
+
+application Library {
+    base nz.example.library
+    module catalog {
+        entity Book scaffold repository BookRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+
+        // DD3 (issue #667): a modeled standalone input boundary used as an
+        // action payload, and a projection with a derived member.
+        dto NewBookInput {
+            String title;
+            String isbn;
+            int playLength;
+        }
+
+        dto BookSummary from Book {
+            title;
+            minutes = playLength / 60;
+        }
+
+        service Catalog {
+            inject BookRepository;
+            Book createBook(NewBookInput input) throws NotFound => BookRepository {
+                let book = self.findById("current") else error NotFound("Book", "current");
+                return book;
+            }
+            protected BookSummary summarise(Book book);
+        }
+    }
+}

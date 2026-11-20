@@ -1,0 +1,7 @@
+package nz.example.library
+
+class Book {
+    String title
+    String isbn
+    int playLength
+}
