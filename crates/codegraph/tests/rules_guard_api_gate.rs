@@ -17,8 +17,11 @@
 //!
 //! Self-contained: Postgres (`DATABASE_URL`), `hurl`, and a cargo build of
 //! the fixture app. Skips gracefully when tools are missing. Runs the SAME
-//! fixture regeneration as `review_api_suite` (shared
-//! `review_api_suite_regen` module) — one recipe, no drift.
+//! fixture provisioning as `review_api_suite` (shared
+//! `review_api_suite_regen` module: from clean, under the cross-process
+//! fixture gate — issue #694) — one recipe, no drift, and no stale
+//! `*_grant_application.hurl` from an older generation to break the
+//! one-contract assertion below.
 //!
 //! ```text
 //! cargo test -p codegraph --test rules_guard_api_gate -- --ignored --nocapture
@@ -204,7 +207,12 @@ async fn eligibility_rule_blocks_the_gated_operation_over_http() {
     }
 
     println!("regenerating fixture from current templates…");
-    review_api_suite_regen::regenerate_fixture()
+    // Held for the whole test (issue #694): the regeneration AND the app build
+    // read the same committed tree `review_api_suite` / `entity_codegen_gate`
+    // rewrite; provisioning is from clean, so the suffix match below can only
+    // ever find THIS generation's contract.
+    let gate = review_api_suite_regen::FixtureGate::acquire().expect("acquire fixture gate");
+    gate.provision()
         .await
         .expect("fixture regeneration must succeed");
     assert_guard_surface(&fixture_dir());

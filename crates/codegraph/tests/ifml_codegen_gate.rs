@@ -29,6 +29,14 @@
 //! from the GENERATOR (G1, Wave B); the gate no longer writes it. The vite
 //! proxy, playwright config, ui stubs, and sweep spec stay gate-owned.
 //! Generator-emitted files are never overwritten.
+//!
+//! Persistent dir (issue #694): `target/ifml-gate/` survives across runs so the
+//! npm install and the cargo cache stay warm, but the generated app tree is
+//! deleted before every provision ([`reset_generated_app`]) — only
+//! `svelte/node_modules` (the content-keyed install cache) is kept. Without
+//! that, a file an older generation emitted (a removed view's route dir or page
+//! class, a renamed module) is typechecked by T1 and matched by the playwright
+//! `testDir` glob in T3, which is a stale artifact read as this run's signal.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -443,10 +451,55 @@ async fn run_pipeline() -> Result<(), String> {
 // ── Shared setup ─────────────────────────────────────────────────────────────
 
 async fn ensure_generated() -> Result<(), String> {
+    reset_generated_app()?;
     stage_fixture()?;
     run_pipeline().await?;
     write_extras(&svelte_dir())?;
     isolate_generated_workspace()
+}
+
+/// Delete the generated app tree before regenerating (issue #694).
+///
+/// The gate root is persistent so the npm install and the cargo cache stay warm
+/// across runs — that is the point of `target/ifml-gate/`. The generated SOURCE
+/// must not be: a file an older generation emitted (a removed view's route dir,
+/// a renamed page class, a retired module) is typechecked by T1 and matched by
+/// the playwright `testDir` glob in T3, i.e. read as this run's signal. T4's
+/// stale-sweep assertion is unaffected — it removes a view and regenerates
+/// WITHIN one provision.
+///
+/// `svelte/node_modules` is the one survivor: it is the npm install cache,
+/// content-keyed by [`NodeProject::ensure_install`] against `package.json`, and
+/// re-installing it costs minutes. It is stashed across the wipe (a rename on
+/// one filesystem, no copy).
+fn reset_generated_app() -> Result<(), String> {
+    let app = app_dir();
+    if !app.exists() {
+        return Ok(());
+    }
+    let keep = svelte_dir().join("node_modules");
+    let stash = gate_root().join("node_modules.stash");
+    let stashed = keep.is_dir();
+    if stashed {
+        let _ = fs::remove_dir_all(&stash);
+        fs::rename(&keep, &stash).map_err(|e| format!("stash {}: {e}", keep.display()))?;
+    }
+    if let Err(e) = fs::remove_dir_all(&app) {
+        if stashed {
+            let _ = fs::rename(&stash, &keep);
+        }
+        return Err(format!("wipe generated app tree {}: {e}", app.display()));
+    }
+    fs::create_dir_all(&app).map_err(|e| e.to_string())?;
+    if stashed {
+        fs::create_dir_all(svelte_dir()).map_err(|e| e.to_string())?;
+        fs::rename(&stash, &keep).map_err(|e| format!("restore {}: {e}", keep.display()))?;
+    }
+    println!(
+        "provision: wiped the generated app tree {} (kept the node_modules install cache)",
+        app.display()
+    );
+    Ok(())
 }
 
 /// The generated app manifest must not claim membership of the codegraph

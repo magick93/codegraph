@@ -72,8 +72,13 @@ skip = ["03_scope_denial_403.hurl", "04_cross_tenant_404.hurl"]
 org_id_a = "00000000-0000-0000-0000-000000000001"
 org_id_b = "00000000-0000-0000-0000-000000000002"
 
-# The generated hurl dir is REGEN-immune (REGEN_WIPE does not cover it), so
-# the hand-authored workflow-409 contract rides every regeneration.
+# The GATE wipes the generated hurl dir with the rest of the generated tree
+# (issue #694: a contract left by an older generation is still discovered by
+# the suite and hurl'd against the new app), so the hand-authored workflow-409
+# contract rides every gate regeneration by being re-seeded here. A CONSUMER
+# `testkit api --workers` run does not wipe it — `codegraph-ops`
+# `suites/workers.rs` `REGEN_WIPE` omitting `hurl` is the recorded follow-up on
+# #694, which is exactly why the seed must stay unconditional.
 [[hooks]]
 name = "seed-hand-authored-hurl"
 exec = "cp hurl/90_workflow_transition_409.hurl generated-workers/hurl/90_workflow_transition_409.hurl"

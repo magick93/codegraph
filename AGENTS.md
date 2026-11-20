@@ -307,8 +307,13 @@ search row-filtering stay a documented follow-up).
   fixture by the shared regen (which now ingests the rosetta model and
   runs the driver's auto-classify pass). The checked-in fixture tree is
   regenerated (enumerated: the grant entity plane, rules.rs, the guarded
-  handler, hurl renumbering) plus the hand-authored
-  `hurl/90_eligibility_rule_403.hurl` (survives regen).
+  handler, hurl renumbering). **Known gap**: the hand-authored
+  `hurl/90_eligibility_rule_403.hurl` the gate asserts is NOT committed
+  (verified against HEAD and origin/master) — a pre-existing fixture defect, so
+  `rules_guard_api_gate` cannot pass on a clean checkout until it lands
+  (tracked by issue #775). It is not produced by any recipe and there is no
+  `post_generate` seed for it (the workers fixture's 409 contract is the
+  precedent for the fix).
 - Gates: `cargo test -p codegraph --test template_harness ::
   rules_guards` (8, node-free PR-CI) + the updated
   `rosetta_rule_tests` golden (record-typed signatures + import + new
@@ -2775,8 +2780,9 @@ the proven #573 IFML pattern:
   job — their file paths are still held to the coverage invariant.
 - Gates: `cargo test -p codegraph --test entity_remote_functions_tests`
   (6, node-free) + `cargo test -p codegraph --test entity_codegen_gate --
-  --ignored --test-threads=1` (node; the nightly lane, wired as
-  `.github/workflows/entity-gate.yml` — issue #634) + the updated
+  --ignored` (node; the nightly lane, wired as
+  `.github/workflows/entity-gate.yml` — issue #634; the gate self-serializes
+  under the review-fixture lock, so no `--test-threads` flag — #694) + the updated
   `ifml_remote_functions_tests`/`ux_rules_tests`/`server_contract_tests`
   pins. Byte-identity: flag-off templates byte-untouched (variant
   selection in Rust); the ux canaries + `policy_rls` full-tree snapshot
@@ -2806,8 +2812,8 @@ worse: the gate that was meant to catch it **could not fail**.
   `KNOWN_DEFECTS` ledger makes pre-existing debt enumerable (an entry
   matching nothing FAILS, so the ledger cannot rot). Nightly workflow
   `.github/workflows/entity-gate.yml` (04:00 UTC, supabase postgres,
-  chromium, `--test-threads=1` — both tests regenerate the same fixture in
-  place). **Unfixed tree: 190 generated-path errors** it had been hiding;
+  chromium; both tests regenerate the same fixture and take its cross-process
+  lock — #694). **Unfixed tree: 190 generated-path errors** it had been hiding;
   **after the sweep: 1 documented** (gap G1 below).
 - **The parser reads svelte-check's MACHINE format (issue #728).** The
   #634 parser still stripped the human shape (`path:line:col`,
@@ -2912,7 +2918,8 @@ worse: the gate that was meant to catch it **could not fail**.
   parser + reconciliation cases, the `START`/ui-dir containment guard,
   and the pre-existing `generated_paths_are_fail_closed_…` attribution
   pin) +
-  `-- --ignored --test-threads=1` (nightly, both lane tests) +
+  `-- --ignored` (nightly, both lane tests; self-serialized by the fixture
+  lock — #694) +
   `entity_form_tests` (3) + `cargo test -p codegraph-generate --lib -- ui::remote ui::page`.
 - Deferred / gaps (`docs/tdd/entity-kit-sweep.tdd.md`): G1
   `$env/dynamic/private` in the SHARED `server_api.rs` helper (kit 3 moved
@@ -4034,6 +4041,10 @@ cargo run -- lsp --schemas schemas/ --classifier classifier.toml --config domain
 Template mutation experiments need a fresh embed — on a pre-#718 checkout run
 `touch crates/codegraph-generate/build.rs` before trusting a red or green
 result (see "Template Overrides → Embedding watch").
+
+A gate that keeps a persistent output directory must, at run start, sweep the
+files the previous generation produced (keep the build cache) or key discovery
+on content (#694) — never `--test-threads=1`.
 
 ```bash
 # Rust tests

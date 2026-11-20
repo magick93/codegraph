@@ -1,14 +1,49 @@
-//! Shared review-fixture regeneration (used by `review_api_suite` and the
-//! #574 S2 `entity_codegen_gate`) — ONE recipe so the gates can never
-//! drift apart: the full default-profile pipeline over
+//! Shared review-fixture regeneration (used by `review_api_suite`, the
+//! #574 S2 `entity_codegen_gate` and `rules_guard_api_gate`) — ONE recipe so
+//! the gates can never drift apart: the full default-profile pipeline over
 //! `tests/fixtures/{schemas,classifier.toml,domains.toml}` written into
 //! `crates/review/generated-candidate/`, minus the gRPC (protoc) and ops
 //! (would overwrite the checked-in manifest/testkit) generators.
+//!
+//! ## The #694 rule: regenerate from clean, serialized
+//!
+//! The fixture is a persistent, CHECKED-IN tree that FOUR test paths regenerate
+//! in place (this flag-ON recipe's three gates, plus the flag-OFF
+//! `grafeo_candidate_inspect_output` / `review_fixture_flag_off_regen`), so two
+//! properties are load-bearing and neither is `--test-threads=1`:
+//!
+//! 1. **From clean** — [`FixtureGate::provision`] sweeps every file this
+//!    recipe's PREVIOUS generation produced before regenerating (see
+//!    `review_fixture_gate`, and its module docs for why the sweep is per
+//!    recipe: the flag-OFF recipe produces `testkit/` + `codegraph-ops.toml`,
+//!    which this plan strips and which the live gate needs). The set comes
+//!    from the generation report, not a hand-kept allowlist, so committed
+//!    extras and gate-owned stubs can never appear in it and are never
+//!    deleted. This is the #688 shape: an artifact an older generation emitted
+//!    (a renumbered `*_actions.hurl`, a removed view's page class) is
+//!    discovered by glob/suffix and read as this run's — the review fixture had
+//!    exactly that hole.
+//! 2. **Serialized** — [`FixtureGate::acquire`] takes an exclusive
+//!    CROSS-PROCESS file lock shared by all four paths. `--test-threads=1` only
+//!    serializes one binary, and hides the problem for anyone running a subset.
+//!
+//! Callers therefore hold a [`FixtureGate`] for the whole test body (not just
+//! the regeneration) and pass it to the provision step — the signature makes
+//! it impossible to regenerate without the lock.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use codegraph_core::traits::GraphQuerier;
+
+// The cross-process gate + the per-recipe produced-file ledgers (issue #694).
+// Shared with the flag-OFF mutators by path so there is exactly one lock and
+// one ledger set.
+#[allow(dead_code)]
+#[path = "review_fixture_gate.rs"]
+pub mod review_fixture_gate;
+
+pub use review_fixture_gate::{FixtureGate, Recipe};
 
 pub fn manifest_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -70,7 +105,11 @@ pub fn ensure_testkit_path_dep(fixture_dir: &Path) {
 /// - the gRPC generators (need protoc) and the `ops` generator (would
 ///   overwrite the checked-in `codegraph-ops.toml` + `testkit/`) are stripped
 ///   from the plan.
-pub async fn regenerate_fixture() -> Result<(), String> {
+///
+/// Returns every file the run wrote, output-dir relative (the #694 ledger's
+/// content). Callers go through [`FixtureGate::provision`], which needs the
+/// [`FixtureGate`] and starts from clean.
+async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
     use codegraph::generate::template_engine::create_tera;
     use codegraph::generate::{
         DtoKeyCasing, GeneratorOpts, ProjectConfig, compute_generation_order,
@@ -304,5 +343,39 @@ pub async fn regenerate_fixture() -> Result<(), String> {
 
     ensure_testkit_workspace_member(&output_dir);
     ensure_testkit_path_dep(&output_dir);
-    Ok(())
+
+    // The ledger's content: exactly the files this run wrote (the report
+    // mirrors every `write_output` call in the pipeline). Absolute paths —
+    // `review_fixture_gate::ledger_text` relativizes them against the fixture
+    // and drops anything redirected outside it (the hooks tempdir).
+    Ok(report.files.iter().map(|file| file.path.clone()).collect())
+}
+
+/// Provision the review fixture (issue #694): from clean, under the gate.
+///
+/// 1. sweep every file a previous generation of EITHER recipe produced (see
+///    `review_fixture_gate::sweep_produced`) so no artifact of an older
+///    generation — including flag-OFF residue this recipe never emits — can be
+///    discovered as this run's;
+/// 2. regenerate with [`regenerate_fixture`];
+/// 3. record this recipe's new produced set.
+///
+/// It is a METHOD on the guard, not a free function, because the caller must
+/// hold the gate for its whole body (the gates BUILD in this tree after
+/// provisioning), and two `flock`s on the same file from one process would
+/// deadlock — the signature makes it impossible to provision without it.
+impl FixtureGate {
+    pub async fn provision(&self) -> Result<(), String> {
+        let output_dir = fixture_dir();
+        let swept = review_fixture_gate::sweep_produced(&output_dir, Recipe::FlagOn);
+        if swept > 0 {
+            eprintln!(
+                "provision: swept {swept} file(s) written by the previous flag-ON generation \
+                 of {}",
+                output_dir.display()
+            );
+        }
+        let produced = regenerate_fixture().await?;
+        review_fixture_gate::record_produced(&output_dir, Recipe::FlagOn, &produced)
+    }
 }

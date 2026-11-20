@@ -2,8 +2,10 @@
 
 **Branch:** `ws/634-kit-sweep` (off `3e8a7241`, master HEAD after the #633 media epic)
 **Runner:** `RUSTFLAGS="-C debuginfo=0" cargo test -p <crate>`; `just ci-local` for the
-matrix. Node gates (`entity_codegen_gate`) run with `--test-threads=1` — both tests
-regenerate the same review fixture in place.
+matrix. Node gates (`entity_codegen_gate`) need no `--test-threads` flag: since issue
+#694 the two tests take the review fixture's cross-process gate and provision it from
+clean, so they self-serialize (this report predates that and records the flag it ran
+with).
 **Scope:** issue #634 — port the ws6 (IFML plane) kit-2.x defect class to the entity
 plane (kit `3.0.0-next.24`), and repair the entity gate that was supposed to catch it.
 
@@ -154,9 +156,10 @@ cargo test -p codegraph-generate --lib -- ui::remote ui::page       # 7 + 18
 cargo test -p codegraph --test ux_rules_byte_identity_tests         # flag-off canary
 cargo test -p codegraph --test forms_byte_identity_tests            # flag-off canary
 
-# nightly (node + postgres + chromium)
+# nightly (node + postgres + chromium); no --test-threads flag since #694 —
+# the gate serializes itself under the review-fixture lock
 cargo test -p codegraph --test entity_codegen_gate -- \
-  --ignored --nocapture --test-threads=1
+  --ignored --nocapture
 ```
 
 Gate summary on this tree:
@@ -176,7 +179,9 @@ default `postgres:15` service in CI would fail the basejump migration's
 `auth.users` reference — that is why the workflow uses the supabase image.)
 
 Wired as `.github/workflows/entity-gate.yml` (workflow_dispatch + `0 4 * * *`,
-supabase postgres service, chromium install, `--test-threads=1`), mirroring
+supabase postgres service, chromium install; the flake-prone
+`--test-threads=1` this report was written with is retired by #694 — the gate
+and its shared provisioning step serialize themselves), mirroring
 `ifml-gate.yml`'s no-secret shape.
 
 ## Byte identity

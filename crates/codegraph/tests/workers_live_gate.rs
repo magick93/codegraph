@@ -707,10 +707,21 @@ fn tail(text: &str, n: usize) -> String {
     lines[start..].join("\n")
 }
 
-/// The entries the workers suite wipes before regenerating (workers.rs
-/// `REGEN_WIPE` — mirrored here because the gate drives the regeneration
-/// itself; see the skip-generate note on the live test).
-const REGEN_WIPE: [&str; 8] = [
+/// The entries the workers gate wipes before regenerating. It drives the
+/// regeneration itself (see the skip-generate note on the live test), so this
+/// list is the gate's own — the harness's `workers.rs` `REGEN_WIPE` covers the
+/// first eight roots, and its remaining gap (`hurl`) is recorded as a follow-up
+/// on #694: the gate must not inherit it just because it mirrors the harness.
+///
+/// Issue #694: `hurl`, `gate-domain-types`, `testkit` and the run manifest are
+/// generated output too. Leaving the hurl dir out (the pre-#694 shape, on the
+/// grounds that the hand-authored `90_workflow_transition_409.hurl` rides it)
+/// is what let an older generation's numbered contract be hurl'd against the
+/// new app — the #688 class exactly, and the gate's own mix assertion would
+/// count it as a per-entity contract. The hand-authored file is re-seeded by
+/// the fixture's `post_generate` hook right after the regeneration, so wiping
+/// the dir loses nothing.
+const REGEN_WIPE: [&str; 11] = [
     "src",
     "workers",
     "migrations",
@@ -718,8 +729,15 @@ const REGEN_WIPE: [&str; 8] = [
     "cornucopia-queries",
     "cli",
     "ui",
+    "hurl",
+    "gate-domain-types",
+    "testkit",
     "Cargo.toml",
 ];
+
+/// Run manifests the generation writes at the output root (never listed by
+/// `REGEN_WIPE` because they are files, not generated tree roots).
+const REGEN_WIPE_FILES: [&str; 1] = [".codegraph-manifest.json"];
 
 /// Wipe the generated workers output (stage-2 parity), then regenerate it
 /// from the current templates through the fixture's own wrapper binary —
@@ -742,11 +760,37 @@ async fn regenerate_workers_output(config: &OpsConfig) -> Result<String, String>
             .and_then(|w| w.output_dir.clone())
             .unwrap_or_else(|| "generated-workers".into()),
     );
+    // Preserve the generated testkit crate's cargo cache across the wipe
+    // (issue #694 review): the crate is its own workspace root, so its
+    // `target/` lives inside it and re-building the harness from cold is the
+    // most expensive part of a re-run that has nothing to do with the
+    // regeneration.
+    let testkit_dir = workers_out.join("testkit");
+    let testkit_cache = testkit_dir.join("target");
+    let cache_stash = workers_out.join(".testkit-target.stash");
+    let cache_stashed = testkit_cache.is_dir();
+    if cache_stashed {
+        let _ = std::fs::remove_dir_all(&cache_stash);
+        std::fs::rename(&testkit_cache, &cache_stash)
+            .map_err(|e| format!("stash {}: {e}", testkit_cache.display()))?;
+    }
     for rel in REGEN_WIPE {
         let path = workers_out.join(rel);
         if path.is_dir() {
             std::fs::remove_dir_all(&path).map_err(|e| format!("wipe {}: {e}", path.display()))?;
         } else if path.is_file() {
+            std::fs::remove_file(&path).map_err(|e| format!("wipe {}: {e}", path.display()))?;
+        }
+    }
+    if cache_stashed {
+        std::fs::create_dir_all(&testkit_dir)
+            .map_err(|e| format!("recreate {}: {e}", testkit_dir.display()))?;
+        std::fs::rename(&cache_stash, &testkit_cache)
+            .map_err(|e| format!("restore {}: {e}", testkit_cache.display()))?;
+    }
+    for rel in REGEN_WIPE_FILES {
+        let path = workers_out.join(rel);
+        if path.is_file() {
             std::fs::remove_file(&path).map_err(|e| format!("wipe {}: {e}", path.display()))?;
         }
     }
@@ -1096,6 +1140,16 @@ async fn run_suite_on_scratch(_admin: &PgTarget, scratch: &str) -> Result<(), St
     let suite_log = std::env::temp_dir().join("workers-gate-suite.log");
     let _ = std::fs::remove_file(&results_path);
     let _ = std::fs::remove_file(&suite_log);
+
+    // Issue #694: the mix assertion below reads `test-results/hurl/*.log`, and
+    // the suite only writes a log for a file it RAN. A log left by a previous
+    // run would prove a contract this run never executed (the same stale-read
+    // class as the hurl dir itself), so clear the directory first.
+    let stale_logs = fixture.join("test-results/hurl");
+    if stale_logs.is_dir() {
+        std::fs::remove_dir_all(&stale_logs)
+            .map_err(|e| format!("clear stale hurl logs {}: {e}", stale_logs.display()))?;
+    }
 
     println!(
         "running the generated testkit (`api --workers --skip-generate`) against {scratch} — \

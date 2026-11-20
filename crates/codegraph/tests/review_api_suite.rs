@@ -25,10 +25,13 @@
 //! dropped at the end): migration → server boot → hurl contracts → curl smoke
 //! → RLS checks → graceful shutdown.
 //!
-//! Before the suite runs, the fixture is regenerated in place from the current
-//! templates (the same pipeline as the `grafeo_generated_code_compiles` gate,
-//! minus the gRPC and ops generators so the checked-in manifest and hurl dir
-//! survive), so the gate always exercises this branch's generator output.
+//! Before the suite runs, the fixture is regenerated FROM CLEAN (issue #694:
+//! the previous generation's files are swept, then the same pipeline as the
+//! `grafeo_generated_code_compiles` gate runs, minus the gRPC and ops
+//! generators so the checked-in manifest and hurl dir survive), under the
+//! cross-process fixture lock shared with `entity_codegen_gate` and
+//! `rules_guard_api_gate` — so the hurl contracts the suite runs are always
+//! this run's, never an older generation's renumbered leftovers.
 //!
 //! Self-contained but slow: the first run builds the fixture app from cold
 //! (~10-20 minutes); warm runs are a few minutes. Needs Postgres
@@ -89,18 +92,11 @@ fn scratch_db_name() -> String {
 
 /// Regenerate the fixture app in place from the current templates.
 ///
-/// Same pipeline as the compile gate (`grafeo_generated_code_compiles`),
-/// except:
-/// - `output_dir` is the checked-in fixture dir (the fixture tracks the
-///   branch, like `grafeo_candidate_inspect_output`);
-/// - the domain-types crate is generated INSIDE the app output so the
-///   scaffolded `domain-types = { path = "domain-types" }` dependency
-///   resolves;
-/// - the gRPC generators (need protoc) and the `ops` generator (would
-///   overwrite the checked-in `codegraph-ops.toml` + `testkit/`) are stripped
-///   from the plan.
-async fn regenerate_fixture() -> Result<(), String> {
-    review_api_suite_regen::regenerate_fixture().await
+/// Goes through the #694 provision step: sweep the previous generation's files,
+/// regenerate, record the new produced set — under the cross-process fixture
+/// gate the caller holds for its whole body.
+async fn provision_fixture(gate: &review_api_suite_regen::FixtureGate) -> Result<(), String> {
+    gate.provision().await
 }
 
 /// Rewrite the `[database.api]` block of the fixture manifest to point at the
@@ -212,7 +208,10 @@ async fn review_fixture_api_suite_passes_in_app_pool_mode() {
     }
 
     println!("regenerating fixture from current templates…");
-    regenerate_fixture()
+    // Held for the whole test: the regeneration AND the `testkit api` build
+    // read the same committed tree the other review-fixture gates rewrite.
+    let gate = review_api_suite_regen::FixtureGate::acquire().expect("acquire fixture gate");
+    provision_fixture(&gate)
         .await
         .expect("fixture regeneration must succeed");
 
