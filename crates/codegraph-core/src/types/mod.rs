@@ -53,9 +53,9 @@ pub use condition::{ConditionKind, ConditionNode};
 pub use ddd::{
     DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,
     DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags, DddDesignNode,
-    DddDocumentField, DddErrorDecl, DddInvariant, DddModelGraph, DddModuleNode, DddPagination,
-    DddParam, DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode,
-    DddServiceNode, DddServiceOperation, DddTransitionRef,
+    DddDocumentField, DddDtoMember, DddDtoShapeNode, DddErrorDecl, DddInvariant, DddModelGraph,
+    DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
+    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation, DddTransitionRef,
 };
 pub use deploy::{
     DeployApplicationNode, DeployBindingNode, DeployComponentNode, DeployConnectionNode,

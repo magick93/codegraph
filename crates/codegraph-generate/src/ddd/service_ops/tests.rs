@@ -431,6 +431,7 @@ fn execution_maps_repository_builtins_and_save() {
         }],
         services: Vec::new(),
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     };
     let ops = [
         "delete".to_string(),
@@ -603,6 +604,7 @@ fn pay_run_model(
             ordinal: 0,
         }],
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     }
 }
 

@@ -204,6 +204,15 @@ fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
     if plan.params.is_empty() {
         return String::new();
     }
+    // Issue #667: a lone modeled DTO parameter IS the request body, so the
+    // contract sends the boundary object directly (not wrapped by its name).
+    if plan.params.len() == 1 && plan.params[0].direct_body {
+        return if plan.params[0].optional {
+            "null".to_string()
+        } else {
+            plan.params[0].sample.to_string()
+        };
+    }
     let mut object = serde_json::Map::new();
     for param in &plan.params {
         object.insert(

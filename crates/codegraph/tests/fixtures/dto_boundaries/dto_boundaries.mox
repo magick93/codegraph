@@ -1,0 +1,9 @@
+package nz.example.library
+
+type Uuid wraps opaque
+
+class Book {
+    String title
+    String isbn
+    int playLength
+}

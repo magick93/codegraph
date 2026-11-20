@@ -157,6 +157,7 @@ generators = [
     # Global
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "dto_boundaries",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
     # gRPC
@@ -213,6 +214,7 @@ generators = [
     "router", "links", "mox_ops",
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "dto_boundaries",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
@@ -302,6 +304,7 @@ generators = [
     "router", "links", "hurl_contract", "mox_ops",
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "dto_boundaries",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
@@ -329,6 +332,7 @@ generators = [
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry",
     "domain_types_scaffold",
+    "dto_boundaries",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",
@@ -388,6 +392,7 @@ generators = [
     # Global
     "cornucopia_config", "worker_scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "dto_boundaries",
     "report_views", "openapi",
 ]
 output = "review/generated-candidate/"
@@ -414,6 +419,7 @@ generators = [
     "router", "links", "mox_ops",
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "dto_boundaries",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
     "grpc_proto", "grpc_service", "grpc_router", "grpc_scaffold",

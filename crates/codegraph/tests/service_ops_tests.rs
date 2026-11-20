@@ -2489,6 +2489,7 @@ async fn unresolvable_throws_entry_fails_validation_naming_the_op() {
             ordinal: 0,
         }],
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     };
     let engine = codegraph_core::mock::MockEngine::builder()
         .with_schema(fixture::pay_run_schema_node())

@@ -16,9 +16,9 @@ use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
     DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,
     DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags, DddDesignNode,
-    DddDocumentField, DddErrorDecl, DddInvariant, DddModelGraph, DddModuleNode, DddPagination,
-    DddParam, DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode,
-    DddServiceNode, DddServiceOperation, DddTransitionRef,
+    DddDocumentField, DddDtoMember, DddDtoShapeNode, DddErrorDecl, DddInvariant, DddModelGraph,
+    DddModuleNode, DddPagination, DddParam, DddRepositoryNode, DddRepositoryOperation,
+    DddSearchField, DddSearchNode, DddServiceNode, DddServiceOperation, DddTransitionRef,
 };
 use phero_driver::{CompileInputs, DomainImports, SchemaImports, SigilImports, compile_ddd_str};
 
@@ -38,6 +38,9 @@ pub struct DddIngestStats {
     pub services: usize,
     /// Search definitions ingested.
     pub searches: usize,
+    /// Modeled DTO boundaries ingested (DD3, issue #667) — mirror,
+    /// projection, and standalone forms alike.
+    pub dto_shapes: usize,
     /// Design class / search entity names that matched no ingested schema
     /// title (exact or +`type_suffix`); the node keeps `None` and the miss
     /// warns on stderr.
@@ -55,7 +58,13 @@ impl std::fmt::Display for DddIngestStats {
             self.services,
             self.searches,
             self.unresolved_classes
-        )
+        )?;
+        // Issue #667: only a model that actually declares DTO boundaries
+        // changes the stats line, so the pre-#667 output is byte-identical.
+        if self.dto_shapes > 0 {
+            write!(f, ", {} dto boundaries", self.dto_shapes)?;
+        }
+        Ok(())
     }
 }
 
@@ -139,6 +148,7 @@ pub async fn ingest_ddd_files(
         stats.repositories += graph.repositories.len();
         stats.services += graph.services.len();
         stats.searches += graph.searches.len();
+        stats.dto_shapes += graph.dto_shapes.len();
         ingestor
             .ingest_ddd_model(&graph)
             .await
@@ -382,6 +392,7 @@ pub fn ddd_model_graph_from_phero(
     let mut repositories = Vec::new();
     let mut services = Vec::new();
     let mut searches = Vec::new();
+    let mut dto_shapes = Vec::new();
 
     for (module_ordinal, module) in model.modules.iter().enumerate() {
         modules.push(DddModuleNode {
@@ -393,22 +404,18 @@ pub fn ddd_model_graph_from_phero(
         });
 
         for (ordinal, design) in module.designs.iter().enumerate() {
-            // DD3: `class` is absent for a standalone DTO boundary (a `dto`
-            // design with no `.mox` source). Those carry no domain class, so
-            // there is nothing to map onto the graph: skip with a warning
-            // naming the boundary instead of inventing an empty class.
+            // DD3 (issue #667): every `dto` design carries a boundary shape,
+            // including the STANDALONE form whose `class` is absent (it has no
+            // `.mox` source). The shape is the consumable surface — the
+            // boundary name, its derived direction, and its ordered members —
+            // so it rides the graph on its own family rather than being
+            // dropped with the class-less design node.
+            if let Some(shape) = &design.dto_shape {
+                dto_shapes.push(ddd_dto_shape_node(shape, &app_name, &module.name, ordinal));
+            }
+            // A standalone DTO boundary carries no domain class, so there is
+            // no design node to map; it lives in `dto_shapes` alone.
             let Some(class) = design.class.clone() else {
-                let boundary = design
-                    .dto_shape
-                    .as_ref()
-                    .map(|shape| shape.name.as_str())
-                    .unwrap_or("<unnamed>");
-                eprintln!(
-                    "Warning: ddd — module '{}' declares standalone DTO boundary \
-                     '{boundary}' with no domain class; skipped (DTO boundaries \
-                     are not mapped onto the entity plane)",
-                    module.name
-                );
                 continue;
             };
             let resolved_title = title_resolver(short_name(&class));
@@ -600,6 +607,7 @@ pub fn ddd_model_graph_from_phero(
         repositories,
         services,
         searches,
+        dto_shapes,
     }
 }
 
@@ -692,6 +700,54 @@ fn service_operation_node(
             })
             .collect(),
         ordinal,
+    }
+}
+
+/// Convert one phero-ir [`phero_ir::ddd::DtoShape`] into its graph mirror
+/// (DD3, issue #667). Member payloads (types, multiplicities) ride as
+/// phero-ir JSON so codegraph-core stays phero-free; the boundary name,
+/// direction, and member kinds are plain strings (the `stereotype` /
+/// `builtin` labelling precedent).
+fn ddd_dto_shape_node(
+    shape: &phero_ir::ddd::DtoShape,
+    application: &str,
+    module: &str,
+    ordinal: usize,
+) -> DddDtoShapeNode {
+    DddDtoShapeNode {
+        application: application.to_string(),
+        module: module.to_string(),
+        name: shape.name.clone(),
+        source_json: opt_json(shape.source.as_ref()),
+        direction: dto_direction_label(shape.direction).to_string(),
+        members: shape
+            .members
+            .iter()
+            .map(|member| DddDtoMember {
+                name: member.name.clone(),
+                kind: dto_member_kind_label(member.kind).to_string(),
+                type_json: to_json(&member.type_),
+                multiplicity_json: opt_json(member.multiplicity.as_ref()),
+                path: member.path.clone(),
+                expression: member.expression.clone(),
+            })
+            .collect(),
+        ordinal,
+    }
+}
+
+fn dto_direction_label(direction: phero_ir::ddd::DtoDirection) -> &'static str {
+    match direction {
+        phero_ir::ddd::DtoDirection::Input => "input",
+        phero_ir::ddd::DtoDirection::Output => "output",
+    }
+}
+
+fn dto_member_kind_label(kind: phero_ir::ddd::DtoMemberKind) -> &'static str {
+    match kind {
+        phero_ir::ddd::DtoMemberKind::Select => "select",
+        phero_ir::ddd::DtoMemberKind::Derive => "derive",
+        phero_ir::ddd::DtoMemberKind::Declared => "declared",
     }
 }
 

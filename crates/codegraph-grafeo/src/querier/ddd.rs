@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use codegraph_core::error::GraphError;
 use codegraph_core::types::{
-    DddApplicationNode, DddDesignNode, DddModelGraph, DddModuleNode, DddRepositoryNode,
-    DddRepositoryOperation, DddSearchNode, DddServiceNode,
+    DddApplicationNode, DddDesignNode, DddDtoShapeNode, DddModelGraph, DddModuleNode,
+    DddRepositoryNode, DddRepositoryOperation, DddSearchNode, DddServiceNode,
 };
 
 use super::query::query_gql;
@@ -115,6 +115,35 @@ impl GrafeoEngine {
                 invariants: parse_json(reader.get_opt_string(row, "invariants_json")?),
                 ordinal: reader.get_usize(row, "ordinal")?,
             });
+        }
+
+        // Modeled DTO boundaries per application (DD3, issue #667), via
+        // DddHasModule → DddHasDtoShape.
+        let result = query_gql(
+            self,
+            "MATCH (a:DddApplication)-[:DddHasModule]->(m:DddModule)-[:DddHasDtoShape]->(s:DddDtoShape) \
+             RETURN a.name AS app, s.module AS module, s.name AS name, \
+             s.source_json AS source_json, s.direction AS direction, \
+             s.members_json AS members_json, s.ordinal AS ordinal",
+        )?;
+        let reader = RowReader::from_columns(&result.columns);
+        let mut dto_shapes: HashMap<String, Vec<DddDtoShapeNode>> = HashMap::new();
+        for row in &result.rows {
+            let app = reader.get_string(row, "app")?;
+            dto_shapes
+                .entry(app.clone())
+                .or_default()
+                .push(DddDtoShapeNode {
+                    application: app,
+                    module: reader.get_string(row, "module")?,
+                    name: reader.get_string(row, "name")?,
+                    source_json: reader
+                        .get_opt_string(row, "source_json")?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    direction: reader.get_string(row, "direction")?,
+                    members: parse_json(reader.get_opt_string(row, "members_json")?),
+                    ordinal: reader.get_usize(row, "ordinal")?,
+                });
         }
 
         // Services per application, via DddHasModule → DddHasService.
@@ -278,6 +307,8 @@ impl GrafeoEngine {
                 designs.sort_by_key(|d| (module_rank(&d.module), d.ordinal));
                 let mut services = services.remove(&app_name).unwrap_or_default();
                 services.sort_by_key(|s| (module_rank(&s.module), s.ordinal));
+                let mut dto_shapes = dto_shapes.remove(&app_name).unwrap_or_default();
+                dto_shapes.sort_by_key(|s| (module_rank(&s.module), s.ordinal));
                 let mut searches = searches.remove(&app_name).unwrap_or_default();
                 searches.sort_by_key(|x| (module_rank(&x.module), x.ordinal));
                 let mut repositories = repositories.remove(&app_name).unwrap_or_default();
@@ -297,6 +328,7 @@ impl GrafeoEngine {
                     repositories,
                     services,
                     searches,
+                    dto_shapes,
                 }
             })
             .collect();

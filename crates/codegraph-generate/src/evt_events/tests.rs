@@ -1831,6 +1831,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
             }],
         }],
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     };
     let doc = crate::events::docs::catalogue_markdown(
         &arch,

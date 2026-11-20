@@ -66,6 +66,9 @@ use utoipa::OpenApi;
         crate::api::{{ domain.name }}::functions_api::{{ function.response }},
 {%- endfor %}
 {% endfor %}
+{%- for boundary in dto_boundaries %}
+        {{ project.domain_types_crate }}::dto::{{ boundary.module }}::{{ boundary.name }},
+{%- endfor %}
         crate::error::ErrorResponse,
         crate::error::ErrorBody,
         crate::error::FieldError,

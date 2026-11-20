@@ -1113,6 +1113,71 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   block's `{% endif %}` so it adds no newline) and the actions contract is
   unchanged for parameter-less ops.
 
+### Modeled DTO boundaries (DD3, issue #667)
+
+A `.ddd` `dto` design is a transport boundary, not a class design. Ingest used
+to DROP it: a standalone DTO has no `Design::class`, and a mirror/projection
+design kept only its `stereotype` — the shape (direction + ordered members)
+never reached the graph. #667 makes the boundary a plane:
+
+- **Graph** (`DddModelGraph.dto_shapes: Vec<DddDtoShapeNode>`, module-major by
+  the owning design's ordinal; `DddDtoMember { name, kind: select|derive|
+  declared, type_json, multiplicity_json, path, expression }`) + the Grafeo
+  `DddDtoShape` node and `DddHasDtoShape` edge. Standalone boundaries land here
+  with no `DddDesign` node; mirror/projection designs still land as design
+  nodes. **`GRAPH_FORMAT_VERSION` 13 → 14** (`graph_document_v14.md`).
+  `DddIngestStats.dto_shapes` prints only when non-zero (pre-#667 stats line
+  byte-identical).
+- **Generation** (`ddd/dto_boundaries.rs`, global `dto_boundaries` capability,
+  presence-gated): one file per `.ddd` module at
+  `{domain_types_base}/src/dto/{module}.rs` + the index, in the SHARED
+  domain-types crate (worker action handlers must reach the same type). EVERY
+  boundary (mirror, projection, standalone) is a STRUCT carrying exactly its
+  modeled members (snake_case fields, project dto casing,
+  `deny_unknown_fields` on inputs, derived members documented with their
+  expression). **Deviation from the issue's "mirror → the existing
+  `{Entity}Response`"**: review proved an alias widens a subset projection into
+  the full response (extra fields, lax unknown-field handling) and breaks on
+  `table "…"` renames (the alias target was derived from the title, not the
+  emitted `pg_table_name`); the exact-member struct is the honest contract.
+  Member typing: primitives via `phero_type_to_rust` (named datatypes
+  normalized — bare `Uuid`/`NaiveDate` become the qualified paths the module
+  can name), ENTITY class refs → `uuid::Uuid`, codelists → the generated enum,
+  nested boundaries imported across modules, multiplicity → `Option`/`Vec`
+  (`Vec` fields carry `#[serde(default)]`, so an omitted list is valid). Named refusals:
+  interface/unresolvable member, a non-entity (value-object/structured) class
+  ref, an unresolved class, an undeclared nested boundary, derivation without
+  source, boundary name colliding with a generated entity DTO type. The
+  domain-types scaffold declares `pub mod dto;` only when the graph carries
+  shapes.
+- **Payload slots** (`ddd/body_params.rs` — split out of the #751 over-limit
+  `body_lower.rs`): `DtoBoundaryIndex` (with graph-backed `sample`s: project
+  wire casing, arrays for many-valued members, the FIRST codelist value) lives
+  beside the generator (wire-valid: project casing, `[]` for a lower-0
+  collection, `[one]` otherwise, the first codelist value, and the named
+  datatype samples `Uuid`/`DateTime`/`Decimal`/`Date`); `body_params` resolves
+  a `DddTypeRef::Dto` parameter to
+  `{domain_types_crate}::dto::{module}::{Name}`, and a LONE boundary parameter
+  makes the endpoint body the DTO itself (`BodyParam.direct_body`, honoured by
+  the pre-rendered extraction — an optional one deserializes the INNER type —
+  by the hurl action body, and by the handler's utoipa `request_body`).
+  Output-only boundaries (any derived member) and unknown boundaries are named
+  refusals riding `ValidationPass::check_service_op_bodies`. Both OpenAPI
+  documents register every boundary as a component schema.
+- **Deferred (filed)**: **#767** — a modeled input boundary as the
+  COLLECTION-level create body (mapping onto `Create{Entity}Request` + the
+  create-shaped route) and the child-op boundary payload (today one WARN per op
+  naming #767); **#768** — projections as read models (derived-member
+  arithmetic lowering + the real read endpoint).
+- **Gates**: `cargo test -p codegraph --test ddd_dto_boundaries_tests` (mirror
+  alias, projection/standalone shape, no-shape byte identity, collision +
+  member refusals, body-param KATs, and an end-to-end `driver::run` over
+  `tests/fixtures/ddd/dto_boundaries/` asserting the emitted module, the crate
+  index, the direct-body extraction, and both OpenAPI registrations) +
+  `--test ddd_dto_boundaries_compile_tests` (the #551 pin: the emitted plane
+  compiles native AND wasm32 in a sea_orm-free scratch crate) +
+  `--test artifact_kit_tests` (the bump) + the standing canaries.
+
 ### Declared error vocabulary + `throws` (DD7, issue #665)
 
 The DD7 error vocabulary is now a generated plane end to end — ingest,
@@ -4295,8 +4360,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `13` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v13.md`.
+  `14` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v14.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -4310,7 +4375,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 14` while the constant is 13), NOT derived from
+  (`formatVersion 15` while the constant is 14), NOT derived from
   `GRAPH_FORMAT_VERSION`; so is the IN-CRATE kit KAT literal
   (`crates/codegraph/src/artifact/kit.rs` `tests::kit_case_rejects_canonical_drift`,
   a `#cfg(test)` `formatVersion` string the five fixture-name sites do not
@@ -4327,7 +4392,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   aggregate child ops, 10→11 service-op condition paths (#663), 11→12
   DD4/DD5 authored aggregate boundaries + design invariants (#666), 12→13
   the DD7 declared error vocabulary (`errors_json` on the application +
-  module nodes, #665) —
+  module nodes, #665), 13→14 the modeled DTO boundary family (`DddDtoShape`,
+  #667) —
   the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
@@ -4336,7 +4402,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v13 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v14 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.

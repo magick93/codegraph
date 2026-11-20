@@ -20,6 +20,19 @@ pub struct OpenApiContext {
     pub title: String,
     pub version: String,
     pub domains: Vec<OpenApiDomain>,
+    /// Modeled DTO boundaries (DD3, issue #667) — registered as component
+    /// schemas beside the entity DTOs. (NO skip_serializing_if — the Tera
+    /// context needs the empty vec.)
+    pub dto_boundaries: Vec<OpenApiBoundary>,
+}
+
+/// One modeled DTO boundary registered as a utoipa component schema.
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenApiBoundary {
+    /// The boundary name (the generated Rust type).
+    pub name: String,
+    /// The `.ddd` module's snake_case file stem in `src/dto/`.
+    pub module: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +105,10 @@ pub struct PerDomainOpenApiContext {
     pub domain_name: String,
     pub domain_label: String,
     pub entities: Vec<OpenApiEntity>,
+    /// Modeled DTO boundaries (DD3, issue #667) — documented in every
+    /// domain document because a boundary is application-scoped, not
+    /// domain-scoped. (NO skip_serializing_if.)
+    pub dto_boundaries: Vec<OpenApiBoundary>,
     /// HTTP-exposed modeled functions (issue #337 B1). Empty unless a
     /// `[functions]` binding opts in.
     /// (NO skip_serializing_if — the Tera context needs the empty vec.)
@@ -386,6 +403,17 @@ impl GlobalGenerator for OpenApiGenerator {
         // Sort domains for deterministic output
         domains.sort_by(|a, b| a.name.cmp(&b.name));
 
+        // Modeled DTO boundaries (DD3, issue #667): application-scoped, so
+        // every document registers the same component schemas.
+        let dto_boundaries: Vec<OpenApiBoundary> =
+            crate::ddd::dto_boundaries::DtoBoundaryIndex::from_models(&db.get_ddd_models().await?)
+                .shapes()
+                .map(|shape| OpenApiBoundary {
+                    name: shape.name.clone(),
+                    module: codegraph_naming::to_snake_case(&shape.module),
+                })
+                .collect();
+
         let openapi_dir = self.output_dir.join("src").join("api").join("openapi");
         let mut files = Vec::new();
 
@@ -403,6 +431,7 @@ impl GlobalGenerator for OpenApiGenerator {
             title: project.identity.api_title.clone(),
             version: project.identity.api_version.clone(),
             domains: domains.clone(),
+            dto_boundaries: dto_boundaries.clone(),
         };
         let all_content =
             render_template_with_project(tera, "api/openapi_all.tera", &all_ctx, project)?;
@@ -421,6 +450,7 @@ impl GlobalGenerator for OpenApiGenerator {
                 entities: domain.entities.clone(),
                 functions: domain.functions.clone(),
                 service_ops: domain.service_ops.clone(),
+                dto_boundaries: dto_boundaries.clone(),
             };
             let content =
                 render_template_with_project(tera, "api/openapi_domain.tera", &ctx, project)?;

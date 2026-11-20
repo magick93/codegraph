@@ -1259,6 +1259,9 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
 {% if op.execution.kind == "child_op" and op.execution.action == "add" %}
     request_body(content = Create{{ entity_name }}Body, description = "The child element to add"),
 {% endif %}
+{% if op.execution.kind == "body" and op.execution.plan.params | length == 1 and op.execution.plan.params[0].direct_body %}
+    request_body(content = {{ op.execution.plan.params[0].request_body }}, description = "The modeled DTO boundary request body"),
+{% endif %}
     responses(
         (status = 200, description = "Accepted"),
         (status = 403, description = "Denied by the actor policy"),
