@@ -35,8 +35,10 @@
 //!    silently drop is named instead of ignored.
 //! 6. The provenance check: every DDD design artifact carries a non-empty
 //!    `pheroVersion`. `DddModel::new()` always stamps it, so an emitted design
-//!    always has one; the domain `Model` carries it too, but its value is
-//!    provenance only and no other artifact root carries the key at all.
+//!    always has one. Exactly two artifact roots carry the key at all — the DDD
+//!    design (`ddd::DddModel`) and the domain `Model` (`.mox` IR); the actor,
+//!    event, deployment, use-case, decision, case, graph and IFML roots do not.
+//!    `formatVersion` remains the only *gate*; `pheroVersion` is provenance.
 //! 7. The kind's versioned `from_json` (when the version gate passed) — the
 //!    reader's own gate, so this check and the ingest path cannot disagree.
 //!
@@ -64,6 +66,13 @@
 //!   codegraph's committed artifacts. A new artifact elsewhere is out of the
 //!   walk and would not be gated; [`committed_artifact_set_is_complete`] covers
 //!   the fixtures tree only.
+//! - **The discovery walk fails on ANY unparseable `*.json` under the fixtures
+//!   tree** (that is what stops a broken artifact from hiding from
+//!   classification). A deliberately-malformed JSON fixture — a negative-case
+//!   input for some other test — therefore cannot simply be dropped in: it
+//!   must be exempted by a documented rule (an explicit allow-list entry in
+//!   [`collect_artifacts`], justified in the fixture's own test), or this gate
+//!   will fail on it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

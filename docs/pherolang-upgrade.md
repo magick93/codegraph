@@ -373,9 +373,10 @@ artifact, found by the coverage walk, not guessed from the issue text). The
 walk is a coverage invariant in both directions: a JSON root under the
 fixtures tree carrying `formatVersion` that is not in the covered list fails
 by name, and a `*.json` file that cannot be read or parsed **fails** rather
-than being skipped (a broken new artifact cannot hide from discovery). Scope
-is the fixtures tree only — an artifact committed elsewhere would not be
-walked.
+than being skipped (a broken new artifact cannot hide from discovery) — so a
+deliberately-malformed negative-case fixture must be exempted by a documented
+rule rather than dropped into the tree. Scope is the fixtures tree only — an
+artifact committed elsewhere would not be walked.
 
 **Why it is a reimplementation.** `phero-cli` is a **binary-only** crate
 (`[[bin]] name = "pherolang"`, no `[lib]` target), so `pherolang artifact
@@ -444,9 +445,11 @@ document, which is the failure class a committed fixture actually hits.
 
 **Regenerating a consumable artifact.** Upstream documents the workspace-wide
 command for its own artifacts — `PHERO_UPDATE_FIXTURES=1 cargo test
---workspace` — plus scoped per-gate variants (`PHERO_UPDATE_FIXTURES=1 cargo
-test -p phero-driver --test examples_artifacts`, `-p phero-verify`, `-p
-phero-ifml`); then *read the diff*: goldens are the spec, not an output. The
+--workspace` — plus scoped per-gate variants for artifacts
+(`PHERO_UPDATE_FIXTURES=1 cargo test -p phero-driver --test
+examples_artifacts`, `-p phero-ifml`); `-p phero-verify` is also in that
+habit but regenerates the docs' proof-register block, not an artifact. Then
+*read the diff*: goldens are the spec, not an output. The
 three fixtures we commit are codegraph-owned, so they re-bless through their
 own golden gates in the same spirit: `DDD_GOLDEN_BLESS=1 cargo test -p
 codegraph --test ddd_golden_tests` and `EVT_GOLDEN_BLESS=1 cargo test -p
