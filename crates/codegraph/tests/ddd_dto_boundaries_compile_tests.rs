@@ -13,8 +13,7 @@ use std::process::Command;
 
 /// End-to-end generation over the boundary fixture (mox + ddd).
 async fn generate() -> tempfile::TempDir {
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ddd/dto_boundaries");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dto_boundaries");
     let temp = tempfile::tempdir().expect("tempdir");
     let output = temp.path().join("out");
     let config = temp.path().join("domains.toml");

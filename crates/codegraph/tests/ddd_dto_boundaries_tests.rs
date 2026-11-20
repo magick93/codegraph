@@ -359,8 +359,7 @@ async fn pipeline_generates_boundaries_and_binds_the_action_payload() {
     use std::fs;
     use std::path::PathBuf;
 
-    let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ddd/dto_boundaries");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dto_boundaries");
     let temp = tempfile::tempdir().expect("tempdir");
     let output = temp.path().join("out");
     let config = temp.path().join("domains.toml");
