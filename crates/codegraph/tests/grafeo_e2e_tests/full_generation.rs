@@ -22,6 +22,14 @@ use codegraph::generate::traits::EntityGenerator;
 use codegraph_core::traits::GraphQuerier;
 use codegraph_grafeo::GrafeoEngine;
 
+// The review fixture's cross-process gate + per-recipe ledgers (issue #694).
+// THIS test is the flag-OFF recipe's origin, and it mutates the same committed
+// tree the flag-ON gates regenerate — so it takes the same lock and records the
+// same ledger set. No single binary uses every item; see the module docs.
+#[allow(dead_code)]
+#[path = "../review_fixture_gate.rs"]
+mod review_fixture_gate;
+
 use crate::setup::{entity_names_from_config, include_domain_config, setup_grafeo};
 // === Task 1: Repository Trait Generation ===
 
@@ -500,6 +508,13 @@ async fn grafeo_candidate_inspect_output() {
         .unwrap()
         .join("review")
         .join("generated-candidate");
+    // Issue #694: this is a NON-ignored PR-CI mutator of the tree the flag-ON
+    // gates regenerate, so it takes the same cross-process gate. It wipes
+    // wholesale (below), which subsumes the ledger sweep, but it MUST record
+    // the produced set — otherwise the flag-ON provision cannot see flag-OFF
+    // residue and its from-clean guarantee is single-recipe.
+    let _gate =
+        review_fixture_gate::FixtureGate::acquire().expect("acquire the review-fixture gate");
     let _ = std::fs::remove_dir_all(&output_dir);
     std::fs::create_dir_all(&output_dir).unwrap();
 
@@ -549,7 +564,20 @@ async fn grafeo_candidate_inspect_output() {
         .join("recruiting")
         .join("candidate");
     std::fs::create_dir_all(&repo_dir).unwrap();
-    std::fs::write(repo_dir.join("repository_impl.rs"), &repo_code).unwrap();
+    let repo_impl = repo_dir.join("repository_impl.rs");
+    std::fs::write(&repo_impl, &repo_code).unwrap();
+
+    // Record this recipe's produced set (the #694 ledger) — the pipeline's
+    // report plus the post-pipeline repository impl written above.
+    let mut produced: Vec<std::path::PathBuf> =
+        report.files.iter().map(|file| file.path.clone()).collect();
+    produced.push(repo_impl);
+    review_fixture_gate::record_produced(
+        &output_dir,
+        review_fixture_gate::Recipe::FlagOff,
+        &produced,
+    )
+    .expect("record the flag-OFF produced set");
 
     // Verify key files exist
     assert!(

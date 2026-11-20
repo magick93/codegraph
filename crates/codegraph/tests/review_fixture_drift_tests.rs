@@ -424,13 +424,12 @@ async fn committed_fixture_matches_the_current_generators() {
 /// the pin can never disagree about what "regenerated" means.
 ///
 /// Unlike `grafeo_candidate_inspect_output` this does NOT wipe the tree:
-/// the checked-in content the flag-OFF pipeline does not produce
-/// (consumer-authored `ui/forms/`, the retired-era trees) survives,
-/// because the pipeline's own `clean_generated_output` sweeps only
-/// entity-scoped output. Files a template change RETIRES elsewhere (hurl
-/// renumbering, retired UI routes) are named by the pin's "no longer
-/// produce" category — delete them by hand, then re-run this helper so
-/// the run manifests list exactly the surviving tree.
+/// content the flag-OFF pipeline does not produce is preserved. Since issue
+/// #694 it DOES sweep the files its own previous generation wrote (the
+/// per-recipe ledger in `review_fixture_gate`), so files a template change
+/// RETIRES (hurl renumbering, retired UI routes) are removed automatically —
+/// re-run this helper and the tree matches the pin's "no longer produce"
+/// category instead of needing a hand-deletion pass.
 #[tokio::test]
 #[ignore = "maintenance: rewrites crates/review/generated-candidate in place (issue #747)"]
 async fn regenerate_committed_fixture_in_place() {

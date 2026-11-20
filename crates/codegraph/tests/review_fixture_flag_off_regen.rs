@@ -24,9 +24,11 @@
 //!   `remove_dir_all`s the fixture first), the maintenance caller must
 //!   preserve the checked-in content the flag-OFF pipeline does not
 //!   produce — `codegraph-ops.toml` + `testkit/` (the `review_api_suite`
-//!   live gate reads them) and consumer-authored `ui/forms/`. The
-//!   pipeline's own `clean_generated_output` sweeps only entity-scoped
-//!   output, so those extras survive an in-place run untouched.
+//!   live gate reads them) and consumer-authored `ui/forms/`. Since issue
+//!   #694 it DOES sweep the previous generation (every recipe's ledger —
+//!   [`review_fixture_gate::sweep_produced`]), which is from-clean without
+//!   touching those extras: they are committed/gate-owned and never in a
+//!   ledger.
 //!
 //! Node-free and DB-free: the ingest is an in-memory Grafeo engine and no
 //! npm/node step is involved.
@@ -40,7 +42,14 @@
 #[path = "grafeo_e2e_tests/setup.rs"]
 mod inspect_setup;
 
-use std::path::Path;
+// The review fixture's cross-process gate + per-recipe ledgers (issue #694).
+// The flag-OFF recipe is one of FOUR mutators of the same committed tree; the
+// gate and the ledger set are shared by path so none of them can drift.
+#[allow(dead_code)]
+#[path = "review_fixture_gate.rs"]
+pub mod review_fixture_gate;
+
+use std::path::{Path, PathBuf};
 
 use codegraph::generate::ProjectConfig;
 use codegraph::generate::ddd::repository_emitter::RepositoryImplEmitter;
@@ -62,7 +71,11 @@ pub fn fixture_dir() -> std::path::PathBuf {
 /// no path, and the pipeline writes output-relative paths only — so a
 /// scratch-dir run is byte-identical to an in-place one (verified by the
 /// drift pin itself, which compares exactly these two).
-pub async fn regenerate_flag_off_fixture_into(output_dir: &Path) -> Result<(), String> {
+///
+/// Returns every file the run wrote (absolute paths inside `output_dir`) — the
+/// #694 ledger's content, recorded by the in-place callers so the next
+/// provision of EITHER recipe can sweep it.
+pub async fn regenerate_flag_off_fixture_into(output_dir: &Path) -> Result<Vec<PathBuf>, String> {
     // 1. Ingest — the same `setup_grafeo()` call the inspect test makes
     //    (tests/fixtures JSON schemas through the classifier; entity names
     //    from domains.toml; no rosetta, no auto-classify — the flag-OFF
@@ -124,13 +137,40 @@ pub async fn regenerate_flag_off_fixture_into(output_dir: &Path) -> Result<(), S
         .join("recruiting")
         .join("candidate");
     std::fs::create_dir_all(&repo_dir).map_err(|e| format!("mkdir {repo_dir:?}: {e}"))?;
-    std::fs::write(repo_dir.join("repository_impl.rs"), repo_code)
-        .map_err(|e| format!("write repository_impl.rs: {e}"))?;
+    let repo_impl = repo_dir.join("repository_impl.rs");
+    std::fs::write(&repo_impl, repo_code).map_err(|e| format!("write repository_impl.rs: {e}"))?;
 
-    Ok(())
+    // The step-3 file is produced OUTSIDE the pipeline report, so it must be
+    // added explicitly or the next sweep would never own it.
+    let mut produced: Vec<PathBuf> = report.files.iter().map(|file| file.path.clone()).collect();
+    produced.push(repo_impl);
+    Ok(produced)
 }
 
 /// Refresh the committed fixture in place with the flag-OFF recipe.
+///
+/// Issue #694: this is a mutator of the shared committed tree, so it takes the
+/// cross-process gate, sweeps the previous FLAG-OFF generation (the same
+/// from-clean rule the flag-ON provision follows, per recipe — nothing this
+/// recipe wrote is preserved, nothing it did not write is touched), and records
+/// its own produced set.
 pub async fn regenerate_flag_off_fixture() -> Result<(), String> {
-    regenerate_flag_off_fixture_into(&fixture_dir()).await
+    // Held to the end of the call: the regeneration is the whole body here.
+    let _gate = review_fixture_gate::FixtureGate::acquire()?;
+    let output_dir = fixture_dir();
+    let swept =
+        review_fixture_gate::sweep_produced(&output_dir, review_fixture_gate::Recipe::FlagOff);
+    if swept > 0 {
+        eprintln!(
+            "provision: swept {swept} file(s) written by the previous flag-OFF generation \
+             of {}",
+            output_dir.display()
+        );
+    }
+    let produced = regenerate_flag_off_fixture_into(&output_dir).await?;
+    review_fixture_gate::record_produced(
+        &output_dir,
+        review_fixture_gate::Recipe::FlagOff,
+        &produced,
+    )
 }

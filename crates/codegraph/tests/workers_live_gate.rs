@@ -760,6 +760,20 @@ async fn regenerate_workers_output(config: &OpsConfig) -> Result<String, String>
             .and_then(|w| w.output_dir.clone())
             .unwrap_or_else(|| "generated-workers".into()),
     );
+    // Preserve the generated testkit crate's cargo cache across the wipe
+    // (issue #694 review): the crate is its own workspace root, so its
+    // `target/` lives inside it and re-building the harness from cold is the
+    // most expensive part of a re-run that has nothing to do with the
+    // regeneration.
+    let testkit_dir = workers_out.join("testkit");
+    let testkit_cache = testkit_dir.join("target");
+    let cache_stash = workers_out.join(".testkit-target.stash");
+    let cache_stashed = testkit_cache.is_dir();
+    if cache_stashed {
+        let _ = std::fs::remove_dir_all(&cache_stash);
+        std::fs::rename(&testkit_cache, &cache_stash)
+            .map_err(|e| format!("stash {}: {e}", testkit_cache.display()))?;
+    }
     for rel in REGEN_WIPE {
         let path = workers_out.join(rel);
         if path.is_dir() {
@@ -767,6 +781,12 @@ async fn regenerate_workers_output(config: &OpsConfig) -> Result<String, String>
         } else if path.is_file() {
             std::fs::remove_file(&path).map_err(|e| format!("wipe {}: {e}", path.display()))?;
         }
+    }
+    if cache_stashed {
+        std::fs::create_dir_all(&testkit_dir)
+            .map_err(|e| format!("recreate {}: {e}", testkit_dir.display()))?;
+        std::fs::rename(&cache_stash, &testkit_cache)
+            .map_err(|e| format!("restore {}: {e}", testkit_cache.display()))?;
     }
     for rel in REGEN_WIPE_FILES {
         let path = workers_out.join(rel);

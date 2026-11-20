@@ -7,33 +7,43 @@
 //!
 //! ## The #694 rule: regenerate from clean, serialized
 //!
-//! The fixture is a persistent, CHECKED-IN tree that three gate binaries
-//! regenerate in place, so two properties are load-bearing and neither is
-//! `--test-threads=1`:
+//! The fixture is a persistent, CHECKED-IN tree that FOUR test paths regenerate
+//! in place (this flag-ON recipe's three gates, plus the flag-OFF
+//! `grafeo_candidate_inspect_output` / `review_fixture_flag_off_regen`), so two
+//! properties are load-bearing and neither is `--test-threads=1`:
 //!
-//! 1. **From clean** — [`FixtureGate::provision`] deletes every file the
-//!    PREVIOUS provision produced before regenerating. The previous set is
-//!    recorded from the generation report (the exact files the pipeline
-//!    wrote), not guessed from a hand-kept allowlist, so committed extras
-//!    (`testkit/`, `codegraph-ops.toml`, `ui/forms/`, the retired-era trees)
-//!    and gate-owned stubs can never appear in it and are never deleted. This
-//!    is the #688 shape: an artifact an older generation emitted (a
-//!    renumbered `*_actions.hurl`, a removed view's page class) is discovered
-//!    by glob/suffix and read as this run's — the review fixture had exactly
-//!    that hole.
+//! 1. **From clean** — [`FixtureGate::provision`] sweeps every file this
+//!    recipe's PREVIOUS generation produced before regenerating (see
+//!    `review_fixture_gate`, and its module docs for why the sweep is per
+//!    recipe: the flag-OFF recipe produces `testkit/` + `codegraph-ops.toml`,
+//!    which this plan strips and which the live gate needs). The set comes
+//!    from the generation report, not a hand-kept allowlist, so committed
+//!    extras and gate-owned stubs can never appear in it and are never
+//!    deleted. This is the #688 shape: an artifact an older generation emitted
+//!    (a renumbered `*_actions.hurl`, a removed view's page class) is
+//!    discovered by glob/suffix and read as this run's — the review fixture had
+//!    exactly that hole.
 //! 2. **Serialized** — [`FixtureGate::acquire`] takes an exclusive
-//!    CROSS-PROCESS file lock. `--test-threads=1` only serializes one binary,
-//!    and hides the problem for anyone running a subset; the lock covers the
-//!    three binaries and any thread count.
+//!    CROSS-PROCESS file lock shared by all four paths. `--test-threads=1` only
+//!    serializes one binary, and hides the problem for anyone running a subset.
 //!
 //! Callers therefore hold a [`FixtureGate`] for the whole test body (not just
 //! the regeneration) and pass it to the provision step — the signature makes
 //! it impossible to regenerate without the lock.
 
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use codegraph_core::traits::GraphQuerier;
+
+// The cross-process gate + the per-recipe produced-file ledgers (issue #694).
+// Shared with the flag-OFF mutators by path so there is exactly one lock and
+// one ledger set.
+#[allow(dead_code)]
+#[path = "review_fixture_gate.rs"]
+pub mod review_fixture_gate;
+
+pub use review_fixture_gate::{FixtureGate, Recipe};
 
 pub fn manifest_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -45,72 +55,6 @@ pub fn fixture_dir() -> PathBuf {
         .unwrap()
         .join("review")
         .join("generated-candidate")
-}
-
-/// Run state for the review-fixture gates (issue #694): the cross-process
-/// lock and the produced-file ledger. Lives in the workspace `target/` — never
-/// inside the committed fixture (machine state must not reach the tracked
-/// bytes) and never in `crates/codegraph/target/` (issue #683a: that directory
-/// is not the workspace target dir).
-fn gate_state_dir() -> PathBuf {
-    manifest_dir()
-        .parent()
-        .and_then(Path::parent)
-        .expect("codegraph crate lives at <repo>/crates/codegraph")
-        .join("target")
-        .join("review-fixture-gate")
-}
-
-fn gate_lock_path() -> PathBuf {
-    gate_state_dir().join("gate.lock")
-}
-
-/// One absolute-or-relative path per line: every file the LAST provision of
-/// this recipe wrote. [`FixtureGate::provision`] deletes those files before
-/// regenerating (the #688 from-clean rule) and rewrites the ledger afterwards.
-fn produced_ledger_path() -> PathBuf {
-    gate_state_dir().join("produced.txt")
-}
-
-/// The exclusive, cross-process gate over the review fixture.
-///
-/// Held for a test's whole body: the three gates regenerate AND build in the
-/// same tree, so serializing only the regeneration would leave the builds
-/// interleaving a tree another test is rewriting. Dropping it releases the
-/// lock (the OS also releases it if the process dies).
-pub struct FixtureGate {
-    file: std::fs::File,
-}
-
-impl FixtureGate {
-    /// Block until this process is the only review-fixture gate.
-    ///
-    /// `std::fs::File::lock` is `flock(2)` on unix: a second handle — even in
-    /// the SAME process — blocks, which is what serializes two `#[tokio::test]`
-    /// functions of one binary without `--test-threads=1`. The wait is a plain
-    /// blocking syscall by design: the gate tests are heavyweight, they do not
-    /// run on a shared production runtime, and a lock is not cancellable.
-    pub fn acquire() -> Result<Self, String> {
-        let dir = gate_state_dir();
-        std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-        let path = gate_lock_path();
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|e| format!("open gate lock {}: {e}", path.display()))?;
-        file.lock()
-            .map_err(|e| format!("acquire gate lock {}: {e}", path.display()))?;
-        Ok(Self { file })
-    }
-}
-
-impl Drop for FixtureGate {
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
-    }
 }
 
 pub fn ensure_testkit_workspace_member(fixture_dir: &Path) {
@@ -401,27 +345,20 @@ async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
     ensure_testkit_path_dep(&output_dir);
 
     // The ledger's content: exactly the files this run wrote (the report
-    // mirrors every `write_output` call in the pipeline).
-    let produced = report
-        .files
-        .iter()
-        .filter_map(|file| {
-            file.path
-                .strip_prefix(&output_dir)
-                .ok()
-                .map(Path::to_path_buf)
-        })
-        .collect();
-    Ok(produced)
+    // mirrors every `write_output` call in the pipeline). Absolute paths —
+    // `review_fixture_gate::ledger_text` relativizes them against the fixture
+    // and drops anything redirected outside it (the hooks tempdir).
+    Ok(report.files.iter().map(|file| file.path.clone()).collect())
 }
 
 /// Provision the review fixture (issue #694): from clean, under the gate.
 ///
-/// 1. delete every file the previous provision produced (see
-///    [`produced_ledger_path`]) so no artifact of an older generation can be
+/// 1. sweep every file a previous generation of EITHER recipe produced (see
+///    `review_fixture_gate::sweep_produced`) so no artifact of an older
+///    generation — including flag-OFF residue this recipe never emits — can be
 ///    discovered as this run's;
 /// 2. regenerate with [`regenerate_fixture`];
-/// 3. record the new produced set.
+/// 3. record this recipe's new produced set.
 ///
 /// It is a METHOD on the guard, not a free function, because the caller must
 /// hold the gate for its whole body (the gates BUILD in this tree after
@@ -430,174 +367,15 @@ async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
 impl FixtureGate {
     pub async fn provision(&self) -> Result<(), String> {
         let output_dir = fixture_dir();
-        sweep_previous_provision(&output_dir);
-        let produced = regenerate_fixture().await?;
-        record_provision(&produced)
-    }
-}
-
-/// Delete the files the LAST provision recorded, and any directory that this
-/// leaves empty.
-///
-/// Only files this recipe itself wrote can be in the ledger, so committed
-/// fixture content (`ui/forms/`, `testkit/`, `codegraph-ops.toml`, the
-/// retired-era trees) and gate-owned stubs are structurally safe — no
-/// allowlist to drift. A missing ledger (first run, a fresh checkout, or a tree
-/// just rewritten by `grafeo_candidate_inspect_output`) means there is nothing
-/// to sweep, which is correct: the committed tree is the source of truth until
-/// this recipe has produced a generation of its own.
-///
-/// The guarantee's boundary, stated so nobody reads it as more than it is: it
-/// covers exactly the #688 class — a file a PREVIOUS generation of this recipe
-/// emitted and the current one does not (a renumbered contract, a renamed
-/// module). A file this recipe never produced (the flag-OFF recipe's output, a
-/// hand edit) is not swept; the gates' documented flag-switch sweeps (the
-/// retired stores, the shell routes) still own those.
-fn sweep_previous_provision(output_dir: &Path) {
-    let Ok(ledger) = std::fs::read_to_string(produced_ledger_path()) else {
-        return;
-    };
-    let removed = sweep_listed(output_dir, &ledger);
-    if removed > 0 {
-        eprintln!(
-            "provision: swept {removed} file(s) written by the previous generation of {}",
-            output_dir.display()
-        );
-    }
-}
-
-/// [`sweep_previous_provision`] over an explicit ledger body (pure over the
-/// filesystem, so the #694 rule is unit-testable without a 20-minute gate).
-/// Returns how many files it removed.
-fn sweep_listed(output_dir: &Path, ledger: &str) -> usize {
-    let mut removed = 0usize;
-    let mut touched_dirs: Vec<PathBuf> = Vec::new();
-    for rel in ledger.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let Some(rel_path) = safe_relative(rel) else {
-            // A ledger written by something else must never steer a delete
-            // outside the fixture.
-            continue;
-        };
-        let path = output_dir.join(&rel_path);
-        if std::fs::remove_file(&path).is_ok() {
-            removed += 1;
-            if let Some(parent) = rel_path.parent() {
-                touched_dirs.push(parent.to_path_buf());
-            }
+        let swept = review_fixture_gate::sweep_produced(&output_dir, Recipe::FlagOn);
+        if swept > 0 {
+            eprintln!(
+                "provision: swept {swept} file(s) written by the previous flag-ON generation \
+                 of {}",
+                output_dir.display()
+            );
         }
-    }
-    // Deepest first so a whole retired tree collapses rather than leaving a
-    // chain of empty directories for the next generation to inherit.
-    touched_dirs.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
-    touched_dirs.dedup();
-    for dir in &touched_dirs {
-        let path = output_dir.join(dir);
-        // `remove_dir` refuses non-empty directories: a dir still holding
-        // committed or gate-owned content stays.
-        let _ = std::fs::remove_dir(&path);
-    }
-    removed
-}
-
-/// A ledger entry is only ever a plain relative path inside the fixture.
-fn safe_relative(rel: &str) -> Option<PathBuf> {
-    let path = Path::new(rel);
-    if path.is_absolute() {
-        return None;
-    }
-    path.components()
-        .all(|component| matches!(component, Component::Normal(_)))
-        .then(|| path.to_path_buf())
-}
-
-/// The ledger body for a produced set: sorted, de-duplicated, `/`-separated,
-/// one per line. Only paths inside the fixture survive [`safe_relative`].
-fn ledger_text(produced: &[PathBuf]) -> String {
-    let mut rels: Vec<String> = produced
-        .iter()
-        .filter(|path| safe_relative(&path.to_string_lossy()).is_some())
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
-        .collect();
-    rels.sort();
-    rels.dedup();
-    format!("{}\n", rels.join("\n"))
-}
-
-fn record_provision(produced: &[PathBuf]) -> Result<(), String> {
-    let path = produced_ledger_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-    }
-    std::fs::write(&path, ledger_text(produced))
-        .map_err(|e| format!("write {}: {e}", path.display()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn write(root: &Path, rel: &str) {
-        let path = root.join(rel);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, "x").unwrap();
-    }
-
-    /// The #694 from-clean rule: last generation's files go, everything the
-    /// recipe did not write (committed extras, gate-owned stubs) stays, and a
-    /// directory the sweep empties is pruned.
-    #[test]
-    fn the_sweep_deletes_only_the_previous_generations_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        write(root, "src/domain/x/mod.rs");
-        write(root, "hurl/11_payroll_pay_run_actions.hurl");
-        write(root, "ui/forms/text.svelte"); // consumer-authored
-        write(root, "testkit/Cargo.toml"); // committed extra
-        write(root, "codegraph-ops.toml"); // committed manifest
-
-        let ledger = "src/domain/x/mod.rs\nhurl/11_payroll_pay_run_actions.hurl\n";
-        assert_eq!(sweep_listed(root, ledger), 2);
-
-        assert!(!root.join("src/domain/x/mod.rs").exists());
-        assert!(!root.join("hurl/11_payroll_pay_run_actions.hurl").exists());
-        assert!(!root.join("hurl").exists(), "an emptied dir is pruned");
-        assert!(!root.join("src/domain/x").exists());
-        assert!(root.join("ui/forms/text.svelte").is_file());
-        assert!(root.join("testkit/Cargo.toml").is_file());
-        assert!(root.join("codegraph-ops.toml").is_file());
-    }
-
-    /// A ledger entry that escapes the fixture (a hand-edited or foreign
-    /// ledger) is ignored — never a delete outside the tree.
-    #[test]
-    fn the_sweep_refuses_paths_outside_the_fixture() {
-        let tmp = tempfile::tempdir().unwrap();
-        let outside = tmp.path().parent().unwrap().join("outside-694.txt");
-        std::fs::write(&outside, "keep me").unwrap();
-
-        let root = tmp.path().join("fixture");
-        std::fs::create_dir_all(&root).unwrap();
-        let ledger = format!("../outside-694.txt\n{}\n", outside.to_string_lossy());
-        assert_eq!(sweep_listed(&root, &ledger), 0);
-        assert!(
-            outside.is_file(),
-            "a path outside the fixture is never removed"
-        );
-        let _ = std::fs::remove_file(&outside);
-    }
-
-    /// The ledger round-trips: recorded paths are what the next sweep removes,
-    /// sorted and de-duplicated.
-    #[test]
-    fn the_ledger_round_trips_a_produced_set() {
-        let produced = vec![
-            PathBuf::from("src/b.rs"),
-            PathBuf::from("src/a.rs"),
-            PathBuf::from("src/a.rs"),
-        ];
-        assert_eq!(ledger_text(&produced), "src/a.rs\nsrc/b.rs\n");
-        assert_eq!(safe_relative("src/a.rs"), Some(PathBuf::from("src/a.rs")));
-        assert_eq!(safe_relative("/etc/passwd"), None);
-        assert_eq!(safe_relative("../escape.rs"), None);
+        let produced = regenerate_fixture().await?;
+        review_fixture_gate::record_produced(&output_dir, Recipe::FlagOn, &produced)
     }
 }

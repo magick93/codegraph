@@ -1002,12 +1002,15 @@ async fn entity_app_builds_and_typechecks() {
     write_gate_tsconfig().unwrap();
     project.sync_sveltekit().unwrap();
 
-    // Sweep the retired store plane (issue #574 S2): this flag-ON provision
-    // sweeps only the files ITS OWN previous generation wrote (issue #694), so
-    // a store the flag-OFF recipe (`grafeo_candidate_inspect_output`) left in
-    // the shared fixture would still linger — importing the retired public key
-    // and failing the check. The navigation store is UI state, not an API
-    // plane — it stays.
+    // Sweep the retired store plane (issue #574 S2) — KEPT deliberately, not
+    // redundant: the #694 sweep covers every RECORDED generation of either
+    // recipe, but the COMMITTED fixture still carries the flag-OFF CRUD stores
+    // (they are checked in on master) and a fresh checkout has no ledger at
+    // all — so the first flag-ON run in a tree would let them through,
+    // importing the retired public key and failing the check. Once a flag-OFF
+    // generation has been recorded in that tree's ledger this sweep is
+    // redundant (the boundary is stated in `review_fixture_gate`'s docs). The
+    // navigation store is UI state, not an API plane — it stays.
     let stores = ui_dir().join("src/lib/stores");
     if stores.is_dir() {
         for entry in fs::read_dir(&stores).map_err(|e| e.to_string()).unwrap() {
@@ -1265,7 +1268,9 @@ async fn entity_specs_run_green() {
     }
     // The retired store plane (see entity_app_builds_and_typechecks): stale
     // CRUD stores import the retired public key and fail the BUILD (vite
-    // resolves `$env/static/public` strictly), not just the check.
+    // resolves `$env/static/public` strictly), not just the check. Kept for
+    // the same first-run reason (the committed fixture carries them; no ledger
+    // on a fresh checkout).
     let stores = ui_dir().join("src/lib/stores");
     if stores.is_dir() {
         for entry in fs::read_dir(&stores).unwrap() {
