@@ -64,7 +64,9 @@ pub(crate) fn build_entity_generators(
         ) as Box<dyn EntityGenerator>,
         Box::new(
             ddd::repository::RepositoryTraitGenerator::new(base("repository"))
-                .with_parent_candidates(parent_candidates.to_vec()),
+                .with_parent_candidates(parent_candidates.to_vec())
+                // Issue #746: the run's own registry — never the ambient one.
+                .with_type_registry(ctx.type_registry().clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
             ddd::command::CommandGenerator::new(base("command"))
@@ -76,10 +78,14 @@ pub(crate) fn build_entity_generators(
                 .with_parent_candidates(parent_candidates.to_vec()),
         ) as Box<dyn EntityGenerator>,
         Box::new(ddd::event::EventGenerator::new(base("event"))) as Box<dyn EntityGenerator>,
-        Box::new(ddd::dto::DtoGenerator::new(base("dto"))) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::dto::DtoGenerator::new(base("dto"))
+                .with_type_registry(ctx.type_registry().clone()),
+        ) as Box<dyn EntityGenerator>,
         Box::new(
             api::handler::HandlerGenerator::new(base("handler"))
                 .with_parent_candidates(parent_candidates.to_vec())
+                .with_type_registry(ctx.type_registry().clone())
                 // Handler-site eligibility guards (issue #338): the call
                 // targets live in the `rules` generator's module, so the
                 // flag rides the plan. Plan-less runs never emit the

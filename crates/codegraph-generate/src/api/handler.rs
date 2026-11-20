@@ -12,7 +12,7 @@ use crate::filter_fields::{
 };
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::type_registry;
+use crate::type_registry::TypeRegistryHandle;
 use codegraph_config::{DomainConfig, EntityConfig};
 
 use super::include_path::{ResolvedIncludePath, resolve_include_paths_for_topology};
@@ -138,7 +138,8 @@ pub struct HandlerContext {
     /// Resolved include paths for `?include=` query parameter.
     pub include_paths: Vec<ResolvedIncludePath>,
     /// Resolved `use` import statements for types referenced by this handler.
-    /// Populated via `type_registry::resolve_imports()` instead of hard-coded template paths.
+    /// Populated through this run's type registry instead of hard-coded
+    /// template paths.
     pub handler_imports: Vec<String>,
     /// When true, the entity has a soft-delete audit policy and the query layer
     /// expects an `include_deleted: bool` argument on all read methods.
@@ -744,6 +745,10 @@ async fn collect_invariant_members(
 pub struct HandlerGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
+    /// This run's type registry (issue #746). Defaults to the ambient
+    /// registry for direct construction; the pipeline injects the run's own
+    /// handle via [`Self::with_type_registry`].
+    type_registry: TypeRegistryHandle,
     /// Whether the plan carries the `rules` domain generator (registry
     /// wiring): handler-site eligibility guards (issue #338) resolve only
     /// when the emitted `rules.rs` module exists to answer the calls.
@@ -756,7 +761,14 @@ impl HandlerGenerator {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
             rules_guards: false,
+            type_registry: TypeRegistryHandle::ambient(),
         }
+    }
+
+    /// Use `registry` for this generator's import resolution.
+    pub fn with_type_registry(mut self, registry: TypeRegistryHandle) -> Self {
+        self.type_registry = registry;
+        self
     }
 
     pub fn with_parent_candidates(mut self, candidates: Vec<ParentCandidate>) -> Self {
@@ -905,6 +917,7 @@ impl EntityGenerator for HandlerGenerator {
         // Resolve handler imports via TypeRegistry instead of hard-coded template paths.
         let has_include = !include_paths.is_empty();
         let handler_imports = build_handler_imports(
+            &self.type_registry,
             &operations,
             &entity_name,
             has_include,
@@ -1695,6 +1708,7 @@ async fn resolve_include_paths(
 }
 
 fn build_handler_imports(
+    type_registry: &TypeRegistryHandle,
     operations: &[String],
     entity_name: &str,
     has_include: bool,
@@ -1755,7 +1769,7 @@ fn build_handler_imports(
         domain.to_string(),
         format!("{}_handler", module_name),
     ];
-    type_registry::resolve_imports(&handler_refs, &handler_caller)
+    type_registry.resolve_imports(&handler_refs, &handler_caller)
 }
 
 pub(crate) async fn resolve_is_auditable(

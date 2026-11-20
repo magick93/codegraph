@@ -11,7 +11,7 @@ use crate::db::dialect::{DatabaseTarget, SqlDialect, dialect_for_target};
 use crate::error::{Error, Result};
 use crate::output::reports_config_dir;
 use crate::project_config::{GeneratorOpts, ProjectConfig};
-use crate::type_registry;
+use crate::type_registry::TypeRegistryHandle;
 
 /// Shared, immutable setup for one generator run.
 ///
@@ -67,6 +67,11 @@ pub(crate) struct GeneratorContext<'a> {
     /// to the project config (default: monolith) when no plan is provided.
     pub(crate) workers_topology: bool,
     pub(crate) capability_registry: crate::profile::CapabilityRegistry,
+    /// This run's type registry (issue #746) — created once in
+    /// [`build_generator_context`] and threaded into the generators that
+    /// register types or resolve imports. Pipeline runs NEVER touch the
+    /// ambient registry.
+    pub(crate) type_registry: TypeRegistryHandle,
 }
 
 impl GeneratorContext<'_> {
@@ -78,6 +83,11 @@ impl GeneratorContext<'_> {
     /// A fresh dialect instance for the configured database target.
     pub(crate) fn make_dialect(&self) -> Box<dyn SqlDialect> {
         dialect_for_target(self.current_target)
+    }
+
+    /// This run's type registry (issue #746).
+    pub(crate) fn type_registry(&self) -> &TypeRegistryHandle {
+        &self.type_registry
     }
 
     /// Whether the entity generator `name` runs for this build plan.
@@ -150,8 +160,6 @@ pub(crate) async fn build_generator_context<'a>(
         domain_config_dir,
     } = opts;
 
-    type_registry::init_type_registry();
-
     // Create the database dialect based on project config.
     let current_target = project.database.database_target;
 
@@ -163,13 +171,16 @@ pub(crate) async fn build_generator_context<'a>(
     // graph queries during generation.
     cached_db.warm().await.map_err(Error::Graph)?;
 
-    // Register framework types so generators can resolve them without hard-coded paths.
-    type_registry::register_framework_types();
-
+    // Issue #746: ONE registry for this run — seeded with the framework
+    // types and the config's entity types, then threaded into the
+    // registry-consuming generators via the context. Nothing here touches
+    // the process-ambient registry, so parallel/sequential runs in one
+    // process cannot resolve each other's module paths.
+    let type_registry = TypeRegistryHandle::with_framework_types();
     // Pre-register all expected entity types so types from entities later in
     // the generation order (e.g. CertificationResponse referenced by Person's
     // include DTOs) are resolvable when earlier entities process their imports.
-    register_entity_types(config);
+    register_entity_types(config, &type_registry);
 
     let capabilities = derive_capabilities(build_plan, domain_config_dir);
 
@@ -214,6 +225,7 @@ pub(crate) async fn build_generator_context<'a>(
         migration_strategy,
         workers_topology,
         capability_registry,
+        type_registry,
     })
 }
 
@@ -329,7 +341,7 @@ fn derive_capabilities(
 /// Pre-register all expected entity types so types from entities later in
 /// the generation order (e.g. CertificationResponse referenced by Person's
 /// include DTOs) are resolvable when earlier entities process their imports.
-fn register_entity_types(config: &DomainConfig) {
+fn register_entity_types(config: &DomainConfig, registry: &TypeRegistryHandle) {
     let suffix = &config.defaults.type_suffix;
     for (domain_name, domain_entry) in &config.domains {
         for entity_title in &domain_entry.entities {
@@ -349,31 +361,31 @@ fn register_entity_types(config: &DomainConfig) {
                     module_name.clone(),
                 ]
             };
-            type_registry::register_type(
+            registry.register_type(
                 &format!("{}Response", entity_name),
                 [base(), vec!["dto_response".into()]].concat(),
             );
-            type_registry::register_type(
+            registry.register_type(
                 &format!("{}LinkedResponse", entity_name),
                 [base(), vec!["dto_response".into()]].concat(),
             );
-            type_registry::register_type(
+            registry.register_type(
                 &format!("{}Repository", entity_name),
                 [base(), vec!["repository".into()]].concat(),
             );
-            type_registry::register_type(
+            registry.register_type(
                 &format!("Create{}Request", entity_name),
                 [base(), vec!["dto_create".into()]].concat(),
             );
-            type_registry::register_type(
+            registry.register_type(
                 &format!("Update{}Request", entity_name),
                 [base(), vec!["dto_update".into()]].concat(),
             );
-            type_registry::register_type(
+            registry.register_type(
                 &format!("{}WithIncludeResponse", entity_name),
                 [base(), vec!["dto_included".into()]].concat(),
             );
-            type_registry::register_type(
+            registry.register_type(
                 &format!("{}IncludedData", entity_name),
                 [base(), vec!["dto_included".into()]].concat(),
             );

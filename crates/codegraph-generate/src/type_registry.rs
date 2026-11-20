@@ -1,4 +1,30 @@
-use std::sync::{Mutex, OnceLock};
+//! Cross-generator type registry.
+//!
+//! Generated code references types that other generators emit (a handler
+//! imports `WorkerResponse` from the DTO generator's module, a repository
+//! impl imports its include targets, …). Those module paths are resolved
+//! through a registry instead of hard-coded template strings.
+//!
+//! # Two registries, one default (issue #746)
+//!
+//! * **Per-run** ([`TypeRegistryHandle`]): every `run_generators_with_opts`
+//!   creates ONE handle and threads it through `GeneratorContext` into the
+//!   generators that register/resolve imports. Two generations in the same
+//!   process (parallel or sequential) therefore never see each other's
+//!   module paths.
+//! * **Ambient** ([`ambient`]): the process-global registry behind the free
+//!   [`register_framework_types`]/[`register_type`]/[`resolve_imports`]
+//!   shims. It exists for public-API compatibility: consumers (hr-specs)
+//!   call `register_framework_types()` in test setup and then construct
+//!   generators directly (`HandlerGenerator::new(..)`), and the `new()`
+//!   constructors default to the ambient handle so that flow keeps
+//!   working. **The pipeline never reads it** — a pipeline run always uses
+//!   its own per-run handle.
+//!
+//! `InMemoryTypeRegistry` itself stays public and usable directly (tests
+//! build one and exercise `imports_needed`).
+
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// Canonical reference to a generated Rust type.
 #[derive(Debug, Clone)]
@@ -113,61 +139,133 @@ impl Default for InMemoryTypeRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// Global singleton — same pattern as ProjectConfig in mod.rs
+// Per-run handle + ambient compatibility shims
 // ---------------------------------------------------------------------------
 
-// TODO(#746): the registry is PROCESS-GLOBAL — every `driver::run` in one
-// process shares it, so two PARALLEL generations resolve each other's
-// module paths (first registrant wins; the compile gates hit this when a
-// second fixture declared the same class titles in a different domain),
-// and even sequential runs keep the previous run's registrations. A
-// per-run registry threaded through GeneratorOpts/GeneratorContext is the
-// fix; the compile gates isolate by test binary until then.
-static TYPE_REGISTRY: OnceLock<Mutex<InMemoryTypeRegistry>> = OnceLock::new();
+/// Cheap cloneable handle to one type registry (issue #746).
+///
+/// The pipeline creates one per `run_generators_with_opts` and threads it
+/// into the generators that register types or resolve imports. Cloning the
+/// handle shares the SAME underlying registry — that is what lets a DTO
+/// generator's registrations resolve in the handler generator of the same
+/// run, while a different run's handle is a different registry.
+#[derive(Clone)]
+pub struct TypeRegistryHandle(Arc<Mutex<InMemoryTypeRegistry>>);
 
-/// Must be called at the start of the generation pipeline before any generator runs.
-pub fn init_type_registry() {
-    TYPE_REGISTRY
-        .set(Mutex::new(InMemoryTypeRegistry::new()))
-        .ok();
-}
+impl TypeRegistryHandle {
+    /// An empty registry.
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(InMemoryTypeRegistry::new())))
+    }
 
-fn with_registry<F, R>(f: F) -> R
-where
-    F: FnOnce(&mut InMemoryTypeRegistry) -> R,
-{
-    let lock = TYPE_REGISTRY.get_or_init(|| Mutex::new(InMemoryTypeRegistry::new()));
-    let mut reg = lock.lock().unwrap();
-    f(&mut reg)
-}
+    /// An empty registry pre-seeded with the framework types
+    /// (`AppState`, `AppError`, `ApiKeyInfo`, …).
+    pub fn with_framework_types() -> Self {
+        let handle = Self::new();
+        handle.register_framework_types();
+        handle
+    }
 
-/// Register a type by name and module path for cross-generator import resolution.
-pub fn register_type(name: &str, module_path: Vec<String>) {
-    with_registry(|reg| {
+    /// The process-ambient registry.
+    ///
+    /// This is the compatibility fallback for directly-constructed
+    /// generators (consumer test harnesses, template harnesses). Pipeline
+    /// runs MUST NOT use it — they thread their own [`TypeRegistryHandle`].
+    pub fn ambient() -> Self {
+        ambient_handle().clone()
+    }
+
+    /// Register a type by name and module path.
+    ///
+    /// Re-registering the same name with the same path is idempotent. A
+    /// DIFFERENT path is a real modeling conflict: the first registration
+    /// wins and a warning names both paths (issue #746 — this used to be
+    /// swallowed silently, which let two apps in one process resolve each
+    /// other's modules).
+    pub fn register_type(&self, name: &str, module_path: Vec<String>) {
         let type_ref = TypeRef {
             name: name.to_string(),
             module_path,
         };
-        reg.register(type_ref).ok();
-    });
+        let mut reg = self.lock();
+        if let Err(conflict) = reg.register(type_ref) {
+            tracing::warn!("type-registry conflict: {conflict}");
+        }
+    }
+
+    /// Resolve import `use` statements for a list of type names from a
+    /// caller's base path.
+    pub fn resolve_imports(&self, names: &[String], caller_base: &[String]) -> Vec<String> {
+        self.lock().imports_needed(names, caller_base)
+    }
+
+    /// Register framework types commonly used by generated code.
+    pub fn register_framework_types(&self) {
+        for (name, path) in FRAMEWORK_TYPES {
+            self.register_type(name, path.iter().map(|s| (*s).to_string()).collect());
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, InMemoryTypeRegistry> {
+        // A panic while holding the lock must not poison every later
+        // generation in the process — the registry is best-effort metadata.
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
-/// Resolve import `use` statements for a list of type names from a caller's base path.
+impl Default for TypeRegistryHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Framework types every generated app exposes, with their canonical paths.
+const FRAMEWORK_TYPES: &[(&str, &[&str])] = &[
+    ("AppState", &["crate", "app_state"]),
+    ("AppError", &["crate", "error"]),
+    ("BulkItemError", &["crate", "error"]),
+    ("ApiKeyInfo", &["crate", "middleware"]),
+    ("AuthInfo", &["crate", "middleware"]),
+    ("Links", &["crate", "api", "links"]),
+    ("Meta", &["crate", "api", "meta"]),
+    ("HookRegistry", &["crate", "hooks"]),
+];
+
+/// The process-ambient registry (compatibility surface — see the module
+/// docs). Created lazily on first use.
+static AMBIENT_TYPE_REGISTRY: OnceLock<TypeRegistryHandle> = OnceLock::new();
+
+fn ambient_handle() -> &'static TypeRegistryHandle {
+    AMBIENT_TYPE_REGISTRY.get_or_init(TypeRegistryHandle::new)
+}
+
+/// Register a type by name and module path in the AMBIENT registry.
+///
+/// Compatibility shim for consumers that register before constructing
+/// generators directly. Pipeline runs register into their per-run handle
+/// and never read this.
+pub fn register_type(name: &str, module_path: Vec<String>) {
+    ambient_handle().register_type(name, module_path);
+}
+
+/// Resolve import `use` statements from the AMBIENT registry.
+///
+/// Compatibility shim — pipeline runs resolve through their per-run handle.
 pub fn resolve_imports(names: &[String], caller_base: &[String]) -> Vec<String> {
-    with_registry(|reg| reg.imports_needed(names, caller_base))
+    ambient_handle().resolve_imports(names, caller_base)
 }
 
-/// Register framework types commonly used by generated code.
-/// Called at pipeline start; also callable from test setup.
+/// Register framework types commonly used by generated code into the
+/// AMBIENT registry.
+///
+/// Kept for public-API compatibility: hr-specs calls this in test setup
+/// before direct-construction generators (`HandlerGenerator::new(..)`),
+/// which default to the ambient handle. Pipeline runs seed their own
+/// per-run handle via [`TypeRegistryHandle::with_framework_types`].
 pub fn register_framework_types() {
-    register_type("AppState", vec!["crate".into(), "app_state".into()]);
-    register_type("AppError", vec!["crate".into(), "error".into()]);
-    register_type("BulkItemError", vec!["crate".into(), "error".into()]);
-    register_type("ApiKeyInfo", vec!["crate".into(), "middleware".into()]);
-    register_type("AuthInfo", vec!["crate".into(), "middleware".into()]);
-    register_type("Links", vec!["crate".into(), "api".into(), "links".into()]);
-    register_type("Meta", vec!["crate".into(), "api".into(), "meta".into()]);
-    register_type("HookRegistry", vec!["crate".into(), "hooks".into()]);
+    ambient_handle().register_framework_types();
 }
 
 #[cfg(test)]
@@ -372,6 +470,78 @@ mod tests {
     fn test_resolve_nonexistent() {
         let reg = InMemoryTypeRegistry::new();
         assert!(reg.resolve("DoesNotExist").is_none());
+    }
+
+    #[test]
+    fn separate_handles_do_not_share_registrations() {
+        // Issue #746: the whole point of the handle — two runs in one
+        // process must resolve their own module paths only.
+        let run_a = TypeRegistryHandle::new();
+        let run_b = TypeRegistryHandle::new();
+        run_a.register_type(
+            "PayRunResponse",
+            ["crate", "domain", "payroll", "pay_run", "dto_response"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        assert_eq!(
+            run_b.resolve_imports(&["PayRunResponse".into()], &[]),
+            Vec::<String>::new(),
+            "a sibling run must not see the first run's registrations"
+        );
+        assert_eq!(
+            run_a.resolve_imports(&["PayRunResponse".into()], &[]),
+            vec!["use crate::domain::payroll::pay_run::dto_response::PayRunResponse;"]
+        );
+    }
+
+    #[test]
+    fn cloned_handle_shares_the_same_registry() {
+        let run = TypeRegistryHandle::new();
+        let same_run = run.clone();
+        run.register_type(
+            "PayRunResponse",
+            ["crate", "domain", "payroll", "pay_run", "dto_response"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        assert_eq!(
+            same_run.resolve_imports(&["PayRunResponse".into()], &[]),
+            vec!["use crate::domain::payroll::pay_run::dto_response::PayRunResponse;"]
+        );
+    }
+
+    #[test]
+    fn with_framework_types_resolves_app_state() {
+        let registry = TypeRegistryHandle::with_framework_types();
+        assert_eq!(
+            registry.resolve_imports(&["AppState".into()], &[]),
+            vec!["use crate::app_state::AppState;"]
+        );
+    }
+
+    #[test]
+    fn conflicting_registration_keeps_the_first_path() {
+        // A real modeling conflict stays a warning (not a hard error inside
+        // generation) — but the first registrant must not be silently
+        // REPLACED either.
+        let registry = TypeRegistryHandle::new();
+        registry.register_type(
+            "SharedResponse",
+            ["crate", "domain", "a", "shared", "dto_response"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        registry.register_type(
+            "SharedResponse",
+            ["crate", "domain", "b", "shared", "dto_response"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        assert_eq!(
+            registry.resolve_imports(&["SharedResponse".into()], &[]),
+            vec!["use crate::domain::a::shared::dto_response::SharedResponse;"]
+        );
     }
 
     #[test]

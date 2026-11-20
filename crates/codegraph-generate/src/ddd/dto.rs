@@ -12,7 +12,7 @@ use crate::api::include_path::{ResolvedIncludePath, resolve_include_paths_for_to
 use crate::error::Result;
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
-use crate::type_registry;
+use crate::type_registry::TypeRegistryHandle;
 use codegraph_config::DomainConfig;
 use codegraph_type_contracts::RefClassificationKind;
 
@@ -657,13 +657,24 @@ async fn resolve_mox_derived(
 
 pub struct DtoGenerator {
     output_dir: PathBuf,
+    /// This run's type registry (issue #746). Defaults to the ambient
+    /// registry for direct construction; the pipeline injects the run's own
+    /// handle via [`Self::with_type_registry`].
+    type_registry: TypeRegistryHandle,
 }
 
 impl DtoGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            type_registry: TypeRegistryHandle::ambient(),
         }
+    }
+
+    /// Use `registry` for this generator's registrations/resolutions.
+    pub fn with_type_registry(mut self, registry: TypeRegistryHandle) -> Self {
+        self.type_registry = registry;
+        self
     }
 }
 
@@ -754,35 +765,35 @@ impl EntityGenerator for DtoGenerator {
             };
             base
         };
-        type_registry::register_type(
+        self.type_registry.register_type(
             &format!("{}Response", ctx.entity_name),
             [module_path(), vec!["dto_response".into()]].concat(),
         );
-        type_registry::register_type(
+        self.type_registry.register_type(
             &format!("{}LinkedResponse", ctx.entity_name),
             [module_path(), vec!["dto_response".into()]].concat(),
         );
         if ctx.operations.contains(&"create".to_string()) {
-            type_registry::register_type(
+            self.type_registry.register_type(
                 &format!("Create{}Request", ctx.entity_name),
                 [module_path(), vec!["dto_create".into()]].concat(),
             );
         }
         if ctx.operations.contains(&"update".to_string()) {
-            type_registry::register_type(
+            self.type_registry.register_type(
                 &format!("Update{}Request", ctx.entity_name),
                 [module_path(), vec!["dto_update".into()]].concat(),
             );
         }
         // Register child DTO types (first-level children are referenced by parent DTOs).
         for child in &ctx.all_child_dtos {
-            type_registry::register_type(
+            self.type_registry.register_type(
                 &child.struct_name,
                 [module_path(), vec!["dto_response".into()]].concat(),
             );
             // Also register the Response variant — child DTOs are used as
             // Option<{struct_name}Response> in include-path fields.
-            type_registry::register_type(
+            self.type_registry.register_type(
                 &format!("{}Response", child.struct_name),
                 [module_path(), vec!["dto_response".into()]].concat(),
             );
@@ -887,6 +898,7 @@ impl DtoGenerator {
 
         // Register include DTO types for cross-generator import resolution.
         register_include_types(
+            &self.type_registry,
             &entity_name,
             domain,
             &module_name,
@@ -918,7 +930,9 @@ impl DtoGenerator {
                 "dto_included".into(),
             ],
         };
-        let imports = type_registry::resolve_imports(&ref_type_names, &caller_module);
+        let imports = self
+            .type_registry
+            .resolve_imports(&ref_type_names, &caller_module);
 
         // Collect codelist enum types referenced by compound DTO base fields.
         let codelist_imports = collect_codelist_imports(&enriched_types);
@@ -1188,6 +1202,7 @@ pub(super) fn supports_garde_length(rust_type: &str) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 fn register_include_types(
+    registry: &TypeRegistryHandle,
     entity_name: &str,
     domain: &str,
     module_name: &str,
@@ -1214,11 +1229,11 @@ fn register_include_types(
     let mut own_response_path = own_ns;
     own_response_path.push(module_name.to_string());
     own_response_path.push("dto_response".into());
-    type_registry::register_type(
+    registry.register_type(
         &format!("{}WithIncludeResponse", entity_name),
         own_path.clone(),
     );
-    type_registry::register_type(&format!("{}IncludedData", entity_name), own_path.clone());
+    registry.register_type(&format!("{}IncludedData", entity_name), own_path.clone());
     for path in include_paths {
         let type_name = if path.segments.len() > 1 {
             format!("{}CombinedResponse", path.segments[0].entity_name)
@@ -1253,7 +1268,7 @@ fn register_include_types(
             }
             _ => own_path.clone(),
         };
-        type_registry::register_type(&type_name, defining_module);
+        registry.register_type(&type_name, defining_module);
     }
 }
 

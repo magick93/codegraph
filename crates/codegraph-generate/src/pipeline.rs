@@ -24,7 +24,6 @@ use crate::project_config::{GenerationEntry, GeneratorOpts, ProjectConfig};
 use crate::registry::{build_domain_generators, build_entity_generators, build_global_generators};
 use crate::report;
 use crate::traits::{DomainGenerator, EntityGenerator, GeneratedFile, GlobalGenerator};
-use crate::type_registry;
 
 /// Run all generators for all entities in topological order.
 pub async fn run_generators(
@@ -205,8 +204,9 @@ pub async fn run_generators_with_opts(opts: GeneratorOpts<'_>) -> Result<report:
         }
     }
 
-    // Per-entity generators — run entities sequentially to ensure TypeRegistry
-    // is populated for earlier entities before later entities reference their types.
+    // Per-entity generators — run entities sequentially so this run's type
+    // registry is populated for earlier entities before later entities
+    // reference their types.
     let entity_results = run_entity_phase(&ctx, &mut entity_gens, &parent_candidates, &order).await;
 
     // Issue #460: the cross-plane consistency sweep — every table the
@@ -625,8 +625,10 @@ async fn debug_assert_repository_registry_ready(
         // Registry probe via the existing resolution API: a name resolves to
         // a `use` statement iff it is registered (and no caller base ever
         // equals a registered module path).
-        let registered =
-            !type_registry::resolve_imports(std::slice::from_ref(&type_name), &[]).is_empty();
+        let registered = !ctx
+            .type_registry()
+            .resolve_imports(std::slice::from_ref(&type_name), &[])
+            .is_empty();
         assert!(
             registered,
             "#333 ordering invariant: `{type_name}` is not registered but the repository \
