@@ -1,0 +1,25 @@
+import "aggregate.mox";
+
+application Shelf {
+    base nz.example.shelf
+    module shelf {
+        // Authored aggregate boundary (DD4, issue #301): `root` asserts the
+        // class is its own aggregate root — legal for an entity no other
+        // designed entity contains. Only a root owns a repository (Rule 6).
+        entity ShelfType scaffold root repository ShelfRepository {
+            findById;
+            findAll;
+            save;
+            delete;
+        }
+        // `aggregate <Root>` places the class in the root's boundary. A
+        // CONTAINED class (BookType, via the mox `contains` above) may only
+        // restate its derived root — authored membership in the same root.
+        // A member declares NO repository (Rule 6) and carries no `scaffold`
+        // (the flag demands one).
+        entity BookType aggregate ShelfType
+        // A refers-linked (NOT contained) entity has no derived membership,
+        // so the authored clause is the whole placement decision.
+        entity BookmarkType aggregate ShelfType
+    }
+}

@@ -1251,6 +1251,7 @@ fn action_plan_renders_pom_action_methods() {
         pascal: "Info".to_string(),
         op_snake: "escalate".to_string(),
         op_kebab: "escalate".to_string(),
+        collection: None,
     });
 
     let rendered = render_pom_page(&pom);
@@ -1320,6 +1321,7 @@ fn action_spec_renders_legs_through_the_pom() {
                     round_trip: None,
                 },
             ],
+            collection_add: None,
         }],
     };
 
@@ -1356,4 +1358,202 @@ fn action_spec_renders_legs_through_the_pom() {
 
 fn render_spec_action(spec: &super::spec_payload::ActionSpec) -> String {
     super::render::render_action_spec(spec)
+}
+
+// ── Issue #692: the collection-add POM method + action legs ─────────────────
+
+/// The planner's collection-add legs are SOUND: a lowered `ChildOp add`
+/// plans exactly `[200, 404]` — the created id is capturable under the
+/// seeded parent, and a bogus parent provably answers 404 through the
+/// parent load (never a guessed status).
+#[tokio::test]
+async fn collection_add_plans_ok_then_not_found_legs() {
+    use super::spec_payload::ActionActKind;
+
+    let db = MockEngine::builder().build();
+    let route = crate::ddd::service_ops::ServiceOpRoute {
+        service: "PayRunType".to_string(),
+        op_name: "addLine".to_string(),
+        snake: "add_line".to_string(),
+        fn_name: "service_op_add_line".to_string(),
+        capabilities: Vec::new(),
+        authorize_fn: None,
+        execution: crate::ddd::service_ops::ExecutionKind::ChildOp {
+            action: crate::ddd::service_ops::ChildAction::Add,
+            feature: "lines".to_string(),
+            child_class: "payroll.PayRunLineType".to_string(),
+            read_back: true,
+            parent_load: None,
+        },
+        record_load: false,
+        authorize_async: false,
+        injected_guard: None,
+        invariant_block: None,
+    };
+    let legs = super::assembly::plan_action_legs(&db, "PayRunLineType", &route).await;
+    let kinds: Vec<ActionActKind> = legs.iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(
+        kinds,
+        vec![ActionActKind::Ok, ActionActKind::NotFound],
+        "the collection add must plan the ok leg and the bogus-parent 404 leg"
+    );
+    assert_eq!(ActionActKind::NotFound.status(), "404");
+}
+
+/// The POM gains a collection-add method (`add{Child}(payload, parentId)`)
+/// that POSTs the child payload to the COLLECTION route through
+/// `page.request` — alongside (never instead of) the item-addressed button
+/// methods, which render unchanged.
+#[test]
+fn collection_add_renders_a_pom_method_posting_the_collection_route() {
+    use super::pom::{PomAction, ViewPom};
+    use super::pom_render::render_pom_page;
+
+    let mut pom = ViewPom {
+        view_name: "PayRunLineDetail".to_string(),
+        class_name: "PayRunLineDetailPage".to_string(),
+        route: "/payrunlinedetail".to_string(),
+        ..Default::default()
+    };
+    pom.actions.push(PomAction {
+        component: "lines".to_string(),
+        pascal: "Lines".to_string(),
+        op_snake: "add_line".to_string(),
+        op_kebab: "add_line".to_string(),
+        collection: Some(super::pom::PomCollectionAdd {
+            method: "addPayRunLine".to_string(),
+            route_expr:
+                "apiUrl(`/api/v1/payroll/pay-run/${parentId}/pay-run-line/actions/add_line`)"
+                    .to_string(),
+        }),
+    });
+    pom.actions.push(PomAction {
+        component: "lines".to_string(),
+        pascal: "Lines".to_string(),
+        op_snake: "save_line".to_string(),
+        op_kebab: "save_line".to_string(),
+        collection: None,
+    });
+
+    let rendered = render_pom_page(&pom);
+    // The collection-add method posts through the POM's page request and
+    // returns the ok/status/id triple the specs assert.
+    assert!(
+        rendered
+            .contains("async addPayRunLine(payload: Record<string, unknown>, parentId: string)"),
+        "the collection-add method must take the payload + parent id:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("this.page.request.post(apiUrl(`/api/v1/payroll/pay-run/${parentId}/pay-run-line/actions/add_line`)"),
+        "the method must POST the collection route through page.request:\n{rendered}"
+    );
+    // The apiUrl import rides the helper's use (gated — never on flag-off).
+    assert!(
+        rendered.contains("import { apiUrl } from './support/api';"),
+        "the collection-add method needs the apiUrl helper:\n{rendered}"
+    );
+    // The item-addressed button surface is UNCHANGED (alongside, not instead).
+    assert!(
+        rendered.contains("linesActionSaveLine(): Locator")
+            && rendered.contains("async actionLinesSaveLine(): Promise<void>"),
+        "item-addressed action methods must keep rendering:\n{rendered}"
+    );
+    // No button accessor for the collection add — there is no button.
+    assert!(
+        !rendered.contains("linesActionAddLine(): Locator"),
+        "a collection add has no rendered button:\n{rendered}"
+    );
+
+    // Bare page (no actions) stays byte-identical — no apiUrl import.
+    let mut bare = pom;
+    bare.actions.clear();
+    let rendered_bare = render_pom_page(&bare);
+    assert!(
+        !rendered_bare.contains("apiUrl"),
+        "the apiUrl import is payload-gated:\n{rendered_bare}"
+    );
+}
+
+/// The action spec drives the collection add through the POM method: seed
+/// the parent fixture via the API, POST the add under the seeded parent
+/// (200 + created id), then the bogus-parent POST (404) — zero raw testids.
+#[test]
+fn collection_add_spec_drives_the_pom_method_with_the_parent_fixture() {
+    use super::spec_payload::{ActionAct, ActionActKind, ActionSpec, ActionTest};
+
+    let spec = ActionSpec {
+        view_name: "PayRunLineDetail".to_string(),
+        label: "Pay Run Line".to_string(),
+        route: "/payrunlinedetail".to_string(),
+        id_param: Some("id".to_string()),
+        tests: vec![ActionTest {
+            title: "action add_line on lines: 200 then 404".to_string(),
+            component: "lines".to_string(),
+            op_snake: "add_line".to_string(),
+            fixture: Fixture {
+                casing: DtoKeyCasing::default(),
+                base_path: "/api/v1/payroll/pay-run".to_string(),
+                entries: vec![("pay_run_id".to_string(), "'ws692-parent'".to_string())],
+                deps: Vec::new(),
+            },
+            acts: vec![
+                ActionAct {
+                    kind: ActionActKind::Ok,
+                    round_trip: None,
+                },
+                ActionAct {
+                    kind: ActionActKind::NotFound,
+                    round_trip: None,
+                },
+            ],
+            collection_add: Some(super::spec_payload::ActionCollectionAdd {
+                method: "addPayRunLine".to_string(),
+                route_expr:
+                    "apiUrl(`/api/v1/payroll/pay-run/${parentId}/pay-run-line/actions/add_line`)"
+                        .to_string(),
+                child_dep_setup: String::new(),
+                child_body: "{ 'line_id': 'ws692-line', 'quantity': 3 }".to_string(),
+                bogus_parent_id: "00000000-0000-0000-0000-000000000000".to_string(),
+            }),
+        }],
+    };
+
+    let rendered = render_spec_action(&spec);
+    // The PARENT fixture is seeded through the API first.
+    assert!(
+        rendered.contains("request.post(apiUrl('/api/v1/payroll/pay-run')"),
+        "the spec must seed the parent fixture before the add:\n{rendered}"
+    );
+    // The ok leg drives the POM method under the seeded parent.
+    assert!(
+        rendered.contains(
+            "await ui.addPayRunLine({ 'line_id': 'ws692-line', 'quantity': 3 }, parentId);"
+        ),
+        "the ok leg must drive the collection-add method under the seeded parent:\n{rendered}"
+    );
+    assert!(
+        rendered
+            .contains("expect(added.status, 'the collection add creates the element').toBe(200);")
+            && rendered
+                .contains("expect(added.id, 'the created element carries an id').toBeTruthy();"),
+        "the ok leg must assert the status and the created id:\n{rendered}"
+    );
+    // The failure leg posts under the bogus parent and pins 404.
+    assert!(
+        rendered.contains(
+            "await ui.addPayRunLine({ 'line_id': 'ws692-line', 'quantity': 3 }, '00000000-0000-0000-0000-000000000000');"
+        ),
+        "the failure leg must POST under the bogus parent:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "expect(denied.status, 'a bogus parent answers 404, never a 500').toBe(404);"
+        ),
+        "the failure leg must pin the 404:\n{rendered}"
+    );
+    // Zero raw testids in the spec body (the POM contract).
+    assert!(
+        !rendered.contains("getByTestId("),
+        "spec bodies must not carry raw testids:\n{rendered}"
+    );
 }

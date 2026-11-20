@@ -9,16 +9,17 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use codegraph_core::mock::MockEngine;
-use codegraph_core::traits::GraphQuerier;
+use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    DddApplicationNode, DddDesignFlags, DddDocumentField, DddModuleNode, DddPagination,
-    DddRepositoryNode, DddSearchField, SchemaNode,
+    DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,
+    DddDesignFlags, DddDesignNode, DddDocumentField, DddInvariant, DddModelGraph, DddModuleNode,
+    DddPagination, DddRepositoryNode, DddSearchField, SchemaNode,
 };
 use phero_ir::ddd::{
-    Application, BuiltinRepositoryOp, DddModel, DddParam, DddTypeRef, Delegation, Design,
-    DesignFlags, DocumentField, ErrorRef, Module, Pagination, RankingStrategy, Repository,
-    RepositoryOperation, SearchDef, SearchField, SearchFilter, SearchSort, Service,
-    ServiceOperation, Stereotype,
+    AggregateMembership, AggregateOrigin, Application, BuiltinRepositoryOp, DddModel, DddParam,
+    DddTypeRef, Delegation, Design, DesignFlags, DocumentField, ErrorRef, Invariant, Module,
+    Pagination, RankingStrategy, Repository, RepositoryOperation, SearchDef, SearchField,
+    SearchFilter, SearchSort, Service, ServiceOperation, Stereotype,
 };
 use phero_ir::{Multiplicity, PrimitiveType, TypeRef, Upper};
 
@@ -104,9 +105,17 @@ fn sample_model() -> DddModel {
             .with_capabilities(vec![phero_ir::ddd::CapabilityRef::new("ReadBooks")]),
         ],
     });
+    // DD4/DD5 (issue #666): the authored aggregate-root verdict and the
+    // design's invariants ride the phero-ir `Design` payload; built with
+    // the upstream constructors' field assignments so the conversion must
+    // mirror them (not invent defaults).
+    book.is_aggregate_root = Some(true);
+    book.invariants = vec![
+        Invariant::new("self.title != null"),
+        Invariant::new("self.copies >= 0"),
+    ];
 
     let money = Design::new("Money", Stereotype::Value);
-
     let mut summary = Design::new("shop::reporting::LoanSummary", Stereotype::Dto);
     summary.is_abstract = true;
     summary.flags = DesignFlags {
@@ -114,7 +123,14 @@ fn sample_model() -> DddModel {
         ..DesignFlags::default()
     };
 
-    let chapter = Design::new("nz.example.library.Chapter", Stereotype::Entity);
+    let mut chapter = Design::new("nz.example.library.Chapter", Stereotype::Entity);
+    // DD4: an authored aggregate member — the root + the decision origin
+    // ride `aggregate`; the root verdict itself is `false`.
+    chapter.is_aggregate_root = Some(false);
+    chapter.aggregate = Some(AggregateMembership {
+        root: class_ref("nz.example.library", "Book"),
+        origin: AggregateOrigin::Authored,
+    });
 
     let mut borrow = ServiceOperation::new("borrow");
     borrow.return_type = Some(DddTypeRef::domain(TypeRef::Primitive(
@@ -300,6 +316,48 @@ fn conversion_maps_module_major_order_and_every_payload() {
     assert_eq!(chapter.class, "nz.example.library.Chapter");
     assert_eq!(chapter.ordinal, 0, "ordinals restart per module");
 
+    // DD4/DD5 (issue #666): the authored aggregate boundary rides as ONE
+    // typed blob (`aggregate_boundary`) — the root verdict and the member
+    // membership keep their authored semantics, the membership's root
+    // crossing as phero-ir `TypeRef` JSON.
+    assert_eq!(
+        book.aggregate_boundary,
+        Some(DddAggregateBoundary {
+            is_root: Some(true),
+            membership: None,
+        }),
+        "an authored root carries the verdict, never a membership"
+    );
+    assert_eq!(
+        chapter.aggregate_boundary,
+        Some(DddAggregateBoundary {
+            is_root: Some(false),
+            membership: Some(DddAggregateMembership {
+                root_json: type_json(&class_ref("nz.example.library", "Book")),
+                origin: DddAggregateOrigin::Authored,
+            }),
+        }),
+    );
+    // The invariants survive conversion verbatim, in declaration order.
+    assert_eq!(
+        book.invariants,
+        vec![
+            DddInvariant {
+                expression: "self.title != null".to_string(),
+            },
+            DddInvariant {
+                expression: "self.copies >= 0".to_string(),
+            },
+        ]
+    );
+    // Non-entity and undecided designs carry no boundary blob and no
+    // invariants (the byte-identical discipline: nothing new serializes).
+    assert_eq!(money.aggregate_boundary, None);
+    assert!(money.invariants.is_empty());
+    assert_eq!(summary.aggregate_boundary, None);
+    assert!(summary.invariants.is_empty());
+    assert_eq!(chapter.invariants, Vec::<DddInvariant>::new());
+
     // Repositories: one, in module-major position, with builtin labels and
     // the declared finder's full signature JSON.
     assert_eq!(graph.repositories.len(), 1);
@@ -452,6 +510,88 @@ fn conversion_maps_module_major_order_and_every_payload() {
         })
     );
     assert_eq!(search.capabilities, vec!["SearchBooks".to_string()]);
+}
+
+/// The graph mirror round-trips the DD4/DD5 payloads through the ingest
+/// contract (`ingest_ddd_model` → `get_ddd_models`, MockEngine): a warm
+/// mirror that lost either blob would silently degrade the enforcement
+/// plane later slices build (issue #666).
+#[tokio::test]
+async fn authored_aggregate_boundary_and_invariants_round_trip_through_the_mock() {
+    let root = DddDesignNode {
+        application: "Library".to_string(),
+        module: "lending".to_string(),
+        class: "nz.example.library::Book".to_string(),
+        resolved_title: Some("BookType".to_string()),
+        stereotype: "entity".to_string(),
+        is_abstract: false,
+        flags: DddDesignFlags::default(),
+        machine_json: None,
+        child_operations: Vec::new(),
+        aggregate_boundary: Some(DddAggregateBoundary {
+            is_root: Some(true),
+            membership: None,
+        }),
+        invariants: vec![
+            DddInvariant {
+                expression: "self.title != null".to_string(),
+            },
+            DddInvariant {
+                expression: "self.copies >= 0".to_string(),
+            },
+        ],
+        ordinal: 0,
+    };
+    let member = DddDesignNode {
+        application: "Library".to_string(),
+        module: "lending".to_string(),
+        class: "nz.example.library.Chapter".to_string(),
+        resolved_title: None,
+        stereotype: "entity".to_string(),
+        is_abstract: false,
+        flags: DddDesignFlags::default(),
+        machine_json: None,
+        child_operations: Vec::new(),
+        aggregate_boundary: Some(DddAggregateBoundary {
+            is_root: Some(false),
+            membership: Some(DddAggregateMembership {
+                root_json: serde_json::json!({
+                    "type": "class",
+                    "value": {"package": "nz.example.library", "name": "Book"}
+                }),
+                origin: DddAggregateOrigin::Derived,
+            }),
+        }),
+        invariants: Vec::new(),
+        ordinal: 1,
+    };
+    let graph = DddModelGraph {
+        source_path: "design.ddd".to_string(),
+        application: DddApplicationNode {
+            name: "Library".to_string(),
+            base: Some("nz.example.library".to_string()),
+            source_path: "design.ddd".to_string(),
+        },
+        modules: vec![DddModuleNode {
+            application: "Library".to_string(),
+            name: "lending".to_string(),
+            ordinal: 0,
+        }],
+        designs: vec![root, member],
+        repositories: Vec::new(),
+        services: Vec::new(),
+        searches: Vec::new(),
+    };
+
+    let mock = MockEngine::builder().build();
+    mock.ingest_ddd_model(&graph).await.unwrap();
+
+    let loaded = mock.get_ddd_models().await.unwrap();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(
+        loaded[0], graph,
+        "the boundary blob and the invariants round-trip losslessly"
+    );
 }
 
 fn phero_ir_builtin(

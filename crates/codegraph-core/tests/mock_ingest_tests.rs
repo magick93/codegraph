@@ -304,6 +304,8 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
             },
             machine_json: None,
             child_operations: Vec::new(),
+            aggregate_boundary: None,
+            invariants: Vec::new(),
             ordinal: 0,
         }],
         repositories: vec![DddRepositoryNode {

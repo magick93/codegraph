@@ -696,6 +696,112 @@ fn doctor_validates_multiple_mox_files() {
     assert_eq!(summary.model_warnings, 0);
 }
 
+/// Issue #702: a `postgres_schema` naming a schema other than the domain
+/// key is a HARD doctor failure — the same predicate the generation-time
+/// gate enforces, so doctor and generation cannot drift. Everything else in
+/// the fixture is clean (mox-first, compiling model), so the only hard
+/// failure is the schema divergence.
+#[test]
+fn doctor_fails_when_postgres_schema_diverges_from_the_domain_key() {
+    let dir = TempDir::new().unwrap();
+    let config = dir.path().join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll_legacy"
+"#,
+    )
+    .unwrap();
+    let mox = dir.path().join("payroll.mox");
+    fs::write(
+        &mox,
+        "package payroll\n\nclass PayRun {\n    String [1] reference\n}\n",
+    )
+    .unwrap();
+
+    let err = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .expect_err(
+        "postgres_schema diverging from the domain key must be a hard doctor failure (#702)",
+    );
+    let message = format!("{err}");
+    assert!(
+        message.contains("hard check"),
+        "the divergence must fail doctor as a hard check: {message}"
+    );
+}
+
+/// The aligned shape — `postgres_schema` equal to the domain key — passes
+/// doctor's schema check (the standing fixture shape).
+#[test]
+fn doctor_aligned_postgres_schema_passes() {
+    let dir = TempDir::new().unwrap();
+    let config = dir.path().join("domains.toml");
+    fs::write(
+        &config,
+        r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.payroll]
+label = "Payroll"
+schema_dir = "payroll"
+postgres_schema = "payroll"
+"#,
+    )
+    .unwrap();
+    let mox = dir.path().join("payroll.mox");
+    fs::write(
+        &mox,
+        "package payroll\n\nclass PayRun {\n    String [1] reference\n}\n",
+    )
+    .unwrap();
+
+    let summary = cmd_doctor(&DoctorArgs {
+        config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "aligned postgres_schema must not fail doctor"
+    );
+}
+
 #[test]
 fn doctor_fails_on_missing_schemas() {
     let dir = TempDir::new().unwrap();
@@ -2597,5 +2703,134 @@ application Payroll {
     assert_eq!(
         summary.soft_warnings, baseline.soft_warnings,
         "fully-bound ops must not warn over the ambient baseline: {summary:?} vs baseline {baseline:?}"
+    );
+}
+
+/// Issue #666 slice 4b (doctor parity): an authored aggregate boundary that
+/// disagrees with the domains.toml routing — a member authored under one
+/// root while config declares a DIFFERENT parent — warns from the COMPILED
+/// model alone (doctor holds no graph). WARN only; the ambient baseline is
+/// subtracted so the delta is attributable. The agreement shape (config
+/// parent == the authored root, and the derived-only model) stays quiet.
+#[test]
+fn doctor_warns_on_aggregate_boundary_config_disagreements() {
+    let dir = TempDir::new().unwrap();
+    let mox = dir.path().join("payroll.mox");
+    fs::write(
+        &mox,
+        "package payroll\n\nclass PayRun {\n    String [1] reference\n}\n\nclass PayLine {\n    String [1] line_id\n}\n\nclass Ledger {\n    String [1] code\n}\n",
+    )
+    .unwrap();
+    let auth_ddd = dir.path().join("authored.ddd");
+    fs::write(
+        &auth_ddd,
+        r#"import "payroll.mox";
+
+application Payroll {
+    base payroll
+    module ops {
+        entity PayRun root repository PayRunRepository {
+            findById;
+        }
+        entity PayLine aggregate PayRun
+    }
+}
+"#,
+    )
+    .unwrap();
+    let make_config = |parent: &str| dir.path().join(format!("domains-{parent}.toml"));
+    let write_config = |path: &std::path::Path, parent: &str| {
+        fs::write(
+            path,
+            format!(
+                "[defaults]\noperations = [\"create\", \"read\", \"update\", \"delete\", \"list\"]\n\n\
+                 [domains.payroll]\nlabel = \"Payroll\"\nschema_dir = \"payroll\"\npostgres_schema = \"payroll\"\n\n\
+                 [domains.payroll.entity_config.PayLine]\nrole = \"child\"\nparent = \"{parent}\"\n"
+            ),
+        )
+        .unwrap();
+    };
+
+    // (iii) disagreement: config parent `Ledger` ≠ the authored root
+    // `PayRun` → exactly one WARN over the ambient baseline.
+    let mismatch_config = make_config("Ledger");
+    write_config(&mismatch_config, "Ledger");
+    let summary = cmd_doctor(&DoctorArgs {
+        config: mismatch_config.clone(),
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox.clone()],
+        rosetta_files: vec![],
+        ddd_files: vec![auth_ddd.clone()],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .unwrap();
+    assert_eq!(
+        summary.hard_failures, 0,
+        "the authored model must still compile: {summary:?}"
+    );
+
+    let baseline = cmd_doctor(&DoctorArgs {
+        config: mismatch_config.clone(),
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox.clone()],
+        rosetta_files: vec![],
+        ddd_files: vec![],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .unwrap();
+    assert_eq!(baseline.hard_failures, 0, "baseline must pass");
+    assert_eq!(
+        summary.soft_warnings,
+        baseline.soft_warnings + 1,
+        "the authored-member/config-parent disagreement must contribute exactly \
+         one WARN: {summary:?} vs baseline {baseline:?}"
+    );
+
+    // Agreement: config parent == the authored root → no delta.
+    let agreeing_config = make_config("PayRun");
+    write_config(&agreeing_config, "PayRun");
+    let quiet = cmd_doctor(&DoctorArgs {
+        config: agreeing_config,
+        schemas: None,
+        classifier: None,
+        profiles_config: None,
+        mox_files: vec![mox.clone()],
+        rosetta_files: vec![],
+        ddd_files: vec![auth_ddd],
+        evt_files: vec![],
+        deploy_files: vec![],
+        ifml_files: vec![],
+        extension_points: None,
+        fail_on_findings: false,
+        graph_artifact: None,
+        emit_graph: None,
+        graph_reachability: vec![],
+    })
+    .unwrap();
+    assert_eq!(
+        quiet.hard_failures, 0,
+        "the agreeing shape must pass: {quiet:?}"
+    );
+    assert_eq!(
+        quiet.soft_warnings, baseline.soft_warnings,
+        "config parent == the authored root must not warn: {quiet:?} vs baseline {baseline:?}"
     );
 }

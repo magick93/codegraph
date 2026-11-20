@@ -345,6 +345,67 @@ pub async fn guard_refusals(
     Ok(refusals)
 }
 
+/// The collection-level child `add`'s parent load (issue #692): every
+/// lowered `add` must resolve the parent's plain by-id query slot at
+/// planning (the handler renders a parent load-or-404 before the create,
+/// so the method it calls must provably exist). The same refusal class the
+/// generation path raises — this pre-generation pass is what makes it fail
+/// BEFORE any tree is written (the `body_refusals` / `guard_refusals`
+/// posture).
+pub async fn child_parent_load_refusals(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+) -> Result<Vec<String>, GraphError> {
+    let models = db.get_ddd_models().await?;
+    if models.iter().all(|model| {
+        model.designs.iter().all(|design| {
+            design
+                .child_operations
+                .iter()
+                .all(|op| op.child_scope.as_ref().map(|scope| scope.action.as_str()) != Some("add"))
+        })
+    }) {
+        return Ok(Vec::new());
+    }
+    let type_suffix = config.defaults.type_suffix.clone();
+    let mut titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for model in &models {
+        for design in &model.designs {
+            for op in &design.child_operations {
+                let Some(scope) = &op.child_scope else {
+                    continue;
+                };
+                if op.is_protected || scope.action != "add" {
+                    continue;
+                }
+                if let Some(title) = schema_title_for_class(db, &scope.class, &type_suffix).await {
+                    titles.insert(title);
+                }
+            }
+        }
+    }
+    let mut refusals = Vec::new();
+    for title in titles {
+        let Ok(Some(schema)) = db.get_schema(&title).await else {
+            continue;
+        };
+        let Some(domain) = schema.domain.clone() else {
+            continue;
+        };
+        if !config.domains.contains_key(domain.as_str()) {
+            continue;
+        }
+        if let Err(reason) =
+            routes_for_entity(db, config, &domain, &title, &BodyRenderContext::default()).await
+        {
+            refusals.push(reason);
+        }
+    }
+    refusals.sort();
+    refusals.dedup();
+    Ok(refusals)
+}
+
 /// The Ask 1 diagnostic: service operations that emit no API surface —
 /// `protected` ops and ops that bind no entity. Returned strings are
 /// human-readable warnings (empty = clean).

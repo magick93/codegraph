@@ -37,7 +37,7 @@ impl ValidationPass {
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -53,6 +53,9 @@ impl ValidationPass {
             Self::check_service_op_bodies(db, config),
             Self::check_transition_bindings(db, config),
             Self::check_service_op_guards(db, config, workers_topology),
+            Self::check_invariants(db, config, workers_topology),
+            Self::check_child_add_parent_load(db, config),
+            Self::check_aggregate_boundaries(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -70,6 +73,9 @@ impl ValidationPass {
         issues.extend(r13);
         issues.extend(r14);
         issues.extend(r15);
+        issues.extend(r16);
+        issues.extend(r17);
+        issues.extend(r18);
         issues
     }
 
@@ -125,6 +131,55 @@ impl ValidationPass {
             .collect()
     }
 
+    /// Collection-level child `add` parent loads (issue #692): every
+    /// lowered `add` must resolve the parent's plain by-id query slot —
+    /// the handler renders a parent load-or-404 BEFORE the create, so the
+    /// method it calls must provably exist. Same hard-error posture (the
+    /// `check_service_op_guards` precedent): a parent with no plain
+    /// `find_by_id`, and a cross-domain parent, fail BEFORE any tree is
+    /// written.
+    async fn check_child_add_parent_load(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) =
+            codegraph_generate::ddd::service_ops::child_parent_load_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(child op parent load)".to_string(),
+                check: "child_op_parent_load",
+                message,
+            })
+            .collect()
+    }
+
+    /// Authored aggregate boundaries (DD4, issue #666 slice 4b): the
+    /// authored verdict and the config/route plane disagree — WARN only
+    /// (the `dead_surface_warnings` posture; the routing itself consumes
+    /// the authored verdict, so the WARN records the override or the
+    /// unresolvable shape, it never blocks).
+    async fn check_aggregate_boundaries(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let warnings =
+            codegraph_generate::ddd::aggregate::aggregate_boundary_warnings(db, config).await;
+        warnings
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(aggregate boundary)".to_string(),
+                check: "aggregate_boundary",
+                message,
+            })
+            .collect()
+    }
+
     /// DD9 typed repository queries (issue #659): every query-carrying
     /// declared operation must lower to a parameterized store query. A
     /// construct outside the documented subset is a HARD error naming the
@@ -144,6 +199,56 @@ impl ValidationPass {
                 message,
             })
             .collect()
+    }
+
+    /// Design invariants (DD5, issue #666 slice 2): every authored
+    /// `invariant <expr>;` must lower into a typed predicate fn. A
+    /// construct outside the closed subset is a HARD error naming the
+    /// domain, the class, the invariant index, and the construct — the
+    /// generator emits refused invariants NOWHERE, so this pre-generation
+    /// pass is what makes the refusal fail BEFORE any tree is written (the
+    /// `check_service_op_bodies` posture).
+    ///
+    /// Slice 4d adds the topology half: the rules plane (where the
+    /// predicate fns — and therefore every enforcement call site — live)
+    /// is monolith-only (#338), so under the workers topology modeled
+    /// invariants are NOT enforced. That gap is made VISIBLE as a
+    /// Warning-severity finding naming the counts — never a silent
+    /// no-op.
+    async fn check_invariants(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        workers_topology: bool,
+    ) -> Vec<ValidationIssue> {
+        let mut issues = Vec::new();
+        if workers_topology
+            && let Some((entities, invariants)) =
+                codegraph_generate::ddd::invariants::modeled_invariant_counts(db).await
+        {
+            issues.push(ValidationIssue {
+                severity: Severity::Warning,
+                entity: "(design invariant)".to_string(),
+                check: "invariant",
+                message: format!(
+                    "{invariants} design invariant(s) on {entities} entity/entities are \
+                     not enforced under the workers topology — the rules plane \
+                     (the predicate fns and their handler call sites) is \
+                     monolith-only (#338)"
+                ),
+            });
+        }
+        let Ok(refusals) =
+            codegraph_generate::ddd::invariants::all_invariant_refusals(db, config).await
+        else {
+            return issues;
+        };
+        issues.extend(refusals.into_iter().map(|message| ValidationIssue {
+            severity: Severity::Error,
+            entity: "(design invariant)".to_string(),
+            check: "invariant",
+            message,
+        }));
+        issues
     }
 
     /// Scaffold-path transition bypass (issue #590, Ask 3): an entity with

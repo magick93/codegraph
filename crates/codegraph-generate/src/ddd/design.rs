@@ -201,6 +201,34 @@ impl DddDesignSurface {
         self.designs.get(schema_title)
     }
 
+    /// The design's effective aggregate-root verdict (issue #666 slice 4b):
+    /// `true` when the DD4 boundary blob carries `is_root == Some(true)`.
+    /// NOTE: the phero-ir artifact records the origin of a ROOT verdict
+    /// nowhere (only a non-root's membership carries `origin`), so this
+    /// includes containment-derived roots — the AUTHORED proof of a root
+    /// is `crate::ddd::aggregate`'s proven-root check (a member's authored
+    /// declaration naming this class).
+    pub fn is_aggregate_root(&self, schema_title: &str) -> bool {
+        self.designs
+            .get(schema_title)
+            .and_then(|design| design.aggregate_boundary.as_ref())
+            .and_then(|boundary| boundary.is_root)
+            == Some(true)
+    }
+
+    /// The AUTHORED aggregate-root class the design's membership names
+    /// (issue #666 slice 4b): `Some(root class name)` only when the
+    /// membership's origin is `Authored` — a `Derived` membership is
+    /// upstream's own containment derivation and never drives routing.
+    pub fn authored_member_root(&self, schema_title: &str) -> Option<String> {
+        let design = self.designs.get(schema_title)?;
+        let membership = design.aggregate_boundary.as_ref()?.membership.as_ref()?;
+        if membership.origin != codegraph_core::types::DddAggregateOrigin::Authored {
+            return None;
+        }
+        crate::ddd::aggregate::authored_root_class_name(&membership.root_json)
+    }
+
     /// The lifecycle state machine designed for the entity, when the graph
     /// carries one (`.ddd` `machine <field>: <Enum>`). The stored form is
     /// opaque phero-ir JSON; codegraph-generate (which may depend on phero-ir)
@@ -1140,6 +1168,8 @@ mod tests {
             flags: DddDesignFlags::default(),
             machine_json: None,
             child_operations: Vec::new(),
+            aggregate_boundary: None,
+            invariants: Vec::new(),
             ordinal: 0,
         }
     }

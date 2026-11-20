@@ -1267,9 +1267,6 @@ impl IfmlE2eTestGenerator {
             let Some(api) = schema_backed_api(db, config, entity, api_version).await else {
                 continue;
             };
-            if !api.has_read && !api.has_update && !api.has_delete {
-                continue;
-            }
             let Some(schema) = schema_for_entity(db, entity).await else {
                 continue;
             };
@@ -1303,7 +1300,37 @@ impl IfmlE2eTestGenerator {
                 // (Ask 1) owns the warning; here it stays unbuilt.
                 continue;
             };
-            let legs = plan_action_legs(db, &schema.title, route).await;
+            // Issue #692: a collection-level child `add` is AGGREGATE
+            // surface — the child's own CRUD api is parent-scoped
+            // (resolve_entity_api zeroes it for `role = "child"`), but the
+            // op routes under the PARENT's collection. Gate on the built
+            // collection-add payload, not the zeroed CRUD surface; every
+            // other shape keeps the CRUD gate (models without child ops
+            // stay byte-identical — routes are empty and the loop
+            // continues either way).
+            let collection_add = self
+                .build_collection_add(
+                    db,
+                    config,
+                    api_version,
+                    component,
+                    &schema,
+                    &domain,
+                    &api,
+                    route,
+                )
+                .await;
+            if collection_add.is_none() && !api.has_read && !api.has_update && !api.has_delete {
+                continue;
+            }
+            let legs = if collection_add.is_some() {
+                vec![
+                    (super::spec_payload::ActionActKind::Ok, None),
+                    (super::spec_payload::ActionActKind::NotFound, None),
+                ]
+            } else {
+                plan_action_legs(db, &schema.title, route).await
+            };
             if legs.is_empty() {
                 continue;
             }
@@ -1316,12 +1343,14 @@ impl IfmlE2eTestGenerator {
                 .map(|a| a.kind.status())
                 .collect::<Vec<_>>()
                 .join(" then ");
-            tests.push(ActionTest {
-                title: format!("action {op_snake} on {}: {statuses}", component_name),
-                component: component_name.clone(),
-                op_snake,
-                fixture: self
-                    .attach_required_refs(
+            // A collection-add test seeds the PARENT aggregate (the
+            // collection route's address); the child payload rides the
+            // ActionCollectionAdd. Everything else seeds the bound entity.
+            let (fixture, child_fixture) = if let Some((parent_fixture, add)) = collection_add {
+                (parent_fixture, Some(add))
+            } else {
+                (
+                    self.attach_required_refs(
                         db,
                         config,
                         api_version,
@@ -1334,13 +1363,29 @@ impl IfmlE2eTestGenerator {
                         },
                     )
                     .await,
+                    None,
+                )
+            };
+            let pom_collection = child_fixture
+                .as_ref()
+                .map(|add| super::pom::PomCollectionAdd {
+                    method: add.method.clone(),
+                    route_expr: add.route_expr.clone(),
+                });
+            tests.push(ActionTest {
+                title: format!("action {op_snake} on {}: {statuses}", component_name),
+                component: component_name.clone(),
+                op_snake,
+                fixture,
                 acts,
+                collection_add: child_fixture,
             });
             pom_actions.push(super::pom::PomAction {
                 component: component_name.clone(),
                 pascal: to_pascal_case(component_name),
                 op_snake: route.snake.clone(),
                 op_kebab: to_kebab_case(&edge.target),
+                collection: pom_collection,
             });
         }
         if tests.is_empty() {
@@ -1354,6 +1399,109 @@ impl IfmlE2eTestGenerator {
                 route: view_route(&vc.name),
                 id_param: Some(id_param),
                 tests,
+            },
+        ))
+    }
+    /// The collection-add payload for a lowered child `add` route (issue
+    /// #692): the PARENT fixture the spec seeds (the collection route's
+    /// address), the child's create body (typed entries, workflow-managed
+    /// fields stripped, required-FK deps posted first under the `add`
+    /// prefix), and the POM method's collection route expression. `None` —
+    /// the leg stays unbuilt, never guessed — when the route is not a
+    /// lowered collection-level `add`, or the parent aggregate does not
+    /// resolve (the config-declared `parent` names no schema/API).
+    #[allow(clippy::too_many_arguments)]
+    async fn build_collection_add(
+        &self,
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+        api_version: &str,
+        component: &IfmlComponent,
+        schema: &codegraph_core::types::SchemaNode,
+        domain: &str,
+        api: &super::super::api_paths::ResolvedApi,
+        route: &ServiceOpRoute,
+    ) -> Option<(Fixture, super::spec_payload::ActionCollectionAdd)> {
+        if !matches!(
+            route.execution,
+            ExecutionKind::ChildOp {
+                action: service_ops::ChildAction::Add,
+                ..
+            }
+        ) {
+            return None;
+        }
+        // The parent aggregate: the config-declared nesting (`role =
+        // "child"` + `parent` + `parent_ref`) is the contract the
+        // collection route mounts under.
+        let child_cfg = config
+            .domains
+            .get(domain)
+            .and_then(|d| d.get_entity_config(&schema.title));
+        let parent_name = child_cfg.and_then(|ec| ec.parent.clone())?;
+        let parent_api = schema_backed_api(db, config, &parent_name, api_version).await?;
+        let parent_entries = super::fixtures::with_required_entries(
+            db,
+            config,
+            Some(parent_name.as_str()),
+            Vec::new(),
+            self.dto_casing,
+        )
+        .await;
+        let parent_fixture = super::fixtures::add_required_refs(
+            db,
+            config,
+            api_version,
+            Some(parent_name.as_str()),
+            Fixture {
+                base_path: parent_api.base_path.clone(),
+                entries: parent_entries,
+                casing: self.dto_casing,
+                deps: Vec::new(),
+            },
+        )
+        .await;
+        // The child create body: the component's typed entries (required
+        // fields; workflow-managed fields stripped by
+        // `typed_fixture_entries`), with required-FK deps posted FIRST
+        // under the `add` prefix so the body's placeholders bind inside
+        // the consuming test.
+        let child_fixture = self
+            .attach_required_refs(
+                db,
+                config,
+                api_version,
+                component.entity.as_deref(),
+                Fixture {
+                    casing: self.dto_casing,
+                    base_path: api.base_path.clone(),
+                    entries: self.typed_fixture_entries(db, config, component).await,
+                    deps: Vec::new(),
+                },
+            )
+            .await;
+        let child_dep_setup = child_fixture.dep_setup_js("add", "\t\t");
+        let child_body = child_fixture.data_literal_prefixed("add");
+        // The collection route:
+        // /api/{v}/{domain}/{parent}/{parentId}/{child}/actions/{snake} —
+        // both segments from the SAME resolution the API plane mounts
+        // (`resolve_path_segment` inside `resolve_entity_api`, the
+        // base_path's last hop).
+        let child_segment = api.base_path.rsplit('/').next()?.to_string();
+        let parent_segment = parent_api.base_path.rsplit('/').next()?.to_string();
+        let method = format!("add{}", to_pascal_case(&schema.rust_type_name));
+        let route_expr = format!(
+            "apiUrl(`/api/{api_version}/{domain}/{parent_segment}/$/{{parentId}}/{child_segment}/actions/{}`)",
+            route.snake
+        );
+        Some((
+            parent_fixture,
+            super::spec_payload::ActionCollectionAdd {
+                method,
+                route_expr,
+                child_dep_setup,
+                child_body,
+                bogus_parent_id: "00000000-0000-0000-0000-000000000000".to_string(),
             },
         ))
     }
@@ -1374,7 +1522,13 @@ impl IfmlE2eTestGenerator {
 ///   the record → `[200, 403]` (the re-act denies; authorize runs before
 ///   the conflict check). A guard that doesn't admit the initial state, or
 ///   whose shape the conservative scan cannot read, stays unbuilt.
-async fn plan_action_legs(
+/// - `ChildOp add` → `[200, 404]` (issue #692): the ok leg posts under
+///   the seeded parent; the failure leg posts under the zero uuid, which
+///   the parent load-or-404 deterministically refuses.
+///
+/// `pub(super)` so the unit pins can drive the planner directly; the spec
+/// builder is the only production caller.
+pub(super) async fn plan_action_legs(
     db: &dyn GraphQuerier,
     entity_title: &str,
     route: &ServiceOpRoute,
@@ -1390,13 +1544,15 @@ async fn plan_action_legs(
         }
         // Aggregate child operations (issue #661). `remove`/`save` address an
         // element the parent-scoped seed fixture already created → 200. `add`
-        // is a COLLECTION-level action (it appends a new element, no element
-        // id in the path), and the emitted POM action surface posts to the
-        // ITEM route — so the leg is left unbuilt rather than guessed
-        // (TODO(#661): a collection-add POM surface).
+        // is a COLLECTION-level action (issue #692): the collection-add POM
+        // method posts the child create body under the SEEDED parent (200,
+        // created id capturable) and, as the failure leg, under a parent id
+        // that provably does not exist (the zero uuid) — the handler's
+        // parent load-or-404 answers 404 deterministically. Both legs are
+        // sound: no status is guessed.
         ExecutionKind::ChildOp { action, .. } => {
             if *action == crate::ddd::service_ops::ChildAction::Add {
-                return Vec::new();
+                return vec![(ActionActKind::Ok, None), (ActionActKind::NotFound, None)];
             }
             return vec![(ActionActKind::Ok, None)];
         }

@@ -1102,6 +1102,8 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
                 // child action handlers (create/update/delete through the
                 // child's plane) must compile natively AND on wasm32.
                 child_operations: fixture_child_operations(),
+                aggregate_boundary: None,
+                invariants: Vec::new(),
                 ordinal: 0,
             },
             // WS4: the child entity's own design + repository — the child
@@ -1116,6 +1118,8 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
                 flags: codegraph_core::types::DddDesignFlags::default(),
                 machine_json: None,
                 child_operations: Vec::new(),
+                aggregate_boundary: None,
+                invariants: Vec::new(),
                 ordinal: 1,
             },
         ],
@@ -1382,6 +1386,19 @@ fn assert_generated_surface(output_dir: &Path) {
     assert!(
         child_handler.contains("find_by_id_scoped(pay_run_line_id, parent_id"),
         "the child record load must be parent-scoped in the worker crate:\n{child_handler}"
+    );
+    // Issue #692: the collection-level `add` loads the PARENT through the
+    // same-domain query slot before the create (the worker AppState
+    // carries only its own domain's slots, so the same-domain fact is
+    // load-bearing for the compilation this gate proves). The parent
+    // design's hand-built flags are auditable=false, so the load carries
+    // no include-deleted argument.
+    assert!(
+        child_handler.contains(
+            "state.compensation_pay_run_queries\n        .find_by_id(parent_id, api_key_info.api_key_id,"
+        ),
+        "the collection add must load the parent through the same-domain query \
+         slot before its create:\n{child_handler}"
     );
     assert!(
         child_handler.contains("service_op_adjust"),

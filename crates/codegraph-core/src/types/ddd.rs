@@ -85,8 +85,79 @@ pub struct DddDesignNode {
     /// block serializes exactly as before.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub child_operations: Vec<DddServiceOperation>,
+    /// The authored aggregate boundary of the design (DD4, issue #666 /
+    /// pherolang#301): the effective aggregate-root verdict plus the
+    /// resolved membership of a non-root entity, mirrored as ONE typed
+    /// blob. `None` when both are undecided (non-entity designs, an
+    /// incompletely lowered domain union) — a design with no authored
+    /// boundary serializes exactly as before. Serde-defaulted for
+    /// read-compat with graphs persisted before the field existed; a warm
+    /// graph cache persisted earlier serves none, hence the
+    /// GRAPH_FORMAT_VERSION bump that cold-re-ingests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregate_boundary: Option<DddAggregateBoundary>,
+    /// The design's invariants (DD5, issue #666 / pherolang#302), in
+    /// declaration order — the verbatim expression source is the identity
+    /// (there is no name/index upstream). Sparse: a design without
+    /// invariants serializes exactly as before. Serde-defaulted for
+    /// read-compat with graphs persisted before the field existed (same
+    /// GRAPH_FORMAT_VERSION story as `aggregate_boundary`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invariants: Vec<DddInvariant>,
     /// Declaration order within the module.
     pub ordinal: usize,
+}
+
+/// The authored aggregate boundary of a [`DddDesignNode`] (DD4, issue
+/// #666): one typed blob carrying BOTH the aggregate-root verdict and the
+/// resolved membership, so the Grafeo node persists exactly one JSON prop
+/// (`aggregate_json`) per concern. Both halves are optional the way the
+/// upstream payload is: a root carries the verdict alone, a member carries
+/// both, and an undecided design carries no blob at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DddAggregateBoundary {
+    /// The effective aggregate-root verdict: `Some(true)` for a root,
+    /// `Some(false)` for a member, `None` when unknown (the imported
+    /// domain union did not fully lower).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_root: Option<bool>,
+    /// The resolved aggregate membership of a **non-root** entity design,
+    /// with the decision's origin. Absent on roots and non-entities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership: Option<DddAggregateMembership>,
+}
+
+/// The aggregate membership of a non-root entity design (phero-ir
+/// `AggregateMembership`, issue #666): the resolved root class and how the
+/// placement was decided. The root rides as phero-ir `TypeRef` JSON
+/// (codegraph-core takes no phero-* deps — the `type_json` discipline).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DddAggregateMembership {
+    /// The resolved aggregate root class, as phero-ir `TypeRef` JSON.
+    pub root_json: serde_json::Value,
+    /// Whether containment or an authored declaration placed the member.
+    pub origin: DddAggregateOrigin,
+}
+
+/// How an entity design's aggregate boundary was decided (phero-ir
+/// `AggregateOrigin`, issue #666).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DddAggregateOrigin {
+    /// The design authored the boundary (`aggregate <Root>`).
+    Authored,
+    /// The containment closure decided the boundary.
+    Derived,
+}
+
+/// One invariant of a [`DddDesignNode`] (DD5, issue #666): the verbatim
+/// source text between `invariant` and `;`. Typing is proven upstream; the
+/// consumer re-parses with the shared expression semantics. Declaration
+/// order is the identity (there is no name/index upstream).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DddInvariant {
+    /// The invariant expression, verbatim.
+    pub expression: String,
 }
 
 /// The design flags of a [`DddDesignNode`], all defaulting to `false`

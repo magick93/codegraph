@@ -36,6 +36,10 @@ use codegraph_core::types::{PropertyNode, SchemaNode};
 use codegraph_type_contracts::RefClassificationKind;
 use serde::Serialize;
 
+mod invariants;
+
+use invariants::{InvariantContractFacts, invariant_contract_facts};
+
 use super::api_model::{resolve_entity_operations, resolve_path_segment_with_config};
 use crate::error::Result;
 use crate::ordering::compute_generation_order;
@@ -60,13 +64,28 @@ const ENTITY_NN_BASE: usize = 10;
 
 pub struct HurlContractGenerator {
     output_dir: PathBuf,
+    /// Whether the plan carries the `rules` domain generator: the
+    /// invariant predicate fns (DD5, issue #666 slice 4e) exist only when
+    /// the `RulesGenerator` runs, so the invariant-denied legs resolve
+    /// their verdicts only under the same flag the handler uses.
+    rules_guards: bool,
 }
 
 impl HurlContractGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
             output_dir: output_dir.to_path_buf(),
+            rules_guards: false,
         }
+    }
+
+    /// Enable the invariant-denied contract legs (issue #666 slice 4e).
+    /// The registry derives this from the build plan's `rules` generator
+    /// membership — the handler call sites (and the predicates they call)
+    /// exist only when that generator runs.
+    pub fn with_rules_guards(mut self, enabled: bool) -> Self {
+        self.rules_guards = enabled;
+        self
     }
 }
 
@@ -110,6 +129,22 @@ struct EntityContractCtx {
     minimal_body: String,
     update_body: String,
     update_asserts: String,
+    /// Design-invariant contract legs (DD5, issue #666 slice 4e): the
+    /// violating-create leg (when the contract's own values PROVE a
+    /// denial) and the documented omission comments (when a verdict is
+    /// undecidable — the `Body { may_refuse }` precedent). Empty for
+    /// every entity without invariants — byte-identical contract.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    invariant_sections: Vec<ContractSection>,
+    /// `true` when the contract's update values PROVABLY violate an
+    /// invariant: the PUT roundtrip then pins 409 + INVARIANT_VIOLATION
+    /// (the write never starts) instead of the 200 roundtrip.
+    #[serde(default)]
+    update_invariant_denied: bool,
+    /// The update-denial comment naming the violated invariant (rendered
+    /// inside the denied roundtrip branch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    update_invariant_note: Option<ContractSection>,
 }
 
 /// One service-op action leg in the actions contract (issue #590).
@@ -140,6 +175,12 @@ struct OpLeg {
     /// `add` read-back and the child failure legs); empty ⇒ the action
     /// route.
     url: String,
+    /// Non-empty ⇒ the COMPLETE request URL, used verbatim (issue #692's
+    /// bogus-parent leg: the collection route with the parent id segment
+    /// replaced by the zero uuid — a suffix on `item_url_base` cannot
+    /// express that). Empty ⇒ the `url`/`collection` selection.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    full_url: String,
     /// Non-empty ⇒ a `[Captures]` entry (`name: jsonpath "$.data.id"`) this
     /// leg records — the child `add` leg captures the created element.
     capture: String,
@@ -187,6 +228,7 @@ fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
 fn state_aware_legs(
     ops: &[crate::ddd::service_ops::ServiceOpRoute],
     child_bodies: (&str, &str),
+    item_url_base: &str,
 ) -> Vec<OpLeg> {
     use crate::ddd::service_ops::{ExecutionKind, ServiceOpTransition};
 
@@ -225,7 +267,8 @@ fn state_aware_legs(
             action, read_back, ..
         } = &op.execution
         {
-            let child_legs = child_action_legs(op, *action, *read_back, child_bodies);
+            let child_legs =
+                child_action_legs(op, *action, *read_back, child_bodies, item_url_base);
             match action {
                 crate::ddd::service_ops::ChildAction::Remove => delete_legs.extend(child_legs),
                 _ => legs.extend(child_legs),
@@ -391,8 +434,11 @@ fn state_aware_legs(
 /// - `add` → POST the collection action with the entity's create body
 ///   (200, capturing the created element), an optional read-back GET by the
 ///   captured id (200 — proves the element really landed and is readable
-///   under the parent), then the failure leg: the create DTO denies unknown
-///   fields, so a bogus key pins 422;
+///   under the parent), then the failure legs: the create DTO denies unknown
+///   fields, so a bogus key pins 422; and (issue #692) the SAME collection
+///   route with the parent id segment replaced by the zero uuid pins 404 —
+///   the handler's parent load-or-404 is the route's existence contract, so
+///   a bogus parent must never reach the FK (a 500, pre-fix);
 /// - `save` → POST the item action with the entity's update body (200), then
 ///   the failure leg: an unknown child id under the parent pins 404;
 /// - `remove` → POST the item action (200, the caller defers it to the end),
@@ -402,6 +448,7 @@ fn child_action_legs(
     action: crate::ddd::service_ops::ChildAction,
     read_back: bool,
     child_bodies: (&str, &str),
+    item_url_base: &str,
 ) -> Vec<OpLeg> {
     use crate::ddd::service_ops::ChildAction;
 
@@ -444,6 +491,27 @@ fn child_action_legs(
                 note: "failure leg: the create body denies unknown fields (422)".to_string(),
                 ..Default::default()
             });
+            // Issue #692: the bogus-parent 404 leg — the same collection
+            // route under a parent id that does not exist. The handler's
+            // parent load-or-404 must answer BEFORE the create; a leg that
+            // 500s (the FK failure surfacing) or 200s (a missing parent
+            // check) fails the contract.
+            legs.push(OpLeg {
+                op_name: format!("{} (failure)", op.op_name),
+                service: base.clone(),
+                snake: op.snake.clone(),
+                expect: 404,
+                full_url: format!(
+                    "{}/actions/{}",
+                    zero_uuid_parent_base(item_url_base),
+                    op.snake
+                ),
+                body: child_bodies.0.to_string(),
+                note: "failure leg: a bogus parent answers 404 through the parent \
+                       load-or-404 — never a 500"
+                    .to_string(),
+                ..Default::default()
+            });
         }
         ChildAction::Save => {
             legs.push(OpLeg {
@@ -470,6 +538,32 @@ fn child_action_legs(
         }
     }
     legs
+}
+
+/// The nested entity URL with every parent id capture replaced by the zero
+/// uuid (issue #692): the bogus-parent probe's base. `{{base_url}}` stays
+/// verbatim (it is the hurl origin variable); the parent captures end in
+/// `_id`. Depth-2 chains replace every ancestor id — a bogus grandparent
+/// fails the parent load just as deterministically.
+fn zero_uuid_parent_base(item_url_base: &str) -> String {
+    const ZERO_UUID: &str = "00000000-0000-0000-0000-000000000000";
+    let mut out = String::with_capacity(item_url_base.len());
+    let mut rest = item_url_base;
+    while let Some(start) = rest.find("{{") {
+        out.push_str(&rest[..start]);
+        let Some(end_offset) = rest[start..].find("}}") else {
+            break;
+        };
+        let name = rest[start + 2..start + end_offset].trim();
+        if name == "base_url" {
+            out.push_str(&rest[start..start + end_offset + 2]);
+        } else {
+            out.push_str(ZERO_UUID);
+        }
+        rest = &rest[start + end_offset + 2..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The child action's failure leg: an id the parent does not own (the zero
@@ -660,8 +754,16 @@ impl DomainGenerator for HurlContractGenerator {
             };
             let nn = format!("{:02}", ENTITY_NN_BASE + idx);
 
-            let contract =
-                build_entity_contract(db, domain, &schema, api_version, &nn, config).await?;
+            let contract = build_entity_contract(
+                db,
+                domain,
+                &schema,
+                api_version,
+                &nn,
+                config,
+                self.rules_guards,
+            )
+            .await?;
 
             files.push(GeneratedFile {
                 path: self
@@ -685,7 +787,11 @@ impl DomainGenerator for HurlContractGenerator {
             .await
             .map_err(codegraph_core::error::Error::Config)?;
             if !ops.is_empty() {
-                let legs = state_aware_legs(&ops, (&contract.create_body, &contract.update_body));
+                let legs = state_aware_legs(
+                    &ops,
+                    (&contract.create_body, &contract.update_body),
+                    &contract.item_url_base,
+                );
                 let ctx = ActionsContractCtx {
                     domain: domain.to_string(),
                     module: schema.pg_table_name.clone(),
@@ -1150,12 +1256,27 @@ async fn resolve_nesting_chain(
             .domains
             .get(domain)
             .and_then(|d| d.get_entity_config(&current.title));
-        let Some(parent_title) = ec.and_then(|e| e.parent.clone()) else {
+        // The parent hop's source: config (role = "child" + parent) first,
+        // then the AUTHORED aggregate boundary (issue #666 slice 4b) when
+        // config is silent — the same precedence the router's Source 0/1
+        // apply, so the contract cannot disagree with the router.
+        let mut parent_title = ec.and_then(|e| e.parent.clone());
+        let mut fk_json_name = ec.and_then(|e| e.parent_ref.clone());
+        if parent_title.is_none() || ec.and_then(|e| e.role.as_deref()) != Some("child") {
+            parent_title = None;
+            fk_json_name = None;
+        }
+        if parent_title.is_none()
+            && let Some(authored) =
+                crate::ddd::aggregate::authored_routing_parent(db, config, domain, &current.title)
+                    .await
+        {
+            parent_title = Some(authored.parent_title);
+            fk_json_name = Some(authored.fk_column);
+        }
+        let Some(parent_title) = parent_title else {
             break;
         };
-        if ec.and_then(|e| e.role.as_deref()) != Some("child") {
-            break;
-        }
         let parent = match db.get_schema_in_domain(&parent_title, domain).await {
             Ok(Some(parent)) => parent,
             _ => break,
@@ -1163,7 +1284,7 @@ async fn resolve_nesting_chain(
         if !visited.insert(parent.title.clone()) {
             break; // cycle — stop walking
         }
-        let fk_json_name = ec.and_then(|e| e.parent_ref.clone()).unwrap_or_else(|| {
+        let fk_json_name = fk_json_name.unwrap_or_else(|| {
             format!(
                 "{}_id",
                 codegraph_naming::to_snake_case(parent.rust_type_name.as_str())
@@ -1192,6 +1313,7 @@ async fn resolve_nesting_chain(
 }
 
 /// Assemble one entity's full template context.
+#[allow(clippy::too_many_arguments)]
 async fn build_entity_contract(
     db: &dyn GraphQuerier,
     domain: &str,
@@ -1199,6 +1321,7 @@ async fn build_entity_contract(
     api_version: &str,
     nn: &str,
     config: &DomainConfig,
+    rules_guards: bool,
 ) -> Result<EntityContractCtx> {
     // The config-declared nesting chain (empty for roots): each hop's
     // preamble POST creates the parent row and captures its id, and the
@@ -1292,6 +1415,29 @@ async fn build_entity_contract(
     let update_body = body(&update);
     let update_asserts = update_echo.join("\n");
 
+    // Design-invariant contract legs (DD5, issue #666 slice 4e). The SAME
+    // plan-membership gate the handler uses — the predicate fns exist only
+    // when the `rules` generator runs. Silent for every entity without
+    // invariants: byte-identical contract.
+    let invariant_facts = if rules_guards {
+        invariant_contract_facts(
+            db,
+            config,
+            domain,
+            schema,
+            &entity_url,
+            &create_body,
+            &update_body,
+        )
+        .await?
+    } else {
+        InvariantContractFacts {
+            create_sections: Vec::new(),
+            update_denied: false,
+            update_note: None,
+        }
+    };
+
     Ok(EntityContractCtx {
         domain: domain.to_string(),
         module: module.clone(),
@@ -1314,6 +1460,9 @@ async fn build_entity_contract(
         minimal_body: create_body,
         update_body,
         update_asserts,
+        invariant_sections: invariant_facts.create_sections,
+        update_invariant_denied: invariant_facts.update_denied,
+        update_invariant_note: invariant_facts.update_note,
     })
 }
 

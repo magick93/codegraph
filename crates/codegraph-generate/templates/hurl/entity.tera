@@ -22,7 +22,9 @@ HTTP 201
 {{ capture_name }}: jsonpath "$.data.id"
 [Asserts]
 {{ create_asserts }}
-{% endif %}{% if has_read %}
+{% endif %}{% for section in invariant_sections | default(value=[]) %}
+{{ section.body }}
+{% endfor %}{% if has_read %}
 # GET by id — field echo
 GET {{ item_url_base }}/{{ capture_ref }}
 {{ auth_header }}
@@ -36,7 +38,25 @@ GET {{ item_url_base }}/00000000-0000-0000-0000-000000000000
 {{ auth_header }}
 
 HTTP 404
-{% endif %}{% if has_update %}
+{% endif %}{% if has_update %}{% if update_invariant_denied %}
+{% if update_invariant_note | default(value="") %}
+{{ update_invariant_note.body }}
+{% endif %}# PUT — the roundtrip values violate the invariant: the handler answers 409
+# BEFORE the write (the row below is unchanged).
+PUT {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+{{ update_body }}
+
+HTTP 409
+[Asserts]
+jsonpath "$.error.code" == "INVARIANT_VIOLATION"
+
+# GET — the write never started
+GET {{ item_url_base }}/{{ capture_ref }}
+{{ auth_header }}
+
+HTTP 200
+{% else %}
 # PUT roundtrip
 PUT {{ item_url_base }}/{{ capture_ref }}
 {{ auth_header }}
@@ -51,7 +71,7 @@ GET {{ item_url_base }}/{{ capture_ref }}
 HTTP 200
 {% if update_asserts %}[Asserts]
 {{ update_asserts }}
-{% endif %}{% endif %}{% if has_delete %}
+{% endif %}{% endif %}{% endif %}{% if has_delete %}
 # DELETE — 204
 DELETE {{ item_url_base }}/{{ capture_ref }}
 {{ auth_header }}

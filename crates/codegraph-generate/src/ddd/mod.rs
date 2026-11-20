@@ -1,13 +1,16 @@
+pub mod aggregate;
 pub mod body_lower;
 pub mod command;
 pub mod cornucopia_repo;
 pub mod design;
 pub mod dto;
+mod dto_fields;
 pub mod errors;
 pub mod event;
 pub mod functions;
 pub mod functions_api;
 pub mod functions_sql;
+pub mod invariants;
 pub mod mox_ops;
 pub mod query;
 pub mod regulatory_report;

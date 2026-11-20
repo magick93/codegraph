@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use codegraph_config::config::DomainConfig;
 use codegraph_core::traits::{GraphIngestor, GraphQuerier};
 use codegraph_core::types::{
-    DddApplicationNode, DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags,
-    DddDesignNode, DddDocumentField, DddModelGraph, DddModuleNode, DddPagination, DddParam,
+    DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,
+    DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags, DddDesignNode,
+    DddDocumentField, DddInvariant, DddModelGraph, DddModuleNode, DddPagination, DddParam,
     DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode,
     DddServiceOperation, DddTransitionRef,
 };
@@ -433,6 +434,40 @@ pub fn ddd_model_graph_from_phero(
                     .iter()
                     .enumerate()
                     .map(|(ordinal, op)| service_operation_node(op, ordinal))
+                    .collect(),
+                // DD4 (issue #666): the authored aggregate boundary rides
+                // as ONE typed blob — the root verdict and the member's
+                // resolved membership — with the root `TypeRef`
+                // serializing at this boundary (codegraph-core takes no
+                // phero-* deps). Undecided on both halves (non-entities,
+                // an incompletely lowered domain union) keeps `None`, so a
+                // design with no authored boundary serializes as before.
+                aggregate_boundary: match (&design.is_aggregate_root, design.aggregate.as_ref()) {
+                    (None, None) => None,
+                    (is_root, membership) => Some(DddAggregateBoundary {
+                        is_root: *is_root,
+                        membership: membership.map(|m| DddAggregateMembership {
+                            root_json: to_json(&m.root),
+                            origin: match m.origin {
+                                phero_ir::ddd::AggregateOrigin::Authored => {
+                                    DddAggregateOrigin::Authored
+                                }
+                                phero_ir::ddd::AggregateOrigin::Derived => {
+                                    DddAggregateOrigin::Derived
+                                }
+                            },
+                        }),
+                    }),
+                },
+                // DD5 (issue #666): the invariants ride verbatim, in
+                // declaration order — the expression source is the
+                // identity (there is no name/index upstream).
+                invariants: design
+                    .invariants
+                    .iter()
+                    .map(|inv| DddInvariant {
+                        expression: inv.expression.clone(),
+                    })
                     .collect(),
                 ordinal,
             });

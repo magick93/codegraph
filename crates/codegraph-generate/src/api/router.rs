@@ -402,12 +402,36 @@ impl DomainGenerator for RouterGenerator {
         }
 
         // Second pass: populate parent/child relationships.
+        // AUTHORED aggregate boundaries (Source 0, issue #666 slice 4b)
+        // take priority over everything: an authored member nests under
+        // its authored root; a class proven root by a member's authored
+        // declaration overrides a config child declaration. Undecided
+        // boundaries assign nothing (byte-identical).
         // Manual config takes priority over graph detection.
         // Second pass: populate parent/child relationships.
         // Manual config takes priority over graph detection.
         {
-            // Source 1: manual config from domains.toml (role/parent/parent_ref)
+            let authored = crate::ddd::aggregate::AuthoredBoundaryIndex::from_graph(
+                db,
+                &config.defaults.type_suffix,
+            )
+            .await;
+            crate::ddd::aggregate::apply_authored_nesting(
+                &authored,
+                config,
+                domain,
+                &mut entities,
+                &title_to_entity_idx,
+                &self.parent_candidates,
+            );
+            // Source 1: manual config from domains.toml (role/parent/parent_ref).
+            // A class PROVEN root by an authored membership skips Source 1
+            // entirely — the authored root verdict wins over a config child
+            // declaration (issue #666 slice 4b).
             for title in entity_titles {
+                if authored.proven_root(title) {
+                    continue;
+                }
                 if let Some(ec) = config
                     .domains
                     .get(domain)
@@ -773,10 +797,34 @@ pub async fn build_router_context(
     }
 
     // Second pass: populate parent/child relationships.
+    // AUTHORED aggregate boundaries (Source 0, issue #666 slice 4b) take
+    // priority over everything: an authored member nests under its authored
+    // root; a class proven root by a member's authored declaration
+    // overrides a config child declaration. Undecided boundaries assign
+    // nothing (byte-identical).
     // Manual config takes priority over graph detection.
     {
-        // Source 1: manual config from domains.toml (role/parent/parent_ref)
+        let authored = crate::ddd::aggregate::AuthoredBoundaryIndex::from_graph(
+            db,
+            &config.defaults.type_suffix,
+        )
+        .await;
+        crate::ddd::aggregate::apply_authored_nesting(
+            &authored,
+            config,
+            domain,
+            &mut entities,
+            &title_to_entity_idx,
+            parent_candidates,
+        );
+        // Source 1: manual config from domains.toml (role/parent/parent_ref).
+        // A class PROVEN root by an authored membership skips Source 1
+        // entirely — the authored root verdict wins over a config child
+        // declaration (issue #666 slice 4b).
         for title in entity_titles {
+            if authored.proven_root(title) {
+                continue;
+            }
             if let Some(ec) = config
                 .domains
                 .get(domain)

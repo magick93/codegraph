@@ -51,8 +51,9 @@ pub use composite::{CompositeColumn, CompositeRange, StructuredSubField};
 pub use composition::{ColumnInfo, CompositionNode, CompositionTree, FkDirection, FkTarget};
 pub use condition::{ConditionKind, ConditionNode};
 pub use ddd::{
-    DddApplicationNode, DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags,
-    DddDesignNode, DddDocumentField, DddModelGraph, DddModuleNode, DddPagination, DddParam,
+    DddAggregateBoundary, DddAggregateMembership, DddAggregateOrigin, DddApplicationNode,
+    DddChildRef, DddConditionPath, DddConditionScope, DddDesignFlags, DddDesignNode,
+    DddDocumentField, DddInvariant, DddModelGraph, DddModuleNode, DddPagination, DddParam,
     DddRepositoryNode, DddRepositoryOperation, DddSearchField, DddSearchNode, DddServiceNode,
     DddServiceOperation, DddTransitionRef,
 };

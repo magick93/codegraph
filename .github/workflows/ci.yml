@@ -125,7 +125,7 @@ jobs:
         run: cargo test -p codegraph --test ops_generator_tests -- --ignored --nocapture
       - name: Wrapper compile gate (issue #348)
         run: cargo test -p codegraph --test wrapper_compile_tests -- --ignored --nocapture
-      - name: Service-ops compile gate (#551 policy, incl. the depth-2 grandchild surface — issue #629)
+      - name: Service-ops compile gate (#551 policy, incl. the depth-2 grandchild surface — issue #629, and the design-invariant plane — issue #666)
         run: cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
       - name: Injected-scope when compile gate (issue #663 — own binary, see #746)
         run: cargo test -p codegraph --test service_ops_injected_guard_gate -- --ignored --nocapture
@@ -142,3 +142,5 @@ jobs:
           hurl --version
       - name: Service-ops hurl gate (lifecycle hardening WS1)
         run: cargo test -p codegraph --test service_ops_hurl_gate -- --ignored --nocapture
+      - name: Design-invariant live gate (issue #666 slices 4d+4e)
+        run: cargo test -p codegraph --test ddd_invariants_live_gate -- --ignored --nocapture

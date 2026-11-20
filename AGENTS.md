@@ -619,6 +619,307 @@ docs: `docs/DDD.md` upstream; driver contract `phero_driver::compile_ddd_str`.
   Postgres FTS + document projections; per-field analyzers/boosts in the
   FTS plumbing; ddd on the classify/ifml-generate paths; LSP for `.ddd`.
 
+### Authored aggregate boundaries + design invariants (DD4/DD5, issue #666 — slice 1: ingest mirrors)
+
+pherolang 0.3's DD4/DD5 payloads ingest NOW (the enforcement plane is the
+#666 epic's later slices): `DddDesignNode.aggregate_boundary`
+(`Option<DddAggregateBoundary>` — ONE typed blob carrying BOTH the
+aggregate-root verdict `is_root` and the member's `membership { root_json,
+origin }`, the `AggregateOrigin::{Authored, Derived}` enum mirrored as
+`DddAggregateOrigin`) and `DddDesignNode.invariants` (`Vec<DddInvariant>`,
+verbatim expressions in declaration order — no name/index upstream). The
+root `TypeRef` serializes at the ingest boundary (`root_json`, codegraph-core
+takes no phero-* deps); both node fields are serde-defaulted/skip-if-absent
+so a design with neither serializes exactly as before. Grafeo: the `:DddDesign`
+node gains `aggregate_json` + `invariants_json` nullable props (`aggregate_json`
+is NULL ⇔ the undecided boundary; `invariants_json` is always written, `[]`
+empty — the `child_operations_json` precedent), and
+**`GRAPH_FORMAT_VERSION`
+11 → 12** (a warm pre-#666 cache would serve an UNDECIDED boundary and no
+invariants — the authored facts the enforcement plane consumes; artifact-kit
+fixture now `graph_document_v12.md`). Gates: `cargo test -p codegraph --test
+ddd_ingest_tests` (8: conversion mirrors incl. both origin arms + the
+MockEngine round-trip pin) + `cargo test -p codegraph-grafeo --test
+grafeo_query_tests` (deep Grafeo round-trip over both blobs) +
+`--test artifact_kit_tests --test artifact_tests`. Byte identity: no `.ddd`
+input change ⇒ zero generated-output movement (the canaries hold).
+
+**Slice 2 — invariants lower to typed predicate fns (landed)**:
+`ddd/invariants.rs` re-parses each verbatim expression with
+`phero_expr::parse` and lowers it through the own-record subset the #590
+`when` guards use — over `input`, not `response` (`lower_invariant` lives in
+`service_ops/when_lower.rs`, whose lowering is now parameterized by the
+record identifier and a `LowerWording` context {subject, noun, refusal
+tails} so the when-wording stays byte-identical — the service_ops pins
+prove it). One
+`pub fn {class_snake}_invariant_{index}(input: &{Entity}Response) -> bool`
+per invariant, emitted into the domain's `rules.rs` plane beside the #338
+eligibility guards (the `RulesGenerator` now runs when rules OR invariants
+exist; the section is gated — no invariants ⇒ byte-identical, and the
+record-type/import resolution is the guards' own `record_type_for`). The
+`index` is the declaration-order position (0-based) and IS the
+`invariantIndex` the enforcement plane reports (slice 4's 409 detail).
+Refusals (the `body_refusals` posture): arithmetic, navigation beyond
+own-record scalars (a cross-aggregate read), collection algebra and list
+literals, lambdas, `let`/`if`, operation calls, `?.`, ordering on
+codelist/date/bool fields, unknown fields, unparseable source, and
+non-boolean roots (the upstream phero-driver bool typing re-proven on the
+re-parsed AST — construct refusals fire first, the shape proof second).
+`invariants_for(db, config, domain, title)` returns only ever-complete
+plans; `invariant_refusals(...)` (per title) and
+`all_invariant_refusals(db, config)` (the walker — it also names designs
+whose class resolved to no schema) feed `ValidationPass::check_invariants`
+(check `invariant`, ERROR severity) so nothing is half-written. Each
+refusal names the domain, the class, the invariant index, and the
+construct, and states the invariant is not emitted. A dto design carrying
+invariants (a stale graph — upstream refuses them) and a value-object
+projection with no record plane (`{Entity}Response` unresolvable) are
+named refusals too. Gates: the `ddd::invariants` unit KATs (13: typed
+lowerings, machine-state binding, Option idioms, every refusal class,
+MockEngine plan/refusal resolvers) + `cargo test -p codegraph --test
+ddd_invariant_tests` (3: emission into `rules.rs`, the no-invariant twin,
+the validation + fail-closed-emission refusal over the production mox+ddd
+front doors). Deferred: handler call sites + hurl legs land in slice 4;
+emission rides the `rules` generator's plan membership (a plan without
+`rules` carries no invariant predicates — slice 4's call sites must gate
+on the same membership).
+
+**Slice 4d — invariants enforce at create/save/transition (landed)**:
+the predicate fns become REAL handler-side enforcement, mirroring #338's
+`build_guard_blocks` shape. `HandlerGenerator` consumes slice 2's
+`ddd::invariants::enforcement_for` (the `InvariantEnforcement { class,
+plans }` — the DESIGNED class name rides out for the 409 detail; the
+lowering is never re-derived) under the SAME gating the eligibility
+guards use: `with_rules_guards` (the `rules` plan membership) AND
+monolith topology. `build_invariant_blocks` pre-renders whitespace-exact
+blocks; empty context = byte-identical handler (the canaries hold, no
+re-bless):
+
+- **CREATE** evaluates the CREATED record (server-generated fields exist
+  only post-insert) in declaration order and **COMPENSATES** on violation
+  — a best-effort `commands.delete` (the #338 auditable soft-delete
+  shape; an entity with no delete op answers straight 409 with a comment
+  naming the gap) — before the 409.
+- **UPDATE** builds the **CANDIDATE before the write**: the loaded
+  record's JSON (`serde_json::to_value`) with the request patch applied
+  (`serde_json::to_value(&body)` — the Update DTO serializes
+  `skip_serializing_if = "Option::is_none"`, so it IS the patch) and
+  decoded back into `{Entity}Response` (`from_value`); a violation
+  answers 409 and the write never starts. The generated command is a
+  single transaction, so handler-level pre-write evaluation is
+  observably identical to in-transaction rollback for the shapes we
+  support (documented in the emitted comments). The root arm carries its
+  own load-or-404 when no eligibility guard bound `existing`; a child arm
+  CLAIMS the `let existing = ` ownership prefix (at most one plane claims
+  it — merged in Rust, one template key).
+- **TRANSITION** (the state-aware update arm, `ExecutionKind::Update`):
+  `ServiceOpRoute.invariant_block` (pre-rendered by the handler
+  generator — `routes_for_entity` results are post-processed, so the
+  service-op plane needs no plan knowledge) applies the action patch —
+  the machine state move INCLUDED — to the candidate after the
+  idempotent-read early return, before `let cmd`; a transition that
+  would leave an invariant false answers 409 pre-write.
+- **MEMBERS**: a root entity whose aggregate CHILDREN carry invariants
+  (config `role = "child"` children ∪ the 4b authored index — consumed
+  via the new `AuthoredBoundaryIndex::members_of`, never re-derived; one
+  routed level, the 4b depth cap) loads each member's rows through the
+  scoped fetch the repository already exposes (`list_filtered` under the
+  parent-FK filter — the child→root FK column rides the canonical
+  `fk::resolve_parent_fk_column_same_domain`) in BOTH the create and
+  update blocks and evaluates the member predicates pre-write. A member
+  violation names the member class, its index, and
+  `aggregateRoot` = the root's designed class.
+- **409 detail**: `AppError { status: CONFLICT, code: "INVARIANT_VIOLATION",
+  message: "Invariant {index} of `{class}` violated: {expr}", details:
+  [class, invariantIndex, aggregateRoot?] }` — built as a struct literal
+  in the pre-rendered block (the `service_op_not_implemented` precedent;
+  `code` is `&'static str`, so NO error.tera constructor and flag-off
+  output never moves). The wire envelope is `error.code` +
+  `error.details` as `FieldError { field, message }` entries — the
+  AppError API's structured-detail surface. utoipa documents the 409 on
+  every guarded route (create/update + the action route, whose wording
+  names both denial classes when a machine-bound op carries invariants).
+- **Workers topology**: the rules plane is monolith-only (#338), so
+  modeled invariants are NOT enforced under workers. The gap is VISIBLE:
+  `check_invariants` gained the topology parameter and emits a
+  Warning-severity finding — "N design invariant(s) on M entity/entities
+  are not enforced under the workers topology — the rules plane
+  (the predicate fns and their handler call sites) is monolith-only
+  (#338)" — never a silent no-op. Monolith runs stay quiet.
+- Gates: `cargo test -p codegraph --test ddd_invariant_tests` (18:
+  the slice-2 three + create compensation/409-detail, the candidate
+  pre-write ordering pin, the transition-arm pin (state patch before
+  candidate, candidate before write), the member-validation pin
+  (aggregateRoot detail, both blocks), the child ownership-prefix pin,
+  the flag-off twin, the workers WARN + monolith-quiet pair, and the
+  hurl legs below). The compile pin rides
+  `service_ops_compile_gate ::
+  generated_app_with_design_invariants_compiles` (ignored; its first
+  runs caught TWO real emitted-code defects the string pins could not
+  see — an unbalanced `Some(vec![` and the ux-sort-widened `list_filtered`
+  arity the member fetch missed).
+
+**Slice 4e — hurl legs, the live gate (landed)**:
+`hurl_contract` gains `.with_rules_guards(plan_has_domain("rules"))`
+(registry-wired — the handler call sites and predicates exist only under
+that plan membership) and evaluates the AUTHORED invariant expressions
+against the contract's OWN bodies — the **FreshFixtureGuard three-verdict
+model** (the #663 posture: never guess a status, a mis-pinned leg fails
+the suite as hard in either direction). The evaluator lives in
+`api/hurl_contract/invariants.rs` (the #751 split — `decide_invariant_plan`
+→ closed collector → `invariant_contract_facts`):
+
+- **Denied** — a literal comparison over the contract's own values
+  provably fails (plain `&&` from the root, `field <op> literal` leaves
+  with the field present in the body — the contract seeds REQUIRED fields
+  only) → the violating-create leg posts the contract's OWN create URL
+  (nested routes included) with ONE satisfied leaf flipped to its
+  provably-rejected seed (`violating_value`: Gt/Ge → literal − 1,
+  Lt/Le → +1, Eq → mutated, Ne → the literal) and pins **409** +
+  `jsonpath "$.error.code" == "INVARIANT_VIOLATION"`. A body that
+  already violates posts verbatim.
+- **Satisfied** — every decided leaf holds and nothing is undecidable →
+  no leg (the create succeeds).
+- **Unverifiable** — any comparison the collector cannot decide (an
+  absent optional field, arithmetic, collections, negation it cannot
+  flip, `||` over an undecided sibling, non-name/literal leaves) → the
+  leg is OMITTED with the documented omission comment naming the
+  invariant (the `Body { may_refuse }` precedent). MIXED verdicts never
+  mis-fire: one provably failing conjunct decides the conjunction.
+- **UPDATE**: the candidate is the create values with the update values
+  applied; a provable violation flips the PUT roundtrip itself — it pins
+  409 + the INVARIANT_VIOLATION assert and drops the update-landed echo
+  (the row is provably unchanged; the read-back stays 200).
+- The verdicts ride `decide_invariant_plan` (phero_expr parse → closed
+  collector: `&&`/`||` folds, negation via `UnOp::Not`, numeric Int/Float
+  cross-compare, string/bool/ISO-date ordering; dates ride their literal
+  text). Silent for every entity without invariants — byte-identical
+  contract (`hurl_contract_tests` goldens hold, no re-bless).
+- **The live gate** `ddd_invariants_live_gate` (ignored, OWN test binary
+  — the #663 TYPE_REGISTRY isolation precedent, TODO(#746); modeled on
+  `service_ops_hurl_gate`): own fixture (the review fixture is shared
+  with `review_api_suite` and must not move), persistent gate dir with
+  the generated SOURCE deleted first (#687), driver regen → GateDb
+  scratch (pgmq shim) → boot → hurl the emitted ROOT + actions contracts
+  (the violating-create leg 409s + compensates; the CHILD contract is
+  pinned by shape only — its LIST entry reads the parent capture it
+  introduces later, so it cannot run standalone, the ops `[hurl]` skip
+  convention; its nested violating-create leg runs live in probe part 1)
+  → hand-authored probes:
+  a transition patch carrying `total: -1` answers 409 + the detail keys
+  asserted, the clean submit advances Draft → Calculated, a violating
+  PUT answers 409, and the member leg stamps the child row violating
+  DIRECTLY IN THE DB (no API sequence can persist a violating member —
+  the member's own plane enforces the same predicate — so the root-save
+  member validation is proven against a stale row) and PUTs the root
+  with a VALID total → 409 naming `PayRunLineType` + `aggregateRoot`.
+  psql proofs: 0 live violating rows (compensation), the probe row's
+  total unchanged at 42, the machine state exactly `Calculated`, and the
+  stamped member untouched.
+- **Opt-in (the #338 shape)**: the default profile does NOT carry the
+  `rules` generator; consumers opt in with `rosetta_backend = true` +
+  `"rules"` in the `[api]` generators list (both gates inject exactly
+  that — the `review_api_suite_regen` precedent). Presence gating keeps
+  every non-opted run byte-identical.
+- Gates: `cargo test -p codegraph --test ddd_invariants_live_gate --
+  --ignored --nocapture` (wired into CI's `test-ops-integration` job and
+  the `just ci-local ops-invariants-live` recipe) + the node-free pins
+  above. Deferred: member validation on transition-arm saves (the CRUD
+  update/create blocks carry it; a machine-bound save evaluates the
+  entity's OWN invariants only), member fetch beyond the first 1000 rows
+  (`list_filtered` page cap — documented v1), a member child exposing no
+  `list` op skips member validation silently (the fetch does not exist
+  to consume), and enforcement under the workers topology (the WARN is
+  the contract; worker-routed rules.rs is the #338 deferral).
+
+**Slice 4b — authored boundaries warn on disagreement and drive child
+routing (landed)**: `ddd/aggregate.rs` (codegraph-generate) is the
+graph-only consumer plane for the slice-1 mirrors. One resolver answers
+every consumer: `AuthoredBoundaryIndex::from_graph` (authored member →
+in-domain-resolved root title + the root's domain; a class PROVEN root by
+a member's authored declaration; contradictory member-proven-root graphs
+keep the ROOT verdict — upstream E0386 — and authored chains deeper than
+one routed level degrade deterministically), `authored_routing_parent`
+(parent title + FK column — config `parent_ref` still owns the FK when it
+names one, else the refers-derived candidate pointing AT the authored
+parent), and `authored_root_proven` (the per-entity root proof).
+
+- **The WARN classes** (`aggregate_boundary_warnings`, Warning severity,
+  the `dead_surface_warnings` posture; wired as check #18
+  `check_aggregate_boundaries` in `validate.rs`'s `run_with_topology` —
+  the tuple widened r17 → r18): (i) authored member whose route plane
+  keeps a top-level (root) surface while it carries its own repository;
+  (ii) authored ROOT vs config `role = "child"`; (iii) authored member vs
+  a config `parent` that is not the authored root (authored WINS for
+  routing; the WARN records the override); (iv) the authored root class
+  resolving to no schema. Every WARN names the class, the authored fact,
+  and the derived fact; `Derived` memberships NEVER warn.
+- **Authored-root detection is the member-authored proof, deliberately**:
+  the phero-ir artifact records the origin of a ROOT verdict nowhere
+  (roots carry `isAggregateRoot` alone; only a non-root's membership
+  carries `origin`), so "authored root" is keyed on a sibling design
+  authoring `aggregate <ThisClass>` — the detectable subset that never
+  fires on the containment-derived verdict most entities carry.
+- **Routing preference order** (all planes read ONE resolver, so they
+  cannot drift): authored member > config `role = "child"` + `parent` >
+  graph parent candidates; a proven root overrides a config child
+  declaration (top-level root); undecided means EXACTLY today's
+  derivation, byte-identical (every gate is `is_empty()`/`None` on models
+  without authored boundaries). Consumption sites: the ROUTER's Source 0
+  in BOTH `build_router_context` copies (`apply_authored_nesting`, setting
+  role/parent/children with the FK column; Source 1 skips proven roots);
+  the HANDLER topology (`apply_authored_parent` between the config and
+  graph arms — re-points the parent, clears it on the root override);
+  `fk.rs::resolve_parent_fk_column_same_domain` step 1.5 (the authored
+  FK feeds the query/command/repository/cornucopia/media planes in ONE
+  place — `find_by_id_scoped` exists for authored children, matching the
+  nested two-uuid handlers); the service-op plane (`routes_for_entity`'s
+  `scoped` + the child-op nesting gate `is_nested_child_of` + the
+  injected-scope child refusal); and the hurl-side twin
+  `resolve_nesting_chain` (authored hop when config is silent, same fk
+  resolution — the contract cannot disagree with the router). The #692
+  `child_parent_load` needs NO change: it reads the parent through the
+  declaring root design, and the fail-closed gate consumes the parent's
+  parent_ref from the same helper.
+- **Doctor parity**: `check_ddd_files` (now taking the config) warns via
+  `aggregate_boundary_warnings_from_compiled_model` — the compiled-model
+  half of (ii) and (iii) only (doctor holds no graph, so (iv)/(i) stay
+  run-path-only). WARN only, never hard.
+- **Upstream Rule 6 shapes the fixtures**: only aggregate roots may
+  declare a repository, so a compiler-legal authored member carries NO
+  repository (and no `scaffold`) — its op set is empty by design and the
+  authored clauses are exactly `entity X root …` / `entity Y aggregate X`
+  (a bare design body is a dto-member-block parse error). The
+  repository-bearing authored member — the full child plane with child
+  ops + parent load — is reachable ONLY through the slice-1 graph mirror:
+  `service_ops_fixture.rs::authored_boundary_graph` hand-builds the
+  `DddModelGraph` over the mox-bridged schemas and slice 4b consumes the
+  MIRROR (stale graphs / hand-built artifacts / future compiler
+  evolution). Compiler-legal fixtures: `tests/fixtures/ddd/aggregate.{mox,ddd}`
+  (sweep compiles them clean + the sweep pin asserts the artifact origins)
+  and `child_ops_ddd_with_authored_boundary` (authored clauses over the
+  child-ops fixture for the WARN/router pins).
+- **Byte identity**: no authored boundary means zero movement everywhere
+  (the fk/router/handler/service-op/hurl arms are all `None`-gated).
+  Gates: `cargo test -p codegraph --test service_ops_tests` (33, incl.
+  the mirror-origin, routing+parent-load, and both WARN-over-router pins)
+  + `--test init_tests ::
+  doctor_warns_on_aggregate_boundary_config_disagreements` (the
+  baseline-delta doctor pin) + the in-crate `ddd::aggregate` KATs (10:
+  root_json parsing, index extraction, chain degradation, contradiction,
+  MockEngine WARN walker) + `--test pherolang_fixture_sweep` + the
+  standing canaries re-verified green with no re-bless.
+- **Deferred to the enforcement slices**: depth-2 authored chains (the
+  depth cap degrades them to one routed level; the depth-2 authored
+  handler surface is the recorded follow-up); slice 4d's enforcement (its
+  handler call sites must consume `ddd::aggregate`'s resolver, NOT
+  re-derive); slice 4e's hurl legs. The authored root of an entity is
+  cheapest at handler-build time via
+  `crate::ddd::aggregate::authored_routing_parent(db, config, domain,
+  title)` — one cached `get_ddd_models` read; on the compiled-model side,
+  `authored_root_class_name` over the membership's `root_json`
+  (`{"type":"class","value":{…,"name":…}}`, the `value.name` leaf).
+
 ## Service ops lower to API surface (issue #590)
 
 `.ddd` service operations are the application surface, not documentation:
@@ -1021,13 +1322,16 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   generalization beyond the already-emitted depth-2 route, the M:N
   junction write (`refers T[]` without a back-ref column lowers to a
   junction table; the action's link is the config child back-ref FK — a
-  junction-only aggregate link is not written), a collection-add POM/
-  action-spec leg, and a modeled child op over a cross-domain child.
+  junction-only aggregate link is not written), and a modeled child op
+  over a cross-domain child (since #692 a cross-domain PARENT is a named
+  generation error). ~~A collection-add POM/action-spec leg~~ — **retired
+  by #692** (see below).
 - **Deferred**: delegation breadth beyond the lowered set
   (service-to-service, `search`); api_key capability enforcement
   (JWT-only policy gates); hurl 403 legs over JWT
   personas; register-class properties (issue Ask 4, upstream pherolang
-  #83); a collection-add POM/action-spec leg. **Landed, no longer
+  #83); ~~a collection-add POM/action-spec leg~~ — **retired by #692**.
+  **Landed, no longer
   deferred** (the ledger drifted): the live `service_ops_hurl_gate`
   (WS1, state-aware contract + psql proofs), the IFML action-op e2e spec
   category + POM surface (WS6 via the #591 manifest), the doctor
@@ -1044,6 +1348,84 @@ child plane — the cross-aggregate 501 seam retires FOR OPS THAT CARRY IT:
   keeps driving the unbound payroll fixture), `codegraph doctor
   --ddd-files` binding parity (needs the graph to bind an op to its
   entity), and the module ambiguity set's cross-file reach (see below).
+
+### The collection add loads the parent first (issue #692)
+
+The #661 collection-level `add` called the child's create command directly
+with NO parent check — a bogus or foreign-org `parent_id` reached the FK
+and Postgres `23503` surfaced as a 500 (the domain error classifier maps
+only scope/role/RLS markers). The `add` now proves the parent row exists
+BEFORE the create, and the IFML/hurl planes gained the collection-add
+legs:
+
+- **Handler** (`templates/api/handler.tera`'s `add` sub-arm): a parent
+  load-or-404 BEFORE `_commands.create` —
+  `state.{domain}_{parent_module}_queries.find_by_id(parent_id,
+  [auditable false], api_key_info.…)` → `from_domain_error` →
+  `AppError::not_found(format!("{Parent} {parent_id} not found"))`, the
+  `record_load` block's whitespace/shape. The query plane is RLS-scoped,
+  so a cross-tenant parent answers None → 404 (the repo convention: 404
+  never 403 for cross-tenant); a genuine FK failure after the check stays
+  a 500.
+- **Route planning** (`ddd/service_ops/routes.rs::child_parent_load`):
+  the parent-load facts (parent module, auditable arity, entity name)
+  ride `ExecutionKind::ChildOp.parent_load` (`ChildParentLoad`), resolved
+  with the EXACT rule the query plane uses to emit `find_by_id`
+  (`resolve_entity_operations` — design-surface override included — plus
+  the `has_create or (has_read and not parent_ref)` mirror of query.tera's
+  `uses_find_by_id`, the parent_ref from the canonical
+  `resolve_parent_fk_column_same_domain`). **Fail closed**: a parent
+  whose resolved op set exposes no plain by-id load, and a cross-domain
+  parent (child ops are same-domain by construction — the #663 posture),
+  are NAMED generation errors at route planning — never a handler that
+  references a method the query plane does not carry. Seamed adds render
+  the 501 arm and pay no parent resolution. The refusals also ride the
+  pre-generation pass: `child_parent_load_refusals` (validation.rs) →
+  `ValidationPass::check_child_add_parent_load` (check name
+  `child_op_parent_load`, Error severity).
+- **hurl** (`api/hurl_contract.rs`): the add contract gains the
+  bogus-parent 404 failure leg — the same collection URL with the
+  ZERO-UUID PARENT segment (`OpLeg.full_url` used verbatim, the new
+  `zero_uuid_parent_base` replaces every non-`base_url` capture in
+  `item_url_base`), the child's create body, `expect 404`. A leg that
+  500s (the FK surfacing) or 200s (a missing parent check) fails the
+  contract.
+- **IFML action plane**: `ActionActKind::NotFound` (404) joins
+  Ok/Conflict/Forbidden/NotImplemented; `plan_action_legs`' `ChildOp add`
+  arm now returns the sound `[200, 404]` pair (the TODO(#661) empty-vec
+  gap retired); `build_collection_add` builds the
+  `ActionCollectionAdd` payload (PARENT fixture from `with_required_
+  entries` + `add_required_refs` on the config parent, the child's typed
+  create body dep-wired under the `add` prefix, the collection route
+  from the SAME segments the API plane mounts); the POM gains
+  `async add{Child}(payload, parentId)` (`PomAction::collection` —
+  `page.request.post` to the collection route, returning
+  `{ ok, status, id }`; the `apiUrl` import is payload-gated) BESIDE the
+  unchanged item-addressed button methods; `render_action_spec` renders
+  the collection-add test (seed the parent → POST add under the seeded
+  parent, 200 + created id → bogus-parent POST, 404) with zero raw
+  testids. The build_action_spec gate keys on the built payload — a
+  child-bound component's zeroed CRUD api (`resolve_entity_api` zeroes
+  `role = "child"` surfaces) no longer hides aggregate ops; models
+  without child ops keep byte-identical output (routes are empty and the
+  loop continues either way).
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (29: the
+  parent-load-before-create pin, the fail-closed pin over a parent design
+  narrowed to `findAll`, the bogus-parent hurl leg pins beside the
+  existing add-leg pins) + `cargo test -p codegraph-generate --lib --
+  ddd::service_ops` + the in-crate collection-add POM/leg pins
+  (`collection_add_plans_ok_then_not_found_legs`,
+  `collection_add_renders_a_pom_method_posting_the_collection_route`,
+  `collection_add_spec_drives_the_pom_method_with_the_parent_fixture`) +
+  `--test worker_wasm_compile_tests -- --ignored` (the same-domain parent
+  load compiles in the cornucopia worker, native + wasm32) + the live
+  `service_ops_hurl_gate` (the `CHILD_OWNERSHIP_PROBE` bogus-parent 404
+  leg + `assert_child_emitted_surface`'s emitted-contract pin).
+  Byte-identity: everything is gated on a declared child op — the
+  ux/forms canaries hold without re-bless.
+- **Deferred**: a depth-2 `add` whose parent exposes only the SCOPED
+  read (no `create`) refuses named — the grandparent-addressed scoped
+  load is a recorded follow-up.
 
 ### The authored transition binding is the selector (issue #660)
 
@@ -1100,7 +1482,7 @@ the op's name and are demoted to a **no-binding fallback**:
   nightly gate exercises the primary path.
 - **Format bump**: `GRAPH_FORMAT_VERSION` 7 → 8 at that bump (the artifact
   kit fixture was renamed `graph_document_v7.md` → `v8.md` then; it is
-  `graph_document_v11.md` now, and the `format_version_too_new` case pins a
+  `graph_document_v12.md` now, and the `format_version_too_new` case pins a
   LITERAL next version that every bump must move by hand — see "Format bump
   discipline + doctor signal" for the current constant) — the binding
   rides the serde-serialized `operations_json` blob, so a warm cache would
@@ -2715,12 +3097,45 @@ see "Child-table tenancy (#700)" below). DB errors classify through the
 `from_repo_err` markers → **403** (INSUFFICIENT_SCOPE / ROLE_FORBIDDEN /
 row-level-security violation). Tables are schema-qualified because `app_user`'s
 search_path is `public, extensions` (the unqualified SQL the plane shipped
-500'd on every non-public schema); issue #702 tracks the `postgres_schema` vs
-DDL-domain divergence. Gates: `media_pipeline_tests`
+500'd on every non-public schema); the schema is the DOMAIN key since #702
+(the media session SQL qualifies with the domain key, never the declared
+`postgres_schema` — see "Postgres schema source of truth (#702)" below).
+Gates: `media_pipeline_tests`
 (bundle/predicate/ordering/exact-org/doc pins), `media_plan_tests`
 (`parent_tenant_column` via `is_global_entity`), `media_compile_tests` (native
 route + session, presigned leg, wasm32 sea-orm-free), nightly
 `ifml_codegen_gate` T0 boot.
+
+### Postgres schema source of truth (#702)
+
+The domains.toml DOMAIN KEY is the single source of truth for every
+Postgres-qualified plane — the DDL, the entity/repository SQL, the RLS and
+public-operations policies, `policy_rls`, the app_user grants (monolith AND
+workers — both are projections of `ScaffoldDomain.postgres_schema`, which now
+carries the domain key), the media session SQL, and the sql-function schemas.
+Before #702 several planes read `DomainEntry.postgres_schema` instead, so a
+divergence scattered tables and their policies across two schemas silently.
+`postgres_schema` stays a REQUIRED domains.toml field (parsing unchanged —
+codegraph-config untouched; the init scaffold emits it equal to the domain
+key), but a divergence is now a named hard config error:
+`consistency::postgres_schema_alignments` runs UNCONDITIONALLY and FIRST in
+`run_generators_with_opts` (config-only, no graph access — before any tree is
+written) and doctor carries the same predicate (`check_domain_schemas`-shaped
+loop in `cmd_doctor` over the shared function), so doctor and generation
+cannot drift. Consumers switched: `db/policy_rls.rs`,
+`db/public_operations_rls.rs`, `ddd/functions_sql.rs` + `ddd/functions.rs`
+(sql migration + `SqlFnImpls` call plane), `api/media.rs`, and — found by the
+grep sweep, same divergence class — `domain_model.rs` +
+`atproto/xrpc_gen.rs` (`{schema}_{table}` module prefix) and
+`ifml_scaffold.rs` (starter `.ifml` schema headers). All committed fixtures
+keep the two equal, so generated output is byte-identical (the ux/forms
+canaries and the `policy_rls` full-output baseline hold; the media doc pin in
+`media_pipeline_tests` was updated deliberately to the resolution text).
+Gates: `cargo test -p codegraph --test postgres_schema_alignment_tests` (the
+driver-level red/green pair) + the divergent-fixture pins per plane
+(`policy_rls_snapshot_tests`, `media_pipeline_tests`, the in-crate
+`consistency`/`public_operations_rls`/`functions_sql`/`functions`/
+`scaffold` test modules) + `init_tests` doctor pair.
 
 **The media contract addresses the route the router serves (issue #691)**:
 the emitted utoipa path and `hurl/09_media.hurl` derive the entity segment
@@ -3785,8 +4200,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `11` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v11.md`.
+  `12` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v12.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -3800,7 +4215,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 12` while the constant is 11), NOT derived from
+  (`formatVersion 13` while the constant is 12), NOT derived from
   `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
@@ -3810,7 +4225,9 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   introduced …"), never the current value (the recorded lineage: 1→2
   op-level `when`, 3→4 WS6 manifest, 4→5 pherolang 0.3, 6→7 service
   bodies, 7→8 transition binding, 8→9 mox tables/register classes, 9→10
-  aggregate child ops, 10→11 service-op condition paths (#663) — the 2→3
+  aggregate child ops, 10→11 service-op condition paths (#663), 11→12
+  DD4/DD5 authored aggregate boundaries + design invariants (#666) —
+  the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
   versions the engine's on-disk format; bump it on every grafeo minor
@@ -3818,7 +4235,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v11 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v12 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.
@@ -4287,6 +4704,29 @@ surface:
   `x_id`) rather than silently aliased.
 - The optionality contract (plain feature = required, `T[0..1]` = Option)
   is documented in the init scaffold README's "Modeling contract" section.
+- **Type adaptation + unified entity-ref DTO type (#459)**: the MAIN
+  repository row→Response hydrator (`repository_emitter::dto::
+  emit_entity_to_dto_field`) adapts uuid↔String mismatches exactly like
+  the include-fetch emitter's `emit_field_assignments_typed` — Uuid
+  column → String DTO emits `.to_string()` (nullable:
+  `.map(|v| v.to_string())`), String column → non-String DTO keeps
+  `.parse()` (nullable: `.and_then(|v| v.parse().ok())`), matching types
+  keep the byte-identical plain assignment — and `ddd/dto_fields.rs`'s
+  `resolve_dto_fields` (split from `dto.rs`, #751 budget) resolves a
+  scalar entity-reference's DTO type to `uuid::Uuid` UNCONDITIONALLY
+  (matching `dot_field_type` and the child-DTO plane), so a stale graph
+  can never drift the FK's DTO type off the Uuid column. Both producers
+  already set `uuid::Uuid` — no reachable fixture output moved (mox↔JSON
+  equivalence + the ux/hurl canaries hold). Gates: the four
+  `entity_to_dto_{converts,parses}_*` hydrator KATs +
+  `entity_to_dto_keeps_plain_assignment_for_matching_types`
+  (`cargo test -p codegraph-generate --lib -- repository_emitter`) + the
+  `scalar_entity_ref_resolves_uuid_even_when_the_graph_says_string` pin
+  (`-- ddd::dto_fields`) + the `mixed_datatype_repository_plane_compiles`
+  compile gate (`cargo test -p codegraph --test repository_compile_tests`
+  — an unformatted `type Identifier wraps String` beside a scalar
+  `refers` FK and a `refers[]` junction over the TRIO's plane;
+  `cargo check` green).
 - Gates: `cargo test -p codegraph-generate --lib -- refers_junction` (10;
   the two serde-behavior KATs compile the emitted DTOs verbatim into a
   scratch crate — cargo-only, node-free/DB-free).
@@ -5169,8 +5609,8 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
   inputs hash covers model/config contents + graph format + storage
   generation, **not** the compiler rev, so without the bump a warm
   `.graph-cache/` would silently serve the pre-upgrade graph. At that
-  upgrade the artifact kit fixture was `graph_document_v5.md` (five bumps
-  older than the current `graph_document_v11.md` — see "Format bump
+  upgrade the artifact kit fixture was `graph_document_v5.md` (seven bumps
+  older than the current `graph_document_v12.md` — see "Format bump
   discipline + doctor signal" for the live constant).
 - **`.ifml` re-platformed** Pest → logos + chumsky (artifacts
   byte-identical). `IfmlParser`/`Rule` are gone; the entry points we use
@@ -5214,15 +5654,18 @@ DD1–DD9). Full review, break inventory and the feature roadmap:
 its gates green): typed repository queries **#659**, the authored
 `transition` binding **#660**, aggregate child operations **#661**,
 executable statement bodies **#662**, injected-scope `when` guards
-(**#663** — `condition_paths`, see the service-op section below), and
+(**#663** — `condition_paths`, see the service-op section below), authored
+aggregate boundaries + design invariants **#666** (slice 1 landed: the
+ingest mirrors + the graph format bump — enforcement lands with the
+#666 epic), and
 explicit `table "…"` names +
 `register` classes + the compiler word tables **#668**. The upgrade PR
 itself carried none of them — they landed as their own slices, which is
 what the "never ride the upgrade PR" rule was for.
 
 **Still deferred** from that list: collection
-sets (#664), the declared error vocabulary + `throws` (#665), invariants +
-authored aggregate boundaries (#666), modeled DTO boundaries (#667), the
+sets (#664), the declared error vocabulary + `throws` (#665), modeled DTO
+boundaries (#667), the
 tree-sitter `.mox` grammar + LSP for the new syntax (#669), session-kind
 grants in `policy_rls` (#670, decision-gated); plus the `.dmn` plane
 (#671), the `.uc`/`.cmmn` assessment (#672), the upstream semantic-graph

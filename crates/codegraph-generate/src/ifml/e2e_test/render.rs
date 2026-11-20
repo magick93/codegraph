@@ -444,6 +444,58 @@ pub(crate) fn render_action_spec(spec: &super::spec_payload::ActionSpec) -> Stri
             js_string(&action.title)
         ));
         s.push_str(&format!("\t\tconst ui = new {class}(page);\n"));
+        // Issue #692: a collection-level child `add` seeds the PARENT the
+        // collection route nests under and drives the POM's
+        // `add{Child}(payload, parentId)` method — no button, no view
+        // open (the drive is the API surface the POM method posts to).
+        // Zero raw testids: the spec speaks only through the page class.
+        if let Some(add) = &action.collection_add {
+            s.push_str(&format!(
+                "\t\tconst parent_resp = await request.post(apiUrl('{}'), {{ data: {} }});\n",
+                js_string(&action.fixture.base_path),
+                action.fixture.data_literal()
+            ));
+            s.push_str(
+                "\t\texpect(parent_resp.ok(), 'fixture parent should be created').toBeTruthy();\n",
+            );
+            s.push_str("\t\tconst parent = await parent_resp.json();\n");
+            s.push_str("\t\tconst parentId = parent.data?.id ?? parent.id;\n");
+            s.push_str(&add.child_dep_setup);
+            for act in &action.acts {
+                match act.kind {
+                    ActionActKind::Ok => {
+                        s.push_str(&format!(
+                            "\t\tconst added = await ui.{}({}, parentId);\n",
+                            add.method, add.child_body
+                        ));
+                        s.push_str(
+                            "\t\texpect(added.status, 'the collection add creates the element').toBe(200);\n",
+                        );
+                        s.push_str(
+                            "\t\texpect(added.id, 'the created element carries an id').toBeTruthy();\n",
+                        );
+                    }
+                    ActionActKind::NotFound => {
+                        s.push_str(&format!(
+                            "\t\tconst denied = await ui.{}({}, '{}');\n",
+                            add.method, add.child_body, add.bogus_parent_id
+                        ));
+                        s.push_str(
+                            "\t\texpect(denied.status, 'a bogus parent answers 404, never a 500').toBe(404);\n",
+                        );
+                    }
+                    // The collection-add planner produces only Ok/NotFound
+                    // (both sound) — the other legs assert through the
+                    // item-addressed error span, which a collection drive
+                    // does not have.
+                    ActionActKind::Conflict
+                    | ActionActKind::Forbidden
+                    | ActionActKind::NotImplemented => {}
+                }
+            }
+            s.push_str("\t});\n\n");
+            continue;
+        }
         s.push_str(&action.fixture.setup_js_json("created", "\t\t"));
         s.push_str("\t\tconst createdId = created.data?.id ?? created.id;\n");
         match &spec.id_param {
@@ -483,6 +535,11 @@ pub(crate) fn render_action_spec(spec: &super::spec_payload::ActionSpec) -> Stri
                         js_string(fragment)
                     ));
                 }
+                // The 404 leg belongs to the collection-add drive only
+                // (issue #692): it asserts the returned status, never the
+                // item-addressed error span, and the planner emits it for
+                // no item-addressed route.
+                ActionActKind::NotFound => {}
             }
         }
         s.push_str("\t});\n\n");

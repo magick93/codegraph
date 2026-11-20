@@ -143,6 +143,8 @@ fn design(class: &str, title: Option<&str>, flags: DddDesignFlags) -> DddDesignN
         flags,
         machine_json: None,
         child_operations: Vec::new(),
+        aggregate_boundary: None,
+        invariants: Vec::new(),
         ordinal: 0,
     }
 }

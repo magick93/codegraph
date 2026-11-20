@@ -7,6 +7,66 @@ use super::types::{FieldInfo, FieldKind};
 
 // ── Rust lowering of `when` conditions ──────────────────────────────────
 
+/// The refusal wording of one lowering context. Every message the lowering
+/// emits is assembled from these six pieces, so the #590 `when` wording and
+/// the #666 invariant wording share ONE message set and can never drift
+/// apart in shape — only in the named pieces.
+pub(crate) struct LowerWording<'w> {
+    /// The full refusal prefix, without the trailing colon-space:
+    /// `` capability `ApprovePayRun` `` /
+    /// `` invariant 0 of `GrantApplicationType` in domain `grants` ``.
+    pub subject: &'w str,
+    /// The condition noun (`` `when` condition `` / "invariant expression").
+    pub noun: &'w str,
+    /// The tail of the deep-chain refusal (after "which cannot be lowered — ").
+    pub chain_tail: &'w str,
+    /// The tail of the non-own-record field-access refusal (after "which is
+    /// not an own-record field; ").
+    pub own_record_tail: &'w str,
+    /// The Rust construct the lowering targets ("Rust guard" / "Rust
+    /// predicate").
+    pub target: &'w str,
+    /// The supported-subset sentence tail of the general refusal.
+    pub subset: &'w str,
+}
+
+impl<'w> LowerWording<'w> {
+    /// The service-op `when` wording. Every existing refusal text is byte
+    /// for byte the pre-refactor string — the `ddd::service_ops` tests and
+    /// the `service_ops_tests` pins hold the exact texts.
+    fn when(subject: &'w str) -> Self {
+        Self {
+            subject,
+            noun: "`when` condition",
+            chain_tail: "a dotted chain under an injected repository is one \
+                         segment deep at most",
+            own_record_tail: "only bare field references and one segment under \
+                              an injected repository are supported",
+            target: "Rust guard",
+            subset: "own-record field refs, one segment under an injected \
+                     repository, string/number/boolean/date literals, \
+                     comparisons, && || !, parentheses, and null comparisons",
+        }
+    }
+
+    /// The DD5 invariant wording (issue #666 slice 2): invariants read the
+    /// record they guard — no injected scopes — so the tails name the
+    /// own-record subset alone.
+    fn invariant(subject: &'w str) -> Self {
+        Self {
+            subject,
+            noun: "invariant expression",
+            chain_tail: "navigation beyond the record's own scalar features \
+                         cannot be lowered",
+            own_record_tail: "only bare own-record field references are supported",
+            target: "Rust predicate",
+            subset: "own-record scalar field refs, string/number/boolean/date \
+                     literals, comparisons, && || !, parentheses, and null \
+                     comparisons",
+        }
+    }
+}
+
 /// Lower a pherolang `when` condition source to a Rust boolean expression
 /// over `response` (the loaded `{Entity}Response` record).
 ///
@@ -58,14 +118,102 @@ pub(crate) fn lower_when_scoped(
     states: &[String],
     injected: &[InjectedScope],
 ) -> Result<String, String> {
+    let subject = format!("capability `{capability}`");
+    parse_and_lower(
+        source,
+        &LowerWording::when(&subject),
+        entity,
+        fields,
+        states,
+        injected,
+        "response",
+    )
+}
+
+/// Lower one DD5 design invariant (issue #666 slice 2) over `record` — the
+/// predicate fn's parameter, `input` — through the same own-record subset
+/// the `when` guards use, with the design's machine states bound as bare
+/// names. No injected scopes: an invariant reads the record it guards, so
+/// dotted navigation (a cross-aggregate read) is the own-record refusal.
+///
+/// The upstream phero-driver pre-types the expression as boolean over the
+/// designed class; the boolean-shape check here re-proves it on the
+/// re-parsed AST so a stale/hand-built graph refuses instead of emitting a
+/// non-boolean predicate body.
+pub(crate) fn lower_invariant(
+    source: &str,
+    subject: &str,
+    entity: &str,
+    record: &str,
+    fields: &HashMap<String, FieldInfo>,
+    states: &[String],
+) -> Result<String, String> {
+    let parsed = phero_expr::parse(source);
+    let Some(ast) = parsed.ast.filter(|_| parsed.errors.is_empty()) else {
+        return Err(format!(
+            "{subject}: invariant expression is not valid pherolang \
+             expression syntax: {source:?}"
+        ));
+    };
+    // Lower FIRST — a construct outside the closed subset names itself
+    // (`a lambda`, `if`, `let`, an operation call); the boolean-shape
+    // proof then catches the lowerable-but-non-predicate roots (a bare
+    // field, a literal), re-proving the upstream phero-driver typing for
+    // a stale/hand-built graph.
+    let lowered = parse_lowered(
+        &ast,
+        &LowerWording::invariant(subject),
+        entity,
+        fields,
+        states,
+        &[],
+        record,
+    )?;
+    if !is_boolean_shaped(&ast) {
+        return Err(format!(
+            "{subject}: invariant expression must lower to a boolean \
+             predicate, but `{source}` has a non-boolean root; an invariant \
+             is a predicate over the record"
+        ));
+    }
+    Ok(lowered)
+}
+
+/// Whether the expression's root is boolean-shaped — the shape proof behind
+/// [`lower_invariant`]. Comparisons, the logical operators, `!`, and boolean
+/// literals are predicates; everything else (a bare field, a literal) is
+/// not. Arithmetic roots cannot reach here (they are refused first).
+fn is_boolean_shaped(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Bool(_) => true,
+        ExprKind::Unary { op: UnOp::Not, .. } => true,
+        ExprKind::Binary { op, .. } => {
+            !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+        }
+        _ => false,
+    }
+}
+
+/// Parse `source` and lower the AST, or refuse naming the syntax failure.
+fn parse_and_lower(
+    source: &str,
+    wording: &LowerWording<'_>,
+    entity: &str,
+    fields: &HashMap<String, FieldInfo>,
+    states: &[String],
+    injected: &[InjectedScope],
+    record: &str,
+) -> Result<String, String> {
     let parsed = phero_expr::parse(source);
     match parsed.ast {
         Some(ast) if parsed.errors.is_empty() => {
-            lower_scoped(&ast, capability, entity, fields, states, injected)
+            parse_lowered(&ast, wording, entity, fields, states, injected, record)
         }
         _ => Err(format!(
-            "capability `{capability}`: `when` condition is not valid \
-             pherolang expression syntax: {source:?}"
+            "{subject}: {noun} is not valid pherolang expression syntax: \
+             {source:?}",
+            subject = wording.subject,
+            noun = wording.noun,
         )),
     }
 }
@@ -114,24 +262,24 @@ pub struct InjectedMachine {
 }
 
 /// Resolve one operand to its scope root and field: `None` for a
-/// non-field operand (literal), the own record (`response`) for a bare
+/// non-field operand (literal), the own record (`record`) for a bare
 /// entity field, the scope's local for a one-segment injected path.
 fn resolve_operand(
+    wording: &LowerWording<'_>,
     scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
     expr: &Expr,
-    capability: &str,
+    record: &str,
 ) -> Result<Option<(String, FieldInfo)>, String> {
-    let (entity, fields, injected) = scopes;
+    let (_entity, fields, injected) = scopes;
     match &expr.kind {
         ExprKind::Name(name) => match fields.get(name) {
-            Some(field) => Ok(Some(("response".to_string(), field.clone()))),
+            Some(field) => Ok(Some((record.to_string(), field.clone()))),
             None => {
                 // A bare name that is not a field is a literal operand (a
                 // declared machine state, most often) — `lower` already
                 // validated or lowered it; the comparison rendering treats
                 // it as the literal side, exactly as the pre-#663
                 // `operand_field` did.
-                let _ = entity;
                 Ok(None)
             }
         },
@@ -142,25 +290,30 @@ fn resolve_operand(
         } => {
             if *optional_safe {
                 return Err(format!(
-                    "capability `{capability}`: `when` condition uses `?.` \
-                     (safe navigation), which cannot be lowered"
+                    "{subject}: {noun} uses `?.` (safe navigation), which \
+                     cannot be lowered",
+                    subject = wording.subject,
+                    noun = wording.noun,
                 ));
             }
             let ExprKind::Name(root) = &receiver.kind else {
                 return Err(format!(
-                    "capability `{capability}`: `when` condition uses field \
-                     access `{}`, which cannot be lowered — a dotted chain \
-                     under an injected repository is one segment deep at most",
-                    write_path(expr)
+                    "{subject}: {noun} uses field access `{}`, which cannot \
+                     be lowered — {chain_tail}",
+                    write_path(expr),
+                    subject = wording.subject,
+                    noun = wording.noun,
+                    chain_tail = wording.chain_tail,
                 ));
             };
             let Some(scope) = injected.iter().find(|scope| &scope.root == root) else {
                 return Err(format!(
-                    "capability `{capability}`: `when` condition uses field \
-                     access `{root}`.{}, which is not an own-record field; \
-                     only bare field references and one segment under an \
-                     injected repository are supported",
-                    name.value
+                    "{subject}: {noun} uses field access `{root}`.{}, which \
+                     is not an own-record field; {own_record_tail}",
+                    name.value,
+                    subject = wording.subject,
+                    noun = wording.noun,
+                    own_record_tail = wording.own_record_tail,
                 ));
             };
             match scope
@@ -170,10 +323,11 @@ fn resolve_operand(
             {
                 Some(field) => Ok(Some((scope.local.clone(), field.clone()))),
                 None => Err(format!(
-                    "capability `{capability}`: `when` condition references \
-                     `{root}`.{}, which is not a field of the injected \
-                     repository's class",
-                    name.value
+                    "{subject}: {noun} references `{root}`.{}, which is not \
+                     a field of the injected repository's class",
+                    name.value,
+                    subject = wording.subject,
+                    noun = wording.noun,
                 )),
             }
         }
@@ -181,32 +335,36 @@ fn resolve_operand(
     }
 }
 
-fn lower_scoped(
+fn parse_lowered(
     expr: &Expr,
-    capability: &str,
+    wording: &LowerWording<'_>,
     entity: &str,
     fields: &HashMap<String, FieldInfo>,
     states: &[String],
     injected: &[InjectedScope],
+    record: &str,
 ) -> Result<String, String> {
     let scopes = (entity, fields, injected);
-    lower(expr, capability, &scopes, states)
+    lower(expr, wording, &scopes, states, record)
 }
 
 fn lower(
     expr: &Expr,
-    capability: &str,
+    wording: &LowerWording<'_>,
     scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
     states: &[String],
+    record: &str,
 ) -> Result<String, String> {
     let (entity, fields, _injected) = scopes;
     let reject = |construct: &str| {
         Err(format!(
-            "capability `{capability}`: `when` condition uses {construct}, \
-             which cannot be lowered to a Rust guard on `{entity}`; the \
-             supported subset is own-record field refs, one segment under \
-             an injected repository, string/number/boolean/date literals, \
-             comparisons, && || !, parentheses, and null comparisons"
+            "{subject}: {noun} uses {construct}, which cannot be lowered to \
+             a {target} on `{entity}`; the supported subset is {subset}",
+            subject = wording.subject,
+            noun = wording.noun,
+            target = wording.target,
+            entity = entity,
+            subset = wording.subset,
         ))
     };
     match &expr.kind {
@@ -223,15 +381,16 @@ fn lower(
                 Ok(rust_string_literal(text))
             } else {
                 Err(format!(
-                    "capability `{capability}`: `when` condition uses the \
-                     date literal {text:?}, which is not a calendar date \
-                     `YYYY-MM-DD`"
+                    "{subject}: {noun} uses the date literal {text:?}, which \
+                     is not a calendar date `YYYY-MM-DD`",
+                    subject = wording.subject,
+                    noun = wording.noun,
                 ))
             }
         }
         ExprKind::Name(name) => {
             if let Some(field) = fields.get(name) {
-                return Ok(field_ref("response", field));
+                return Ok(field_ref(record, field));
             }
             // A bare name that is a declared machine state lowers to the
             // enum value's wire spelling: the codelist/string comparison
@@ -248,12 +407,14 @@ fn lower(
                 )
             };
             Err(format!(
-                "capability `{capability}`: `when` condition references \
-                 `{name}`, which is not a field of `{entity}`{states_note}"
+                "{subject}: {noun} references `{name}`, which is not a field \
+                 of `{entity}`{states_note}",
+                subject = wording.subject,
+                noun = wording.noun,
             ))
         }
         ExprKind::Unary { op, expr } => {
-            let inner = lower(expr, capability, scopes, states)?;
+            let inner = lower(expr, wording, scopes, states, record)?;
             match op {
                 UnOp::Not => Ok(format!("(!({inner}))")),
                 UnOp::Neg => match &expr.kind {
@@ -283,11 +444,13 @@ fn lower(
                 // The non-null operand must be a field ref for the
                 // Option check to be honest; a required field's null
                 // comparison is vacuous and lowers to a literal.
-                let (root, field) = resolve_operand(scopes, field_expr_expr, capability)?
+                let (root, field) = resolve_operand(wording, scopes, field_expr_expr, record)?
                     .ok_or_else(|| {
                         format!(
-                            "capability `{capability}`: `when` condition uses \
-                             a null comparison against a non-field"
+                            "{subject}: {noun} uses a null comparison against \
+                             a non-field",
+                            subject = wording.subject,
+                            noun = wording.noun,
                         )
                     })?;
                 return Ok(match (op, field.optional) {
@@ -315,13 +478,14 @@ fn lower(
             };
             comparison(
                 op,
-                &lower(lhs, capability, scopes, states)?,
-                &lower(rhs, capability, scopes, states)?,
+                &lower(lhs, wording, scopes, states, record)?,
+                &lower(rhs, wording, scopes, states, record)?,
                 rust_op,
-                capability,
+                wording,
                 scopes,
                 lhs,
                 rhs,
+                record,
             )
         }
         ExprKind::FeatureAccess {
@@ -334,7 +498,7 @@ fn lower(
             }
             // A dotted path lowers ONLY through an injected scope; every
             // other receiver is the own-record dotted-navigation refusal.
-            match resolve_operand(scopes, expr, capability) {
+            match resolve_operand(wording, scopes, expr, record) {
                 Ok(Some((root, field))) => Ok(field_ref(&root, &field)),
                 Ok(None) => reject(&format!(
                     "field access on a non-field receiver (`{}`.{})",
@@ -366,14 +530,15 @@ fn comparison(
     lhs_text: &str,
     rhs_text: &str,
     rust_op: &str,
-    capability: &str,
+    wording: &LowerWording<'_>,
     scopes: &(&str, &HashMap<String, FieldInfo>, &[InjectedScope]),
     lhs: &Expr,
     rhs: &Expr,
+    record: &str,
 ) -> Result<String, String> {
     let is_ordering = matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
-    let lhs_field = resolve_operand(scopes, lhs, capability)?;
-    let rhs_field = resolve_operand(scopes, rhs, capability)?;
+    let lhs_field = resolve_operand(wording, scopes, lhs, record)?;
+    let rhs_field = resolve_operand(wording, scopes, rhs, record)?;
     match (lhs_field, rhs_field) {
         (Some((root, field)), None) => {
             let literal = strip_parens(rhs_text);
@@ -383,7 +548,7 @@ fn comparison(
                 &literal,
                 rust_op,
                 is_ordering,
-                capability,
+                wording,
                 scopes.0,
             )
         }
@@ -409,32 +574,38 @@ fn comparison(
                 &literal,
                 flipped,
                 is_ordering,
-                capability,
+                wording,
                 scopes.0,
             )
         }
         (Some((lhs_root, a)), Some((rhs_root, b))) => {
             if lhs_root != rhs_root {
                 return Err(format!(
-                    "capability `{capability}`: comparison between `{}` and `{}` across \
-                     different records (an own-record field vs an injected field, or two \
-                     injected scopes) cannot be lowered faithfully — compare each side \
-                     against a literal instead",
-                    a.rust_name, b.rust_name
+                    "{subject}: comparison between `{}` and `{}` across \
+                     different records (an own-record field vs an injected \
+                     field, or two injected scopes) cannot be lowered \
+                     faithfully — compare each side against a literal instead",
+                    a.rust_name,
+                    b.rust_name,
+                    subject = wording.subject,
                 ));
             }
             if is_ordering && (a.optional || b.optional || a.kind != b.kind) {
                 return Err(format!(
-                    "capability `{capability}`: ordering comparison between \
-                     fields `{}` and `{}` cannot be lowered faithfully",
-                    a.rust_name, b.rust_name
+                    "{subject}: ordering comparison between fields `{}` and \
+                     `{}` cannot be lowered faithfully",
+                    a.rust_name,
+                    b.rust_name,
+                    subject = wording.subject,
                 ));
             }
             if a.optional != b.optional || a.kind != b.kind {
                 return Err(format!(
-                    "capability `{capability}`: field-to-field comparison \
-                     between `{}` and `{}` mixes requiredness or types",
-                    a.rust_name, b.rust_name
+                    "{subject}: field-to-field comparison between `{}` and \
+                     `{}` mixes requiredness or types",
+                    a.rust_name,
+                    b.rust_name,
+                    subject = wording.subject,
                 ));
             }
             Ok(format!(
@@ -452,7 +623,7 @@ fn field_vs_literal(
     literal: &str,
     rust_op: &str,
     is_ordering: bool,
-    capability: &str,
+    wording: &LowerWording<'_>,
     entity: &str,
 ) -> Result<String, String> {
     let name = &field.rust_name;
@@ -471,8 +642,9 @@ fn field_vs_literal(
         FieldKind::Bool => {
             if is_ordering {
                 return Err(format!(
-                    "capability `{capability}`: ordering comparison on bool \
-                     field `{name}` of `{entity}`"
+                    "{subject}: ordering comparison on bool field `{name}` of \
+                     `{entity}`",
+                    subject = wording.subject,
                 ));
             }
             match field.optional {
@@ -496,13 +668,14 @@ fn field_vs_literal(
         FieldKind::Codelist | FieldKind::Date => {
             if is_ordering {
                 return Err(format!(
-                    "capability `{capability}`: ordering comparison on \
-                     `{kind}` field `{name}` of `{entity}`",
+                    "{subject}: ordering comparison on `{kind}` field \
+                     `{name}` of `{entity}`",
                     kind = if field.kind == FieldKind::Codelist {
                         "codelist"
                     } else {
                         "date"
                     },
+                    subject = wording.subject,
                 ));
             }
             match field.optional {
@@ -514,8 +687,10 @@ fn field_vs_literal(
             }
         }
         FieldKind::Unsupported => Err(format!(
-            "capability `{capability}`: `when` condition references `{name}`, \
-             which is not a comparable scalar field of `{entity}`"
+            "{subject}: {noun} references `{name}`, which is not a \
+             comparable scalar field of `{entity}`",
+            subject = wording.subject,
+            noun = wording.noun,
         )),
     }
 }

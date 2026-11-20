@@ -240,9 +240,14 @@ pub(crate) fn build_domain_generators(
         Box::new(api::links::LinksGenerator::new(base("links"))) as Box<dyn DomainGenerator>,
         // hurl API contract tests (issue #463) — per-entity contracts plus
         // the once-per-run authn/authz suite.
-        Box::new(api::hurl_contract::HurlContractGenerator::new(base(
-            "hurl_contract",
-        ))) as Box<dyn DomainGenerator>,
+        Box::new(
+            api::hurl_contract::HurlContractGenerator::new(base("hurl_contract"))
+                // The invariant-denied legs call nothing — they evaluate the
+                // AUTHORED expressions against the contract's own bodies —
+                // but they only exist when the predicates (and the handler
+                // call sites) do: the `rules` plan membership gates them.
+                .with_rules_guards(ctx.plan_has_domain("rules")),
+        ) as Box<dyn DomainGenerator>,
         Box::new(ui::domain_layout::UiDomainLayoutGenerator::new(base(
             "ui-domain-layout",
         ))) as Box<dyn DomainGenerator>,

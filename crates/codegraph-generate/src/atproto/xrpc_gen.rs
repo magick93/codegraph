@@ -222,7 +222,9 @@ impl DomainGenerator for AtprotoXrpcEmitter {
         db: &dyn GraphQuerier,
         domain: &str,
         entity_titles: &[String],
-        config: &DomainConfig,
+        // Issue #702: no longer read — the domain key (`domain`) is the
+        // Postgres schema source of truth. The parameter is the trait's.
+        _config: &DomainConfig,
         tera: &tera::Tera,
         project: &ProjectConfig,
     ) -> Result<Vec<GeneratedFile>> {
@@ -230,11 +232,11 @@ impl DomainGenerator for AtprotoXrpcEmitter {
             return Ok(Vec::new());
         }
 
-        let pg_schema = config
-            .domains
-            .get(domain)
-            .map(|d| d.postgres_schema.clone())
-            .unwrap_or_else(|| domain.to_string());
+        // Issue #702: the domain key is the single Postgres schema source
+        // of truth — the `{schema}_{table}` module prefix must match the
+        // entity module the entity plane emits (which keys off the domain
+        // key).
+        let pg_schema = domain.to_string();
 
         let mut endpoints = Vec::new();
         let mut procedures = Vec::new();

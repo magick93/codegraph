@@ -164,7 +164,8 @@ fn public_table(
     {
         return None;
     }
-    let domain = config.domains.get(schema.domain.as_deref()?)?;
+    let domain_key = schema.domain.as_deref()?;
+    let domain = config.domains.get(domain_key)?;
     let entity_cfg = domain.get_entity_config(&schema.title);
     let public_ops: &[String] = entity_cfg
         .and_then(|ec| ec.public_operations.as_deref())
@@ -198,11 +199,14 @@ fn public_table(
     actions.sort();
     actions.dedup();
 
+    // Issue #702: the domain key is the single Postgres schema source of
+    // truth — the schema the DDL created the table in. The declared
+    // `postgres_schema` is validated equal to it (the consistency gate).
     Some((
-        domain.postgres_schema.clone(),
+        domain_key.to_string(),
         schema.pg_table_name.clone(),
         PublicRlsTable {
-            schema: domain.postgres_schema.clone(),
+            schema: domain_key.to_string(),
             table: schema.pg_table_name.clone(),
             actions,
             policies,
@@ -227,5 +231,64 @@ mod tests {
             Some(("DELETE", true, false))
         );
         assert_eq!(action_for_operation("search"), None);
+    }
+
+    fn public_schema() -> SchemaNode {
+        SchemaNode {
+            namespace: None,
+            schema_id: "id:NoticeType".to_string(),
+            title: "NoticeType".to_string(),
+            access: Some(Access::Public),
+            annotations: None,
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity".to_string(),
+            domain: Some("notice".to_string()),
+            rel_path: "notice/NoticeType.json".to_string(),
+            pg_type: "UUID".to_string(),
+            rust_type: "Uuid".to_string(),
+            sea_orm_type: "Uuid".to_string(),
+            rust_type_name: "Notice".to_string(),
+            pg_table_name: "notice".to_string(),
+            api_path_segment: "notices".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+        }
+    }
+
+    fn divergent_config() -> DomainConfig {
+        toml::from_str(
+            r#"
+[domains.notice]
+label = "Notice"
+schema_dir = "notice"
+postgres_schema = "notice_legacy"
+
+[domains.notice.entity_config.Notice]
+public_operations = ["list", "read"]
+"#,
+        )
+        .expect("config")
+    }
+
+    /// Issue #702: the domain key is the single Postgres schema source of
+    /// truth. Even when `postgres_schema` names a DIFFERENT schema, the
+    /// public-operations RLS policies must qualify with the DOMAIN key —
+    /// the schema the DDL created the table in.
+    #[test]
+    fn public_rls_schema_comes_from_the_domain_key_not_postgres_schema() {
+        let config = divergent_config();
+        let (pg_schema, _table, entry) = public_table(&public_schema(), &config)
+            .expect("a public entity with public_operations must resolve");
+        assert_eq!(pg_schema, "notice", "the DOMAIN key wins (#702)");
+        assert_eq!(entry.schema, "notice");
+        assert_ne!(pg_schema, "notice_legacy");
     }
 }
