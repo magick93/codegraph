@@ -199,6 +199,17 @@ fn member_sample(type_json: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+/// Resolution context for one boundary file: the sibling shapes a member can
+/// reference, the module each lives in, and the import sets the render
+/// context collects. Grouped so member resolution stays a readable arity.
+struct MemberLookup<'a> {
+    module_file: &'a str,
+    shape_by_name: &'a BTreeMap<String, &'a DddDtoShapeNode>,
+    module_of: &'a BTreeMap<String, String>,
+    codelist_imports: &'a mut BTreeSet<String>,
+    boundary_imports: &'a mut BTreeMap<(String, String), ()>,
+}
+
 /// Generates the modeled DTO boundaries into the domain-types crate.
 pub struct DddDtoBoundariesGenerator {
     src_dir: PathBuf,
@@ -285,11 +296,13 @@ impl GlobalGenerator for DddDtoBoundariesGenerator {
                         config,
                         project,
                         shape,
-                        &module_file,
-                        &shape_by_name,
-                        &module_of,
-                        &mut codelist_imports,
-                        &mut boundary_imports,
+                        &mut MemberLookup {
+                            module_file: &module_file,
+                            shape_by_name: &shape_by_name,
+                            module_of: &module_of,
+                            codelist_imports: &mut codelist_imports,
+                            boundary_imports: &mut boundary_imports,
+                        },
                     )
                     .await?;
                 boundaries.push(ctx);
@@ -345,11 +358,7 @@ impl DddDtoBoundariesGenerator {
         config: &DomainConfig,
         project: &ProjectConfig,
         shape: &DddDtoShapeNode,
-        module_file: &str,
-        shape_by_name: &BTreeMap<String, &DddDtoShapeNode>,
-        module_of: &BTreeMap<String, String>,
-        codelist_imports: &mut BTreeSet<String>,
-        boundary_imports: &mut BTreeMap<(String, String), ()>,
+        lookup: &mut MemberLookup<'_>,
     ) -> Result<BoundaryCtx> {
         let camel_case =
             project.codegen.dto_key_casing == crate::project_config::DtoKeyCasing::Camel;
@@ -393,15 +402,7 @@ impl DddDtoBoundariesGenerator {
 
         let mut fields = Vec::with_capacity(shape.members.len());
         for member in &shape.members {
-            let base = self.member_rust_type(
-                &shape.name,
-                member,
-                module_file,
-                shape_by_name,
-                module_of,
-                codelist_imports,
-                boundary_imports,
-            )?;
+            let base = self.member_rust_type(&shape.name, member, lookup)?;
             let (rust_type, optional) = wrap_multiplicity(&base, member.multiplicity_json.as_ref())
                 .map_err(|reason| {
                     Error::Config(format!(
@@ -450,11 +451,7 @@ impl DddDtoBoundariesGenerator {
         &self,
         boundary: &str,
         member: &codegraph_core::types::DddDtoMember,
-        module_file: &str,
-        shape_by_name: &BTreeMap<String, &DddDtoShapeNode>,
-        module_of: &BTreeMap<String, String>,
-        codelist_imports: &mut BTreeSet<String>,
-        boundary_imports: &mut BTreeMap<(String, String), ()>,
+        lookup: &mut MemberLookup<'_>,
     ) -> Result<String> {
         use crate::ddd::signature::{DddSignatureType, signature_type};
         let refuse = |what: &str| {
@@ -475,7 +472,7 @@ impl DddDtoBoundariesGenerator {
                     // A codelist/vocabulary renders the generated enum.
                     phero_ir::TypeRef::Enum { name, .. }
                     | phero_ir::TypeRef::Vocabulary { name, .. } => {
-                        codelist_imports.insert(name.clone());
+                        lookup.codelist_imports.insert(name.clone());
                         return Ok(name.clone());
                     }
                     phero_ir::TypeRef::Interface { .. } => {
@@ -491,18 +488,20 @@ impl DddDtoBoundariesGenerator {
                 })
             }
             DddSignatureType::Dto(name) => {
-                if !shape_by_name.contains_key(&name) {
+                if !lookup.shape_by_name.contains_key(&name) {
                     return Err(Error::Config(format!(
                         "ddd — modeled DTO boundary member `{}` references boundary `{name}`, \
                          which the model does not declare",
                         member.name
                     )));
                 }
-                let target_module = module_of.get(&name).cloned().unwrap_or_default();
-                if target_module == module_file {
+                let target_module = lookup.module_of.get(&name).cloned().unwrap_or_default();
+                if target_module == lookup.module_file {
                     Ok(name)
                 } else {
-                    boundary_imports.insert((target_module, name.clone()), ());
+                    lookup
+                        .boundary_imports
+                        .insert((target_module, name.clone()), ());
                     Ok(name)
                 }
             }

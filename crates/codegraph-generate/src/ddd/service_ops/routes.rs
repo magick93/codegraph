@@ -1138,7 +1138,7 @@ fn child_execution(
     // child plane still binds the child's GENERATED create/update DTO. Say so
     // once per op instead of silently ignoring the modeled payload type —
     // wiring the boundary through the child command plane is the recorded
-    // follow-up (TODO(#667)).
+    // follow-up (#767).
     if let Some(param) = op.params.first()
         && let Some(boundary) = param
             .type_json
@@ -1150,7 +1150,7 @@ fn child_execution(
             &format!(
                 "child operation `{}` declares modeled DTO boundary `{boundary}` as its \
                  payload; the child plane still binds the child's generated request DTO \
-                 (the modeled payload is a recorded #667 follow-up)",
+                 (the modeled payload is issue #767)",
                 op.name
             ),
         );

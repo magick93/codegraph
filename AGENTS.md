@@ -1113,6 +1113,59 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   block's `{% endif %}` so it adds no newline) and the actions contract is
   unchanged for parameter-less ops.
 
+### Modeled DTO boundaries (DD3, issue #667)
+
+A `.ddd` `dto` design is a transport boundary, not a class design. Ingest used
+to DROP it: a standalone DTO has no `Design::class`, and a mirror/projection
+design kept only its `stereotype` — the shape (direction + ordered members)
+never reached the graph. #667 makes the boundary a plane:
+
+- **Graph** (`DddModelGraph.dto_shapes: Vec<DddDtoShapeNode>`, module-major by
+  the owning design's ordinal; `DddDtoMember { name, kind: select|derive|
+  declared, type_json, multiplicity_json, path, expression }`) + the Grafeo
+  `DddDtoShape` node and `DddHasDtoShape` edge. Standalone boundaries land here
+  with no `DddDesign` node; mirror/projection designs still land as design
+  nodes. **`GRAPH_FORMAT_VERSION` 13 → 14** (`graph_document_v14.md`).
+  `DddIngestStats.dto_shapes` prints only when non-zero (pre-#667 stats line
+  byte-identical).
+- **Generation** (`ddd/dto_boundaries.rs`, global `dto_boundaries` capability,
+  presence-gated): one file per `.ddd` module at
+  `{domain_types_base}/src/dto/{module}.rs` + the index, in the SHARED
+  domain-types crate (worker action handlers must reach the same type). A
+  **mirror** (every member a same-name selection of a resolvable source class)
+  is a type ALIAS onto `{Entity}Response`; **projection/standalone** boundaries
+  are structs (snake_case fields, project dto casing, `deny_unknown_fields` on
+  inputs, derived members documented with their expression). Member typing:
+  primitives via `phero_type_to_rust`, class refs → `uuid::Uuid`, codelists →
+  the generated enum, nested boundaries imported across modules, multiplicity →
+  `Option`/`Vec`. Named refusals: interface/unresolvable member, undeclared
+  nested boundary, derivation without source, boundary name colliding with a
+  generated entity DTO type. The domain-types scaffold declares `pub mod dto;`
+  only when the graph carries shapes.
+- **Payload slots**: `DtoBoundaryIndex` + `boundary_sample` live beside the
+  generator; `body_lower::body_params` resolves a `DddTypeRef::Dto` parameter to
+  `{domain_types_crate}::dto::{module}::{Name}`, and a LONE boundary parameter
+  makes the endpoint body the DTO itself (`BodyParam.direct_body`, honoured by
+  the pre-rendered extraction `serde_json::from_value::<T>(value.0.clone())`
+  and by the hurl action body). Output-only boundaries (any derived member) and
+  unknown boundaries are named refusals riding
+  `ValidationPass::check_service_op_bodies`; a body-less op with a DTO param
+  still emits no body block. Both OpenAPI documents register every boundary as
+  a component schema.
+- **Deferred (filed)**: **#767** — a modeled input boundary as the
+  COLLECTION-level create body (mapping onto `Create{Entity}Request` + the
+  create-shaped route) and the child-op boundary payload (today one WARN per op
+  naming #767); **#768** — projections as read models (derived-member
+  arithmetic lowering + the real read endpoint).
+- **Gates**: `cargo test -p codegraph --test ddd_dto_boundaries_tests` (mirror
+  alias, projection/standalone shape, no-shape byte identity, collision +
+  member refusals, body-param KATs, and an end-to-end `driver::run` over
+  `tests/fixtures/ddd/dto_boundaries/` asserting the emitted module, the crate
+  index, the direct-body extraction, and both OpenAPI registrations) +
+  `--test ddd_dto_boundaries_compile_tests` (the #551 pin: the emitted plane
+  compiles native AND wasm32 in a sea_orm-free scratch crate) +
+  `--test artifact_kit_tests` (the bump) + the standing canaries.
+
 ### Declared error vocabulary + `throws` (DD7, issue #665)
 
 The DD7 error vocabulary is now a generated plane end to end — ingest,
