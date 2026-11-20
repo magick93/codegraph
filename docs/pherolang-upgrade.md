@@ -364,13 +364,18 @@ the stage is silent and existing doctor output is byte-identical.
 ### P6 landed — `artifact check` as a PR-CI gate (#674); receipts deferred
 
 `crates/codegraph/tests/artifact_check_tests.rs` validates every committed
-artifact fixture from the artifact alone, in-process, node-free and DB-free:
+artifact fixture **under `crates/codegraph/tests/fixtures/`** from the
+artifact alone, in-process, node-free and DB-free:
 `tests/fixtures/ddd/library.ddd.json` (DDD design),
 `tests/fixtures/evt/orders.evt.json` (event contract), and
 `tests/fixtures/graph_analytics/sod.json` (actor policy — the third committed
-artifact; a coverage test walks `tests/fixtures/` for any JSON root carrying
-`formatVersion` and fails by name when one is not in the covered list, so the
-gate cannot be quietly outgrown).
+artifact, found by the coverage walk, not guessed from the issue text). The
+walk is a coverage invariant in both directions: a JSON root under the
+fixtures tree carrying `formatVersion` that is not in the covered list fails
+by name, and a `*.json` file that cannot be read or parsed **fails** rather
+than being skipped (a broken new artifact cannot hide from discovery). Scope
+is the fixtures tree only — an artifact committed elsewhere would not be
+walked.
 
 **Why it is a reimplementation.** `phero-cli` is a **binary-only** crate
 (`[[bin]] name = "pherolang"`, no `[lib]` target), so `pherolang artifact
@@ -384,31 +389,66 @@ we already depend on:
    `0.2-era rexlang artifact — regenerate with pherolang 0.3`. A stale
    committed artifact therefore fails CI with a migration instruction, not a
    diff wall.
-2. **Shape classification** in upstream's documented precedence (`decisions`
-   before `views`; `views` before `application`/`modules`; `nodes` before
-   `applications`; the marker-only form falls through to the actor artifact).
+2. **Shape classification** in upstream's documented precedence *and with
+   upstream's exact predicates* (`decisions` before `views`; `views` before
+   `application`/`modules`; `nodes` before `applications`; every kinded rule
+   gated on `formatVersion` being an unsigned integer plus the right JSON type
+   on its discriminating key; the DDD arm requires the absence of `blocks`).
+   The final rule is upstream's **strict** minimal-empty rule — `blocks`, or
+   exactly `{"formatVersion": N}` — so `{"formatVersion": 2,
+   "nobodyKnowsMe": true}` is `unrecognized artifact`, never an actor artifact
+   (accepting it would validate a document whose payload the readers silently
+   drop).
 3. **The version gate** — the root's `formatVersion` is compared against
    `phero-ir`'s own marker const for the classified kind
    (`DDD_MODEL_FORMAT_VERSION`, `EVENT_MODEL_FORMAT_VERSION`,
-   `ACTOR_MODEL_FORMAT_VERSION`, …), and the document then round-trips through
-   that kind's versioned `from_json`, so this gate and the ingest reader
-   cannot disagree. A mismatch reports the reader's wording
-   (`unsupported artifact formatVersion: found N, expected M`).
-4. **Provenance** — a contract-complete DDD design must carry a non-empty
-   `pheroVersion`; the other artifact roots do not carry the key at all
-   (`formatVersion` remains the only *gate*, `pheroVersion` is provenance).
+   `ACTOR_MODEL_FORMAT_VERSION`, …), and — when the gate passes — the document
+   round-trips through that kind's versioned `from_json`, so this gate and the
+   ingest reader cannot disagree. The diagnostic is upstream's
+   **artifact-check** wording, verbatim: `unsupported DDD design artifact
+   formatVersion 99: this tool reads formatVersion 2 — regenerate the artifact
+   with a matching pherolang version` (it names the fix; the reader's own
+   `IrError` wording is deliberately *not* used).
+4. **Named collections** — upstream's `check_named_array` over the key lists
+   the classifier already carries (`packages`, `blocks`, `modules`, `events`/
+   `channels`/`subscriptions`, `applications`/`profiles`/`deployments`,
+   `useCases`, `decisions`, `cases`, the IFML keys): an entry that is not an
+   object, or whose `name` is missing/empty/non-string, is named.
+5. **Snake_case structural keys** — upstream's `scan_snake_case_keys` over
+   `phero_backend_common::STRUCTURAL_KEYS` (the ONE corpus, binary-searched
+   exactly as upstream does; the crate's closure is `anyhow` + `serde_json`,
+   so it is a dev-dependency only). The readers ignore unknown fields, so a
+   `never_both` spelling would load and the value would be silently dropped;
+   the scan names both spellings instead.
+6. **Provenance** — **every** DDD design artifact carries a non-empty
+   `pheroVersion` (not only one with an `application`: `DddModel::new` always
+   stamps it, so a compiler-emitted design always has one). `formatVersion`
+   remains the only *gate*; `pheroVersion` is provenance. Note the domain
+   `Model` (`.mox` IR) carries `pheroVersion` too — it is not DDD-specific —
+   while the actor, event, deployment, use-case, decision, case, graph and
+   IFML roots do not carry the key at all.
 
-Not reimplemented: `phero_backend_ddd::check_contract` (the deep
-artifact-only DDD contract — resolved companions, aligned parallel lists,
-value semantics, DTO boundaries). That crate is not a codegraph dependency,
-and the ingest path already refuses a broken design with `Error::DddModel`
-(pinned by `ddd_golden_tests`).
+**Named limitations** (upstream does more; the gate says so instead of
+pretending): canonical instance documents **fail closed** as not covered
+(`phero-runtime`, which owns the instance marker and the `$id`/`$ref` rules,
+is not a codegraph dependency; no instance fixture is committed). The deep
+DDD artifact-only contract (`phero_backend_ddd::check_contract` — resolved
+companions, aligned parallel lists, value semantics, DTO boundaries) and
+upstream's `application.name` check live in crates codegraph does not depend
+on; the emission side is pinned instead — `ddd_golden_tests` byte-compares
+the compiler's output against the committed artifact, so the bytes this gate
+reads are exactly the bytes the compiler produced. Graph identity-field /
+`attributes` checks, the IR `collection` marker check and other per-kind
+extras are not mirrored; the kind's `from_json` still has to accept the
+document, which is the failure class a committed fixture actually hits.
 
-**Regenerating a consumable artifact.** Upstream documents exactly one
-command for its own artifacts: `PHERO_UPDATE_FIXTURES=1 cargo test
---workspace` (then *read the diff* — goldens are the spec, not an output).
-The three fixtures we commit are codegraph-owned, so they re-bless through
-their own golden gates in the same spirit: `DDD_GOLDEN_BLESS=1 cargo test -p
+**Regenerating a consumable artifact.** Upstream documents the workspace-wide
+command for its own artifacts — `PHERO_UPDATE_FIXTURES=1 cargo test
+--workspace` — plus scoped per-gate variants (`PHERO_UPDATE_FIXTURES=1 cargo
+test -p phero-driver --test examples_artifacts`, `-p phero-verify`, `-p
+phero-ifml`); then *read the diff*: goldens are the spec, not an output. The
+three fixtures we commit are codegraph-owned, so they re-bless through their
+own golden gates in the same spirit: `DDD_GOLDEN_BLESS=1 cargo test -p
 codegraph --test ddd_golden_tests` and `EVT_GOLDEN_BLESS=1 cargo test -p
 codegraph --test evt_golden_tests` (`sod.json` is a hand-authored policy
 fixture — it has no compiler source and no bless flag).
@@ -420,10 +460,10 @@ with the evidence pointers that back it (`docs/RECEIPTS.md` upstream):
 
 | Status | Meaning |
 |---|---|
-| `proved` | SMT-discharged by Creusot/Why3 for all inputs (needs a `proof` or `mirror` evidence entry) |
-| `tested` | Covered by executing tests, not by a proof (needs a `test` evidence entry) |
-| `argued` | Reasoned about, not proved and not (fully) tested; carries a `trigger` and an ISO review date |
-| `assumed` | Deliberately trusted, with the shrinking path recorded |
+| `proved` | SMT-discharged under `cargo creusot` for all inputs (needs a `proof` or `mirror` evidence entry) |
+| `tested` | Pinned by the test suites, not by a proof (needs a `test` evidence entry) |
+| `argued` | Manual argument **plus** tests, with the formal proof open; carries a `trigger` and an ISO review date ≥ `reviewedAt` |
+| `assumed` | `#[trusted]` or absent checks — an assumption, not a proof; carries the shrinking path and a review date |
 
 **Why a receipt never says "verified".** It is the epic's non-goal and the
 document's spine: a receipt is **not a verdict**. It does not upgrade an

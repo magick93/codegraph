@@ -1,10 +1,11 @@
 //! `pherolang artifact check` as a PR-CI gate over every committed artifact
-//! fixture (issue #674).
+//! fixture under `crates/codegraph/tests/fixtures/` (issue #674).
 //!
 //! Upstream ships `pherolang artifact check`: it validates one serialized
 //! artifact *from the artifact alone* — its root shape, its `formatVersion`,
-//! and the DDD artifact-only contract — and names a 0.2-era document with a
-//! migration message instead of diffing it. We commit golden artifacts
+//! its named collections, its structural-key spellings, and the DDD
+//! artifact-only contract — and names a 0.2-era document with a migration
+//! message instead of diffing it. We commit golden artifacts
 //! (`ddd/library.ddd.json`, `evt/orders.evt.json`, `graph_analytics/sod.json`),
 //! so a fixture that drifts into an unreadable generation must fail CI here,
 //! before a consumer hits it.
@@ -13,31 +14,61 @@
 //! **binary-only** crate (`[[bin]] name = "pherolang"`, no `[lib]` target), so
 //! `pherolang artifact check` cannot be invoked as a library and would turn a
 //! node-free/DB-free PR-CI gate into a `cargo install` + subprocess step. The
-//! check below is lifted onto the crates codegraph already depends on:
+//! check below is lifted onto `phero-ir` (already a dependency) plus ONE lean
+//! dev-dependency, `phero-backend-common` (closure: `anyhow` + `serde_json`),
+//! for the structural-key corpus the snake_case scan binary-searches:
 //!
 //! 1. [`LEGACY_MESSAGE`] — upstream's rule 0, verbatim. It runs *first*, so a
 //!    0.2-era document is named as such rather than reported as a generic
 //!    `formatVersion` mismatch or an `unknown root $type`.
-//! 2. Shape classification in upstream's documented precedence (see
-//!    [`classify`]), so every artifact kind is recognized the same way.
-//! 3. The version gate — the root's `formatVersion` is compared against
-//!    `phero-ir`'s own marker const for the classified kind, and the document
-//!    is then deserialized through that kind's versioned `from_json` (the
-//!    reader's gate, so this check and the ingest path cannot disagree).
-//! 4. The provenance check: a contract-complete DDD design carries a
-//!    non-empty `pheroVersion` (`formatVersion` remains the only gate; the
-//!    other artifact roots do not carry the key at all).
+//! 2. Shape classification in upstream's documented precedence and with
+//!    upstream's exact predicates (see [`classify`]) — including the strict
+//!    minimal-empty rule `{"formatVersion": N}`, so a document with an
+//!    unknown root key is `unrecognized`, never an actor artifact.
+//! 3. The version gate, with upstream's artifact-check wording
+//!    ([`format_version_error`]), which names the fix.
+//! 4. The named-collection shape check ([`check_named_array`]), for the key
+//!    lists the classifier carries per kind.
+//! 5. The snake_case structural-key scan ([`scan_snake_case_keys`]) over
+//!    `phero_backend_common::STRUCTURAL_KEYS` — the ONE corpus, binary-searched
+//!    exactly as upstream does, so a `never_both` spelling that the readers
+//!    silently drop is named instead of ignored.
+//! 6. The provenance check: every DDD design artifact carries a non-empty
+//!    `pheroVersion`. `DddModel::new()` always stamps it, so an emitted design
+//!    always has one; the domain `Model` carries it too, but its value is
+//!    provenance only and no other artifact root carries the key at all.
+//! 7. The kind's versioned `from_json` (when the version gate passed) — the
+//!    reader's own gate, so this check and the ingest path cannot disagree.
 //!
-//! The deep DDD artifact-only contract (`phero_backend_ddd::check_contract` —
-//! resolved companions, aligned parallel lists, value semantics, DTO
-//! boundaries) is deliberately **not** reimplemented here: it lives in a crate
-//! codegraph does not depend on, and the ingest path already refuses a broken
-//! design with `Error::DddModel` (pinned by `ddd_golden_tests`). This gate
-//! owns what a *committed file on disk* can prove on its own.
+//! **Named limitations** (upstream does more; this gate does not silently
+//! pretend otherwise):
+//!
+//! - **Canonical instance documents fail closed.** `phero-runtime` (which
+//!   owns the instance marker/`$id`/`$ref` rules) is not a codegraph
+//!   dependency, so an instance artifact is classified and then *refused* as
+//!   not covered. No instance fixture is committed; one would need a checker
+//!   before it could land.
+//! - **The deep DDD artifact-only contract is not mirrored.**
+//!   `phero_backend_ddd::check_contract` (resolved companions, aligned parallel
+//!   lists, value semantics, DTO boundaries) and upstream's
+//!   `application.name` check live in crates that are not codegraph
+//!   dependencies. The *emission* side is pinned instead: `ddd_golden_tests`
+//!   byte-compares the compiler's output against the committed artifact, so
+//!   the bytes this gate reads are exactly the bytes the compiler produced.
+//! - **Per-kind deep shape checks are not mirrored** beyond the version gate,
+//!   the named collections and the snake_case scan (upstream's graph
+//!   identity-field / `attributes` checks, the IR `collection` marker check,
+//!   and the per-kind extras). The kind's `from_json` still has to accept the
+//!   document, which is the failure class a committed fixture actually hits.
+//! - **Scope is `crates/codegraph/tests/fixtures/`**, the tree that holds
+//!   codegraph's committed artifacts. A new artifact elsewhere is out of the
+//!   walk and would not be gated; [`committed_artifact_set_is_complete`] covers
+//!   the fixtures tree only.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use phero_backend_common::{STRUCTURAL_KEYS, camel_case};
 use serde_json::{Map, Value};
 
 /// The one message a 0.2-era artifact gets — upstream's `LEGACY_MESSAGE`,
@@ -56,6 +87,22 @@ const LEGACY_PROVENANCE_KEY: &str = "rexVersion";
 /// The canonical-instance discriminator 0.2-era artifacts carried (renamed to
 /// `phero.instance`).
 const LEGACY_INSTANCE_TYPE: &str = "rex.instance";
+
+/// The current canonical-instance discriminator. Spelling it here (rather than
+/// depending on `phero-runtime`) is what makes the instance branch fail closed:
+/// [`ArtifactKind::Instance`] has no marker in this dependency set.
+const INSTANCE_TYPE: &str = "phero.instance";
+
+/// The DDD design fixture — named so the teeth tests below do not depend on
+/// list order.
+const LIBRARY_DDD: &str = "ddd/library.ddd.json";
+
+/// The event-contract fixture.
+const ORDERS_EVT: &str = "evt/orders.evt.json";
+
+/// The actor-policy fixture (the third committed artifact — found by the
+/// coverage walk, not guessed from the issue text).
+const SOD_ACTOR: &str = "graph_analytics/sod.json";
 
 /// An artifact kind upstream's `artifact check` classifies, in its documented
 /// precedence order.
@@ -86,6 +133,24 @@ enum ArtifactKind {
 }
 
 impl ArtifactKind {
+    /// The kind's name in a diagnostic — upstream's `what` argument, so a
+    /// version message reads exactly as `pherolang artifact check` writes it.
+    fn what(self) -> &'static str {
+        match self {
+            Self::DomainModel => "IR artifact",
+            Self::DddModel => "DDD design artifact",
+            Self::EventModel => "event artifact",
+            Self::ActorModel => "actor artifact",
+            Self::DeployModel => "deployment artifact",
+            Self::UseCaseModel => "use-case artifact",
+            Self::DmnModel => "decision artifact",
+            Self::CmmnModel => "case artifact",
+            Self::GraphModel => "semantic graph artifact",
+            Self::IfmlModel => "interaction-flow artifact",
+            Self::Instance => "canonical instance",
+        }
+    }
+
     /// The `formatVersion` this kind's reader accepts — the same const the
     /// deserializer gates on, so the two cannot drift.
     fn format_version(self) -> Option<u32> {
@@ -102,27 +167,32 @@ impl ArtifactKind {
             Self::IfmlModel => phero_ir::ifml::IFML_MODEL_FORMAT_VERSION,
             // The instance marker lives in `phero-runtime` (not a codegraph
             // dependency); upstream's `artifact check` is the only reader.
-            // Fail closed: a committed instance would be a named gap, never a
-            // silent pass.
             Self::Instance => return None,
         };
         Some(version)
     }
 
-    /// The kind's name as the diagnostics spell it.
-    fn label(self) -> &'static str {
+    /// The root collections whose entries must be named objects — upstream's
+    /// per-kind `keys` argument. Deliberately empty for two kinds:
+    /// `GraphModel`, whose collections carry `id`/`kind`/`from`/`to` and a
+    /// different required-field rule (upstream's `check_graph_objects`, not
+    /// mirrored — see the module's named limitations), and `Instance`, whose
+    /// objects are model-defined.
+    fn named_keys(self) -> &'static [&'static str] {
         match self {
-            Self::DomainModel => "domain IR artifact",
-            Self::DddModel => "DDD design artifact",
-            Self::EventModel => "event-contract artifact",
-            Self::ActorModel => "actor-policy artifact",
-            Self::DeployModel => "deployment artifact",
-            Self::UseCaseModel => "use-case artifact",
-            Self::DmnModel => "decision-model artifact",
-            Self::CmmnModel => "case-management artifact",
-            Self::GraphModel => "semantic graph artifact",
-            Self::IfmlModel => "interaction-flow artifact",
-            Self::Instance => "canonical instance",
+            Self::DomainModel => &["packages"],
+            Self::DddModel => &["modules"],
+            Self::EventModel => &["events", "channels", "subscriptions"],
+            Self::ActorModel => &["blocks"],
+            Self::DeployModel => &["applications", "profiles", "deployments"],
+            Self::UseCaseModel => &["useCases"],
+            Self::DmnModel => &["decisions"],
+            Self::CmmnModel => &["cases"],
+            Self::GraphModel => &[],
+            Self::IfmlModel => &[
+                "views", "domains", "actions", "modules", "actors", "commands",
+            ],
+            Self::Instance => &[],
         }
     }
 
@@ -149,8 +219,8 @@ impl ArtifactKind {
     }
 }
 
-/// Every committed artifact fixture, relative to `tests/fixtures/`, with the
-/// kind `artifact check` must classify it as.
+/// Every committed artifact fixture under `tests/fixtures/`, relative to that
+/// directory, with the kind `artifact check` must classify it as.
 ///
 /// Enumerated from the tree, not guessed: [`committed_artifact_set_is_complete`]
 /// walks `tests/fixtures/` for JSON documents carrying a root-level
@@ -159,9 +229,9 @@ impl ArtifactKind {
 /// the OpenAPI document (`openapi/customers.json`) are model *inputs*, not
 /// artifacts, and carry no `formatVersion`.
 const COMMITTED_ARTIFACTS: &[(&str, ArtifactKind)] = &[
-    ("ddd/library.ddd.json", ArtifactKind::DddModel),
-    ("evt/orders.evt.json", ArtifactKind::EventModel),
-    ("graph_analytics/sod.json", ArtifactKind::ActorModel),
+    (LIBRARY_DDD, ArtifactKind::DddModel),
+    (ORDERS_EVT, ArtifactKind::EventModel),
+    (SOD_ACTOR, ArtifactKind::ActorModel),
 ];
 
 /// The fixture root. `CODEGRAPH_ARTIFACT_FIXTURES` points the gate at a copy —
@@ -174,12 +244,10 @@ fn fixture_root() -> PathBuf {
     }
 }
 
-/// The root-level `formatVersion` a document claims, if it is an unsigned
-/// integer.
-fn claimed_format_version(root: &Map<String, Value>) -> Option<u32> {
-    root.get("formatVersion")
-        .and_then(Value::as_u64)
-        .and_then(|version| u32::try_from(version).ok())
+/// Reads a committed fixture by its `tests/fixtures/`-relative name.
+fn fixture_text(relative: &str) -> String {
+    let path = fixture_root().join(relative);
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
 /// Reports the 0.2-era marker a document root carries: the pre-rename
@@ -192,74 +260,154 @@ fn legacy_marker(root: &Map<String, Value>) -> Option<&'static str> {
     (legacy_provenance || legacy_instance).then_some(LEGACY_MESSAGE)
 }
 
-/// Classifies an artifact by root shape, in upstream's documented precedence.
+/// Classifies an artifact by root shape, in upstream's documented precedence
+/// **and with upstream's exact predicates** (`phero-cli`'s
+/// `artifact_check::check`).
 ///
-/// The order is load-bearing in three places, exactly as upstream records it:
-/// `decisions` before `views` (a decision model also carries decision views),
-/// `views` before `application`/`modules` (an IFML model may carry `modules`),
-/// and `nodes` before `applications` (a graph artifact also carries
+/// Every kinded rule is gated on `formatVersion` being an unsigned integer
+/// *and* on the discriminating key having the right JSON type, and the DDD
+/// arm additionally requires the absence of `blocks`. The ordering is
+/// load-bearing in three places, exactly as upstream records it: `decisions`
+/// before `views` (a decision model also carries decision views), `views`
+/// before `application`/`modules` (an IFML model may carry `modules`), and
+/// `nodes` before `applications` (a graph artifact also carries
 /// `applications`). The module-only IFML model is shape-ambiguous with a DDD
 /// design and classifies as one — upstream's documented collision, inherited
 /// here on purpose.
+///
+/// The final rule is upstream's **strict** minimal-empty rule: `blocks` or
+/// exactly `{"formatVersion": N}`. A `formatVersion`-bearing root with any
+/// other unknown key is `None` (unrecognized), never an actor artifact —
+/// accepting it would validate a document whose payload the readers silently
+/// drop.
 fn classify(root: &Map<String, Value>) -> Option<ArtifactKind> {
-    let has = |key: &str| root.contains_key(key);
-    let versioned = claimed_format_version(root).is_some();
+    let versioned = root.get("formatVersion").is_some_and(Value::is_u64);
+    let is_array = |key: &str| root.get(key).is_some_and(Value::is_array);
+    let is_object = |key: &str| root.get(key).is_some_and(Value::is_object);
+    let any_array = |keys: &[&str]| keys.iter().any(|key| is_array(key));
 
-    if has("packages") {
+    if root.contains_key("packages") {
         return Some(ArtifactKind::DomainModel);
     }
-    if versioned && has("decisions") {
+    if versioned && is_array("decisions") {
         return Some(ArtifactKind::DmnModel);
     }
-    if versioned
-        && ["views", "domains", "actions", "commands", "imports"]
-            .iter()
-            .any(|key| has(key))
-    {
+    if versioned && any_array(&["views", "domains", "actions", "commands", "imports"]) {
         return Some(ArtifactKind::IfmlModel);
     }
-    if versioned && (has("application") || has("modules")) {
+    if versioned
+        && !root.contains_key("blocks")
+        && (is_object("application") || is_array("modules"))
+    {
         return Some(ArtifactKind::DddModel);
     }
-    if versioned
-        && ["events", "channels", "subscriptions"]
-            .iter()
-            .any(|key| has(key))
-    {
+    if versioned && any_array(&["events", "channels", "subscriptions"]) {
         return Some(ArtifactKind::EventModel);
     }
-    if versioned && has("nodes") {
+    if versioned && is_array("nodes") {
         return Some(ArtifactKind::GraphModel);
     }
-    if versioned
-        && ["applications", "profiles", "deployments"]
-            .iter()
-            .any(|key| has(key))
-    {
+    if versioned && any_array(&["applications", "profiles", "deployments"]) {
         return Some(ArtifactKind::DeployModel);
     }
-    if versioned && has("useCases") {
+    if versioned && is_array("useCases") {
         return Some(ArtifactKind::UseCaseModel);
     }
-    if versioned && has("cases") {
+    if versioned && is_array("cases") {
         return Some(ArtifactKind::CmmnModel);
     }
-    if has("blocks") || versioned {
-        // The minimal-empty artifact is exactly `{"formatVersion": N}` for
-        // several kinds; shape-sniffing cannot tell them apart, so the marker
-        // alone falls through to the actor kind (the canonical block-less
-        // ActorModel), upstream's rule 11.
+    // The canonical block-less ActorModel is exactly `{"formatVersion": N}`:
+    // a Model always emits `packages`, a DddModel always carries the design
+    // keys, an EventModel/DeployModel/UseCaseModel/DmnModel/CmmnModel always
+    // carries one of its arrays, an IfmlModel one of the IFML keys. Anything
+    // else has no known root shape.
+    if root.contains_key("blocks") || (root.len() == 1 && root.contains_key("formatVersion")) {
         return Some(ArtifactKind::ActorModel);
     }
     None
+}
+
+/// Builds the `formatVersion` diagnostic — upstream's `format_version_error`
+/// wording, verbatim, so a stale fixture reads the same here as it does under
+/// `pherolang artifact check` (including the regenerate instruction, which is
+/// the fix).
+fn format_version_error(root: &Map<String, Value>, supported: u32, what: &str) -> Option<String> {
+    match root.get("formatVersion") {
+        None => Some(format!(
+            "missing {what} formatVersion: this tool reads formatVersion {supported}"
+        )),
+        Some(found) => match found.as_u64() {
+            Some(found) if found == u64::from(supported) => None,
+            Some(found) => Some(format!(
+                "unsupported {what} formatVersion {found}: this tool reads formatVersion \
+                 {supported} — regenerate the artifact with a matching pherolang version"
+            )),
+            None => Some(format!(
+                "{what} formatVersion must be an unsigned integer, found {found}"
+            )),
+        },
+    }
+}
+
+/// `packages`/`blocks`/`events`/… sanity: an array of objects each carrying a
+/// non-empty string `name` — upstream's `check_named_array`, verbatim.
+fn check_named_array(value: &Value, key: &str, errors: &mut Vec<String>) {
+    let Some(items) = value.as_array() else {
+        errors.push(format!("{key:?} must be an array, found {value}"));
+        return;
+    };
+    for (index, item) in items.iter().enumerate() {
+        match item.as_object() {
+            None => errors.push(format!("{key}[{index}] must be an object, found {item}")),
+            Some(object) => match object.get("name") {
+                None => errors.push(format!("{key}[{index}] is missing \"name\"")),
+                Some(name) if name.as_str().is_none_or(str::is_empty) => errors.push(format!(
+                    "{key}[{index}] \"name\" must be a non-empty string, found {name}"
+                )),
+                _ => {}
+            },
+        }
+    }
+}
+
+/// Reports every key whose spelling is snake_case but whose camelCase form is
+/// a known structural key — the readers ignore unknown fields (forward
+/// compatibility), so such an artifact loads but silently drops the value.
+///
+/// Upstream's `scan_snake_case_keys`, over the same corpus
+/// (`phero_backend_common::STRUCTURAL_KEYS`, binary-searched). Runs on every
+/// classified artifact kind: all of their keys are structural (the exempt
+/// case is a canonical instance, which this gate refuses outright).
+fn scan_snake_case_keys(value: &Value, errors: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            for (key, child) in map {
+                if key.contains('_') {
+                    let camel = camel_case(key);
+                    if STRUCTURAL_KEYS.binary_search(&camel.as_str()).is_ok() {
+                        errors.push(format!(
+                            "key {key:?} is not wire format: the camelCase key is {camel:?}"
+                        ));
+                    }
+                }
+                scan_snake_case_keys(child, errors);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                scan_snake_case_keys(item, errors);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Validates one artifact document, returning its kind or every violation.
 ///
 /// Mirrors `phero_cli::artifact_check::check`'s contract for the kinds
 /// codegraph commits: rule 0 (legacy), the root `$type` branch, shape
-/// classification, the version gate, and — for a design — the provenance
-/// check.
+/// classification, the version gate, the named collections, the snake_case
+/// scan, and — for a design — the provenance check.
 fn check_artifact(text: &str) -> Result<ArtifactKind, Vec<String>> {
     let value: Value = match serde_json::from_str(text) {
         Ok(value) => value,
@@ -277,61 +425,79 @@ fn check_artifact(text: &str) -> Result<ArtifactKind, Vec<String>> {
         let Some(tag) = tag.as_str() else {
             return Err(vec![format!("root $type must be a string, found {tag}")]);
         };
-        if tag != "phero.instance" {
+        if tag != INSTANCE_TYPE {
             return Err(vec![format!(
                 "unknown root $type {tag:?}: instance documents declare $type \
-                 \"phero.instance\"; IR and actor artifacts carry no root $type"
+                 {INSTANCE_TYPE:?}; IR and actor artifacts carry no root $type"
             )]);
         }
         return check_known_kind(ArtifactKind::Instance, root, text);
     }
     let Some(kind) = classify(root) else {
-        return Err(vec!["unrecognized artifact".to_string()]);
+        return Err(vec![
+            "unrecognized artifact: no known root shape (IR artifacts carry \"packages\", \
+             actor artifacts \"blocks\", interaction-flow artifacts \
+             \"views\"/\"domains\"/\"actions\"/\"commands\", DDD design artifacts \
+             \"application\"/\"modules\", event artifacts \
+             \"events\"/\"channels\"/\"subscriptions\", deployment artifacts \
+             \"applications\"/\"profiles\"/\"deployments\", semantic graph artifacts \"nodes\", \
+             use-case artifacts \"useCases\", decision artifacts \"decisions\", \
+             instances declare $type \"phero.instance\")"
+                .to_string(),
+        ]);
     };
     check_known_kind(kind, root, text)
 }
 
-/// The version gate, the provenance check, and the deserializer round-trip for
-/// a classified artifact.
+/// The version gate, the named collections, the snake_case scan, the provenance
+/// check, and the deserializer round-trip for a classified artifact.
 fn check_known_kind(
     kind: ArtifactKind,
     root: &Map<String, Value>,
     text: &str,
 ) -> Result<ArtifactKind, Vec<String>> {
     let Some(expected) = kind.format_version() else {
+        // Fail closed: a committed instance would be a named gap, never a
+        // silent pass (no codegraph dependency exposes the instance reader).
         return Err(vec![format!(
             "{} documents are not covered by codegraph's in-process artifact \
              check (no dependency exposes the instance marker); a committed \
              instance fixture needs a checker before it can land",
-            kind.label()
+            kind.what()
         )]);
     };
-    let Some(found) = claimed_format_version(root) else {
-        return Err(vec![format!(
-            "{}: formatVersion must be an unsigned integer",
-            kind.label()
-        )]);
-    };
-    if found != expected {
-        // The reader's own wording (`IrError::UnsupportedFormatVersion`), so a
-        // stale fixture reads the same here as it would at ingest.
-        return Err(vec![format!(
-            "unsupported artifact formatVersion: found {found}, expected {expected}"
-        )]);
+
+    let mut errors = Vec::new();
+    errors.extend(format_version_error(root, expected, kind.what()));
+    for key in kind.named_keys() {
+        if let Some(array) = root.get(*key) {
+            check_named_array(array, key, &mut errors);
+        }
     }
-    // Provenance: a contract-complete design carries a non-empty
-    // `pheroVersion`. `formatVersion` is the only *gate*; this is the honesty
-    // check that the artifact was emitted by a real compiler run.
-    if kind == ArtifactKind::DddModel && root.contains_key("application") {
+    scan_snake_case_keys(&Value::Object(root.clone()), &mut errors);
+    // Provenance: EVERY DDD design artifact carries a non-empty `pheroVersion`
+    // (`DddModel::new` always stamps it, so a compiler-emitted design — with or
+    // without an `application` — has one). `formatVersion` remains the only
+    // *gate*; this is the honesty check that the bytes came from a real
+    // compiler run rather than a hand edit.
+    if kind == ArtifactKind::DddModel {
         let provenance = root
             .get("pheroVersion")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if provenance.is_empty() {
-            return Err(vec![
-                "contract-complete design artifact carries no pheroVersion provenance".to_string(),
-            ]);
+            errors.push(
+                "DDD design artifact carries no pheroVersion provenance: a compiler-emitted \
+                 design always stamps it"
+                    .to_string(),
+            );
         }
+    }
+
+    if !errors.is_empty() {
+        // A version-gate failure explains itself; deserializing on top of it
+        // only adds a second, redundant message.
+        return Err(errors);
     }
     kind.deserialize(text).map_err(|error| vec![error])?;
     Ok(kind)
@@ -362,7 +528,7 @@ fn every_committed_artifact_passes_the_artifact_alone_check() {
                 kind,
                 *expected,
                 "{relative} must classify as {}",
-                expected.label()
+                expected.what()
             ),
             Err(errors) => panic!(
                 "{relative} fails `artifact check`:\n  {}",
@@ -372,16 +538,28 @@ fn every_committed_artifact_passes_the_artifact_alone_check() {
     }
 }
 
-/// Coverage invariant: the list above is the WHOLE set of committed artifacts.
-/// A new JSON fixture carrying a root-level `formatVersion` that is not in
-/// [`COMMITTED_ARTIFACTS`] fails here by name, so the gate cannot be quietly
-/// outgrown (the `entity_specs_run_green` coverage discipline, applied to
-/// artifacts).
+/// Coverage invariant: the list above is the WHOLE set of committed artifacts
+/// under `tests/fixtures/`. A new JSON fixture carrying a root-level
+/// `formatVersion` that is not in [`COMMITTED_ARTIFACTS`] fails here by name,
+/// so the gate cannot be quietly outgrown (the `entity_specs_run_green`
+/// coverage discipline, applied to artifacts).
+///
+/// The walk is fail-closed in the other direction too: a `*.json` file under
+/// the fixtures tree that cannot be read or parsed fails by name rather than
+/// being skipped — otherwise a broken new artifact could hide from discovery.
 #[test]
 fn committed_artifact_set_is_complete() {
     let root = fixture_root();
     let mut discovered = BTreeSet::new();
-    collect_artifacts(&root, &root, &mut discovered);
+    let mut unreadable = Vec::new();
+    collect_artifacts(&root, &root, &mut discovered, &mut unreadable);
+
+    assert!(
+        unreadable.is_empty(),
+        "fixture JSON could not be read/parsed (it cannot be classified, so it cannot be \
+         skipped silently): {unreadable:?}"
+    );
+
     let covered: BTreeSet<String> = COMMITTED_ARTIFACTS
         .iter()
         .map(|(relative, _)| (*relative).to_string())
@@ -400,35 +578,53 @@ fn committed_artifact_set_is_complete() {
 }
 
 /// Walks `dir` for `.json` files whose root object carries a `formatVersion`
-/// (the artifact marker). Schema inputs and OpenAPI documents cannot match.
-fn collect_artifacts(root: &Path, dir: &Path, found: &mut BTreeSet<String>) {
+/// (the artifact marker). Schema inputs and OpenAPI documents cannot match; a
+/// file that cannot be read or parsed is recorded in `unreadable`.
+fn collect_artifacts(
+    root: &Path,
+    dir: &Path,
+    found: &mut BTreeSet<String>,
+    unreadable: &mut Vec<String>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     let mut paths: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok())
-        .map(|e| e.path())
+        .map(|entry| entry.path())
         .collect();
     paths.sort();
     for path in paths {
         if path.is_dir() {
-            collect_artifacts(root, &path, found);
+            collect_artifacts(root, &path, found, unreadable);
             continue;
         }
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(relative) = path.strip_prefix(root) else {
             continue;
         };
-        let Ok(Value::Object(root_object)) = serde_json::from_str::<Value>(&text) else {
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) => {
+                unreadable.push(format!("{relative}: {error}"));
+                continue;
+            }
+        };
+        let document = match serde_json::from_str::<Value>(&text) {
+            Ok(document) => document,
+            Err(error) => {
+                unreadable.push(format!("{relative}: {error}"));
+                continue;
+            }
+        };
+        let Value::Object(root_object) = document else {
             continue;
         };
-        if !root_object.contains_key("formatVersion") {
-            continue;
-        }
-        if let Ok(relative) = path.strip_prefix(root) {
-            found.insert(relative.to_string_lossy().replace('\\', "/"));
+        if root_object.contains_key("formatVersion") {
+            found.insert(relative);
         }
     }
 }
@@ -439,9 +635,8 @@ fn collect_artifacts(root: &Path, dir: &Path, found: &mut BTreeSet<String>) {
 /// copy-the-tree hook the shell-level teeth run uses).
 #[test]
 fn a_0_2_era_artifact_is_named_not_diffed() {
-    let artifact = COMMITTED_ARTIFACTS[0].0;
-    let text = std::fs::read_to_string(fixture_root().join(artifact)).expect("fixture readable");
-    let mut legacy: Value = serde_json::from_str(&text).expect("fixture is JSON");
+    let mut legacy: Value =
+        serde_json::from_str(&fixture_text(LIBRARY_DDD)).expect("fixture is JSON");
     let root = legacy.as_object_mut().expect("artifact root is an object");
     root.insert(
         LEGACY_PROVENANCE_KEY.to_string(),
@@ -480,13 +675,12 @@ fn a_0_2_era_instance_discriminator_is_named() {
 }
 
 /// Teeth: a fixture whose marker moves ahead of the pinned `phero-ir` is named
-/// with the found/expected versions (the reader's wording), again over a temp
-/// copy of the real bytes.
+/// with upstream's artifact-check wording — which also says how to fix it —
+/// over a temp copy of the real bytes.
 #[test]
 fn a_newer_format_version_names_the_upgrade() {
-    let artifact = COMMITTED_ARTIFACTS[0].0;
-    let text = std::fs::read_to_string(fixture_root().join(artifact)).expect("fixture readable");
-    let mut bumped: Value = serde_json::from_str(&text).expect("fixture is JSON");
+    let mut bumped: Value =
+        serde_json::from_str(&fixture_text(LIBRARY_DDD)).expect("fixture is JSON");
     bumped
         .as_object_mut()
         .expect("artifact root is an object")
@@ -499,19 +693,22 @@ fn a_newer_format_version_names_the_upgrade() {
     let errors = check_file(&path).expect_err("a newer artifact must fail");
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].contains("unsupported artifact formatVersion: found 99, expected 2"),
-        "the version gate names both versions: {errors:?}"
+        errors[0].contains(
+            "unsupported DDD design artifact formatVersion 99: this tool reads formatVersion 2 \
+             — regenerate the artifact with a matching pherolang version"
+        ),
+        "the version gate is upstream's wording (naming the fix): {errors:?}"
     );
 }
 
 /// A design stripped of its provenance is a contract failure, not a pass:
 /// `pheroVersion` is how a consumer tells a compiler-emitted design from a
-/// hand-edited document.
+/// hand-edited document. Checked on EVERY design artifact (no `application`
+/// precondition) because `DddModel::new` always stamps it.
 #[test]
 fn a_design_without_provenance_is_rejected() {
-    let artifact = COMMITTED_ARTIFACTS[0].0;
-    let text = std::fs::read_to_string(fixture_root().join(artifact)).expect("fixture readable");
-    let mut stripped: Value = serde_json::from_str(&text).expect("fixture is JSON");
+    let mut stripped: Value =
+        serde_json::from_str(&fixture_text(LIBRARY_DDD)).expect("fixture is JSON");
     let root = stripped
         .as_object_mut()
         .expect("artifact root is an object");
@@ -526,15 +723,88 @@ fn a_design_without_provenance_is_rejected() {
         errors.iter().any(|e| e.contains("pheroVersion")),
         "the violation names the missing provenance: {errors:?}"
     );
+
+    // A modules-only design (no `application`) is held to the same rule — the
+    // check is not gated on the design carrying an application.
+    let modules_only = r#"{"formatVersion": 2, "modules": []}"#;
+    let errors = check_artifact(modules_only).expect_err("modules-only design still needs it");
+    assert!(
+        errors.iter().any(|e| e.contains("pheroVersion")),
+        "the modules-only arm is covered too: {errors:?}"
+    );
 }
 
-/// Anything that is not a known artifact fails closed rather than passing as
-/// "unrecognized".
+/// Teeth: renaming a camelCase structural key to snake_case is caught. The
+/// readers ignore unknown fields, so without this scan `never_both` would load
+/// and the `neverBoth` policy would be silently dropped.
 #[test]
-fn an_unrecognized_document_fails_closed() {
+fn a_snake_case_structural_key_is_named() {
+    let mut renamed: Value =
+        serde_json::from_str(&fixture_text(SOD_ACTOR)).expect("fixture is JSON");
+    let blocks = renamed
+        .get_mut("blocks")
+        .and_then(Value::as_array_mut)
+        .expect("the actor fixture carries blocks");
+    let block = blocks[0].as_object_mut().expect("a block is an object");
+    let never_both = block
+        .remove("neverBoth")
+        .expect("the actor fixture declares neverBoth");
+    block.insert("never_both".to_string(), never_both);
+
+    let errors = check_artifact(&serde_json::to_string(&renamed).unwrap())
+        .expect_err("a snake_case structural key must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("never_both") && e.contains("neverBoth")),
+        "the violation names both spellings: {errors:?}"
+    );
+}
+
+/// Teeth (against upstream's rule 11): a `formatVersion`-bearing root whose
+/// only key is an unknown one is `unrecognized`, never an actor artifact —
+/// accepting it would validate a document whose payload the readers drop.
+#[test]
+fn an_unknown_root_shape_is_unrecognized() {
+    let errors = check_artifact(r#"{"formatVersion": 2, "nobodyKnowsMe": true}"#)
+        .expect_err("an unknown root shape must not pass as an actor artifact");
+    assert!(
+        errors[0].starts_with("unrecognized artifact: no known root shape"),
+        "{errors:?}"
+    );
+
+    // The canonical minimal-empty actor artifact (the marker alone) IS
+    // recognized — the strictness above must not swallow upstream's rule 11.
+    assert_eq!(
+        check_artifact(r#"{"formatVersion": 2}"#).expect("the marker alone is the actor artifact"),
+        ArtifactKind::ActorModel
+    );
+
     let errors = check_artifact(r#"{"hello": "world"}"#).expect_err("not an artifact");
-    assert_eq!(errors, vec!["unrecognized artifact".to_string()]);
+    assert!(errors[0].starts_with("unrecognized artifact"), "{errors:?}");
 
     let errors = check_artifact("not json at all").expect_err("not JSON");
     assert!(errors[0].starts_with("not valid JSON:"), "{errors:?}");
+}
+
+/// Teeth: a named collection whose entry carries no usable `name` is rejected
+/// (upstream's `check_named_array`) — the readers would accept it and the
+/// entity would be nameless downstream.
+#[test]
+fn a_named_array_entry_without_a_name_is_rejected() {
+    let errors = check_artifact(r#"{"formatVersion": 2, "events": [{"name": ""}]}"#)
+        .expect_err("a nameless event must fail");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("events[0] \"name\" must be a non-empty string")),
+        "the violation names the collection, its index and the field: {errors:?}"
+    );
+
+    let errors = check_artifact(r#"{"formatVersion": 2, "events": [{}]}"#)
+        .expect_err("an event with no name key at all must fail");
+    assert!(
+        errors.iter().any(|e| e.contains("is missing \"name\"")),
+        "{errors:?}"
+    );
 }

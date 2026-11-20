@@ -882,6 +882,7 @@ dependencies = [
  "hotpath",
  "insta",
  "pathdiff",
+ "phero-backend-common",
  "phero-driver",
  "phero-expr",
  "phero-ifml",
@@ -3231,6 +3232,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3673cba5b9a124916096a423b806a9f29620972c6c97b08db5f2053e9428b481"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "phero-backend-common"
+version = "0.4.0"
+source = "git+https://github.com/yestechgroup/pherolang.git?rev=4f497e17a73ad94ba47d3a2ad2349b23e6aa6257#4f497e17a73ad94ba47d3a2ad2349b23e6aa6257"
+dependencies = [
+ "anyhow",
+ "serde_json",
 ]
 
 [[package]]
