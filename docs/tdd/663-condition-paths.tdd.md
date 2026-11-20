@@ -37,7 +37,7 @@ Fixture authoring notes (two upstream constraints the first attempt hit):
 
 ## Teeth
 
-- Compile gate (its own binary — #746): first run caught the design-op override missing rust-name lookups (E0599 on a design without `delete`); reverted-gate run fails with the emitted file list.
+- Compile gate (`service_ops_compile_gate`, same binary as the payroll/release legs since #746): first run caught the design-op override missing rust-name lookups (E0599 on a design without `delete`); reverted-gate run fails with the emitted file list.
 - The planner verdict KATs are hand-built scopes + conditions — breaking `collect_injected_comparisons`' plain-AND context (the first cut) fails `undecided_comparisons_omit_the_leg_never_guess`.
 
 ## Deliberately not done

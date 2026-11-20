@@ -20,18 +20,21 @@
 //! Path deps (`dependency_strategy = "path"`, issue #347) keep the gate
 //! network-free. Skips gracefully when `cargo` is absent.
 //!
+//! The injected-scope `when` leg (issue #663) also lives here: every leg in
+//! this binary now runs against a PER-RUN type registry (issue #746), so
+//! fixtures that declare the same class titles (`PayRunType`) in different
+//! domains no longer resolve each other's module paths.
+//!
+//! History: that leg originally shipped as its own test binary
+//! (`service_ops_injected_guard_gate.rs`) — the workaround for the
+//! process-global `TYPE_REGISTRY` shared by every `driver::run` in one
+//! process. #746 retired the workaround (the registry lives on
+//! `GeneratorContext` per run) and merged the leg back here, where it is
+//! the isolation proof for the payroll/release fixtures.
+//!
 //! ```text
 //! cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
 //! ```
-//!
-//! The injected-scope `when` leg (issue #663) lives in its OWN test binary
-//! (`service_ops_injected_guard_gate.rs`): the process-global
-//! `TYPE_REGISTRY` (type_registry.rs) is shared by every `driver::run` in
-//! one process, and this file's legs run the PAYROLL fixture — a second,
-//! different-domain fixture declaring the same class titles
-//! (`PayRunType`) would resolve the first registrant's module paths.
-//! TODO(#746): per-run type registry (the process-global is a concurrency
-//! hazard for any two parallel generations).
 
 #[path = "service_ops_fixture.rs"]
 mod fixture;
@@ -40,7 +43,8 @@ use std::fs;
 use std::path::Path;
 
 use fixture::{
-    DOMAINS_TOML, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, gate_tempdir, ingest, write_fixture_in,
+    DOMAINS_TOML, PAY_RUN_MOX, PAY_RUN_SCHEMA, PAYROLL_DDD, gate_tempdir, ingest, ingest_guard,
+    write_fixture_in, write_guard_fixture,
 };
 
 /// The fixture profiles: the workspace default with path deps (the gate
@@ -434,4 +438,77 @@ async fn generated_app_with_design_invariants_compiles() {
 
     codegraph::driver::check_generated_output(&output)
         .expect("the generated app with design invariants must pass the compile gate");
+}
+
+/// Issue #663 (the #551 policy): the injected-scope `when` plane compiles —
+/// the async authorize fn (`&AppState` + `&ApiKeyInfo` params, the
+/// own-record FK extraction, the sibling query slot's `find_by_id` load,
+/// and the scoped comparison) compiles against the generated app exactly
+/// like the synchronous own-record gate does.
+///
+/// Issue #746: this leg lives in the SAME binary as the payroll/release legs
+/// on purpose — the guard fixture declares `PayRunType` in `guardpay` while
+/// the payroll fixture declares it in `payroll`, so it is the proof that
+/// per-run type registries keep sibling generations isolated.
+#[tokio::test]
+#[ignore = "slow: cargo check over the generated app; needs the full dep stack"]
+async fn generated_app_with_injected_guard_compiles() {
+    let fixture = write_guard_fixture();
+    let _engine = ingest_guard(&fixture).await;
+
+    let out_dir = gate_tempdir();
+    let output = out_dir.path().join("app");
+    fs::create_dir_all(&output).unwrap();
+    let fixture_root = fixture.config.parent().unwrap().to_path_buf();
+    let profiles_path = write_profiles(&fixture_root);
+
+    codegraph::driver::run(codegraph::driver::RunArgs {
+        schemas: None,
+        classifier: None,
+        config_path: &fixture.config,
+        output: &output,
+        extension_points_path: None,
+        integration_manifests: &[],
+        profile_name: "default",
+        variant: None,
+        profiles_config_path: Some(profiles_path),
+        no_post_gen: true,
+        template_dir: &[],
+        ifml_files: &[],
+        openapi_files: &[],
+        mox_files: std::slice::from_ref(&fixture.mox),
+        rosetta_files: &[],
+        ddd_files: std::slice::from_ref(&fixture.ddd),
+        evt_files: &[],
+        deploy_files: &[],
+        ifml_framework: &[],
+        ifml_components: None,
+        ifml_design_system: None,
+        codegraph_rev: None,
+        check: false,
+        ux_rules: None,
+    })
+    .await
+    .expect("generation over the guard fixture must succeed");
+
+    // The async gate must be ON DISK before the build spend: the sibling
+    // query slot spelling and the FK field are compile-coupled (a misspelt
+    // slot or DTO field is an E0560, not a silent seam).
+    let handler = fs::read_to_string(output.join("src/api/guardpay/pay_run_handler.rs"))
+        .expect("the guarded handler must emit");
+    assert!(
+        handler.contains("async fn service_op_submit_authorize"),
+        "the injected guard must render the async authorize fn:\n{handler}"
+    );
+    assert!(
+        handler.contains("state.guardpay_timecard_queries"),
+        "the load must ride the injected entity's query slot:\n{handler}"
+    );
+    assert!(
+        handler.contains("response.timecard_id"),
+        "the id must come from the own-record FK:\n{handler}"
+    );
+
+    codegraph::driver::check_generated_output(&output)
+        .expect("the generated app with an injected-scope guard must compile");
 }

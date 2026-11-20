@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
@@ -9,9 +10,10 @@ use crate::capabilities::{Capability, CapabilitySet};
 use crate::db;
 use crate::db::dialect::{DatabaseTarget, SqlDialect, dialect_for_target};
 use crate::error::{Error, Result};
+use crate::ordering::compute_generation_order;
 use crate::output::reports_config_dir;
-use crate::project_config::{GeneratorOpts, ProjectConfig};
-use crate::type_registry;
+use crate::project_config::{GenerationEntry, GeneratorOpts, ProjectConfig};
+use crate::type_registry::TypeRegistryHandle;
 
 /// Shared, immutable setup for one generator run.
 ///
@@ -67,6 +69,15 @@ pub(crate) struct GeneratorContext<'a> {
     /// to the project config (default: monolith) when no plan is provided.
     pub(crate) workers_topology: bool,
     pub(crate) capability_registry: crate::profile::CapabilityRegistry,
+    /// This run's type registry (issue #746) — created once in
+    /// [`build_generator_context`] and threaded into the generators that
+    /// register types or resolve imports. Pipeline runs NEVER touch the
+    /// ambient registry.
+    pub(crate) type_registry: TypeRegistryHandle,
+    /// This run's deterministic generation order (issue #332), computed once
+    /// here so entity-type pre-registration follows the SAME title-claim
+    /// precedence the generators emit against (issue #746 F1).
+    pub(crate) generation_order: Vec<GenerationEntry>,
 }
 
 impl GeneratorContext<'_> {
@@ -78,6 +89,16 @@ impl GeneratorContext<'_> {
     /// A fresh dialect instance for the configured database target.
     pub(crate) fn make_dialect(&self) -> Box<dyn SqlDialect> {
         dialect_for_target(self.current_target)
+    }
+
+    /// This run's type registry (issue #746).
+    pub(crate) fn type_registry(&self) -> &TypeRegistryHandle {
+        &self.type_registry
+    }
+
+    /// This run's deterministic generation order.
+    pub(crate) fn generation_order(&self) -> &[GenerationEntry] {
+        &self.generation_order
     }
 
     /// Whether the entity generator `name` runs for this build plan.
@@ -150,8 +171,6 @@ pub(crate) async fn build_generator_context<'a>(
         domain_config_dir,
     } = opts;
 
-    type_registry::init_type_registry();
-
     // Create the database dialect based on project config.
     let current_target = project.database.database_target;
 
@@ -163,13 +182,33 @@ pub(crate) async fn build_generator_context<'a>(
     // graph queries during generation.
     cached_db.warm().await.map_err(Error::Graph)?;
 
-    // Register framework types so generators can resolve them without hard-coded paths.
-    type_registry::register_framework_types();
+    // Deterministic generation order (issue #332), computed HERE because
+    // the entity-type pre-registration below must follow the same title-claim
+    // precedence the generators emit against (issue #746 F1). The pipeline
+    // reuses this order rather than recomputing it.
+    let generation_order = compute_generation_order(&cached_db, config).await?;
 
+    // Issue #746: ONE registry for this run — seeded with the framework
+    // types and the config's entity types, then threaded into the
+    // registry-consuming generators via the context. Nothing here touches
+    // the process-ambient registry, so parallel/sequential runs in one
+    // process cannot resolve each other's module paths.
+    let type_registry = TypeRegistryHandle::with_framework_types();
+    // F4: a consumer that seeded the pre-#746 ambient registry must not
+    // silently believe those registrations reach this run.
+    if let Some(count) = crate::type_registry::ambient_registration_count()
+        && count > 0
+    {
+        eprintln!(
+            "warning: type-registry: {count} ambient registration(s) do not affect \
+             pipeline runs (issue #746); construct generators directly or pass a \
+             TypeRegistryHandle"
+        );
+    }
     // Pre-register all expected entity types so types from entities later in
     // the generation order (e.g. CertificationResponse referenced by Person's
     // include DTOs) are resolvable when earlier entities process their imports.
-    register_entity_types(config);
+    register_entity_types(config, &type_registry, &generation_order);
 
     let capabilities = derive_capabilities(build_plan, domain_config_dir);
 
@@ -214,6 +253,8 @@ pub(crate) async fn build_generator_context<'a>(
         migration_strategy,
         workers_topology,
         capability_registry,
+        type_registry,
+        generation_order,
     })
 }
 
@@ -329,56 +370,118 @@ fn derive_capabilities(
 /// Pre-register all expected entity types so types from entities later in
 /// the generation order (e.g. CertificationResponse referenced by Person's
 /// include DTOs) are resolvable when earlier entities process their imports.
-fn register_entity_types(config: &DomainConfig) {
-    let suffix = &config.defaults.type_suffix;
-    for (domain_name, domain_entry) in &config.domains {
-        for entity_title in &domain_entry.entities {
-            // Match the naming used by the DTO generators: strip the configured
-            // suffix, then PascalCase what remains (titles may contain spaces,
-            // e.g. "Validation Issue" -> "ValidationIssue").
-            let entity_name = codegraph_naming::to_pascal_case(&codegraph_naming::strip_suffix(
-                entity_title,
-                suffix,
-            ));
-            let module_name = codegraph_naming::to_snake_case(&entity_name);
-            let base = || -> Vec<String> {
-                vec![
-                    "crate".into(),
-                    "domain".into(),
-                    domain_name.clone(),
-                    module_name.clone(),
-                ]
-            };
-            type_registry::register_type(
-                &format!("{}Response", entity_name),
-                [base(), vec!["dto_response".into()]].concat(),
-            );
-            type_registry::register_type(
-                &format!("{}LinkedResponse", entity_name),
-                [base(), vec!["dto_response".into()]].concat(),
-            );
-            type_registry::register_type(
-                &format!("{}Repository", entity_name),
-                [base(), vec!["repository".into()]].concat(),
-            );
-            type_registry::register_type(
-                &format!("Create{}Request", entity_name),
-                [base(), vec!["dto_create".into()]].concat(),
-            );
-            type_registry::register_type(
-                &format!("Update{}Request", entity_name),
-                [base(), vec!["dto_update".into()]].concat(),
-            );
-            type_registry::register_type(
-                &format!("{}WithIncludeResponse", entity_name),
-                [base(), vec!["dto_included".into()]].concat(),
-            );
-            type_registry::register_type(
-                &format!("{}IncludedData", entity_name),
-                [base(), vec!["dto_included".into()]].concat(),
-            );
+///
+/// Determinism and ownership (issue #746 F1): the registry is keyed by type
+/// NAME, and a title may legitimately be carried by more than one domain
+/// (the documented `PositionType` common+screening shape). Registration
+/// therefore follows [`compute_generation_order`]'s title claim — each title
+/// is registered exactly ONCE, for the domain that actually emits the
+/// entity. Letting `config.domains`' `HashMap` iteration pick the first
+/// registrant was nondeterministic and could point generated imports at a
+/// domain that is never emitted (E0433).
+fn register_entity_types(
+    config: &DomainConfig,
+    registry: &TypeRegistryHandle,
+    generation_order: &[GenerationEntry],
+) {
+    // Titles the config explicitly lists, plus a deterministic fallback
+    // owner (first listing domain in sorted-name order) for titles the
+    // order never emits — missing schema, excluded, or force-VO. Master
+    // registered those too; dropping them would be an unrelated change.
+    let mut configured_titles: HashSet<&str> = HashSet::new();
+    let mut fallback_owner: HashMap<&str, &str> = HashMap::new();
+    let mut domain_names: Vec<&String> = config.domains.keys().collect();
+    domain_names.sort();
+    for domain_name in &domain_names {
+        for entity_title in &config.domains[*domain_name].entities {
+            configured_titles.insert(entity_title.as_str());
+            fallback_owner
+                .entry(entity_title.as_str())
+                .or_insert(domain_name.as_str());
         }
     }
+
+    let mut registered: HashSet<&str> = HashSet::new();
+    // 1) The EMITTED owner of every configured title, in generation order.
+    for entry in generation_order {
+        if !configured_titles.contains(entry.schema_title.as_str())
+            || !registered.insert(entry.schema_title.as_str())
+        {
+            continue;
+        }
+        register_entity_type(
+            registry,
+            &config.defaults.type_suffix,
+            &entry.schema_title,
+            &entry.domain,
+        );
+    }
+    // 2) Configured titles the order never emits, in sorted-domain/config
+    // order (deterministic first-listing owner).
+    for domain_name in &domain_names {
+        for entity_title in &config.domains[*domain_name].entities {
+            if !registered.insert(entity_title.as_str()) {
+                continue;
+            }
+            let owner = fallback_owner
+                .get(entity_title.as_str())
+                .copied()
+                .unwrap_or(domain_name.as_str());
+            register_entity_type(registry, &config.defaults.type_suffix, entity_title, owner);
+        }
+    }
+}
+
+/// Register the seven cross-generator names for one entity title under
+/// `domain_name`.
+fn register_entity_type(
+    registry: &TypeRegistryHandle,
+    suffix: &str,
+    entity_title: &str,
+    domain_name: &str,
+) {
+    // Match the naming used by the DTO generators: strip the configured
+    // suffix, then PascalCase what remains (titles may contain spaces,
+    // e.g. "Validation Issue" -> "ValidationIssue").
+    let entity_name =
+        codegraph_naming::to_pascal_case(&codegraph_naming::strip_suffix(entity_title, suffix));
+    let module_name = codegraph_naming::to_snake_case(&entity_name);
+    let base = || -> Vec<String> {
+        vec![
+            "crate".into(),
+            "domain".into(),
+            domain_name.to_string(),
+            module_name.clone(),
+        ]
+    };
+    registry.register_type(
+        &format!("{}Response", entity_name),
+        [base(), vec!["dto_response".into()]].concat(),
+    );
+    registry.register_type(
+        &format!("{}LinkedResponse", entity_name),
+        [base(), vec!["dto_response".into()]].concat(),
+    );
+    registry.register_type(
+        &format!("{}Repository", entity_name),
+        [base(), vec!["repository".into()]].concat(),
+    );
+    registry.register_type(
+        &format!("Create{}Request", entity_name),
+        [base(), vec!["dto_create".into()]].concat(),
+    );
+    registry.register_type(
+        &format!("Update{}Request", entity_name),
+        [base(), vec!["dto_update".into()]].concat(),
+    );
+    registry.register_type(
+        &format!("{}WithIncludeResponse", entity_name),
+        [base(), vec!["dto_included".into()]].concat(),
+    );
+    registry.register_type(
+        &format!("{}IncludedData", entity_name),
+        [base(), vec!["dto_included".into()]].concat(),
+    );
 }
 
 /// Compute the output roots for `.codegraph-manifest.json` emission: the main
@@ -423,4 +526,253 @@ pub(crate) fn build_manifest_roots(ctx: &GeneratorContext<'_>) -> Vec<PathBuf> {
     }
 
     roots
+}
+
+#[cfg(test)]
+mod type_registry_tests {
+    //! Issue #746 F1: entity-type pre-registration is DETERMINISTIC and
+    //! winner-consistent with `compute_generation_order`. A title carried by
+    //! two domains must register once — under the domain that actually emits
+    //! it — so generated imports cannot flip run-to-run or point at a domain
+    //! that is never emitted.
+
+    use std::path::Path;
+
+    use codegraph_config::{UiDomainConfig, UiOverrideConfig};
+    use codegraph_core::mock::MockEngine;
+    use codegraph_core::types::SchemaNode;
+
+    use super::*;
+
+    fn candidate_schema(domain: &str) -> SchemaNode {
+        SchemaNode {
+            schema_id: format!("{domain}/CandidateType"),
+            title: "CandidateType".to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity".to_string(),
+            domain: Some(domain.to_string()),
+            namespace: None,
+            rel_path: format!("{domain}/CandidateType.json"),
+            pg_type: "TABLE".to_string(),
+            rust_type: "Candidate".to_string(),
+            sea_orm_type: "Entity".to_string(),
+            rust_type_name: "Candidate".to_string(),
+            pg_table_name: "candidate".to_string(),
+            api_path_segment: "candidates".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
+        }
+    }
+
+    fn config(toml_text: &str) -> DomainConfig {
+        toml::from_str(toml_text).expect("config parses")
+    }
+
+    /// The inputs `build_generator_context` needs, grouped so the helper
+    /// stays a plain function rather than an eight-positional-argument call.
+    struct CtxInputs<'a> {
+        engine: &'a MockEngine,
+        config: &'a DomainConfig,
+        tera: &'a Tera,
+        output_dir: &'a Path,
+        schema_base: &'a Path,
+        ui_overrides: &'a UiOverrideConfig,
+        ui_domains: &'a UiDomainConfig,
+        project: &'a ProjectConfig,
+    }
+
+    async fn build_ctx<'a>(inputs: CtxInputs<'a>) -> GeneratorContext<'a> {
+        build_generator_context(
+            GeneratorOpts {
+                db: inputs.engine,
+                config: inputs.config,
+                output_dir: inputs.output_dir,
+                tera: inputs.tera,
+                ui_overrides: inputs.ui_overrides,
+                ui_domains: inputs.ui_domains,
+                schema_base_dir: inputs.schema_base,
+                seed_config: None,
+                domain_types_base: None,
+                hooks_base: None,
+                ext_points: None,
+                integration_manifests: None,
+                build_plan: None,
+                profile_name: "default",
+                ifml_frameworks: Vec::new(),
+                ifml_components: None,
+                ux_rules: None,
+                project_config: None,
+                emdash_plugins: None,
+                domain_config_dir: None,
+            },
+            inputs.project,
+        )
+        .await
+        .expect("context builds")
+    }
+
+    fn resolved_candidate(ctx: &GeneratorContext<'_>) -> Vec<String> {
+        ctx.type_registry()
+            .resolve_imports(&["CandidateResponse".to_string()], &[])
+    }
+
+    /// The documented duplicate-title shape: several domains explicitly list
+    /// the same title. `compute_generation_order` claims it for the first
+    /// domain in ITS order (`DomainRegistry::topological_order` reverses the
+    /// sorted Kahn output, so the lexicographically LAST independent domain
+    /// comes first); registration must agree, every time.
+    ///
+    /// Four claiming domains is deliberate: the pre-#746 code iterated
+    /// `config.domains` (a `HashMap`) and let the first registrant win, so it
+    /// would agree with the emitted domain only ~(1/4)^4 of 4-run sequences.
+    #[tokio::test]
+    async fn duplicate_title_registers_once_for_the_emitted_domain() {
+        let engine = MockEngine::builder()
+            .with_schema(candidate_schema("common"))
+            .build();
+        let config = config(
+            r#"
+[domains.common]
+label = "Common"
+schema_dir = "schemas/common"
+postgres_schema = "common"
+entities = ["CandidateType"]
+
+[domains.dup]
+label = "Dup"
+schema_dir = "schemas/common"
+postgres_schema = "dup"
+entities = ["CandidateType"]
+
+[domains.extra]
+label = "Extra"
+schema_dir = "schemas/common"
+postgres_schema = "extra"
+entities = ["CandidateType"]
+
+[domains.final]
+label = "Final"
+schema_dir = "schemas/common"
+postgres_schema = "final"
+entities = ["CandidateType"]
+"#,
+        );
+        let tera = crate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+        let out = tempfile::tempdir().expect("tempdir");
+        let ui_overrides = UiOverrideConfig::default();
+        let ui_domains = UiDomainConfig::default();
+        let project = ProjectConfig::default();
+
+        let expected = vec![
+            "use crate::domain::final::candidate::dto_response::CandidateResponse;".to_string(),
+        ];
+        let mut seen: Vec<Vec<String>> = Vec::new();
+        for _ in 0..4 {
+            let ctx = build_ctx(CtxInputs {
+                engine: &engine,
+                config: &config,
+                tera: &tera,
+                output_dir: out.path(),
+                schema_base: out.path(),
+                ui_overrides: &ui_overrides,
+                ui_domains: &ui_domains,
+                project: &project,
+            })
+            .await;
+            let emitted_domain = ctx
+                .generation_order()
+                .iter()
+                .find(|e| e.schema_title == "CandidateType")
+                .map(|e| e.domain.clone())
+                .expect("the title is emitted");
+            assert_eq!(
+                emitted_domain, "final",
+                "the first domain in compute_generation_order claims the title"
+            );
+            assert_eq!(
+                resolved_candidate(&ctx),
+                expected,
+                "the registry must register the title for the EMITTED domain"
+            );
+            assert!(
+                ctx.type_registry().conflict_messages().is_empty(),
+                "one registration per title means no conflict diagnostics"
+            );
+            seen.push(resolved_candidate(&ctx));
+        }
+        assert!(
+            seen.windows(2).all(|w| w[0] == w[1]),
+            "registration must be identical across runs: {seen:?}"
+        );
+    }
+
+    /// Explicit config beats graph discovery (the cross-domain allOf shape):
+    /// the schema physically lives in `zeta` (the FIRST domain in
+    /// `compute_generation_order`, so it claims the title by discovery), but
+    /// `alpha` explicitly lists it — the order reassigns the claim to
+    /// `alpha`, so that is what must be registered. A plain "sorted listing
+    /// domain wins" shortcut would pick `alpha` here by luck only; with the
+    /// discovery domain first this test proves registration follows the
+    /// order's reassignment, not the listing order.
+    #[tokio::test]
+    async fn explicit_domain_claim_wins_over_graph_discovery() {
+        let engine = MockEngine::builder()
+            .with_schema(candidate_schema("zeta"))
+            .build();
+        let config = config(
+            r#"
+[domains.alpha]
+label = "Alpha"
+schema_dir = "schemas/alpha"
+postgres_schema = "alpha"
+entities = ["CandidateType"]
+
+[domains.zeta]
+label = "Zeta"
+schema_dir = "schemas/zeta"
+postgres_schema = "zeta"
+"#,
+        );
+        let tera = crate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+        let out = tempfile::tempdir().expect("tempdir");
+        let ui_overrides = UiOverrideConfig::default();
+        let ui_domains = UiDomainConfig::default();
+        let project = ProjectConfig::default();
+
+        let ctx = build_ctx(CtxInputs {
+            engine: &engine,
+            config: &config,
+            tera: &tera,
+            output_dir: out.path(),
+            schema_base: out.path(),
+            ui_overrides: &ui_overrides,
+            ui_domains: &ui_domains,
+            project: &project,
+        })
+        .await;
+        let emitted_domain = ctx
+            .generation_order()
+            .iter()
+            .find(|e| e.schema_title == "CandidateType")
+            .map(|e| e.domain.clone())
+            .expect("the title is emitted");
+        assert_eq!(emitted_domain, "alpha");
+        assert_eq!(
+            resolved_candidate(&ctx),
+            vec![
+                "use crate::domain::alpha::candidate::dto_response::CandidateResponse;".to_string()
+            ]
+        );
+        assert!(ctx.type_registry().conflict_messages().is_empty());
+    }
 }

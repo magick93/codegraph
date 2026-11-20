@@ -13,6 +13,7 @@ use crate::error::Result;
 use crate::filter_fields::{FilterFieldInfo, resolve_filter_fields};
 use crate::render_template_with_project;
 use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
+use crate::type_registry::TypeRegistryHandle;
 use codegraph_config::DomainConfig;
 
 use super::repository_emitter::RepositoryImplEmitter;
@@ -60,6 +61,10 @@ pub struct RepositoryContext {
 pub struct RepositoryTraitGenerator {
     output_dir: PathBuf,
     parent_candidates: Vec<ParentCandidate>,
+    /// This run's type registry (issue #746). Defaults to the ambient
+    /// registry for direct construction; the pipeline injects the run's own
+    /// handle via [`Self::with_type_registry`].
+    type_registry: TypeRegistryHandle,
 }
 
 impl RepositoryTraitGenerator {
@@ -67,7 +72,14 @@ impl RepositoryTraitGenerator {
         Self {
             output_dir: output_dir.to_path_buf(),
             parent_candidates: Vec::new(),
+            type_registry: TypeRegistryHandle::ambient(),
         }
+    }
+
+    /// Use `registry` for the emitted implementation's import resolution.
+    pub fn with_type_registry(mut self, registry: TypeRegistryHandle) -> Self {
+        self.type_registry = registry;
+        self
     }
 
     pub fn with_parent_candidates(mut self, candidates: Vec<ParentCandidate>) -> Self {
@@ -326,7 +338,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
         if !project.is_cornucopia() {
             let emitter = RepositoryImplEmitter;
             let impl_content = emitter
-                .emit(
+                .emit_with_registry(
                     db,
                     schema_title,
                     &domain,
@@ -334,6 +346,7 @@ impl EntityGenerator for RepositoryTraitGenerator {
                     parent_ref.as_deref(),
                     &include_paths,
                     project,
+                    &self.type_registry,
                 )
                 .await?;
             files.push(GeneratedFile {

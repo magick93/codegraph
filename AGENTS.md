@@ -796,7 +796,9 @@ the suite as hard in either direction). The evaluator lives in
   text). Silent for every entity without invariants — byte-identical
   contract (`hurl_contract_tests` goldens hold, no re-bless).
 - **The live gate** `ddd_invariants_live_gate` (ignored, OWN test binary
-  — the #663 TYPE_REGISTRY isolation precedent, TODO(#746); modeled on
+  — its fixture must not collide with `review_api_suite`'s shared review
+  fixture; since #746 this is a fixture-ownership reason, not a
+  type-registry one); modeled on
   `service_ops_hurl_gate`): own fixture (the review fixture is shared
   with `review_api_suite` and must not move), persistent gate dir with
   the generated SOURCE deleted first (#687), driver regen → GateDb
@@ -1297,10 +1299,11 @@ own-record field".
   mixed-machine-and-undecidable KAT — both round-2 review
   counterexamples),
   `--test ddd_ingest_tests`, `--test artifact_kit_tests` (the bump),
-  `--test service_ops_injected_guard_gate -- --ignored` (its own test
-  BINARY — the #551 pin: the emitted async handler must compile; the
-  process-global `TYPE_REGISTRY` (#746) forced the isolation after its
-  first runs caught the design-op override missing rust-name lookups),
+  `--test service_ops_compile_gate -- --ignored` (the #551 pin: the emitted
+  async handler must compile in the SAME binary as the payroll/release
+  legs — the injected-guard leg declares `PayRunType` in a different
+  domain, proving the per-run type registry (#746); its first runs caught
+  the design-op override missing rust-name lookups),
   plus the standing canaries (flag-off byte-identical, no re-bless).
 - **Deferred**: a class-typed service-parameter arm as the id source
   (today's source is the own-record FK only); `db/expr_sql.rs` policy-
@@ -5640,6 +5643,14 @@ decision-gated.
 
 - **Files ≤ 2,000 lines.** Enforced by `crates/codegraph/tests/file_length_contract.rs` — a plain test in the CI `test` job (clippy has no file-length lint) walking `crates/*/src/**/*.rs`. Seven pre-existing over-limit files are allow-listed in that test as tracked follow-ups; a stale allow entry (its file now under the limit) FAILS the test, so the list can only shrink. Integration-test directories (`crates/*/tests/`) and nested fixture src trees (`crates/review/generated-candidate/**`, `crates/*/tests/fixtures/**`) are out of scope (generator output, not hand-maintained source). When a file outgrows the limit, split it into a directory module — `ddd/service_ops/` and `db/ddl/query/` are the reference shapes (mod.rs re-exports preserve every public path).
 - **Functions ≤ 400 lines.** `clippy::too_many_lines` is enforced via `-D clippy::too_many_lines` in the CI lint job, with `too-many-lines-threshold = 400` in the workspace `clippy.toml` (the default 100 flags ~500 functions here; 300 flags 17). All twelve pre-existing `#[allow(clippy::too_many_lines)] // TODO(#751)` markers were retired by PR #755 (wave 1) — zero allows remain under `crates/*/src`; a function outgrowing 400 lines must split, never re-allow. The build-script-generated `embedded_templates.rs` carries its allow at generation time (`crates/codegraph-generate/build.rs`).
+
+### Type registry lifecycle (issue #746)
+
+`crates/codegraph-generate/src/type_registry.rs` holds the cross-generator type registry **per run**: `run_generators_with_opts` creates one `TypeRegistryHandle` (`Arc<Mutex<InMemoryTypeRegistry>>`) in `build_generator_context`, stores it on `GeneratorContext`, and the registry injects it into the three registry-consuming generators — `DtoGenerator`, `HandlerGenerator`, and `RepositoryTraitGenerator` (the repository plane threads it through `RepositoryImplEmitter::emit_with_registry`). Parallel or sequential generations in one process are isolated; `RepositoryImplEmitter::emit` and the generators' `new()` default to the ambient handle only for direct construction.
+
+Entity-type pre-registration follows `compute_generation_order`'s title claim: each configured title registers ONCE, under the domain that actually emits it (the order is computed in `build_generator_context` and reused by the pipeline), so a title carried by several domains cannot make imports flip run-to-run.
+
+The process-ambient registry remains as a **compatibility surface only**: the free `register_framework_types`/`register_type`/`resolve_imports` shims read/write it, and `init_type_registry()` is a `#[deprecated]` no-op. **Ambient registrations do NOT affect pipeline runs** — a pipeline that starts with a non-empty ambient registry prints `warning: type-registry: N ambient registration(s) do not affect pipeline runs (issue #746)`. Registration conflicts are visible too: the first path wins, and a once-per-name `warning: type-registry: …` line on stderr names both module paths (`TypeRegistryHandle::conflict_messages` records the same diagnostics for tests — `tracing` is invisible without RUST_LOG, so generation diagnostics use the `eprintln!` convention).
 
 ## Dependency policy (#426)
 

@@ -11,7 +11,7 @@ use crate::api::include_path::{ResolvedIncludePath, resolve_include_paths_gated}
 use crate::code_writer::{CodeWriter, wln};
 use crate::error::Result;
 use crate::filter_fields::{resolve_filter_fields, resolve_nested_filter_fields};
-use crate::type_registry;
+use crate::type_registry::TypeRegistryHandle;
 
 use super::child::flatten_child_tables;
 use super::context::{
@@ -78,6 +78,9 @@ struct IncludeSegments {
 /// Everything the include-path emission needs (extracted from `emit`,
 /// issue #751); replaces a >6-argument helper signature.
 struct IncludeEmitContext<'a> {
+    /// The run's type registry (issue #746) — the include emission
+    /// registers include targets and resolves their imports through it.
+    type_registry: &'a TypeRegistryHandle,
     db: &'a dyn GraphQuerier,
     config: &'a DomainConfig,
     project: &'a ProjectConfig,
@@ -347,6 +350,37 @@ impl RepositoryImplEmitter {
         include_paths: &[ResolvedIncludePath],
         project: &ProjectConfig,
     ) -> Result<String> {
+        // Compatibility entry point: directly-constructed emitters (consumer
+        // test harnesses, template tests) resolve through the ambient
+        // registry. The pipeline threads its per-run handle via
+        // [`Self::emit_with_registry`] (issue #746).
+        let type_registry = TypeRegistryHandle::ambient();
+        self.emit_with_registry(
+            db,
+            schema_title,
+            domain,
+            config,
+            parent_ref,
+            include_paths,
+            project,
+            &type_registry,
+        )
+        .await
+    }
+
+    /// [`Self::emit`] with an explicit per-run type registry (issue #746).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn emit_with_registry(
+        &self,
+        db: &dyn GraphQuerier,
+        schema_title: &str,
+        domain: &str,
+        config: &DomainConfig,
+        parent_ref: Option<&str>,
+        include_paths: &[ResolvedIncludePath],
+        project: &ProjectConfig,
+        type_registry: &TypeRegistryHandle,
+    ) -> Result<String> {
         let tree = self
             .query_entity_tree(db, schema_title, domain, config, parent_ref)
             .await?;
@@ -452,6 +486,7 @@ impl RepositoryImplEmitter {
 
         if !include_paths.is_empty() {
             let ctx = IncludeEmitContext {
+                type_registry,
                 db,
                 config,
                 project,
@@ -557,9 +592,12 @@ impl RepositoryImplEmitter {
                 };
                 module.push(last_seg.module_name.clone());
                 module.push("dto_response".into());
-                type_registry::register_type(&format!("{}Response", last_seg.entity_name), module);
+                ctx.type_registry
+                    .register_type(&format!("{}Response", last_seg.entity_name), module);
             }
-            let imports = type_registry::resolve_imports(&include_type_names, &caller_base);
+            let imports = ctx
+                .type_registry
+                .resolve_imports(&include_type_names, &caller_base);
             let mut resolved_names: std::collections::HashSet<String> = imports
                 .iter()
                 .map(|u| {
@@ -642,11 +680,13 @@ impl RepositoryImplEmitter {
             for path in ctx.include_paths {
                 if path.segments.len() > 1 && seen_enriched.insert(path.response_rust_type.clone())
                 {
-                    let already_imported = !type_registry::resolve_imports(
-                        std::slice::from_ref(&path.response_rust_type),
-                        &caller_base,
-                    )
-                    .is_empty();
+                    let already_imported = !ctx
+                        .type_registry
+                        .resolve_imports(
+                            std::slice::from_ref(&path.response_rust_type),
+                            &caller_base,
+                        )
+                        .is_empty();
                     if already_imported {
                         continue;
                     }

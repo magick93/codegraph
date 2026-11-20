@@ -64,7 +64,9 @@ pub(crate) fn build_entity_generators(
         ) as Box<dyn EntityGenerator>,
         Box::new(
             ddd::repository::RepositoryTraitGenerator::new(base("repository"))
-                .with_parent_candidates(parent_candidates.to_vec()),
+                .with_parent_candidates(parent_candidates.to_vec())
+                // Issue #746: the run's own registry — never the ambient one.
+                .with_type_registry(ctx.type_registry().clone()),
         ) as Box<dyn EntityGenerator>,
         Box::new(
             ddd::command::CommandGenerator::new(base("command"))
@@ -76,10 +78,14 @@ pub(crate) fn build_entity_generators(
                 .with_parent_candidates(parent_candidates.to_vec()),
         ) as Box<dyn EntityGenerator>,
         Box::new(ddd::event::EventGenerator::new(base("event"))) as Box<dyn EntityGenerator>,
-        Box::new(ddd::dto::DtoGenerator::new(base("dto"))) as Box<dyn EntityGenerator>,
+        Box::new(
+            ddd::dto::DtoGenerator::new(base("dto"))
+                .with_type_registry(ctx.type_registry().clone()),
+        ) as Box<dyn EntityGenerator>,
         Box::new(
             api::handler::HandlerGenerator::new(base("handler"))
                 .with_parent_candidates(parent_candidates.to_vec())
+                .with_type_registry(ctx.type_registry().clone())
                 // Handler-site eligibility guards (issue #338): the call
                 // targets live in the `rules` generator's module, so the
                 // flag rides the plan. Plan-less runs never emit the
@@ -838,5 +844,173 @@ mod charts_capability_audit {
             "Global capabilities with NO registry constructor (the #577 \
              class — the capability list lies): {missing:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod type_registry_wiring {
+    //! Issue #746 F3: the registry-consuming generators the REGISTRY builds
+    //! must use the run's handle, not the ambient fallback. If any
+    //! `.with_type_registry(...)` wiring is deleted, the per-run handle never
+    //! observes the generator's registrations and this node-free test fails
+    //! (instead of only the slow ignored compile gate).
+
+    use std::path::Path;
+
+    use codegraph_config::{DomainConfig, UiDomainConfig, UiOverrideConfig};
+    use codegraph_core::mock::MockEngine;
+    use codegraph_core::types::{PropertyNode, SchemaNode};
+    use codegraph_type_contracts::RefClassificationKind;
+
+    use super::*;
+    use crate::context::build_generator_context;
+    use crate::project_config::{GeneratorOpts, ProjectConfig};
+    use crate::traits::EntityGeneratorKind;
+
+    fn candidate_schema() -> SchemaNode {
+        SchemaNode {
+            schema_id: "library/CandidateType".to_string(),
+            title: "CandidateType".to_string(),
+            description: None,
+            schema_type: "object".to_string(),
+            classification: "entity".to_string(),
+            domain: Some("library".to_string()),
+            namespace: None,
+            rel_path: "library/CandidateType.json".to_string(),
+            pg_type: "TABLE".to_string(),
+            rust_type: "Candidate".to_string(),
+            sea_orm_type: "Entity".to_string(),
+            rust_type_name: "Candidate".to_string(),
+            pg_table_name: "candidate".to_string(),
+            api_path_segment: "candidates".to_string(),
+            parent_schema: None,
+            is_entity: true,
+            is_codelist: false,
+            is_primitive_wrapper: false,
+            has_all_of: false,
+            has_one_of: false,
+            has_any_of: false,
+            has_definitions: false,
+            custom_annotations: Default::default(),
+            access: None,
+            annotations: None,
+        }
+    }
+
+    fn name_prop() -> PropertyNode {
+        PropertyNode {
+            name: "name".to_string(),
+            prop_type: "string".to_string(),
+            description: None,
+            format: None,
+            is_required: true,
+            is_nullable: false,
+            is_id: false,
+            is_array: false,
+            min_items: None,
+            max_items: None,
+            pattern: None,
+            min_length: None,
+            max_length: None,
+            minimum: None,
+            maximum: None,
+            pg_column_name: "name".to_string(),
+            pg_column_type: "TEXT".to_string(),
+            rust_field_name: "name".to_string(),
+            rust_field_type: "String".to_string(),
+            sea_orm_type: "text".to_string(),
+            render_strategy: "primitive".to_string(),
+            ref_target: None,
+            classification: None,
+            projection: None,
+            classification_kind: Some(RefClassificationKind::PrimitiveWrapper),
+            type_expr: None,
+            ui_override_detail: None,
+            ui_override_list_cell: None,
+            ui_override_form: None,
+            ui_override_inline: None,
+        }
+    }
+
+    /// The title is GRAPH-DISCOVERED only (no `entities` entry), so the
+    /// context pre-registers nothing — every resolved name below can only
+    /// come from the generator's own registrations on the run's handle.
+    #[tokio::test]
+    async fn entity_generators_write_to_the_context_type_registry() {
+        let engine = MockEngine::builder()
+            .with_schema(candidate_schema())
+            .with_properties("CandidateType", vec![name_prop()])
+            .build();
+        let config: DomainConfig = toml::from_str(
+            "[domains.library]\nlabel = \"Library\"\nschema_dir = \"schemas/library\"\npostgres_schema = \"library\"\n",
+        )
+        .expect("config parses");
+        let tera = crate::template_engine::create_tera_with_overrides(&[]).expect("tera");
+        let out = tempfile::tempdir().expect("tempdir");
+        let ui_overrides = UiOverrideConfig::default();
+        let ui_domains = UiDomainConfig::default();
+        let project = ProjectConfig::default();
+
+        let ctx = build_generator_context(
+            GeneratorOpts {
+                db: &engine,
+                config: &config,
+                output_dir: out.path(),
+                tera: &tera,
+                ui_overrides: &ui_overrides,
+                ui_domains: &ui_domains,
+                schema_base_dir: Path::new(""),
+                seed_config: None,
+                domain_types_base: None,
+                hooks_base: None,
+                ext_points: None,
+                integration_manifests: None,
+                build_plan: None,
+                profile_name: "default",
+                ifml_frameworks: Vec::new(),
+                ifml_components: None,
+                ux_rules: None,
+                project_config: None,
+                emdash_plugins: None,
+                domain_config_dir: None,
+            },
+            &project,
+        )
+        .await
+        .expect("context builds");
+
+        assert!(
+            ctx.type_registry()
+                .resolve_imports(&["CandidateResponse".to_string()], &[])
+                .is_empty(),
+            "the fixture must start with nothing pre-registered for a graph-discovered title"
+        );
+
+        let generators = build_entity_generators(&ctx, &[], None);
+        let dto = generators
+            .iter()
+            .find(|g| g.kind() == EntityGeneratorKind::Dto)
+            .expect("the registry builds a DTO generator");
+        dto.generate(
+            ctx.db(),
+            "CandidateType",
+            "library",
+            ctx.config,
+            ctx.tera,
+            ctx.project,
+        )
+        .await
+        .expect("dto generation succeeds");
+
+        assert_eq!(
+            ctx.type_registry()
+                .resolve_imports(&["CandidateResponse".to_string()], &[]),
+            vec![
+                "use crate::domain::library::candidate::dto_response::CandidateResponse;"
+                    .to_string()
+            ],
+            "the DTO generator must register into the context's per-run handle"
+        );
+        assert!(ctx.type_registry().conflict_messages().is_empty());
     }
 }
