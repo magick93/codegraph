@@ -4298,7 +4298,11 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
   (`formatVersion 14` while the constant is 13), NOT derived from
-  `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
+  `GRAPH_FORMAT_VERSION`; so is the IN-CRATE kit KAT literal
+  (`crates/codegraph/src/artifact/kit.rs` `tests::kit_case_rejects_canonical_drift`,
+  a `#cfg(test)` `formatVersion` string the five fixture-name sites do not
+  cover — the #665 bump shipped it stale and CI's `test` job caught it).
+  Only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
   (and the kit case then fails).
