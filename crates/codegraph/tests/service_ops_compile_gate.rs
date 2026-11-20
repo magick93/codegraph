@@ -25,6 +25,13 @@
 //! fixtures that declare the same class titles (`PayRunType`) in different
 //! domains no longer resolve each other's module paths.
 //!
+//! History: that leg originally shipped as its own test binary
+//! (`service_ops_injected_guard_gate.rs`) — the workaround for the
+//! process-global `TYPE_REGISTRY` shared by every `driver::run` in one
+//! process. #746 retired the workaround (the registry lives on
+//! `GeneratorContext` per run) and merged the leg back here, where it is
+//! the isolation proof for the payroll/release fixtures.
+//!
 //! ```text
 //! cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
 //! ```
