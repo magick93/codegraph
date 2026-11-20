@@ -419,6 +419,7 @@ fn execution_maps_repository_builtins_and_save() {
             name: "App".to_string(),
             base: None,
             source_path: "test.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: Vec::new(),
         designs: Vec::new(),
@@ -568,6 +569,7 @@ fn pay_run_model(
             name: "App".to_string(),
             base: None,
             source_path: "test.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: Vec::new(),
         designs: vec![codegraph_core::types::DddDesignNode {
@@ -1526,4 +1528,147 @@ fn scopes_for_test(
     fields: &HashMap<String, FieldInfo>,
 ) -> (&str, &HashMap<String, FieldInfo>, &[InjectedScope]) {
     ("PayRunType", fields, &[])
+}
+
+// ── Declared error vocabulary resolution (DD7, issue #665) ─────────────
+
+fn param(
+    name: &str,
+    type_json: serde_json::Value,
+    multiplicity: Option<serde_json::Value>,
+) -> codegraph_core::types::DddParam {
+    codegraph_core::types::DddParam {
+        name: name.to_string(),
+        type_json,
+        multiplicity,
+    }
+}
+
+fn declared_error_with_fields(
+    name: &str,
+    fields: &[&str],
+) -> crate::ddd::body_lower::DeclaredError {
+    crate::ddd::body_lower::DeclaredError {
+        variant: name.to_string(),
+        code: "PAYMENT_DECLINED".to_string(),
+        status: 422,
+        fields: fields
+            .iter()
+            .map(|f| crate::ddd::body_lower::DeclaredErrorField {
+                name: (*f).to_string(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn throws_responses_group_by_status_and_filter_covered_statuses() {
+    let mut table = crate::ddd::body_lower::RaiseTable::default();
+    table.declared.insert(
+        "PaymentDeclined".to_string(),
+        declared_error_with_fields("PaymentDeclined", &["reason", "reference"]),
+    );
+
+    // Prelude + declared group under their own statuses; 404 (covered by
+    // the base set) drops out entirely.
+    let responses = crate::ddd::service_ops::routes::throws_responses(
+        &table,
+        "declines",
+        "PayRunService",
+        &["NotFound", "PaymentDeclined"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+        &[403, 404],
+    )
+    .expect("resolvable vocabulary");
+    assert_eq!(
+        responses.len(),
+        1,
+        "404 is covered; only 422 documents: {responses:?}"
+    );
+    assert_eq!(responses[0].status, 422);
+    assert_eq!(responses[0].errors, "PaymentDeclined");
+
+    // An uncovered prelude (409 via a machine Conflict) groups alone.
+    let responses = crate::ddd::service_ops::routes::throws_responses(
+        &table,
+        "submit",
+        "PayRunService",
+        &["Conflict"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+        &[403, 404],
+    )
+    .expect("resolvable vocabulary");
+    assert_eq!(responses.len(), 1);
+    assert_eq!(responses[0].status, 409);
+    assert_eq!(responses[0].errors, "Conflict");
+}
+
+#[test]
+fn unresolvable_throws_entry_refuses_naming_the_op_and_entry() {
+    let table = crate::ddd::body_lower::RaiseTable::default();
+    let error = crate::ddd::service_ops::routes::throws_responses(
+        &table,
+        "declines",
+        "PayRunService",
+        &["Bogus".to_string()],
+        &[],
+    )
+    .expect_err("an unresolvable entry refuses");
+    assert!(error.contains("declines"), "{error}");
+    assert!(error.contains("`Bogus`"), "{error}");
+    assert!(error.contains("no declared errors are in scope"), "{error}");
+}
+
+#[test]
+fn error_payload_fields_map_enums_classes_and_refuse_collections() {
+    // Enum payload field → the generated codelist enum.
+    let fields = crate::ddd::errors::error_field_defs(
+        "PaymentDeclined",
+        &[param(
+            "reason",
+            serde_json::json!({"type": "enum", "value": {"package": "payroll", "name": "DeclineReason"}}),
+            None,
+        )],
+    )
+    .expect("enum payload maps");
+    assert_eq!(fields[0].rust_type, "crate::codelist::DeclineReason");
+
+    // Class reference payload field → the `{Class}Id` Uuid slot (#517).
+    let fields = crate::ddd::errors::error_field_defs(
+        "PaymentDeclined",
+        &[param("run", class_type_json("payroll", "PayRun"), None)],
+    )
+    .expect("class payload maps to the Uuid slot");
+    assert_eq!(fields[0].rust_type, "uuid::Uuid");
+
+    // Optional primitive field → Option.
+    let fields = crate::ddd::errors::error_field_defs(
+        "PaymentDeclined",
+        &[param(
+            "reference",
+            serde_json::json!({"type": "primitive", "value": "string"}),
+            Some(serde_json::json!({"lower": 0, "upper": {"finite": 1}})),
+        )],
+    )
+    .expect("optional maps");
+    assert_eq!(fields[0].rust_type, "Option<String>");
+    assert!(fields[0].optional);
+
+    // A collection payload field refuses, naming the error and field.
+    let error = crate::ddd::errors::error_field_defs(
+        "PaymentDeclined",
+        &[param(
+            "reasons",
+            serde_json::json!({"type": "primitive", "value": "string"}),
+            Some(serde_json::json!({"lower": 0, "upper": "unbounded"})),
+        )],
+    )
+    .expect_err("a collection payload refuses");
+    assert!(error.contains("PaymentDeclined"), "{error}");
+    assert!(error.contains("reasons"), "{error}");
+    assert!(error.contains("collection"), "{error}");
 }

@@ -188,6 +188,7 @@ pub fn domain_config() -> DomainConfig {
             postgres_schema: "recruiting".into(),
             depends_on: vec!["common".into()],
             dependencies: Vec::new(),
+            errors: HashMap::new(),
             entities: vec!["CandidateType".into()],
             entity_config: HashMap::new(),
             auto_discover: None,

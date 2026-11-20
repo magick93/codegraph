@@ -104,7 +104,7 @@ async fn service_ops_render_routes_handlers_and_policy_gates() {
     // `relation "common.<table>" does not exist` regression.
     let codelist_migration = out
         .path()
-        .join("migrations/000010_common_pay_run_status_codelist.sql");
+        .join("migrations/000011_common_pay_run_status_codelist.sql");
     let codelist = read(&codelist_migration);
     assert!(
         codelist.contains("CREATE TABLE IF NOT EXISTS common.pay_run_status"),
@@ -774,7 +774,7 @@ async fn non_common_mox_codelists_are_common_and_deterministic() {
         assert!(!report.has_errors(), "generation errors: {report:?}");
         rendered.push(read(
             &out.path()
-                .join("migrations/000010_common_pay_run_status_codelist.sql"),
+                .join("migrations/000011_common_pay_run_status_codelist.sql"),
         ));
     }
     assert_eq!(
@@ -2340,4 +2340,267 @@ async fn authored_root_beats_a_config_child_declaration_with_a_warning() {
         "the authored root verdict overrides the config child role"
     );
     assert!(root.parent.is_none());
+}
+
+// ── Declared error vocabulary + `throws` (DD7, issue #665) ──────────────
+
+/// The `.ddd` declared error vocabulary generates as `{Domain}Error`
+/// variants (payload fields typed through the shared derivation), and a
+/// delegation op's `throws` documents its declared statuses on the action
+/// path. `NotFound` adds no utoipa entry (the base set documents 404) but
+/// DOES get a deterministic hurl 404 leg.
+#[tokio::test]
+async fn declared_error_vocabulary_generates_and_documents_on_delegations() {
+    let fixture = write_fixture_in("service_ops_throws", PAYROLL_DDD);
+    let engine = ingest(&fixture).await;
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    // ── errors.rs: the declared vocabulary, both scopes ──
+    let errors = read(&out.path().join("src/domain/payroll/errors.rs"));
+    // Application-scope error with a payload: codelist field + primitive
+    // field, named-field variant, `{ .. }` match arms.
+    assert!(
+        errors.contains("PaymentDeclined {"),
+        "the payload variant must generate:\n{errors}"
+    );
+    assert!(
+        errors.contains("reason: crate::codelist::DeclineReason,"),
+        "the codelist payload field must resolve to the generated enum:\n{errors}"
+    );
+    assert!(
+        errors.contains("reference: String,"),
+        "the primitive payload field must map:\n{errors}"
+    );
+    assert!(
+        errors.contains("Self::PaymentDeclined { .. } => \"PAYMENT_DECLINED\""),
+        "the code() arm must carry the payload pattern:\n{errors}"
+    );
+    // The payload-less application error stays a unit variant; the
+    // module-private error generates into its own domain's enum.
+    assert!(errors.contains("PayrollFrozen,"), "{errors}");
+    assert!(errors.contains("LineLocked {"), "{errors}");
+    // Prelude cannot be shadowed: no declared variant redefines it.
+    assert!(!errors.contains("NotFound(P"), "{errors}");
+
+    // ── handler utoipa: the declared status on the delegation surface ──
+    let handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));
+    assert!(
+        handler.contains(
+            "(status = 422, description = \"The operation raised PaymentDeclined (declared `throws`)\")"
+        ),
+        "the declared 422 must document on the declines action:\n{handler}"
+    );
+    // 404 is already in the base set — no duplicate entry for NotFound.
+    assert!(
+        !handler.contains("The operation raised NotFound"),
+        "a base-set-covered status must not duplicate:\n{handler}"
+    );
+
+    // ── hurl: the deterministic declared-error leg ──
+    let actions = read(&out.path().join("hurl/12_payroll_pay_run_actions.hurl"));
+    assert!(
+        actions.contains("declared `throws NotFound`"),
+        "the DD7 note must label the leg:\n{actions}"
+    );
+    assert!(
+        actions.contains("/00000000-0000-0000-0000-000000000000/actions/declines"),
+        "the zero-uuid action path must pin the 404:\n{actions}"
+    );
+}
+
+/// A `throws` entry naming no prelude error and no declared variant is a
+/// NAMED refusal naming the op and the entry. The pherolang compiler
+/// rejects an unknown name upstream (E0373), so this pins the graph-level
+/// gate for the stale/hand-built artifact class: a persisted model naming
+/// a declaration that no longer resolves (a warm cache whose vocabulary
+/// moved, a hand-assembled graph).
+#[tokio::test]
+async fn unresolvable_throws_entry_fails_validation_naming_the_op() {
+    use codegraph_core::traits::GraphIngestor;
+
+    let fixture = write_fixture_in("service_ops_throws_refusal", PAYROLL_DDD);
+    let config = codegraph_config::config::parse_domain_config(&fixture.config).unwrap();
+
+    // A hand-built model: the compiler can never produce this shape, which
+    // is exactly the point — the gate catches what outlives the compile.
+    let graph = codegraph_core::types::DddModelGraph {
+        source_path: "payroll.ddd".to_string(),
+        application: codegraph_core::types::DddApplicationNode {
+            name: "Payroll".to_string(),
+            base: None,
+            source_path: "payroll.ddd".to_string(),
+            errors: Vec::new(),
+        },
+        modules: vec![codegraph_core::types::DddModuleNode {
+            application: "Payroll".to_string(),
+            name: "payroll".to_string(),
+            ordinal: 0,
+            errors: Vec::new(),
+        }],
+        designs: Vec::new(),
+        repositories: vec![codegraph_core::types::DddRepositoryNode {
+            application: "Payroll".to_string(),
+            name: "PayRunRepository".to_string(),
+            design_class: "PayRunType".to_string(),
+            operations: Vec::new(),
+        }],
+        services: vec![codegraph_core::types::DddServiceNode {
+            application: "Payroll".to_string(),
+            module: "payroll".to_string(),
+            name: "PayRunService".to_string(),
+            description: None,
+            dependencies: vec!["PayRunRepository".to_string()],
+            decision_dependencies: Vec::new(),
+            operations: vec![codegraph_core::types::DddServiceOperation {
+                name: "declines".to_string(),
+                return_type: None,
+                return_multiplicity: None,
+                params: Vec::new(),
+                delegation_target: Some("PayRunRepository".to_string()),
+                delegation_operation: Some("save".to_string()),
+                capabilities: Vec::new(),
+                is_protected: false,
+                condition: None,
+                emits: Vec::new(),
+                invokes: Vec::new(),
+                throws: vec![serde_json::json!({
+                    "name": "Bogus",
+                    "scope": "module",
+                    "module": "payroll"
+                })],
+                bodies: Default::default(),
+                body_receiver: None,
+                transition: None,
+                child_scope: None,
+                condition_paths: Vec::new(),
+                ordinal: 0,
+            }],
+            ordinal: 0,
+        }],
+        searches: Vec::new(),
+    };
+    let engine = codegraph_core::mock::MockEngine::builder()
+        .with_schema(fixture::pay_run_schema_node())
+        .build();
+    engine.ingest_ddd_model(&graph).await.unwrap();
+
+    let refusals = codegraph_generate::ddd::service_ops::throws_refusals(&engine, &config)
+        .await
+        .unwrap();
+    let refusal = refusals
+        .iter()
+        .find(|r| r.contains("declines"))
+        .unwrap_or_else(|| panic!("expected a throws refusal naming the op: {refusals:?}"));
+    assert!(
+        refusal.contains("`Bogus`"),
+        "the refusal must name the entry: {refusal}"
+    );
+    assert!(
+        refusal.contains("no generated error"),
+        "the refusal must name the resolution failure: {refusal}"
+    );
+}
+
+/// A domains.toml override keyed by the declared error name keeps its
+/// description/status, adopts the model's payload fields, and moves the
+/// documented status.
+#[tokio::test]
+async fn domain_error_override_keeps_status_and_adopts_fields() {
+    let fixture = write_fixture_in("service_ops_throws_override", PAYROLL_DDD);
+    let config_source = format!(
+        "{DOMAINS_TOML}\n[domains.payroll.errors]\nPaymentDeclined = {{ description = \"declined by the processor\", http_status = 409 }}\n"
+    );
+    fs::write(&fixture.config, config_source).unwrap();
+    let engine = ingest(&fixture).await;
+    // On the run path `ingest_api_model` seeds this node from the config's
+    // `[domains.payroll.errors]` walk; the test seeds it directly to pin
+    // the MERGE contract (the node is the derivation's only input).
+    use codegraph_core::traits::GraphIngestor;
+    engine
+        .ingest_error_definition(&codegraph_core::types::ErrorDefinitionNode {
+            code: "PaymentDeclined".to_string(),
+            description: "declined by the processor".to_string(),
+            http_status: 409,
+            domain: Some("payroll".to_string()),
+        })
+        .await
+        .unwrap();
+    let out = tempdir();
+    let domain_types = tempdir();
+    let hooks = tempdir();
+    let report = run_generation(
+        &engine,
+        &fixture,
+        out.path(),
+        domain_types.path(),
+        hooks.path(),
+    )
+    .await;
+    assert!(!report.has_errors(), "generation errors: {report:?}");
+
+    let errors = read(&out.path().join("src/domain/payroll/errors.rs"));
+    // The override's status wins; the model's payload fields stay.
+    assert!(
+        errors.contains("Self::PaymentDeclined { .. } => StatusCode::from_u16(409)"),
+        "the override status must win:\n{errors}"
+    );
+    assert!(
+        errors.contains("reason: crate::codelist::DeclineReason,"),
+        "the override must not drop the payload fields:\n{errors}"
+    );
+    let handler = read(&out.path().join("src/api/payroll/pay_run_handler.rs"));
+    assert!(
+        handler.contains(
+            "(status = 409, description = \"The operation raised PaymentDeclined (declared `throws`)\")"
+        ),
+        "the documented status must follow the override:\n{handler}"
+    );
+}
+
+/// The `[domains.<d>.errors]` → ErrorDefinitionNode seeding walk has a
+/// DIRECT pin (issue #665 review N5): the override merge test seeds the
+/// node by hand, so a rename/serde drift in the walk itself would
+/// otherwise silently disable every override.
+#[tokio::test]
+async fn domain_error_override_walk_seeds_the_shared_node() {
+    use codegraph_core::traits::GraphQuerier;
+
+    // Parse an override the way `ingest_api_model`'s walk receives it.
+    let mut overrides = std::collections::HashMap::new();
+    overrides.insert(
+        "PaymentDeclined".to_string(),
+        codegraph_config::config::ErrorDefConfig {
+            description: "declined by the processor".to_string(),
+            http_status: 409,
+        },
+    );
+
+    let engine = codegraph_core::mock::MockEngine::builder().build();
+    let mut stats = codegraph::ingest::api_ingest::ApiModelIngestStats::default();
+    for (code, def) in &overrides {
+        codegraph::ingest::api_ingest::seed_domain_error_override(
+            &engine, "payroll", code, def, &mut stats,
+        )
+        .await;
+    }
+    assert_eq!(stats.errors, 1, "one override seeded");
+
+    let seeded = engine.get_error_definitions().await.unwrap();
+    let node = seeded
+        .iter()
+        .find(|n| n.code == "PaymentDeclined" && n.domain.as_deref() == Some("payroll"))
+        .expect("the override node");
+    assert_eq!(node.http_status, 409);
+    assert_eq!(node.description, "declined by the processor");
 }

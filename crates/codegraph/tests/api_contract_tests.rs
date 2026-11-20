@@ -60,6 +60,7 @@ fn domain_config(domain: &str, entities: &[&str]) -> DomainConfig {
             postgres_schema: domain.to_string(),
             depends_on: vec!["common".into()],
             dependencies: Vec::new(),
+            errors: HashMap::new(),
             entities: entities.iter().map(|e| e.to_string()).collect(),
             entity_config: HashMap::new(),
             auto_discover: None,

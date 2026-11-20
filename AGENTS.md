@@ -1111,6 +1111,88 @@ IFML hydration convention; **API-key sessions bypass the policy gates**
   block's `{% endif %}` so it adds no newline) and the actions contract is
   unchanged for parameter-less ops.
 
+### Declared error vocabulary + `throws` (DD7, issue #665)
+
+The DD7 error vocabulary is now a generated plane end to end — ingest,
+variants, per-surface documentation, and deterministic hurl legs — with ONE
+derivation so the enum and every consumer cannot drift:
+
+- **Ingest**: `DddModel.errors` (application scope) and `Module.errors`
+  (module scope) mirror as `DddErrorDecl { name, description, fields:
+  Vec<DddParam> }` (the type/multiplicity discipline) onto
+  `DddApplicationNode.errors` / `DddModuleNode.errors` (serde-defaulted).
+  **`GRAPH_FORMAT_VERSION` 12 → 13** (new `errors_json` props on both node
+  types — a warm pre-#665 cache deserializes both as EMPTY, silently
+  vanishing every declared variant and mapping every `throws` entry to
+  nothing, so it cold-re-ingests; the artifact-kit fixture is
+  `graph_document_v13.md` and the kit-runner rejection literal moved to 14
+  with it).
+- **One derivation** (`ddd/errors.rs::declared_error_defs`): the
+  domains.toml-seeded `ErrorDefinitionNode`s fold FIRST (existing
+  behavior), then the `.ddd` declarations fold in per domain —
+  application-scope errors into every domain hosting a module of their
+  model, module-scope errors into that module's domain (module name =
+  domain). A domains.toml override keyed by the declared name
+  (`[domains.payroll.errors]` → `ErrorDefConfig`, seeded by the
+  `ingest_api_model` walk) keeps its description/status and ADOPTS the
+  model's payload fields; a declaration no config names generates as a
+  default-422 variant with the SCREAMING_SNAKE name as the envelope code.
+  Prelude names cannot be shadowed (`TEMPLATE_BUILTIN_VARIANTS` filters
+  both sources). Payload fields resolve through the shared
+  `signature_type` slot rules widened for this plane only — codelist
+  enums → `crate::codelist::{Enum}`, class refs → the `Uuid` slot;
+  collections/wraps/DTO boundaries are NAMED refusals
+  (`error_field_defs`). The generated variant carries the payload as
+  named fields, and the #662 declared raise renders them into the error
+  envelope's `details` entries in declaration order (`FieldError
+  { field, message }` — the entity/IFML fail legs already parse
+  `details`, so the payload reaches the UI planes free; the #582
+  `[object Object]` class stays dead). Unit variants render BYTE-
+  IDENTICAL to the pre-#665 template (`RenderedError` pre-renders the
+  variant block and the `{ .. }`-aware match arms in Rust — no Tera
+  whitespace leakage).
+- **Non-body surfaces**: `ServiceOpRoute.throws` +
+  `.raise_responses` carry the resolved vocabulary per op. Every surface
+  (delegations, seams, child ops) documents its declared statuses on the
+  action path's utoipa `responses(...)` — MINUS the statuses the
+  surface's base set already documents (404 record-load, 409 machine
+  update, 422 child payload, 501 seam), so no status documents twice.
+  Where executable, enforcement already exists (load-or-404 IS the
+  NotFound enforcement; machine/invariant 409 IS Conflict); a pure
+  delegation declaring an error its lowering cannot raise is DOCUMENTED-
+  ONLY, never refused — upstream mandates complete transitive supersets,
+  and the contract stays honest. Bodies keep the #662 enforcement.
+- **Closed-subset refusal**: a `throws` entry resolving to no prelude
+  error and no declared variant is a NAMED generation error
+  (`routes.rs::throws_responses`) surfaced pre-tree by
+  `ValidationPass::check_service_op_throws` (`throws_refusals`, the
+  `body_refusals` posture). Upstream E0373 rejects unknown names at
+  compile time, so the gate exists for the stale/hand-built artifact
+  class (pinned by a hand-built `DddModelGraph` — the compiler cannot
+  produce that shape).
+- **hurl**: a delegation declaring `throws NotFound` gets ONE
+  deterministic 404 leg per actions contract (the zero-uuid action path —
+  the load-or-404 is the route's existence contract, so the declared-
+  error path is provable without guessing; delete ops' legs defer with
+  their deletes). Declared non-prelude errors get NO leg (the #662
+  `may_refuse` rule stands — the fixture cannot prove when a guard fires;
+  deterministic-leg proving is the recorded deferral).
+- **Gates**: `cargo test -p codegraph --test service_ops_tests` (36 —
+  vocabulary generation + delegation documentation + the hurl 404 leg +
+  the hand-built refusal + the override merge) · `cargo test
+  -p codegraph-generate --lib -- ddd::service_ops` (42 KATs incl. the
+  `throws_responses` covered-status grouping and the payload-slot
+  mappings) · `--test ddd_ingest_tests` (both-scope round-trips) · the
+  grafeo deep round-trip (`ddd_fixture` carries errors, equality-pinned)
+  · `--test artifact_kit_tests` (the 13 bump) · the standing canaries
+  (throws-free models emit byte-identical errors.rs/handler/hurl).
+- **Deferred** (named, not guessed): the vocabulary catalogue (#616
+  precedent — the issue does not ask for one); repository/query/mox-ops
+  `throws` consumption (the generated SQL planes raise nothing declared);
+  deterministic non-prelude hurl legs (guard-determinism proving);
+  payload `details` typing beyond stringified Display values; i18n and a
+  compiler-generated error hierarchy (the issue's own out-of-scope).
+
 ### Injected-scope `when` guards (issue #663, `condition_paths`)
 
 pherolang#180's `ServiceOperation.condition_paths` — the resolved field
@@ -3353,7 +3435,7 @@ flag is asserted per title (the shape a root-only resolver would miss — proved
 by mutation), and `media_pipeline_tests` pins both session SQL bodies, the
 emitted constant on BOTH branches, and both gate calls' argument order. Byte
 identity: media-only output; the three whole-tree canaries hold with no
-re-bless. Filed: #744 (the runtime gate never exercises a soft-deleted parent).
+re-bless. #744 LANDED (PR #753 — the runtime gate drives a soft-deleted parent; the leg is enumerated there).
 
 ### Media runtime gate against a real S3 server (#695 Stage 1)
 
@@ -4200,8 +4282,8 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
 - **Format bump discipline + doctor signal (P2) — the canonical
   "what is it now" lookup**: `GRAPH_FORMAT_VERSION` (codegraph-grafeo
   `schema_ddl.rs`) versions codegraph's graph artifact schema. **It is
-  `12` today**, and the committed artifact-kit conformance fixture is
-  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v12.md`.
+  `13` today**, and the committed artifact-kit conformance fixture is
+  `crates/codegraph/tests/fixtures/artifact_kit/graph_document_v13.md`.
   Bump it whenever the node/edge/property shape changes. The constant and
   the fixture move TOGETHER in ONE change: bump the constant, rename the
   fixture, update its canonical + `accepted` bodies, and move its
@@ -4215,8 +4297,12 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   so the bump checklist must list all five (a missed `include_str!` is a
   compile error; a missed doc comment goes stale silently). The
   `format_version_too_new` value is also a LITERAL in the fixture
-  (`formatVersion 13` while the constant is 12), NOT derived from
-  `GRAPH_FORMAT_VERSION`; only `crates/codegraph/tests/artifact_tests.rs`
+  (`formatVersion 14` while the constant is 13), NOT derived from
+  `GRAPH_FORMAT_VERSION`; so is the IN-CRATE kit KAT literal
+  (`crates/codegraph/src/artifact/kit.rs` `tests::kit_case_rejects_canonical_drift`,
+  a `#cfg(test)` `formatVersion` string the five fixture-name sites do not
+  cover — the #665 bump shipped it stale and CI's `test` job caught it).
+  Only `crates/codegraph/tests/artifact_tests.rs`
   derives its too-new value (`FORMAT_VERSION + 1`), so a constant bump that
   forgets the fixture turns that rejection case into an ACCEPTED document
   (and the kit case then fails).
@@ -4226,7 +4312,9 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   op-level `when`, 3→4 WS6 manifest, 4→5 pherolang 0.3, 6→7 service
   bodies, 7→8 transition binding, 8→9 mox tables/register classes, 9→10
   aggregate child ops, 10→11 service-op condition paths (#663), 11→12
-  DD4/DD5 authored aggregate boundaries + design invariants (#666) —
+  DD4/DD5 authored aggregate boundaries + design invariants (#666), 12→13
+  the DD7 declared error vocabulary (`errors_json` on the application +
+  module nodes, #665) —
   the 2→3
   and 5→6 steps were never written up, so the lineage is only partially
   recorded). `GRAFEO_STORAGE_GENERATION`
@@ -4235,7 +4323,7 @@ Measured on the crewbase consumer loop (9 mox packages, ~38 entities,
   format. Both terms ride the inputs hash, so a bump forces a cold
   re-ingest instead of migrating `.graph-cache/` in place. `codegraph
   doctor` prints the cache state explicitly: `PASS graph-cache — warm
-  (inputs hash …, N nodes; graph format v12 / storage gen 2)` when the
+  (inputs hash …, N nodes; graph format v13 / storage gen 2)` when the
   marker matches the current inputs (the numbers are the live constants,
   not prose), or `INFO graph-cache — cold: inputs changed …` / `absent …`
   when the next run will re-ingest.
@@ -5551,7 +5639,7 @@ decision-gated.
 ### Size budgets (issue #751)
 
 - **Files ≤ 2,000 lines.** Enforced by `crates/codegraph/tests/file_length_contract.rs` — a plain test in the CI `test` job (clippy has no file-length lint) walking `crates/*/src/**/*.rs`. Seven pre-existing over-limit files are allow-listed in that test as tracked follow-ups; a stale allow entry (its file now under the limit) FAILS the test, so the list can only shrink. Integration-test directories (`crates/*/tests/`) and nested fixture src trees (`crates/review/generated-candidate/**`, `crates/*/tests/fixtures/**`) are out of scope (generator output, not hand-maintained source). When a file outgrows the limit, split it into a directory module — `ddd/service_ops/` and `db/ddl/query/` are the reference shapes (mod.rs re-exports preserve every public path).
-- **Functions ≤ 400 lines.** `clippy::too_many_lines` is enforced via `-D clippy::too_many_lines` in the CI lint job, with `too-many-lines-threshold = 400` in the workspace `clippy.toml` (the default 100 flags ~500 functions here; 300 flags 17). The pre-existing sites carry `#[allow(clippy::too_many_lines)] // TODO(#751)` markers — split them, never grow them. The build-script-generated `embedded_templates.rs` carries its allow at generation time (`crates/codegraph-generate/build.rs`).
+- **Functions ≤ 400 lines.** `clippy::too_many_lines` is enforced via `-D clippy::too_many_lines` in the CI lint job, with `too-many-lines-threshold = 400` in the workspace `clippy.toml` (the default 100 flags ~500 functions here; 300 flags 17). All twelve pre-existing `#[allow(clippy::too_many_lines)] // TODO(#751)` markers were retired by PR #755 (wave 1) — zero allows remain under `crates/*/src`; a function outgrowing 400 lines must split, never re-allow. The build-script-generated `embedded_templates.rs` carries its allow at generation time (`crates/codegraph-generate/build.rs`).
 
 ## Dependency policy (#426)
 

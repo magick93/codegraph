@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::entity::EntityConfig;
+use super::entity::{EntityConfig, ErrorDefConfig};
 use super::media::MediaConfig;
 
 /// A pinned external domain face (issue #276): a foreign domain published
@@ -34,6 +34,14 @@ pub struct DomainEntry {
     pub dependencies: Vec<DomainDependency>,
     #[serde(default)]
     pub entities: Vec<String>,
+    /// Per-domain overrides for the DD7 declared error vocabulary (issue
+    /// #665), keyed by the declared error NAME: the entry's `description`
+    /// and `http_status` override the generated variant's (the payload
+    /// fields stay the model's own). Ingested as ErrorDefinition nodes, so
+    /// the shared `declared_error_defs` derivation folds them ahead of the
+    /// `.ddd` declarations.
+    #[serde(default)]
+    pub errors: HashMap<String, ErrorDefConfig>,
     /// Per-entity configuration for API generation.
     #[serde(default)]
     pub entity_config: HashMap<String, EntityConfig>,
@@ -161,6 +169,7 @@ impl DomainEntry {
             depends_on: Vec::new(),
             dependencies: Vec::new(),
             entities: Vec::new(),
+            errors: HashMap::new(),
             entity_config: HashMap::new(),
             auto_discover: Some(false),
             exclude_entities: Vec::new(),

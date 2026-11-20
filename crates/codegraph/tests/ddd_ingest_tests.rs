@@ -17,8 +17,8 @@ use codegraph_core::types::{
 };
 use phero_ir::ddd::{
     AggregateMembership, AggregateOrigin, Application, BuiltinRepositoryOp, DddModel, DddParam,
-    DddTypeRef, Delegation, Design, DesignFlags, DocumentField, ErrorRef, Invariant, Module,
-    Pagination, RankingStrategy, Repository, RepositoryOperation, SearchDef, SearchField,
+    DddTypeRef, Delegation, Design, DesignFlags, DocumentField, ErrorDecl, ErrorRef, Invariant,
+    Module, Pagination, RankingStrategy, Repository, RepositoryOperation, SearchDef, SearchField,
     SearchFilter, SearchSort, Service, ServiceOperation, Stereotype,
 };
 use phero_ir::{Multiplicity, PrimitiveType, TypeRef, Upper};
@@ -197,13 +197,38 @@ fn sample_model() -> DddModel {
     discovery.designs = vec![chapter];
     discovery.searches = vec![book_search];
 
-    DddModel::new()
+    // DD7 (issue #665): the declared error vocabulary, both scopes. A
+    // module-private declaration and an application-wide one, each with a
+    // payload field.
+    lending.errors = vec![ErrorDecl {
+        name: "LineLocked".to_string(),
+        description: None,
+        fields: vec![DddParam {
+            name: "reason".to_string(),
+            type_: DddTypeRef::Domain(TypeRef::Primitive(PrimitiveType::String)),
+            multiplicity: None,
+        }],
+    }];
+    let mut model = DddModel::new()
         .application(Application {
             name: "Library".to_string(),
             base: Some("nz.example.library".to_string()),
         })
         .module(lending)
-        .module(discovery)
+        .module(discovery);
+    model.errors = vec![ErrorDecl {
+        name: "PaymentDeclined".to_string(),
+        description: None,
+        fields: vec![DddParam {
+            name: "reason".to_string(),
+            type_: DddTypeRef::Domain(TypeRef::Enum {
+                package: "nz.example.library".to_string(),
+                name: "DeclineReason".to_string(),
+            }),
+            multiplicity: None,
+        }],
+    }];
+    model
 }
 
 #[test]
@@ -258,30 +283,29 @@ fn conversion_maps_module_major_order_and_every_payload() {
     );
 
     assert_eq!(graph.source_path, "design.ddd");
-    assert_eq!(
-        graph.application,
-        DddApplicationNode {
-            name: "Library".to_string(),
-            base: Some("nz.example.library".to_string()),
-            source_path: "design.ddd".to_string(),
-        }
-    );
+    // DD7 (issue #665): the application-scope vocabulary mirrors with its
+    // payload fields.
+    assert_eq!(graph.application.errors.len(), 1);
+    assert_eq!(graph.application.errors[0].name, "PaymentDeclined");
+    assert_eq!(graph.application.errors[0].fields.len(), 1);
+    assert_eq!(graph.application.errors[0].fields[0].name, "reason");
 
     // Modules in declaration order with their own ordinals.
-    assert_eq!(
-        graph.modules,
-        vec![
-            DddModuleNode {
-                application: "Library".to_string(),
-                name: "lending".to_string(),
-                ordinal: 0,
-            },
-            DddModuleNode {
-                application: "Library".to_string(),
-                name: "discovery".to_string(),
-                ordinal: 1,
-            },
-        ]
+    let lending_errors = graph
+        .modules
+        .iter()
+        .find(|m| m.name == "lending")
+        .map(|m| m.errors.clone())
+        .unwrap();
+    assert_eq!(lending_errors.len(), 1);
+    assert_eq!(lending_errors[0].name, "LineLocked");
+    assert_eq!(lending_errors[0].fields.len(), 1);
+    assert!(
+        graph
+            .modules
+            .iter()
+            .all(|m| m.name == "discovery" || m.errors.len() == 1),
+        "only lending declares module-scope errors"
     );
 
     // Designs: module-major (lending's three, then discovery's one), with
@@ -571,11 +595,13 @@ async fn authored_aggregate_boundary_and_invariants_round_trip_through_the_mock(
             name: "Library".to_string(),
             base: Some("nz.example.library".to_string()),
             source_path: "design.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: vec![DddModuleNode {
             application: "Library".to_string(),
             name: "lending".to_string(),
             ordinal: 0,
+            errors: Vec::new(),
         }],
         designs: vec![root, member],
         repositories: Vec::new(),

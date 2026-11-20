@@ -94,7 +94,7 @@ pub use types::{
 };
 pub use validation::{
     body_refusals, child_parent_load_refusals, dead_surface_warnings, guard_refusals,
-    ifml_dead_triggers, transition_binding_errors, transition_binding_warnings,
+    ifml_dead_triggers, throws_refusals, transition_binding_errors, transition_binding_warnings,
 };
 pub use when_lower::InjectedMachine;
 

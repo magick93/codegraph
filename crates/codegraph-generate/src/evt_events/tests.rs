@@ -1796,6 +1796,7 @@ async fn catalogue_lists_the_emitting_service_operations() {
             name: "Library".to_string(),
             base: None,
             source_path: "library.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: Vec::new(),
         designs: Vec::new(),

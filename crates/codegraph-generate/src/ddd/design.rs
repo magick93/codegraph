@@ -1208,11 +1208,13 @@ mod tests {
                 name: "Library".to_string(),
                 base: Some("nz.example.library".to_string()),
                 source_path: "library.ddd".to_string(),
+                errors: Vec::new(),
             },
             modules: vec![DddModuleNode {
                 application: "Library".to_string(),
                 name: "media".to_string(),
                 ordinal: 0,
+                errors: Vec::new(),
             }],
             designs,
             repositories,

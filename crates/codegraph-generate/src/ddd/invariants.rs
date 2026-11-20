@@ -658,6 +658,7 @@ postgres_schema = "grants"
                 name: "Grants".to_string(),
                 base: None,
                 source_path: "grants.ddd".to_string(),
+                errors: Vec::new(),
             },
             modules: Vec::new(),
             designs,

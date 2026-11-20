@@ -14,10 +14,14 @@ impl GrafeoEngine {
         let session = CountingSession::new(self.db().session());
 
         let gql = format!(
-            "INSERT (:DddApplication {{ name: '{}', base: {}, source_path: '{}' }})",
+            "INSERT (:DddApplication {{ name: '{}', base: {}, source_path: '{}', errors_json: '{}' }})",
             escape_gql(&model.application.name),
             opt_str(&model.application.base),
             escape_gql(&model.application.source_path),
+            // DD7 (issue #665): the application's declared error vocabulary
+            // as one serde-serialized blob — always written, `[]` when
+            // empty, so a readback never tells "absent" from "empty".
+            escape_gql(&json_string(&model.application.errors)?),
         );
         session
             .execute(&gql)
@@ -25,10 +29,13 @@ impl GrafeoEngine {
 
         for module in &model.modules {
             let gql = format!(
-                "INSERT (:DddModule {{ application: '{}', name: '{}', ordinal: {} }})",
+                "INSERT (:DddModule {{ application: '{}', name: '{}', ordinal: {}, errors_json: '{}' }})",
                 escape_gql(&module.application),
                 escape_gql(&module.name),
                 module.ordinal,
+                // DD7 (issue #665): the module's private error vocabulary
+                // as one serde-serialized blob — always written.
+                escape_gql(&json_string(&module.errors)?),
             );
             session
                 .execute(&gql)

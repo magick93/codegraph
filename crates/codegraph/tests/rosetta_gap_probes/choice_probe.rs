@@ -137,6 +137,7 @@ fn plain_domain_entry(entities: &[&str]) -> codegraph_config::config::DomainEntr
         postgres_schema: "shop".into(),
         depends_on: vec![],
         dependencies: Vec::new(),
+        errors: HashMap::new(),
         entities: entities.iter().map(|s| s.to_string()).collect(),
         entity_config: HashMap::new(),
         auto_discover: None,

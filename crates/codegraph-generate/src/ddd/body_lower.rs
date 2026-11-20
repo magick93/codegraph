@@ -86,6 +86,17 @@ pub struct DeclaredError {
     pub code: String,
     /// The model's HTTP status.
     pub status: u16,
+    /// The declared payload field NAMES in declaration order (DD7, issue
+    /// #665) — raise arguments align with them positionally (the arity is
+    /// the model's own and enforced), and each surfaces as the error
+    /// envelope's `details` entry naming its field.
+    pub fields: Vec<DeclaredErrorField>,
+}
+
+/// One payload field name of a [`DeclaredError`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredErrorField {
+    pub name: String,
 }
 
 impl RaiseTable {
@@ -96,6 +107,15 @@ impl RaiseTable {
             "Conflict" => Some(RaiseTarget::Conflict),
             other => self.declared.get(other).cloned().map(RaiseTarget::Declared),
         }
+    }
+
+    /// The documented (status, declared-name) pair one `throws` entry
+    /// lowers to (DD7, issue #665), or `None` when the entry names no
+    /// prelude error and no declared variant — the caller turns that into
+    /// a named refusal (the closed-subset posture).
+    pub fn resolve_entry(&self, name: &str) -> Option<(u16, String)> {
+        self.resolve(name)
+            .map(|target| (target.status(), target.name().to_string()))
     }
 }
 
@@ -905,10 +925,30 @@ impl<'a> Lowerer<'a> {
                     self.scope.domain,
                     codegraph_naming::to_pascal_case(self.scope.domain)
                 );
+                // DD7 (issue #665): the payload fields surface in the
+                // error envelope's `details` entries in declaration order —
+                // the same order the raise arguments lower in (the arity
+                // is enforced above), so field N names argument N.
+                let details = if error.fields.is_empty() {
+                    "None".to_string()
+                } else {
+                    let entries: Vec<String> = error
+                        .fields
+                        .iter()
+                        .zip(args.iter())
+                        .map(|(field, value)| {
+                            format!(
+                                "crate::error::FieldError {{ field: {field}, message: {value}.to_string() }}",
+                                field = rust_string_literal(&field.name),
+                            )
+                        })
+                        .collect();
+                    format!("Some(vec![{}])", entries.join(", "))
+                };
                 format!(
                     "AppError {{\n            status: {domain_error}::{variant}.http_status(),\n            \
                      code: {domain_error}::{variant}.code(),\n            \
-                     message: {render},\n            details: None,\n            \
+                     message: {render},\n            details: {details},\n            \
                      correlation_id: Some(correlation_id),\n        }}",
                     variant = error.variant,
                 )
@@ -972,9 +1012,19 @@ impl<'a> Lowerer<'a> {
         let expected = match target {
             RaiseTarget::NotFound => 2,
             RaiseTarget::Conflict => 1,
-            // A declared error's payload arity is the model's own; every
-            // argument renders positionally into the message.
-            RaiseTarget::Declared(_) => args.len(),
+            // A declared error's payload arity is the model's own. When
+            // the payload fields are known (the DD7 graph vocabulary),
+            // they ENFORCE it: fewer arguments than fields would silently
+            // truncate the `details` entries (issue #665 review N3), so a
+            // mismatch is a refusal. An unknown payload (a hand-built
+            // table) keeps the argument count.
+            RaiseTarget::Declared(error) => {
+                if error.fields.is_empty() {
+                    args.len()
+                } else {
+                    error.fields.len()
+                }
+            }
         };
         if args.len() != expected {
             return Err(self.refuse(&format!(
@@ -1615,7 +1665,7 @@ pub fn body_params(
                 slot.describe()
             )));
         };
-        let Some(base) = body_param_rust_type(type_ref) else {
+        let Some(base) = payload_field_rust_type(type_ref) else {
             return Err(Refusal(format!(
                 "service op `{op_name}`: parameter `{}` types `{}`, which the \
                  action body cannot bind (primitives only)",
@@ -1659,10 +1709,13 @@ pub fn body_params(
     Ok(out)
 }
 
-/// The graph-native Rust type of one primitive parameter. It must agree with
-/// the entity DTO field mapping (`int`→`i32`, `long`→`i64`, `float`→`f32`,
-/// `double`→`f64`) so a body assignment unifies; the compile pin arbitrates.
-fn body_param_rust_type(type_ref: &phero_ir::TypeRef) -> Option<String> {
+/// The graph-native Rust type of one primitive/class/enum payload slot.
+/// Shared by the action-body parameter plane and the declared-error payload
+/// plane (issue #665) — one mapping, so the two planes cannot drift. It
+/// must agree with the entity DTO field mapping (`int`→`i32`,
+/// `long`→`i64`, `float`→`f32`, `double`→`f64`) so a body assignment
+/// unifies; the compile pin arbitrates.
+pub(crate) fn payload_field_rust_type(type_ref: &phero_ir::TypeRef) -> Option<String> {
     use phero_ir::{PrimitiveType, TypeRef};
     match type_ref {
         TypeRef::Primitive(primitive) => match primitive {
@@ -1784,6 +1837,7 @@ mod tests {
                 variant: "PaymentDeclined".to_string(),
                 code: "PAYMENT_DECLINED".to_string(),
                 status: 422,
+                fields: Vec::new(),
             },
         );
         table

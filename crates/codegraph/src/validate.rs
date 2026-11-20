@@ -37,7 +37,7 @@ impl ValidationPass {
         workers_topology: bool,
     ) -> Vec<ValidationIssue> {
         // Run all independent validation checks concurrently.
-        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18) = tokio::join!(
+        let (r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19) = tokio::join!(
             Self::check_codelists(db),
             Self::check_ref_targets(db, config),
             Self::check_fk_targets(db, config),
@@ -56,6 +56,7 @@ impl ValidationPass {
             Self::check_invariants(db, config, workers_topology),
             Self::check_child_add_parent_load(db, config),
             Self::check_aggregate_boundaries(db, config),
+            Self::check_service_op_throws(db, config),
         );
         let mut issues = Vec::new();
         issues.extend(r1);
@@ -76,7 +77,32 @@ impl ValidationPass {
         issues.extend(r16);
         issues.extend(r17);
         issues.extend(r18);
+        issues.extend(r19);
         issues
+    }
+
+    /// Declared `throws` vocabularies (DD7, issue #665): every entry must
+    /// resolve against the shared error derivation. An entry naming no
+    /// prelude error and no declared variant is a HARD error naming the op
+    /// and the entry — the `body_refusals` posture, before any tree is
+    /// written.
+    async fn check_service_op_throws(
+        db: &dyn GraphQuerier,
+        config: &DomainConfig,
+    ) -> Vec<ValidationIssue> {
+        let Ok(refusals) = codegraph_generate::ddd::service_ops::throws_refusals(db, config).await
+        else {
+            return Vec::new();
+        };
+        refusals
+            .into_iter()
+            .map(|message| ValidationIssue {
+                severity: Severity::Error,
+                entity: "(service op throws)".to_string(),
+                check: "service_op_throws",
+                message,
+            })
+            .collect()
     }
 
     /// Executable service-op statement bodies (issue #662): every bodied

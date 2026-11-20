@@ -147,6 +147,10 @@ struct EntityContractCtx {
     update_invariant_note: Option<ContractSection>,
 }
 
+/// The note every declared-`NotFound` 404 leg carries (DD7, issue #665).
+const DECLARED_NOT_FOUND_NOTE: &str =
+    "declared `throws NotFound` (DD7): the action on a missing row answers 404";
+
 /// One service-op action leg in the actions contract (issue #590).
 #[derive(Serialize, Default)]
 struct OpLeg {
@@ -256,6 +260,25 @@ fn state_aware_legs(
                 body: String::new(),
                 ..Default::default()
             });
+            // A declared `throws NotFound` vocabulary gets its
+            // deterministic 404 leg (DD7, issue #665) alongside — the
+            // zero uuid never resolves, so the load-or-404 contract is
+            // provable without guessing.
+            if op.throws.iter().any(|name| name == "NotFound") {
+                delete_legs.push(OpLeg {
+                    op_name: op.op_name.clone(),
+                    service: op.service.clone(),
+                    snake: op.snake.clone(),
+                    expect: 404,
+                    seam: false,
+                    seam_reason: String::new(),
+                    wrong_state: false,
+                    body: String::new(),
+                    url: format!("/00000000-0000-0000-0000-000000000000/actions/{}", op.snake),
+                    note: DECLARED_NOT_FOUND_NOTE.to_string(),
+                    ..Default::default()
+                });
+            }
             continue;
         }
         // Aggregate child operations (issue #661). `add` appends a NEW
@@ -399,6 +422,35 @@ fn state_aware_legs(
             },
         };
         legs.push(leg);
+        // A declared `throws NotFound` vocabulary gets a deterministic 404
+        // leg (DD7, issue #665): the action on the zero uuid always 404s
+        // (the load-or-404 is the route's existence contract), so the
+        // declared-error path is pinned without guessing. Body ops with
+        // 4xx raises already emit no leg (the may_refuse rule above); a
+        // seam 501s regardless; child actions carry their own failure
+        // legs.
+        if op.throws.iter().any(|name| name == "NotFound")
+            && !matches!(
+                op.execution,
+                ExecutionKind::Seam { .. }
+                    | ExecutionKind::Body { .. }
+                    | ExecutionKind::ChildOp { .. }
+            )
+        {
+            legs.push(OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 404,
+                seam: false,
+                seam_reason: String::new(),
+                wrong_state: false,
+                body: String::new(),
+                url: format!("/00000000-0000-0000-0000-000000000000/actions/{}", op.snake),
+                note: DECLARED_NOT_FOUND_NOTE.to_string(),
+                ..Default::default()
+            });
+        }
     }
 
     // Guarantee the wrong-state edge is exercised. Replaying an already

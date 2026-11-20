@@ -1025,6 +1025,13 @@ impl EntityGenerator for HandlerGenerator {
                         &entity_name,
                         &invariant_enforcement,
                     ));
+                    // The invariant 409 is now part of the surface's base
+                    // set (the template documents it beside the machine
+                    // arm), so a declared `throws Conflict` on this route
+                    // must NOT double-document 409 (issue #665 review M2 —
+                    // the routes-level `covered_statuses` cannot see the
+                    // block, which attaches only here).
+                    route.raise_responses.retain(|raise| raise.status != 409);
                 }
             }
         }

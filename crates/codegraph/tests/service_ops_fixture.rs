@@ -63,6 +63,11 @@ enum PayRunStatus {
     Reversed = 3
 }
 
+enum DeclineReason {
+    InsufficientFunds = 0
+    CardExpired = 1
+}
+
 class PayRunType {
     String payRunId
     PayRunStatus payRunStatus
@@ -92,7 +97,10 @@ pub const PAYROLL_DDD: &str = r#"
 import "pay_run.mox";
 
 application Payroll {
+    error PaymentDeclined(DeclineReason reason, String reference);
+    error PayrollFrozen();
     module payroll {
+        error LineLocked(String reason);
         entity PayRunType scaffold repository PayRunRepository {
             findById;
             findAll;
@@ -111,6 +119,7 @@ application Payroll {
             purge => PayRunRepository.delete capability ApprovePayRun;
             inspect => PayRunRepository.findById capability InspectPayRun;
             archive => PayRunRepository.save;
+            declines => PayRunRepository.save throws NotFound, PaymentDeclined;
             reverse => PayRunRepository.save capability ApprovePayRun;
             submit => PayRunRepository.save capability SubmitPayRun when (payRunStatus == Draft);
             approve => PayRunRepository.save capability ApprovePayRun;
@@ -522,11 +531,13 @@ pub fn authored_boundary_graph() -> codegraph_core::types::DddModelGraph {
             name: "Payroll".to_string(),
             base: Some("payroll".to_string()),
             source_path: "authored_boundary.ddd".to_string(),
+            errors: Vec::new(),
         },
         modules: vec![codegraph_core::types::DddModuleNode {
             application: "Payroll".to_string(),
             name: "payroll".to_string(),
             ordinal: 0,
+            errors: Vec::new(),
         }],
         designs: vec![root, member],
         repositories: vec![
@@ -1295,6 +1306,38 @@ pub async fn ingest_guard(fixture: &Fixture) -> codegraph_grafeo::GrafeoEngine {
 
 /// Scratch dir for the node-free service-ops pins: small, generation-only
 /// trees that never build a Rust crate, so the default temp dir is fine.
+/// The `PayRunType` schema node the hand-built graph tests bind against
+/// (the same shape the in-crate service-op KATs build).
+pub fn pay_run_schema_node() -> codegraph_core::types::SchemaNode {
+    codegraph_core::types::SchemaNode {
+        namespace: None,
+        schema_id: "payroll/json/PayRunType.json".to_string(),
+        title: "PayRunType".to_string(),
+        description: None,
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some("payroll".to_string()),
+        rel_path: "payroll/json/PayRunType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "PayRun".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "PayRunType".to_string(),
+        pg_table_name: "pay_run".to_string(),
+        api_path_segment: "pay-run".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: false,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
 pub fn tempdir() -> TempDir {
     TempDir::new().unwrap()
 }

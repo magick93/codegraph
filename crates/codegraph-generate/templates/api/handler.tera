@@ -1272,7 +1272,9 @@ fn service_op_not_implemented(reason: impl Into<String>) -> AppError {
 {% endif %}
 {% if op.execution.kind == "seam" %}
         (status = 501, description = "Operation body not lowered"),
-{% endif %}{% if op.execution.kind == "body" %}
+{% endif %}{% if op.raise_responses %}
+{% for raise in op.raise_responses %}        (status = {{ raise.status }}, description = "The operation raised {{ raise.errors }} (declared `throws`)"),
+{% endfor %}{% endif %}{% if op.execution.kind == "body" %}
 {% for raise in op.execution.plan.responses %}        (status = {{ raise.status }}, description = "The operation body raised {{ raise.errors }}"),
 {% endfor %}{% endif %}
     )

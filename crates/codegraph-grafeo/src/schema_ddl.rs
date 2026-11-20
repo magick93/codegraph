@@ -82,7 +82,14 @@
 /// serves an UNDECIDED boundary and no invariants — the authored facts a
 /// later slice's enforcement plane consumes are exactly the ones it
 /// silently lacks. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 12;
+///
+/// Bumped to 13 for the DD7 declared error vocabulary (issue #665):
+/// `DddApplicationNode.errors` and `DddModuleNode.errors` ride new
+/// `errors_json` props. A cached graph persisted by a pre-#665 binary
+/// deserializes both as EMPTY — every declared variant the generated
+/// `{Domain}Error` plane would carry silently vanishes, and every
+/// `throws` entry silently maps to no variant. Cold re-ingest instead.
+pub const GRAPH_FORMAT_VERSION: u32 = 13;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -596,12 +603,14 @@ const DDD_NODE_DDL: &[&str] = &[
     "CREATE NODE TYPE IF NOT EXISTS DddApplication (
             name STRING NOT NULL,
             base STRING,
-            source_path STRING NOT NULL
+            source_path STRING NOT NULL,
+            errors_json STRING NOT NULL
         )",
     "CREATE NODE TYPE IF NOT EXISTS DddModule (
             application STRING NOT NULL,
             name STRING NOT NULL,
-            ordinal INTEGER NOT NULL
+            ordinal INTEGER NOT NULL,
+            errors_json STRING NOT NULL
         )",
     "CREATE NODE TYPE IF NOT EXISTS DddDesign (
             application STRING NOT NULL,

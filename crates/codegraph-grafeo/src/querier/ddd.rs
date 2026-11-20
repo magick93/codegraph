@@ -25,7 +25,8 @@ impl GrafeoEngine {
         let result = query_gql(
             self,
             "MATCH (a:DddApplication) \
-             RETURN a.name AS name, a.base AS base, a.source_path AS source_path",
+             RETURN a.name AS name, a.base AS base, a.source_path AS source_path, \
+             a.errors_json AS errors_json",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut apps: Vec<(String, DddApplicationNode)> = result
@@ -41,6 +42,10 @@ impl GrafeoEngine {
                         name,
                         base,
                         source_path,
+                        // DD7 (issue #665): the declared error vocabulary,
+                        // parsed back from its blob (empty for a pre-#665
+                        // prop-less row — the format bump cold-re-ingests).
+                        errors: parse_json(reader.get_opt_string(row, "errors_json")?),
                     },
                 ))
             })
@@ -54,7 +59,8 @@ impl GrafeoEngine {
         let result = query_gql(
             self,
             "MATCH (a:DddApplication)-[:DddHasModule]->(m:DddModule) \
-             RETURN a.name AS app, m.name AS name, m.ordinal AS ordinal",
+             RETURN a.name AS app, m.name AS name, m.ordinal AS ordinal, \
+             m.errors_json AS errors_json",
         )?;
         let reader = RowReader::from_columns(&result.columns);
         let mut modules: HashMap<String, Vec<DddModuleNode>> = HashMap::new();
@@ -70,6 +76,7 @@ impl GrafeoEngine {
                 application: app,
                 name,
                 ordinal,
+                errors: parse_json(reader.get_opt_string(row, "errors_json")?),
             });
         }
 

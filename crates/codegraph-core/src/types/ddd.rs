@@ -26,6 +26,26 @@ pub struct DddModelGraph {
     pub searches: Vec<DddSearchNode>,
 }
 
+/// One declared error of the DD7 vocabulary (phero-ir `ErrorDecl`, issue
+/// #665): the payload reuses the operation-parameter shape, so every field
+/// type rides as phero-ir `TypeRef`/`Multiplicity` JSON (codegraph-core
+/// takes no phero-* deps — the `type_json` discipline). An
+/// application-level declaration rides [`DddApplicationNode::errors`]; a
+/// module-level one rides [`DddModuleNode::errors`]. Error names are
+/// application-wide unique upstream and may not shadow a prelude error.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DddErrorDecl {
+    /// The error name exactly as declared.
+    pub name: String,
+    /// Human-readable description (the declaration's doc comment).
+    /// Serde-defaulted: the pinned compiler does not capture docs yet.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Payload fields in declaration order.
+    #[serde(default)]
+    pub fields: Vec<DddParam>,
+}
+
 /// The designed application (phero-ir `Application` plus its source path).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DddApplicationNode {
@@ -36,6 +56,11 @@ pub struct DddApplicationNode {
     pub base: Option<String>,
     /// The `.ddd` source file the application was parsed from.
     pub source_path: String,
+    /// The application's declared error vocabulary (DD7, issue #665) —
+    /// visible to every module of the application. Serde-defaulted for
+    /// read-compat with graphs persisted before the field existed.
+    #[serde(default)]
+    pub errors: Vec<DddErrorDecl>,
 }
 
 /// A module of the application: a cohesive slice of services, designed
@@ -48,6 +73,11 @@ pub struct DddModuleNode {
     pub name: String,
     /// Declaration order within the application.
     pub ordinal: usize,
+    /// The module's private error vocabulary (DD7, issue #665) — visible
+    /// only inside this module. Serde-defaulted for read-compat with
+    /// graphs persisted before the field existed.
+    #[serde(default)]
+    pub errors: Vec<DddErrorDecl>,
 }
 
 /// The design decision for one referenced `.mox` class: its stereotype,
