@@ -93,11 +93,12 @@ const MAX_REPORTED: usize = 20;
 /// IS in the flag-OFF plan and the recipe produces them (only
 /// `testkit/Cargo.toml` needs special byte handling — see
 /// `OUTPUT_DIR_RELATIVE_FILES`).
+const COMMITTED_EXTRA_PREFIXES: [&str; 4] = ["ui/forms/", "api-contracts/", "svelte/", "e2e/"];
+
 fn committed_extra(rel: &str) -> bool {
-    rel.starts_with("ui/forms/")
-        || rel.starts_with("api-contracts/")
-        || rel.starts_with("svelte/")
-        || rel.starts_with("e2e/")
+    COMMITTED_EXTRA_PREFIXES
+        .iter()
+        .any(|prefix| rel.starts_with(prefix))
 }
 
 /// Files whose bytes legitimately depend on WHERE the recipe ran, so a
@@ -360,8 +361,24 @@ async fn committed_fixture_matches_the_current_generators() {
 
     let manifest_findings = check_manifests(fresh.path(), &committed_root, &committed_set);
 
+    // Whitelist deletion protection (issue #747 review MAJOR-1): a WIPE of
+    // a whitelisted tree would pass every category above — the fresh regen
+    // produces none of those files (missing only fires for files the regen
+    // HAS), and stale only fires for files the committed tree still has.
+    // `grafeo_candidate_inspect_output` removes the fixture dir wholesale,
+    // so the destructive-in-place-run + blind-commit class is real (the
+    // eaef78d15 precedent: a node_modules sweep had to be restored by
+    // hand). Each whitelisted prefix must stay non-empty in the committed
+    // tree.
+    let wiped: Vec<String> = COMMITTED_EXTRA_PREFIXES
+        .iter()
+        .copied()
+        .filter(|prefix| !committed_files.iter().any(|rel| rel.starts_with(prefix)))
+        .map(String::from)
+        .collect();
+
     let mut report = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         category(
             "generated file missing from the committed fixture",
             &missing
@@ -374,6 +391,7 @@ async fn committed_fixture_matches_the_current_generators() {
             "committed file the current generators no longer produce",
             &stale
         ),
+        category("whitelisted tree wiped from the committed fixture", &wiped),
     );
     if !manifest_findings.is_empty() {
         report.push_str(&format!(
