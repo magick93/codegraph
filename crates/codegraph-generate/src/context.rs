@@ -578,7 +578,9 @@ mod type_registry_tests {
         toml::from_str(toml_text).expect("config parses")
     }
 
-    async fn build_ctx<'a>(
+    /// The inputs `build_generator_context` needs, grouped so the helper
+    /// stays a plain function rather than an eight-positional-argument call.
+    struct CtxInputs<'a> {
         engine: &'a MockEngine,
         config: &'a DomainConfig,
         tera: &'a Tera,
@@ -587,16 +589,18 @@ mod type_registry_tests {
         ui_overrides: &'a UiOverrideConfig,
         ui_domains: &'a UiDomainConfig,
         project: &'a ProjectConfig,
-    ) -> GeneratorContext<'a> {
+    }
+
+    async fn build_ctx<'a>(inputs: CtxInputs<'a>) -> GeneratorContext<'a> {
         build_generator_context(
             GeneratorOpts {
-                db: engine,
-                config,
-                output_dir,
-                tera,
-                ui_overrides,
-                ui_domains,
-                schema_base_dir: schema_base,
+                db: inputs.engine,
+                config: inputs.config,
+                output_dir: inputs.output_dir,
+                tera: inputs.tera,
+                ui_overrides: inputs.ui_overrides,
+                ui_domains: inputs.ui_domains,
+                schema_base_dir: inputs.schema_base,
                 seed_config: None,
                 domain_types_base: None,
                 hooks_base: None,
@@ -611,7 +615,7 @@ mod type_registry_tests {
                 emdash_plugins: None,
                 domain_config_dir: None,
             },
-            project,
+            inputs.project,
         )
         .await
         .expect("context builds")
@@ -674,16 +678,16 @@ entities = ["CandidateType"]
         ];
         let mut seen: Vec<Vec<String>> = Vec::new();
         for _ in 0..4 {
-            let ctx = build_ctx(
-                &engine,
-                &config,
-                &tera,
-                out.path(),
-                out.path(),
-                &ui_overrides,
-                &ui_domains,
-                &project,
-            )
+            let ctx = build_ctx(CtxInputs {
+                engine: &engine,
+                config: &config,
+                tera: &tera,
+                output_dir: out.path(),
+                schema_base: out.path(),
+                ui_overrides: &ui_overrides,
+                ui_domains: &ui_domains,
+                project: &project,
+            })
             .await;
             let emitted_domain = ctx
                 .generation_order()
@@ -745,16 +749,16 @@ postgres_schema = "zeta"
         let ui_domains = UiDomainConfig::default();
         let project = ProjectConfig::default();
 
-        let ctx = build_ctx(
-            &engine,
-            &config,
-            &tera,
-            out.path(),
-            out.path(),
-            &ui_overrides,
-            &ui_domains,
-            &project,
-        )
+        let ctx = build_ctx(CtxInputs {
+            engine: &engine,
+            config: &config,
+            tera: &tera,
+            output_dir: out.path(),
+            schema_base: out.path(),
+            ui_overrides: &ui_overrides,
+            ui_domains: &ui_domains,
+            project: &project,
+        })
         .await;
         let emitted_domain = ctx
             .generation_order()
