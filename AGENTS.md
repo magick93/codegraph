@@ -3973,6 +3973,9 @@ Template mutation experiments need a fresh embed — on a pre-#718 checkout run
 `touch crates/codegraph-generate/build.rs` before trusting a red or green
 result (see "Template Overrides → Embedding watch").
 
+A gate that keeps a persistent output directory must regenerate from clean at
+run start or key discovery on content (#694) — never `--test-threads=1`.
+
 ```bash
 # Rust tests
 cargo test --workspace                    # all tests (969+)

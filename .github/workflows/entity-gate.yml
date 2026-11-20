@@ -8,8 +8,12 @@ name: Entity Gate
 # assertion could not fail (svelte-check prints the path on the line BEFORE
 # the `Error:` line, so the old filter always produced an empty set).
 #
-# `--test-threads=1` is REQUIRED: both tests regenerate the same review
-# fixture in place and share one `node_modules`.
+# The gate self-serializes (issue #694): the two tests provision, build and
+# typecheck ONE committed review fixture tree, so they take the in-process
+# gate lock, and the shared provisioning step takes the cross-process fixture
+# lock (`review_api_suite` / `rules_guard_api_gate` regenerate the same tree).
+# No `--test-threads=1` flag is required — a subset run and this workflow run
+# see the same from-clean tree.
 
 on:
   workflow_dispatch:
@@ -69,7 +73,7 @@ jobs:
       - name: Install Playwright chromium
         run: npx --yes playwright@1.62.0 install --with-deps chromium
       - name: Run entity codegen gate (build + typecheck + sessionless spec lane)
-        run: cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture --test-threads=1
+        run: cargo test -p codegraph --test entity_codegen_gate -- --ignored --nocapture
       - name: Upload gate logs on failure
         if: failure()
         uses: actions/upload-artifact@v7
