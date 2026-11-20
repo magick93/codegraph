@@ -62,6 +62,7 @@ generators = [
     # Global
     "openapi", "scaffold", "basejump_setup", "pgmq_setup",
     "platform_schema", "workflow_seed", "hook_registry", "domain_types_scaffold",
+    "dto_boundaries",
     "report_views",
     "webhook_dispatch", "webhook_endpoint_api",
 {% if features.grpc %}

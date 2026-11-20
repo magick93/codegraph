@@ -4,6 +4,7 @@ pub mod command;
 pub mod cornucopia_repo;
 pub mod design;
 pub mod dto;
+pub mod dto_boundaries;
 mod dto_fields;
 pub mod errors;
 pub mod event;

@@ -227,6 +227,8 @@ pub(crate) fn base_capabilities() -> HashMap<String, GeneratorCapability> {
         cap("ui_testids",           Global, Ui,    &[], &[]),
         cap("hook_registry",        Global, Common, &[], &[]),
         cap("domain_types_scaffold", Global, Common, &[], &[]),
+        // Modeled DTO boundaries (DD3, issue #667): presence-gated on the graph.
+        cap("dto_boundaries",       Global, Common, &[], &[]),
         cap("report_views",         Global, Common, &[], &[]),
         cap("cli_scaffold",         Global, Cli,   &[], &[]),
         cap("playwright-global",    Global, Ui,    &[], &[]),

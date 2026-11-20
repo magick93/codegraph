@@ -123,6 +123,9 @@ pub struct DddDesignSurface {
     designs: HashMap<String, DddDesignNode>,
     repositories: HashMap<String, DddRepositoryNode>,
     searches: HashMap<String, DddSearchNode>,
+    /// Modeled DTO boundaries by boundary name (DD3, issue #667). Boundary
+    /// names are application-unique upstream, so one map is enough.
+    dto_shapes: HashMap<String, codegraph_core::types::DddDtoShapeNode>,
 }
 
 impl DddDesignSurface {
@@ -186,14 +189,30 @@ impl DddDesignSurface {
                 };
                 surface.repositories.insert(title, repo.clone());
             }
+            // DD3 (issue #667): boundary shapes are indexed by the name a
+            // `DddTypeRef::Dto` slot references.
+            for shape in &model.dto_shapes {
+                surface.dto_shapes.insert(shape.name.clone(), shape.clone());
+            }
         }
         surface
+    }
+
+    /// The modeled DTO boundary with this name, when the graph carries one.
+    pub fn dto_shape(&self, name: &str) -> Option<&codegraph_core::types::DddDtoShapeNode> {
+        self.dto_shapes.get(name)
     }
 
     /// `true` when the graph carries no usable designs — every consumer
     /// gates on this to keep flag-off output byte-identical.
     pub fn is_empty(&self) -> bool {
         self.designs.is_empty()
+    }
+
+    /// `true` when the graph carries at least one modeled DTO boundary
+    /// (DD3, issue #667).
+    pub fn has_dto_boundaries(&self) -> bool {
+        !self.dto_shapes.is_empty()
     }
 
     /// The design decision for the entity with this schema title.

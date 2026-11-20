@@ -418,6 +418,15 @@ pub(crate) fn build_global_generators(ctx: &GeneratorContext<'_>) -> Vec<Box<dyn
                 .unwrap_or_else(|| output_dir.to_path_buf()),
         ),
     ) as Box<dyn GlobalGenerator>);
+    // Modeled DTO boundaries (DD3, issue #667) — presence-gated on the graph:
+    // no `dto` designs ⇒ no files.
+    global_gens.push(Box::new(
+        ddd::dto_boundaries::DddDtoBoundariesGenerator::new_with_base(
+            ctx.domain_types_base
+                .map(|b| b.to_path_buf())
+                .unwrap_or_else(|| output_dir.to_path_buf()),
+        ),
+    ) as Box<dyn GlobalGenerator>);
     global_gens.push(
         Box::new(cli::scaffold::CliScaffoldGenerator::new(output_dir)) as Box<dyn GlobalGenerator>,
     );

@@ -314,6 +314,19 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
             .map(|d| format!("pub mod {};\n", d))
             .collect();
 
+        // Modeled DTO boundaries (DD3, issue #667) live in `src/dto/`; the
+        // boundary generator writes the module files, this declares the index.
+        let has_dto_boundaries = db
+            .get_ddd_models()
+            .await
+            .map(|models| models.iter().any(|m| !m.dto_shapes.is_empty()))
+            .unwrap_or(false);
+        let dto_mod = if has_dto_boundaries {
+            "pub mod dto;\n"
+        } else {
+            ""
+        };
+
         let mut structured_re_exports = String::new();
         let mut sorted_types: Vec<&String> = structured_types.iter().collect();
         sorted_types.sort();
@@ -335,6 +348,7 @@ impl GlobalGenerator for DomainTypesScaffoldGenerator {
              pub mod codelist;\n\
              pub mod context;\n\
              pub mod query;\n\
+             {dto_mod}\
              \n\
              pub use context::{{SourceContext, SourceOrigin}};\n\
              pub use query::{{ListParams, PagedResult, QueryError, SortOrder}};\n\
