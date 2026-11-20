@@ -36,6 +36,8 @@ pub struct {{ boundary.name }} {
 {%- endif %}
 {%- if field.optional %}
     #[serde(default, skip_serializing_if = "Option::is_none")]
+{%- elif field.is_vec %}
+    #[serde(default)]
 {%- endif %}
     pub {{ field.name }}: {{ field.rust_type }},
 {%- endfor %}

@@ -412,6 +412,11 @@ postgres_schema = "library"
     let boundary = fs::read_to_string(output.join("crates/domain-types/src/dto/catalog.rs"))
         .expect("generated boundary module");
     assert!(boundary.contains("pub struct NewBookInput {"), "{boundary}");
+    assert!(
+        boundary.contains("pub token: uuid::Uuid,"),
+        "a `wraps opaque` datatype named Uuid must use the QUALIFIED path: {boundary}"
+    );
+    assert!(boundary.contains("pub extras: Vec<String>,"), "{boundary}");
     assert!(boundary.contains("pub struct BookSummary {"), "{boundary}");
     assert!(
         boundary.contains("/// Computed: `playLength / 60`"),
@@ -529,6 +534,25 @@ async fn boundary_sample_matches_the_generated_wire_contract() {
                 path: Vec::new(),
                 expression: None,
             },
+            DddDtoMember {
+                name: "extras".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({"type": "primitive", "value": "string"}),
+                multiplicity_json: Some(serde_json::json!({"lower": 0, "upper": "unbounded"})),
+                path: Vec::new(),
+                expression: None,
+            },
+            DddDtoMember {
+                name: "token".to_string(),
+                kind: "declared".to_string(),
+                type_json: serde_json::json!({
+                    "type": "datatype",
+                    "value": {"package": "", "name": "Uuid"}
+                }),
+                multiplicity_json: None,
+                path: Vec::new(),
+                expression: None,
+            },
         ],
         ordinal: 0,
     };
@@ -550,16 +574,20 @@ async fn boundary_sample_matches_the_generated_wire_contract() {
         Some(serde_json::json!({
             "play_length": 42,
             "tags": ["contract-sample"],
-            "colour": "CRIMSON"
+            "colour": "CRIMSON",
+            "extras": [],
+            "token": "00000000-0000-0000-0000-000000000000"
         })),
-        "snake keys, arrays for many members, the first codelist value, optional omitted"
+        "snake keys, arrays for many members, the first codelist value, empty lower-0 list, datatype sample, optional omitted"
     );
     assert_eq!(
         index.sample("PaintInput", true).cloned(),
         Some(serde_json::json!({
             "playLength": 42,
             "tags": ["contract-sample"],
-            "colour": "CRIMSON"
+            "colour": "CRIMSON",
+            "extras": [],
+            "token": "00000000-0000-0000-0000-000000000000"
         })),
         "camel casing applies to every key"
     );

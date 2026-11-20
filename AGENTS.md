@@ -1140,9 +1140,11 @@ never reached the graph. #667 makes the boundary a plane:
   the full response (extra fields, lax unknown-field handling) and breaks on
   `table "…"` renames (the alias target was derived from the title, not the
   emitted `pg_table_name`); the exact-member struct is the honest contract.
-  Member typing: primitives via `phero_type_to_rust`, ENTITY class refs →
-  `uuid::Uuid`, codelists → the generated enum, nested boundaries imported
-  across modules, multiplicity → `Option`/`Vec`. Named refusals:
+  Member typing: primitives via `phero_type_to_rust` (named datatypes
+  normalized — bare `Uuid`/`NaiveDate` become the qualified paths the module
+  can name), ENTITY class refs → `uuid::Uuid`, codelists → the generated enum,
+  nested boundaries imported across modules, multiplicity → `Option`/`Vec`
+  (`Vec` fields carry `#[serde(default)]`, so an omitted list is valid). Named refusals:
   interface/unresolvable member, a non-entity (value-object/structured) class
   ref, an unresolved class, an undeclared nested boundary, derivation without
   source, boundary name colliding with a generated entity DTO type. The
@@ -1151,7 +1153,10 @@ never reached the graph. #667 makes the boundary a plane:
 - **Payload slots** (`ddd/body_params.rs` — split out of the #751 over-limit
   `body_lower.rs`): `DtoBoundaryIndex` (with graph-backed `sample`s: project
   wire casing, arrays for many-valued members, the FIRST codelist value) lives
-  beside the generator; `body_params` resolves a `DddTypeRef::Dto` parameter to
+  beside the generator (wire-valid: project casing, `[]` for a lower-0
+  collection, `[one]` otherwise, the first codelist value, and the named
+  datatype samples `Uuid`/`DateTime`/`Decimal`/`Date`); `body_params` resolves
+  a `DddTypeRef::Dto` parameter to
   `{domain_types_crate}::dto::{module}::{Name}`, and a LONE boundary parameter
   makes the endpoint body the DTO itself (`BodyParam.direct_body`, honoured by
   the pre-rendered extraction — an optional one deserializes the INNER type —

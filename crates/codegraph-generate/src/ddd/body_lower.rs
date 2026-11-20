@@ -145,32 +145,12 @@ impl RaiseTarget {
     }
 }
 
-/// A statically-unlowerable construct. Carries the fully-named diagnostic
-/// (`service op \`X\` of service \`Y\`: …`); the caller turns it into a hard
-/// generation error (the run path also surfaces it through
-/// `ValidationPass::check_service_op_bodies`, before any tree is written).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Refusal(pub String);
-
-impl std::fmt::Display for Refusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl BodyParam {
-    /// The value-kind classification of the bound local.
-    fn kind(&self) -> ValKind {
-        ValKind::of_rust_type(&self.rust_type)
-    }
-}
-
 // The action-body parameter plane lives in its own module (issue #751: this
 // file is over the 2,000-line budget; the #667 payload work must SHRINK it,
 // never grow it). Re-exported so every existing path keeps working.
 pub(crate) use crate::ddd::body_params::param_extraction_with;
 pub(crate) use crate::ddd::body_params::payload_field_rust_type;
-pub use crate::ddd::body_params::{BodyParam, body_params};
+pub use crate::ddd::body_params::{BodyParam, Refusal, body_params};
 
 /// One declared raise a body can answer with (docs + hurl planning).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -295,7 +275,7 @@ enum Binding {
 
 /// How a value renders in comparisons and envelopes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ValKind {
+pub(crate) enum ValKind {
     /// The aggregate record.
     Record,
     /// A `Copy` scalar (`i32`, `bool`, `Uuid`, …).
@@ -317,7 +297,7 @@ enum ValKind {
 
 impl ValKind {
     /// The kind of a declared Rust type text (params and `let` bindings).
-    fn of_rust_type(rust_type: &str) -> Self {
+    pub(crate) fn of_rust_type(rust_type: &str) -> Self {
         let trimmed = rust_type.trim();
         if let Some(inner) = trimmed
             .strip_prefix("Option<")

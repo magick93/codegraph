@@ -16,6 +16,8 @@ application Library {
             String title;
             String isbn;
             int playLength;
+            Uuid token;
+            String[0..*] extras;
         }
 
         dto BookSummary from Book {

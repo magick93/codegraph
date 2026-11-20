@@ -60,6 +60,10 @@ struct BoundaryFieldCtx {
     name: String,
     rust_type: String,
     optional: bool,
+    /// A `Vec<T>` member: serde-required by default, so an empty list is a
+    /// valid minimal body — `#[serde(default)]` keeps a caller that omits it
+    /// working too (review R1).
+    is_vec: bool,
     derived: bool,
     expression: Option<String>,
 }
@@ -184,7 +188,13 @@ impl DtoBoundaryIndex {
             let multiplicity = member.multiplicity_json.as_ref().and_then(|json| {
                 serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok()
             });
-            if multiplicity.as_ref().is_some_and(|m| m.lower == 0) {
+            // A non-many optional member is omitted (the minimal body); a
+            // many-valued one is ALWAYS present (the struct's `Vec` field is
+            // not `Option`) — empty when the lower bound is 0.
+            if multiplicity
+                .as_ref()
+                .is_some_and(|m| m.lower == 0 && !m.is_many())
+            {
                 continue;
             }
             let Ok(one) = async {
@@ -204,6 +214,9 @@ impl DtoBoundaryIndex {
                             .map(|v| serde_json::json!(v.value))
                             .unwrap_or(serde_json::json!("contract-sample")))
                     }
+                    DddSignatureType::Domain(phero_ir::TypeRef::Datatype { name, .. }) => {
+                        Ok(named_sample(&name))
+                    }
                     DddSignatureType::Domain(_) => Ok(serde_json::json!("contract-sample")),
                     DddSignatureType::Dto(nested) => {
                         if depth >= 4 || nested == shape.name {
@@ -218,10 +231,10 @@ impl DtoBoundaryIndex {
             else {
                 continue;
             };
-            let value = if multiplicity.as_ref().is_some_and(|m| m.is_many()) {
-                serde_json::json!([one])
-            } else {
-                one
+            let value = match multiplicity.as_ref() {
+                Some(m) if m.is_many() && m.lower == 0 => serde_json::json!([]),
+                Some(m) if m.is_many() => serde_json::json!([one]),
+                _ => one,
             };
             object.insert(wire_key(&member.name, camel), value);
         }
@@ -300,6 +313,19 @@ fn primitive_sample(primitive: &phero_ir::PrimitiveType) -> serde_json::Value {
     }
 }
 
+/// The sample for a named `.mox` datatype (`Uuid`/`DateTime`/`Decimal`/`Date`
+/// and their wraps) — the wire spellings the generated DTO field deserializes.
+fn named_sample(name: &str) -> serde_json::Value {
+    match name {
+        "Uuid" => serde_json::json!("00000000-0000-0000-0000-000000000000"),
+        "DateTime" | "Instant" | "Timestamp" => serde_json::json!("2026-01-01T00:00:00Z"),
+        "Date" => serde_json::json!("2026-01-01"),
+        // `serde-with-str` in the domain-types crate: Decimal arrives as a string.
+        "Decimal" => serde_json::json!("1.0"),
+        _ => serde_json::json!("contract-sample"),
+    }
+}
+
 /// A class-reference sample: an entity ref is the FK id; an unresolvable
 /// class is still a Uuid (generation refuses non-entity refs, so only an
 /// entity can reach a contract).
@@ -333,7 +359,10 @@ fn blocking_sample(
             .multiplicity_json
             .as_ref()
             .and_then(|json| serde_json::from_value::<phero_ir::Multiplicity>(json.clone()).ok());
-        if multiplicity.as_ref().is_some_and(|m| m.lower == 0) {
+        if multiplicity
+            .as_ref()
+            .is_some_and(|m| m.lower == 0 && !m.is_many())
+        {
             continue;
         }
         use crate::ddd::signature::{DddSignatureType, signature_type};
@@ -343,6 +372,9 @@ fn blocking_sample(
             }
             DddSignatureType::Domain(phero_ir::TypeRef::Class { .. }) => {
                 serde_json::json!("00000000-0000-0000-0000-000000000000")
+            }
+            DddSignatureType::Domain(phero_ir::TypeRef::Datatype { name, .. }) => {
+                named_sample(&name)
             }
             DddSignatureType::Domain(_) | DddSignatureType::Unresolvable(_) => {
                 serde_json::json!("contract-sample")
@@ -355,10 +387,10 @@ fn blocking_sample(
                 }
             }
         };
-        let value = if multiplicity.as_ref().is_some_and(|m| m.is_many()) {
-            serde_json::json!([one])
-        } else {
-            one
+        let value = match multiplicity.as_ref() {
+            Some(m) if m.is_many() && m.lower == 0 => serde_json::json!([]),
+            Some(m) if m.is_many() => serde_json::json!([one]),
+            _ => one,
         };
         object.insert(wire_key(&member.name, camel), value);
     }
@@ -546,6 +578,7 @@ impl DddDtoBoundariesGenerator {
                 )));
             }
             fields.push(BoundaryFieldCtx {
+                is_vec: rust_type.starts_with("Vec<"),
                 name: codegraph_naming::to_snake_case(&member.name),
                 rust_type,
                 optional,
@@ -604,7 +637,8 @@ impl DddDtoBoundariesGenerator {
                             }
                             Some(schema) => {
                                 return Err(refuse(&format!(
-                                    "the non-entity class `{}` ({}); a contained value object                                      needs its own boundary shape",
+                                    "the non-entity class `{}` ({}) — a contained value object \
+                                     needs its own boundary shape",
                                     name, schema.classification
                                 )));
                             }
@@ -626,12 +660,20 @@ impl DddDtoBoundariesGenerator {
                     }
                     phero_ir::TypeRef::Datatype { .. } => {}
                 }
-                crate::ddd::design::phero_type_to_rust(&type_ref).ok_or_else(|| {
-                    refuse(&format!(
-                        "the datatype `{}`",
-                        type_ref.qualified_name().unwrap_or_default()
-                    ))
-                })
+                crate::ddd::design::phero_type_to_rust(&type_ref)
+                    .map(|rust| match rust.as_str() {
+                        // The shared map returns these two BARE (the trait
+                        // plane imports them); the boundary module does not.
+                        "Uuid" => "uuid::Uuid".to_string(),
+                        "NaiveDate" => "chrono::NaiveDate".to_string(),
+                        _ => rust,
+                    })
+                    .ok_or_else(|| {
+                        refuse(&format!(
+                            "the datatype `{}`",
+                            type_ref.qualified_name().unwrap_or_default()
+                        ))
+                    })
             }
             DddSignatureType::Dto(name) => {
                 if !lookup.shape_by_name.contains_key(&name) {

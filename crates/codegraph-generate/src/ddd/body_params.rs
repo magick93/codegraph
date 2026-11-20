@@ -6,7 +6,27 @@
 //! latter resolves to the generated type in the domain-types crate, and a
 //! LONE boundary parameter makes the endpoint body the DTO itself.
 
-use super::body_lower::Refusal;
+use super::body_lower::ValKind;
+
+/// A statically-unlowerable construct. Carries the fully-named diagnostic
+/// (`service op \`X\` of service \`Y\`: …`); the caller turns it into a hard
+/// generation error (the run path also surfaces it through
+/// `ValidationPass::check_service_op_bodies`, before any tree is written).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal(pub String);
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl BodyParam {
+    /// The value-kind classification of the bound local.
+    pub(crate) fn kind(&self) -> ValKind {
+        ValKind::of_rust_type(&self.rust_type)
+    }
+}
 
 /// One action-body parameter, extracted from the POST body by the handler.
 #[derive(Debug, Clone, serde::Serialize)]

@@ -85,7 +85,8 @@ fn cargo_check_boundary_plane(domain_types: &Path, target: Option<&str>) {
          serde_json = \"1\"\n\
          uuid = { version = \"1\", features = [\"v4\", \"serde\", \"js\"] }\n\
          chrono = { version = \"0.4\", features = [\"serde\"] }\n\
-         utoipa = { version = \"6\", features = [\"chrono\", \"uuid\"] }\n",
+         rust_decimal = { version = \"1\", features = [\"serde-with-str\"] }\n\
+         utoipa = { version = \"6\", features = [\"chrono\", \"uuid\", \"decimal\"] }\n",
     )
     .unwrap();
 
