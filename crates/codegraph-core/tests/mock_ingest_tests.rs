@@ -406,6 +406,7 @@ async fn ingest_ddd_model_round_trips_through_the_mock() {
             capabilities: vec![],
             ordinal: 0,
         }],
+        dto_shapes: Vec::new(),
     };
 
     engine.ingest_ddd_model(&fixture).await.unwrap();

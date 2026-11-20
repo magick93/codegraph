@@ -89,7 +89,7 @@
 /// deserializes both as EMPTY — every declared variant the generated
 /// `{Domain}Error` plane would carry silently vanishes, and every
 /// `throws` entry silently maps to no variant. Cold re-ingest instead.
-pub const GRAPH_FORMAT_VERSION: u32 = 13;
+pub const GRAPH_FORMAT_VERSION: u32 = 14;
 
 /// Generation of the grafeo storage engine's on-disk format, distinct from
 /// [`GRAPH_FORMAT_VERSION`] (which versions codegraph's own artifact
@@ -626,6 +626,20 @@ const DDD_NODE_DDL: &[&str] = &[
             invariants_json STRING,
             ordinal INTEGER NOT NULL
         )",
+    // Modeled DTO boundaries (DD3, issue #667). One node per `dto` design —
+    // mirror, projection, and standalone alike (a standalone boundary has no
+    // `DddDesign` node, hence its own family). Members ride as one
+    // serde-serialized blob (the `child_operations_json` discipline); the
+    // boundary name is unique application-wide upstream.
+    "CREATE NODE TYPE IF NOT EXISTS DddDtoShape (
+            application STRING NOT NULL,
+            module STRING NOT NULL,
+            name STRING NOT NULL,
+            source_json STRING,
+            direction STRING NOT NULL,
+            members_json STRING NOT NULL,
+            ordinal INTEGER NOT NULL
+        )",
     "CREATE NODE TYPE IF NOT EXISTS DddRepository (
             application STRING NOT NULL,
             name STRING NOT NULL,
@@ -842,6 +856,7 @@ fn edge_type_ddl() -> Vec<&'static str> {
         // DddDesign/DddSearch to its resolved Schema (advisory).
         "CREATE EDGE TYPE IF NOT EXISTS DddHasModule ()",
         "CREATE EDGE TYPE IF NOT EXISTS DddHasDesign ()",
+        "CREATE EDGE TYPE IF NOT EXISTS DddHasDtoShape ()",
         "CREATE EDGE TYPE IF NOT EXISTS DddHasRepository ()",
         "CREATE EDGE TYPE IF NOT EXISTS DddHasService ()",
         "CREATE EDGE TYPE IF NOT EXISTS DddHasSearch ()",

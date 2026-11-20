@@ -1905,6 +1905,59 @@ fn ddd_fixture() -> DddModelGraph {
             capabilities: vec!["SearchBooks".to_string()],
             ordinal: 0,
         }],
+        dto_shapes: vec![
+            DddDtoShapeNode {
+                application: "Library".to_string(),
+                module: "lending".to_string(),
+                name: "BookSummary".to_string(),
+                source_json: Some(serde_json::json!({
+                    "type": "class",
+                    "value": {"package": "nz.example.library", "name": "Book"}
+                })),
+                direction: "output".to_string(),
+                members: vec![
+                    DddDtoMember {
+                        name: "title".to_string(),
+                        kind: "select".to_string(),
+                        type_json: serde_json::json!({
+                            "type": "primitive",
+                            "value": "string"
+                        }),
+                        multiplicity_json: None,
+                        path: vec!["title".to_string()],
+                        expression: None,
+                    },
+                    DddDtoMember {
+                        name: "minutes".to_string(),
+                        kind: "derive".to_string(),
+                        type_json: serde_json::json!({
+                            "type": "primitive",
+                            "value": "int"
+                        }),
+                        multiplicity_json: None,
+                        path: Vec::new(),
+                        expression: Some("playLength / 60".to_string()),
+                    },
+                ],
+                ordinal: 2,
+            },
+            DddDtoShapeNode {
+                application: "Library".to_string(),
+                module: "lending".to_string(),
+                name: "CreateBookRequest".to_string(),
+                source_json: None,
+                direction: "input".to_string(),
+                members: vec![DddDtoMember {
+                    name: "isbn".to_string(),
+                    kind: "declared".to_string(),
+                    type_json: serde_json::json!({"type": "primitive", "value": "string"}),
+                    multiplicity_json: None,
+                    path: Vec::new(),
+                    expression: None,
+                }],
+                ordinal: 3,
+            },
+        ],
     }
 }
 
@@ -1933,6 +1986,9 @@ async fn test_ddd_model_round_trip() {
     assert_eq!(count_edges(&engine, "DddHasSearch"), 1);
     assert_eq!(count_edges(&engine, "DddHasRepository"), 2);
     assert_eq!(count_edges(&engine, "DddHasOperation"), 7);
+    // DD3 (issue #667): one edge per modeled boundary, mirror/projection and
+    // standalone alike.
+    assert_eq!(count_edges(&engine, "DddHasDtoShape"), 2);
     // DddBindsClass: only the resolved titles bind (design Book + search
     // BookSearch → Schema "Book").
     assert_eq!(count_edges(&engine, "DddBindsClass"), 2);
@@ -1961,6 +2017,7 @@ async fn test_ddd_models_sorted_by_application_name() {
         repositories: vec![],
         services: vec![],
         searches: vec![],
+        dto_shapes: Vec::new(),
     };
     engine.ingest_ddd_model(&other).await.unwrap();
 

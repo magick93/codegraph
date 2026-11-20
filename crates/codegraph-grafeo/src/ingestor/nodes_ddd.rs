@@ -54,6 +54,42 @@ impl GrafeoEngine {
             })?;
         }
 
+        // Modeled DTO boundaries (DD3, issue #667): one node per `dto` design,
+        // including the standalone form with no `DddDesign` node. Members
+        // ride as one serde blob (always written, `[]` when member-less).
+        for shape in &model.dto_shapes {
+            let source_json = shape.source_json.as_ref().map(json_string).transpose()?;
+            let members_json = json_string(&shape.members)?;
+            let gql = format!(
+                "INSERT (:DddDtoShape {{ application: '{}', module: '{}', name: '{}', \
+                 source_json: {}, direction: '{}', members_json: '{}', ordinal: {} }})",
+                escape_gql(&shape.application),
+                escape_gql(&shape.module),
+                escape_gql(&shape.name),
+                opt_str(&source_json),
+                escape_gql(&shape.direction),
+                escape_gql(&members_json),
+                shape.ordinal,
+            );
+            session.execute(&gql).map_err(|e| {
+                GraphError::Ingest(format!("ingest_ddd_model dto shape failed: {e}"))
+            })?;
+            let edge = format!(
+                "MATCH (m:DddModule {{application: '{}', name: '{}'}}), \
+                 (s:DddDtoShape {{application: '{}', module: '{}', name: '{}', ordinal: {}}}) \
+                 INSERT (m)-[:DddHasDtoShape]->(s)",
+                escape_gql(&shape.application),
+                escape_gql(&shape.module),
+                escape_gql(&shape.application),
+                escape_gql(&shape.module),
+                escape_gql(&shape.name),
+                shape.ordinal,
+            );
+            session.execute(&edge).map_err(|e| {
+                GraphError::Ingest(format!("ingest_ddd_model DddHasDtoShape failed: {e}"))
+            })?;
+        }
+
         for design in &model.designs {
             let flags_json = json_string(&design.flags)?;
             let machine_json = design.machine_json.as_ref().map(json_string).transpose()?;

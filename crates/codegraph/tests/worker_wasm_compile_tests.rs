@@ -1130,6 +1130,7 @@ fn fixture_ddd_graph() -> codegraph_core::types::DddModelGraph {
         ],
         services: fixture_services(),
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     }
 }
 

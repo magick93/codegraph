@@ -665,6 +665,7 @@ postgres_schema = "grants"
             repositories: Vec::new(),
             services: Vec::new(),
             searches: Vec::new(),
+            dto_shapes: Vec::new(),
         }
     }
 

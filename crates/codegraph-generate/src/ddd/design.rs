@@ -1220,6 +1220,7 @@ mod tests {
             repositories,
             services: Vec::new(),
             searches,
+            dto_shapes: Vec::new(),
         }
     }
 

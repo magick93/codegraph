@@ -546,6 +546,7 @@ pub fn authored_boundary_graph() -> codegraph_core::types::DddModelGraph {
         ],
         services: Vec::new(),
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     }
 }
 

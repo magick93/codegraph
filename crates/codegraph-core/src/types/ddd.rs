@@ -24,6 +24,74 @@ pub struct DddModelGraph {
     pub services: Vec<DddServiceNode>,
     /// Search definitions across all modules, in declaration order.
     pub searches: Vec<DddSearchNode>,
+    /// Modeled DTO boundaries (DD3, issue #667), module-major declaration
+    /// order. Every `dto` design carries one — mirror, projection, and
+    /// standalone alike — including the standalone form whose `Design::class`
+    /// is `None` (it has no design node of its own). Empty for a model with
+    /// no `dto` designs, so such a model behaves exactly as before.
+    pub dto_shapes: Vec<DddDtoShapeNode>,
+}
+
+/// One modeled DTO boundary (phero-ir `DtoShape`, DD3 / pherolang#300, issue
+/// #667): the transport shape a `DddTypeRef::Dto` signature slot references.
+///
+/// The shape carries its own members so generation never re-derives them:
+/// a **mirror** (`dto User`) expands to every stored feature upstream, a
+/// **projection** carries the authored select/derive members, and a
+/// **standalone** DTO (`dto CreateBookRequest { … }`) has no `source` at all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DddDtoShapeNode {
+    /// The owning application name.
+    pub application: String,
+    /// The owning module name.
+    pub module: String,
+    /// The boundary name — the name a `DddTypeRef::Dto` references.
+    pub name: String,
+    /// The resolved domain class the boundary is built from, as phero-ir
+    /// `TypeRef` JSON. `None` for a standalone DTO (codegraph-core takes no
+    /// phero-* deps — the `type_json` discipline).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_json: Option<serde_json::Value>,
+    /// The derived direction: `"input"` (the caller supplies the data) or
+    /// `"output"` (the use case returns it — any derived member makes a
+    /// boundary output-only, upstream).
+    pub direction: String,
+    /// Members in declaration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<DddDtoMember>,
+    /// Declaration order within the module (the owning design's ordinal —
+    /// a standalone DTO has no design node but shares the design index
+    /// space, so module-major readback is preserved).
+    pub ordinal: usize,
+}
+
+/// One member of a [`DddDtoShapeNode`] (phero-ir `DtoMember`, DD3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DddDtoMember {
+    /// The member name as it appears on the boundary.
+    pub name: String,
+    /// How the member is populated: `"select"` (copied from the source
+    /// feature named by [`Self::path`]), `"derive"` (computed from
+    /// [`Self::expression`]), or `"declared"` (carried by the boundary
+    /// alone).
+    pub kind: String,
+    /// The member's type as phero-ir `DddTypeRef` JSON — a domain type or
+    /// another DTO boundary (`{"dto":"Name"}`).
+    pub type_json: serde_json::Value,
+    /// The declared cardinality as phero-ir `Multiplicity` JSON; `None` is
+    /// single-valued.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiplicity_json: Option<serde_json::Value>,
+    /// The selected source feature path (a single segment for a top-level
+    /// feature, a dotted chain for a nested one). Empty for every
+    /// non-`select` kind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
+    /// The derivation's verbatim source text, for a `derive` member. The
+    /// payload stays OPAQUE here (codegraph-core may not depend on
+    /// phero-expr); generation re-parses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
 }
 
 /// One declared error of the DD7 vocabulary (phero-ir `ErrorDecl`, issue

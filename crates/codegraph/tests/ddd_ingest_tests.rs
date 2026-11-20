@@ -232,11 +232,12 @@ fn sample_model() -> DddModel {
 }
 
 #[test]
-fn standalone_dto_boundary_designs_are_skipped_not_mapped() {
-    // DD3: a `dto` design with no `.mox` source has `class: None` and is
-    // described entirely by `dtoShape`. It is a transport boundary, not a
-    // domain class, so it never becomes a design node — and the skip must
-    // not shift the class-backed design's ordinal off its declaration index.
+fn standalone_dto_boundaries_ingest_as_shapes_not_design_nodes() {
+    // DD3 (issue #667): a `dto` design with no `.mox` source has `class: None`
+    // and is described entirely by `dtoShape`. It is a transport boundary, not
+    // a domain class, so it never becomes a design node — but its SHAPE is the
+    // consumable surface and must ride the graph. The skip must not shift the
+    // class-backed design's ordinal off its declaration index.
     let mut module = Module::new("reporting");
     module.designs = vec![
         Design::new("Book", Stereotype::Entity),
@@ -251,6 +252,78 @@ fn standalone_dto_boundary_designs_are_skipped_not_mapped() {
     assert_eq!(graph.designs[0].class, "Book");
     assert_eq!(graph.designs[0].ordinal, 0);
     assert_eq!(graph.designs[0].stereotype, "entity");
+    assert_eq!(graph.dto_shapes.len(), 1, "the boundary shape still lands");
+    assert_eq!(graph.dto_shapes[0].name, "CreateBookRequest");
+    assert_eq!(graph.dto_shapes[0].module, "reporting");
+    assert_eq!(graph.dto_shapes[0].direction, "output");
+    assert!(
+        graph.dto_shapes[0].source_json.is_none(),
+        "a standalone boundary has no source class"
+    );
+    assert_eq!(
+        graph.dto_shapes[0].ordinal, 1,
+        "the shape keeps the owning design's declaration ordinal"
+    );
+}
+
+#[test]
+fn dto_shape_members_and_direction_mirror_the_artifact() {
+    // DD3 (issue #667): a projection's selected and derived members ride the
+    // graph verbatim (kinds, paths, expressions, resolved types), and the
+    // derived direction follows upstream (any derive ⇒ output).
+    let shape = phero_ir::ddd::DtoShape::new("BookSummary", phero_ir::ddd::DtoDirection::Output)
+        .with_source(Some(TypeRef::Class {
+            package: "nz.example.library".to_string(),
+            name: "Book".to_string(),
+        }))
+        .with_members(vec![
+            phero_ir::ddd::DtoMember::new(
+                "title",
+                phero_ir::ddd::DtoMemberKind::Select,
+                phero_ir::ddd::DddTypeRef::domain(TypeRef::Primitive(PrimitiveType::String)),
+            )
+            .with_path(vec!["title".to_string()]),
+            phero_ir::ddd::DtoMember::new(
+                "minutes",
+                phero_ir::ddd::DtoMemberKind::Derive,
+                phero_ir::ddd::DddTypeRef::domain(TypeRef::Primitive(PrimitiveType::Int)),
+            )
+            .with_expression(Some("playLength / 60".to_string())),
+        ]);
+    let mut module = Module::new("reporting");
+    module.designs = vec![
+        Design::new("Book", Stereotype::Entity),
+        Design::new("Book", Stereotype::Dto).with_dto_shape(Some(shape)),
+    ];
+    let model = DddModel::new().module(module);
+
+    let graph =
+        codegraph::ingest::ddd_ingest::ddd_model_graph_from_phero(&model, "design.ddd", &|_| {
+            Some("BookType".to_string())
+        });
+
+    assert_eq!(graph.dto_shapes.len(), 1);
+    let shape = &graph.dto_shapes[0];
+    assert_eq!(shape.name, "BookSummary");
+    assert_eq!(shape.direction, "output");
+    assert_eq!(
+        shape.source_json.as_ref().and_then(|s| s.get("type")),
+        Some(&serde_json::json!("class"))
+    );
+    assert_eq!(shape.members.len(), 2);
+    assert_eq!(shape.members[0].name, "title");
+    assert_eq!(shape.members[0].kind, "select");
+    assert_eq!(shape.members[0].path, vec!["title".to_string()]);
+    assert_eq!(shape.members[1].name, "minutes");
+    assert_eq!(shape.members[1].kind, "derive");
+    assert_eq!(
+        shape.members[1].expression.as_deref(),
+        Some("playLength / 60")
+    );
+    assert!(
+        shape.members[1].multiplicity_json.is_none(),
+        "a single-valued member carries no multiplicity payload"
+    );
 }
 
 /// Book resolves via the +`Type` suffix (the mox bridge convention), Money
@@ -607,6 +680,7 @@ async fn authored_aggregate_boundary_and_invariants_round_trip_through_the_mock(
         repositories: Vec::new(),
         services: Vec::new(),
         searches: Vec::new(),
+        dto_shapes: Vec::new(),
     };
 
     let mock = MockEngine::builder().build();
