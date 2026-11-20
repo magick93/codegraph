@@ -247,7 +247,10 @@ async fn projection_and_standalone_boundaries_emit_real_types() {
     // deny_unknown_fields on a read model).
     assert!(content.contains("pub struct BookSummary {"), "{content}");
     assert!(content.contains("pub title: String,"), "{content}");
-    assert!(content.contains("pub minutes: i64,"), "{content}");
+    assert!(
+        content.contains("pub minutes: i32,"),
+        "the boundary primitive mapping is the payload plane's (int→i32): {content}"
+    );
     assert!(
         content.contains("/// Computed: `playLength / 60` (read-only)."),
         "{content}"
@@ -441,6 +444,81 @@ postgres_schema = "library"
             "serde_json::from_value::<domain_types::dto::catalog::NewBookInput>(value.0.clone())"
         ),
         "a lone DTO parameter must bind the request body directly: {handler}"
+    );
+
+    // ── Issue #767: the collection-level create body ────────────────────
+    //
+    // `registerBook` is abstract, returns the bound entity, and takes one
+    // modeled input boundary — the create-shaped predicate. The route is
+    // COLLECTION-level, the boundary IS the body, and the handler constructs
+    // `CreateBookRequest` from it field by field (snake_case identity).
+    assert!(
+        handler.contains("/library/book/actions/register_book"),
+        "the create-shaped route documents the collection-level path: {handler}"
+    );
+    assert!(
+        handler.contains("request_body(content = domain_types::dto::catalog::NewBookDraft"),
+        "the modeled boundary is the documented request body: {handler}"
+    );
+    assert!(
+        handler.contains("let item = CreateBookRequest {"),
+        "the boundary is mapped onto the entity's create DTO: {handler}"
+    );
+    assert!(
+        handler.contains("title: payload.title,")
+            && handler.contains("isbn: payload.isbn,")
+            && handler.contains("play_length: payload.play_length,"),
+        "every boundary member maps by snake_case identity: {handler}"
+    );
+    assert!(
+        handler.contains("Ok((StatusCode::CREATED,"),
+        "a collection-level create answers 201: {handler}"
+    );
+    // The non-create-shaped shapes keep their old lowerings: a primitive
+    // parameter is still a door to the 501 seam, and `archive` (a parameterless
+    // `save` delegation) is not reclassified as a create.
+    assert!(
+        handler.contains("/actions/import_book\"")
+            && !handler.contains("book/actions/import_book\""),
+        "a primitive-parameter op keeps its ITEM-addressed 501 seam: {handler}"
+    );
+    assert!(
+        handler.contains("/actions/archive\"") && !handler.contains("book/actions/archive\""),
+        "a parameterless `save` delegation is not reclassified as a create: {handler}"
+    );
+    let router = fs::read_to_string(output.join("src/api/library/router.rs")).unwrap();
+    assert!(
+        router.contains(".route(\"/actions/register_book\""),
+        "the router mounts the collection-level action route: {router}"
+    );
+    assert!(
+        !router.contains("{book_id}/actions/register_book"),
+        "the create-shaped route never carries an id path: {router}"
+    );
+
+    // hurl: the create-shaped leg posts the boundary at the collection route
+    // and pins 201; the seam op still pins 501.
+    // The contract's number prefix follows generation order — discover it by
+    // suffix (the ops suite's own convention) instead of pinning a literal.
+    let hurl_dir = output.join("hurl");
+    let actions_path = fs::read_dir(&hurl_dir)
+        .expect("hurl dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("_library_book_actions.hurl"))
+        })
+        .expect("the actions contract is emitted for an entity with service ops");
+    let actions = fs::read_to_string(actions_path).unwrap();
+    assert!(
+        actions.contains("/actions/register_book") && actions.contains("HTTP 201"),
+        "the actions contract pins the collection-level create: {actions}"
+    );
+    assert!(
+        actions.contains("HTTP 501"),
+        "the abstract op with a primitive parameter keeps its 501 seam: {actions}"
     );
 
     // The boundary is documented as a component schema in BOTH documents.
@@ -707,4 +785,211 @@ async fn class_members_resolve_entities_to_uuid_and_refuse_value_objects() {
             assert!(text.contains("Card"), "{text}");
         }
     }
+}
+
+// ── Issue #767: the boundary → request-DTO mapping ────────────────────────
+//
+// The pipeline test above pins the happy path end to end. These pins drive
+// the mapping directly so every refusal class is exercised by a fixture that
+// CAN fail: an unmappable member, a type disagreement, and an uncovered
+// required field are named errors (never a silently dropped field), while an
+// uncovered OPTIONAL field defaults to `None`.
+
+use codegraph_core::types::PropertyNode;
+use codegraph_generate::ddd::body_params::BodyParam;
+use codegraph_generate::ddd::boundary_map::{RequestDtoKind, plan_boundary_request};
+
+/// A stored BookType column. `rust_type`/`pg_type` mirror what the mox bridge
+/// produces for `String` and `int` (so the DTO field types are the real ones).
+fn stored(name: &str, rust_type: &str, pg_type: &str, required: bool) -> PropertyNode {
+    PropertyNode {
+        is_id: false,
+        name: name.to_string(),
+        prop_type: if rust_type == "i32" {
+            "integer"
+        } else {
+            "string"
+        }
+        .to_string(),
+        description: None,
+        format: None,
+        is_required: required,
+        is_nullable: !required,
+        is_array: false,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        min_items: None,
+        max_items: None,
+        pg_column_name: name.to_string(),
+        pg_column_type: pg_type.to_string(),
+        rust_field_name: name.to_string(),
+        rust_field_type: rust_type.to_string(),
+        sea_orm_type: "Text".to_string(),
+        render_strategy: "scalar".to_string(),
+        ref_target: None,
+        classification: None,
+        projection: None,
+        classification_kind: None,
+        type_expr: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+    }
+}
+
+/// A BookType schema with `title`/`isbn` required strings, `play_length` a
+/// required `int`, and `subtitle` an OPTIONAL string.
+async fn mapping_engine() -> MockEngine {
+    let engine = MockEngine::builder().build();
+    engine
+        .ingest_schema(&schema("BookType", "library"))
+        .await
+        .unwrap();
+    for prop in [
+        stored("title", "String", "TEXT", true),
+        stored("isbn", "String", "TEXT", true),
+        stored("play_length", "i32", "INTEGER", true),
+        stored("subtitle", "String", "TEXT", false),
+    ] {
+        engine
+            .ingest_property("BookType", "library/BookType", &prop)
+            .await
+            .unwrap();
+    }
+    engine
+}
+
+/// A `NewBookDraft`-shaped boundary with the given members.
+fn draft(members: Vec<DddDtoMember>) -> DddDtoShapeNode {
+    DddDtoShapeNode {
+        application: "Library".to_string(),
+        module: "catalog".to_string(),
+        name: "NewBookDraft".to_string(),
+        source_json: None,
+        direction: "input".to_string(),
+        members,
+        ordinal: 1,
+    }
+}
+
+fn draft_param() -> BodyParam {
+    BodyParam {
+        name: "input".to_string(),
+        rust_type: "domain_types::dto::catalog::NewBookDraft".to_string(),
+        optional: false,
+        direct_body: true,
+        sample: serde_json::json!({}),
+        request_body: Some("domain_types::dto::catalog::NewBookDraft".to_string()),
+    }
+}
+
+async fn plan(
+    engine: &MockEngine,
+    shape: &DddDtoShapeNode,
+) -> Result<codegraph_generate::ddd::boundary_map::BoundaryRequestPlan, String> {
+    let shapes = std::collections::BTreeMap::from([(shape.name.clone(), shape.clone())]);
+    let module_of = std::collections::BTreeMap::from([(shape.name.clone(), "catalog".to_string())]);
+    plan_boundary_request(
+        codegraph_generate::ddd::boundary_map::BoundaryTarget {
+            db: engine,
+            config: &config(),
+            domain: "library",
+            entity_title: "BookType",
+        },
+        shape,
+        codegraph_generate::ddd::boundary_map::BoundaryShapeSet {
+            shapes: &shapes,
+            module_of: &module_of,
+        },
+        RequestDtoKind::Create,
+        &draft_param(),
+    )
+    .await
+}
+
+fn int_member(name: &str) -> DddDtoMember {
+    DddDtoMember {
+        expression: None,
+        path: Vec::new(),
+        ..member(name, "declared", int_type())
+    }
+}
+
+#[tokio::test]
+async fn create_body_mapping_refuses_a_member_with_no_request_field() {
+    let engine = mapping_engine().await;
+    let shape = draft(vec![
+        member("title", "declared", string_type()),
+        member("bogus", "declared", string_type()),
+    ]);
+    let err = plan(&engine, &shape).await.expect_err("must refuse");
+    assert!(
+        err.contains("member `bogus` matches no `CreateBookRequest` field"),
+        "the refusal names the member and the DTO: {err}"
+    );
+    assert!(
+        err.contains("accepted: isbn, play_length, subtitle, title"),
+        "the refusal lists the accepted fields: {err}"
+    );
+}
+
+#[tokio::test]
+async fn create_body_mapping_refuses_a_type_disagreement_naming_both_sides() {
+    let engine = mapping_engine().await;
+    // `play_length` is an i32 column; a boundary member typed `string`
+    // cannot fill it.
+    let shape = draft(vec![
+        member("title", "declared", string_type()),
+        member("isbn", "declared", string_type()),
+        member("playLength", "declared", string_type()),
+    ]);
+    let err = plan(&engine, &shape).await.expect_err("must refuse");
+    assert!(
+        err.contains("member `playLength` types `String`")
+            && err.contains("`CreateBookRequest.play_length` types `i32`"),
+        "the refusal names BOTH spellings: {err}"
+    );
+}
+
+#[tokio::test]
+async fn create_body_mapping_refuses_an_uncovered_required_field() {
+    let engine = mapping_engine().await;
+    // No `play_length` member: the create command would have no value for a
+    // NOT NULL column, so the mapping refuses instead of guessing.
+    let shape = draft(vec![
+        member("title", "declared", string_type()),
+        member("isbn", "declared", string_type()),
+    ]);
+    let err = plan(&engine, &shape).await.expect_err("must refuse");
+    assert!(
+        err.contains("does not carry the REQUIRED `CreateBookRequest` field `play_length`"),
+        "the refusal names the missing required field: {err}"
+    );
+}
+
+#[tokio::test]
+async fn create_body_mapping_defaults_an_uncovered_optional_field() {
+    let engine = mapping_engine().await;
+    let shape = draft(vec![
+        member("title", "declared", string_type()),
+        member("isbn", "declared", string_type()),
+        int_member("playLength"),
+    ]);
+    let plan = plan(&engine, &shape).await.expect("maps");
+    assert!(
+        plan.construct.contains("title: payload.title,")
+            && plan.construct.contains("play_length: payload.play_length,"),
+        "mapped members are copied by identity: {}",
+        plan.construct
+    );
+    assert!(
+        plan.construct.contains("subtitle: None,") && plan.defaulted == vec!["subtitle"],
+        "an optional field the boundary omits defaults to None (documented): {} / {:?}",
+        plan.construct,
+        plan.defaulted
+    );
 }

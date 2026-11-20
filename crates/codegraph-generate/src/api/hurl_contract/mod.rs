@@ -69,11 +69,13 @@ pub struct HurlContractGenerator {
     /// the `RulesGenerator` runs, so the invariant-denied legs resolve
     /// their verdicts only under the same flag the handler uses.
     rules_guards: bool,
+    boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache,
 }
 
 impl HurlContractGenerator {
     pub fn new(output_dir: &Path) -> Self {
         Self {
+            boundaries: crate::ddd::dto_boundaries::BoundaryIndexCache::new(),
             output_dir: output_dir.to_path_buf(),
             rules_guards: false,
         }
@@ -198,6 +200,10 @@ struct OpLeg {
 /// parameter (`{}` when the op declares none). Empty string ⇒ no body line.
 fn op_body_json(route: &crate::ddd::service_ops::ServiceOpRoute) -> String {
     use crate::ddd::service_ops::ExecutionKind;
+    // Issue #767: a create-shaped op's body IS the modeled boundary object.
+    if let ExecutionKind::Create { plan } = &route.execution {
+        return plan.sample.to_string();
+    }
     let ExecutionKind::Body { plan } = &route.execution else {
         return String::new();
     };
@@ -418,6 +424,20 @@ fn state_aware_legs(
                     },
                 }
             }
+            // Issue #767: a create-shaped op is COLLECTION-level and answers
+            // 201 with the created record (the entity create's own contract).
+            ExecutionKind::Create { .. } => OpLeg {
+                op_name: op.op_name.clone(),
+                service: op.service.clone(),
+                snake: op.snake.clone(),
+                expect: 201,
+                seam: false,
+                seam_reason: "collection-level create".to_string(),
+                wrong_state: false,
+                collection: true,
+                body: op_body_json(op),
+                ..Default::default()
+            },
             _ => OpLeg {
                 op_name: op.op_name.clone(),
                 service: op.service.clone(),
@@ -443,6 +463,7 @@ fn state_aware_legs(
                 op.execution,
                 ExecutionKind::Seam { .. }
                     | ExecutionKind::Body { .. }
+                    | ExecutionKind::Create { .. }
                     | ExecutionKind::ChildOp { .. }
             )
         {
@@ -514,6 +535,19 @@ fn child_action_legs(
     use crate::ddd::service_ops::ChildAction;
 
     let base = &op.service;
+    // Issue #767: when the operation declares a modeled INPUT boundary whose
+    // source class IS the child, the handler deserializes THAT type (its own
+    // `deny_unknown_fields`), not the child's generated request DTO — so the
+    // contract must send the boundary's sample, or every leg would 422 on a
+    // key the boundary does not declare.
+    let payload_body = op
+        .execution
+        .child_payload()
+        .map(|plan| plan.sample.to_string());
+    let add_body = payload_body
+        .clone()
+        .unwrap_or_else(|| child_bodies.0.to_string());
+    let save_body = payload_body.unwrap_or_else(|| child_bodies.1.to_string());
     let mut legs = Vec::new();
     match action {
         ChildAction::Add => {
@@ -523,7 +557,7 @@ fn child_action_legs(
                 service: base.clone(),
                 snake: op.snake.clone(),
                 expect: 200,
-                body: child_bodies.0.to_string(),
+                body: add_body.clone(),
                 collection: true,
                 capture: capture.clone(),
                 note: "aggregate child `add` — create-and-link under the parent".to_string(),
@@ -567,7 +601,7 @@ fn child_action_legs(
                     zero_uuid_parent_base(item_url_base),
                     op.snake
                 ),
-                body: child_bodies.0.to_string(),
+                body: add_body.clone(),
                 note: "failure leg: a bogus parent answers 404 through the parent \
                        load-or-404 — never a 500"
                     .to_string(),
@@ -580,7 +614,7 @@ fn child_action_legs(
                 service: base.clone(),
                 snake: op.snake.clone(),
                 expect: 200,
-                body: child_bodies.1.to_string(),
+                body: save_body.clone(),
                 note: "aggregate child `save` — update the parent-scoped element".to_string(),
                 ..Default::default()
             });
@@ -843,7 +877,8 @@ impl DomainGenerator for HurlContractGenerator {
                 config,
                 domain,
                 title,
-                &crate::ddd::service_ops::BodyRenderContext::from_project(project),
+                &crate::ddd::service_ops::BodyRenderContext::from_project(project)
+                    .with_boundary_cache(self.boundaries.clone()),
             )
             .await
             .map_err(codegraph_core::error::Error::Config)?;
@@ -1763,6 +1798,61 @@ entities = ["TaskType"]
         assert!(
             update.join("\n").contains("\"status\": \"Posted\""),
             "the PUT roundtrip moves to the second enum code"
+        );
+    }
+    /// Issue #767: a child op that binds a modeled boundary sends THE
+    /// BOUNDARY's sample — its own `deny_unknown_fields` would reject the
+    /// child's generated request-DTO body whenever the two shapes differ, so
+    /// the contract must follow the handler's binding, not the entity's.
+    #[test]
+    fn child_op_boundary_payload_drives_the_contract_body() {
+        let plan = crate::ddd::service_ops::BoundaryPayloadPlan {
+            dto_prefix: "Create".to_string(),
+            extraction: String::new(),
+            construct: String::new(),
+            defaulted: Vec::new(),
+            request_body: None,
+            sample: serde_json::json!({"marker": "boundary-shape"}),
+        };
+        let route = crate::ddd::service_ops::ServiceOpRoute {
+            service: "PayRunType".to_string(),
+            op_name: "addLine".to_string(),
+            snake: "add_line".to_string(),
+            fn_name: "service_op_add_line".to_string(),
+            capabilities: Vec::new(),
+            authorize_fn: None,
+            execution: crate::ddd::service_ops::ExecutionKind::ChildOp {
+                action: crate::ddd::service_ops::ChildAction::Add,
+                feature: "lines".to_string(),
+                child_class: "payroll.PayRunLineType".to_string(),
+                read_back: true,
+                parent_load: None,
+                payload: Some(plan),
+            },
+            record_load: false,
+            authorize_async: false,
+            injected_guard: None,
+            invariant_block: None,
+            throws: Vec::new(),
+            raise_responses: Vec::new(),
+        };
+        let legs = child_action_legs(
+            &route,
+            crate::ddd::service_ops::ChildAction::Add,
+            true,
+            ("{\"entity_body\":true}", "{}"),
+            "{{base_url}}/api/v1/payroll/pay-run/{{pay_run_id}}/pay-run-line",
+        );
+        let add = legs.first().expect("the add leg");
+        assert!(
+            add.body.contains("boundary-shape"),
+            "the boundary sample must drive the body: {}",
+            add.body
+        );
+        assert!(
+            !add.body.contains("entity_body"),
+            "the child's request-DTO body must NOT be sent beside a boundary: {}",
+            add.body
         );
     }
 }

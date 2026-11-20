@@ -1286,6 +1286,7 @@ impl IfmlE2eTestGenerator {
                     domain_types_crate: service_ops::BodyRenderContext::default()
                         .domain_types_crate,
                     dto_casing: self.dto_casing,
+                    boundary_cache: None,
                     // The IFML e2e planner is topology-blind by
                     // construction (no ProjectConfig reaches this layer;
                     // injected-guard action legs are a recorded #663
@@ -1541,6 +1542,15 @@ pub(super) async fn plan_action_legs(
         }
         ExecutionKind::Read | ExecutionKind::Delete => {
             return vec![(ActionActKind::Ok, None)];
+        }
+        // A create-shaped service op (issue #767) is a COLLECTION-level action
+        // (`POST …/{entity}/actions/{op}`). The POM action surface is
+        // ITEM-addressed, so there is no sound drive sequence for it yet — a
+        // collection-add POM surface is the recorded #661 follow-up (the hurl
+        // contract and the live gates cover the route in the meantime). The
+        // action stays unbuilt rather than guessed.
+        ExecutionKind::Create { .. } => {
+            return Vec::new();
         }
         // Aggregate child operations (issue #661). `remove`/`save` address an
         // element the parent-scoped seed fixture already created → 200. `add`

@@ -128,7 +128,7 @@ fn {{ entity.module_name }}_routes() -> Router<AppState> {
         // Aggregate child `add` (issue #661): a COLLECTION-level action — the
         // element does not exist yet, so the path anchors on the parent.
 {%- endif %}
-        .route("{% if op.execution.kind == "child_op" and op.execution.action == "add" %}/actions/{{ op.snake }}{% else %}/{ {{- entity.param_name -}} }/actions/{{ op.snake }}{% endif %}", axum::routing::post({{ entity.module_name }}_handler::{{ op.fn_name }}))
+        .route("{% if (op.execution.kind == "child_op" and op.execution.action == "add") or op.execution.kind == "create" %}/actions/{{ op.snake }}{% else %}/{ {{- entity.param_name -}} }/actions/{{ op.snake }}{% endif %}", axum::routing::post({{ entity.module_name }}_handler::{{ op.fn_name }}))
 {%- endfor %}
 {% for mf in entity.media_fields %}
 {%- if entity.media_mode_presigned %}

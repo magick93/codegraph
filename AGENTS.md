@@ -1164,16 +1164,51 @@ never reached the graph. #667 makes the boundary a plane:
   Output-only boundaries (any derived member) and unknown boundaries are named
   refusals riding `ValidationPass::check_service_op_bodies`. Both OpenAPI
   documents register every boundary as a component schema.
-- **Deferred (filed)**: **#767** — a modeled input boundary as the
-  COLLECTION-level create body (mapping onto `Create{Entity}Request` + the
-  create-shaped route) and the child-op boundary payload (today one WARN per op
-  naming #767); **#768** — projections as read models (derived-member
-  arithmetic lowering + the real read endpoint).
+- **Collection-level create body (issue #767)**: a **create-shaped** op — no
+  statement body, no machine transition, no record-scoped load, a lone modeled
+  INPUT boundary parameter, a return slot resolving to the bound entity's
+  designed class, and the entity's op set exposing `create` — lowers to
+  `POST /api/{v}/{domain}/{entity}/actions/{op}` (COLLECTION level, 201). Its
+  body IS the boundary; `ddd/boundary_map.rs::plan_boundary_request` maps the
+  members onto the entity's generated `Create{Entity}Request` by snake_case
+  identity, using the DTO generator's OWN context (`build_dto_context`) so the
+  mapping cannot drift from the emitted struct. Primitive types unify through
+  the payload plane's one mapping (`payload_field_rust_type`: `int`→`i32`,
+  `long`→`i64`, `float`→`f32`, `double`→`f64`) — the boundary generator's
+  members were re-pointed at it, so a boundary member and the column it fills
+  agree by construction. Refusals are NAMED pre-generation errors (the
+  `check_service_op_bodies` posture): a member with no request field, a type
+  disagreement (both spellings named), a boundary that omits a REQUIRED field.
+  Uncovered OPTIONAL fields default to `None` and are documented on the op.
+  The route runs the CRUD create's own gates (eligibility guards + design
+  invariants, compensation included). **Child aggregate ops** declaring a
+  boundary whose source class resolves to the child now CONSTRUCT the child's
+  `Create`/`Update{Child}Request` from it (the handler deserializes the
+  boundary, so the hurl legs send the boundary sample) instead of the
+  `child-dto-payload` WARN; a boundary for another class keeps the WARN and the
+  child's own request DTO. A nested child entity's create-shaped op is NOT
+  collection-level (the child-op plane owns that anchor) and keeps its seam.
+  A `save` DELEGATION is accepted by the predicate too, but the pinned
+  compiler cannot express one — a delegating service member declares no
+  parameter list — so that arm is reachable only through a hand-built
+  artifact. The boundary index is memoized per generation pass
+  (`BoundaryIndexCache` on the generator instances: handler/router/hurl/
+  openapi), `from_models` no longer precomputes samples (OpenAPI never reads
+  them), and a REQUIRED boundary parameter whose minimal body is
+  unrepresentable (a member codelist with ZERO values ⇒ a variantless enum) is
+  refused by name rather than shipped as a guaranteed 422. The IFML/POM
+  collection-add action surface stays the recorded #661 follow-up — the action
+  planner leaves `Create` unbuilt rather than guessing a drive sequence.
+- **Deferred (filed)**: **#768** — projections as read models (derived-member
+  arithmetic lowering + the real read endpoint); the POM collection-add
+  surface (#661).
 - **Gates**: `cargo test -p codegraph --test ddd_dto_boundaries_tests` (mirror
   alias, projection/standalone shape, no-shape byte identity, collision +
-  member refusals, body-param KATs, and an end-to-end `driver::run` over
-  `tests/fixtures/ddd/dto_boundaries/` asserting the emitted module, the crate
-  index, the direct-body extraction, and both OpenAPI registrations) +
+  member refusals, body-param KATs, the #767 mapping refusals/defaults, and an
+  end-to-end `driver::run` over `tests/fixtures/dto_boundaries/` asserting the
+  emitted module, the crate index, the direct-body extraction, both OpenAPI
+  registrations, the collection-level route/handler/hurl leg, and that the
+  primitive-parameter op keeps its item-addressed 501 seam) +
   `--test ddd_dto_boundaries_compile_tests` (the #551 pin: the emitted plane
   compiles native AND wasm32 in a sea_orm-free scratch crate) +
   `--test artifact_kit_tests` (the bump) + the standing canaries.

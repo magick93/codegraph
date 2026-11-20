@@ -38,6 +38,12 @@ pub struct BodyRenderContext {
     /// both until the worker media/async story exists (#338's "guards stay
     /// doc-only under workers" conservatism). Default `false`.
     pub workers_topology: bool,
+    /// The per-run boundary-index memo (issue #767 review): the generators
+    /// that call [`routes_for_entity`] once per entity thread ONE cache, so
+    /// the graph-backed boundary samples are built once per generation pass
+    /// instead of once per call. `None` (tests, plan-less callers) rebuilds —
+    /// correct, just not memoized.
+    pub boundary_cache: Option<crate::ddd::dto_boundaries::BoundaryIndexCache>,
 }
 
 impl Default for BodyRenderContext {
@@ -49,6 +55,7 @@ impl Default for BodyRenderContext {
             domain_types_crate: "domain_types".to_string(),
             dto_casing: DtoKeyCasing::default(),
             workers_topology: false,
+            boundary_cache: None,
         }
     }
 }
@@ -61,7 +68,18 @@ impl BodyRenderContext {
             domain_types_crate: project.identity.domain_types_crate.clone(),
             dto_casing: project.codegen.dto_key_casing,
             workers_topology: project.is_workers_topology(),
+            boundary_cache: None,
         }
+    }
+
+    /// Thread one per-run boundary-index memo (issue #767 review).
+    #[must_use]
+    pub fn with_boundary_cache(
+        mut self,
+        cache: crate::ddd::dto_boundaries::BoundaryIndexCache,
+    ) -> Self {
+        self.boundary_cache = Some(cache);
+        self
     }
 }
 
@@ -103,11 +121,14 @@ async fn raise_table(
 /// handler's construction site — that site filters `raise_responses`
 /// itself (handler.rs), so this list stays the routes-level truth.
 pub(super) fn covered_statuses(execution: &ExecutionKind) -> Vec<u16> {
-    let mut covered = vec![403u16, 404];
+    let mut covered = vec![403u16];
     match execution {
-        ExecutionKind::Seam { .. } => covered.push(501),
-        ExecutionKind::ChildOp { .. } => covered.push(422),
-        _ => {}
+        // Issue #767: the collection-level create documents 201 + the DTO's
+        // validation 422, and there is no record-load 404.
+        ExecutionKind::Create { .. } => covered.extend([201u16, 422]),
+        ExecutionKind::Seam { .. } => covered.extend([404u16, 501]),
+        ExecutionKind::ChildOp { .. } => covered.extend([404u16, 422]),
+        _ => covered.push(404),
     }
     if execution
         .transition_state()
@@ -212,9 +233,14 @@ pub async fn routes_for_entity(
     let type_suffix = config.defaults.type_suffix.clone();
     // DD3 (issue #667): the body plane resolves a DTO-typed action parameter
     // to the generated boundary type; one index for the whole pass.
-    let boundary_index = crate::ddd::dto_boundaries::DtoBoundaryIndex::from_graph(db, config)
-        .await
-        .map_err(|e| e.to_string())?;
+    let boundary_index = match &body.boundary_cache {
+        Some(cache) => cache.get(db, config).await.map_err(|e| e.to_string())?,
+        None => std::sync::Arc::new(
+            crate::ddd::dto_boundaries::DtoBoundaryIndex::from_graph(db, config)
+                .await
+                .map_err(|e| e.to_string())?,
+        ),
+    };
     let props = db
         .get_properties(entity_title)
         .await
@@ -331,7 +357,14 @@ pub async fn routes_for_entity(
                 // load and with a response-less authorize fn (crewbase#71;
                 // #595 follow-up). `when`-conditioned ops on such entities
                 // are a generation error (fail closed).
-                let record_load = surface_ops.iter().any(|o| o == "read");
+                // Issue #767: a create-shaped op (no body, no record load, a
+                // return slot resolving to the bound entity, one modeled INPUT
+                // boundary parameter) is COLLECTION-level — there is no record
+                // to load, so the route carries no id path and the gate takes
+                // no response.
+                let create_shape =
+                    create_shape_candidate(op, model, entity_title, &surface_ops, scoped);
+                let record_load = !create_shape && surface_ops.iter().any(|o| o == "read");
                 // Issue #663: resolve the op's injected-scope `when` paths
                 // into the per-scope plans the rendered gate loads (schema,
                 // domain, query slot, FK) plus the class fields the
@@ -380,7 +413,9 @@ pub async fn routes_for_entity(
                     &machine_states,
                     &injected,
                 )?;
-                let params = if op.bodies.is_empty() {
+                // Issue #767: the create-shaped op's boundary IS the
+                // collection-level create payload, so its body resolves too.
+                let params = if op.bodies.is_empty() && !create_shape {
                     Vec::new()
                 } else {
                     crate::ddd::body_lower::body_params(
@@ -416,7 +451,20 @@ pub async fn routes_for_entity(
                     params: &params,
                     throws: &throws,
                 };
-                let execution = execution_for(op, model, config, &service.name, &shape)?;
+                let execution = if create_shape {
+                    create_execution(
+                        db,
+                        config,
+                        domain,
+                        entity_title,
+                        op,
+                        &params,
+                        &boundary_index,
+                    )
+                    .await?
+                } else {
+                    execution_for(op, model, config, &service.name, &shape)?
+                };
                 let covered = covered_statuses(&execution);
                 let raise_responses =
                     throws_responses(&raises, &op.name, &service.name, &throws, &covered)?;
@@ -439,228 +487,30 @@ pub async fn routes_for_entity(
         }
     }
 
-    // ── Aggregate child operations (issue #661) ─────────────────────────
-    //
-    // A `children <Root> { <op> => <feature>.<action> }` block is declared on
-    // the ROOT's design but ACTS on the child: `add` appends to the root's
-    // child collection, `remove` deletes one element, `save` updates one.
-    // The route is therefore emitted into the CHILD entity's router — the
-    // parent nests that router (`POST …/{parent}/{parent_id}/{child}/…`), so
-    // the parent ownership load and the nested path are the SAME WS4 shape
-    // the child CRUD plane already generates; nothing here invents a second
-    // nesting. This pass collects the ops whose `childScope` resolves to the
-    // entity being generated.
-    for model in &models {
-        for design in &model.designs {
-            for op in &design.child_operations {
-                let Some(scope) = op.child_scope.as_ref() else {
-                    continue;
-                };
-                let Some(action) = ChildAction::from_scope(&scope.action) else {
-                    crate::ddd::design::warn_once(
-                        &format!("child-op-action:{}::{}", design.class, op.name),
-                        &format!(
-                            "child operation `{}` of `{}`: unknown child action `{}` (the \
-                             closed set is add, remove, save); no route emitted",
-                            op.name, design.class, scope.action
-                        ),
-                    );
-                    continue;
-                };
-                // Resolution may be exact, `+type_suffix`, or a miss (the
-                // class is not a schema in the graph).
-                let Some(child_title) =
-                    schema_title_for_class(db, &scope.class, &type_suffix).await
-                else {
-                    crate::ddd::design::warn_once(
-                        &format!("child-op-class:{}::{}", design.class, op.name),
-                        &format!(
-                            "child operation `{}` of `{}`: child class `{}` resolves to no \
-                             ingested schema; no route emitted",
-                            op.name, design.class, scope.class
-                        ),
-                    );
-                    continue;
-                };
-                if child_title != entity_title {
-                    continue;
-                }
-                if !seen.insert(op.name.clone()) {
-                    continue;
-                }
-                let Some(parent_title) = design.resolved_title.as_deref() else {
-                    continue;
-                };
-                if op.is_protected {
-                    crate::ddd::design::warn_once(
-                        &format!("child-op-protected:{}::{}", design.class, op.name),
-                        &format!(
-                            "child operation `{}` of `{}` is `protected` — it emits no API \
-                             surface (Sculptor visibility); IFML actions bound to it are \
-                             dead triggers",
-                            op.name, design.class
-                        ),
-                    );
-                    continue;
-                }
-                if !schema.is_entity {
-                    continue;
-                }
-                // The child's plane only nests under the parent when the
-                // MODEL says so: config `role = "child"` + `parent` +
-                // `parent_ref`, or — since issue #666 slice 4b — the AUTHORED
-                // aggregate boundary (an authored membership naming this
-                // root; authored wins over config). The parent ownership
-                // load, the two-uuid path, and the scoped read all derive
-                // from it. Without either there is no aggregated route to
-                // emit — warn (never a top-level route that silently drops
-                // the parent anchor).
-                if !is_nested_child_of(
-                    entity_cfg,
-                    parent_title,
-                    &design.class,
-                    &type_suffix,
-                    authored_routing.as_ref().map(|p| p.parent_title.as_str()),
-                ) {
-                    crate::ddd::design::warn_once(
-                        &format!("child-op-nesting:{}::{}", design.class, op.name),
-                        &format!(
-                            "child operation `{}` of `{}`: child entity `{}` is not declared \
-                             as a nested child of `{}` (domains.toml `role = \"child\"` + \
-                             `parent = \"{}\"` + `parent_ref`); no route emitted",
-                            op.name, design.class, entity_title, parent_title, parent_title
-                        ),
-                    );
-                    continue;
-                }
-                let record_load = match action {
-                    // `add` addresses the collection, not a child row.
-                    ChildAction::Add => false,
-                    ChildAction::Remove | ChildAction::Save => {
-                        surface_ops.iter().any(|o| o == "read")
-                    }
-                };
-                let execution = child_execution(op, action, scope, &surface_ops, record_load);
-                // Issue #692: a lowered collection-level `add` resolves the
-                // parent's by-id load at planning — the handler renders a
-                // parent load-or-404 before the create, so the plan must
-                // carry the parent's query slot, auditable arity and the
-                // fail-closed proof that the method exists (a parent whose
-                // query plane exposes no plain `find_by_id`, and a
-                // cross-domain parent, are NAMED generation errors raised
-                // by `child_parent_load` — never a handler referencing a
-                // method that does not exist). Seamed adds render the 501
-                // arm and never reach the create, so they pay no parent
-                // resolution.
-                let execution = match execution {
-                    ExecutionKind::ChildOp {
-                        action,
-                        feature,
-                        child_class,
-                        read_back,
-                        ..
-                    } if action == ChildAction::Add => ExecutionKind::ChildOp {
-                        action,
-                        feature,
-                        child_class,
-                        read_back,
-                        parent_load: Some(
-                            child_parent_load(db, config, domain, parent_title, &op.name).await?,
-                        ),
-                    },
-                    ExecutionKind::ChildOp {
-                        action,
-                        feature,
-                        child_class,
-                        read_back,
-                        ..
-                    } => ExecutionKind::ChildOp {
-                        action,
-                        feature,
-                        child_class,
-                        read_back,
-                        parent_load: None,
-                    },
-                    other => other,
-                };
-                // Issue #663: injected-scope guards are a SERVICE-op plane
-                // lowering — a child op's `when` types against the CHILD
-                // class as `self`, so an injected path there has no id
-                // source (the child's own path is the route anchor). A
-                // named generation error, never a silently narrower guard.
-                if op.condition_paths.iter().any(|path| {
-                    matches!(
-                        path.scope,
-                        codegraph_core::types::DddConditionScope::Injected { .. }
-                    )
-                }) {
-                    return Err(format!(
-                        "child operation `{}` of `{}` carries an injected-scope \
-                         `when` path — the child plane lowers own-record guards \
-                         only (the child row IS the guard's record); bind the \
-                         cross-entity guard on a root service operation instead",
-                        op.name, design.class
-                    ));
-                }
-                // The policy surface (capability membership + the op-level
-                // `when`, which types against the CHILD class as `self`).
-                // `add` carries no loaded record, so a guard there was seamed
-                // out above; the response-less authorize fn still gates the
-                // capability.
-                let authorize_fn = if !op.capabilities.is_empty() || op.condition.is_some() {
-                    render_authorize_fn_with_states(
-                        &to_snake_case(&op.name),
-                        &op.name,
-                        parent_title,
-                        &op.capabilities,
-                        if record_load {
-                            op.condition.as_deref()
-                        } else {
-                            None
-                        },
-                        &format!(
-                            "crate::domain::{domain}::{module_name}::dto_response::{response_type}"
-                        ),
-                        surface.as_ref(),
-                        &fields,
-                        entity_title,
-                        record_load,
-                        &machine_states,
-                    )?
-                } else {
-                    None
-                };
-                let snake = to_snake_case(&op.name);
-                let throws: Vec<String> = op
-                    .throws
-                    .iter()
-                    .filter_map(|json| json.get("name").and_then(serde_json::Value::as_str))
-                    .map(str::to_string)
-                    .collect();
-                let covered = covered_statuses(&execution);
-                let raise_responses =
-                    throws_responses(&raises, &op.name, &design.class, &throws, &covered)?;
-                routes.push(ServiceOpRoute {
-                    // The declaration site: a child op's `service` names the
-                    // aggregate ROOT design whose `children` block declared
-                    // it (there is no `service` in the artifact).
-                    service: short_class_name(&design.class),
-                    op_name: op.name.clone(),
-                    fn_name: format!("service_op_{snake}"),
-                    snake,
-                    capabilities: op.capabilities.clone(),
-                    authorize_fn,
-                    execution,
-                    record_load,
-                    authorize_async: false,
-                    injected_guard: None,
-                    invariant_block: None,
-                    throws,
-                    raise_responses,
-                });
-            }
-        }
-    }
+    child_op_routes(
+        ChildOpCtx {
+            models: &models,
+            db,
+            config,
+            domain,
+            entity_title,
+            type_suffix: &type_suffix,
+            is_entity: schema.is_entity,
+            entity_cfg,
+            surface: surface.as_ref(),
+            fields: &fields,
+            module_name: &module_name,
+            response_type: &response_type,
+            machine_states: &machine_states,
+            raises: &raises,
+            boundaries: &boundary_index,
+            authored_parent: authored_routing.as_ref(),
+            surface_ops: &surface_ops,
+        },
+        &mut seen,
+        &mut routes,
+    )
+    .await?;
 
     Ok(routes)
 }
@@ -1092,20 +942,162 @@ fn is_nested_child_of(
 ///
 /// Shapes that cannot be bound FAITHFULLY answer the 501 seam naming the
 /// fix — never a silently broader write, never a patch of the parent row.
-fn child_execution(
+/// The #767 create-shaped predicate (see [`create_execution`]).
+///
+/// A create-shaped op declares no statement body and no machine transition,
+/// binds the route entity, exposes the entity's `create` op, and has exactly
+/// one parameter that is a modeled INPUT boundary — with a return slot that
+/// resolves to the bound entity's designed class. A nested child entity is
+/// NOT create-shaped: its create rides the child-op plane (the parent anchor
+/// is the route), so a child's abstract op keeps its 501 seam.
+///
+/// A `save` DELEGATION is also accepted (the issue's widened predicate), even
+/// though the pinned compiler cannot express one: a delegating service member
+/// declares no parameter list (`name => Repository.save;`), so the shape is
+/// reachable only through a hand-built/stale artifact. The arm stays for that
+/// class rather than silently lowering it as an update.
+fn create_shape_candidate(
+    op: &codegraph_core::types::DddServiceOperation,
+    model: &codegraph_core::types::DddModelGraph,
+    entity_title: &str,
+    surface_ops: &[String],
+    scoped: Option<&str>,
+) -> bool {
+    if !op.bodies.is_empty() || op.transition.is_some() || scoped.is_some() {
+        return false;
+    }
+    if !surface_ops.iter().any(|o| o == "create") {
+        return false;
+    }
+    if op.params.len() != 1 {
+        return false;
+    }
+    // No delegation, or the repository `save` (create-or-update) builtin.
+    match op.delegation_operation.as_deref() {
+        None => {}
+        Some(operation) if operation.eq_ignore_ascii_case("save") => {}
+        Some(_) => return false,
+    }
+    // The lone parameter must be a modeled DTO boundary.
+    if crate::ddd::signature::signature_type(&op.params[0].type_json)
+        .dto_name()
+        .is_none()
+    {
+        return false;
+    }
+    // The return slot must resolve to the bound entity's designed class.
+    let Some(return_name) = crate::ddd::signature::signature_type_opt(op.return_type.as_ref())
+        .and_then(|slot| slot.class_name().map(str::to_string))
+    else {
+        return false;
+    };
+    let Some(entity_class) = model
+        .designs
+        .iter()
+        .find(|d| d.resolved_title.as_deref() == Some(entity_title))
+        .map(|d| d.class.as_str())
+    else {
+        return false;
+    };
+    short_class_name(&return_name) == short_class_name(entity_class)
+}
+
+/// Lower a create-shaped op (issue #767) into the collection-level create
+/// body: the lone modeled boundary parameter becomes the entity's
+/// `Create{Entity}Request` through the shared field-identity mapping
+/// ([`crate::ddd::boundary_map::plan_boundary_request`]). Every unmappable
+/// member is a NAMED generation error — never a silently dropped field.
+async fn create_execution(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    entity_title: &str,
+    op: &codegraph_core::types::DddServiceOperation,
+    params: &[crate::ddd::body_params::BodyParam],
+    boundaries: &crate::ddd::dto_boundaries::DtoBoundaryIndex,
+) -> Result<ExecutionKind, String> {
+    let Some(param) = params.first() else {
+        return Err(format!(
+            "service op `{}` is create-shaped (returns the bound entity with one modeled \
+             boundary parameter) but the body plane resolved no parameter — regenerate \
+             the graph",
+            op.name
+        ));
+    };
+    if !param.direct_body {
+        return Err(format!(
+            "service op `{}` is create-shaped, but its body resolves to more than one \
+             parameter — a create-shaped op takes exactly ONE input boundary",
+            op.name
+        ));
+    }
+    let boundary_name = crate::ddd::signature::signature_type(&op.params[0].type_json)
+        .dto_name()
+        .unwrap_or_default()
+        .to_string();
+    let Some(shape) = boundaries.get(&boundary_name) else {
+        return Err(format!(
+            "service op `{}`: boundary `{boundary_name}` resolves to no modeled DTO shape",
+            op.name
+        ));
+    };
+    let plan = crate::ddd::boundary_map::plan_boundary_request(
+        crate::ddd::boundary_map::BoundaryTarget {
+            db,
+            config,
+            domain,
+            entity_title,
+        },
+        shape,
+        crate::ddd::boundary_map::BoundaryShapeSet {
+            shapes: boundaries.shape_map(),
+            module_of: boundaries.module_of(),
+        },
+        crate::ddd::boundary_map::RequestDtoKind::Create,
+        param,
+    )
+    .await
+    .map_err(|reason| format!("service op `{}`: {reason}", op.name))?;
+    Ok(ExecutionKind::Create {
+        plan: super::types::BoundaryPayloadPlan {
+            dto_prefix: "Create".to_string(),
+            extraction: plan.extraction,
+            construct: plan.construct,
+            defaulted: plan.defaulted,
+            request_body: param.request_body.clone(),
+            sample: param.sample.clone(),
+        },
+    })
+}
+
+/// Lower one aggregate child operation (issue #661), binding a modeled INPUT
+/// boundary whose source class IS the child (issue #767) instead of WARNing
+/// about it.
+///
+/// A boundary for ANOTHER class — or one whose source does not resolve to the
+/// child — keeps the pre-#767 behavior: the child's generated request DTO is
+/// bound and the source-class mismatch is WARNed once, naming it.
+#[allow(clippy::too_many_arguments)]
+async fn child_execution(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    domain: &str,
+    child_title: &str,
+    type_suffix: &str,
+    boundaries: &crate::ddd::dto_boundaries::DtoBoundaryIndex,
     op: &codegraph_core::types::DddServiceOperation,
     action: ChildAction,
     scope: &codegraph_core::types::DddChildRef,
     surface_ops: &[String],
     record_load: bool,
-) -> ExecutionKind {
+) -> Result<ExecutionKind, String> {
     let required = match action {
         ChildAction::Add => "create",
         ChildAction::Save => "update",
         ChildAction::Remove => "delete",
     };
     if !surface_ops.iter().any(|o| o == required) {
-        return seam(format!(
+        return Ok(seam(format!(
             "child operation `{}` (action `{}`) needs the child's `{}` operation, but the \
              child's design exposes no `{}` — its repository must declare `{}` for the \
              action to lower",
@@ -1118,7 +1110,7 @@ fn child_execution(
                 ChildAction::Save => "save",
                 ChildAction::Remove => "delete",
             }
-        ));
+        )));
     }
     // A child action binds its input from the request BODY: zero parameters,
     // or exactly one object-shaped carrier (the child class or a DTO
@@ -1127,7 +1119,7 @@ fn child_execution(
     if let Some(param) = op.params.first()
         && (op.params.len() > 1 || !is_body_carrier(param, &scope.class))
     {
-        return seam(format!(
+        return Ok(seam(format!(
             "child operation `{}` declares parameter `{}` ({}), which has no executable \
              binding: a child action takes its payload from the request body — write \
              the parameter as the child class or a DTO boundary, and let the child id \
@@ -1135,47 +1127,118 @@ fn child_execution(
             op.name,
             param.name,
             body_carrier_hint(&param.type_json)
-        ));
+        )));
     }
-    // DD3 (issue #667): a modeled DTO boundary is an accepted carrier, but the
-    // child plane still binds the child's GENERATED create/update DTO. Say so
-    // once per op instead of silently ignoring the modeled payload type —
-    // wiring the boundary through the child command plane is the recorded
-    // follow-up (#767).
+    // Issue #767: a modeled DTO boundary is an accepted carrier, and — when
+    // its source class resolves to THIS child — it now IS the child's
+    // request DTO: the handler deserializes the boundary and constructs the
+    // generated `Create{Child}Request` / `Update{Child}Request` from it.
+    let mut payload = None;
     if let Some(param) = op.params.first()
-        && let Some(boundary) = param
+        && let Some(boundary_name) = param
             .type_json
             .get("dto")
             .and_then(serde_json::Value::as_str)
+        && action != ChildAction::Remove
     {
-        crate::ddd::design::warn_once(
-            &format!("child-dto-payload:{}::{}", scope.class, op.name),
-            &format!(
-                "child operation `{}` declares modeled DTO boundary `{boundary}` as its \
-                 payload; the child plane still binds the child's generated request DTO \
-                 (the modeled payload is issue #767)",
-                op.name
-            ),
-        );
+        let shape = boundaries.get(boundary_name);
+        let source_name = shape.and_then(|s| s.source_json.as_ref()).and_then(|json| {
+            crate::ddd::signature::signature_type_opt(Some(json))
+                .and_then(|slot| slot.class_name().map(str::to_string))
+        });
+        let resolves_to_child = match source_name {
+            Some(class) => {
+                schema_title_for_class(db, &class, type_suffix)
+                    .await
+                    .as_deref()
+                    == Some(child_title)
+            }
+            None => false,
+        };
+        if let (true, Some(shape)) = (resolves_to_child, shape) {
+            let kind = match action {
+                ChildAction::Add => crate::ddd::boundary_map::RequestDtoKind::Create,
+                _ => crate::ddd::boundary_map::RequestDtoKind::Update,
+            };
+            let params = crate::ddd::body_lower::body_params(
+                &op.name,
+                &op.params,
+                boundaries,
+                // The child's request DTO lives in the domain-types crate; the
+                // crate name only matters for a DTO-typed SLOT, which the
+                // single-carrier rule above already rules out beside a boundary.
+                "domain_types",
+                crate::project_config::DtoKeyCasing::default(),
+            )
+            .map_err(|refusal| refusal.0)?;
+            let Some(param) = params.first() else {
+                return Err(format!(
+                    "child operation `{}`: the modeled boundary parameter resolved to \
+                     nothing — regenerate the graph",
+                    op.name
+                ));
+            };
+            let plan = crate::ddd::boundary_map::plan_boundary_request(
+                crate::ddd::boundary_map::BoundaryTarget {
+                    db,
+                    config,
+                    domain,
+                    entity_title: child_title,
+                },
+                shape,
+                crate::ddd::boundary_map::BoundaryShapeSet {
+                    shapes: boundaries.shape_map(),
+                    module_of: boundaries.module_of(),
+                },
+                kind,
+                param,
+            )
+            .await
+            .map_err(|reason| {
+                format!(
+                    "child operation `{}` of `{}`: {reason}",
+                    op.name, scope.class
+                )
+            })?;
+            payload = Some(super::types::BoundaryPayloadPlan {
+                dto_prefix: kind.dto_prefix().to_string(),
+                extraction: plan.extraction,
+                construct: plan.construct,
+                defaulted: plan.defaulted,
+                request_body: param.request_body.clone(),
+                sample: param.sample.clone(),
+            });
+        } else {
+            crate::ddd::design::warn_once(
+                &format!("child-dto-payload:{}::{}", scope.class, op.name),
+                &format!(
+                    "child operation `{}` declares modeled DTO boundary `{boundary_name}`, \
+                     but its source class does not resolve to the child entity `{child_title}`; \
+                     the operation binds the child's generated request DTO (declare the \
+                     boundary `from {child_title}` to carry its members instead)",
+                    op.name
+                ),
+            );
+        }
     }
     if op.condition.is_some() {
         if action == ChildAction::Add {
-            return seam(format!(
+            return Ok(seam(format!(
                 "child operation `{}` declares a `when` guard, but `add` runs before the \
                  child row exists — the guard types against a record that is not there \
                  (guard a `save`/`remove` action, or validate in the payload)",
                 op.name
-            ));
+            )));
         }
         if !record_load {
-            return seam(format!(
+            return Ok(seam(format!(
                 "child operation `{}` declares a `when` guard, but the child entity exposes \
                  no `read` operation — the guard has no loaded record to evaluate",
                 op.name
-            ));
+            )));
         }
     }
-    ExecutionKind::ChildOp {
+    Ok(ExecutionKind::ChildOp {
         action,
         feature: scope.feature.clone(),
         child_class: scope.class.clone(),
@@ -1185,7 +1248,8 @@ fn child_execution(
         // access this sync lowering does not have, and only for a LOWERED
         // add (a seamed add renders the 501 arm, never the create).
         parent_load: None,
-    }
+        payload,
+    })
 }
 
 /// The parent load-or-404 plan for one lowered collection-level child
@@ -1404,4 +1468,294 @@ pub(super) async fn bind_entity(
         return Some(title);
     }
     None
+}
+
+/// The child-op plane's inputs (issue #661): the resolved route context
+/// `routes_for_entity` already gathered, grouped so the child loop can live
+/// in its own function (the #751 line budget).
+struct ChildOpCtx<'a> {
+    models: &'a [codegraph_core::types::DddModelGraph],
+    db: &'a dyn GraphQuerier,
+    config: &'a DomainConfig,
+    domain: &'a str,
+    entity_title: &'a str,
+    type_suffix: &'a str,
+    is_entity: bool,
+    entity_cfg: Option<&'a codegraph_config::EntityConfig>,
+    surface: Option<&'a PolicySurface>,
+    fields: &'a std::collections::HashMap<String, super::types::FieldInfo>,
+    module_name: &'a str,
+    response_type: &'a str,
+    machine_states: &'a [String],
+    raises: &'a crate::ddd::body_lower::RaiseTable,
+    boundaries: &'a crate::ddd::dto_boundaries::DtoBoundaryIndex,
+    authored_parent: Option<&'a crate::ddd::aggregate::AuthoredParent>,
+    surface_ops: &'a [String],
+}
+
+/// Collect the aggregate child operations (issue #661) that resolve to THIS
+/// entity, plus the #767 boundary payload each binds.
+async fn child_op_routes(
+    ctx: ChildOpCtx<'_>,
+    seen: &mut std::collections::HashSet<String>,
+    routes: &mut Vec<ServiceOpRoute>,
+) -> Result<(), String> {
+    let ChildOpCtx {
+        models,
+        db,
+        config,
+        domain,
+        entity_title,
+        type_suffix,
+        is_entity,
+        entity_cfg,
+        surface,
+        fields,
+        module_name,
+        response_type,
+        machine_states,
+        raises,
+        boundaries,
+        authored_parent,
+        surface_ops,
+    } = ctx;
+    // ── Aggregate child operations (issue #661) ─────────────────────────
+    //
+    // A `children <Root> { <op> => <feature>.<action> }` block is declared on
+    // the ROOT's design but ACTS on the child: `add` appends to the root's
+    // child collection, `remove` deletes one element, `save` updates one.
+    // The route is therefore emitted into the CHILD entity's router — the
+    // parent nests that router (`POST …/{parent}/{parent_id}/{child}/…`), so
+    // the parent ownership load and the nested path are the SAME WS4 shape
+    // the child CRUD plane already generates; nothing here invents a second
+    // nesting. This pass collects the ops whose `childScope` resolves to the
+    // entity being generated.
+    for model in models {
+        for design in &model.designs {
+            for op in &design.child_operations {
+                let Some(scope) = op.child_scope.as_ref() else {
+                    continue;
+                };
+                let Some(action) = ChildAction::from_scope(&scope.action) else {
+                    crate::ddd::design::warn_once(
+                        &format!("child-op-action:{}::{}", design.class, op.name),
+                        &format!(
+                            "child operation `{}` of `{}`: unknown child action `{}` (the \
+                             closed set is add, remove, save); no route emitted",
+                            op.name, design.class, scope.action
+                        ),
+                    );
+                    continue;
+                };
+                // Resolution may be exact, `+type_suffix`, or a miss (the
+                // class is not a schema in the graph).
+                let Some(child_title) = schema_title_for_class(db, &scope.class, type_suffix).await
+                else {
+                    crate::ddd::design::warn_once(
+                        &format!("child-op-class:{}::{}", design.class, op.name),
+                        &format!(
+                            "child operation `{}` of `{}`: child class `{}` resolves to no \
+                             ingested schema; no route emitted",
+                            op.name, design.class, scope.class
+                        ),
+                    );
+                    continue;
+                };
+                if child_title != entity_title {
+                    continue;
+                }
+                if !seen.insert(op.name.clone()) {
+                    continue;
+                }
+                let Some(parent_title) = design.resolved_title.as_deref() else {
+                    continue;
+                };
+                if op.is_protected {
+                    crate::ddd::design::warn_once(
+                        &format!("child-op-protected:{}::{}", design.class, op.name),
+                        &format!(
+                            "child operation `{}` of `{}` is `protected` — it emits no API \
+                             surface (Sculptor visibility); IFML actions bound to it are \
+                             dead triggers",
+                            op.name, design.class
+                        ),
+                    );
+                    continue;
+                }
+                if !is_entity {
+                    continue;
+                }
+                // The child's plane only nests under the parent when the
+                // MODEL says so: config `role = "child"` + `parent` +
+                // `parent_ref`, or — since issue #666 slice 4b — the AUTHORED
+                // aggregate boundary (an authored membership naming this
+                // root; authored wins over config). The parent ownership
+                // load, the two-uuid path, and the scoped read all derive
+                // from it. Without either there is no aggregated route to
+                // emit — warn (never a top-level route that silently drops
+                // the parent anchor).
+                if !is_nested_child_of(
+                    entity_cfg,
+                    parent_title,
+                    &design.class,
+                    type_suffix,
+                    authored_parent.map(|p| p.parent_title.as_str()),
+                ) {
+                    crate::ddd::design::warn_once(
+                        &format!("child-op-nesting:{}::{}", design.class, op.name),
+                        &format!(
+                            "child operation `{}` of `{}`: child entity `{}` is not declared \
+                             as a nested child of `{}` (domains.toml `role = \"child\"` + \
+                             `parent = \"{}\"` + `parent_ref`); no route emitted",
+                            op.name, design.class, entity_title, parent_title, parent_title
+                        ),
+                    );
+                    continue;
+                }
+                let record_load = match action {
+                    // `add` addresses the collection, not a child row.
+                    ChildAction::Add => false,
+                    ChildAction::Remove | ChildAction::Save => {
+                        surface_ops.iter().any(|o| o == "read")
+                    }
+                };
+                let execution = child_execution(
+                    db,
+                    config,
+                    domain,
+                    entity_title,
+                    type_suffix,
+                    boundaries,
+                    op,
+                    action,
+                    scope,
+                    surface_ops,
+                    record_load,
+                )
+                .await?;
+                // Issue #692: a lowered collection-level `add` resolves the
+                // parent's by-id load at planning — the handler renders a
+                // parent load-or-404 before the create, so the plan must
+                // carry the parent's query slot, auditable arity and the
+                // fail-closed proof that the method exists (a parent whose
+                // query plane exposes no plain `find_by_id`, and a
+                // cross-domain parent, are NAMED generation errors raised
+                // by `child_parent_load` — never a handler referencing a
+                // method that does not exist). Seamed adds render the 501
+                // arm and never reach the create, so they pay no parent
+                // resolution.
+                let execution = match execution {
+                    ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        payload,
+                        ..
+                    } if action == ChildAction::Add => ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        parent_load: Some(
+                            child_parent_load(db, config, domain, parent_title, &op.name).await?,
+                        ),
+                        payload,
+                    },
+                    ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        payload,
+                        ..
+                    } => ExecutionKind::ChildOp {
+                        action,
+                        feature,
+                        child_class,
+                        read_back,
+                        parent_load: None,
+                        payload,
+                    },
+                    other => other,
+                };
+                // Issue #663: injected-scope guards are a SERVICE-op plane
+                // lowering — a child op's `when` types against the CHILD
+                // class as `self`, so an injected path there has no id
+                // source (the child's own path is the route anchor). A
+                // named generation error, never a silently narrower guard.
+                if op.condition_paths.iter().any(|path| {
+                    matches!(
+                        path.scope,
+                        codegraph_core::types::DddConditionScope::Injected { .. }
+                    )
+                }) {
+                    return Err(format!(
+                        "child operation `{}` of `{}` carries an injected-scope \
+                         `when` path — the child plane lowers own-record guards \
+                         only (the child row IS the guard's record); bind the \
+                         cross-entity guard on a root service operation instead",
+                        op.name, design.class
+                    ));
+                }
+                // The policy surface (capability membership + the op-level
+                // `when`, which types against the CHILD class as `self`).
+                // `add` carries no loaded record, so a guard there was seamed
+                // out above; the response-less authorize fn still gates the
+                // capability.
+                let authorize_fn = if !op.capabilities.is_empty() || op.condition.is_some() {
+                    render_authorize_fn_with_states(
+                        &to_snake_case(&op.name),
+                        &op.name,
+                        parent_title,
+                        &op.capabilities,
+                        if record_load {
+                            op.condition.as_deref()
+                        } else {
+                            None
+                        },
+                        &format!(
+                            "crate::domain::{domain}::{module_name}::dto_response::{response_type}"
+                        ),
+                        surface,
+                        fields,
+                        entity_title,
+                        record_load,
+                        machine_states,
+                    )?
+                } else {
+                    None
+                };
+                let snake = to_snake_case(&op.name);
+                let throws: Vec<String> = op
+                    .throws
+                    .iter()
+                    .filter_map(|json| json.get("name").and_then(serde_json::Value::as_str))
+                    .map(str::to_string)
+                    .collect();
+                let covered = covered_statuses(&execution);
+                let raise_responses =
+                    throws_responses(raises, &op.name, &design.class, &throws, &covered)?;
+                routes.push(ServiceOpRoute {
+                    // The declaration site: a child op's `service` names the
+                    // aggregate ROOT design whose `children` block declared
+                    // it (there is no `service` in the artifact).
+                    service: short_class_name(&design.class),
+                    op_name: op.name.clone(),
+                    fn_name: format!("service_op_{snake}"),
+                    snake,
+                    capabilities: op.capabilities.clone(),
+                    authorize_fn,
+                    execution,
+                    record_load,
+                    authorize_async: false,
+                    injected_guard: None,
+                    invariant_block: None,
+                    throws,
+                    raise_responses,
+                });
+            }
+        }
+    }
+    Ok(())
 }

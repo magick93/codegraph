@@ -152,6 +152,22 @@ pub fn body_params(
                     param.name
                 )));
             }
+            // Issue #767 review: a boundary whose minimal body cannot be
+            // represented (a member codelist declares ZERO values, so the
+            // generated enum has no variants) can never deserialize — refuse
+            // the REQUIRED parameter by name instead of emitting a body that
+            // is guaranteed to 422. An OPTIONAL one sends `null`, which is
+            // valid, so it stays.
+            if !optional && !boundaries.sample_is_wire_valid(&shape.name) {
+                return Err(Refusal(format!(
+                    "service op `{op_name}`: parameter `{}` uses DTO boundary `{}`, whose \
+                     minimal body cannot be represented — one of its codelist members \
+                     declares zero values, so the generated enum has no variants and no \
+                     JSON value can deserialize into it; declare values for the codelist \
+                     (or type the member differently)",
+                    param.name, boundary_name
+                )));
+            }
             dto_params += 1;
             let inner_path = path.clone();
             out.push(BodyParam {
