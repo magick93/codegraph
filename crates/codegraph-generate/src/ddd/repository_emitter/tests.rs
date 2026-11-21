@@ -645,13 +645,13 @@ fn dot_include_fetch_filters_the_intermediate_when_auditable() {
         &[Some(sort_test_tree(true))],
         // Intermediate tree (segments[0]): auditable — filtered.
         &[Some(sort_test_tree(true))],
-        &[per_seg_dto.clone()],
-        &[per_seg_dto.clone()],
+        std::slice::from_ref(&per_seg_dto),
+        std::slice::from_ref(&per_seg_dto),
         &[vec![vec![false], vec![false]]],
         &[vec![vec![false], vec![false]]],
         &[vec![vec![None], vec![None]]],
         &[vec![vec![false], vec![false]]],
-        &[per_seg_dto.clone()],
+        std::slice::from_ref(&per_seg_dto),
     );
     let out = code.into_string();
     assert!(

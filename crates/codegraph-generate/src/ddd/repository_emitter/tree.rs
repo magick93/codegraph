@@ -242,9 +242,7 @@ impl RepositoryImplEmitter {
             let target_tree = include_target_trees.get(idx).and_then(|t| t.as_ref());
             // The dot shape's intermediate hop (segments[0]) — the leaf is the
             // LAST segment's tree above. `None` for single-segment paths.
-            let intermediate_tree = include_intermediate_trees
-                .get(idx)
-                .and_then(|t| t.as_ref());
+            let intermediate_tree = include_intermediate_trees.get(idx).and_then(|t| t.as_ref());
             let per_seg_dto = include_segment_dto_fields
                 .get(idx)
                 .map(|v| v.as_slice())

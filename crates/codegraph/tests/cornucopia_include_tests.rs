@@ -64,14 +64,16 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         sql.contains("WHERE \"id\" = ANY(:source_ids::uuid[])"),
         "the batch query must key on the requested source ids:\n{sql}"
     );
-    // The soft-delete marker is filtered only when the target's tree carries
-    // one (a SoftDelete policy). This fixture has none — the same condition
-    // `get_{entity}` / `list_{entity}` filter on — so the include must NOT
-    // invent a marker the table may not have. The KAT in
-    // `db::cornucopia_queries::include_query_tests` covers the marker arm.
+    // The soft-delete marker derives from the read plane's auditable decision
+    // (issue #784 — `include_soft_delete_marker` over `EntityTree.is_auditable`,
+    // the same predicate `get_{entity}` / `list_{entity}` gate their
+    // `include_deleted` parameters on). This fixture's tables are auditable,
+    // so the include DOES carry the marker now; a non-auditable target would
+    // invent none (the table has no column to filter). The derivation KATs in
+    // `db::cornucopia_queries::include_query_tests` cover both arms.
     assert!(
-        !sql.contains("deleted_at"),
-        "no soft-delete marker without a policy:\n{sql}"
+        sql.contains("\n  AND \"deleted_at\" IS NULL"),
+        "an auditable target's include carries the soft-delete marker:\n{sql}"
     );
 
     // ── 2. Adapter: inherent fetch methods on the source repository ─────
@@ -164,9 +166,10 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
     );
     assert!(
         customer_sql.contains(
-            "SELECT \"id\", \"customer_id\", \"reference\", \"total\", \"created_at\", \"updated_at\"\nFROM \"shop\".\"work_order\"\nWHERE \"customer_id\" = :source_id;"
+            "SELECT \"id\", \"customer_id\", \"reference\", \"total\", \"created_at\", \"updated_at\"\nFROM \"shop\".\"work_order\"\nWHERE \"customer_id\" = :source_id\n  AND \"deleted_at\" IS NULL;"
         ),
-        "the single array query must scan the target's reverse FK:\n{customer_sql}"
+        "the single array query must scan the target's reverse FK and carry the \
+         auditable soft-delete marker (#784):\n{customer_sql}"
     );
     assert!(
         customer_sql.contains(
@@ -176,9 +179,10 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
     );
     assert!(
         customer_sql.contains(
-            "SELECT \"customer_id\" AS \"source_id\", \"id\", \"customer_id\", \"reference\", \"total\", \"created_at\", \"updated_at\"\nFROM \"shop\".\"work_order\"\nWHERE \"customer_id\" = ANY(:source_ids::uuid[]);"
+            "SELECT \"customer_id\" AS \"source_id\", \"id\", \"customer_id\", \"reference\", \"total\", \"created_at\", \"updated_at\"\nFROM \"shop\".\"work_order\"\nWHERE \"customer_id\" = ANY(:source_ids::uuid[])\n  AND \"deleted_at\" IS NULL;"
         ),
-        "the batch array query must key by the reverse FK and cast uuid[]:\n{customer_sql}"
+        "the batch array query must key by the reverse FK, cast uuid[], and carry \
+         the soft-delete marker (#784):\n{customer_sql}"
     );
     assert!(
         customer_sql.contains("--! include_invoice_for_customer (source_id) : ("),

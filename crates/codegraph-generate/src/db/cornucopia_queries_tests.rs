@@ -531,10 +531,23 @@ fn dot_include_sql_markers_follow_the_auditable_decision_per_hop() {
 
     // Live intermediate, soft-deleted leaf: only the leaf marker applies.
     let intermediate = tree("Customer", "customer", vec![], None, false);
-    let leaf = tree("Organization", "organization", vec![], Some("deleted_at"), false);
+    let leaf = tree(
+        "Organization",
+        "organization",
+        vec![],
+        Some("deleted_at"),
+        false,
+    );
     let sql = render_include_sql(
         &worker(),
-        &dot_facts("customer.org", "customer_id", "org_id", &intermediate, &leaf, &pg),
+        &dot_facts(
+            "customer.org",
+            "customer_id",
+            "org_id",
+            &intermediate,
+            &leaf,
+            &pg,
+        ),
     );
     assert!(
         sql.contains("WHERE \"i\".\"id\" = (SELECT \"customer_id\" FROM \"common\".\"worker\" WHERE \"id\" = :source_id)\n  AND \"l\".\"deleted_at\" IS NULL\nLIMIT 1;"),
@@ -546,7 +559,14 @@ fn dot_include_sql_markers_follow_the_auditable_decision_per_hop() {
     let leaf = tree("Organization", "organization", vec![], None, false);
     let sql = render_include_sql(
         &worker(),
-        &dot_facts("customer.org", "customer_id", "org_id", &intermediate, &leaf, &pg),
+        &dot_facts(
+            "customer.org",
+            "customer_id",
+            "org_id",
+            &intermediate,
+            &leaf,
+            &pg,
+        ),
     );
     assert!(
         sql.contains("AND \"i\".\"deleted_at\" IS NULL\nLIMIT 1;"),
@@ -606,8 +626,8 @@ fn both_providers_derive_the_include_marker_from_one_predicate() {
             std::slice::from_ref(&path),
             &[Some(target)],
             &[None],
-            &[per_seg.clone()],
-            &[per_seg.clone()],
+            std::slice::from_ref(&per_seg),
+            std::slice::from_ref(&per_seg),
             &[vec![vec![false]]],
             &[vec![vec![false]]],
             &[vec![vec![None]]],

@@ -157,15 +157,16 @@ async fn soft_delete_leg_facts(
             continue;
         };
         if !target_tree.is_auditable {
-            facts.insert(
-                path.alias.clone(),
-                SoftDeleteLegFacts::OmittedNonAuditable,
-            );
+            facts.insert(path.alias.clone(), SoftDeleteLegFacts::OmittedNonAuditable);
             continue;
         }
-        let ops =
-            crate::api::api_model::resolve_entity_operations(db, config, &first.domain, &first.schema_title)
-                .await;
+        let ops = crate::api::api_model::resolve_entity_operations(
+            db,
+            config,
+            &first.domain,
+            &first.schema_title,
+        )
+        .await;
         let has_op = |op: &str| ops.iter().any(|o| o == op);
         if !(has_op("create") && has_op("delete")) {
             facts.insert(path.alias.clone(), SoftDeleteLegFacts::Omitted);
@@ -184,7 +185,9 @@ async fn soft_delete_leg_facts(
         let type_suffix = &config.defaults.type_suffix;
         let fk_json_name = props
             .iter()
-            .filter(|p| !p.is_array && p.effective_kind() == Some(RefClassificationKind::EntityReference))
+            .filter(|p| {
+                !p.is_array && p.effective_kind() == Some(RefClassificationKind::EntityReference)
+            })
             .filter_map(|p| {
                 let target_name = p.ref_target.as_ref()?;
                 let points_at_source = target_name == &source_title
@@ -196,15 +199,8 @@ async fn soft_delete_leg_facts(
             facts.insert(path.alias.clone(), SoftDeleteLegFacts::Omitted);
             continue;
         };
-        let target_body = super::minimal_body_for(
-            db,
-            config,
-            &first.domain,
-            &target,
-            api_version,
-            0,
-        )
-        .await?;
+        let target_body =
+            super::minimal_body_for(db, config, &first.domain, &target, api_version, 0).await?;
         // Wire the reverse FK to the source's captured id (the body is
         // required-fields-only; the reverse FK may be optional).
         let target_create_body = inject_fk_capture(&target_body, &fk_json_name, capture_ref);
@@ -250,7 +246,7 @@ fn inject_fk_capture(body: &str, fk_json_name: &str, capture_ref: &str) -> Strin
 }
 
 /// The #784 soft-delete leg's per-path resolution.
-enum SoftDeleteLegFacts {
+pub(super) enum SoftDeleteLegFacts {
     /// The leg is provable: POST the target, DELETE it, GET the source,
     /// assert the empty collection.
     Provable {
@@ -1006,7 +1002,10 @@ mod tests {
         );
         assert!(!out.contains("HTTP 204"), "{out}");
         // The hydration legs themselves are untouched.
-        assert!(out.contains("jsonpath \"$.included.part\" != null"), "{out}");
+        assert!(
+            out.contains("jsonpath \"$.included.part\" != null"),
+            "{out}"
+        );
     }
 
     /// Unresolved facts (no schema, no ops, no reverse-FK property) omit the
@@ -1034,7 +1033,10 @@ mod tests {
         .collect::<Vec<_>>()
         .join("\n");
         assert!(!out.contains("HTTP 204"), "{out}");
-        assert!(out.contains("jsonpath \"$.included.part\" != null"), "{out}");
+        assert!(
+            out.contains("jsonpath \"$.included.part\" != null"),
+            "{out}"
+        );
     }
 
     /// The FK injection prepends the reverse-FK member to the target's
