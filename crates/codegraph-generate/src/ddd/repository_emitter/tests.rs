@@ -663,3 +663,97 @@ fn dot_include_fetch_filters_the_intermediate_when_auditable() {
         "the dot leaf load must filter the auditable leaf:\n{out}"
     );
 }
+
+// --- dot-intermediate addressing (issue #789, the #784 TDD §8 finding) ---
+//
+// The old `emit_dot_fetch_method` loaded the INTERMEDIATE with
+// `Column::Id.eq(source_id)` — the SOURCE row's primary key — so
+// `intermediate.id == source_pk` never matched across entities and every
+// SeaORM dot include answered `Ok(None)`. The cornucopia twin is correct
+// (`WHERE "i"."id" = (SELECT "fk" FROM source WHERE "id" = :source_id)`);
+// the SeaORM arm must mirror it through the scalar include arm's own
+// idiom: load the source by PK, read its FK, load the intermediate by
+// that value.
+
+/// The dot fetch addresses the INTERMEDIATE through the SOURCE's FK: the
+/// source row loads by its own PK first, its FK is read, and the
+/// intermediate loads by that value — never by the source's PK.
+#[test]
+fn dot_fetch_addresses_the_intermediate_through_the_source_fk() {
+    let out = emit_include_with_target(&dot_include_path(), None);
+    assert!(
+        out.contains(".filter(crate::entity::common_task::Column::Id.eq(source_id))"),
+        "the source row must load by its own PK first:\n{out}"
+    );
+    assert!(
+        out.contains("source.job_id"),
+        "the source's FK to the intermediate must be read:\n{out}"
+    );
+    assert!(
+        out.contains("crate::entity::hr_job::Column::Id.eq(fk_value)"),
+        "the intermediate must load by the source's FK value:\n{out}"
+    );
+    assert!(
+        !out.contains("hr_job::Column::Id.eq(source_id)"),
+        "the intermediate must not be addressed by the source's PK:\n{out}"
+    );
+}
+
+/// A source row that does not exist answers `Ok(None)` — the fetch must
+/// match the source load (and early-return on `None`) BEFORE touching the
+/// intermediate.
+#[test]
+fn dot_fetch_returns_none_when_the_source_row_is_missing() {
+    let out = emit_include_with_target(&dot_include_path(), None);
+    let source_match = out
+        .find("let source = match source {")
+        .unwrap_or_else(|| panic!("the source load must be matched:\n{out}"));
+    let intermediate_load = out
+        .find("let intermediate = crate::entity::hr_job::Entity::find()")
+        .unwrap_or_else(|| panic!("the intermediate load must exist:\n{out}"));
+    assert!(
+        source_match < intermediate_load,
+        "the source match must precede the intermediate load:\n{out}"
+    );
+    let arms = &out[source_match..out.find("};").unwrap_or(out.len())];
+    assert!(
+        arms.contains("None => return Ok(None),"),
+        "a missing source row must early-return Ok(None):\n{out}"
+    );
+}
+
+/// An OPTIONAL first-hop FK reads through the Option idiom —
+/// `Some(v) => v, None => return Ok(None)` (the scalar arm's shape).
+#[test]
+fn dot_fetch_optional_fk_uses_the_option_idiom() {
+    let out = emit_include_with_target(&dot_include_path(), None);
+    assert!(
+        out.contains("let fk_value = match source.job_id {"),
+        "an optional first-hop FK must unwrap through a match:\n{out}"
+    );
+    let fk_read = out
+        .find("let fk_value = match source.job_id {")
+        .unwrap_or_else(|| panic!("the optional FK match must exist:\n{out}"));
+    let arms = &out[fk_read..out[fk_read..].find("};").map(|i| fk_read + i).unwrap_or(out.len())];
+    assert!(
+        arms.contains("Some(v) => v,") && arms.contains("None => return Ok(None),"),
+        "an optional FK with no value must early-return Ok(None):\n{out}"
+    );
+}
+
+/// A REQUIRED first-hop FK reads the plain `Uuid` directly — no Option
+/// machinery on a non-optional column.
+#[test]
+fn dot_fetch_required_fk_reads_the_plain_uuid() {
+    let mut path = dot_include_path();
+    path.segments[0].fk_is_required = true;
+    let out = emit_include_with_target(&path, None);
+    assert!(
+        out.contains("let fk_value = source.job_id;"),
+        "a required first-hop FK must read the plain Uuid:\n{out}"
+    );
+    assert!(
+        !out.contains("match source.job_id"),
+        "a required FK must carry no Option unwrapping:\n{out}"
+    );
+}
