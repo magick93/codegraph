@@ -28,6 +28,37 @@ non-workspace directories: `codegraph-vscode/` (IFML VS Code extension),
 and `crates/review/` (regenerated fixture app exercised by
 `grafeo_e2e_tests`). None are workspace members.
 
+## Build cache (mbx)
+
+`mbx` (mr boxington) is the machine-wide compilation cache for this
+workspace. Cargo still resolves and decides what to build; mbx restores
+matching compilations from a shared store and coordinates parallel builds.
+A wiped `target/` rebuilt through mbx restored in seconds in the trial
+(6.5 s vs 6:34 for `cargo build --workspace`; 15 s vs 7:20 for the
+~200-target test compile).
+
+- **Run cargo through mbx.** `mbx setup` installs the cargo shim so plain
+  `cargo`, `just ci-local`, and agent commands route through it; or call
+  `mbx build` / `mbx test` directly. Use one mode per checkout — alternating
+  mbx and plain cargo in one checkout recompiles build-script units.
+- **Toolchain and flags are cache keys.** `rust-toolchain.toml` pins the
+  compiler (bump it deliberately, never via a silent `rustup update`), and the
+  `RUSTFLAGS="-C debuginfo=0"` convention in `just test` / `just ci-local` is
+  the test-build key set. A bare `cargo test` uses a different key set — keep
+  a given build flavour consistent.
+- **Expected non-hits, not bugs.** `crates/tree-sitter-ifml` and
+  `crates/tree-sitter-mox` (`crate-type = ["staticlib", …]`) are never
+  published to the shared cache — they use private incremental reuse. Build
+  scripts that ask to rerun every build (the 369-template `.tera` embed) are
+  likewise re-executed. Everything else — including wasm32 links and C
+  compiles from `cc`/CMake build scripts — is cacheable.
+- **Store.** `~/.cache/mbx`, 90 GiB default budget with automatic GC;
+  `mbx cache stats` and `mbx gc --dry-run` inspect it. `.mbx.toml` opts test
+  binaries into the machine-wide scheduler so concurrent agents cannot
+  oversubscribe the box.
+- Escape hatch: plain `cargo` keeps working; `MBX_*` variables disable
+  individual features (see https://mr-boxington.jdx.dev/configuration).
+
 ## mox-First Modeling (epic #228)
 
 `.mox` (pherolang) is the **primary text-based modeling language**; JSON
