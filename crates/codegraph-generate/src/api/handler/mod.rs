@@ -776,6 +776,26 @@ impl EntityGenerator for HandlerGenerator {
                     // block, which attaches only here).
                     route.raise_responses.retain(|raise| raise.status != 409);
                 }
+                // The create-shaped arm splices the same two handler-level
+                // blocks the CRUD create handler carries (the #338
+                // create-eligibility guards and the #666 slice-4d create
+                // invariants) — they are rendered from `guard_blocks` /
+                // `invariant_blocks`, which the routes plane cannot see.
+                if matches!(
+                    route.execution,
+                    crate::ddd::service_ops::ExecutionKind::Create { .. }
+                ) {
+                    route.create_guard_block = guard_blocks.create_guard_block.clone();
+                    route.create_invariant_block = invariant_blocks.create_block.clone();
+                }
+            }
+            // Issue #778: the execution blocks are pre-rendered from the
+            // route, so every route is re-rendered ONCE here — after the
+            // post-pass attached the invariant/guard slots above, before
+            // `service_ops` moves into the template context.
+            for route in service_ops.iter_mut() {
+                route.execution_block =
+                    crate::ddd::service_ops::render::render_execution_block(route);
             }
         }
 

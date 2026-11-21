@@ -9,7 +9,9 @@ use codegraph_naming::to_snake_case;
 ///
 /// A newtype keeps state names from being confused with trigger names,
 /// wire keys, or arbitrary prose at call sites.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(transparent)]
 pub struct StateName(String);
 
@@ -32,7 +34,9 @@ impl std::fmt::Display for StateName {
 }
 
 /// A normalized machine trigger name (snake_case, e.g. `submit`).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(transparent)]
 pub struct TriggerName(String);
 
@@ -55,7 +59,9 @@ impl std::fmt::Display for TriggerName {
 }
 
 /// An Update-DTO wire key carrying the machine state field.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(transparent)]
 pub struct WireKey(String);
 
@@ -78,7 +84,7 @@ impl std::fmt::Display for WireKey {
 }
 
 /// One machine transition reduced to the wire-relevant `(from, to)` pair.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ServiceOpTransition {
     pub from: StateName,
     pub to: StateName,
@@ -87,7 +93,7 @@ pub struct ServiceOpTransition {
 /// The machine-field binding an executable save/update delegation carries
 /// (P0.5/P0): the state field on the response, its DTO wire key, the
 /// machine's initial state, and the transitions this operation may apply.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceOpState {
     /// Rust expression producing the record's current state as a `String`
     /// (codelist/string aware, optional-aware).
@@ -117,7 +123,7 @@ pub struct ServiceOpState {
 /// so the handler can never reference a method that does not exist; the
 /// fail-closed refusals (no plain by-id load on the parent, a cross-domain
 /// parent) are named generation errors raised in [`super::routes`].
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChildParentLoad {
     /// The parent aggregate's Rust type (`PayRun`) — the 404 prose.
     pub entity: String,
@@ -141,7 +147,7 @@ pub struct ChildParentLoad {
 /// is pre-rendered at generation time (the #338/#662 pattern), so the
 /// template only splices text and the mapping refusals fire before any tree
 /// is written.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BoundaryPayloadPlan {
     /// `Create` / `Update` — the request DTO prefix the handler constructs.
     pub dto_prefix: String,
@@ -151,17 +157,17 @@ pub struct BoundaryPayloadPlan {
     pub construct: String,
     /// Request fields the boundary does not carry, defaulted to `None` —
     /// documented in the emitted operation, never silent.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub defaulted: Vec<String>,
     /// The modeled boundary's Rust path — the utoipa `request_body` type.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_body: Option<String>,
     /// The minimal valid body the hurl contract sends (the boundary sample).
     pub sample: serde_json::Value,
     /// Required ENTITY-reference members. A generated contract cannot seed an
     /// arbitrary target row, so the hurl planner omits the leg for such a
     /// payload rather than posting the nil uuid (a guaranteed FK 500).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_class_refs: Vec<String>,
 }
 
@@ -171,7 +177,7 @@ pub struct BoundaryPayloadPlan {
 /// could represent invalid combinations) with an exhaustive tagged enum.
 /// `#[non_exhaustive]` lets new lowerings land without breaking external
 /// matches — internal matches must stay exhaustive.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ExecutionKind {
@@ -183,7 +189,7 @@ pub enum ExecutionKind {
     /// present when the entity carries a machine (transition binding or
     /// body-driven target whitelist).
     Update {
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         state: Option<ServiceOpState>,
     },
     /// A create-shaped operation (issue #767): no statement body, no
@@ -223,14 +229,14 @@ pub enum ExecutionKind {
         /// `add`; `None` for `remove`/`save` (their scoped record load IS
         /// the parent-ownership proof) and for seamed adds (the 501 arm
         /// never reaches the create).
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_load: Option<ChildParentLoad>,
         /// Issue #767: the operation declares a modeled INPUT boundary whose
         /// source class IS this child, so the handler constructs the child's
         /// request DTO from the boundary (the same field-by-field mapping the
         /// collection-level create uses). `None` keeps the operation on the
         /// child's own generated request DTO — byte-identical.
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         payload: Option<BoundaryPayloadPlan>,
     },
     /// A projection READ (issue #768): a public abstract op whose return
@@ -245,7 +251,7 @@ pub enum ExecutionKind {
 }
 
 /// The lowering facts of one projection read (issue #768).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectionReadPlan {
     /// The projection boundary's generated module stem (`catalog`).
     pub module: String,
@@ -258,12 +264,12 @@ pub struct ProjectionReadPlan {
     /// hurl planner folds each over the contract's own create body and
     /// asserts the computed value — the derived member provably COMPUTES in
     /// the read path.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub derived: Vec<ProjectionDerived>,
 }
 
 /// One derived member's wire key + expression source (issue #768).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectionDerived {
     /// The member's wire key (project dto casing) the JSON assert reads.
     pub wire_key: String,
@@ -273,7 +279,7 @@ pub struct ProjectionDerived {
 
 /// The closed child-action vocabulary of `children <Root>` operations
 /// (phero-ir `ChildRef.action`, validated upstream).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChildAction {
     /// Append one element to the root's child collection.
@@ -397,7 +403,7 @@ pub struct ExecutionRenderFacts {
 }
 
 /// One service operation lowered to a route on one entity.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ServiceOpRoute {
     /// The owning service name.
     pub service: String,
@@ -412,7 +418,7 @@ pub struct ServiceOpRoute {
     /// Pre-rendered authorization fn (the whole item, doc comment
     /// included). `None` = ungated: no capabilities, or no actor policy in
     /// the graph.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorize_fn: Option<String>,
     /// The executable lowering (delete / read / update / 501 seam).
     pub execution: ExecutionKind,
@@ -429,20 +435,20 @@ pub struct ServiceOpRoute {
     /// repository, and the rendered fn loads the related records before
     /// evaluating. `false` keeps today's synchronous
     /// `(role, &response)` shape — byte-identical flag-off output.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub authorize_async: bool,
     /// The op's injected-scope `when` guard, resolved at generation time
     /// (issue #663). `None` for own-record-only guards — the hurl
     /// contract's state planner pins the conservative denial leg when a
     /// guard is present but not provably satisfied by a fresh fixture.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub injected_guard: Option<InjectedGuard>,
     /// Pre-rendered design-invariant block (DD5, issue #666 slice 4d):
     /// the candidate (loaded record + action patch, machine state move
     /// included) evaluated BEFORE the write. `None` = the entity carries
     /// no enforceable invariants (or the plane is gated off) —
     /// byte-identical arm.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invariant_block: Option<String>,
     /// The #338 create-eligibility guard block the create-shaped arm splices
     /// after the reload (an ineligible create is compensated and denied with
@@ -464,7 +470,7 @@ pub struct ServiceOpRoute {
     /// names. Empty ⇒ the op declares no vocabulary — every consumer
     /// (utoipa documentation, hurl planning) renders nothing, byte-
     /// identical to the pre-#665 shape.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub throws: Vec<String>,
     /// The declared statuses the action path documents (issue #665): the
     /// op's `throws` resolved through the shared error derivation, MINUS
@@ -472,7 +478,7 @@ pub struct ServiceOpRoute {
     /// a record load, 409 for a machine-bound update, 422 for a child
     /// payload, 501 for a seam). A `Body` execution documents its raises
     /// through the #662 plan instead, so this stays empty there.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub raise_responses: Vec<crate::ddd::body_lower::BodyRaiseResponse>,
     /// The handler-template names this route's execution block renders with
     /// (issue #778). Generation-time only: [`Self::execution_block`] bakes
@@ -506,7 +512,7 @@ pub struct ServiceOpRoute {
 ///   fields, non-name/date literals, field-to-field) or an unparseable
 ///   condition → the contract OMITS the leg with the documented header
 ///   (the `Body { may_refuse }` precedent).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FreshFixtureGuard {
     Satisfied,
@@ -516,7 +522,7 @@ pub enum FreshFixtureGuard {
 
 /// The compact guard facts a route carries for the hurl contract's
 /// planner (issue #663).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InjectedGuard {
     /// The guard's condition source, verbatim — the comment the emitted
     /// contract pins.

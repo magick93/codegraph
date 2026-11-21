@@ -36,6 +36,8 @@ use sha2::{Digest, Sha256};
 use codegraph::generate::ProjectConfig;
 use codegraph::generate::api::include_path::{IncludeSegment, ResolvedIncludePath};
 use codegraph::generate::api::include_plan::{IncludePlanCtx, build_include_plan};
+use codegraph::generate::ddd::service_ops::render::render_execution_block;
+use codegraph::generate::ddd::service_ops::{ExecutionRenderFacts, ServiceOpRoute};
 use codegraph::generate::profile::PersistenceProvider;
 use codegraph::generate::render_template_with_project;
 use codegraph::generate::template_engine::create_tera;
@@ -451,11 +453,13 @@ fn root_service_ops() -> Value {
     seamed["throws"] = json!(["NotFound", "InvalidState", "MissingField"]);
 
     // A seam WITHOUT a record load: the capability-membership-only route.
+    // The fixture spells the seam reason the template's `default` filter
+    // supplied before the arm was pre-rendered (`no executable lowering`).
     let mut stateless_seam = service_op(
         "TaskService",
         "purgeCache",
         "purge_cache",
-        json!({ "kind": "seam" }),
+        json!({ "kind": "seam", "reason": "no executable lowering" }),
     );
     stateless_seam["record_load"] = json!(false);
     stateless_seam["authorize_fn"] = json!(OP_AUTHORIZE_FN);
@@ -737,6 +741,61 @@ fn child_service_ops() -> Value {
 }
 
 // ── The permutation table ──────────────────────────────────────────────
+
+/// Fill every service-op fixture's derived `execution_block` (issue #778).
+///
+/// The matrix mirrors `ServiceOpRoute`'s serde shape by hand; the execution
+/// block is DERIVED from the rest of the route, so the mirror derives it the
+/// same way the handler plane does — one renderer, never a second copy of the
+/// arm text. The facts come from the case's own context (they are exactly the
+/// names the template's prelude binds).
+fn with_execution_blocks(ctx: &mut Value) {
+    // Read the facts out FIRST: the ops array is borrowed mutably below.
+    let is_auditable = ctx["is_auditable"].as_bool().unwrap_or(false);
+    let nested_child = ctx["role"].as_str() == Some("child");
+    let ux_sort_fields = ctx["ux_sort_fields"]
+        .as_array()
+        .is_some_and(|fields| !fields.is_empty());
+    let facts = ExecutionRenderFacts {
+        domain: ctx["domain"].as_str().unwrap_or_default().to_string(),
+        entity_name: ctx["entity_name"].as_str().unwrap_or_default().to_string(),
+        entity_table: ctx["module_name"].as_str().unwrap_or_default().to_string(),
+        id_param: ctx["param_name"].as_str().unwrap_or_default().to_string(),
+        domain_types_crate: ctx["domain_types_crate"]
+            .as_str()
+            .unwrap_or("domain_types")
+            .to_string(),
+        nested_child,
+        auditable: is_auditable,
+        ux_sort_fields,
+    };
+    // The handler generator's post-pass copies the handler-level create
+    // blocks onto every create-shaped route (the arm splices them).
+    let create_guard_block = ctx["create_guard_block"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let create_invariant_block = ctx["create_invariant_block"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let Some(ops) = ctx.get_mut("service_ops").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for op in ops.iter_mut() {
+        let mut route: ServiceOpRoute =
+            serde_json::from_value(op.clone()).expect("service-op fixture deserializes");
+        route.render_facts = facts.clone();
+        if matches!(
+            route.execution,
+            codegraph::generate::ddd::service_ops::ExecutionKind::Create { .. }
+        ) {
+            route.create_guard_block = create_guard_block.clone();
+            route.create_invariant_block = create_invariant_block.clone();
+        }
+        op["execution_block"] = serde_json::json!(render_execution_block(&route));
+    }
+}
 
 fn cases() -> Vec<Case> {
     let mut out: Vec<Case> = Vec::new();
@@ -1130,6 +1189,10 @@ fn cases() -> Vec<Case> {
         ctx,
         project: ProjectConfig::default(),
     });
+
+    for case in out.iter_mut() {
+        with_execution_blocks(&mut case.ctx);
+    }
 
     out.sort_by(|a, b| a.name.cmp(b.name));
     out
