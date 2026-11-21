@@ -93,10 +93,7 @@ pub(super) fn body_block(plan: &crate::ddd::body_lower::BodyPlan) -> String {
 mod tests {
     use crate::ddd::body_lower::{BodyParam, BodyPlan};
     use crate::ddd::service_ops::render::{render_execution_block, test_support};
-    use crate::ddd::service_ops::types::{
-        BoundaryPayloadPlan, ExecutionKind, ExecutionRenderFacts, ProjectionReadPlan,
-        ServiceOpRoute,
-    };
+    use crate::ddd::service_ops::types::{ExecutionKind, ExecutionRenderFacts, ServiceOpRoute};
 
     // ── T3.1 fixtures: the `payroll` route ────────────────────────────────
 
@@ -208,43 +205,6 @@ mod tests {
             block.contains("state.payroll_pay_run_commands.delete(pay_run_id,"),
             "the command slot renders from the route's render facts: {block}"
         );
-    }
-
-    /// Every kind this module does not own renders as an EMPTY string — the
-    /// template keeps its own arm (so the future wiring is flag-off for
-    /// them).
-    #[test]
-    fn every_unported_kind_renders_nothing() {
-        let cases = vec![
-            ExecutionKind::Create {
-                plan: BoundaryPayloadPlan {
-                    dto_prefix: "Create".to_string(),
-                    extraction: String::new(),
-                    construct: String::new(),
-                    defaulted: Vec::new(),
-                    request_body: None,
-                    sample: serde_json::json!({}),
-                    required_class_refs: Vec::new(),
-                },
-            },
-            ExecutionKind::ProjectionRead {
-                plan: ProjectionReadPlan {
-                    module: "catalog".to_string(),
-                    projection: "BookSummary".to_string(),
-                    collection: false,
-                    derived: Vec::new(),
-                },
-            },
-        ];
-        for execution in cases {
-            let kind = format!("{execution:?}");
-            let op = route(execution, true);
-            assert_eq!(
-                render_execution_block(&op),
-                String::new(),
-                "kind `{kind}` is still template-owned and must render nothing"
-            );
-        }
     }
 
     // ── T3.4: the `body` arm (`root_service_ops`'s two body variants) ────

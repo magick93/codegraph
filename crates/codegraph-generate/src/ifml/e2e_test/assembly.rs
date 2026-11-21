@@ -1292,6 +1292,7 @@ impl IfmlE2eTestGenerator {
                     // injected-guard action legs are a recorded #663
                     // deferral) — the monolith default.
                     workers_topology: false,
+                    ux: None,
                 },
             )
             .await

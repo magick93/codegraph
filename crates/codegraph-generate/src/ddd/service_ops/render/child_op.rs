@@ -5,7 +5,7 @@
 use super::super::types::{
     BoundaryPayloadPlan, ChildAction, ChildParentLoad, ExecutionRenderFacts, ServiceOpRoute,
 };
-use super::{audit_arity, domain_error};
+use super::{REQUEST_VALIDATE_BLOCK, audit_arity, domain_error};
 
 /// The `child_op` arm (issue #661): a `children <Root> { … }` operation that
 /// drives the CHILD's command plane under the parent's aggregate path.
@@ -52,7 +52,7 @@ pub(super) fn child_op_block(
                 None => block.push_str(&add_body_match_item(facts)),
             }
             block.push('\n');
-            block.push_str(CHILD_VALIDATE_BLOCK);
+            block.push_str(REQUEST_VALIDATE_BLOCK);
             block.push_str(&add_create_tail(facts));
         }
         ChildAction::Save => {
@@ -155,21 +155,6 @@ fn add_body_match_item(facts: &ExecutionRenderFacts) -> String {
         entity = facts.entity_name,
     )
 }
-
-/// The `garde` validation both `add` item shapes run before the create.
-const CHILD_VALIDATE_BLOCK: &str = concat!(
-    "    if let Err(report) = garde::Validate::validate(&item) {\n",
-    "        let details: Vec<crate::error::FieldError> = report.into_inner()\n",
-    "            .into_iter()\n",
-    "            .map(|(path, error)| crate::error::FieldError {\n",
-    "                field: path.to_string(),\n",
-    "                message: error.message().to_string(),\n",
-    "            })\n",
-    "            .collect();\n",
-    "        return Err(AppError::validation(\"Request validation failed\", details)\n",
-    "            .with_correlation_id(correlation_id));\n",
-    "    }\n",
-);
 
 /// The add tail: create-and-link, then reload the created element (the
 /// `include_deleted` arity when the CHILD is auditable) and return it.

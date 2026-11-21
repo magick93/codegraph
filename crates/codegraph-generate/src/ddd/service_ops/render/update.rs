@@ -573,6 +573,7 @@ mod tests {
             domain_types_crate: "domain_types".to_string(),
             nested_child: true,
             auditable: false,
+            ux_sort_fields: false,
         };
         assert_eq!(render_execution_block(&op), MATRIX_CHILD_BLOCK);
     }

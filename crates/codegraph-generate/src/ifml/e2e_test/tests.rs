@@ -1392,6 +1392,8 @@ async fn collection_add_plans_ok_then_not_found_legs() {
         invariant_block: None,
         throws: Vec::new(),
         raise_responses: Vec::new(),
+        create_guard_block: String::new(),
+        create_invariant_block: String::new(),
         render_facts: Default::default(),
         execution_block: String::new(),
     };

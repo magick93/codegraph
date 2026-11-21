@@ -1340,6 +1340,8 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            create_guard_block: String::new(),
+            create_invariant_block: String::new(),
             render_facts: Default::default(),
             execution_block: String::new(),
         };
@@ -1390,6 +1392,8 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            create_guard_block: String::new(),
+            create_invariant_block: String::new(),
             render_facts: Default::default(),
             execution_block: String::new(),
         };
@@ -1444,6 +1448,8 @@ entities = ["TaskType"]
             invariant_block: None,
             throws: Vec::new(),
             raise_responses: Vec::new(),
+            create_guard_block: String::new(),
+            create_invariant_block: String::new(),
             render_facts: Default::default(),
             execution_block: String::new(),
         };

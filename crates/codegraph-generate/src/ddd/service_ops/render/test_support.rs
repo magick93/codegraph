@@ -22,6 +22,8 @@ pub(super) fn facts(
         domain_types_crate: "domain_types".to_string(),
         nested_child,
         auditable,
+        // The arm KATs that exercise the sort arity set it explicitly.
+        ux_sort_fields: false,
     }
 }
 
@@ -48,6 +50,8 @@ pub(super) fn route(
         authorize_async: false,
         injected_guard: None,
         invariant_block: None,
+        create_guard_block: String::new(),
+        create_invariant_block: String::new(),
         throws: Vec::new(),
         raise_responses: Vec::new(),
         render_facts,

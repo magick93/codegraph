@@ -387,6 +387,13 @@ pub struct ExecutionRenderFacts {
     /// `true` when the entity's query/command planes take the
     /// `include_deleted` argument — the template's `is_auditable`.
     pub auditable: bool,
+    /// `true` when the entity's `list_filtered` query carries the issue
+    /// #306 `sort: Option<(String, bool)>` argument — the template's
+    /// `ux_sort_fields` (non-empty sortable-column list). Resolved with the
+    /// SAME `resolve_ux_sort_plan` the query and handler planes use, so the
+    /// collection projection read's `list_filtered` call keeps the arity the
+    /// query plane emitted.
+    pub ux_sort_fields: bool,
 }
 
 /// One service operation lowered to a route on one entity.
@@ -437,6 +444,22 @@ pub struct ServiceOpRoute {
     /// byte-identical arm.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invariant_block: Option<String>,
+    /// The #338 create-eligibility guard block the create-shaped arm splices
+    /// after the reload (an ineligible create is compensated and denied with
+    /// 403). Whitespace-exact, leading newline included — the same text the
+    /// handler's `create_guard_block` context key carries; the handler
+    /// generator attaches it AFTER the routes are built (the
+    /// `invariant_block` post-pass), so the routes plane leaves it empty and
+    /// the wiring re-renders. Empty = no create-eligible rule.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub create_guard_block: String,
+    /// The #666 slice-4d CREATE design-invariant block (server-generated
+    /// fields exist only post-insert, so the CREATED record is evaluated and
+    /// a violation compensates before the 409) — the handler's
+    /// `create_invariant_block` key. Attached by the same post-pass as
+    /// [`Self::create_guard_block`]; empty = no enforceable invariants.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub create_invariant_block: String,
     /// The op's declared `throws` set (DD7, issue #665), authored error
     /// names. Empty ⇒ the op declares no vocabulary — every consumer
     /// (utoipa documentation, hurl planning) renders nothing, byte-
