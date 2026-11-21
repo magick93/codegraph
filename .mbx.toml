@@ -1,0 +1,14 @@
+# mbx (mr boxington) — shared compilation cache for this workspace.
+# https://mr-boxington.jdx.dev/configuration
+#
+# Run builds through mbx: `mbx setup` installs the cargo shim so plain
+# `cargo` routes through it, or call `mbx build` / `mbx test` directly.
+# Use one mode per checkout; plain cargo keeps working as an escape hatch.
+
+# Put test binaries in the same machine-wide CPU/memory budget as
+# compilations, so concurrent agent runs cannot oversubscribe the box.
+scheduler.tests = true
+
+# Opt-in only (off by default): let identical workspace crates restore
+# across checkouts at the cost of placeholder source paths in debug info.
+# share_workspace_root = true
