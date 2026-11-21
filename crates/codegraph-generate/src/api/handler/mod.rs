@@ -15,7 +15,7 @@ use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use crate::type_registry::TypeRegistryHandle;
 use codegraph_config::{DomainConfig, EntityConfig};
 
-use super::include_path::{ResolvedIncludePath, resolve_include_paths_for_topology};
+use super::include_path::ResolvedIncludePath;
 use super::include_plan::{IncludePlanCtx, build_include_plan};
 use super::router::{ChildInfo, CrossRefInfo};
 
@@ -1454,45 +1454,18 @@ async fn resolve_include_paths(
     entity_cfg: Option<&EntityConfig>,
     project: &ProjectConfig,
 ) -> Result<Vec<ResolvedIncludePath>> {
-    // Resolve include paths from config. Skip non-root entities unless they
-    // have explicit allow_include configuration.
-    let has_explicit_include = entity_cfg
-        .and_then(|ec| ec.allow_include.as_ref())
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-    let is_root = entity_cfg
-        .and_then(|ec| ec.role.as_deref())
-        .map(|r| r == "root")
-        .unwrap_or(true);
-    let include_paths = if has_explicit_include || is_root {
-        if let Some(ec) = entity_cfg {
-            resolve_include_paths_for_topology(
-                db,
-                config,
-                domain,
-                schema_title,
-                ec.allow_include.as_ref(),
-                project.is_workers_topology(),
-            )
-            .await?
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    // Deduplicate include paths by alias to prevent duplicate struct fields
-    // in the generated handler code (auto-discover can produce the same child
-    // entity through multiple FK relationships).
-    let include_paths = {
-        let mut seen = std::collections::HashSet::new();
-        include_paths
-            .into_iter()
-            .filter(|path| seen.insert(path.alias.clone()))
-            .collect::<Vec<_>>()
-    };
-    Ok(include_paths)
+    // ONE gate, shared with the generated hurl contract's `?include=` legs
+    // (issue #781): the contract must assert exactly the surface this handler
+    // hydrates.
+    super::include_path::resolve_include_paths_for_entity(
+        db,
+        config,
+        domain,
+        schema_title,
+        entity_cfg,
+        project.is_workers_topology(),
+    )
+    .await
 }
 
 pub(crate) async fn resolve_is_auditable(

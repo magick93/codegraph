@@ -112,6 +112,20 @@ pub struct IncludePlanCtx<'a> {
     pub is_auditable: bool,
 }
 
+/// The provider's `?include=` support verdict, independent of any entity —
+/// the ONE predicate every consumer reads (the handler's hydration plan and
+/// the generated hurl contract's include legs), so a contract can never probe
+/// a surface the handler refuses.
+pub fn include_support_for(project: &ProjectConfig) -> IncludeSupport {
+    if project.is_cornucopia() {
+        IncludeSupport::Unsupported {
+            reason: CORNUCOPIA_UNSUPPORTED_REASON.to_string(),
+        }
+    } else {
+        IncludeSupport::SeaOrm
+    }
+}
+
 /// Build the include plan for one entity, deriving provider support from
 /// `project` (`PersistenceProvider` has exactly two variants today).
 ///
@@ -123,14 +137,7 @@ pub fn build_include_plan(
     ctx: &IncludePlanCtx<'_>,
     project: &ProjectConfig,
 ) -> IncludePlan {
-    let support = if project.is_cornucopia() {
-        IncludeSupport::Unsupported {
-            reason: CORNUCOPIA_UNSUPPORTED_REASON.to_string(),
-        }
-    } else {
-        IncludeSupport::SeaOrm
-    };
-    build_include_plan_with_support(support, paths, ctx)
+    build_include_plan_with_support(include_support_for(project), paths, ctx)
 }
 
 /// The cornucopia verdict's reason (rendered into the 501 message).

@@ -202,6 +202,63 @@ pub async fn resolve_include_paths_gated(
     .await
 }
 
+/// The ENTITY gate every `?include=` consumer applies, on top of
+/// [`resolve_include_paths_for_topology`]:
+///
+/// - an entity with **no config entry** resolves nothing (the handler renders
+///   no include surface for it, so a contract asserting one would be lying);
+/// - a non-root entity (`role != "root"`) resolves nothing unless it declares
+///   a non-empty `allow_include`;
+/// - alias duplicates are dropped (auto-discovery can reach the same child
+///   through several FKs, which would duplicate struct fields).
+///
+/// The handler and the generated hurl contract both call THIS function so the
+/// contract's `?include=` legs cannot disagree with the surface the handler
+/// actually hydrates.
+pub async fn resolve_include_paths_for_entity(
+    db: &dyn GraphQuerier,
+    config: &codegraph_config::DomainConfig,
+    domain: &str,
+    schema_title: &str,
+    entity_cfg: Option<&codegraph_config::EntityConfig>,
+    workers_topology: bool,
+) -> Result<Vec<ResolvedIncludePath>> {
+    let has_explicit_include = entity_cfg
+        .and_then(|ec| ec.allow_include.as_ref())
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let is_root = entity_cfg
+        .and_then(|ec| ec.role.as_deref())
+        .map(|r| r == "root")
+        .unwrap_or(true);
+    let include_paths = if has_explicit_include || is_root {
+        if let Some(ec) = entity_cfg {
+            resolve_include_paths_for_topology(
+                db,
+                config,
+                domain,
+                schema_title,
+                ec.allow_include.as_ref(),
+                workers_topology,
+            )
+            .await?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Deduplicate include paths by alias to prevent duplicate struct fields
+    // in the generated handler code (auto-discover can produce the same child
+    // entity through multiple FK relationships).
+    let mut seen = std::collections::HashSet::new();
+    Ok(include_paths
+        .into_iter()
+        .filter(|path| seen.insert(path.alias.clone()))
+        .collect())
+}
+
 /// Drop include paths with cross-domain segments when `workers_topology` is
 /// set; monolith keeps them.
 fn filter_cross_domain_paths(

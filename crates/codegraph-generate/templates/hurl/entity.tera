@@ -38,7 +38,9 @@ GET {{ item_url_base }}/00000000-0000-0000-0000-000000000000
 {{ auth_header }}
 
 HTTP 404
-{% endif %}{% if has_update %}{% if update_invariant_denied %}
+{% endif %}{% for section in include_sections | default(value=[]) %}
+{{ section.body }}
+{% endfor %}{% if has_update %}{% if update_invariant_denied %}
 {% if update_invariant_note | default(value="") %}
 {{ update_invariant_note.body }}
 {% endif %}# PUT — the roundtrip values violate the invariant: the handler answers 409
