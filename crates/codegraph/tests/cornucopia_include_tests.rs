@@ -144,19 +144,11 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         "LIST handler must batch-hydrate through the query layer:\n{handler}"
     );
 
-    // The dot-notation path in the SAME handler is an unsupported shape: the
-    // plane refuses it per path, while `customer` hydrates above.
+    // Every modelled path on this handler is implemented, so no per-path
+    // fail-closed guard is emitted.
     assert!(
-        handler.contains("\"customer.org\" => Some(\"dot-notation"),
-        "the unsupported shape must be named in the per-path guard:\n{handler}"
-    );
-    assert!(
-        handler.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
-        "an unsupported shape must fail closed:\n{handler}"
-    );
-    assert!(
-        !handler.contains("state.shop_work_order_queries.fetch_customer_org_for_work_order"),
-        "no hydration call may be emitted for an unsupported shape:\n{handler}"
+        !handler.contains("let unsupported = match"),
+        "no unsupported shape is modelled on work_order:\n{handler}"
     );
 
     // ── 5. Reverse-FK (array) shape: SQL, adapter, wrapper, handler ──────
@@ -297,7 +289,175 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         "the array shape must no longer answer 501:\n{customer_handler}"
     );
 
-    // ── 6. Parse gate: every emitted file is syntactically valid Rust ────
+    // ── 6. Dot notation (`customer.org`) ────────────────────────────────
+    //
+    // InvoiceType's explicit surface carries `customer.org` (implemented) and
+    // `customer.org.currency` (three segments — the named 501). Invoice does
+    // NOT model `customer` on its own, so the SQL plane emits the first hop's
+    // pair here; the leaf hop joins through the intermediate's FK and is keyed
+    // by SOURCE id for the LIST envelope.
+    let invoice_sql = read(&output.join("queries/shop/invoice.sql"));
+    assert!(
+        invoice_sql.contains("--! include_customer_for_invoice (source_id) : ("),
+        "the first hop's probe query must be emitted even when it is not \
+         modelled on its own:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql.contains("--! include_customer_batch_for_invoice (source_ids) : (source_id,"),
+        "the first hop's batch query seeds the LIST map:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql.contains(
+            "--! include_customer_org_for_invoice (source_id) : (id, currency_id?, name, created_at, updated_at)"
+        ),
+        "the dot leaf query must return the LEAF's columns:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql.contains(
+            "--! include_customer_org_batch_for_invoice (source_ids) : (source_id, id, currency_id?, name, created_at, updated_at)"
+        ),
+        "the dot batch must key by SOURCE id:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql
+            .contains("JOIN \"shop\".\"customer\" AS \"i\" ON \"i\".\"org_id\" = \"l\".\"id\""),
+        "the leaf hop must join the intermediate on its own FK:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql.contains(
+            "WHERE \"i\".\"id\" = (SELECT \"customer_id\" FROM \"shop\".\"invoice\" WHERE \"id\" = :source_id)"
+        ),
+        "the intermediate is addressed through the source's FK:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql
+            .contains("JOIN \"shop\".\"organization\" AS \"l\" ON \"l\".\"id\" = \"i\".\"org_id\""),
+        "the batch joins source → intermediate → leaf:\n{invoice_sql}"
+    );
+    assert!(
+        invoice_sql.contains(
+            "SELECT \"src\".\"source_id\" AS \"source_id\", \"l\".\"id\", \"l\".\"currency_id\""
+        ),
+        "the batch selects the source key FIRST and qualifies the leaf:\n{invoice_sql}"
+    );
+    // A three-segment shape is unsupported: no SQL for it.
+    assert!(
+        !invoice_sql.contains("customer_org_currency"),
+        "the depth-3 path must emit no SQL:\n{invoice_sql}"
+    );
+
+    let invoice_adapter =
+        read(&output.join("src/domain/shop/invoice/cornucopia_repository_impl.rs"));
+    assert!(
+        invoice_adapter.contains(
+            ") -> Result<Option<CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+        ),
+        "dot GET adapter returns the combined response:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter.contains("invoice::include_customer_for_invoice().bind(db, &source_id)"),
+        "the GET probe reuses the first hop's scalar query:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter
+            .contains("invoice::include_customer_org_for_invoice().bind(db, &source_id)"),
+        "the GET leaf fetch calls the dot query:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter.contains("combined.organization = Some(resp);"),
+        "the leaf maps into the combined response's leaf field:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter.contains(
+            ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+        ),
+        "the dot batch returns the combined map (no Option — the SeaORM \
+         dot batch contract):\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter.contains("result.entry(target.source_id).or_default();"),
+        "the intermediate batch seeds every source that HAS a target:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter
+            .contains("result.entry(row.source_id).or_default().organization = Some(resp);"),
+        "the leaf batch fills each combined response by SOURCE id:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter.contains("use super::dto_included::CustomerCombinedResponse;"),
+        "the combined type is a sibling import:\n{invoice_adapter}"
+    );
+    assert!(
+        invoice_adapter
+            .contains("use crate::domain::shop::organization::dto_response::OrganizationResponse;"),
+        "the leaf response DTO is imported:\n{invoice_adapter}"
+    );
+
+    let invoice_query = read(&output.join("src/domain/shop/invoice/query.rs"));
+    assert!(
+        invoice_query.contains(") -> Result<Option<CustomerCombinedResponse>, ShopError> {"),
+        "the GET wrapper declares the combined return:\n{invoice_query}"
+    );
+    assert!(
+        invoice_query.contains(
+            ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, ShopError> {"
+        ),
+        "the LIST wrapper declares the combined map:\n{invoice_query}"
+    );
+    assert!(
+        invoice_query.contains("use super::dto_included::CustomerCombinedResponse;"),
+        "the wrapper imports the combined type from its own dto_included:\n{invoice_query}"
+    );
+    assert!(
+        invoice_query.contains(
+            "set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;"
+        ),
+        "the dot wrappers ride the same RLS session bundle:\n{invoice_query}"
+    );
+
+    let invoice_handler = read(&output.join("src/api/shop/invoice_handler.rs"));
+    assert!(
+        invoice_handler.contains("\"customer.org.currency\" => Some(\"dot-notation"),
+        "the depth-3 shape must be named in the per-path guard:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
+        "the unsupported shape fails closed:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains(
+            "let leaf_resp = state.shop_invoice_queries.fetch_customer_org_for_invoice(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+        ),
+        "the dot arm must hydrate through the query layer:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains("if let Some(ref mut combined) = included.customer {"),
+        "sibling dot paths merge into the first hop's entry:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains("combined.organization = val.organization;"),
+        "the merge assigns the leaf field:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains("included.customer = Some(CustomerCombinedResponse {"),
+        "an absent entry is created as the combined response:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains(
+            "let batch = state.shop_invoice_queries.fetch_customer_org_batch_for_invoice(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+        ),
+        "the LIST dot arm batches through the query layer:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains(".entry(\"customer\".to_string())"),
+        "the LIST accumulation keys the first hop's entry:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains("let leaf = serde_json::json!(combined.organization);"),
+        "the LIST arm extracts the leaf under its segment name:\n{invoice_handler}"
+    );
+
+    // ── 7. Parse gate: every emitted file is syntactically valid Rust ────
     for rel in [
         "src/api/shop/work_order_handler.rs",
         "src/domain/shop/work_order/query.rs",
@@ -305,6 +465,9 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         "src/api/shop/customer_handler.rs",
         "src/domain/shop/customer/query.rs",
         "src/domain/shop/customer/cornucopia_repository_impl.rs",
+        "src/api/shop/invoice_handler.rs",
+        "src/domain/shop/invoice/query.rs",
+        "src/domain/shop/invoice/cornucopia_repository_impl.rs",
     ] {
         assert_parses(&output.join(rel));
     }
@@ -374,5 +537,34 @@ async fn cornucopia_include_hydration_flag_off_is_the_p0_surface() {
     assert!(
         !customer_handler.contains("included.work_order"),
         "flag off must not hydrate the reverse collection:\n{customer_handler}"
+    );
+
+    // The dot plane is part of the SAME switch: no leaf/intermediate SQL, no
+    // dot adapter methods, no dot wrappers, and the same guarded 501 on the
+    // invoice handler (every path, including the depth-3 one).
+    let invoice_sql = read(&output.join("queries/shop/invoice.sql"));
+    assert!(
+        !invoice_sql.contains("include_customer"),
+        "flag off must emit no dot include SQL:\n{invoice_sql}"
+    );
+    let invoice_adapter =
+        read(&output.join("src/domain/shop/invoice/cornucopia_repository_impl.rs"));
+    assert!(
+        !invoice_adapter.contains("fetch_customer_org_for_invoice"),
+        "flag off must emit no dot adapter methods:\n{invoice_adapter}"
+    );
+    let invoice_query = read(&output.join("src/domain/shop/invoice/query.rs"));
+    assert!(
+        !invoice_query.contains("fetch_customer_org_for_invoice"),
+        "flag off must emit no dot query wrappers:\n{invoice_query}"
+    );
+    let invoice_handler = read(&output.join("src/api/shop/invoice_handler.rs"));
+    assert!(
+        invoice_handler.contains("if !include_paths.is_empty()"),
+        "flag off keeps the guarded 501 on the dot side:\n{invoice_handler}"
+    );
+    assert!(
+        !invoice_handler.contains("included.customer"),
+        "flag off must not hydrate the dot leaf:\n{invoice_handler}"
     );
 }

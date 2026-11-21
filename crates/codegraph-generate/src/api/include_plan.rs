@@ -121,6 +121,21 @@ pub enum CornucopiaIncludeShape {
     /// resolver refuses a junction array before it reaches this plane, so an
     /// array that survives carries a real back-FK column.
     SingleArray,
+    /// One hop of dot notation — `customer.org`: the target's own scalar FK to
+    /// a leaf entity.
+    ///
+    /// GET: the leaf row addressed through the INTERMEDIATE's FK to it
+    /// (`WHERE intermediate.{leaf_fk} = leaf.id`, joined back to the source
+    /// relationship), so the combined response carries
+    /// `Option<{Leaf}Response>`. LIST: the same hop for many source ids in one
+    /// query, keyed by SOURCE id (the `included.<first>` envelope's map key),
+    /// exactly like the SeaORM dot batch.
+    ///
+    /// Depth is exactly two. The first hop must be scalar (the combined
+    /// response carries ONE leaf field — a collection first hop would need a
+    /// different contract) and the leaf must be a scalar FK hop whose column
+    /// the resolver already verified. Everything else keeps its named refusal.
+    Dot,
 }
 
 impl CornucopiaIncludeShape {
@@ -130,12 +145,44 @@ impl CornucopiaIncludeShape {
         let Some(first) = path.segments.first() else {
             return Err("the path resolves to no segment".to_string());
         };
-        if path.segments.len() > 1 {
+        if path.segments.len() > 2 {
             return Err(
-                "dot-notation includes (a target's child) are not implemented on the \
-                 cornucopia SQL-first plane yet"
+                "dot-notation includes deeper than one hop (a target's child's child) are \
+                 not implemented on the cornucopia SQL-first plane yet"
                     .to_string(),
             );
+        }
+        if path.segments.len() == 2 {
+            let leaf = &path.segments[1];
+            if first.child_table_override.is_some() || leaf.child_table_override.is_some() {
+                return Err(
+                    "VO→entity child-table includes are not implemented on the cornucopia \
+                     SQL-first plane yet"
+                        .to_string(),
+                );
+            }
+            if first.is_array {
+                return Err(
+                    "dot-notation includes whose first hop is a collection are not \
+                     implemented on the cornucopia SQL-first plane yet"
+                        .to_string(),
+                );
+            }
+            if leaf.is_array {
+                return Err(
+                    "dot-notation includes whose leaf is a collection are not implemented \
+                     on the cornucopia SQL-first plane yet"
+                        .to_string(),
+                );
+            }
+            if leaf.fk_column.is_empty() {
+                return Err(
+                    "dot-notation include carries no FK column on the first hop to address \
+                     its leaf by"
+                        .to_string(),
+                );
+            }
+            return Ok(Self::Dot);
         }
         if first.child_table_override.is_some() {
             return Err(
@@ -392,20 +439,61 @@ fn render_get_cornucopia(
                 "            {} => {{\n",
                 rust_string_literal(&ipath.alias)
             ));
-            if shape.is_array() {
-                out.push_str(&format!(
-                    "                included.{} = Some({queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
-                    first.module_name, ipath.fetch_method
-                ));
-                push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
-                out.push_str("                    })?);\n");
-            } else {
-                out.push_str(&format!(
-                    "                included.{} = {queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
-                    first.module_name, ipath.fetch_method
-                ));
-                push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
-                out.push_str("                    })?;\n");
+            match shape {
+                CornucopiaIncludeShape::SingleArray => {
+                    out.push_str(&format!(
+                        "                included.{} = Some({queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                        first.module_name, ipath.fetch_method
+                    ));
+                    push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+                    out.push_str("                    })?);\n");
+                }
+                CornucopiaIncludeShape::SingleScalar => {
+                    out.push_str(&format!(
+                        "                included.{} = {queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                        first.module_name, ipath.fetch_method
+                    ));
+                    push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+                    out.push_str("                    })?;\n");
+                }
+                CornucopiaIncludeShape::Dot => {
+                    // Same merge the SeaORM dot arm performs: the combined
+                    // response type carries one `Option<{Leaf}Response>` field
+                    // per leaf, and sibling dot paths sharing the first hop
+                    // accumulate instead of clobbering.
+                    let leaf = &ipath.segments[1];
+                    out.push_str(
+                        "                // Dot-notation path: merge into combined response\n",
+                    );
+                    out.push_str(&format!(
+                        "                let leaf_resp = {queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                        ipath.fetch_method
+                    ));
+                    push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+                    out.push_str("                    })?;\n");
+                    out.push_str("                if let Some(val) = leaf_resp {\n");
+                    out.push_str(&format!(
+                        "                    if let Some(ref mut combined) = included.{} {{\n",
+                        first.module_name
+                    ));
+                    out.push_str(&format!(
+                        "                        combined.{} = val.{};\n",
+                        leaf.module_name, leaf.module_name
+                    ));
+                    out.push_str("                    } else {\n");
+                    out.push_str(&format!(
+                        "                        included.{} = Some({} {{\n",
+                        first.module_name, ipath.response_rust_type
+                    ));
+                    out.push_str(&format!(
+                        "                            {}: val.{},\n",
+                        leaf.module_name, leaf.module_name
+                    ));
+                    out.push_str("                            ..Default::default()\n");
+                    out.push_str("                        });\n");
+                    out.push_str("                    }\n");
+                    out.push_str("                }\n");
+                }
             }
             out.push_str("            }\n");
         }
@@ -443,6 +531,56 @@ fn render_list_cornucopia(
         let Some(first) = ipath.segments.first() else {
             continue;
         };
+        let Ok(shape) = CornucopiaIncludeShape::classify(ipath) else {
+            continue;
+        };
+        if shape == CornucopiaIncludeShape::Dot {
+            // Same accumulation the SeaORM LIST dot arm performs: key the
+            // first-hop entry by SOURCE id and insert each leaf under its
+            // segment name, so sibling dot paths sharing the first hop merge
+            // instead of clobbering each other.
+            let leaf = &ipath.segments[1];
+            out.push_str(&format!(
+                "        if include_paths.contains(&\"{}\".to_string()) {{\n",
+                ipath.alias
+            ));
+            out.push_str(&format!(
+                "            let batch = {queries}.{}(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                ipath.batch_fetch_method
+            ));
+            push_cornucopia_map_err(&mut out, 16, &ipath.alias, &error_type);
+            out.push_str("                })?;\n");
+            out.push_str("            let entry = included_map\n");
+            out.push_str(&format!(
+                "                .entry(\"{}\".to_string())\n",
+                first.module_name
+            ));
+            out.push_str("                .or_insert_with(|| serde_json::json!({}));\n");
+            out.push_str("            if let Some(by_source) = entry.as_object_mut() {\n");
+            out.push_str("                for (source_id, combined) in batch {\n");
+            out.push_str(&format!(
+                "                    let leaf = serde_json::json!(combined.{});\n",
+                leaf.module_name
+            ));
+            out.push_str("                    let leaf_entry = by_source\n");
+            out.push_str("                        .entry(source_id.to_string())\n");
+            out.push_str("                        .or_insert_with(|| serde_json::json!({}));\n");
+            out.push_str(
+                "                    if let Some(leaf_obj) = leaf_entry.as_object_mut() {\n",
+            );
+            out.push_str("                        leaf_obj.insert(\n");
+            out.push_str(&format!(
+                "                            \"{}\".to_string(),\n",
+                leaf.module_name
+            ));
+            out.push_str("                            leaf,\n");
+            out.push_str("                        );\n");
+            out.push_str("                    }\n");
+            out.push_str("                }\n");
+            out.push_str("            }\n");
+            out.push_str("        }\n");
+            continue;
+        }
         out.push_str(&format!(
             "        if include_paths.contains(&\"{}\".to_string()) {{\n",
             ipath.alias
@@ -847,7 +985,7 @@ fn include_doc_for(support: &IncludeSupport) -> &'static str {
             "    /// Eager-load related entities, e.g. `?include=person,deployment.position`."
         }
         IncludeSupport::CornucopiaHydration => {
-            "    /// Eager-load related entities. The cornucopia persistence provider hydrates scalar `refers` includes and reverse-FK collections; any other modelled shape answers 501 (issue #781)."
+            "    /// Eager-load related entities. The cornucopia persistence provider hydrates scalar `refers` includes, reverse-FK collections, and one-hop dot-notation includes; any other modelled shape answers 501 (issue #781)."
         }
         IncludeSupport::Unsupported { .. } => {
             "    /// Includes are modelled for this entity but are not supported by this deployment's persistence provider; a request that sends `?include=` answers 501 (issue #781)."
@@ -1361,6 +1499,14 @@ mod tests {
                 "deployment.position",
                 vec![segment("deployment", false), segment("position", false)],
             ),
+            path(
+                "deployment.position.building",
+                vec![
+                    segment("deployment", false),
+                    segment("position", false),
+                    segment("building", false),
+                ],
+            ),
         ];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
         assert_eq!(plan.support, IncludeSupport::CornucopiaHydration);
@@ -1371,11 +1517,11 @@ mod tests {
                 .iter()
                 .map(|p| p.alias.as_str())
                 .collect::<Vec<_>>(),
-            vec!["person", "deployment"]
+            vec!["person", "deployment", "deployment.position"]
         );
         let unsupported = plan.support.unsupported_paths(&paths);
         assert_eq!(unsupported.len(), 1);
-        assert_eq!(unsupported[0].alias, "deployment.position");
+        assert_eq!(unsupported[0].alias, "deployment.position.building");
         assert!(
             unsupported[0].reason.contains("dot-notation"),
             "{}",
@@ -1384,15 +1530,57 @@ mod tests {
     }
 
     /// The classifier names the construct for every unimplemented shape, and
-    /// accepts exactly the shapes the SQL/adapter/query planes implement.
+    /// accepts exactly the shapes the SQL/adapter/query planes implement —
+    /// including one hop of dot notation.
     #[test]
     fn cornucopia_shape_classifier_names_the_construct() {
+        let two_hop = path(
+            "deployment.position.building",
+            vec![
+                segment("deployment", false),
+                segment("position", false),
+                segment("building", false),
+            ],
+        );
+        let reason = CornucopiaIncludeShape::classify(&two_hop).unwrap_err();
+        assert!(reason.contains("dot-notation"), "{reason}");
+
         let dot = path(
             "deployment.position",
             vec![segment("deployment", false), segment("position", false)],
         );
-        let reason = CornucopiaIncludeShape::classify(&dot).unwrap_err();
-        assert!(reason.contains("dot-notation"), "{reason}");
+        assert_eq!(
+            CornucopiaIncludeShape::classify(&dot),
+            Ok(CornucopiaIncludeShape::Dot)
+        );
+
+        // A dot whose first hop is a collection has no single combined leaf
+        // slot to merge into.
+        let array_first = path(
+            "deployment.position",
+            vec![segment("deployment", true), segment("position", false)],
+        );
+        let reason = CornucopiaIncludeShape::classify(&array_first).unwrap_err();
+        assert!(reason.contains("first hop is a collection"), "{reason}");
+
+        // A dot whose leaf is a collection needs a Vec slot the combined
+        // response does not model.
+        let array_leaf = path(
+            "deployment.position",
+            vec![segment("deployment", false), segment("position", true)],
+        );
+        let reason = CornucopiaIncludeShape::classify(&array_leaf).unwrap_err();
+        assert!(reason.contains("leaf is a collection"), "{reason}");
+
+        // A dot leaf with no FK on the intermediate cannot be addressed.
+        let mut no_leaf_fk = segment("position", false);
+        no_leaf_fk.fk_column = String::new();
+        let reason = CornucopiaIncludeShape::classify(&path(
+            "deployment.position",
+            vec![segment("deployment", false), no_leaf_fk],
+        ))
+        .unwrap_err();
+        assert!(reason.contains("no FK column"), "{reason}");
 
         // An array whose path carries no back-FK column cannot be scanned.
         let mut no_back_fk = segment("deployment", true);
@@ -1436,8 +1624,12 @@ mod tests {
             path("person", vec![segment("person", false)]),
             path("deployment", vec![segment("deployment", true)]),
             path(
-                "person.address",
-                vec![segment("person", false), segment("address", false)],
+                "person.address.city",
+                vec![
+                    segment("person", false),
+                    segment("address", false),
+                    segment("city", false),
+                ],
             ),
         ];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
@@ -1453,7 +1645,7 @@ mod tests {
             "{block}"
         );
         assert!(
-            block.contains("            \"person.address\" => Some(\"dot-notation"),
+            block.contains("            \"person.address.city\" => Some(\"dot-notation"),
             "{block}"
         );
         assert!(
@@ -1561,13 +1753,17 @@ mod tests {
     #[test]
     fn cornucopia_hydration_all_unsupported_still_fails_closed() {
         let paths = vec![path(
-            "deployment.position",
-            vec![segment("deployment", false), segment("position", false)],
+            "deployment.position.building",
+            vec![
+                segment("deployment", false),
+                segment("position", false),
+                segment("building", false),
+            ],
         )];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
         assert!(
             plan.get_block
-                .contains("\"deployment.position\" => Some(\"dot-notation"),
+                .contains("\"deployment.position.building\" => Some(\"dot-notation"),
             "{}",
             plan.get_block
         );
@@ -1584,6 +1780,101 @@ mod tests {
                 .contains("let included = if !include_paths.is_empty() {"),
             "{}",
             plan.list_block
+        );
+    }
+
+    /// GET: the dot arm merges the leaf into the combined response — the
+    /// `included.<first>` entry is created when absent and updated in place
+    /// otherwise, exactly like the SeaORM dot arm.
+    #[test]
+    fn cornucopia_hydration_get_block_merges_the_dot_leaf() {
+        let paths = vec![path(
+            "customer.org",
+            vec![segment("customer", false), segment("organization", false)],
+        )];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let block = &plan.get_block;
+
+        assert!(
+            block.contains("            \"customer.org\" => {"),
+            "{block}"
+        );
+        assert!(
+            block.contains("                // Dot-notation path: merge into combined response"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "let leaf_resp = state.common_worker_queries.fetch_customer_org_for_worker(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains("if let Some(ref mut combined) = included.customer {"),
+            "{block}"
+        );
+        assert!(
+            block.contains("combined.organization = val.organization;"),
+            "{block}"
+        );
+        assert!(
+            block.contains("included.customer = Some(CustomerOrgCombinedResponse {"),
+            "{block}"
+        );
+        assert!(block.contains("organization: val.organization,"), "{block}");
+        assert!(block.contains("..Default::default()"), "{block}");
+        // No per-path guard when the only modelled path is implemented.
+        assert!(!block.contains("let unsupported = match"), "{block}");
+    }
+
+    /// LIST: the dot arm batches the leaf and accumulates it into
+    /// `included.<first>[<source_id>].<leaf>` — sibling dot paths sharing the
+    /// first hop merge, exactly like the SeaORM dot arm.
+    #[test]
+    fn cornucopia_hydration_list_block_accumulates_the_dot_leaf() {
+        let paths = vec![
+            path(
+                "customer.org",
+                vec![segment("customer", false), segment("organization", false)],
+            ),
+            path(
+                "customer.billing",
+                vec![segment("customer", false), segment("billing", false)],
+            ),
+        ];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let block = &plan.list_block;
+
+        assert!(
+            block.contains("if include_paths.contains(&\"customer.org\".to_string()) {"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "let batch = state.common_worker_queries.fetch_customer_org_batch_for_worker(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains("let leaf = serde_json::json!(combined.organization);"),
+            "{block}"
+        );
+        assert!(
+            block.contains("let leaf = serde_json::json!(combined.billing);"),
+            "{block}"
+        );
+        assert_eq!(
+            block.matches(".entry(\"customer\".to_string())").count(),
+            2,
+            "sibling dot paths accumulate on the same first-hop entry:\n{block}"
+        );
+        assert!(
+            block.contains("                            \"organization\".to_string(),"),
+            "{block}"
+        );
+        assert!(
+            block.contains("                            \"billing\".to_string(),"),
+            "{block}"
         );
     }
 

@@ -10,7 +10,7 @@ use crate::traits::{EntityGenerator, EntityGeneratorKind, GeneratedFile};
 use codegraph_config::DomainConfig;
 
 use super::cornucopia_repo_include::{
-    IncludeAdapterPlan, emit_include_adapter, emit_include_imports,
+    IncludeAdapterPlan, IncludeLeafPlan, emit_include_adapter, emit_include_imports,
     resolve_cornucopia_include_targets,
 };
 use super::repository_emitter::{
@@ -111,7 +111,9 @@ impl EntityGenerator for CornucopiaRepoGenerator {
         };
         let include_plans: Vec<IncludeAdapterPlan<'_>> = include_plans_data
             .iter()
-            .filter_map(|(path, target)| {
+            .filter_map(|entry| {
+                let path = &entry.path;
+                let target = &entry.target;
                 let seg = path.segments.first()?;
                 // The SAME classifier the handler and the SQL plane read: a
                 // shape this plane does not implement gets no adapter method
@@ -119,6 +121,29 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 let shape =
                     crate::api::include_plan::CornucopiaIncludeShape::classify(path).ok()?;
                 let alias_snake = path.alias.replace('.', "_");
+                let (leaf, combined_type, intermediate_query_fn, intermediate_batch_query_fn) =
+                    if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+                        let leaf_seg = path.segments.get(1)?;
+                        let leaf_tree = entry.leaf.as_ref()?;
+                        (
+                            Some(IncludeLeafPlan {
+                                tree: leaf_tree,
+                                domain: &leaf_seg.domain,
+                                module_name: &leaf_seg.module_name,
+                            }),
+                            Some(format!("{}CombinedResponse", seg.entity_name)),
+                            Some(format!(
+                                "include_{}_for_{}",
+                                seg.module_name, tree.table_name
+                            )),
+                            Some(format!(
+                                "include_{}_batch_for_{}",
+                                seg.module_name, tree.table_name
+                            )),
+                        )
+                    } else {
+                        (None, None, None, None)
+                    };
                 Some(IncludeAdapterPlan {
                     query_fn: format!("include_{alias_snake}_for_{}", tree.table_name),
                     batch_query_fn: format!("include_{alias_snake}_batch_for_{}", tree.table_name),
@@ -130,6 +155,10 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                     target,
                     shape,
                     reverse_fk_is_required: seg.reverse_fk_is_required,
+                    leaf,
+                    combined_type,
+                    intermediate_query_fn,
+                    intermediate_batch_query_fn,
                 })
             })
             .collect();

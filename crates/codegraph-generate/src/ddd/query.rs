@@ -335,21 +335,39 @@ impl EntityGenerator for QueryGenerator {
                     continue;
                 };
                 let resp = &path.response_rust_type;
-                let same_module = seg.domain == domain && seg.module_name == module_name;
-                if !same_module && imported.insert(resp.clone()) && resp.ends_with("Response") {
-                    imports.push_str(&format!(
-                        "use crate::domain::{}::{}::dto_response::{};\n",
-                        seg.domain, seg.module_name, resp
-                    ));
+                if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+                    // The combined response type lives in THIS entity's
+                    // `dto_included` (it carries the first hop's base fields
+                    // plus the leaf), so it is a sibling import — not the
+                    // target's `dto_response`.
+                    if imported.insert(resp.clone()) {
+                        imports.push_str(&format!("use super::dto_included::{resp};\n"));
+                    }
+                } else {
+                    let same_module = seg.domain == domain && seg.module_name == module_name;
+                    if !same_module && imported.insert(resp.clone()) && resp.ends_with("Response") {
+                        imports.push_str(&format!(
+                            "use crate::domain::{}::{}::dto_response::{};\n",
+                            seg.domain, seg.module_name, resp
+                        ));
+                    }
                 }
                 // The GET return type tracks the DTO include field: a scalar
                 // path is `Option<{Target}Response>`, an array path is the
                 // whole `Vec<{Target}Response>` (the handler wraps it in
-                // `Some`). The LIST map values follow the same split.
+                // `Some`), and a dot path is the combined response the handler
+                // merges (the LIST map values follow the same split — the dot
+                // batch is `HashMap<Uuid, Combined>` with no `Option`, the
+                // SeaORM dot batch's contract).
                 let (get_ret, map_ret) = if shape.is_array() {
                     (
                         format!("Vec<{resp}>"),
                         format!("std::collections::HashMap<Uuid, Vec<{resp}>>"),
+                    )
+                } else if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+                    (
+                        format!("Option<{resp}>"),
+                        format!("std::collections::HashMap<Uuid, {resp}>"),
                     )
                 } else {
                     (

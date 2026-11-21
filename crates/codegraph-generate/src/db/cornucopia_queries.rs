@@ -823,6 +823,14 @@ struct IncludeQueryFacts<'a> {
     target: &'a EntityTree,
     /// Column → PG type for the target's casts.
     target_pg_types: &'a std::collections::HashMap<String, String>,
+    /// The LEAF entity's tree for a one-hop dot path (`customer.org` → the
+    /// `organization` tree). `None` for every single-segment shape.
+    leaf: Option<&'a EntityTree>,
+    /// FK column ON the intermediate (`target`) table referencing the leaf
+    /// (`org_id` on `customer`). Read only by the dot shape.
+    leaf_fk_column: &'a str,
+    /// Column → PG type for the leaf's casts (dot shape only).
+    leaf_pg_types: Option<&'a std::collections::HashMap<String, String>>,
 }
 
 /// Append one `include_*` query pair per implemented include path.
@@ -857,6 +865,17 @@ async fn render_include_queries(
     let support = crate::api::include_plan::include_support_for(project);
 
     let mut sql = String::new();
+    // Aliases whose single-segment pair is emitted in this file. A dot path
+    // reuses its first hop's scalar query for the GET existence probe; when
+    // that path is NOT modelled on its own, the pair is emitted here under the
+    // first hop's module alias, so the adapter's call always resolves.
+    let mut emitted_aliases: std::collections::HashSet<String> = support
+        .supported_paths(&paths)
+        .iter()
+        .filter(|path| path.segments.len() == 1)
+        .map(|path| path.alias.clone())
+        .collect();
+
     for path in support.supported_paths(&paths) {
         let Some(seg) = path.segments.first() else {
             continue;
@@ -876,22 +895,63 @@ async fn render_include_queries(
         else {
             continue;
         };
-        let Ok(entity_ir) = build_persistence_entity(
-            db,
-            &seg.schema_title,
-            &seg.domain,
-            config,
-            parent_candidates,
-        )
-        .await
+        let Ok(target_pg_types) =
+            pg_types_for_entity(db, config, parent_candidates, seg, domain).await
         else {
             continue;
         };
-        let target_pg_types: std::collections::HashMap<String, String> = entity_ir
-            .columns
-            .iter()
-            .map(|c| (c.column_name.clone(), c.pg_type.clone()))
-            .collect();
+
+        if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+            // (a) The first hop's query pair, when no standalone single-segment
+            // path already emits it under the same alias. The GET adapter
+            // probes the intermediate row through the SINGLE query (a target
+            // miss is `Ok(None)`); the batch query seeds the LIST map with
+            // every source that HAS a target, matching the SeaORM dot batch's
+            // "present combos only" contract.
+            if emitted_aliases.insert(seg.module_name.clone()) {
+                let facts = IncludeQueryFacts {
+                    alias: &seg.module_name,
+                    shape: crate::api::include_plan::CornucopiaIncludeShape::SingleScalar,
+                    fk_column: &seg.fk_column,
+                    reverse_fk_column: &seg.reverse_fk_column,
+                    reverse_fk_is_required: seg.reverse_fk_is_required,
+                    target: &target,
+                    target_pg_types: &target_pg_types,
+                    leaf: None,
+                    leaf_fk_column: "",
+                    leaf_pg_types: None,
+                };
+                sql.push_str(&render_include_sql(tree, &facts));
+            }
+            // (b) The leaf hop, addressed through the intermediate's FK.
+            let leaf_seg = &path.segments[1];
+            let Ok(leaf) = RepositoryImplEmitter
+                .query_entity_tree(db, &leaf_seg.schema_title, &leaf_seg.domain, config, None)
+                .await
+            else {
+                continue;
+            };
+            let Ok(leaf_pg_types) =
+                pg_types_for_entity(db, config, parent_candidates, leaf_seg, domain).await
+            else {
+                continue;
+            };
+            let facts = IncludeQueryFacts {
+                alias: &path.alias,
+                shape,
+                fk_column: &seg.fk_column,
+                reverse_fk_column: &seg.reverse_fk_column,
+                reverse_fk_is_required: seg.reverse_fk_is_required,
+                target: &target,
+                target_pg_types: &target_pg_types,
+                leaf: Some(&leaf),
+                leaf_fk_column: &leaf_seg.fk_column,
+                leaf_pg_types: Some(&leaf_pg_types),
+            };
+            sql.push_str(&render_include_sql(tree, &facts));
+            continue;
+        }
+
         let facts = IncludeQueryFacts {
             alias: &path.alias,
             shape,
@@ -900,10 +960,36 @@ async fn render_include_queries(
             reverse_fk_is_required: seg.reverse_fk_is_required,
             target: &target,
             target_pg_types: &target_pg_types,
+            leaf: None,
+            leaf_fk_column: "",
+            leaf_pg_types: None,
         };
         sql.push_str(&render_include_sql(tree, &facts));
     }
     sql
+}
+
+/// Column → PG type for one entity (the text-cast decision input).
+async fn pg_types_for_entity(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    seg: &crate::api::include_path::IncludeSegment,
+    _domain: &str,
+) -> std::result::Result<std::collections::HashMap<String, String>, crate::error::Error> {
+    let entity_ir = build_persistence_entity(
+        db,
+        &seg.schema_title,
+        &seg.domain,
+        config,
+        parent_candidates,
+    )
+    .await?;
+    Ok(entity_ir
+        .columns
+        .iter()
+        .map(|c| (c.column_name.clone(), c.pg_type.clone()))
+        .collect())
 }
 
 /// Render the two annotated queries for one implemented include path.
@@ -991,6 +1077,69 @@ fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> Strin
                  SELECT \"{reverse_fk}\" AS \"source_id\", {cols}\n\
                  FROM {target_table}\n\
                  WHERE \"{reverse_fk}\" = ANY(:source_ids::uuid[]){batch_soft};\n\n",
+            ));
+            return sql;
+        }
+        crate::api::include_plan::CornucopiaIncludeShape::Dot => {
+            let Some(leaf) = facts.leaf else {
+                return String::new();
+            };
+            let fk = facts.fk_column;
+            let leaf_fk = facts.leaf_fk_column;
+            let inter_table = target_table;
+            let leaf_table = format!("\"{}\".\"{}\"", leaf.schema_name, leaf.table_name);
+            let empty_pg_types = std::collections::HashMap::new();
+            let leaf_pg_types = facts.leaf_pg_types.unwrap_or(&empty_pg_types);
+            let leaf_cols: Vec<&TreeColumn> = leaf
+                .direct_columns
+                .iter()
+                .filter(|c| !c.is_composite_range)
+                .collect();
+            let cols = prefixed_row_col_list("l", &leaf_cols, leaf_pg_types, leaf.append_only);
+            let hints = row_hints(&leaf_cols, leaf.append_only);
+            // Both hops' soft-delete markers apply: the intermediate row must
+            // be visible (the GET probe's target fetch already filters it, but
+            // the leaf query must not resurrect a deleted intermediate), and
+            // the leaf itself is filtered like every other read.
+            let mut marker_conds: Vec<String> = Vec::new();
+            if let Some(sd) = target.soft_delete_column.as_deref() {
+                marker_conds.push(format!("\"i\".\"{sd}\" IS NULL"));
+            }
+            if let Some(sd) = leaf.soft_delete_column.as_deref() {
+                marker_conds.push(format!("\"l\".\"{sd}\" IS NULL"));
+            }
+            let single_markers: String = marker_conds
+                .iter()
+                .map(|cond| format!("\n  AND {cond}"))
+                .collect();
+            let batch_where = if marker_conds.is_empty() {
+                String::new()
+            } else {
+                format!("\nWHERE {}", marker_conds.join("\n  AND "))
+            };
+            let mut sql = String::new();
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_for_{source} (source_id) : ({hints})\n\
+                 --- Eager-load `{alias}` (the `{leaf_alias}` hop of the `{inter}` intermediate) for one {source} row through the intermediate's own FK (issue #781 P1).\n\
+                 SELECT {cols}\n\
+                 FROM {leaf_table} AS \"l\"\n\
+                 JOIN {inter_table} AS \"i\" ON \"i\".\"{leaf_fk}\" = \"l\".\"id\"\n\
+                 WHERE \"i\".\"id\" = (SELECT \"{fk}\" FROM {src_table} WHERE \"id\" = :source_id){single_markers}\n\
+                 LIMIT 1;\n\n",
+                leaf_alias = leaf.table_name,
+                inter = target.table_name,
+            ));
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_batch_for_{source} (source_ids) : (source_id, {hints})\n\
+                 --- Eager-load `{alias}` for many {source} rows, keyed by source id (issue #781 P1).\n\
+                 SELECT \"src\".\"source_id\" AS \"source_id\", {cols}\n\
+                 FROM (\n\
+                 \x20   SELECT \"id\" AS \"source_id\", \"{fk}\" AS \"target_id\"\n\
+                 \x20   FROM {src_table}\n\
+                 \x20   WHERE \"id\" = ANY(:source_ids::uuid[])\n\
+                 ) AS \"src\"\n\
+                 JOIN {inter_table} AS \"i\" ON \"i\".\"id\" = \"src\".\"target_id\"\n\
+                 JOIN {leaf_table} AS \"l\" ON \"l\".\"id\" = \"i\".\"{leaf_fk}\"{batch_where};\n\n",
             ));
             return sql;
         }
@@ -1658,338 +1807,5 @@ fn write_tree_workers_query(sql: &mut String, tree: &EntityTree) {
 }
 
 #[cfg(test)]
-mod include_query_tests {
-    use super::*;
-
-    fn col(field: &str, pg_column: &str, rust_type: &str, is_nullable: bool) -> TreeColumn {
-        TreeColumn {
-            field_name: field.to_string(),
-            pg_column_name: pg_column.to_string(),
-            dto_field_name: None,
-            rust_type: rust_type.to_string(),
-            is_nullable,
-            is_entity_ref: false,
-            dto_rust_type: None,
-            is_workflow_managed: false,
-            is_array: false,
-            pg_cast: None,
-            is_composite_range: false,
-            is_structured_wrapper: false,
-            is_media: false,
-        }
-    }
-
-    fn tree(
-        entity: &str,
-        table: &str,
-        columns: Vec<TreeColumn>,
-        soft_delete: Option<&str>,
-        append_only: bool,
-    ) -> EntityTree {
-        EntityTree {
-            entity_name: entity.to_string(),
-            module_name: table.to_string(),
-            schema_name: "common".to_string(),
-            table_name: table.to_string(),
-            entity_module: format!("common_{table}"),
-            namespace: None,
-            direct_columns: columns,
-            child_tables: vec![],
-            junction_tables: vec![],
-            has_create: true,
-            has_read: true,
-            has_update: false,
-            has_delete: false,
-            has_list: true,
-            has_workflow: false,
-            has_fts: false,
-            has_embeddings: false,
-            fts_language: "english".to_string(),
-            is_auditable: soft_delete.is_some(),
-            soft_delete_visibility: "exclude_by_default".to_string(),
-            soft_delete_column: soft_delete.map(str::to_string),
-            soft_delete_cascade: "restrict".to_string(),
-            track_updated_user: false,
-            track_deleted_user: false,
-            append_only,
-            filter_fields: vec![],
-            nested_filter_fields: vec![],
-            parent_ref: None,
-            hierarchy_field: None,
-            tree_include: vec![],
-            design_finders: vec![],
-        }
-    }
-
-    fn facts<'a>(
-        alias: &'a str,
-        fk: &'a str,
-        target: &'a EntityTree,
-        pg_types: &'a std::collections::HashMap<String, String>,
-    ) -> IncludeQueryFacts<'a> {
-        IncludeQueryFacts {
-            alias,
-            shape: crate::api::include_plan::CornucopiaIncludeShape::SingleScalar,
-            fk_column: fk,
-            reverse_fk_column: fk,
-            reverse_fk_is_required: false,
-            target,
-            target_pg_types: pg_types,
-        }
-    }
-
-    fn array_facts<'a>(
-        alias: &'a str,
-        reverse_fk: &'a str,
-        reverse_fk_is_required: bool,
-        target: &'a EntityTree,
-        pg_types: &'a std::collections::HashMap<String, String>,
-    ) -> IncludeQueryFacts<'a> {
-        IncludeQueryFacts {
-            alias,
-            shape: crate::api::include_plan::CornucopiaIncludeShape::SingleArray,
-            fk_column: "unused_for_the_array_shape",
-            reverse_fk_column: reverse_fk,
-            reverse_fk_is_required,
-            target,
-            target_pg_types: pg_types,
-        }
-    }
-
-    fn worker() -> EntityTree {
-        tree("Worker", "worker", vec![], Some("deleted_at"), false)
-    }
-
-    /// The single-fetch query addresses the FK through a correlated subquery
-    /// (unambiguous columns, RLS on the source) and filters the TARGET's
-    /// soft-delete marker.
-    #[test]
-    fn single_scalar_include_sql_shape() {
-        let target = tree(
-            "Person",
-            "person",
-            vec![
-                col("given_name", "given_name", "String", false),
-                col("nickname", "nickname", "String", true),
-            ],
-            Some("deleted_at"),
-            false,
-        );
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
-
-        assert!(
-            sql.contains(
-                "--! include_person_for_worker (source_id) : (id, given_name, nickname?, created_at, updated_at)"
-            ),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(
-                "FROM \"common\".\"person\"\nWHERE \"id\" = (SELECT \"person_id\" FROM \"common\".\"worker\" WHERE \"id\" = :source_id)\n  AND \"deleted_at\" IS NULL\nLIMIT 1;"
-            ),
-            "{sql}"
-        );
-    }
-
-    /// The batch query keys each target row by the source id and qualifies
-    /// every target column (the JOIN makes unqualified names ambiguous).
-    #[test]
-    fn batch_scalar_include_sql_is_keyed_and_qualified() {
-        let target = tree(
-            "Person",
-            "person",
-            vec![col("given_name", "given_name", "String", false)],
-            None,
-            false,
-        );
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
-
-        assert!(
-            sql.contains("--! include_person_batch_for_worker (source_ids) : (source_id, id, given_name, created_at, updated_at)"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("SELECT \"src\".\"source_id\" AS \"source_id\", \"t\".\"id\", \"t\".\"given_name\", \"t\".\"created_at\", \"t\".\"updated_at\""),
-            "{sql}"
-        );
-        assert!(
-            sql.contains("WHERE \"id\" = ANY(:source_ids::uuid[])"),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(
-                "JOIN \"common\".\"person\" AS \"t\" ON \"t\".\"id\" = \"src\".\"target_id\";"
-            ),
-            "{sql}"
-        );
-        // No soft-delete filter when the target has no marker.
-        assert!(!sql.contains("IS NULL"), "{sql}");
-    }
-
-    /// Append-only targets carry no `updated_at` (issue #284), and a
-    /// renamed physical column keeps its field-name alias.
-    #[test]
-    fn append_only_target_omits_updated_at_and_keeps_aliases() {
-        let target = tree(
-            "Person",
-            "person",
-            vec![col("gender", "gender_code", "String", false)],
-            Some("deleted_at"),
-            true,
-        );
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
-
-        assert!(
-            sql.contains("AS \"gender\""),
-            "physical column keeps its field alias:\n{sql}"
-        );
-        assert!(
-            sql.contains("(id, gender, created_at)"),
-            "append-only target has no updated_at hint:\n{sql}"
-        );
-        assert!(!sql.contains("updated_at"), "{sql}");
-        assert!(
-            sql.contains("WHERE \"t\".\"deleted_at\" IS NULL;"),
-            "batch filters the target's soft delete:\n{sql}"
-        );
-    }
-
-    /// Columns whose Postgres type maps to `String` in Rust (numeric, ranges,
-    /// geometry) cast to text in both the plain and the prefixed list.
-    #[test]
-    fn text_cast_applies_to_both_select_forms() {
-        let target = tree(
-            "Person",
-            "person",
-            vec![col("salary", "salary", "String", false)],
-            None,
-            false,
-        );
-        let mut pg = std::collections::HashMap::new();
-        pg.insert("salary".to_string(), "NUMERIC".to_string());
-        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
-
-        assert!(sql.contains("\"salary\"::text"), "{sql}");
-        assert!(sql.contains("\"t\".\"salary\"::text"), "{sql}");
-    }
-
-    /// A reverse-FK target: the child rows live on the target table, and the
-    /// predicate is the target's own FK column — no source subquery, no JOIN.
-    fn deployment() -> EntityTree {
-        tree(
-            "Deployment",
-            "deployment",
-            vec![
-                col("reference", "reference", "String", false),
-                col("customer_id", "customer_id", "Uuid", false),
-            ],
-            Some("deleted_at"),
-            false,
-        )
-    }
-
-    /// Array single: the target's reverse FK is the predicate, the target's
-    /// soft-delete marker ANDs on, and there is no scalar `LIMIT 1`.
-    #[test]
-    fn single_array_include_sql_scans_the_reverse_fk() {
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(
-            &tree("Customer", "customer", vec![], None, false),
-            &array_facts("deployment", "customer_id", false, &deployment(), &pg),
-        );
-
-        assert!(
-            sql.contains(
-                "--! include_deployment_for_customer (source_id) : (id, reference, customer_id, created_at, updated_at)"
-            ),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(
-                "SELECT \"id\", \"reference\", \"customer_id\", \"created_at\", \"updated_at\"\nFROM \"common\".\"deployment\"\nWHERE \"customer_id\" = :source_id\n  AND \"deleted_at\" IS NULL;"
-            ),
-            "{sql}"
-        );
-        assert!(!sql.contains("LIMIT 1"), "{sql}");
-        assert!(
-            !sql.contains("SELECT \"customer_id\" FROM \"common\".\"customer\""),
-            "no source subquery for the reverse shape:\n{sql}"
-        );
-    }
-
-    /// Array batch: one query for many sources, the reverse FK aliased to the
-    /// fixed `source_id` key the adapter groups by, the `uuid[]` cast the
-    /// other array-parameter query pins, and the target's soft-delete marker.
-    /// An OPTIONAL reverse FK carries the `source_id?` hint (`Option<Uuid>`),
-    /// matching the adapter's `None => continue` arm.
-    #[test]
-    fn batch_array_include_sql_keys_the_reverse_fk() {
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(
-            &tree("Customer", "customer", vec![], None, false),
-            &array_facts("deployment", "customer_id", false, &deployment(), &pg),
-        );
-
-        assert!(
-            sql.contains(
-                "--! include_deployment_batch_for_customer (source_ids) : (source_id?, id, reference, customer_id, created_at, updated_at)"
-            ),
-            "{sql}"
-        );
-        assert!(
-            sql.contains(
-                "SELECT \"customer_id\" AS \"source_id\", \"id\", \"reference\", \"customer_id\", \"created_at\", \"updated_at\"\nFROM \"common\".\"deployment\"\nWHERE \"customer_id\" = ANY(:source_ids::uuid[])\n  AND \"deleted_at\" IS NULL;"
-            ),
-            "{sql}"
-        );
-        // Single-table shape — no JOIN derived table needed.
-        assert!(!sql.contains("JOIN"), "{sql}");
-        assert!(!sql.contains("target_id"), "{sql}");
-    }
-
-    /// A REQUIRED reverse FK hints `source_id` (plain `Uuid`), the row type the
-    /// adapter's `let key = row.source_id;` arm matches.
-    #[test]
-    fn required_reverse_fk_batch_hint_is_non_nullable() {
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(
-            &tree("Customer", "customer", vec![], None, false),
-            &array_facts("invoice", "customer_id", true, &deployment(), &pg),
-        );
-        assert!(
-            sql.contains(
-                "--! include_invoice_batch_for_customer (source_ids) : (source_id, id, reference, customer_id, created_at, updated_at)"
-            ),
-            "{sql}"
-        );
-        assert!(!sql.contains("source_id?"), "{sql}");
-    }
-
-    /// The array shape keeps the append-only (`updated_at` suppression) and
-    /// marker-free arms identical to the scalar shape: no invented filter.
-    #[test]
-    fn array_include_omits_updated_at_and_invents_no_marker() {
-        let target = tree(
-            "Deployment",
-            "deployment",
-            vec![col("customer_id", "customer_id", "Uuid", false)],
-            None,
-            true,
-        );
-        let pg = std::collections::HashMap::new();
-        let sql = render_include_sql(
-            &tree("Customer", "customer", vec![], None, false),
-            &array_facts("deployment", "customer_id", false, &target, &pg),
-        );
-
-        assert!(
-            sql.contains("(source_id) : (id, customer_id, created_at)"),
-            "append-only target has no updated_at hint:\n{sql}"
-        );
-        assert!(!sql.contains("updated_at"), "{sql}");
-        assert!(!sql.contains("IS NULL"), "no marker is invented:\n{sql}");
-    }
-}
+#[path = "cornucopia_queries_tests.rs"]
+mod include_query_tests;

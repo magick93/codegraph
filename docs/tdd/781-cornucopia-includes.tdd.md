@@ -59,8 +59,9 @@ taxonomy is therefore:
 |---|---|---|
 | scalar FK on the source | `segments.len() == 1`, `!is_array`, no override | **implemented** |
 | reverse FK on the target (one-to-many) | `segments.len() == 1`, `is_array` | **implemented** (§1.4) |
+| one-hop dot notation (the target's own child) | `segments.len() == 2` | **implemented** (§1.4b) |
 | VO→entity child table | `segments[0].child_table_override.is_some()` | deferred |
-| dot-notation (target's child) | `segments.len() > 1` | deferred |
+| dot notation deeper than one hop | `segments.len() > 2` | deferred |
 
 ### 1.2 Single-segment scalar — GET (`include_{alias}_for_{source} (source_id)`)
 
@@ -176,17 +177,75 @@ Deliberate choices:
   reverse include is configured with `role = "root"` + no explicit
   `allow_include`, not by listing the child.
 
+### 1.4b One-hop dot notation — LANDED (the third shape)
+
+`customer.org` (the target's own scalar FK child) landed as
+`CornucopiaIncludeShape::Dot`. Two queries per path, plus the first hop's pair
+when the first hop is not modelled on its own:
+
+```sql
+--! include_customer_for_invoice (source_id) : (id, name, org_id?, …)
+--- Eager-load `customer` for one invoice row through its own FK (issue #781 P1).
+SELECT … FROM "shop"."customer" WHERE "id" = (SELECT "customer_id" FROM "shop"."invoice" WHERE "id" = :source_id) LIMIT 1;
+
+--! include_customer_org_for_invoice (source_id) : (id, currency_id?, name, …)
+--- Eager-load `customer.org` (the `organization` hop of the `customer` intermediate) for one invoice row through the intermediate's own FK (issue #781 P1).
+SELECT "l"."id", "l"."currency_id", "l"."name", …
+FROM "shop"."organization" AS "l"
+JOIN "shop"."customer" AS "i" ON "i"."org_id" = "l"."id"
+WHERE "i"."id" = (SELECT "customer_id" FROM "shop"."invoice" WHERE "id" = :source_id)
+LIMIT 1;
+
+--! include_customer_org_batch_for_invoice (source_ids) : (source_id, id, currency_id?, name, …)
+SELECT "src"."source_id" AS "source_id", "l"."id", "l"."currency_id", …
+FROM (
+    SELECT "id" AS "source_id", "customer_id" AS "target_id"
+    FROM "shop"."invoice"
+    WHERE "id" = ANY(:source_ids::uuid[])
+) AS "src"
+JOIN "shop"."customer" AS "i" ON "i"."id" = "src"."target_id"
+JOIN "shop"."organization" AS "l" ON "l"."id" = "i"."org_id";
+```
+
+Deliberate choices:
+
+* **The leaf query joins through the intermediate**, addressed by the source
+  relationship — the adapter binds only `source_id`/`source_ids`, never an
+  intermediate FK value, so the hop is entirely a SQL fact. The leaf columns
+  are qualified by the leaf alias (`prefixed_row_col_list("l", …)`) because the
+  join makes unqualified `"id"` ambiguous.
+* **Both hops' soft-delete markers apply** (`"i".{marker}` and `"l".{marker}`
+  when each tree carries one): the GET probe's target fetch already filters
+  the intermediate, but a deleted intermediate must not resurrect through the
+  leaf query, and the leaf is filtered like every other read.
+* **The first hop's pair is emitted by the SQL plane when it is not modelled
+  on its own** (`InvoiceType` configures `customer.org` without `customer`).
+  Its alias is the first segment's MODULE name, which is what the adapter
+  calls (`include_{seg0_module}_for_{source}`); when a single-segment path
+  with that alias exists, it is reused (emitted once, tracked by alias).
+  The batch half seeds the LIST map with every source that HAS a target.
+* **The combined response is built in the adapter, not SQL**: GET probes the
+  intermediate (`include_{seg0}_for_…`; a miss is `Ok(None)`), maps the leaf
+  into `{First}CombinedResponse { {leaf}: Some(resp), ..Default::default() }`
+  and the handler performs the SAME merge as `render_get_sea_orm`'s dot arm.
+  LIST returns `HashMap<Uuid, {First}CombinedResponse>` (no `Option`) —
+  the SeaORM dot batch contract — seeded from the intermediate batch and
+  filled by SOURCE id, so the handler's accumulation is identical.
+* **`{First}CombinedResponse` lives in the SOURCE's `dto_included`** (the
+  DTO plane already generates it for any multi-segment path); the adapter and
+  the query wrappers import it as a sibling (`use super::dto_included::…`),
+  and only the LEAF's `{Leaf}Response` is imported from a foreign
+  `dto_response` — the intermediate's response is never constructed.
+* **Exactly one hop.** A two-segment path whose first hop is a collection, or
+  whose leaf is a collection, has no single combined leaf slot and keeps a
+  named refusal; deeper paths keep their own refusal.
+
 ### 1.5 Still deferred shapes (the SQL is designed, not emitted)
 
 * **Junction arrays.** Not reachable: the resolver drops them.
-* **Dot notation.** Per the SeaORM emitter, the combined response is the FIRST
-  segment's row plus a merged leaf field (`DeploymentCombinedResponse`). The SQL shape is
-  the first hop's single/batch query PLUS the leaf hop addressed through the first
-  target's own FK (or reverse FK) — i.e. two queries and a Rust merge identical to
-  `render_get_sea_orm`'s accumulation, with the leaf type imported from
-  `dto_included`. It needs the combined-struct mapping to be written against
-  `dto_included` (the shared response mapping today renders `{Entity}Response`), which is
-  why it is a separate slice.
+* **Deeper dot notation (depth > 2).** The depth-2 shape is the recorder; a
+  three-hop chain needs either a third query or a recursive combined-struct
+  mapping, and the resolver caps explicit paths at 3 segments.
 * **VO→entity child table.** The fetch queries the child table
   (`segments[0].child_table_override.child_table_name`) by `parent_fk_column`, mapping
   into `{ChildStruct}Response`; already half-modelled by
@@ -415,8 +474,12 @@ implement and **names the construct** otherwise:
 | 1 segment, `!is_array`, no child-table override | `SingleScalar` | — |
 | 1 segment, `is_array`, resolvable reverse FK | `SingleArray` | — |
 | 1 segment, `is_array`, no reverse FK (defensive) | unsupported | "array / reverse-FK include carries no back-FK column to scan the target by" |
+| 2 segments, scalar hops, no override, leaf FK present | `Dot` | — |
+| 2 segments, first hop is a collection | unsupported | "dot-notation includes whose first hop is a collection are not implemented …" |
+| 2 segments, leaf is a collection | unsupported | "dot-notation includes whose leaf is a collection are not implemented …" |
+| 2 segments, no leaf FK (defensive) | unsupported | "dot-notation include carries no FK column on the first hop to address its leaf by" |
 | `child_table_override` | unsupported | "VO→entity child-table includes are not implemented …" |
-| >1 segment | unsupported | "dot-notation includes (a target's child) are not implemented …" |
+| >2 segments | unsupported | "dot-notation includes deeper than one hop (a target's child's child) are not implemented …" |
 | 0 segments (defensive) | unsupported | "the path resolves to no segment" |
 
 **One predicate, four consumers** — this is the invariant that keeps the planes honest:
@@ -440,8 +503,8 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
 
 | Gate | Covers |
 |---|---|
-| `cargo test -p codegraph-generate --lib -- api include_plan cornucopia` | 21 include-plan KATs (incl. the cornucopia ones: flag-off P0, flag-on per-path support, classifier reasons + both accepted shapes, GET block bytes incl. the `Some(collection)` arm, LIST block bytes, all-unsupported, doc line) · 7 SQL KATs (`db::cornucopia_queries::include_query_tests`: correlated-subquery shape, batch keying/qualification, append-only/aliases, text casts, reverse-FK single predicate, reverse-FK batch keying + `uuid[]` cast, array append-only/marker-free arm) · 5 adapter KATs (`ddd::cornucopia_repo_include::include_adapter_tests`: query calls + batch keying, imports, self-target, array collection/grouping, required vs optional reverse-FK key) · 1 hurl KAT (per-path omission) |
-| `cargo test -p codegraph --test cornucopia_include_tests` | The **wiring pin**: one mox fixture, two profiles (flag ON / OFF) through `driver::run`. ON asserts the scalar SQL pair AND the reverse-FK SQL pair (optional `work_order` + required `invoice`), the inherent adapter methods + imports + collection/grouping shapes, the query wrappers (`Vec`/`HashMap<Uuid, Vec<_>>`) + `set_rls_session_vars`, the handler hydration calls (direct assignment + `Some(…)`), the per-path 501 for `customer.org`, and `syn`-parses six emitted files. OFF asserts no include SQL / adapter / wrappers (scalar or array) and the P0 guarded 501 on both sides. |
+| `cargo test -p codegraph-generate --lib -- api include_plan cornucopia` | 23 include-plan KATs (incl. the cornucopia ones: flag-off P0, flag-on per-path support, classifier reasons + all three accepted shapes + the dot refusals, GET block bytes incl. the `Some(collection)` arm and the dot merge, LIST block bytes incl. the dot accumulation, all-unsupported, doc line) · 10 SQL KATs (`db::cornucopia_queries::include_query_tests`: correlated-subquery shape, batch keying/qualification, append-only/aliases, text casts, reverse-FK single predicate, reverse-FK batch keying + `uuid[]` cast, array append-only/marker-free arm, **dot join single + batch with both markers**) · 7 adapter KATs (`ddd::cornucopia_repo_include::include_adapter_tests`: query calls + batch keying, imports, self-target, array collection/grouping, required vs optional reverse-FK key, **dot leaf merge + dot import surface**) · 20 hurl KATs (per-path omission incl. the supported-but-unprovable dot comment) |
+| `cargo test -p codegraph --test cornucopia_include_tests` | The **wiring pin**: one mox fixture, two profiles (flag ON / OFF) through `driver::run`. ON asserts the scalar SQL pair, the reverse-FK SQL pair (optional `work_order` + required `invoice`), the dot plane (the intermediate probe pair emitted for a dot-only source, the leaf join pair keyed by source id, the adapter's combined merge/seed, the wrappers' `Option<Combined>`/`HashMap<Uuid, Combined>` returns, the handler's merge block), and the per-path 501 for `customer.org.currency` (depth 3); `syn`-parses nine emitted files. OFF asserts no include SQL / adapter / wrappers (scalar, array, or dot) and the P0 guarded 501 on all three handlers. |
 | `file_length_contract` | The adapter emission was split into `ddd/cornucopia_repo_include.rs` (issue #751 budget: `cornucopia_repo.rs` 1,780 → 1,829 lines, new module 415) — the test stays green with no allow-list entry. |
 | `handler_matrix_tests` | **Unchanged** in this slice (the matrix's `cornucopia_include` permutation uses a default `ProjectConfig`, so the flag is off). |
 | `hurl_contract_tests` / `review_fixture_drift_tests` / `service_ops_tests` / `include_junction_tests` | Verified green (no flag-off movement). |
@@ -458,10 +521,18 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    from `test_framework::cornucopia_queries_stub` plus the eight hint-shaped `include_*`
    query modules. It `cargo check`s the app crate (PR-CI, ~2 s warm). The stub surface is
    pinned EXACTLY to the emitted SQL `--! include_*` names and to the handler call set, so
-   a renamed query fails before compiling. Teeth validated by mutation: a row-shape rename
-   (`E0609`) and a bind-arity drop (`E0061`) both fail at the emitted adapter. The wasm32
+   a renamed query fails before compiling — the call-set pin now accepts adapter calls
+   too (a dot path's first-hop probe pair is called from the adapter, not a handler).
+   **Dot notation compiles its MERGE, not just its calls**: each emitted dot arm's
+   `let leaf_resp = …; if let Some(val) = leaf_resp { … }` block is sliced verbatim
+   into a typed probe over the real `{Entity}IncludedData` and the compiled wrapper
+   return type, so a leaf-field rename (E0609) or a first-segment DTO-type collision
+   (the `customer` + `customer.org` alias hazard) fails `cargo check`. Teeth validated
+   by mutation: a row-shape rename (`E0609`), a bind-arity drop (`E0061`) and a
+   `combined.{leaf}` rename (`E0609`) all fail at the emitted adapter/merge. The wasm32
    leg is delegated to the #550 worker gate (the emitters have no `cfg(target_arch)`
-   branches; the only wasm questions are `Send`-ness/object safety it already exercises).
+   branches; the only wasm questions are `Send`-ness/object safety it already exercises;
+   re-run green with the dot changes).
 2. **Real-Postgres runtime pin.** Extend `hooks_cornucopia_runtime_tests` (or a sibling
    binary) with the shop fixture from `cornucopia_include_tests`: boot the assembled
    tree against Postgres, seed two orgs, and assert (a) GET hydrates the scalar include,
@@ -497,7 +568,14 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
 
 ## 7. Deferrals (explicit, not guessed)
 
-* Dot notation / combined responses (needs the `dto_included` mapping surface).
+* Dot notation deeper than one hop (depth > 2, `customer.org.country`); the
+  depth-2 shape is landed (§1.4b).
+* A same-handler `customer` + `customer.org` pair: the DTO plane's
+  `include_fields` dedupes by first-segment field alias (first wins), so a
+  single-segment path and a dot path sharing the first segment claim the same
+  `included.<first>` slot. This is a PRE-EXISTING DTO-plane limitation shared
+  with the SeaORM emitter (the fixture's dot source deliberately does not also
+  list `customer`), not something this slice introduced.
 * VO→entity child-table includes.
 * Batching the child-table hydration (shared N+1 with the SeaORM plane).
 * `namespace_layout` target-module paths in the adapter imports (the SeaORM emitter
@@ -566,6 +644,10 @@ Continue with this split, in this order:
 4. ~~implement reverse-FK/array~~ — **LANDED** (§1.4): `SingleArray` + its SQL,
    adapter, wrapper, handler arm and KATs. The compile pin (item 1) must now stub the
    array query pair too — see the report's stub list.
-5. dot notation last (it drags in the `dto_included` combined-response mapping);
+5. ~~dot notation~~ — **LANDED** (§1.4b): `Dot` + the intermediate/leaf query
+   pair, the adapter's combined-response merge and seed, the wrappers'
+   `Option<Combined>`/`HashMap<Uuid, Combined>` returns, and the handler's
+   merge/accumulation arms. The compile pin stubs the new `--!` surface and
+   compiles it. Depth > 2 stays a named 501.
 6. flip the switch by default (typed strict feature + profiles.toml + matrix re-bless +
    review-fixture regeneration note), then delete the preview flag.

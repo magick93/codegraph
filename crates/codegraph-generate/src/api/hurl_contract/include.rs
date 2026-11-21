@@ -423,10 +423,11 @@ mod tests {
         let paths = vec![
             path("part", vec![segment("part", "part_id", false, true)]),
             path(
-                "part.vendor",
+                "part.vendor.country",
                 vec![
                     segment("part", "part_id", false, true),
                     segment("vendor", "part_id", false, false),
+                    segment("country", "vendor_id", false, false),
                 ],
             ),
         ];
@@ -451,12 +452,53 @@ mod tests {
             "the implemented scalar shape gets its GET leg:\n{out}"
         );
         assert!(
-            out.contains("# ?include=part.vendor — omitted: this shape is not implemented on the"),
-            "the dot-notation shape is omitted with the reason:\n{out}"
+            out.contains(
+                "# ?include=part.vendor.country — omitted: this shape is not implemented on the"
+            ),
+            "the depth-3 shape is omitted with the reason:\n{out}"
         );
         assert!(
-            !out.contains("include=part.vendor\n"),
+            !out.contains("include=part.vendor.country\n"),
             "no leg may address the unsupported shape:\n{out}"
+        );
+    }
+
+    /// A SUPPORTED one-hop dot path is still unprovable on a fresh row (its
+    /// leaf is an `Option`), so it gets the omission comment — never a leg.
+    #[test]
+    fn supported_dot_path_is_omitted_as_unprovable() {
+        let paths = vec![path(
+            "part.vendor",
+            vec![
+                segment("part", "part_id", false, true),
+                segment("vendor", "part_id", false, false),
+            ],
+        )];
+        let out = sections_for_paths(
+            &paths,
+            &IncludeSupport::CornucopiaHydration,
+            ITEM,
+            CAPTURE,
+            LIST,
+            "{}",
+            true,
+            true,
+            true,
+        )
+        .into_iter()
+        .map(|s| s.body)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(
+            out.contains(
+                "# ?include=part.vendor — omitted: the combined response types the leaf as a"
+            ),
+            "{out}"
+        );
+        assert!(
+            !out.contains("GET "),
+            "no leg may address the unprovable dot shape:\n{out}"
         );
     }
 

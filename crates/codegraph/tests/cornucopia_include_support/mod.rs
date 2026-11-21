@@ -29,14 +29,23 @@ use std::path::{Path, PathBuf};
 /// derives its array flag from a SOURCE-side array property, which a scalar
 /// child reference never has.
 ///
-/// `customer.org` is a dot-notation include — the deliberately unsupported
-/// shape, so the per-path fail-closed arm is exercised by the SAME handler
-/// that hydrates `customer`.
+/// `InvoiceType`'s explicit surface carries the dot notation: `customer.org`
+/// is the implemented one-hop shape, and `customer.org.currency` (three
+/// segments) is the deliberately unsupported shape, so the per-path
+/// fail-closed arm is exercised by the SAME handler that hydrates
+/// `customer.org`. `InvoiceType` deliberately does NOT also list `customer`
+/// — a single-segment path would claim the `customer` include field the dot
+/// path's combined response owns.
 pub const MODEL_MOX: &str = r#"
 package shop
 
+class CurrencyType {
+    String code
+}
+
 class OrganizationType {
     String name
+    refers CurrencyType[0..1] currency
 }
 
 class CustomerType {
@@ -75,7 +84,12 @@ role = "root"
 
 [domains.shop.entity_config.WorkOrderType]
 role = "root"
-allow_include = ["customer", "customer.org"]
+allow_include = ["customer"]
+
+# The dot-notation source: `customer.org` hydrates (one hop); the
+# three-segment path is the named 501 shape the fail-closed arm asserts.
+[domains.shop.entity_config.InvoiceType]
+allow_include = ["customer.org", "customer.org.currency"]
 "#;
 
 /// Two profiles over one model: the preview feature ON and OFF. Everything

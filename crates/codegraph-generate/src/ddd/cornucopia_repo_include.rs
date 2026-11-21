@@ -21,6 +21,18 @@ use codegraph_config::DomainConfig;
 
 use super::cornucopia_repo::{emit_response_expr, qmod};
 
+/// One implemented `?include=` path plus the trees its emission needs (issue
+/// #781 P1).
+pub(crate) struct CornucopiaIncludeTargets {
+    /// The resolved path (`fetch_method`, `response_rust_type`, segments).
+    pub(crate) path: crate::api::include_path::ResolvedIncludePath,
+    /// The first segment's entity tree (the fetch target; for a dot path, the
+    /// intermediate the leaf is addressed through).
+    pub(crate) target: EntityTree,
+    /// The LEAF entity's tree for a one-hop dot path — `None` otherwise.
+    pub(crate) leaf: Option<EntityTree>,
+}
+
 /// Resolve the implemented include paths and each target's tree, in
 /// declaration order (issue #781 P1).
 ///
@@ -33,7 +45,7 @@ pub(crate) async fn resolve_cornucopia_include_targets(
     project: &ProjectConfig,
     domain: &str,
     schema_title: &str,
-) -> Vec<(crate::api::include_path::ResolvedIncludePath, EntityTree)> {
+) -> Vec<CornucopiaIncludeTargets> {
     let entity_cfg = config
         .domains
         .get(domain)
@@ -65,9 +77,37 @@ pub(crate) async fn resolve_cornucopia_include_targets(
         else {
             continue;
         };
-        out.push((path.clone(), target));
+        // The dot shape maps the LEAF row (the intermediate only proves the
+        // hop exists), so its tree is resolved too. A miss is a graph
+        // inconsistency: skip the path (the handler's per-path verdict stays
+        // authoritative, and no adapter method may reference a missing tree).
+        let leaf = if path.segments.len() == 2 {
+            let leaf_seg = &path.segments[1];
+            match RepositoryImplEmitter
+                .query_entity_tree(db, &leaf_seg.schema_title, &leaf_seg.domain, config, None)
+                .await
+            {
+                Ok(tree) => Some(tree),
+                Err(_) => continue,
+            }
+        } else {
+            None
+        };
+        out.push(CornucopiaIncludeTargets {
+            path: path.clone(),
+            target,
+            leaf,
+        });
     }
     out
+}
+
+/// The leaf hop of a one-hop dot include (`customer.org` → the `organization`
+/// tree), for the combined-response mapping.
+pub(crate) struct IncludeLeafPlan<'a> {
+    pub(crate) tree: &'a EntityTree,
+    pub(crate) domain: &'a str,
+    pub(crate) module_name: &'a str,
 }
 
 /// One implemented `?include=` path's adapter facts (issue #781 P1).
@@ -101,6 +141,19 @@ pub(crate) struct IncludeAdapterPlan<'a> {
     /// a plain `Uuid`; optional ⇒ the key is `Option<Uuid>` and a NULL row is
     /// skipped. Only the array shape reads it.
     pub(crate) reverse_fk_is_required: bool,
+    /// The leaf hop of a one-hop dot include (`customer.org`). `None` for
+    /// every single-segment shape.
+    pub(crate) leaf: Option<IncludeLeafPlan<'a>>,
+    /// The combined response type the dot shape builds
+    /// (`{FirstEntity}CombinedResponse`, defined in the source's
+    /// `dto_included`).
+    pub(crate) combined_type: Option<String>,
+    /// The FIRST hop's annotated scalar query (`include_customer_for_invoice`)
+    /// — the GET existence probe and the LIST "present sources" seed. Emitted
+    /// by the SQL plane even when the first hop is not modelled on its own.
+    pub(crate) intermediate_query_fn: Option<String>,
+    /// The FIRST hop's annotated batch query (`include_customer_batch_for_invoice`).
+    pub(crate) intermediate_batch_query_fn: Option<String>,
 }
 
 /// Imports the include hydration needs: the target's response DTO (and its
@@ -123,7 +176,53 @@ pub(crate) fn emit_include_imports(
             .collect();
     seen.insert(format!("{}Response", tree.entity_name));
     let mut seen_modules: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen_combined: std::collections::HashSet<String> = std::collections::HashSet::new();
     for inc in includes {
+        // The dot shape maps the LEAF row into the source module's combined
+        // response; the intermediate's response type is never constructed, so
+        // only the leaf's surface (plus the combined type itself) is imported.
+        if let (Some(leaf), Some(combined)) = (inc.leaf.as_ref(), inc.combined_type.as_ref()) {
+            if seen_combined.insert(combined.clone()) {
+                wln!(code, "use super::dto_included::{};", combined);
+            }
+            let same_module = leaf.domain == domain && leaf.module_name == tree.module_name;
+            if same_module {
+                continue;
+            }
+            let leaf_resp = format!("{}Response", leaf.tree.entity_name);
+            if seen.insert(leaf_resp.clone()) {
+                wln!(
+                    code,
+                    "use crate::domain::{}::{}::dto_response::{};",
+                    leaf.domain,
+                    leaf.module_name,
+                    leaf_resp
+                );
+            }
+            for child in
+                crate::ddd::repository_emitter::flatten_child_tables(&leaf.tree.child_tables)
+            {
+                let name = format!("{}Response", child.struct_name);
+                if seen.insert(name.clone()) {
+                    wln!(
+                        code,
+                        "use crate::domain::{}::{}::dto_response::{};",
+                        leaf.domain,
+                        leaf.module_name,
+                        name
+                    );
+                }
+            }
+            if seen_modules.insert(format!("{}::{}", leaf.domain, leaf.module_name)) {
+                wln!(
+                    code,
+                    "use cornucopia_queries::queries::{}::{};",
+                    leaf.domain,
+                    leaf.module_name
+                );
+            }
+            continue;
+        }
         let same_module = inc.target_domain == domain && inc.target_module == tree.module_name;
         if same_module {
             continue;
@@ -173,6 +272,14 @@ pub(crate) fn emit_include_imports(
 /// requested source id, then the rows pushed under the reverse FK the batch
 /// SQL aliases to `source_id`. Both are the SeaORM batch contract, so the
 /// `included` envelope serializes identically for both providers.
+///
+/// Dot shape (one hop, `customer.org`) — GET: the intermediate is probed
+/// through its own scalar fetch (a target miss is `Ok(None)`), then the leaf
+/// row is mapped into `{First}CombinedResponse`'s leaf field. LIST: the
+/// intermediate batch seeds one default combined per source that HAS a target
+/// (the SeaORM dot batch's "present combos only" contract), then the leaf rows
+/// keyed by SOURCE id fill the leaf field — so the handler's accumulation sees
+/// the same `HashMap<Uuid, Combined>` shape on both providers.
 pub(crate) fn emit_include_adapter(
     tree: &EntityTree,
     includes: &[IncludeAdapterPlan<'_>],
@@ -192,10 +299,16 @@ pub(crate) fn emit_include_adapter(
         entity_name = tree.entity_name
     );
     for inc in includes {
-        if inc.shape.is_array() {
-            emit_include_adapter_array(inc, &qmod, code);
-        } else {
-            emit_include_adapter_scalar(inc, &qmod, code);
+        match inc.shape {
+            crate::api::include_plan::CornucopiaIncludeShape::SingleArray => {
+                emit_include_adapter_array(inc, &qmod, code)
+            }
+            crate::api::include_plan::CornucopiaIncludeShape::SingleScalar => {
+                emit_include_adapter_scalar(inc, &qmod, code)
+            }
+            crate::api::include_plan::CornucopiaIncludeShape::Dot => {
+                emit_include_adapter_dot(inc, &qmod, code)
+            }
         }
     }
     wln!(code, "}}");
@@ -369,6 +482,113 @@ fn emit_include_adapter_array(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &m
     wln!(code, "    }}");
 }
 
+/// The dot (one-hop) adapter pair — `customer.org`.
+///
+/// GET: probe the intermediate through its own scalar fetch (a source whose
+/// target hop is missing or invisible answers `Ok(None)`), then map the leaf
+/// row into the combined response's leaf field. LIST: seed one default
+/// combined per source that HAS an intermediate (the intermediate batch), then
+/// fill each leaf under the SOURCE id the leaf batch aliases to `source_id`.
+fn emit_include_adapter_dot(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &mut CodeWriter) {
+    let (Some(leaf), Some(combined)) = (inc.leaf.as_ref(), inc.combined_type.as_deref()) else {
+        return;
+    };
+    let intermediate = inc
+        .intermediate_query_fn
+        .as_deref()
+        .unwrap_or("include_missing_intermediate");
+    let intermediate_batch = inc
+        .intermediate_batch_query_fn
+        .as_deref()
+        .unwrap_or("include_missing_intermediate_batch");
+    let leaf_field = leaf.module_name;
+
+    // ── single (GET) ────────────────────────────────────────────────────
+    wln!(code);
+    wln!(
+        code,
+        "    pub async fn {}<C: GenericClient + Sync>(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       source_id: Uuid,\n\
+         \x20   ) -> Result<Option<{combined}>, Box<dyn std::error::Error>> {{",
+        inc.fetch_method
+    );
+    wln!(
+        code,
+        "        let targets = {qmod}::{intermediate}().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;"
+    );
+    wln!(code, "        if targets.is_empty() {{");
+    wln!(code, "            return Ok(None);");
+    wln!(code, "        }}");
+    wln!(
+        code,
+        "        let rows = {qmod}::{query_fn}().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;",
+        query_fn = inc.query_fn
+    );
+    wln!(code, "        let mut combined = {combined}::default();");
+    wln!(code, "        for row in rows {{");
+    emit_response_expr(
+        leaf.tree,
+        code,
+        "row",
+        "            ",
+        "            let resp = ",
+    );
+    wln!(code, "            ;");
+    wln!(code, "            combined.{leaf_field} = Some(resp);");
+    wln!(code, "        }}");
+    wln!(code, "        Ok(Some(combined))");
+    wln!(code, "    }}");
+
+    // ── batch (LIST) ────────────────────────────────────────────────────
+    wln!(code);
+    wln!(
+        code,
+        "    pub async fn {}<C: GenericClient + Sync>(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       source_ids: &[Uuid],\n\
+         \x20   ) -> Result<std::collections::HashMap<Uuid, {combined}>, Box<dyn std::error::Error>> {{",
+        inc.batch_fetch_method
+    );
+    wln!(
+        code,
+        "        let targets = {qmod}::{intermediate_batch}().bind(db, source_ids).all().await.map_err(|e| e.to_string())?;"
+    );
+    wln!(
+        code,
+        "        let mut result: std::collections::HashMap<Uuid, {combined}> = std::collections::HashMap::new();"
+    );
+    wln!(code, "        for target in targets {{");
+    wln!(
+        code,
+        "            result.entry(target.source_id).or_default();"
+    );
+    wln!(code, "        }}");
+    wln!(
+        code,
+        "        let rows = {qmod}::{batch_query_fn}().bind(db, source_ids).all().await.map_err(|e| e.to_string())?;",
+        batch_query_fn = inc.batch_query_fn
+    );
+    wln!(code, "        for row in rows {{");
+    emit_response_expr(
+        leaf.tree,
+        code,
+        "row",
+        "            ",
+        "            let resp = ",
+    );
+    wln!(code, "            ;");
+    wln!(
+        code,
+        "            result.entry(row.source_id).or_default().{leaf_field} = Some(resp);"
+    );
+    wln!(code, "        }}");
+    wln!(code, "        Ok(result)");
+    wln!(code, "    }}");
+}
+
 #[cfg(test)]
 mod include_adapter_tests {
     use super::*;
@@ -421,6 +641,10 @@ mod include_adapter_tests {
             target,
             shape: crate::api::include_plan::CornucopiaIncludeShape::SingleScalar,
             reverse_fk_is_required: false,
+            leaf: None,
+            combined_type: None,
+            intermediate_query_fn: None,
+            intermediate_batch_query_fn: None,
         }
     }
 
@@ -440,6 +664,38 @@ mod include_adapter_tests {
             target,
             shape: crate::api::include_plan::CornucopiaIncludeShape::SingleArray,
             reverse_fk_is_required,
+            leaf: None,
+            combined_type: None,
+            intermediate_query_fn: None,
+            intermediate_batch_query_fn: None,
+        }
+    }
+
+    fn dot_plan<'a>(
+        target: &'a EntityTree,
+        leaf: &'a EntityTree,
+        combined: &'a str,
+        leaf_module: &'a str,
+    ) -> IncludeAdapterPlan<'a> {
+        IncludeAdapterPlan {
+            query_fn: "include_customer_org_for_invoice".to_string(),
+            batch_query_fn: "include_customer_org_batch_for_invoice".to_string(),
+            fetch_method: "fetch_customer_org_for_invoice",
+            batch_fetch_method: "fetch_customer_org_batch_for_invoice",
+            response_type: combined,
+            target_domain: "common",
+            target_module: "customer",
+            target,
+            shape: crate::api::include_plan::CornucopiaIncludeShape::Dot,
+            reverse_fk_is_required: false,
+            leaf: Some(IncludeLeafPlan {
+                tree: leaf,
+                domain: "common",
+                module_name: leaf_module,
+            }),
+            combined_type: Some(combined.to_string()),
+            intermediate_query_fn: Some("include_customer_for_invoice".to_string()),
+            intermediate_batch_query_fn: Some("include_customer_batch_for_invoice".to_string()),
         }
     }
 
@@ -615,5 +871,118 @@ mod include_adapter_tests {
         assert!(out.contains("let key = row.source_id;"), "{out}");
         assert!(!out.contains("match row.source_id"), "{out}");
         assert!(!out.contains("None => continue,"), "{out}");
+    }
+    /// The dot adapter probes the intermediate through its own scalar fetch
+    /// (a target miss is `Ok(None)`), then maps the LEAF row into the combined
+    /// response's leaf field. LIST seeds one default combined per source that
+    /// HAS a target, then fills leaves keyed by SOURCE id — the SeaORM dot
+    /// batch contract the handler accumulates.
+    #[test]
+    fn dot_include_adapter_merges_the_leaf() {
+        let intermediate = tree("Customer", "customer");
+        let leaf = tree("Organization", "organization");
+        let includes = vec![dot_plan(
+            &intermediate,
+            &leaf,
+            "CustomerCombinedResponse",
+            "organization",
+        )];
+        let mut code = CodeWriter::new();
+        emit_include_adapter(&tree("Invoice", "invoice"), &includes, &mut code);
+        let out = code.as_str();
+
+        assert!(
+            out.contains(
+                ") -> Result<Option<CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+            ),
+            "{out}"
+        );
+        // The intermediate probe reuses the first hop's scalar query.
+        assert!(
+            out.contains(
+                "let targets = invoice::include_customer_for_invoice().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("if targets.is_empty() {\n            return Ok(None);\n        }"),
+            "{out}"
+        );
+        // The leaf query maps into the combined response's leaf field.
+        assert!(
+            out.contains(
+                "let rows = invoice::include_customer_org_for_invoice().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("let mut combined = CustomerCombinedResponse::default();"),
+            "{out}"
+        );
+        assert!(out.contains("combined.organization = Some(resp);"), "{out}");
+        assert!(out.contains("Ok(Some(combined))"), "{out}");
+        // LIST: no `Option` in the map value (the SeaORM dot batch contract),
+        // seeded from the intermediate batch and filled by SOURCE id.
+        assert!(
+            out.contains(
+                ") -> Result<std::collections::HashMap<Uuid, CustomerCombinedResponse>, Box<dyn std::error::Error>> {"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "let targets = invoice::include_customer_batch_for_invoice().bind(db, source_ids).all().await.map_err(|e| e.to_string())?;"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("result.entry(target.source_id).or_default();"),
+            "{out}"
+        );
+        assert!(
+            out.contains("result.entry(row.source_id).or_default().organization = Some(resp);"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("HashMap<Uuid, Option<CustomerCombinedResponse>>"),
+            "the dot batch keys straight to the combined type:\n{out}"
+        );
+    }
+
+    /// The dot import surface is the LEAF's response (+ children + query
+    /// module) and the combined type from this entity's `dto_included` — never
+    /// the intermediate's response, which the adapter does not construct.
+    #[test]
+    fn dot_include_imports_combined_and_leaf() {
+        let intermediate = tree("Customer", "customer");
+        let leaf = tree("Organization", "organization");
+        let includes = vec![dot_plan(
+            &intermediate,
+            &leaf,
+            "CustomerCombinedResponse",
+            "organization",
+        )];
+        let mut code = CodeWriter::new();
+        emit_include_imports(&tree("Invoice", "invoice"), "common", &includes, &mut code);
+        let out = code.as_str();
+
+        assert!(
+            out.contains("use super::dto_included::CustomerCombinedResponse;"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "use crate::domain::common::organization::dto_response::OrganizationResponse;"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("use cornucopia_queries::queries::common::organization;"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("CustomerResponse"),
+            "the intermediate's response is never constructed:\n{out}"
+        );
     }
 }
