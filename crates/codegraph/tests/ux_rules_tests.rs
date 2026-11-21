@@ -913,9 +913,12 @@ fn ux_rules_sort_plane_wires_handler_query_and_list_page() {
     );
     // The validated spec rides the existing list-query path (RLS/context
     // bundle untouched). The fixture entity is auditable by default, so
-    // the `include_deleted` slot (`false`) sits before the sort spec.
+    // the `include_deleted` slot (the `?include_deleted=` toggle, issue
+    // #792) sits before the sort spec.
     assert!(
-        handler.contains("list_filtered(params.page, params.page_size, &filters, false, ux_sort,"),
+        handler.contains(
+            "list_filtered(params.page, params.page_size, &filters, params.include_deleted.unwrap_or(false), ux_sort,"
+        ),
         "{handler}"
     );
 
@@ -1095,8 +1098,9 @@ fn ux_rules_flag_off_emits_no_sort_plane() {
         );
     }
     assert!(
-        handler
-            .contains("list_filtered(params.page, params.page_size, &filters, false, api_key_info"),
+        handler.contains(
+            "list_filtered(params.page, params.page_size, &filters, params.include_deleted.unwrap_or(false), api_key_info"
+        ),
         "pre-#306 call shape must stay:\n{handler}"
     );
 

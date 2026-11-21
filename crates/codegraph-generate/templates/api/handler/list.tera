@@ -1,5 +1,5 @@
-{% if has_list %}
-
+{% if has_list or is_auditable %}
+{{ include_deleted_helper_fn }}
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ListParams {
@@ -36,12 +36,19 @@ pub struct ListParams {
     #[serde(default)]
     #[param(ignore)]
     pub include: Option<String>,
+{% endif -%}
+{% if is_auditable %}
+    /// Include soft-deleted rows in the results (`?include_deleted=true`).
+    /// Requires a `manager`-or-better role; under-privileged requests
+    /// answer 403.
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 {% endif %}
 }
 
 fn default_page() -> u64 { 0 }
 fn default_page_size() -> u64 { 20 }
-
+{% if has_list %}
 /// Allowed filter keys for this entity (includes nested child/grandchild fields via dot notation).
 const ALLOWED_FILTER_KEYS: &[&str] = &[
 {% for ff in filter_fields %}
@@ -67,7 +74,7 @@ const ALLOWED_INCLUDE_KEYS: &[&str] = &[
     "{{ path.alias }}",
 {% endfor %}
 ];
-{% endif %}
+{% endif %}{% endif %}
 
 /// List {{ entity_name }} with pagination and JSON:API filters.
 #[utoipa::path(
@@ -96,7 +103,7 @@ pub async fn list(
 {{ path_extractor_collection }}
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let correlation_id = extract_correlation_id(&headers);
+    let correlation_id = extract_correlation_id(&headers);{{ include_deleted_guard_block }}
 {% if ux_sort_fields %}
     // Validate ?sort=/?order= against the entity's sortable-field
     // allow-list (issue #306). No params ⇒ the repository's default
@@ -137,7 +144,7 @@ pub async fn list(
     // When ?q= is provided, delegate to full-text search with ranking
     if let Some(ref q) = params.q {
         if !q.is_empty() {
-            let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+            let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(q, params.page, params.page_size{% if is_auditable %}, params.include_deleted.unwrap_or(false){% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
                 .map_err(|e: {{ domain | pascal_case }}Error| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to search {{ entity_name }}")
                         .with_correlation_id(correlation_id)
@@ -170,7 +177,7 @@ pub async fn list(
     // Scope results to the parent entity
     filters.insert("{{ parent_ref }}".to_string(), parent_id.to_string());
 {% endif %}
-    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, false{% endif %}{% if ux_sort_fields %}, ux_sort{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.list_filtered(params.page, params.page_size, &filters{% if is_auditable %}, params.include_deleted.unwrap_or(false){% endif %}{% if ux_sort_fields %}, ux_sort{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list {{ entity_name }}")
                         .with_correlation_id(correlation_id)

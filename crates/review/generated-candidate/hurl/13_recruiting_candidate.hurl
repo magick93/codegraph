@@ -58,6 +58,10 @@ HTTP 200
 jsonpath "$.included" exists
 jsonpath "$.included.application" exists
 
+# ?include_deleted=true — no toggle leg: the entity is auditable but
+# carries no `delete` operation, so the contract cannot create and
+# soft-delete a second row to prove the toggle.
+
 # PUT roundtrip
 PUT {{base_url}}/api/v1/recruiting/candidate/{{candidate_id}}
 Authorization: Bearer {{api_key}}

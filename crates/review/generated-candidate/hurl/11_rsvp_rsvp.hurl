@@ -39,6 +39,37 @@ Authorization: Bearer {{api_key}}
 
 HTTP 404
 
+# ?include_deleted=true — the soft-delete read toggle (issue #792). The role
+# gate: JWT callers need a `manager`-or-better role; API-key sessions pass
+# (their scopes enforce at the DB tier).
+POST {{base_url}}/api/v1/rsvp/rsvp
+Authorization: Bearer {{api_key}}
+{
+  "status": "Confirmed",
+  "timestamp": "2026-01-01T00:00:00Z"
+}
+
+HTTP 201
+[Captures]
+rsvp_deleted_id: jsonpath "$.data.id"
+
+DELETE {{base_url}}/api/v1/rsvp/rsvp/{{rsvp_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 204
+
+GET {{base_url}}/api/v1/rsvp/rsvp/{{rsvp_deleted_id}}?include_deleted=true
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.id" == "{{rsvp_deleted_id}}"
+
+GET {{base_url}}/api/v1/rsvp/rsvp/{{rsvp_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+
 # PUT roundtrip
 PUT {{base_url}}/api/v1/rsvp/rsvp/{{rsvp_id}}
 Authorization: Bearer {{api_key}}

@@ -281,8 +281,17 @@ pub async fn get_by_id(
 
 ) -> Result<Json<ApplicationWithIncludeResponse>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
+    // `?include_deleted=true` needs a `manager`-or-better role (issue #792);
+    // API-key sessions pass (their scopes enforce at the DB tier). Absent or
+    // `false` is the default read and needs no gate.
+    if params.include_deleted == Some(true) && !include_deleted_role_allows(&api_key_info) {
+        return Err(AppError::forbidden(
+            "?include_deleted=true requires a manager-or-better role",
+        )
+        .with_correlation_id(correlation_id));
+    }
 
-    let response = state.recruiting_application_queries.find_by_id(id, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    let response = state.recruiting_application_queries.find_by_id(id, params.include_deleted.unwrap_or(false), api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: RecruitingError| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to find Application")
                         .with_correlation_id(correlation_id)
@@ -453,7 +462,23 @@ pub async fn delete(
 }
 
 
-
+/// `?include_deleted=true` is a privileged read (issue #792): JWT sessions
+/// need a `manager`-or-better role in the domain's role hierarchy (earlier
+/// ranks higher). API-key sessions pass — their authority is the key's RLS
+/// scopes (#169). Unknown roles and hierarchies without `manager` fail closed.
+fn include_deleted_role_allows(auth_info: &ApiKeyInfo) -> bool {
+    if matches!(auth_info.auth_mode, crate::middleware::AuthMode::ApiKey { .. }) {
+        return true;
+    }
+    const HIERARCHY: &[&str] = &["owner", "manager", "member", "employee"];
+    let Some(min_rank) = HIERARCHY.iter().position(|r| *r == "manager") else {
+        return false;
+    };
+    HIERARCHY
+        .iter()
+        .position(|r| *r == auth_info.role.as_str())
+        .is_some_and(|rank| rank <= min_rank)
+}
 #[derive(Debug, serde::Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ListParams {
@@ -473,6 +498,12 @@ pub struct ListParams {
     #[serde(default)]
     #[param(ignore)]
     pub include: Option<String>,
+
+    /// Include soft-deleted rows in the results (`?include_deleted=true`).
+    /// Requires a `manager`-or-better role; under-privileged requests
+    /// answer 403.
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
 
 }
 
@@ -521,6 +552,15 @@ pub async fn list(
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
+    // `?include_deleted=true` needs a `manager`-or-better role (issue #792);
+    // API-key sessions pass (their scopes enforce at the DB tier). Absent or
+    // `false` is the default read and needs no gate.
+    if params.include_deleted == Some(true) && !include_deleted_role_allows(&api_key_info) {
+        return Err(AppError::forbidden(
+            "?include_deleted=true requires a manager-or-better role",
+        )
+        .with_correlation_id(correlation_id));
+    }
 
     // Validate filter keys and build typed filter map.
     let mut filters = std::collections::HashMap::new();
@@ -533,7 +573,7 @@ pub async fn list(
     }
 
 
-    let (results, total) = state.recruiting_application_queries.list_filtered(params.page, params.page_size, &filters, false, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    let (results, total) = state.recruiting_application_queries.list_filtered(params.page, params.page_size, &filters, params.include_deleted.unwrap_or(false), api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: RecruitingError| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to list Application")
                         .with_correlation_id(correlation_id)

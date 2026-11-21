@@ -37,6 +37,36 @@ Authorization: Bearer {{api_key}}
 
 HTTP 404
 
+# ?include_deleted=true — the soft-delete read toggle (issue #792). The role
+# gate: JWT callers need a `manager`-or-better role; API-key sessions pass
+# (their scopes enforce at the DB tier).
+POST {{base_url}}/api/v1/compensation/pay-runs
+Authorization: Bearer {{api_key}}
+{
+  "pay_run_id": "contract-pay_run"
+}
+
+HTTP 201
+[Captures]
+pay_run_deleted_id: jsonpath "$.data.id"
+
+DELETE {{base_url}}/api/v1/compensation/pay-runs/{{pay_run_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 204
+
+GET {{base_url}}/api/v1/compensation/pay-runs/{{pay_run_deleted_id}}?include_deleted=true
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.id" == "{{pay_run_deleted_id}}"
+
+GET {{base_url}}/api/v1/compensation/pay-runs/{{pay_run_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+
 # PUT roundtrip
 PUT {{base_url}}/api/v1/compensation/pay-runs/{{pay_run_id}}
 Authorization: Bearer {{api_key}}

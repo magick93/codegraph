@@ -11,6 +11,14 @@ pub struct SearchParams {
     pub page: u64,
     #[serde(default = "default_page_size")]
     pub page_size: u64,
+{%- if is_auditable %}
+
+    /// Include soft-deleted rows in the results (`?include_deleted=true`).
+    /// Requires a `manager`-or-better role; under-privileged requests
+    /// answer 403.
+    #[serde(default)]
+    pub include_deleted: Option<bool>,
+{% endif %}
 }
 
 /// Full-text search for {{ entity_name }} with ranking.
@@ -41,12 +49,12 @@ pub async fn search(
 {{ path_extractor_collection_unused }}
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<SearchParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let correlation_id = extract_correlation_id(&headers);
+    let correlation_id = extract_correlation_id(&headers);{{ include_deleted_guard_block }}
     if params.q.trim().is_empty() {
         return Err(AppError::bad_request("Missing or empty q parameter")
             .with_correlation_id(correlation_id));
     }
-    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(&params.q, params.page, params.page_size{% if is_auditable %}, false{% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
+    let (results, total) = state.{{ domain }}_{{ module_name }}_queries.search(&params.q, params.page, params.page_size{% if is_auditable %}, params.include_deleted.unwrap_or(false){% endif %}, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await
         .map_err(|e: {{ domain | pascal_case }}Error| {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to search {{ entity_name }}")
                         .with_correlation_id(correlation_id)

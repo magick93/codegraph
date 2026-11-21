@@ -23,6 +23,7 @@ use super::api_model::{resolve_entity_operations, resolve_path_segment};
 
 mod guards;
 mod imports;
+pub mod include_deleted;
 mod invariants;
 
 use guards::build_guard_blocks;
@@ -361,6 +362,17 @@ pub struct HandlerContext {
     /// When true, the entity has a soft-delete audit policy and the query layer
     /// expects an `include_deleted: bool` argument on all read methods.
     pub is_auditable: bool,
+    /// The `?include_deleted=` role gate (issue #792): the pre-rendered
+    /// helper fn the GET/LIST/SEARCH handlers consult, and the pre-rendered
+    /// 403 guard block rendered after the `correlation_id` binding. Both are
+    /// EMPTY unless the entity is auditable AND at least one GET/LIST/SEARCH
+    /// surface exists — the byte-identity contract (the #338 block
+    /// convention: the guard block starts with a newline and carries no
+    /// trailing newline).
+    #[serde(default)]
+    pub include_deleted_helper_fn: String,
+    #[serde(default)]
+    pub include_deleted_guard_block: String,
     /// Sortable-field allow-list for `?sort=` on the list endpoint
     /// (issue #306), derived from the ux plan. Empty = the ux sort plane
     /// is inactive: no sort params are emitted and the handler stays
@@ -833,6 +845,24 @@ impl EntityGenerator for HandlerGenerator {
             .clone()
             .unwrap_or_else(|| guard_blocks.update_ownership_prefix.clone());
 
+        // The `?include_deleted=` role gate (issue #792): the pre-rendered
+        // helper + 403 guard block for auditable entities with a
+        // GET/LIST/SEARCH surface. The hierarchy is the domain's
+        // `[rbac] roles_hierarchy` (default basejump) — the same source the
+        // DB-level role policies read. Empty otherwise: byte-identical.
+        let roles_hierarchy = config
+            .rbac
+            .as_ref()
+            .map(|r| r.hierarchy_or_default())
+            .unwrap_or_else(codegraph_config::config::default_roles_hierarchy);
+        let include_deleted_gate = include_deleted::build_include_deleted_gate(
+            is_auditable,
+            operations.contains(&"read".to_string()),
+            operations.contains(&"list".to_string()),
+            has_fts,
+            &roles_hierarchy,
+        );
+
         // Template decisions resolved in Rust (issue #778 wave 1): the guard
         // presence flags the utoipa 403 docs read, the `?include=`
         // initialiser's deduped field list, and the `Path(…)` parameter
@@ -913,6 +943,8 @@ impl EntityGenerator for HandlerGenerator {
             include_doc: include_plan.include_doc,
             handler_imports,
             is_auditable,
+            include_deleted_helper_fn: include_deleted_gate.helper_fn,
+            include_deleted_guard_block: include_deleted_gate.guard_block,
             ux_sort_fields,
             update_ownership_prefix,
             update_guard_block: guard_blocks.update_guard_block,
@@ -1562,6 +1594,11 @@ mod ux_sort_handler_template_tests {
             "handler_imports": [],
             "is_auditable": false,
             "ux_sort_fields": ux_sort_fields,
+            // The `?include_deleted=` gate artifacts (issue #792) are
+            // pre-rendered from Rust: the real serializer always emits the
+            // keys (empty when inactive), so the key must exist here.
+            "include_deleted_helper_fn": "",
+            "include_deleted_guard_block": "",
         })
     }
 
