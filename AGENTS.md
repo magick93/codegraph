@@ -5190,6 +5190,29 @@ struct built from `PolicyNode` graph data. Policy effects drive:
 | `Audit` | `created_at`, `updated_at`, `updated_by`, `deleted_by` columns | Same columns in RETURNING clauses + trigger queries |
 | `Retention` | Column + archive strategy | Time-partitioned WHERE clauses (future) |
 
+### Cornucopia CRUD soft-delete parity (issue #788)
+
+The cornucopia CRUD plane derives its soft-delete marker from the SAME
+predicate the include plane does (#784) —
+`db/cornucopia_queries.rs::render_entity_sql` reads
+`include_soft_delete_marker(tree)` (`Some("deleted_at")` iff
+`EntityTree.is_auditable`, the read plane's decision), not the
+policy-derived `soft_delete_column` the mox-first path never populates. One
+local feeds every writer, so for auditable tables `list/count/get/scoped/
+search/semantic` filter `deleted_at IS NULL` on the default arms,
+`UPDATE` refuses deleted rows, design-finder SQL keeps its "deleted rows
+invisible" contract, and **DELETE is a SOFT delete**
+(`UPDATE SET "deleted_at" = NOW()`) — it was a hard `DELETE FROM` before
+#788 (the SeaORM twin always soft-deleted). The `_including_deleted` query
+variants and the repository plane's `include_deleted: bool` parameter are
+the escape hatch, and they now branch real statements. Non-auditable and
+append-only trees stay byte-identical (marker `None`; the stale-policy-field
+negative is pinned). **Consumer migration**: cornucopia consumers' DELETE
+becomes soft and reads hide deleted rows — hr-specs is the external
+acceptance gate. Record: `docs/tdd/784b-cornucopia-crud-soft-delete.tdd.md`;
+KATs: `db::cornucopia_queries::crud_soft_delete_tests`; live gate:
+`cornucopia_include_runtime_tests` section 10.
+
 ### Adding a new persistence provider
 
 1. Add a variant to `PersistenceProvider` in `profile/types.rs`
