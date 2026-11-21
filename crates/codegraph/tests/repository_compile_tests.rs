@@ -176,6 +176,47 @@ accept = ["image/png"]
 binding = "MEDIA_BUCKET"
 "#;
 
+/// Dot-include fixture (issue #789): the worker→deployment→position shape —
+/// a scalar `refers` chain two hops deep (the explicit `[0..1]`
+/// multiplicity keeps each hop a scalar FK column, not a junction). The
+/// source's `allow_include` declares the dot path so the repository plane
+/// emits the combined intermediate+leaf fetch (`emit_dot_fetch_method`),
+/// the plane whose intermediate addressing the fix re-points through the
+/// source's FK.
+const DOT_MOX: &str = r#"
+package staff
+
+class WorkerType {
+    String name
+    refers DeploymentType [0..1] deployment
+}
+
+class DeploymentType {
+    String reason
+    refers PositionType [0..1] position
+}
+
+class PositionType {
+    String title
+}
+"#;
+
+/// Config for the dot-include fixture's `staff` package: the explicit
+/// `allow_include` dot path on the source entity (the dot_notation mock's
+/// shape — explicit paths are the documented way to opt into dot includes).
+const DOT_DOMAINS_TOML: &str = r#"
+[defaults]
+operations = ["create", "read", "update", "delete", "list"]
+
+[domains.staff]
+label = "Staff"
+schema_dir = "staff"
+postgres_schema = "staff"
+
+[domains.staff.entity_config.WorkerType]
+allow_include = ["deployment.position"]
+"#;
+
 /// Fixed materialization root (the #550 convention): survives a failed run
 /// so the generated tree can be inspected.
 fn tree_root(label: &str) -> PathBuf {
@@ -822,5 +863,75 @@ async fn projection_finder_emission_compiles() {
 
     let ws = tree_root("projection-finders").join("ws");
     assemble_workspace(&app_dir, &_domain_types, &ws);
+    cargo_check(&ws);
+}
+
+/// Dot-include variant (issue #789): the worker→deployment→position shape
+/// emits the combined intermediate+leaf fetch, whose INTERMEDIATE must be
+/// addressed through the SOURCE's FK (load the source row by PK, read its
+/// FK, load the intermediate by that value) — never by the source's PK,
+/// which answered empty on every dot include. The presence guards name the
+/// addressing shape BEFORE cargo check (template drift must be named, not
+/// buried in a compile error); the scratch crate then proves the whole
+/// plane — trait, impl, DTO shims, combined response — compiles.
+///
+/// Native only, like every leg here: the repository plane is SeaORM.
+#[tokio::test]
+async fn dot_include_fetch_compiles() {
+    // The mox fixture lives OUTSIDE the materialization root —
+    // `generate_tree` wipes that root at the start of every run — and is
+    // pid-suffixed so concurrent checkouts building the pin cannot
+    // cross-contaminate the fixture input (the media leg's precedent).
+    let mox_root =
+        std::env::temp_dir().join(format!("repository-pin-dot-{}", std::process::id()));
+    write_file(&mox_root.join("model.mox"), DOT_MOX);
+    let (app_dir, domain_types_dir) = generate_tree(
+        "dot-include",
+        Some(DOT_DOMAINS_TOML),
+        false,
+        Some(&[mox_root.join("model.mox")]),
+        None,
+    )
+    .await;
+
+    // ── Presence guards (fail BEFORE cargo check) ──
+    let impl_path = app_dir.join("src/domain/staff/worker/repository_impl.rs");
+    assert!(
+        impl_path.exists(),
+        "the dot fixture must emit the worker repository impl:\n{:?}",
+        app_dir.join("src/domain")
+    );
+    let impl_src = fs::read_to_string(&impl_path).unwrap();
+    assert!(
+        impl_src.contains("async fn fetch_deployment_position_for_worker("),
+        "the dot fetch method must be emitted for the allowed path:\n{impl_src}"
+    );
+    // The #789 fix: the SOURCE row loads by its own PK first.
+    assert!(
+        impl_src.contains("let source = crate::entity::staff_worker::Entity::find()"),
+        "the dot fetch must load the source row by its own PK:\n{impl_src}"
+    );
+    // …read the source's FK to the intermediate…
+    assert!(
+        impl_src.contains("source.deployment_id"),
+        "the source's FK to the intermediate must be read:\n{impl_src}"
+    );
+    // …and address the intermediate by that FK value.
+    assert!(
+        impl_src.contains("crate::entity::staff_deployment::Column::Id.eq(fk_value)"),
+        "the intermediate must load by the source's FK value:\n{impl_src}"
+    );
+    assert!(
+        !impl_src.contains("staff_deployment::Column::Id.eq(source_id)"),
+        "the intermediate must not be addressed by the source's PK (the \
+         #789 defect — every dot include answered empty):\n{impl_src}"
+    );
+
+    let ws = tree_root("dot-include").join("ws");
+    let impls = assemble_workspace(&app_dir, &domain_types_dir, &ws);
+    assert!(
+        impls >= 1,
+        "the dot fixture must emit at least one repository impl, got {impls}"
+    );
     cargo_check(&ws);
 }
