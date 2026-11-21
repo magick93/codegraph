@@ -469,12 +469,23 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    cross-tenant `source_id` yields no include, (e) a soft-deleted target (policy present)
    is excluded, (f) a soft-deleted source still hydrates (the `include_deleted` decision
    stays with the CRUD read).
-3. **wasm32 worker gate.** Add the flag to a workers-topology cornucopia fixture
-   (`worker_wasm_compile_tests`) so the adapter + wrapper compile natively AND on
-   `wasm32-unknown-unknown`. **Open question this must answer:** the wrapper is async and
-   `GenericClient`/`Transaction` must stay `Send` for the axum handler; the trait impl
-   already requires `C: GenericClient + Sync`, so the expectation is green, but the
-   plane has never been compiled for wasm with includes.
+3. **wasm32 worker gate — LANDED.** `worker_wasm_compile_tests` runs the
+   workers-topology cornucopia fixture with `codegen.cornucopia_include_hydration
+   = true` (the test writes its `ProjectConfig` directly — no `profiles.toml`;
+   the driver sets the same field from `feature_bool("cornucopia_include_hydration")`),
+   so the adapter + wrapper + handler call sites compile natively AND on
+   `wasm32-unknown-unknown` against the real worker `AppState`. Both implemented
+   shapes are covered: the reverse-FK collection (`PayRunLineType`'s config
+   `parent_ref` FK, `--!` hint `source_id?`) and a same-domain scalar
+   (`PayRunType.compensation`, cross-domain paths are dropped by the resolver
+   under workers). The stub `QUERIES_RS` carries the four `include_*` pairs and
+   the target's CRUD surface, pinned to the emitted `--!` names by the existing
+   `assert_stub_tripwire`; `assert_include_surface` pins the SQL ⇄ adapter ⇄
+   wrapper ⇄ handler wiring before the compile phases. **Answer to the open
+   question: green on native and wasm32** — the async wrappers stay `Send`
+   (`ClientSource` + `GenericClient`), so no emission change was owed. Teeth
+   re-validated by mutation: renaming a stub row field fails the wasm check
+   (E0308) at the emitted adapter.
 4. **Hurl include legs for cornucopia.** `sections_for_paths` already omits unsupported
    shapes and emits provable legs for supported ones. A reverse-FK collection is
    unconditionally provable (`included.<seg>` is `Some(vec)` — `[]` when empty), so the
@@ -551,7 +562,7 @@ Continue with this split, in this order:
    parse gate cannot;
 2. extend the runtime harness (real Postgres, two orgs, soft delete) — closes the RLS
    and soft-delete risks;
-3. add a flag-ON workers fixture to the wasm gate;
+3. add a flag-ON workers fixture to the wasm gate — **LANDED** (§6 item 3);
 4. ~~implement reverse-FK/array~~ — **LANDED** (§1.4): `SingleArray` + its SQL,
    adapter, wrapper, handler arm and KATs. The compile pin (item 1) must now stub the
    array query pair too — see the report's stub list.

@@ -41,6 +41,16 @@
 //! cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture
 //! ```
 //!
+//! The fixture runs with the preview `cornucopia_include_hydration` feature
+//! ON (issue #781 P1), so the cornucopia `?include=` plane — the include SQL,
+//! the adapter fetch methods, the session-owning query wrappers and the
+//! handler hydration call sites — compiles natively AND on wasm32. This is
+//! the gate the design record delegates the wasm question to: the wrappers are
+//! async and ride `GenericClient`/`Transaction`, and the worker `AppState`
+//! owns the query slots, so a `!Send` or object-safety regression in the
+//! include emission surfaces here rather than at a consumer's
+//! `wrangler dev`.
+//!
 //! Known gaps (documented deferrals, not regressions this fixture
 //! exercises): the events/webhook worker surfaces ride separate fixtures;
 //! `api/media_route.tera`'s sea_orm usage is unguarded and only bites
@@ -69,6 +79,14 @@ use test_framework::cornucopia_queries_stub;
 const ENTITY_TITLE: &str = "PayRunType";
 const DOMAIN: &str = "compensation";
 const TABLE: &str = "pay_run";
+/// The scalar `refers` target (issue #781 P1): a SAME-DOMAIN entity, because
+/// the include resolver drops cross-domain paths under the workers topology.
+/// `PayRunType.compensation` is the scalar include; `PayRunLineType.pay_run_id`
+/// (config `parent_ref`) is the reverse-FK collection.
+const SCALAR_TARGET_TITLE: &str = "CompensationType";
+const SCALAR_TARGET_TABLE: &str = "compensation";
+/// Every fixture table whose emitted SQL feeds the stub tripwire.
+const FIXTURE_TABLES: &[&str] = &[TABLE, "pay_run_line", SCALAR_TARGET_TABLE];
 const APP_NAME: &str = "compilecheck";
 const WORKER_CRATE: &str = "compilecheck-compensation";
 const GATEWAY_CRATE: &str = "compilecheck-gateway";
@@ -101,13 +119,15 @@ pub mod compensation {
             pub id: uuid::Uuid,
             pub name: String,
             pub notes: Option<String>,
+            /// Issue #781 P1: the scalar include FK (nullable `refers`).
+            pub compensation_id: Option<uuid::Uuid>,
             pub created_at: chrono::DateTime<chrono::Utc>,
             pub updated_at: chrono::DateTime<chrono::Utc>,
         }
 
         pub type ListPayRun = GetPayRun;
 
-        // --! create_pay_run (name, notes?) : (id)
+        // --! create_pay_run (name, notes?, compensation_id?) : (id)
         pub struct CreatePayRunStmt;
 
         pub fn create_pay_run() -> CreatePayRunStmt {
@@ -124,6 +144,7 @@ pub mod compensation {
                 _client: &'c C,
                 _name: &'a String,
                 _notes: &'a Option<String>,
+                _compensation_id: &'a Option<String>,
             ) -> CreatePayRunQuery<'c, 'a, 's, C> {
                 CreatePayRunQuery {
                     _marker: PhantomData,
@@ -267,8 +288,8 @@ pub mod compensation {
             }
         }
 
-        // --! update_pay_run (id, name?, notes?) — exec: SET params bind
-        // in SQL first-occurrence order, the trailing `&id` last.
+        // --! update_pay_run (id, name?, notes?, compensation_id?) — exec: SET
+        // params bind in SQL first-occurrence order, the trailing `&id` last.
         pub struct UpdatePayRunStmt;
 
         pub fn update_pay_run() -> UpdatePayRunStmt {
@@ -281,6 +302,7 @@ pub mod compensation {
                 _client: &'c C,
                 _name: &'a Option<String>,
                 _notes: &'a Option<String>,
+                _compensation_id: &'a Option<String>,
                 _id: &'a uuid::Uuid,
             ) -> Result<u64, Error> {
                 unreachable!("check stub never executes")
@@ -300,6 +322,170 @@ pub mod compensation {
                 _client: &'c C,
                 _id: &'a uuid::Uuid,
             ) -> Result<u64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // ── Issue #781 P1: the `?include=` hydration surface ──
+        //
+        // Both implemented shapes, each as the GET + LIST pair the emitted
+        // adapter calls. Row fields follow the emitted `--!` hints exactly:
+        // the reverse FK's `source_id` alias is OPTIONAL here because the
+        // child's FK column comes from the config `parent_ref`, not a schema
+        // property, so `fk_column_is_required` cannot prove it non-null.
+
+        // --! include_pay_run_line_for_pay_run (source_id) : (id, line_id, notes?, created_at, updated_at)
+        #[derive(Debug)]
+        pub struct IncludePayRunLineForPayRun {
+            pub id: uuid::Uuid,
+            pub line_id: String,
+            pub notes: Option<String>,
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
+        }
+
+        pub struct IncludePayRunLineForPayRunStmt;
+
+        pub fn include_pay_run_line_for_pay_run() -> IncludePayRunLineForPayRunStmt {
+            IncludePayRunLineForPayRunStmt
+        }
+
+        pub struct IncludePayRunLineForPayRunQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a uuid::Uuid, &'s ())>,
+        }
+
+        impl IncludePayRunLineForPayRunStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _source_id: &'a uuid::Uuid,
+            ) -> IncludePayRunLineForPayRunQuery<'c, 'a, 's, C> {
+                IncludePayRunLineForPayRunQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> IncludePayRunLineForPayRunQuery<'c, 'a, 's, C> {
+            pub async fn all(&self) -> Result<Vec<IncludePayRunLineForPayRun>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! include_pay_run_line_batch_for_pay_run (source_ids) : (source_id?, id, line_id, notes?, created_at, updated_at)
+        #[derive(Debug)]
+        pub struct IncludePayRunLineBatchForPayRun {
+            pub source_id: Option<uuid::Uuid>,
+            pub id: uuid::Uuid,
+            pub line_id: String,
+            pub notes: Option<String>,
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
+        }
+
+        pub struct IncludePayRunLineBatchForPayRunStmt;
+
+        pub fn include_pay_run_line_batch_for_pay_run() -> IncludePayRunLineBatchForPayRunStmt {
+            IncludePayRunLineBatchForPayRunStmt
+        }
+
+        pub struct IncludePayRunLineBatchForPayRunQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a [uuid::Uuid], &'s ())>,
+        }
+
+        impl IncludePayRunLineBatchForPayRunStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _source_ids: &'a [uuid::Uuid],
+            ) -> IncludePayRunLineBatchForPayRunQuery<'c, 'a, 's, C> {
+                IncludePayRunLineBatchForPayRunQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient>
+            IncludePayRunLineBatchForPayRunQuery<'c, 'a, 's, C>
+        {
+            pub async fn all(&self) -> Result<Vec<IncludePayRunLineBatchForPayRun>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! include_compensation_for_pay_run (source_id) : (id, name, created_at, updated_at)
+        #[derive(Debug)]
+        pub struct IncludeCompensationForPayRun {
+            pub id: uuid::Uuid,
+            pub name: String,
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
+        }
+
+        pub struct IncludeCompensationForPayRunStmt;
+
+        pub fn include_compensation_for_pay_run() -> IncludeCompensationForPayRunStmt {
+            IncludeCompensationForPayRunStmt
+        }
+
+        pub struct IncludeCompensationForPayRunQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a uuid::Uuid, &'s ())>,
+        }
+
+        impl IncludeCompensationForPayRunStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _source_id: &'a uuid::Uuid,
+            ) -> IncludeCompensationForPayRunQuery<'c, 'a, 's, C> {
+                IncludeCompensationForPayRunQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> IncludeCompensationForPayRunQuery<'c, 'a, 's, C> {
+            pub async fn all(&self) -> Result<Vec<IncludeCompensationForPayRun>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! include_compensation_batch_for_pay_run (source_ids) : (source_id, id, name, created_at, updated_at)
+        #[derive(Debug)]
+        pub struct IncludeCompensationBatchForPayRun {
+            pub source_id: uuid::Uuid,
+            pub id: uuid::Uuid,
+            pub name: String,
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
+        }
+
+        pub struct IncludeCompensationBatchForPayRunStmt;
+
+        pub fn include_compensation_batch_for_pay_run() -> IncludeCompensationBatchForPayRunStmt {
+            IncludeCompensationBatchForPayRunStmt
+        }
+
+        pub struct IncludeCompensationBatchForPayRunQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a [uuid::Uuid], &'s ())>,
+        }
+
+        impl IncludeCompensationBatchForPayRunStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _source_ids: &'a [uuid::Uuid],
+            ) -> IncludeCompensationBatchForPayRunQuery<'c, 'a, 's, C> {
+                IncludeCompensationBatchForPayRunQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient>
+            IncludeCompensationBatchForPayRunQuery<'c, 'a, 's, C>
+        {
+            pub async fn all(&self) -> Result<Vec<IncludeCompensationBatchForPayRun>, Error> {
                 unreachable!("check stub never executes")
             }
         }
@@ -528,6 +714,191 @@ pub mod compensation {
             }
         }
     }
+
+    /// Issue #781 P1: the SCALAR include target's own query module —
+    /// `PayRunType.compensation`'s target. Its CRUD surface is stubbed too
+    /// because the entity plane generates its repository (folding it into
+    /// the tripwire's exact-coverage contract).
+    pub mod compensation {
+        use crate::client::GenericClient;
+        use std::marker::PhantomData;
+
+        type Error = tokio_postgres::Error;
+
+        #[derive(Debug)]
+        pub struct GetCompensation {
+            pub id: uuid::Uuid,
+            pub name: String,
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
+        }
+
+        pub type ListCompensation = GetCompensation;
+
+        // --! create_compensation (name) : (id)
+        pub struct CreateCompensationStmt;
+
+        pub fn create_compensation() -> CreateCompensationStmt {
+            CreateCompensationStmt
+        }
+
+        pub struct CreateCompensationQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a String, &'s ())>,
+        }
+
+        impl CreateCompensationStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _name: &'a String,
+            ) -> CreateCompensationQuery<'c, 'a, 's, C> {
+                CreateCompensationQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> CreateCompensationQuery<'c, 'a, 's, C> {
+            pub async fn one(&self) -> Result<uuid::Uuid, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! get_compensation (id) : (id, name, created_at, updated_at)
+        pub struct GetCompensationStmt;
+
+        pub fn get_compensation() -> GetCompensationStmt {
+            GetCompensationStmt
+        }
+
+        pub fn get_compensation_including_deleted() -> GetCompensationStmt {
+            GetCompensationStmt
+        }
+
+        pub struct GetCompensationQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a uuid::Uuid, &'s ())>,
+        }
+
+        impl GetCompensationStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _id: &'a uuid::Uuid,
+            ) -> GetCompensationQuery<'c, 'a, 's, C> {
+                GetCompensationQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> GetCompensationQuery<'c, 'a, 's, C> {
+            pub async fn opt(&self) -> Result<Option<GetCompensation>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! list_compensation (offset, page_size) : (id, name, created_at, updated_at)
+        pub struct ListCompensationStmt;
+
+        pub fn list_compensation() -> ListCompensationStmt {
+            ListCompensationStmt
+        }
+
+        pub fn list_compensation_including_deleted() -> ListCompensationStmt {
+            ListCompensationStmt
+        }
+
+        pub struct ListCompensationQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a i64, &'s ())>,
+        }
+
+        impl ListCompensationStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _page_size: &'a i64,
+                _offset: &'a i64,
+            ) -> ListCompensationQuery<'c, 'a, 's, C> {
+                ListCompensationQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> ListCompensationQuery<'c, 'a, 's, C> {
+            pub async fn all(&self) -> Result<Vec<ListCompensation>, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! count_compensation : (count)
+        pub struct CountCompensationStmt;
+
+        pub fn count_compensation() -> CountCompensationStmt {
+            CountCompensationStmt
+        }
+
+        pub fn count_compensation_including_deleted() -> CountCompensationStmt {
+            CountCompensationStmt
+        }
+
+        pub struct CountCompensationQuery<'c, 'a, 's, C: GenericClient> {
+            _marker: PhantomData<(&'c C, &'a (), &'s ())>,
+        }
+
+        impl CountCompensationStmt {
+            pub fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+            ) -> CountCompensationQuery<'c, 'a, 's, C> {
+                CountCompensationQuery {
+                    _marker: PhantomData,
+                }
+            }
+        }
+
+        impl<'c, 'a, 's, C: GenericClient> CountCompensationQuery<'c, 'a, 's, C> {
+            pub async fn one(&self) -> Result<i64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! update_compensation (id, name?) — exec: SET params bind in SQL
+        // first-occurrence order, the trailing `&id` last.
+        pub struct UpdateCompensationStmt;
+
+        pub fn update_compensation() -> UpdateCompensationStmt {
+            UpdateCompensationStmt
+        }
+
+        impl UpdateCompensationStmt {
+            pub async fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _name: &'a Option<String>,
+                _id: &'a uuid::Uuid,
+            ) -> Result<u64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+
+        // --! delete_compensation (id) — exec
+        pub struct DeleteCompensationStmt;
+
+        pub fn delete_compensation() -> DeleteCompensationStmt {
+            DeleteCompensationStmt
+        }
+
+        impl DeleteCompensationStmt {
+            pub async fn bind<'c, 'a, 's, C: GenericClient>(
+                &'s self,
+                _client: &'c C,
+                _id: &'a uuid::Uuid,
+            ) -> Result<u64, Error> {
+                unreachable!("check stub never executes")
+            }
+        }
+    }
 }
 "#;
 
@@ -592,11 +963,11 @@ fn assert_check_red(label: &str, expected_marker: &str, outcome: &CheckOutcome) 
 }
 
 /// The annotation names in the emitted SQL — the stub function set is
-/// pinned to exactly this list (both directions). Both fixture entities'
-/// SQL files feed the union (the stub carries a module per entity).
+/// pinned to exactly this list (both directions). Every fixture entity's
+/// SQL file feeds the union (the stub carries a module per entity).
 fn emitted_query_fns(output: &Path) -> Vec<String> {
     let mut names = Vec::new();
-    for table in [TABLE, "pay_run_line"] {
+    for table in FIXTURE_TABLES {
         let sql_path = output
             .join("queries")
             .join(DOMAIN)
@@ -646,7 +1017,7 @@ fn stub_query_fns() -> Vec<String> {
 }
 
 /// The fixture's root entity schema (`pay_run`) — the push-covered entity
-/// with a required and a nullable text column.
+/// with a required and a nullable text column plus the scalar include FK.
 fn pay_run_schema() -> codegraph_core::types::SchemaNode {
     codegraph_core::types::SchemaNode {
         namespace: None,
@@ -713,6 +1084,79 @@ fn fixture_text_prop(name: &str, nullable: bool) -> codegraph_core::types::Prope
     }
 }
 
+/// A nullable scalar entity reference (`refers X[0..1]`) — the include
+/// plane's SingleScalar shape (issue #781 P1).
+fn fixture_ref_prop(
+    name: &str,
+    column: &str,
+    ref_target: &str,
+) -> codegraph_core::types::PropertyNode {
+    codegraph_core::types::PropertyNode {
+        is_id: false,
+        name: name.to_string(),
+        prop_type: "string".to_string(),
+        description: Some(name.to_string()),
+        format: Some("uuid".to_string()),
+        is_required: false,
+        is_nullable: true,
+        is_array: false,
+        min_items: None,
+        max_items: None,
+        pattern: None,
+        min_length: None,
+        max_length: None,
+        minimum: None,
+        maximum: None,
+        pg_column_name: column.to_string(),
+        pg_column_type: "UUID".to_string(),
+        rust_field_name: column.to_string(),
+        rust_field_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        render_strategy: "entity_reference".to_string(),
+        ref_target: Some(ref_target.to_string()),
+        classification: Some("entity_reference".to_string()),
+        classification_kind: None,
+        projection: None,
+        ui_override_detail: None,
+        ui_override_list_cell: None,
+        ui_override_form: None,
+        ui_override_inline: None,
+        type_expr: None,
+    }
+}
+
+/// The scalar include target (same domain — the workers topology drops
+/// cross-domain include paths, so this must live in `compensation`).
+fn compensation_schema() -> codegraph_core::types::SchemaNode {
+    codegraph_core::types::SchemaNode {
+        namespace: None,
+        schema_id: "compensation/json/CompensationType.json".to_string(),
+        title: SCALAR_TARGET_TITLE.to_string(),
+        description: Some("A compensation record".to_string()),
+        schema_type: "object".to_string(),
+        classification: "entity_reference".to_string(),
+        domain: Some(DOMAIN.to_string()),
+        rel_path: "compensation/json/CompensationType.json".to_string(),
+        pg_type: "UUID".to_string(),
+        rust_type: "Uuid".to_string(),
+        sea_orm_type: "Uuid".to_string(),
+        rust_type_name: "Compensation".to_string(),
+        pg_table_name: SCALAR_TARGET_TABLE.to_string(),
+        api_path_segment: "compensations".to_string(),
+        parent_schema: None,
+        is_entity: true,
+        is_codelist: false,
+        is_primitive_wrapper: false,
+        has_all_of: false,
+        has_one_of: false,
+        has_any_of: false,
+        has_definitions: true,
+        custom_annotations: Default::default(),
+        access: None,
+        annotations: None,
+    }
+}
+
 // WS4: the refers-linked CHILD entity — `role = "child"` config with a
 // synthetic parent FK (`parent_ref`), exercising the child service-op
 // plane's scoped load + nested routes under the workers topology.
@@ -747,19 +1191,40 @@ fn pay_run_line_schema() -> codegraph_core::types::SchemaNode {
 }
 
 fn fixture_mock() -> codegraph_core::mock::MockEngine {
+    let compensation = compensation_schema();
     let props = vec![
         fixture_text_prop("name", false),
         fixture_text_prop("notes", true),
+        // Issue #781 P1: the scalar include arm — `pay_run?include=compensation`.
+        fixture_ref_prop(
+            "compensation",
+            "compensation_id",
+            "compensation/json/CompensationType.json",
+        ),
     ];
     let line_props = vec![
         fixture_text_prop("line_id", false),
         fixture_text_prop("notes", true),
     ];
+    let scalar_props = vec![fixture_text_prop("name", false)];
     codegraph_core::mock::MockEngine::builder()
         .with_schema(pay_run_schema())
         .with_properties(ENTITY_TITLE, props)
+        .with_ref_target("compensation", ENTITY_TITLE, compensation.clone())
         .with_schema(pay_run_line_schema())
         .with_properties("PayRunLineType", line_props)
+        // The reverse-FK include arm — `pay_run?include=pay_run_line`. The
+        // FK column comes from the config `parent_ref` (the child schema
+        // carries no property for it), so the candidate is what makes the
+        // reverse relationship discoverable.
+        .with_parent_candidate(codegraph_core::types::ParentCandidate {
+            parent_title: ENTITY_TITLE.to_string(),
+            child_title: "PayRunLineType".to_string(),
+            field_name: "pay_run_id".to_string(),
+            source: codegraph_core::types::DetectionSource::ScalarRef,
+        })
+        .with_schema(compensation)
+        .with_properties(SCALAR_TARGET_TITLE, scalar_props)
         .build()
 }
 
@@ -1183,7 +1648,14 @@ operations = ["create", "read", "update", "delete", "list"]
 label = "Compensation"
 schema_dir = "compensation"
 postgres_schema = "compensation"
-entities = ["PayRunType", "PayRunLineType"]
+entities = ["PayRunType", "PayRunLineType", "CompensationType"]
+
+# Issue #781 P1: `root` + NO explicit `allow_include` ⇒ auto-discovery
+# resolves both include shapes (the scalar `compensation` ref and the
+# reverse-FK `pay_run_line` child). The resolver renders NO include surface
+# for an entity with no config entry, so the root entry is load-bearing.
+[domains.compensation.entity_config.PayRunType]
+role = "root"
 
 [domains.compensation.entity_config.PayRunLineType]
 role = "child"
@@ -1234,6 +1706,15 @@ fn worker_project_config(repo: &Path) -> codegraph::generate::ProjectConfig {
         },
         deployment: codegraph::generate::DeploymentConfig {
             deployment_topology: codegraph::profile::DeploymentTopology::Workers,
+        },
+        // Issue #781 P1: the cornucopia `?include=` hydration plane ON, so its
+        // SQL / adapter / query wrappers / handler call sites compile on
+        // native AND wasm32. The gate writes its `ProjectConfig` directly (no
+        // `profiles.toml`), so this field IS the feature switch — the driver's
+        // `feature_bool("cornucopia_include_hydration")` sets the same field.
+        codegen: codegraph::generate::CodegenConfig {
+            cornucopia_include_hydration: true,
+            ..Default::default()
         },
         integration: codegraph::generate::IntegrationFlags {
             has_extension_points: true,
@@ -1432,9 +1913,99 @@ fn assert_generated_surface(output_dir: &Path) {
         "domain-types/Cargo.toml",
         "queries/compensation/pay_run.sql",
         "queries/compensation/pay_run_line.sql",
+        "queries/compensation/compensation.sql",
+        // Issue #781 P1: the scalar include target's own entity module.
+        "workers/compensation/src/domain/compensation/compensation/dto_response.rs",
+        "workers/compensation/src/domain/compensation/compensation/cornucopia_repository_impl.rs",
     ] {
         let path = output_dir.join(required);
         assert!(path.exists(), "missing generated file: {}", path.display());
+    }
+}
+
+/// Issue #781 P1: the cornucopia `?include=` hydration plane must be WIRED
+/// into the worker tree before the compile phases mean anything — SQL,
+/// adapter, query wrappers and handler call sites are four files that have to
+/// agree on names and types. The compile is the arbiter of the types; these
+/// pins make a silently dropped shape name itself.
+///
+/// Both implemented shapes ride the fixture: the reverse-FK collection
+/// (`pay_run_line` — the child's config `parent_ref` FK) and the scalar FK
+/// (`compensation` — a same-domain `refers`, since the workers topology
+/// drops cross-domain includes).
+fn assert_include_surface(output_dir: &Path) {
+    let sql = fs::read_to_string(output_dir.join("queries").join(DOMAIN).join("pay_run.sql"))
+        .expect("pay_run query SQL emits");
+    for name in [
+        "include_pay_run_line_for_pay_run",
+        "include_pay_run_line_batch_for_pay_run",
+        "include_compensation_for_pay_run",
+        "include_compensation_batch_for_pay_run",
+    ] {
+        assert!(
+            sql.contains(&format!("--! {name} ")),
+            "the worker's include SQL must carry `--! {name}`:\n{sql}"
+        );
+    }
+
+    let worker_src = output_dir.join("workers").join(DOMAIN).join("src");
+    let adapter = fs::read_to_string(
+        worker_src.join("domain/compensation/pay_run/cornucopia_repository_impl.rs"),
+    )
+    .expect("pay_run cornucopia repository emits");
+    for call in [
+        "pay_run::include_pay_run_line_for_pay_run()",
+        "pay_run::include_pay_run_line_batch_for_pay_run()",
+        "pay_run::include_compensation_for_pay_run()",
+        "pay_run::include_compensation_batch_for_pay_run()",
+    ] {
+        assert!(
+            adapter.contains(call),
+            "the include adapter must call `{call}`:\n{adapter}"
+        );
+    }
+
+    let queries = fs::read_to_string(worker_src.join("domain/compensation/pay_run/query.rs"))
+        .expect("pay_run query handler emits");
+    for method in [
+        "fetch_pay_run_line_for_pay_run",
+        "fetch_pay_run_line_batch_for_pay_run",
+        "fetch_compensation_for_pay_run",
+        "fetch_compensation_batch_for_pay_run",
+    ] {
+        assert!(
+            queries.contains(&format!("pub async fn {method}(")),
+            "the worker query handler must carry `{method}`:\n{queries}"
+        );
+    }
+    for shape in [
+        "Result<Vec<PayRunLineResponse>, CompensationError>",
+        "Result<std::collections::HashMap<Uuid, Vec<PayRunLineResponse>>, CompensationError>",
+        "Result<Option<CompensationResponse>, CompensationError>",
+        "Result<std::collections::HashMap<Uuid, Option<CompensationResponse>>, CompensationError>",
+    ] {
+        assert!(
+            queries.contains(shape),
+            "the include wrapper's return shape `{shape}` must emit:\n{queries}"
+        );
+    }
+    assert!(
+        queries.contains("set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role)"),
+        "every include wrapper must own the RLS session bundle:\n{queries}"
+    );
+
+    let handler = fs::read_to_string(worker_src.join(format!("api/{DOMAIN}/pay_run_handler.rs")))
+        .expect("pay_run handler emits");
+    for call in [
+        "included.pay_run_line = Some(state.compensation_pay_run_queries.fetch_pay_run_line_for_pay_run(id,",
+        "included.compensation = state.compensation_pay_run_queries.fetch_compensation_for_pay_run(id,",
+        "fetch_pay_run_line_batch_for_pay_run(&ids,",
+        "fetch_compensation_batch_for_pay_run(&ids,",
+    ] {
+        assert!(
+            handler.contains(call),
+            "the worker handler must hydrate `{call}`:\n{handler}"
+        );
     }
 }
 
@@ -1525,6 +2096,7 @@ async fn generated_worker_wasm_check_is_in_ci() {
     );
 
     assert_generated_surface(&output_dir);
+    assert_include_surface(&output_dir);
 
     let worker_src = output_dir.join("workers").join(DOMAIN).join("src");
 
