@@ -106,7 +106,23 @@ fn root_base() -> Value {
     ctx["read_guarded"] = json!(false);
     ctx["update_guarded"] = json!(false);
     ctx["delete_guarded"] = json!(false);
+    attach_path_extractors(&mut ctx, "root", 0, "task_id");
     ctx
+}
+
+/// Mirror `HandlerContext`'s pre-rendered `Path(…)` bindings: the real
+/// generator derives them from (role, ancestor_path_params, param_name) via
+/// `path_extractors`, so the matrix feeds the same derivation instead of
+/// re-spelling the whitespace-exact bytes (the helper's shapes are pinned by
+/// its own unit tests).
+fn attach_path_extractors(ctx: &mut Value, role: &str, depth: usize, param_name: &str) {
+    let extractors = codegraph::generate::api::handler::path_extractors(role, depth, param_name);
+    ctx["path_extractor_item"] = json!(extractors.item);
+    ctx["path_extractor_item_named"] = json!(extractors.item_named);
+    ctx["path_extractor_collection"] = json!(extractors.collection);
+    ctx["path_extractor_collection_unused"] = json!(extractors.collection_unused);
+    ctx["path_extractor_item_unused_parent"] = json!(extractors.item_unused_parent);
+    ctx["path_extractor_child_op_add"] = json!(extractors.child_op_add);
 }
 
 fn full_crud(ctx: &mut Value) {
@@ -133,6 +149,7 @@ fn child_base() -> Value {
     ctx["parent_module_name"] = json!("task");
     ctx["parent_param_name"] = json!("task_id");
     ctx["ancestor_path_params"] = json!(1);
+    attach_path_extractors(&mut ctx, "child", 1, "task_note_id");
     ctx
 }
 
@@ -154,6 +171,7 @@ fn grandchild_base() -> Value {
     ctx["grandparent_param_name"] = json!("task_id");
     ctx["grandparent_path_segment"] = json!("tasks");
     ctx["ancestor_path_params"] = json!(2);
+    attach_path_extractors(&mut ctx, "child", 2, "task_note_revision_id");
     ctx
 }
 

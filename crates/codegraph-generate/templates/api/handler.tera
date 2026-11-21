@@ -163,13 +163,7 @@ pub async fn create(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,
-{% else %}
-    Path(parent_id): Path<Uuid>,
-{% endif %}
-{% endif %}
+{{ path_extractor_collection }}
     CreateBody(body): CreateBody,
 ) -> Result<axum::response::Response, AppError> {
     use axum::response::IntoResponse;
@@ -293,15 +287,7 @@ pub async fn get_by_id(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-{% else %}
-    Path((parent_id, id)): Path<(Uuid, Uuid)>,
-{% endif %}
-{% else %}
-    Path(id): Path<Uuid>,
-{% endif %}
+{{ path_extractor_item }}
 {% if has_include %}
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
 {% endif %}
@@ -437,15 +423,7 @@ pub async fn update(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-{% else %}
-    Path((parent_id, id)): Path<(Uuid, Uuid)>,
-{% endif %}
-{% else %}
-    Path(id): Path<Uuid>,
-{% endif %}
+{{ path_extractor_item }}
     JsonPathBody(body): JsonPathBody<Update{{ entity_name }}Request>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
@@ -519,15 +497,7 @@ pub async fn delete(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-{% else %}
-    Path((parent_id, id)): Path<(Uuid, Uuid)>,
-{% endif %}
-{% else %}
-    Path(id): Path<Uuid>,
-{% endif %}
+{{ path_extractor_item }}
 ) -> Result<StatusCode, AppError> {
     let correlation_id = extract_correlation_id(&headers);
 {% if role == "child" %}
@@ -652,13 +622,7 @@ pub async fn list(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,
-{% else %}
-    Path(parent_id): Path<Uuid>,
-{% endif %}
-{% endif %}
+{{ path_extractor_collection }}
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<ListParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
@@ -815,13 +779,7 @@ pub async fn search(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, _parent_id)): Path<(Uuid, Uuid)>,
-{% else %}
-    Path(_parent_id): Path<Uuid>,
-{% endif %}
-{% endif %}
+{{ path_extractor_collection_unused }}
     crate::qs_query::QsQuery(params): crate::qs_query::QsQuery<SearchParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
@@ -921,15 +879,7 @@ pub async fn tree(
     State(state): State<AppState>,
     Extension(api_key_info): Extension<ApiKeyInfo>,
     headers: HeaderMap,
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,
-{% else %}
-    Path((_parent_id, id)): Path<(Uuid, Uuid)>,
-{% endif %}
-{% else %}
-    Path(id): Path<Uuid>,
-{% endif %}
+{{ path_extractor_item_unused_parent }}
     axum::extract::Query(params): axum::extract::Query<TreeParams>,
 ) -> Result<Json<Vec<{% if tree_include %}serde_json::Value{% else %}{{ entity_name }}Response{% endif %}>>, AppError> {
     let correlation_id = extract_correlation_id(&headers);
@@ -1176,32 +1126,16 @@ pub async fn {{ op.fn_name }}(
     body: Option<Json<serde_json::Value>>,
 {% elif op.execution.kind == "child_op" and op.execution.action == "add" %}
 {% if op.execution.payload %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,
-{% else %}
-    Path(parent_id): Path<Uuid>,
-{% endif %}
+{{ path_extractor_child_op_add }}
     body: Option<Json<serde_json::Value>>,
 {% else %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,
-{% else %}
-    Path(parent_id): Path<Uuid>,
-{% endif %}
+{{ path_extractor_child_op_add }}
     CreateBody(body): CreateBody,
 {% endif %}
 {% elif op.execution.kind == "projection_read" and op.execution.plan.collection %}
     body: Option<Json<serde_json::Value>>,
 {% else %}
-{% if role == "child" %}
-{% if ancestor_path_params >= 2 %}
-    Path((_grandparent_id, parent_id, {{ param_name }})): Path<(Uuid, Uuid, Uuid)>,
-{% else %}
-    Path((parent_id, {{ param_name }})): Path<(Uuid, Uuid)>,
-{% endif %}
-{% else %}
-    Path({{ param_name }}): Path<Uuid>,
-{% endif %}
+{{ path_extractor_item_named }}
     body: Option<Json<serde_json::Value>>,
 {% endif %}
 ) -> Result<axum::response::Response, AppError> {

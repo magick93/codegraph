@@ -128,6 +128,130 @@ pub fn included_default_fields(include_paths: &[ResolvedIncludePath]) -> Vec<Str
         .collect()
 }
 
+/// Pre-rendered `axum::extract::Path` parameter bindings (issue #778 wave 1 /
+/// T1.3).
+///
+/// Each string is the EXACT rendered bytes of the role/depth conditional block
+/// it replaces — INCLUDING the blank lines those control-tag lines emitted —
+/// so splicing it onto its own template line keeps the surrounding parameter
+/// list byte-identical. A shape with no binding at all (a root collection
+/// endpoint: `create`/`list`/`search`) is the empty string, so the template
+/// splices nothing and the site keeps its single blank line.
+///
+/// The whitespace convention is therefore: non-root shapes render one blank
+/// line per removed control-tag line before the binding (two, for a shape
+/// nested inside an outer `role` + inner `depth` pair) plus the binding line
+/// itself; an item shape binds at root too (one leading blank line), while a
+/// collection shape never does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PathExtractors {
+    /// Item routes binding the record `id`: `get_by_id`, `update`, `delete`.
+    pub item: String,
+    /// Item routes binding the entity's own path parameter (the service-op
+    /// handlers, `{Entity}` path params substituted).
+    pub item_named: String,
+    /// Collection routes binding the parent id: `create`, `list`.
+    pub collection: String,
+    /// Collection routes that ignore the parent id: `search`.
+    pub collection_unused: String,
+    /// Item routes whose parent id is unused: `tree`.
+    pub item_unused_parent: String,
+    /// The child-op `add` arm's collection extractor. It sits one nesting
+    /// level deeper than [`Self::collection`] (inside the operation's
+    /// payload/kind branch), whose own control tags already emit the leading
+    /// blank line, so this segment carries exactly one fewer.
+    pub child_op_add: String,
+}
+
+/// Build the handler's pre-rendered `Path(…)` bindings for `role` (the config
+/// topology role), `depth` (`ancestor_path_params`: 0 root, 1 child,
+/// 2+ grandchild) and the entity's `param_name`.
+pub fn path_extractors(role: &str, depth: usize, param_name: &str) -> PathExtractors {
+    let child = role == "child";
+    let grandchild = child && depth >= 2;
+
+    // One binding line, 4-space indent + trailing newline.
+    let line = |names: &str, ty: &str| format!("    Path({names}): Path<{ty}>,\n");
+
+    let item_line = if grandchild {
+        line("(_grandparent_id, parent_id, id)", "(Uuid, Uuid, Uuid)")
+    } else if child {
+        line("(parent_id, id)", "(Uuid, Uuid)")
+    } else {
+        line("id", "Uuid")
+    };
+    let named_line = if grandchild {
+        line(
+            &format!("(_grandparent_id, parent_id, {param_name})"),
+            "(Uuid, Uuid, Uuid)",
+        )
+    } else if child {
+        line(&format!("(parent_id, {param_name})"), "(Uuid, Uuid)")
+    } else {
+        line(param_name, "Uuid")
+    };
+    let collection_line = if grandchild {
+        line("(_grandparent_id, parent_id)", "(Uuid, Uuid)")
+    } else {
+        line("parent_id", "Uuid")
+    };
+    let collection_unused_line = if grandchild {
+        line("(_grandparent_id, _parent_id)", "(Uuid, Uuid)")
+    } else {
+        line("_parent_id", "Uuid")
+    };
+    let item_unused_parent_line = if grandchild {
+        line("(_grandparent_id, _parent_id, id)", "(Uuid, Uuid, Uuid)")
+    } else if child {
+        line("(_parent_id, id)", "(Uuid, Uuid)")
+    } else {
+        line("id", "Uuid")
+    };
+
+    // A shape nested inside the outer `role` if AND the inner `depth` if
+    // renders two leading blank lines (one per removed tag line) and the
+    // inner `{% endif %}` line's trailing blank; a root item shape renders
+    // one leading blank line only.
+    let nested = |binding: String| format!("\n\n{binding}\n");
+    let item_root = |binding: String| format!("\n{binding}");
+
+    PathExtractors {
+        item: if child {
+            nested(item_line)
+        } else {
+            item_root(item_line)
+        },
+        item_named: if child {
+            nested(named_line)
+        } else {
+            item_root(named_line)
+        },
+        // Root collection endpoints have no parent binding at all.
+        collection: if child {
+            nested(collection_line.clone())
+        } else {
+            String::new()
+        },
+        collection_unused: if child {
+            nested(collection_unused_line)
+        } else {
+            String::new()
+        },
+        item_unused_parent: if child {
+            nested(item_unused_parent_line)
+        } else {
+            item_root(item_unused_parent_line)
+        },
+        // The child-op `add` arm's own control tags supply the outer blank
+        // line; only the inner tag line's blank plus the binding remain.
+        child_op_add: if child {
+            item_root(collection_line)
+        } else {
+            String::new()
+        },
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct HandlerContext {
     pub entity_name: String,
@@ -158,6 +282,18 @@ pub struct HandlerContext {
     pub grandparent_param_name: Option<String>,
     /// Path segment for the grandparent entity (depth-2 children only, e.g. `"workers"`).
     pub grandparent_path_segment: Option<String>,
+    /// Pre-rendered `axum::extract::Path` parameter bindings (issue #778 wave
+    /// 1), derived once from [`Self::role`],
+    /// [`Self::ancestor_path_params`] and [`Self::param_name`] by
+    /// [`path_extractors`]. Each string is whitespace-exact — see
+    /// [`PathExtractors`] for the convention — and EMPTY where the shape has
+    /// no binding (root collection endpoints).
+    pub path_extractor_item: String,
+    pub path_extractor_item_named: String,
+    pub path_extractor_collection: String,
+    pub path_extractor_collection_unused: String,
+    pub path_extractor_item_unused_parent: String,
+    pub path_extractor_child_op_add: String,
     /// Domain of the grandparent entity (depth-2 children only).
     /// Skipped when None: tera 2's `default` only fires on undefined keys.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -678,10 +814,12 @@ impl EntityGenerator for HandlerGenerator {
             .unwrap_or_else(|| guard_blocks.update_ownership_prefix.clone());
 
         // Template decisions resolved in Rust (issue #778 wave 1): the guard
-        // presence flags the utoipa 403 docs read, and the `?include=`
-        // initialiser's deduped field list.
+        // presence flags the utoipa 403 docs read, the `?include=`
+        // initialiser's deduped field list, and the `Path(…)` parameter
+        // bindings (derived from the resolved topology + path parameter).
         let guard_presence = GuardPresence::from_guards(&eligibility_guards);
         let included_default_fields = included_default_fields(&include_paths);
+        let path_extractors = path_extractors(&topo.role, ancestor_path_params, &param_name);
 
         // `?include=` hydration blocks (issue #778 wave 2): the provider
         // decision and the rendered hydration lines live in Rust, so the
@@ -725,6 +863,12 @@ impl EntityGenerator for HandlerGenerator {
             grandparent_param_name,
             grandparent_path_segment,
             grandparent_domain,
+            path_extractor_item: path_extractors.item,
+            path_extractor_item_named: path_extractors.item_named,
+            path_extractor_collection: path_extractors.collection,
+            path_extractor_collection_unused: path_extractors.collection_unused,
+            path_extractor_item_unused_parent: path_extractors.item_unused_parent,
+            path_extractor_child_op_add: path_extractors.child_op_add,
             children: topo.children,
             cross_refs: topo.cross_refs,
             status_field,
@@ -1383,7 +1527,10 @@ mod ux_sort_handler_template_tests {
     use super::*;
     use serde_json::json;
 
+    /// Bare context is a ROOT read+list handler, so its pre-rendered `Path(…)`
+    /// bindings are the root shapes (see [`path_extractors`]).
     fn base_ctx(ux_sort_fields: Vec<&str>) -> serde_json::Value {
+        let extractors = path_extractors("root", 0, "task_id");
         json!({
             "entity_name": "Task",
             "module_name": "task",
@@ -1398,6 +1545,12 @@ mod ux_sort_handler_template_tests {
             "has_list": true,
             "role": "root",
             "param_name": "task_id",
+            "path_extractor_item": extractors.item,
+            "path_extractor_item_named": extractors.item_named,
+            "path_extractor_collection": extractors.collection,
+            "path_extractor_collection_unused": extractors.collection_unused,
+            "path_extractor_item_unused_parent": extractors.item_unused_parent,
+            "path_extractor_child_op_add": extractors.child_op_add,
             "children": [],
             "cross_refs": [],
             "status_field": null,
@@ -1665,5 +1818,112 @@ mod template_decisions_tests {
             ..include_path("broken", &["task"])
         };
         assert!(included_default_fields(&[no_segments]).is_empty());
+    }
+
+    // ── Pre-rendered `Path(…)` bindings (T1.3) ─────────────────────────
+
+    /// The exact strings the template's removed conditional blocks produced,
+    /// trailing blank lines included (the oracle pins the rendered bytes; these
+    /// pin the derivation).
+    #[test]
+    fn path_extractors_item_shape_per_depth() {
+        let root = path_extractors("root", 0, "task_id");
+        assert_eq!(root.item, "\n    Path(id): Path<Uuid>,\n");
+
+        let child = path_extractors("child", 1, "note_id");
+        assert_eq!(
+            child.item,
+            "\n\n    Path((parent_id, id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+
+        let grandchild = path_extractors("child", 2, "revision_id");
+        assert_eq!(
+            grandchild.item,
+            "\n\n    Path((_grandparent_id, parent_id, id)): Path<(Uuid, Uuid, Uuid)>,\n\n"
+        );
+
+        // A non-`child` role takes the root branch, exactly like the template.
+        assert_eq!(
+            path_extractors("value_object", 2, "task_id").item,
+            root.item
+        );
+    }
+
+    #[test]
+    fn path_extractors_named_item_substitutes_the_path_parameter() {
+        assert_eq!(
+            path_extractors("root", 0, "task_id").item_named,
+            "\n    Path(task_id): Path<Uuid>,\n"
+        );
+        assert_eq!(
+            path_extractors("child", 1, "task_note_id").item_named,
+            "\n\n    Path((parent_id, task_note_id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_revision_id").item_named,
+            "\n\n    Path((_grandparent_id, parent_id, task_note_revision_id)): Path<(Uuid, Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_collection_is_empty_at_root() {
+        // Root collection endpoints (`create`/`list`) bind no path at all, so
+        // the template splices nothing and keeps its single blank line.
+        let root = path_extractors("root", 0, "task_id");
+        assert_eq!(root.collection, "");
+        assert_eq!(root.collection_unused, "");
+
+        let child = path_extractors("child", 1, "task_note_id");
+        assert_eq!(child.collection, "\n\n    Path(parent_id): Path<Uuid>,\n\n");
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").collection,
+            "\n\n    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_collection_unused_per_depth() {
+        let child = path_extractors("child", 1, "task_note_id");
+        assert_eq!(
+            child.collection_unused,
+            "\n\n    Path(_parent_id): Path<Uuid>,\n\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").collection_unused,
+            "\n\n    Path((_grandparent_id, _parent_id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_item_unused_parent_per_depth() {
+        assert_eq!(
+            path_extractors("root", 0, "task_id").item_unused_parent,
+            "\n    Path(id): Path<Uuid>,\n"
+        );
+        assert_eq!(
+            path_extractors("child", 1, "task_note_id").item_unused_parent,
+            "\n\n    Path((_parent_id, id)): Path<(Uuid, Uuid)>,\n\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").item_unused_parent,
+            "\n\n    Path((_grandparent_id, _parent_id, id)): Path<(Uuid, Uuid, Uuid)>,\n\n"
+        );
+    }
+
+    #[test]
+    fn path_extractors_child_op_add_carries_one_fewer_blank_line() {
+        // The child-op `add` arm sits one nesting level deeper, so its own
+        // control tags emit the outer blank line: the segment carries one
+        // leading blank line, not two.
+        assert_eq!(
+            path_extractors("child", 1, "task_note_id").child_op_add,
+            "\n    Path(parent_id): Path<Uuid>,\n"
+        );
+        assert_eq!(
+            path_extractors("child", 2, "task_note_id").child_op_add,
+            "\n    Path((_grandparent_id, parent_id)): Path<(Uuid, Uuid)>,\n"
+        );
+        // Never emitted for a root entity (the op plane nests the arm).
+        assert_eq!(path_extractors("root", 0, "task_id").child_op_add, "");
     }
 }
