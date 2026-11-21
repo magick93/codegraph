@@ -58,7 +58,7 @@ taxonomy is therefore:
 | Shape | `ResolvedIncludePath` discriminant | PoC |
 |---|---|---|
 | scalar FK on the source | `segments.len() == 1`, `!is_array`, no override | **implemented** |
-| reverse FK on the target (one-to-many) | `segments.len() == 1`, `is_array` | deferred |
+| reverse FK on the target (one-to-many) | `segments.len() == 1`, `is_array` | **implemented** (§1.4) |
 | VO→entity child table | `segments[0].child_table_override.is_some()` | deferred |
 | dot-notation (target's child) | `segments.len() > 1` | deferred |
 
@@ -119,15 +119,65 @@ JOIN "shop"."customer" AS "t" ON "t"."id" = "src"."target_id";
 * Sources with a NULL FK simply produce no target row; the adapter pre-seeds every
   requested id with `None`.
 
-### 1.4 Deferred shapes (the SQL is designed, not emitted)
+### 1.4 Single-segment array / reverse FK — LANDED (the second shape)
 
-* **Reverse FK / array.** Single: `SELECT <target cols> FROM {target} WHERE
-  "{reverse_fk}" = :source_id [AND marker IS NULL]`; batch: `... WHERE
-  "{reverse_fk}" = ANY(:source_ids::uuid[])` then group by `row.{reverse_fk}` in Rust
-  into `HashMap<Uuid, Vec<{Target}Response>>`. The column is already on the path
-  (`IncludeSegment::reverse_fk_column` / `reverse_fk_is_required`), and the
-  `reverse_fk_is_required` flag decides whether the group key needs the `Option` match
-  the SeaORM batch emits (`let key = match row.{fk} { Some(v) => v, None => continue }`).
+The reverse (one-to-many) shape landed as `CornucopiaIncludeShape::SingleArray`.
+The predicate is the TARGET's own FK column — no source subquery, no JOIN (the
+target table alone carries every selected column):
+
+```sql
+--! include_deployment_for_customer (source_id) : (id, customer_id?, reference, …)
+--- Eager-load the `deployment` collection for one customer row through the target's reverse FK (issue #781 P1).
+SELECT "id", "customer_id", "reference", "total", "created_at", "updated_at"
+FROM "shop"."deployment"
+WHERE "customer_id" = :source_id;                                  -- + AND marker IS NULL
+
+--! include_deployment_batch_for_customer (source_ids) : (source_id?, id, customer_id?, reference, …)
+--- Eager-load the `deployment` collection for many customer rows, grouped by the target's reverse FK (issue #781 P1).
+SELECT "customer_id" AS "source_id", "id", "customer_id", "reference", "total", "created_at", "updated_at"
+FROM "shop"."deployment"
+WHERE "customer_id" = ANY(:source_ids::uuid[]);                    -- + AND marker IS NULL
+```
+
+Deliberate choices:
+
+* **The reverse FK is selected FIRST under the fixed alias `"source_id"`** in
+  the batch query, so the adapter groups by `row.source_id` exactly like the
+  scalar batch. This is a deliberate strengthening of the design sketch's
+  `row.{reverse_fk}`: a config-declared child's `parent_ref` column is exempt
+  from the resolver's property gate (`resolve_child_fk_column`), so it need NOT
+  appear in the target's schema properties — and therefore need not be in
+  `direct_columns`/`row_col_list`. Selecting it explicitly makes the key column
+  always present; the predicate column must exist physically or the query
+  itself is invalid.
+* **`reverse_fk_is_required` decides the key type.** Required ⇒ the selected
+  alias hints `source_id` and types as `Uuid` (`let key = row.source_id;`); optional ⇒
+  the hint is `source_id?`, the field types as `Option<Uuid>`
+  (`let key = match row.source_id { Some(v) => v, None => continue }`).
+  `= ANY(...)` never matches NULL, so the `None` arm is unreachable by
+  construction but the row field type demands it.
+* **No `ORDER BY`.** The SeaORM include fetch (`Entity::find().all(db)`) has no
+  explicit order either; ordering parity is deliberate rather than a new
+  behavioural difference between providers.
+* **No `LIMIT`** — a collection is the whole matching set.
+* **Soft delete** is the target tree's `soft_delete_column`, `AND`-ed onto the
+  reverse-FK predicate in both queries (the scalar batch frees its `WHERE` for
+  the marker; here the FK predicate owns it).
+* **GET returns `Vec<{Target}Response>`** (the handler assigns
+  `included.<seg> = Some(fetch…)?`; the DTO field is `Option<Vec<…>>`, and an
+  empty vec is still a present `[]`), **LIST returns
+  `HashMap<Uuid, Vec<{Target}Response>>`** seeded with an empty vec per
+  requested id — the SeaORM array-batch contract, so the `included` envelope
+  serialises identically for both providers.
+* **Resolution note.** The resolver only derives `is_array` for the reverse
+  direction in AUTO-discovery (a parent candidate whose child holds a scalar
+  reference). An explicit `allow_include` entry derives `is_array` from a
+  SOURCE-side array property, which a scalar child reference never has — so a
+  reverse include is configured with `role = "root"` + no explicit
+  `allow_include`, not by listing the child.
+
+### 1.5 Still deferred shapes (the SQL is designed, not emitted)
+
 * **Junction arrays.** Not reachable: the resolver drops them.
 * **Dot notation.** Per the SeaORM emitter, the combined response is the FIRST
   segment's row plus a merged leaf field (`DeploymentCombinedResponse`). The SQL shape is
@@ -143,7 +193,7 @@ JOIN "shop"."customer" AS "t" ON "t"."id" = "src"."target_id";
   `IncludeSegment::child_table_override`, needs the VO child tree rather than the entity
   tree.
 
-### 1.5 Tenancy / RLS — where the session vars are set
+### 1.6 Tenancy / RLS — where the session vars are set
 
 **In the query handler, not in the adapter and not in the HTTP handler.** The generated
 cornucopia query handler (`templates/ddd/query.tera`) owns the provider's session story:
@@ -213,6 +263,15 @@ impl WorkOrderRepositoryImpl {
     pub async fn fetch_customer_batch_for_work_order<C: GenericClient + Sync>(
         &self, db: &C, source_ids: &[Uuid],
     ) -> Result<std::collections::HashMap<Uuid, Option<CustomerResponse>>, Box<dyn std::error::Error>> { … }
+
+    // Reverse-FK (array) shape: the whole collection on GET, grouped on LIST.
+    pub async fn fetch_work_order_for_customer<C: GenericClient + Sync>(
+        &self, db: &C, source_id: Uuid,
+    ) -> Result<Vec<WorkOrderResponse>, Box<dyn std::error::Error>> { … }
+
+    pub async fn fetch_work_order_batch_for_customer<C: GenericClient + Sync>(
+        &self, db: &C, source_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderResponse>>, Box<dyn std::error::Error>> { … }
 }
 ```
 
@@ -226,6 +285,10 @@ impl WorkOrderRepositoryImpl {
   `result.insert(row.source_id, Some(resp))` per row — identical to the SeaORM
   `HashMap<Uuid, Option<T>>` contract, so `serde_json::to_value` in the LIST block yields
   the same JSON for both providers.
+* Array keying: seed `result.entry(*id).or_insert_with(Vec::new)` per requested id,
+  then `let key = row.source_id;` (required reverse FK) or
+  `let key = match row.source_id { Some(v) => v, None => continue };` (nullable) and
+  `result.entry(key).or_default().push(resp)` — the SeaORM array-batch contract.
 * A self-referencing include (target module == source module) works: the target tree is
   re-resolved from the same title and the imports are skipped (the header already
   carries them).
@@ -238,6 +301,9 @@ impl WorkOrderRepositoryImpl {
 tree handler's query-layer call shape.
 
 ### GET (`render_get_cornucopia`)
+
+The scalar shape assigns the fetched value directly; the reverse-FK shape
+wraps the returned `Vec` in `Some(…)` (the DTO field is `Option<Vec<…>>`).
 
 ```rust
 for path in &include_paths {
@@ -264,6 +330,12 @@ for path in &include_paths {
                     AppError::from_domain_error(e.http_status(), e.to_string(), "Failed to include customer")
                         .with_correlation_id(correlation_id)
                 })?;
+        }
+        "work_order" => {
+            // Reverse-FK collection: `Some(vec)` — an empty vec is still `[]`.
+            included.work_order = Some(state.shop_customer_queries
+                .fetch_work_order_for_customer(id, api_key_info.api_key_id, …).await
+                .map_err(|e: ShopError| { … })?);
         }
         _ => {}
     }
@@ -326,7 +398,7 @@ pub enum IncludeSupport {
 
 pub enum IncludePathSupport { Supported, Unsupported { reason: String } }
 
-pub enum CornucopiaIncludeShape { SingleScalar }
+pub enum CornucopiaIncludeShape { SingleScalar, SingleArray }
 
 impl IncludeSupport {
     pub fn path_support(&self, path: &ResolvedIncludePath) -> IncludePathSupport;
@@ -341,7 +413,8 @@ implement and **names the construct** otherwise:
 | Path shape | Verdict | Reason text (in the 501) |
 |---|---|---|
 | 1 segment, `!is_array`, no child-table override | `SingleScalar` | — |
-| 1 segment, `is_array` | unsupported | "array / reverse-FK includes are not implemented on the cornucopia SQL-first plane yet" |
+| 1 segment, `is_array`, resolvable reverse FK | `SingleArray` | — |
+| 1 segment, `is_array`, no reverse FK (defensive) | unsupported | "array / reverse-FK include carries no back-FK column to scan the target by" |
 | `child_table_override` | unsupported | "VO→entity child-table includes are not implemented …" |
 | >1 segment | unsupported | "dot-notation includes (a target's child) are not implemented …" |
 | 0 segments (defensive) | unsupported | "the path resolves to no segment" |
@@ -367,8 +440,8 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
 
 | Gate | Covers |
 |---|---|
-| `cargo test -p codegraph-generate --lib -- api include_plan cornucopia` | 21 include-plan KATs (incl. 7 new cornucopia ones: flag-off P0, flag-on per-path support, classifier reasons, GET block bytes, LIST block bytes, all-unsupported, doc line) · 4 SQL KATs (`db::cornucopia_queries::include_query_tests`: correlated-subquery shape, batch keying/qualification, append-only/aliases, text casts) · 3 adapter KATs (`ddd::cornucopia_repo_include::include_adapter_tests`: query calls + batch keying, imports, self-target) · 1 hurl KAT (per-path omission) |
-| `cargo test -p codegraph --test cornucopia_include_tests` | The **wiring pin**: one mox fixture, two profiles (flag ON / OFF) through `driver::run`. ON asserts the SQL pair, the inherent adapter methods + imports, the query wrappers + `set_rls_session_vars`, the handler hydration calls, the per-path 501 for `customer.org`, and `syn`-parses four emitted files. OFF asserts no include SQL / adapter / wrappers and the P0 guarded 501. |
+| `cargo test -p codegraph-generate --lib -- api include_plan cornucopia` | 21 include-plan KATs (incl. the cornucopia ones: flag-off P0, flag-on per-path support, classifier reasons + both accepted shapes, GET block bytes incl. the `Some(collection)` arm, LIST block bytes, all-unsupported, doc line) · 7 SQL KATs (`db::cornucopia_queries::include_query_tests`: correlated-subquery shape, batch keying/qualification, append-only/aliases, text casts, reverse-FK single predicate, reverse-FK batch keying + `uuid[]` cast, array append-only/marker-free arm) · 5 adapter KATs (`ddd::cornucopia_repo_include::include_adapter_tests`: query calls + batch keying, imports, self-target, array collection/grouping, required vs optional reverse-FK key) · 1 hurl KAT (per-path omission) |
+| `cargo test -p codegraph --test cornucopia_include_tests` | The **wiring pin**: one mox fixture, two profiles (flag ON / OFF) through `driver::run`. ON asserts the scalar SQL pair AND the reverse-FK SQL pair (optional `work_order` + required `invoice`), the inherent adapter methods + imports + collection/grouping shapes, the query wrappers (`Vec`/`HashMap<Uuid, Vec<_>>`) + `set_rls_session_vars`, the handler hydration calls (direct assignment + `Some(…)`), the per-path 501 for `customer.org`, and `syn`-parses six emitted files. OFF asserts no include SQL / adapter / wrappers (scalar or array) and the P0 guarded 501 on both sides. |
 | `file_length_contract` | The adapter emission was split into `ddd/cornucopia_repo_include.rs` (issue #751 budget: `cornucopia_repo.rs` 1,780 → 1,829 lines, new module 415) — the test stays green with no allow-list entry. |
 | `handler_matrix_tests` | **Unchanged** in this slice (the matrix's `cornucopia_include` permutation uses a default `ProjectConfig`, so the flag is off). |
 | `hurl_contract_tests` / `review_fixture_drift_tests` / `service_ops_tests` / `include_junction_tests` | Verified green (no flag-off movement). |
@@ -399,15 +472,16 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    already requires `C: GenericClient + Sync`, so the expectation is green, but the
    plane has never been compiled for wasm with includes.
 4. **Hurl include legs for cornucopia.** `sections_for_paths` already omits unsupported
-   shapes and emits provable legs for supported ones; the live proof (a scalar FK is
-   `required` + wired in the create body) belongs to the runtime gate above.
+   shapes and emits provable legs for supported ones. A reverse-FK collection is
+   unconditionally provable (`included.<seg>` is `Some(vec)` — `[]` when empty), so the
+   array shape gets both legs from the same planner; the live proof belongs to the
+   runtime gate above.
 5. **Matrix re-bless** — see §8.
 
 ---
 
 ## 7. Deferrals (explicit, not guessed)
 
-* Array / reverse-FK shapes (SQL design in §1.4).
 * Dot notation / combined responses (needs the `dto_included` mapping surface).
 * VO→entity child-table includes.
 * Batching the child-table hydration (shared N+1 with the SeaORM plane).
@@ -417,6 +491,7 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
   `filter_cross_domain_paths` — so P1 inherits the same limitation).
 * `include_deleted`-aware includes (no request parameter exists on any provider).
 * Per-include field selection / nested include arguments.
+* Collection ordering (`ORDER BY`) — the SeaORM include fetch has none either (§1.4).
 
 ---
 
@@ -473,8 +548,9 @@ Continue with this split, in this order:
 2. extend the runtime harness (real Postgres, two orgs, soft delete) — closes the RLS
    and soft-delete risks;
 3. add a flag-ON workers fixture to the wasm gate;
-4. implement reverse-FK/array (smallest remaining shape with real consumer demand —
-   child collections are the common include);
+4. ~~implement reverse-FK/array~~ — **LANDED** (§1.4): `SingleArray` + its SQL,
+   adapter, wrapper, handler arm and KATs. The compile pin (item 1) must now stub the
+   array query pair too — see the report's stub list.
 5. dot notation last (it drags in the `dto_included` combined-response mapping);
 6. flip the switch by default (typed strict feature + profiles.toml + matrix re-bless +
    review-fixture regeneration note), then delete the preview flag.

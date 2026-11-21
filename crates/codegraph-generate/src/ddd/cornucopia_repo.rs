@@ -111,13 +111,15 @@ impl EntityGenerator for CornucopiaRepoGenerator {
         };
         let include_plans: Vec<IncludeAdapterPlan<'_>> = include_plans_data
             .iter()
-            .map(|(path, target)| {
-                let seg = path
-                    .segments
-                    .first()
-                    .expect("supported include paths carry a segment");
+            .filter_map(|(path, target)| {
+                let seg = path.segments.first()?;
+                // The SAME classifier the handler and the SQL plane read: a
+                // shape this plane does not implement gets no adapter method
+                // (its request answers a guarded 501).
+                let shape =
+                    crate::api::include_plan::CornucopiaIncludeShape::classify(path).ok()?;
                 let alias_snake = path.alias.replace('.', "_");
-                IncludeAdapterPlan {
+                Some(IncludeAdapterPlan {
                     query_fn: format!("include_{alias_snake}_for_{}", tree.table_name),
                     batch_query_fn: format!("include_{alias_snake}_batch_for_{}", tree.table_name),
                     fetch_method: &path.fetch_method,
@@ -126,7 +128,9 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                     target_domain: &seg.domain,
                     target_module: &seg.module_name,
                     target,
-                }
+                    shape,
+                    reverse_fk_is_required: seg.reverse_fk_is_required,
+                })
             })
             .collect();
 

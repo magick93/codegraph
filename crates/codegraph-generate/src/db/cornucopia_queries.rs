@@ -804,8 +804,21 @@ struct IncludeQueryFacts<'a> {
     /// The dot-notation alias exactly as the request spells it (the query
     /// function name is derived from it).
     alias: &'a str,
+    /// The shape the SQL/adapter/query planes implement for this path (the
+    /// SAME classifier the handler reads).
+    shape: crate::api::include_plan::CornucopiaIncludeShape,
     /// FK column ON THE SOURCE table referencing the target (`person_id`).
+    /// Read only by the scalar shape.
     fk_column: &'a str,
+    /// FK column ON THE TARGET table referencing the source (`customer_id`).
+    /// Read only by the array shape — it is the predicate of both queries and
+    /// the selected group key of the batch query.
+    reverse_fk_column: &'a str,
+    /// Whether the reverse FK is a REQUIRED genuine `EntityReference`. It
+    /// decides the batch key's nullability hint: required ⇒ `source_id`
+    /// (a plain `Uuid` row field), optional ⇒ `source_id?` (`Option<Uuid>`),
+    /// which is what the adapter's group-key arm matches.
+    reverse_fk_is_required: bool,
     /// The target entity's tree (columns, table, soft delete).
     target: &'a EntityTree,
     /// Column → PG type for the target's casts.
@@ -848,6 +861,12 @@ async fn render_include_queries(
         let Some(seg) = path.segments.first() else {
             continue;
         };
+        // The SAME classifier the handler reads: only an implemented shape
+        // emits SQL (a refusal here is defensive — `supported_paths` already
+        // filtered on it).
+        let Ok(shape) = crate::api::include_plan::CornucopiaIncludeShape::classify(path) else {
+            continue;
+        };
         // A shape the plane implements always resolves its target tree; a
         // miss is a graph inconsistency, not a generation decision — skip it
         // (the handler's per-path verdict stays authoritative).
@@ -875,7 +894,10 @@ async fn render_include_queries(
             .collect();
         let facts = IncludeQueryFacts {
             alias: &path.alias,
+            shape,
             fk_column: &seg.fk_column,
+            reverse_fk_column: &seg.reverse_fk_column,
+            reverse_fk_is_required: seg.reverse_fk_is_required,
             target: &target,
             target_pg_types: &target_pg_types,
         };
@@ -886,18 +908,34 @@ async fn render_include_queries(
 
 /// Render the two annotated queries for one implemented include path.
 ///
-/// **Single** (`include_{alias}_for_{source} (source_id)`): the target row
-/// addressed through the SOURCE's own FK column. The FK is read by a
+/// **Single scalar** (`include_{alias}_for_{source} (source_id)`): the target
+/// row addressed through the SOURCE's own FK column. The FK is read by a
 /// correlated subquery rather than a JOIN so the SELECT list stays the plain
 /// unqualified `row_col_list` every other query uses (a JOIN makes `"id"`
 /// ambiguous), and so RLS applies to the source row as well: a tenant who
 /// cannot see the source sees no include.
 ///
-/// **Batch** (`include_{alias}_batch_for_{source} (source_ids)`): one row per
-/// (source, target) pair, keyed by `source_id`, so the adapter can build the
-/// provider-identical `HashMap<Uuid, Option<{Target}Response>>` the LIST
-/// envelope serializes. The inner derived table carries the source id +
+/// **Batch scalar** (`include_{alias}_batch_for_{source} (source_ids)`): one
+/// row per (source, target) pair, keyed by `source_id`, so the adapter can
+/// build the provider-identical `HashMap<Uuid, Option<{Target}Response>>` the
+/// LIST envelope serializes. The inner derived table carries the source id +
 /// FK under distinct names, so the target column list is unambiguous.
+///
+/// **Single array** (`include_{alias}_for_{source}` same signature): every
+/// TARGET row whose reverse FK points at the source — the one-to-many shape.
+/// No JOIN: the target table alone carries both the predicate column and the
+/// selected columns, so the plain `row_col_list` renderer applies verbatim.
+///
+/// **Batch array** (`…_batch_for_…`): the same rows for many sources in one
+/// query, with the reverse FK selected FIRST under the fixed alias
+/// `"source_id"` so the adapter groups without depending on the target's
+/// column list carrying the FK under its DTO field name (a config-declared
+/// child's `parent_ref` column need not appear in the child's schema
+/// properties). The annotation's `source_id`/`source_id?` hint is the row
+/// type's nullability source — it mirrors `reverse_fk_is_required`, which is
+/// exactly the split the adapter's group-key arm matches. Rows whose FK is
+/// NULL never match `= ANY(...)`, so the optional arm's `None` is
+/// unreachable-by-construction (but required by the type).
 ///
 /// Soft-delete: the TARGET's marker column filters in both queries (matching
 /// the SeaORM include fetch, which runs under the default scope — there is no
@@ -909,7 +947,6 @@ fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> Strin
     let source = &tree.table_name;
     let alias = facts.alias;
     let alias_snake = facts.alias.replace('.', "_");
-    let fk = facts.fk_column;
 
     let row_cols: Vec<&TreeColumn> = target
         .direct_columns
@@ -918,17 +955,55 @@ fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> Strin
         .collect();
     let cols = row_col_list(&row_cols, facts.target_pg_types, target.append_only);
     let hints = row_hints(&row_cols, target.append_only);
+    let soft_delete = target.soft_delete_column.as_deref();
+
+    match facts.shape {
+        crate::api::include_plan::CornucopiaIncludeShape::SingleArray => {
+            let reverse_fk = facts.reverse_fk_column;
+            // `AND` joins the reverse-FK predicate on both queries.
+            let single_soft = soft_delete
+                .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
+                .unwrap_or_default();
+            let batch_soft = soft_delete
+                .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
+                .unwrap_or_default();
+            let mut sql = String::new();
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_for_{source} (source_id) : ({hints})\n\
+                 --- Eager-load the `{alias}` collection for one {source} row through the \
+                 target's reverse FK (issue #781 P1).\n\
+                 SELECT {cols}\n\
+                 FROM {target_table}\n\
+                 WHERE \"{reverse_fk}\" = :source_id{single_soft};\n\n",
+            ));
+            // The hint is the row type's nullability source: a required FK is a
+            // plain `Uuid`, a nullable one an `Option<Uuid>` — the same split
+            // the adapter's group-key arm consumes.
+            let key_hint = if facts.reverse_fk_is_required {
+                "source_id"
+            } else {
+                "source_id?"
+            };
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_batch_for_{source} (source_ids) : ({key_hint}, {hints})\n\
+                 --- Eager-load the `{alias}` collection for many {source} rows, grouped by the \
+                 target's reverse FK (issue #781 P1).\n\
+                 SELECT \"{reverse_fk}\" AS \"source_id\", {cols}\n\
+                 FROM {target_table}\n\
+                 WHERE \"{reverse_fk}\" = ANY(:source_ids::uuid[]){batch_soft};\n\n",
+            ));
+            return sql;
+        }
+        crate::api::include_plan::CornucopiaIncludeShape::SingleScalar => {}
+    }
+
+    let fk = facts.fk_column;
     let batch_cols =
         prefixed_row_col_list("t", &row_cols, facts.target_pg_types, target.append_only);
-
-    let single_soft = target
-        .soft_delete_column
-        .as_deref()
+    let single_soft = soft_delete
         .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
         .unwrap_or_default();
-    let batch_soft = target
-        .soft_delete_column
-        .as_deref()
+    let batch_soft = soft_delete
         .map(|sd| format!("\nWHERE \"t\".\"{sd}\" IS NULL"))
         .unwrap_or_default();
 
@@ -1654,7 +1729,28 @@ mod include_query_tests {
     ) -> IncludeQueryFacts<'a> {
         IncludeQueryFacts {
             alias,
+            shape: crate::api::include_plan::CornucopiaIncludeShape::SingleScalar,
             fk_column: fk,
+            reverse_fk_column: fk,
+            reverse_fk_is_required: false,
+            target,
+            target_pg_types: pg_types,
+        }
+    }
+
+    fn array_facts<'a>(
+        alias: &'a str,
+        reverse_fk: &'a str,
+        reverse_fk_is_required: bool,
+        target: &'a EntityTree,
+        pg_types: &'a std::collections::HashMap<String, String>,
+    ) -> IncludeQueryFacts<'a> {
+        IncludeQueryFacts {
+            alias,
+            shape: crate::api::include_plan::CornucopiaIncludeShape::SingleArray,
+            fk_column: "unused_for_the_array_shape",
+            reverse_fk_column: reverse_fk,
+            reverse_fk_is_required,
             target,
             target_pg_types: pg_types,
         }
@@ -1778,5 +1874,122 @@ mod include_query_tests {
 
         assert!(sql.contains("\"salary\"::text"), "{sql}");
         assert!(sql.contains("\"t\".\"salary\"::text"), "{sql}");
+    }
+
+    /// A reverse-FK target: the child rows live on the target table, and the
+    /// predicate is the target's own FK column — no source subquery, no JOIN.
+    fn deployment() -> EntityTree {
+        tree(
+            "Deployment",
+            "deployment",
+            vec![
+                col("reference", "reference", "String", false),
+                col("customer_id", "customer_id", "Uuid", false),
+            ],
+            Some("deleted_at"),
+            false,
+        )
+    }
+
+    /// Array single: the target's reverse FK is the predicate, the target's
+    /// soft-delete marker ANDs on, and there is no scalar `LIMIT 1`.
+    #[test]
+    fn single_array_include_sql_scans_the_reverse_fk() {
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(
+            &tree("Customer", "customer", vec![], None, false),
+            &array_facts("deployment", "customer_id", false, &deployment(), &pg),
+        );
+
+        assert!(
+            sql.contains(
+                "--! include_deployment_for_customer (source_id) : (id, reference, customer_id, created_at, updated_at)"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                "SELECT \"id\", \"reference\", \"customer_id\", \"created_at\", \"updated_at\"\nFROM \"common\".\"deployment\"\nWHERE \"customer_id\" = :source_id\n  AND \"deleted_at\" IS NULL;"
+            ),
+            "{sql}"
+        );
+        assert!(!sql.contains("LIMIT 1"), "{sql}");
+        assert!(
+            !sql.contains("SELECT \"customer_id\" FROM \"common\".\"customer\""),
+            "no source subquery for the reverse shape:\n{sql}"
+        );
+    }
+
+    /// Array batch: one query for many sources, the reverse FK aliased to the
+    /// fixed `source_id` key the adapter groups by, the `uuid[]` cast the
+    /// other array-parameter query pins, and the target's soft-delete marker.
+    /// An OPTIONAL reverse FK carries the `source_id?` hint (`Option<Uuid>`),
+    /// matching the adapter's `None => continue` arm.
+    #[test]
+    fn batch_array_include_sql_keys_the_reverse_fk() {
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(
+            &tree("Customer", "customer", vec![], None, false),
+            &array_facts("deployment", "customer_id", false, &deployment(), &pg),
+        );
+
+        assert!(
+            sql.contains(
+                "--! include_deployment_batch_for_customer (source_ids) : (source_id?, id, reference, customer_id, created_at, updated_at)"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                "SELECT \"customer_id\" AS \"source_id\", \"id\", \"reference\", \"customer_id\", \"created_at\", \"updated_at\"\nFROM \"common\".\"deployment\"\nWHERE \"customer_id\" = ANY(:source_ids::uuid[])\n  AND \"deleted_at\" IS NULL;"
+            ),
+            "{sql}"
+        );
+        // Single-table shape — no JOIN derived table needed.
+        assert!(!sql.contains("JOIN"), "{sql}");
+        assert!(!sql.contains("target_id"), "{sql}");
+    }
+
+    /// A REQUIRED reverse FK hints `source_id` (plain `Uuid`), the row type the
+    /// adapter's `let key = row.source_id;` arm matches.
+    #[test]
+    fn required_reverse_fk_batch_hint_is_non_nullable() {
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(
+            &tree("Customer", "customer", vec![], None, false),
+            &array_facts("invoice", "customer_id", true, &deployment(), &pg),
+        );
+        assert!(
+            sql.contains(
+                "--! include_invoice_batch_for_customer (source_ids) : (source_id, id, reference, customer_id, created_at, updated_at)"
+            ),
+            "{sql}"
+        );
+        assert!(!sql.contains("source_id?"), "{sql}");
+    }
+
+    /// The array shape keeps the append-only (`updated_at` suppression) and
+    /// marker-free arms identical to the scalar shape: no invented filter.
+    #[test]
+    fn array_include_omits_updated_at_and_invents_no_marker() {
+        let target = tree(
+            "Deployment",
+            "deployment",
+            vec![col("customer_id", "customer_id", "Uuid", false)],
+            None,
+            true,
+        );
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(
+            &tree("Customer", "customer", vec![], None, false),
+            &array_facts("deployment", "customer_id", false, &target, &pg),
+        );
+
+        assert!(
+            sql.contains("(source_id) : (id, customer_id, created_at)"),
+            "append-only target has no updated_at hint:\n{sql}"
+        );
+        assert!(!sql.contains("updated_at"), "{sql}");
+        assert!(!sql.contains("IS NULL"), "no marker is invented:\n{sql}");
     }
 }

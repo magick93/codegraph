@@ -24,13 +24,14 @@
 //!
 //! Issue #781 P1 adds [`IncludeSupport::CornucopiaHydration`] behind the
 //! `cornucopia_include_hydration` preview feature (default OFF). Its verdict
-//! is **per path**: [`CornucopiaIncludeShape::classify`] accepts the shape the
-//! SQL/adapter/query planes implement (a single-segment scalar `refers`) and
-//! names the construct for every other shape, so an unimplemented shape still
-//! fails closed (a guarded 501 naming the alias) instead of silently
-//! returning empty data. The rendered block calls the entity's cornucopia
-//! QUERY handler (the provider's session/transaction owner), mirroring the
-//! tree handler's call shape — never the adapter directly.
+//! is **per path**: [`CornucopiaIncludeShape::classify`] accepts the shapes
+//! the SQL/adapter/query planes implement (a single-segment scalar `refers`,
+//! and a single-segment reverse-FK collection) and names the construct for
+//! every other shape, so an unimplemented shape still fails closed (a guarded
+//! 501 naming the alias) instead of silently returning empty data. The
+//! rendered block calls the entity's cornucopia QUERY handler (the provider's
+//! session/transaction owner), mirroring the tree handler's call shape —
+//! never the adapter directly.
 //!
 //! The design record is `docs/tdd/781-cornucopia-includes.tdd.md`.
 //!
@@ -111,6 +112,15 @@ pub enum CornucopiaIncludeShape {
     /// GET: one row on the target table through the source's own FK column.
     /// LIST: the same relationship keyed by `source_ids` in one query.
     SingleScalar,
+    /// GET: every target row whose reverse FK points at the source
+    /// (one-to-many — the source holds a collection). LIST: the same rows for
+    /// many sources in one query, grouped by source id in the adapter.
+    ///
+    /// The reverse FK is the column the resolver already carries
+    /// ([`crate::api::include_path::IncludeSegment::reverse_fk_column`]); the
+    /// resolver refuses a junction array before it reaches this plane, so an
+    /// array that survives carries a real back-FK column.
+    SingleArray,
 }
 
 impl CornucopiaIncludeShape {
@@ -127,13 +137,6 @@ impl CornucopiaIncludeShape {
                     .to_string(),
             );
         }
-        if first.is_array {
-            return Err(
-                "array / reverse-FK includes are not implemented on the cornucopia \
-                 SQL-first plane yet"
-                    .to_string(),
-            );
-        }
         if first.child_table_override.is_some() {
             return Err(
                 "VO→entity child-table includes are not implemented on the cornucopia \
@@ -141,7 +144,28 @@ impl CornucopiaIncludeShape {
                     .to_string(),
             );
         }
+        if first.is_array {
+            // The array query scans the TARGET by its reverse FK; a path with
+            // no resolvable back-FK column is unfetchable (the resolver drops
+            // junction arrays before this point, so this arm is defensive).
+            if first.reverse_fk_column.is_empty() {
+                return Err(
+                    "array / reverse-FK include carries no back-FK column to scan the \
+                     target by"
+                        .to_string(),
+                );
+            }
+            return Ok(Self::SingleArray);
+        }
         Ok(Self::SingleScalar)
+    }
+
+    /// GET: does the hydrated field hold a collection? The DTO's include field
+    /// is `Option<Vec<{Target}Response>>` for an array path and
+    /// `Option<{Target}Response>` for a scalar one (`ddd::dto`), so the
+    /// assignment differs by exactly this bit.
+    pub fn is_array(self) -> bool {
+        matches!(self, Self::SingleArray)
     }
 }
 
@@ -336,6 +360,12 @@ fn render_get_block(
 /// transaction in the handler the way the SeaORM arm does. The RLS session
 /// vars therefore come from the query layer's `set_rls_session_vars`, exactly
 /// like every other cornucopia read (the tree handler's call shape).
+///
+/// The array shape wraps the returned `Vec<{Target}Response>` in `Some(…)`
+/// exactly like the SeaORM array branch: the DTO field is
+/// `Option<Vec<{Target}Response>>`, and an empty collection is still a
+/// PRESENT value (`[]`, not `null`) — which is what the generated hurl
+/// contract asserts.
 fn render_get_cornucopia(
     paths: &[ResolvedIncludePath],
     ctx: &IncludePlanCtx<'_>,
@@ -352,19 +382,31 @@ fn render_get_cornucopia(
     if !supported.is_empty() {
         out.push_str("        match path.as_str() {\n");
         for ipath in &supported {
-            let Some(first) = ipath.segments.first() else {
+            let (Some(first), Ok(shape)) = (
+                ipath.segments.first(),
+                CornucopiaIncludeShape::classify(ipath),
+            ) else {
                 continue;
             };
             out.push_str(&format!(
                 "            {} => {{\n",
                 rust_string_literal(&ipath.alias)
             ));
-            out.push_str(&format!(
-                "                included.{} = {queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
-                first.module_name, ipath.fetch_method
-            ));
-            push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
-            out.push_str("                    })?;\n");
+            if shape.is_array() {
+                out.push_str(&format!(
+                    "                included.{} = Some({queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                    first.module_name, ipath.fetch_method
+                ));
+                push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+                out.push_str("                    })?);\n");
+            } else {
+                out.push_str(&format!(
+                    "                included.{} = {queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                    first.module_name, ipath.fetch_method
+                ));
+                push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+                out.push_str("                    })?;\n");
+            }
             out.push_str("            }\n");
         }
         out.push_str("            _ => {}\n");
@@ -805,7 +847,7 @@ fn include_doc_for(support: &IncludeSupport) -> &'static str {
             "    /// Eager-load related entities, e.g. `?include=person,deployment.position`."
         }
         IncludeSupport::CornucopiaHydration => {
-            "    /// Eager-load related entities. The cornucopia persistence provider hydrates scalar `refers` includes; any other modelled shape answers 501 (issue #781)."
+            "    /// Eager-load related entities. The cornucopia persistence provider hydrates scalar `refers` includes and reverse-FK collections; any other modelled shape answers 501 (issue #781)."
         }
         IncludeSupport::Unsupported { .. } => {
             "    /// Includes are modelled for this entity but are not supported by this deployment's persistence provider; a request that sends `?include=` answers 501 (issue #781)."
@@ -1315,24 +1357,34 @@ mod tests {
         let paths = vec![
             path("person", vec![segment("person", false)]),
             path("deployment", vec![segment("deployment", true)]),
+            path(
+                "deployment.position",
+                vec![segment("deployment", false), segment("position", false)],
+            ),
         ];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
         assert_eq!(plan.support, IncludeSupport::CornucopiaHydration);
         assert!(plan.support.is_supported());
         let supported = plan.support.supported_paths(&paths);
-        assert_eq!(supported.len(), 1);
-        assert_eq!(supported[0].alias, "person");
+        assert_eq!(
+            supported
+                .iter()
+                .map(|p| p.alias.as_str())
+                .collect::<Vec<_>>(),
+            vec!["person", "deployment"]
+        );
         let unsupported = plan.support.unsupported_paths(&paths);
         assert_eq!(unsupported.len(), 1);
-        assert_eq!(unsupported[0].alias, "deployment");
+        assert_eq!(unsupported[0].alias, "deployment.position");
         assert!(
-            unsupported[0].reason.contains("array / reverse-FK"),
+            unsupported[0].reason.contains("dot-notation"),
             "{}",
             unsupported[0].reason
         );
     }
 
-    /// The classifier names the construct for every unimplemented shape.
+    /// The classifier names the construct for every unimplemented shape, and
+    /// accepts exactly the shapes the SQL/adapter/query planes implement.
     #[test]
     fn cornucopia_shape_classifier_names_the_construct() {
         let dot = path(
@@ -1342,9 +1394,12 @@ mod tests {
         let reason = CornucopiaIncludeShape::classify(&dot).unwrap_err();
         assert!(reason.contains("dot-notation"), "{reason}");
 
-        let array = path("deployment", vec![segment("deployment", true)]);
-        let reason = CornucopiaIncludeShape::classify(&array).unwrap_err();
-        assert!(reason.contains("array / reverse-FK"), "{reason}");
+        // An array whose path carries no back-FK column cannot be scanned.
+        let mut no_back_fk = segment("deployment", true);
+        no_back_fk.reverse_fk_column = String::new();
+        let reason =
+            CornucopiaIncludeShape::classify(&path("deployment", vec![no_back_fk])).unwrap_err();
+        assert!(reason.contains("no back-FK column"), "{reason}");
 
         let mut vo = segment("person", false);
         vo.child_table_override = Some(crate::api::include_path::ChildTableOverride {
@@ -1363,16 +1418,27 @@ mod tests {
             CornucopiaIncludeShape::classify(&scalar),
             Ok(CornucopiaIncludeShape::SingleScalar)
         );
+
+        let array = path("deployment", vec![segment("deployment", true)]);
+        assert_eq!(
+            CornucopiaIncludeShape::classify(&array),
+            Ok(CornucopiaIncludeShape::SingleArray)
+        );
     }
 
-    /// GET: the supported arm calls the entity's cornucopia QUERY handler
+    /// GET: the supported arms call the entity's cornucopia QUERY handler
     /// (which owns the client/transaction/RLS session vars) — never the
-    /// adapter directly — and the unsupported arm 501s naming the alias.
+    /// adapter directly — the array shape wraps the collection in `Some(…)`,
+    /// and the unsupported arm 501s naming the alias.
     #[test]
     fn cornucopia_hydration_get_block_calls_the_query_handler() {
         let paths = vec![
             path("person", vec![segment("person", false)]),
             path("deployment", vec![segment("deployment", true)]),
+            path(
+                "person.address",
+                vec![segment("person", false), segment("address", false)],
+            ),
         ];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
         let block = &plan.get_block;
@@ -1387,7 +1453,7 @@ mod tests {
             "{block}"
         );
         assert!(
-            block.contains("            \"deployment\" => Some(\"array / reverse-FK"),
+            block.contains("            \"person.address\" => Some(\"dot-notation"),
             "{block}"
         );
         assert!(
@@ -1400,18 +1466,33 @@ mod tests {
             block.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
             "{block}"
         );
-        // The implemented arm hydrates through the query handler with the
-        // session args in the provider's positional order.
+        // The implemented scalar arm hydrates through the query handler with
+        // the session args in the provider's positional order.
         assert!(
             block.contains(
                 "included.person = state.common_worker_queries.fetch_person_for_worker(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
             ),
             "{block}"
         );
+        // The array arm assigns `Some(collection)` — the DTO field is
+        // `Option<Vec<…>>`, and an empty vec is still a present value.
+        assert!(
+            block.contains(
+                "included.deployment = Some(state.common_worker_queries.fetch_deployment_for_worker(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "{block}"
+        );
+        assert!(block.contains("                    })?);"), "{block}");
         assert!(block.contains(".map_err(|e: CommonError| {"), "{block}");
         assert!(
             block.contains(
                 "AppError::from_domain_error(e.http_status(), e.to_string(), \"Failed to include person\")"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "AppError::from_domain_error(e.http_status(), e.to_string(), \"Failed to include deployment\")"
             ),
             "{block}"
         );
@@ -1425,10 +1506,15 @@ mod tests {
     }
 
     /// LIST: one batch call per path, keyed by source id in the same
-    /// `HashMap<Uuid, …>` JSON shape the SeaORM arm emits.
+    /// `HashMap<Uuid, …>` JSON shape the SeaORM arm emits. The array shape
+    /// serialises the SAME map (its values are `Vec<{Target}Response>` — the
+    /// batch contract the query wrapper declares).
     #[test]
     fn cornucopia_hydration_list_block_batches_by_source_id() {
-        let paths = vec![path("person", vec![segment("person", false)])];
+        let paths = vec![
+            path("person", vec![segment("person", false)]),
+            path("deployment", vec![segment("deployment", true)]),
+        ];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
         let block = &plan.list_block;
 
@@ -1450,6 +1536,16 @@ mod tests {
             ),
             "{block}"
         );
+        assert!(
+            block.contains("if include_paths.contains(&\"deployment\".to_string()) {"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "serde_json::to_value(state.common_worker_queries.fetch_deployment_batch_for_worker(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "the array batch rides the same envelope:\n{block}"
+        );
         assert!(block.contains(".unwrap_or_default(),"), "{block}");
         assert!(
             block.contains("        std::collections::HashMap::new()"),
@@ -1464,11 +1560,14 @@ mod tests {
     /// guard plus the empty map the Ok envelope reads.
     #[test]
     fn cornucopia_hydration_all_unsupported_still_fails_closed() {
-        let paths = vec![path("deployment", vec![segment("deployment", true)])];
+        let paths = vec![path(
+            "deployment.position",
+            vec![segment("deployment", false), segment("position", false)],
+        )];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
         assert!(
             plan.get_block
-                .contains("\"deployment\" => Some(\"array / reverse-FK"),
+                .contains("\"deployment.position\" => Some(\"dot-notation"),
             "{}",
             plan.get_block
         );

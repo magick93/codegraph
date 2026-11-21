@@ -20,8 +20,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// `refers X[0..1]` is a scalar FK (the implemented include shape). A bare
-/// `refers X` is many-valued in mox, so the optional form is load-bearing.
+/// `refers X[0..1]` is a scalar FK (the implemented scalar include shape). A
+/// bare `refers X` is many-valued in mox, so the optional form is load-bearing.
+/// `refers X[1]` is a REQUIRED scalar FK — the reverse side of it is a
+/// collection whose reverse-FK column is non-nullable, exercising the
+/// required group-key arm.
+///
+/// The ONE-TO-MANY relationship is implicit: `WorkOrderType` and `InvoiceType`
+/// both point at `CustomerType`, so auto-discovery (CustomerType is `root`
+/// with no explicit `allow_include`) resolves `customer?include=work_order`
+/// and `customer?include=invoice` as reverse-FK collections. An explicit
+/// `allow_include` cannot express that direction — `resolve_explicit_paths`
+/// derives its array flag from a SOURCE-side array property, which a scalar
+/// child reference never has.
 ///
 /// `customer.org` is a dot-notation include — the deliberately unsupported
 /// shape, so the per-path fail-closed arm is exercised by the SAME handler
@@ -43,6 +54,12 @@ class WorkOrderType {
     refers CustomerType[0..1] customer
     int total
 }
+
+class InvoiceType {
+    String number
+    refers CustomerType[1] customer
+    int total
+}
 "#;
 
 const DOMAINS_TOML: &str = r#"
@@ -54,6 +71,10 @@ label = "Shop"
 schema_dir = "shop"
 postgres_schema = "shop"
 
+# `root` + NO explicit `allow_include` ⇒ auto-discovery, which is the only
+# resolver path that turns a child's scalar reference into the reverse-FK
+# (array) shape. `WorkOrderType.customer` is optional ⇒ optional group key;
+# `InvoiceType.customer` is required ⇒ plain group key.
 [domains.shop.entity_config.CustomerType]
 role = "root"
 
@@ -283,7 +304,7 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         "the wrapper must call the adapter on its transaction:\n{query}"
     );
 
-    // ── 4. Handler: hydrate the scalar, 501 the array ───────────────────
+    // ── 4. Handler: hydrate the scalar, 501 the dot path ────────────────
     let handler = read(&output.join("src/api/shop/work_order_handler.rs"));
     assert!(
         handler.contains(
@@ -313,27 +334,145 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
         "no hydration call may be emitted for an unsupported shape:\n{handler}"
     );
 
-    // The reverse relationship (`customer?include=work_order`) is the array
-    // shape — refused with its own construct name, and NO adapter/query/wrapper
-    // surface is emitted for it.
-    let customer_handler = read(&output.join("src/api/shop/customer_handler.rs"));
+    // ── 5. Reverse-FK (array) shape: SQL, adapter, wrapper, handler ──────
+    //
+    // `customer?include=work_order` (optional FK) and `?include=invoice`
+    // (required FK) are one-to-many: the target rows are found by the
+    // TARGET's own FK column, never by a source subquery or a JOIN.
+    let customer_sql = read(&output.join("queries/shop/customer.sql"));
     assert!(
-        customer_handler.contains("\"work_order\" => Some(\"array / reverse-FK"),
-        "the array shape must be named in its guard:\n{customer_handler}"
+        customer_sql.contains("--! include_work_order_for_customer (source_id) : ("),
+        "array single query missing:\n{customer_sql}"
     );
+    assert!(
+        customer_sql.contains(
+            "SELECT \"id\", \"customer_id\", \"reference\", \"total\", \"created_at\", \"updated_at\"\nFROM \"shop\".\"work_order\"\nWHERE \"customer_id\" = :source_id;"
+        ),
+        "the single array query must scan the target's reverse FK:\n{customer_sql}"
+    );
+    assert!(
+        customer_sql.contains(
+            "--! include_work_order_batch_for_customer (source_ids) : (source_id?, id, customer_id?, reference, total, created_at, updated_at)"
+        ),
+        "array batch query missing (optional reverse FK ⇒ `source_id?`):\n{customer_sql}"
+    );
+    assert!(
+        customer_sql.contains(
+            "SELECT \"customer_id\" AS \"source_id\", \"id\", \"customer_id\", \"reference\", \"total\", \"created_at\", \"updated_at\"\nFROM \"shop\".\"work_order\"\nWHERE \"customer_id\" = ANY(:source_ids::uuid[]);"
+        ),
+        "the batch array query must key by the reverse FK and cast uuid[]:\n{customer_sql}"
+    );
+    assert!(
+        customer_sql.contains("--! include_invoice_for_customer (source_id) : ("),
+        "the second reverse include (required FK) must emit too:\n{customer_sql}"
+    );
+    assert!(
+        customer_sql.contains(
+            "--! include_invoice_batch_for_customer (source_ids) : (source_id, id, customer_id, number, total, created_at, updated_at)"
+        ),
+        "a required reverse FK hints a non-nullable key (`source_id`):\n{customer_sql}"
+    );
+    assert!(
+        !customer_sql.contains("SELECT \"customer_id\" FROM \"shop\".\"customer\""),
+        "the array shape opens no source subquery:\n{customer_sql}"
+    );
+
     let customer_adapter =
         read(&output.join("src/domain/shop/customer/cornucopia_repository_impl.rs"));
     assert!(
-        !customer_adapter.contains("fetch_work_order_for_customer"),
-        "no adapter method may exist for an unsupported shape:\n{customer_adapter}"
+        customer_adapter
+            .contains(") -> Result<Vec<WorkOrderResponse>, Box<dyn std::error::Error>> {"),
+        "array GET adapter must return the collection:\n{customer_adapter}"
     );
-    let customer_query = read(&output.join("src/domain/shop/customer/query.rs"));
     assert!(
-        !customer_query.contains("fetch_work_order_for_customer"),
-        "no query wrapper may exist for an unsupported shape:\n{customer_query}"
+        customer_adapter
+            .contains("let mut out: Vec<WorkOrderResponse> = Vec::with_capacity(rows.len());"),
+        "array GET adapter must push each row:\n{customer_adapter}"
+    );
+    assert!(
+        customer_adapter
+            .contains("customer::include_work_order_for_customer().bind(db, &source_id)"),
+        "the array adapter must call the generated query:\n{customer_adapter}"
+    );
+    assert!(
+        customer_adapter.contains(
+            ") -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderResponse>>, Box<dyn std::error::Error>> {"
+        ),
+        "array LIST adapter must group into a Vec map:\n{customer_adapter}"
+    );
+    assert!(
+        customer_adapter.contains("result.entry(*id).or_insert_with(Vec::new);"),
+        "the array batch must seed every requested source id:\n{customer_adapter}"
+    );
+    // Optional reverse FK ⇒ Option match with a skip arm…
+    assert!(
+        customer_adapter.contains("let key = match row.source_id {"),
+        "the optional reverse FK must match the Option:\n{customer_adapter}"
+    );
+    assert!(
+        customer_adapter.contains("None => continue,"),
+        "the optional reverse FK skips a NULL key:\n{customer_adapter}"
+    );
+    assert!(
+        customer_adapter.contains("result.entry(key).or_default().push(resp);"),
+        "the array batch pushes under the source key:\n{customer_adapter}"
+    );
+    // …required reverse FK ⇒ a plain Uuid key.
+    assert!(
+        customer_adapter.contains("let key = row.source_id;"),
+        "the required reverse FK (invoice) groups on a plain Uuid:\n{customer_adapter}"
     );
 
-    // ── 5. Parse gate: every emitted file is syntactically valid Rust ────
+    let customer_query = read(&output.join("src/domain/shop/customer/query.rs"));
+    assert!(
+        customer_query.contains(") -> Result<Vec<WorkOrderResponse>, ShopError> {"),
+        "array GET wrapper must declare the collection return:\n{customer_query}"
+    );
+    assert!(
+        customer_query.contains(
+            ") -> Result<std::collections::HashMap<Uuid, Vec<WorkOrderResponse>>, ShopError> {"
+        ),
+        "array LIST wrapper must declare the grouped return:\n{customer_query}"
+    );
+    assert!(
+        customer_query
+            .contains("let result = self.repo.fetch_work_order_for_customer(&tx, source_id).await"),
+        "the array wrapper must call the adapter on its transaction:\n{customer_query}"
+    );
+
+    let customer_handler = read(&output.join("src/api/shop/customer_handler.rs"));
+    // The GET arm wraps the collection in `Some(…)` — the DTO field is
+    // `Option<Vec<…>>` and an empty vec is a present value.
+    assert!(
+        customer_handler.contains(
+            "included.work_order = Some(state.shop_customer_queries.fetch_work_order_for_customer(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+        ),
+        "array GET handler must wrap the collection in Some:\n{customer_handler}"
+    );
+    assert!(
+        customer_handler.contains("                    })?);"),
+        "the Some wrapper must close with `)?);`:\n{customer_handler}"
+    );
+    assert!(
+        customer_handler.contains(
+            "included.invoice = Some(state.shop_customer_queries.fetch_invoice_for_customer(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+        ),
+        "the required-FK reverse include must hydrate too:\n{customer_handler}"
+    );
+    // The LIST arm serialises the SAME batch map shape.
+    assert!(
+        customer_handler.contains(
+            "serde_json::to_value(state.shop_customer_queries.fetch_work_order_batch_for_customer(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+        ),
+        "array LIST handler must batch-hydrate:\n{customer_handler}"
+    );
+    // No per-path 501 remains for the array shape.
+    assert!(
+        !customer_handler.contains("array / reverse-FK"),
+        "the array shape must no longer answer 501:\n{customer_handler}"
+    );
+
+    // ── 6. Parse gate: every emitted file is syntactically valid Rust ────
     for rel in [
         "src/api/shop/work_order_handler.rs",
         "src/domain/shop/work_order/query.rs",
@@ -381,5 +520,34 @@ async fn cornucopia_include_hydration_flag_off_is_the_p0_surface() {
     assert!(
         !handler.contains("fetch_customer_for_work_order"),
         "flag off must not call a hydration method:\n{handler}"
+    );
+
+    // The reverse-FK plane is part of the SAME switch: no array SQL, no array
+    // adapter, no array wrapper, and the same guarded 501 on the customer
+    // handler.
+    let customer_sql = read(&output.join("queries/shop/customer.sql"));
+    assert!(
+        !customer_sql.contains("include_work_order"),
+        "flag off must emit no array include SQL:\n{customer_sql}"
+    );
+    let customer_adapter =
+        read(&output.join("src/domain/shop/customer/cornucopia_repository_impl.rs"));
+    assert!(
+        !customer_adapter.contains("fetch_work_order_for_customer"),
+        "flag off must emit no array adapter methods:\n{customer_adapter}"
+    );
+    let customer_query = read(&output.join("src/domain/shop/customer/query.rs"));
+    assert!(
+        !customer_query.contains("fetch_work_order_for_customer"),
+        "flag off must emit no array query wrappers:\n{customer_query}"
+    );
+    let customer_handler = read(&output.join("src/api/shop/customer_handler.rs"));
+    assert!(
+        customer_handler.contains("if !include_paths.is_empty()"),
+        "flag off keeps the guarded 501 on the reverse side:\n{customer_handler}"
+    );
+    assert!(
+        !customer_handler.contains("included.work_order"),
+        "flag off must not hydrate the reverse collection:\n{customer_handler}"
     );
 }

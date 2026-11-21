@@ -327,6 +327,13 @@ impl EntityGenerator for QueryGenerator {
                 let Some(seg) = path.segments.first() else {
                     continue;
                 };
+                // The SAME classifier the handler and the SQL/adapter planes
+                // read: it decides whether the wrapper returns a single value
+                // or the collection of the reverse-FK shape.
+                let Ok(shape) = crate::api::include_plan::CornucopiaIncludeShape::classify(path)
+                else {
+                    continue;
+                };
                 let resp = &path.response_rust_type;
                 let same_module = seg.domain == domain && seg.module_name == module_name;
                 if !same_module && imported.insert(resp.clone()) && resp.ends_with("Response") {
@@ -335,12 +342,27 @@ impl EntityGenerator for QueryGenerator {
                         seg.domain, seg.module_name, resp
                     ));
                 }
+                // The GET return type tracks the DTO include field: a scalar
+                // path is `Option<{Target}Response>`, an array path is the
+                // whole `Vec<{Target}Response>` (the handler wraps it in
+                // `Some`). The LIST map values follow the same split.
+                let (get_ret, map_ret) = if shape.is_array() {
+                    (
+                        format!("Vec<{resp}>"),
+                        format!("std::collections::HashMap<Uuid, Vec<{resp}>>"),
+                    )
+                } else {
+                    (
+                        format!("Option<{resp}>"),
+                        format!("std::collections::HashMap<Uuid, Option<{resp}>>"),
+                    )
+                };
                 methods.push_str(&format!(
                     "\n    /// Eager-load `{}` for one {entity_name} row (issue #781 P1).\n",
                     path.alias
                 ));
                 methods.push_str(&format!(
-            "    pub async fn {}(&self, source_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Option<{resp}>, {error_type}> {{\n",
+            "    pub async fn {}(&self, source_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<{get_ret}, {error_type}> {{\n",
             path.fetch_method
         ));
                 push_cornucopia_query_tx(
@@ -356,7 +378,7 @@ impl EntityGenerator for QueryGenerator {
             path.alias
         ));
                 methods.push_str(&format!(
-            "    pub async fn {}(&self, source_ids: &[Uuid], api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<std::collections::HashMap<Uuid, Option<{resp}>>, {error_type}> {{\n",
+            "    pub async fn {}(&self, source_ids: &[Uuid], api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<{map_ret}, {error_type}> {{\n",
             path.batch_fetch_method
         ));
                 push_cornucopia_query_tx(

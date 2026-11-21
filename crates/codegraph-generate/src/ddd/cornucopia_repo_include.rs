@@ -93,6 +93,14 @@ pub(crate) struct IncludeAdapterPlan<'a> {
     pub(crate) target_module: &'a str,
     /// The target entity's tree.
     pub(crate) target: &'a EntityTree,
+    /// The shape the SQL/adapter/query planes implement for this path (the
+    /// SAME classifier the handler reads).
+    pub(crate) shape: crate::api::include_plan::CornucopiaIncludeShape,
+    /// Whether the target's reverse FK is a REQUIRED genuine `EntityReference`
+    /// (`IncludeSegment::reverse_fk_is_required`). Required ⇒ the batch key is
+    /// a plain `Uuid`; optional ⇒ the key is `Option<Uuid>` and a NULL row is
+    /// skipped. Only the array shape reads it.
+    pub(crate) reverse_fk_is_required: bool,
 }
 
 /// Imports the include hydration needs: the target's response DTO (and its
@@ -155,10 +163,16 @@ pub(crate) fn emit_include_imports(
 
 /// Emit the inherent include-fetch impl block.
 ///
-/// GET: one target row addressed through the source's own FK column.
-/// LIST: one row per source id, folded into
-/// `HashMap<Uuid, Option<{Target}Response>>` — the same keying the SeaORM
-/// batch fetch returns, so the `included` envelope serializes identically.
+/// Scalar shape — GET: one target row addressed through the source's own FK
+/// column. LIST: one row per source id, folded into
+/// `HashMap<Uuid, Option<{Target}Response>>`.
+///
+/// Array shape (one-to-many) — GET: `Vec<{Target}Response>` (the DTO field is
+/// `Option<Vec<…>>`; the handler wraps it in `Some`). LIST:
+/// `HashMap<Uuid, Vec<{Target}Response>>` — seeded with an empty vec per
+/// requested source id, then the rows pushed under the reverse FK the batch
+/// SQL aliases to `source_id`. Both are the SeaORM batch contract, so the
+/// `included` envelope serializes identically for both providers.
 pub(crate) fn emit_include_adapter(
     tree: &EntityTree,
     includes: &[IncludeAdapterPlan<'_>],
@@ -178,79 +192,181 @@ pub(crate) fn emit_include_adapter(
         entity_name = tree.entity_name
     );
     for inc in includes {
-        let resp = inc.response_type;
-        // ── single (GET) ────────────────────────────────────────────────
-        wln!(code);
-        wln!(
-            code,
-            "    pub async fn {}<C: GenericClient + Sync>(\n\
-             \x20       &self,\n\
-             \x20       db: &C,\n\
-             \x20       source_id: Uuid,\n\
-             \x20   ) -> Result<Option<{resp}>, Box<dyn std::error::Error>> {{",
-            inc.fetch_method
-        );
-        wln!(
-            code,
-            "        let rows = {qmod}::{query_fn}().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;",
-            query_fn = inc.query_fn
-        );
-        wln!(code, "        let mut out: Option<{resp}> = None;");
-        wln!(code, "        for row in rows {{");
-        emit_response_expr(
-            inc.target,
-            code,
-            "row",
-            "            ",
-            "            let resp = ",
-        );
-        wln!(code, "            ;");
-        wln!(code, "            out = Some(resp);");
-        wln!(code, "        }}");
-        wln!(code, "        Ok(out)");
-        wln!(code, "    }}");
-
-        // ── batch (LIST) ────────────────────────────────────────────────
-        wln!(code);
-        wln!(
-            code,
-            "    pub async fn {}<C: GenericClient + Sync>(\n\
-             \x20       &self,\n\
-             \x20       db: &C,\n\
-             \x20       source_ids: &[Uuid],\n\
-             \x20   ) -> Result<std::collections::HashMap<Uuid, Option<{resp}>>, Box<dyn std::error::Error>> {{",
-            inc.batch_fetch_method
-        );
-        wln!(
-            code,
-            "        let rows = {qmod}::{batch_query_fn}().bind(db, source_ids).all().await.map_err(|e| e.to_string())?;",
-            batch_query_fn = inc.batch_query_fn
-        );
-        wln!(
-            code,
-            "        let mut result: std::collections::HashMap<Uuid, Option<{resp}>> = std::collections::HashMap::new();"
-        );
-        wln!(code, "        for id in source_ids {{");
-        wln!(code, "            result.insert(*id, None);");
-        wln!(code, "        }}");
-        wln!(code, "        for row in rows {{");
-        emit_response_expr(
-            inc.target,
-            code,
-            "row",
-            "            ",
-            "            let resp = ",
-        );
-        wln!(code, "            ;");
-        wln!(
-            code,
-            "            result.insert(row.source_id, Some(resp));"
-        );
-        wln!(code, "        }}");
-        wln!(code, "        Ok(result)");
-        wln!(code, "    }}");
+        if inc.shape.is_array() {
+            emit_include_adapter_array(inc, &qmod, code);
+        } else {
+            emit_include_adapter_scalar(inc, &qmod, code);
+        }
     }
     wln!(code, "}}");
+}
+
+/// The scalar (many-to-one) adapter pair.
+fn emit_include_adapter_scalar(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &mut CodeWriter) {
+    let resp = inc.response_type;
+    // ── single (GET) ────────────────────────────────────────────────────
+    wln!(code);
+    wln!(
+        code,
+        "    pub async fn {}<C: GenericClient + Sync>(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       source_id: Uuid,\n\
+         \x20   ) -> Result<Option<{resp}>, Box<dyn std::error::Error>> {{",
+        inc.fetch_method
+    );
+    wln!(
+        code,
+        "        let rows = {qmod}::{query_fn}().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;",
+        query_fn = inc.query_fn
+    );
+    wln!(code, "        let mut out: Option<{resp}> = None;");
+    wln!(code, "        for row in rows {{");
+    emit_response_expr(
+        inc.target,
+        code,
+        "row",
+        "            ",
+        "            let resp = ",
+    );
+    wln!(code, "            ;");
+    wln!(code, "            out = Some(resp);");
+    wln!(code, "        }}");
+    wln!(code, "        Ok(out)");
+    wln!(code, "    }}");
+
+    // ── batch (LIST) ────────────────────────────────────────────────────
+    wln!(code);
+    wln!(
+        code,
+        "    pub async fn {}<C: GenericClient + Sync>(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       source_ids: &[Uuid],\n\
+         \x20   ) -> Result<std::collections::HashMap<Uuid, Option<{resp}>>, Box<dyn std::error::Error>> {{",
+        inc.batch_fetch_method
+    );
+    wln!(
+        code,
+        "        let rows = {qmod}::{batch_query_fn}().bind(db, source_ids).all().await.map_err(|e| e.to_string())?;",
+        batch_query_fn = inc.batch_query_fn
+    );
+    wln!(
+        code,
+        "        let mut result: std::collections::HashMap<Uuid, Option<{resp}>> = std::collections::HashMap::new();"
+    );
+    wln!(code, "        for id in source_ids {{");
+    wln!(code, "            result.insert(*id, None);");
+    wln!(code, "        }}");
+    wln!(code, "        for row in rows {{");
+    emit_response_expr(
+        inc.target,
+        code,
+        "row",
+        "            ",
+        "            let resp = ",
+    );
+    wln!(code, "            ;");
+    wln!(
+        code,
+        "            result.insert(row.source_id, Some(resp));"
+    );
+    wln!(code, "        }}");
+    wln!(code, "        Ok(result)");
+    wln!(code, "    }}");
+}
+
+/// The array (one-to-many, reverse FK) adapter pair.
+fn emit_include_adapter_array(inc: &IncludeAdapterPlan<'_>, qmod: &str, code: &mut CodeWriter) {
+    let resp = inc.response_type;
+    // ── single (GET) — the whole collection ─────────────────────────────
+    wln!(code);
+    wln!(
+        code,
+        "    pub async fn {}<C: GenericClient + Sync>(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       source_id: Uuid,\n\
+         \x20   ) -> Result<Vec<{resp}>, Box<dyn std::error::Error>> {{",
+        inc.fetch_method
+    );
+    wln!(
+        code,
+        "        let rows = {qmod}::{query_fn}().bind(db, &source_id).all().await.map_err(|e| e.to_string())?;",
+        query_fn = inc.query_fn
+    );
+    wln!(
+        code,
+        "        let mut out: Vec<{resp}> = Vec::with_capacity(rows.len());"
+    );
+    wln!(code, "        for row in rows {{");
+    emit_response_expr(
+        inc.target,
+        code,
+        "row",
+        "            ",
+        "            let resp = ",
+    );
+    wln!(code, "            ;");
+    wln!(code, "            out.push(resp);");
+    wln!(code, "        }}");
+    wln!(code, "        Ok(out)");
+    wln!(code, "    }}");
+
+    // ── batch (LIST) — grouped by source id ─────────────────────────────
+    wln!(code);
+    wln!(
+        code,
+        "    pub async fn {}<C: GenericClient + Sync>(\n\
+         \x20       &self,\n\
+         \x20       db: &C,\n\
+         \x20       source_ids: &[Uuid],\n\
+         \x20   ) -> Result<std::collections::HashMap<Uuid, Vec<{resp}>>, Box<dyn std::error::Error>> {{",
+        inc.batch_fetch_method
+    );
+    wln!(
+        code,
+        "        let rows = {qmod}::{batch_query_fn}().bind(db, source_ids).all().await.map_err(|e| e.to_string())?;",
+        batch_query_fn = inc.batch_query_fn
+    );
+    wln!(
+        code,
+        "        let mut result: std::collections::HashMap<Uuid, Vec<{resp}>> = std::collections::HashMap::new();"
+    );
+    wln!(code, "        for id in source_ids {{");
+    wln!(
+        code,
+        "            result.entry(*id).or_insert_with(Vec::new);"
+    );
+    wln!(code, "        }}");
+    wln!(code, "        for row in rows {{");
+    if inc.reverse_fk_is_required {
+        // Required genuine EntityReference: the reverse FK is a plain Uuid.
+        wln!(code, "            let key = row.source_id;");
+    } else {
+        // Nullable FK: the batch predicate never MATCHES a NULL, but the row
+        // field types as Option, so the NULL arm is unreachable-by-construction
+        // and must still be spelled.
+        wln!(code, "            let key = match row.source_id {{");
+        wln!(code, "                Some(v) => v,");
+        wln!(code, "                None => continue,");
+        wln!(code, "            }};");
+    }
+    emit_response_expr(
+        inc.target,
+        code,
+        "row",
+        "            ",
+        "            let resp = ",
+    );
+    wln!(code, "            ;");
+    wln!(
+        code,
+        "            result.entry(key).or_default().push(resp);"
+    );
+    wln!(code, "        }}");
+    wln!(code, "        Ok(result)");
+    wln!(code, "    }}");
 }
 
 #[cfg(test)]
@@ -303,6 +419,27 @@ mod include_adapter_tests {
             target_domain: "common",
             target_module: "person",
             target,
+            shape: crate::api::include_plan::CornucopiaIncludeShape::SingleScalar,
+            reverse_fk_is_required: false,
+        }
+    }
+
+    fn array_plan<'a>(
+        target: &'a EntityTree,
+        response: &'a str,
+        reverse_fk_is_required: bool,
+    ) -> IncludeAdapterPlan<'a> {
+        IncludeAdapterPlan {
+            query_fn: "include_deployment_for_customer".to_string(),
+            batch_query_fn: "include_deployment_batch_for_customer".to_string(),
+            fetch_method: "fetch_deployment_for_customer",
+            batch_fetch_method: "fetch_deployment_batch_for_customer",
+            response_type: response,
+            target_domain: "common",
+            target_module: "deployment",
+            target,
+            shape: crate::api::include_plan::CornucopiaIncludeShape::SingleArray,
+            reverse_fk_is_required,
         }
     }
 
@@ -411,5 +548,72 @@ mod include_adapter_tests {
         let mut code = CodeWriter::new();
         emit_include_imports(&tree("Worker", "worker"), "common", &includes, &mut code);
         assert_eq!(code.as_str(), "");
+    }
+
+    /// Array GET returns the whole collection (`Vec<{Target}Response>` — the
+    /// handler wraps it in `Some`), and LIST groups by the reverse FK the
+    /// batch SQL aliases to `source_id`, seeding every requested id with an
+    /// empty vec.
+    #[test]
+    fn array_include_adapter_returns_a_grouped_collection() {
+        let target = tree("Deployment", "deployment");
+        let includes = vec![array_plan(&target, "DeploymentResponse", false)];
+        let mut code = CodeWriter::new();
+        emit_include_adapter(&tree("Customer", "customer"), &includes, &mut code);
+        let out = code.as_str();
+
+        assert!(
+            out.contains("pub async fn fetch_deployment_for_customer<C: GenericClient + Sync>("),
+            "{out}"
+        );
+        assert!(
+            out.contains(") -> Result<Vec<DeploymentResponse>, Box<dyn std::error::Error>> {"),
+            "{out}"
+        );
+        assert!(
+            out.contains("let mut out: Vec<DeploymentResponse> = Vec::with_capacity(rows.len());"),
+            "{out}"
+        );
+        assert!(out.contains("out.push(resp);"), "{out}");
+        assert!(
+            out.contains(
+                ") -> Result<std::collections::HashMap<Uuid, Vec<DeploymentResponse>>, Box<dyn std::error::Error>> {"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("result.entry(*id).or_insert_with(Vec::new);"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("Option<DeploymentResponse>"),
+            "the array shape must not return the scalar Option contract:\n{out}"
+        );
+        // Optional reverse FK: an Option match with a skip arm.
+        assert!(out.contains("let key = match row.source_id {"), "{out}");
+        assert!(out.contains("None => continue,"), "{out}");
+        assert!(
+            out.contains("result.entry(key).or_default().push(resp);"),
+            "{out}"
+        );
+        assert!(
+            !out.contains("let key = row.source_id;"),
+            "the optional arm must not read a bare Uuid:\n{out}"
+        );
+    }
+
+    /// Required reverse FK (a genuine required `EntityReference`): the group
+    /// key is a plain `Uuid`, no Option match.
+    #[test]
+    fn required_reverse_fk_groups_on_a_plain_uuid() {
+        let target = tree("Invoice", "invoice");
+        let includes = vec![array_plan(&target, "InvoiceResponse", true)];
+        let mut code = CodeWriter::new();
+        emit_include_adapter(&tree("Customer", "customer"), &includes, &mut code);
+        let out = code.as_str();
+
+        assert!(out.contains("let key = row.source_id;"), "{out}");
+        assert!(!out.contains("match row.source_id"), "{out}");
+        assert!(!out.contains("None => continue,"), "{out}");
     }
 }
