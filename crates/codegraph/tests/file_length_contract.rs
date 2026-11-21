@@ -74,13 +74,6 @@ const ALLOWED_OVER_LIMIT: &[(&str, &str)] = &[
 /// separately.
 const ALLOWED_TEMPLATES_OVER_LIMIT: &[(&str, &str)] = &[
     (
-        // TEMPORARY — issue #778. Wave 4 of the handler refactor splits
-        // this template by responsibility; that PR must delete this entry
-        // (the stale-entry rule makes forgetting it a test failure).
-        "crates/codegraph-generate/templates/api/handler.tera",
-        "CRUD/service-op/tree handlers in one template; split per handler arm (#778)",
-    ),
-    (
         "crates/codegraph-generate/templates/api/media_route.tera",
         "media upload/presign/display/remove handlers; split per route",
     ),
