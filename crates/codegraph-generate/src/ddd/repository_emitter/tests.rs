@@ -734,7 +734,11 @@ fn dot_fetch_optional_fk_uses_the_option_idiom() {
     let fk_read = out
         .find("let fk_value = match source.job_id {")
         .unwrap_or_else(|| panic!("the optional FK match must exist:\n{out}"));
-    let arms = &out[fk_read..out[fk_read..].find("};").map(|i| fk_read + i).unwrap_or(out.len())];
+    let arms = &out[fk_read
+        ..out[fk_read..]
+            .find("};")
+            .map(|i| fk_read + i)
+            .unwrap_or(out.len())];
     assert!(
         arms.contains("Some(v) => v,") && arms.contains("None => return Ok(None),"),
         "an optional FK with no value must early-return Ok(None):\n{out}"
