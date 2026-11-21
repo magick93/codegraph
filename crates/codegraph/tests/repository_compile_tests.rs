@@ -882,8 +882,7 @@ async fn dot_include_fetch_compiles() {
     // `generate_tree` wipes that root at the start of every run — and is
     // pid-suffixed so concurrent checkouts building the pin cannot
     // cross-contaminate the fixture input (the media leg's precedent).
-    let mox_root =
-        std::env::temp_dir().join(format!("repository-pin-dot-{}", std::process::id()));
+    let mox_root = std::env::temp_dir().join(format!("repository-pin-dot-{}", std::process::id()));
     write_file(&mox_root.join("model.mox"), DOT_MOX);
     let (app_dir, domain_types_dir) = generate_tree(
         "dot-include",
