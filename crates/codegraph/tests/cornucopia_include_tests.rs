@@ -17,193 +17,18 @@
 //! (`db::cornucopia_queries`, `ddd::cornucopia_repo`, `api::include_plan`); this
 //! test pins that they are WIRED together by the driver.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-/// `refers X[0..1]` is a scalar FK (the implemented scalar include shape). A
-/// bare `refers X` is many-valued in mox, so the optional form is load-bearing.
-/// `refers X[1]` is a REQUIRED scalar FK — the reverse side of it is a
-/// collection whose reverse-FK column is non-nullable, exercising the
-/// required group-key arm.
-///
-/// The ONE-TO-MANY relationship is implicit: `WorkOrderType` and `InvoiceType`
-/// both point at `CustomerType`, so auto-discovery (CustomerType is `root`
-/// with no explicit `allow_include`) resolves `customer?include=work_order`
-/// and `customer?include=invoice` as reverse-FK collections. An explicit
-/// `allow_include` cannot express that direction — `resolve_explicit_paths`
-/// derives its array flag from a SOURCE-side array property, which a scalar
-/// child reference never has.
-///
-/// `customer.org` is a dot-notation include — the deliberately unsupported
-/// shape, so the per-path fail-closed arm is exercised by the SAME handler
-/// that hydrates `customer`.
-const MODEL_MOX: &str = r#"
-package shop
+#[path = "cornucopia_include_support/mod.rs"]
+mod support;
 
-class OrganizationType {
-    String name
-}
+use support::{FLAG_OFF_PROFILE, FLAG_ON_PROFILE, generate, read};
 
-class CustomerType {
-    String name
-    refers OrganizationType[0..1] org
-}
-
-class WorkOrderType {
-    String reference
-    refers CustomerType[0..1] customer
-    int total
-}
-
-class InvoiceType {
-    String number
-    refers CustomerType[1] customer
-    int total
-}
-"#;
-
-const DOMAINS_TOML: &str = r#"
-[defaults]
-operations = ["create", "read", "update", "delete", "list"]
-
-[domains.shop]
-label = "Shop"
-schema_dir = "shop"
-postgres_schema = "shop"
-
-# `root` + NO explicit `allow_include` ⇒ auto-discovery, which is the only
-# resolver path that turns a child's scalar reference into the reverse-FK
-# (array) shape. `WorkOrderType.customer` is optional ⇒ optional group key;
-# `InvoiceType.customer` is required ⇒ plain group key.
-[domains.shop.entity_config.CustomerType]
-role = "root"
-
-[domains.shop.entity_config.WorkOrderType]
-role = "root"
-allow_include = ["customer", "customer.org"]
-"#;
-
-/// Two profiles over one model: the preview feature ON and OFF. Everything
-/// else is identical, so the flag is the only variable.
-const PROFILES_TOML: &str = r#"
-[profiles.cornucopia-includes.meta]
-name = "cornucopia-includes"
-version = "1.0.0"
-description = "cornucopia include hydration preview"
-
-[profiles.cornucopia-includes.features]
-persistence_provider = "cornucopia"
-deployment_topology = "monolith"
-cornucopia_include_hydration = true
-
-[profiles.cornucopia-includes.api]
-generators = [
-    "ddl", "cornucopia_queries", "cornucopia_repo", "dto", "repository",
-    "command", "query", "event", "handler", "lifecycle_trait",
-    "domain_types_dto", "domain_types_query_service",
-    "errors", "router", "links",
-    "cornucopia_config", "basejump_setup", "pgmq_setup", "platform_schema",
-    "workflow_seed", "hook_registry", "domain_types_scaffold", "codelist",
-    "openapi",
-]
-output = "generated/"
-
-[profiles.cornucopia-off.meta]
-name = "cornucopia-off"
-version = "1.0.0"
-description = "cornucopia without include hydration"
-
-[profiles.cornucopia-off.features]
-persistence_provider = "cornucopia"
-deployment_topology = "monolith"
-
-[profiles.cornucopia-off.api]
-generators = [
-    "ddl", "cornucopia_queries", "cornucopia_repo", "dto", "repository",
-    "command", "query", "event", "handler", "lifecycle_trait",
-    "domain_types_dto", "domain_types_query_service",
-    "errors", "router", "links",
-    "cornucopia_config", "basejump_setup", "pgmq_setup", "platform_schema",
-    "workflow_seed", "hook_registry", "domain_types_scaffold", "codelist",
-    "openapi",
-]
-output = "generated/"
-"#;
-
-struct Fixture {
-    root: tempfile::TempDir,
-    config: PathBuf,
-    mox: PathBuf,
-    profiles: PathBuf,
-}
-
-fn write_fixture() -> Fixture {
-    let root = tempfile::tempdir().unwrap();
-    fs::write(root.path().join("domains.toml"), DOMAINS_TOML).unwrap();
-    fs::create_dir_all(root.path().join("model")).unwrap();
-    fs::write(root.path().join("model/shop.mox"), MODEL_MOX).unwrap();
-    fs::write(root.path().join("profiles.toml"), PROFILES_TOML).unwrap();
-    Fixture {
-        config: root.path().join("domains.toml"),
-        mox: root.path().join("model/shop.mox"),
-        profiles: root.path().join("profiles.toml"),
-        root,
-    }
-}
-
-fn run_args<'a>(
-    fixture: &'a Fixture,
-    profile: &'a str,
-    mox_files: &'a [PathBuf],
-    output: &'a Path,
-) -> codegraph::driver::RunArgs<'a> {
-    codegraph::driver::RunArgs {
-        integration_manifests: &[],
-        schemas: None,
-        classifier: None,
-        config_path: &fixture.config,
-        output,
-        extension_points_path: None,
-        profile_name: profile,
-        variant: None,
-        profiles_config_path: Some(fixture.profiles.clone()),
-        no_post_gen: true,
-        template_dir: &[],
-        ifml_files: &[],
-        openapi_files: &[],
-        mox_files,
-        rosetta_files: &[],
-        ddd_files: &[],
-        evt_files: &[],
-        deploy_files: &[],
-        ifml_framework: &[],
-        ifml_components: None,
-        ifml_design_system: None,
-        codegraph_rev: None,
-        check: false,
-        ux_rules: None,
-    }
-}
-
-async fn generate(profile: &str) -> (Fixture, PathBuf) {
-    let fixture = write_fixture();
-    let output = fixture.root.path().join(format!("generated-{profile}"));
-    let mox_files = vec![fixture.mox.clone()];
-    codegraph::driver::run(run_args(&fixture, profile, &mox_files, &output))
-        .await
-        .expect("generation must succeed");
-    (fixture, output)
-}
-
-fn read(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
-}
-
-/// Parse-only gate (#551 posture, the cheap half): the emitted Rust must be
-/// syntactically valid. Types are NOT checked here — the cornucopia query
-/// crate that the adapter calls is produced by `cornucopia` codegen, so the
-/// full compile pin needs the stubbed-crate harness (see the design record's
-/// "compiled-app/assembly pin" follow-up).
+/// Parse-only gate: the emitted Rust must be syntactically valid. Types are
+/// NOT checked here — the type-level #551 pin is
+/// `cornucopia_include_compile_tests`, which assembles the include plane into
+/// a scratch crate against a stubbed `cornucopia-queries` and `cargo check`s
+/// it (the real query crate only exists after cornucopia codegen runs).
 fn assert_parses(path: &Path) {
     let src = read(path);
     if let Err(e) = syn::parse_file(&src) {
@@ -216,7 +41,7 @@ fn assert_parses(path: &Path) {
 
 #[tokio::test]
 async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
-    let (_fixture, output) = generate("cornucopia-includes").await;
+    let (_fixture, output) = generate(FLAG_ON_PROFILE).await;
 
     // ── 1. SQL: the annotated include query pair ────────────────────────
     let sql = read(&output.join("queries/shop/work_order.sql"));
@@ -487,7 +312,7 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
 
 #[tokio::test]
 async fn cornucopia_include_hydration_flag_off_is_the_p0_surface() {
-    let (_fixture, output) = generate("cornucopia-off").await;
+    let (_fixture, output) = generate(FLAG_OFF_PROFILE).await;
 
     let sql = read(&output.join("queries/shop/work_order.sql"));
     assert!(

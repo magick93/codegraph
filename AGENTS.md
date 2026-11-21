@@ -3823,6 +3823,7 @@ their runtime substitute.
 |-------|-----|-------|
 | mox plane (`mox_types` + ops) | `mox_plane_compile_tests` | native + wasm32, sea_orm-free (#517) |
 | SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**, **media child exclusion (#719)**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere); the `media_repository_plane_compiles` leg carries a `[media]` through-app fixture pinning the #707 shape — request DTO pair omits the reference, response DTO keeps it, the child insert/replace loops skip the media child while reads hydrate it — and no wasm32 leg (SeaORM; cornucopia/wasm rides #550) |
+| cornucopia include plane (adapter include methods + `query.rs` wrappers + handler include blocks; preview flag `cornucopia_include_hydration`) | `cornucopia_include_compile_tests` | native, scratch crate over the stubbed `cornucopia-queries` (the `hooks_cornucopia_runtime_tests` harness pattern); the stub query surface is pinned EXACTLY to the emitted SQL `--! include_*` names and the handler's call set (a renamed query fails before compiling); teeth validated by row-shape (E0609) and bind-arity (E0061) mutations; wasm32 rides the #550 worker gate |
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
@@ -4195,6 +4196,7 @@ cargo test -p codegraph --test pherolang_fixture_sweep
 # Compile-pin policy (#551) — node-free PR-CI pins (scratch-crate cargo check)
 cargo test -p codegraph --test mox_plane_compile_tests   # 3, mox plane native + wasm32 (#517)
 cargo test -p codegraph --test repository_compile_tests  # 5, SeaORM repository impl + design finders + media DTO/repository (#719)
+cargo test -p codegraph --test cornucopia_include_compile_tests  # #781 P1 cornucopia include plane (#551 pin, stubbed cornucopia-queries)
 cargo test -p codegraph --test command_compile_tests     # 1, command/query + dispatcher + hooks types
 
 # Committed review fixture drift pin (#747) — node-free PR-CI; holds the

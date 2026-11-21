@@ -448,16 +448,20 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
 
 ### To add BEFORE flipping the switch
 
-1. **Compile pin (#551 policy).** The adapter calls the `cornucopia-queries` crate's
-   generated functions, which only exist after `cornucopia` codegen runs. Two proven
-   patterns:
-   * a `repository_compile_tests`-style scratch crate with a **stubbed**
-     `cornucopia_queries` (hand-written `include_*` functions with the exact
-     `--!` signatures) plus the emitted adapter + query wrapper + handler, `cargo check`
-     native — this catches types the `syn` parse gate cannot
-     (`HashMap` keying, `Option` shapes, `GenericClient`/`Sync` bounds);
-   * extend the existing stubbed-crate harness (`hooks_cornucopia_runtime_tests`'s
-     `tests/test_framework/cornucopia_queries_stub`) with the include functions.
+1. **Compile pin (#551 policy) — LANDED.**
+   `crates/codegraph/tests/cornucopia_include_compile_tests.rs` assembles a scratch app from
+   the emitted pieces (domain-types, target `dto_response`/`dto_included`, `api/links.rs`,
+   the sliced include-adapter `impl` with its own imports, the emitted
+   `set_rls_session_vars` compiled verbatim + all eight `fetch_*` wrappers hosted on
+   `*Queries` structs matching the generated handler's field names/types, and a probe
+   awaiting every handler call expression) over a **stubbed** `cornucopia-queries` built
+   from `test_framework::cornucopia_queries_stub` plus the eight hint-shaped `include_*`
+   query modules. It `cargo check`s the app crate (PR-CI, ~2 s warm). The stub surface is
+   pinned EXACTLY to the emitted SQL `--! include_*` names and to the handler call set, so
+   a renamed query fails before compiling. Teeth validated by mutation: a row-shape rename
+   (`E0609`) and a bind-arity drop (`E0061`) both fail at the emitted adapter. The wasm32
+   leg is delegated to the #550 worker gate (the emitters have no `cfg(target_arch)`
+   branches; the only wasm questions are `Send`-ness/object safety it already exercises).
 2. **Real-Postgres runtime pin.** Extend `hooks_cornucopia_runtime_tests` (or a sibling
    binary) with the shop fixture from `cornucopia_include_tests`: boot the assembled
    tree against Postgres, seed two orgs, and assert (a) GET hydrates the scalar include,
