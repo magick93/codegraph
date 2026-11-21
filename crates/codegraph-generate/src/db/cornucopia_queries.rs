@@ -225,7 +225,13 @@ fn render_entity_sql(
 
     let table = format!("\"{}\".\"{}\"", tree.schema_name, tree.table_name);
     let entity_name = snake_name(tree);
-    let soft_delete_col = tree.soft_delete_column.as_deref();
+    // ONE derivation for the whole CRUD plane (issue #788): the read plane's
+    // auditable decision (`include_soft_delete_marker`, issue #784), NOT the
+    // policy-derived `soft_delete_column` the mox-first path never populates.
+    // Every writer below — list/count/get/scoped/update/delete/search/
+    // embeddings/design finders — filters on it, so the cornucopia plane
+    // matches the SeaORM twin's soft-delete semantics exactly.
+    let soft_delete_col = include_soft_delete_marker(tree);
 
     // Direct columns participating in row returns (excludes composite ranges,
     // which do not exist as physical columns).
@@ -507,7 +513,8 @@ fn write_design_finder_queries(
             });
         }
         // The declared signature carries no include_deleted parameter —
-        // soft-deleted rows always stay invisible to design finders.
+        // soft-deleted rows always stay invisible to design finders
+        // (TRUE since #788: the marker derives from the auditable decision).
         if let Some(sd) = soft_delete_col {
             clauses.push(format!("\"{sd}\" IS NULL"));
         }
@@ -1814,3 +1821,9 @@ fn write_tree_workers_query(sql: &mut String, tree: &EntityTree) {
 #[cfg(test)]
 #[path = "cornucopia_queries_tests.rs"]
 mod include_query_tests;
+
+// Issue #788: the CRUD plane's soft-delete contract (a sibling module — the
+// file itself sits at the #751 line budget).
+#[cfg(test)]
+#[path = "cornucopia_crud_soft_delete_tests.rs"]
+mod crud_soft_delete_tests;
