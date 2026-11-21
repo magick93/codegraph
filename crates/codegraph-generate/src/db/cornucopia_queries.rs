@@ -103,24 +103,22 @@ impl EntityGenerator for CornucopiaQueryGenerator {
 
         let mut sql = render_entity_sql(schema_title, domain, config, &tree, &pg_types);
 
-        // `?include=` hydration queries (issue #781 P1 preview feature).
+        // `?include=` hydration queries (issue #781 P1, default ON).
         // Only the shapes the plane implements reach here — every other
         // modelled path stays un-hydratable (the handler answers its guarded
         // 501 naming the shape), so no query is emitted for it.
-        if project.codegen.cornucopia_include_hydration {
-            sql.push_str(
-                &render_include_queries(
-                    db,
-                    config,
-                    project,
-                    domain,
-                    schema_title,
-                    &tree,
-                    &self.parent_candidates,
-                )
-                .await,
-            );
-        }
+        sql.push_str(
+            &render_include_queries(
+                db,
+                config,
+                project,
+                domain,
+                schema_title,
+                &tree,
+                &self.parent_candidates,
+            )
+            .await,
+        );
 
         // Deployed-worker query for tree_include entities: the resolution
         // needs the repository emitter's graph walk (the persistence tree

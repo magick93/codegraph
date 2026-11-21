@@ -255,20 +255,6 @@ pub fn rosetta_primary_notice() -> &'static str {
     "INFO: .rosetta files are a primary model source; --schemas fills gaps for types not authored in .rosetta"
 }
 
-/// Read a boolean `[features]` entry that has no typed `BuildPlan` field.
-///
-/// Used for preview flags whose surface is a single ProjectConfig bit (the
-/// `BuildPlan.features` table is the profile's raw feature map, so adding a
-/// typed field would churn every `BuildPlan` literal in the tests for one
-/// bit). A non-bool value reads as absent — preview flags are additive and
-/// default OFF, so a typo can never turn one ON.
-fn feature_bool(plan: &crate::profile::BuildPlan, key: &str) -> bool {
-    plan.features
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-}
-
 /// What a pipeline run did with the persisted-graph cache (issue #275).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOutcome {
@@ -727,7 +713,6 @@ fn resolve_run_profile(
                 ifml_tanstack_forms: plan.ifml_tanstack_forms,
                 testid_module: plan.testid_module,
                 structural_gates: plan.structural_gates,
-                cornucopia_include_hydration: feature_bool(&plan, "cornucopia_include_hydration"),
                 event_envelope: plan.event_envelope.as_str().to_string(),
                 event_idempotency: plan.event_idempotency,
                 event_archive: plan.event_archive,
@@ -1789,8 +1774,6 @@ pub async fn ifml_generate(args: IfmlGenerateArgs<'_>) -> Result<()> {
         project_config.codegen.ifml_tanstack_forms = plan.ifml_tanstack_forms;
         project_config.codegen.testid_module = plan.testid_module;
         project_config.codegen.structural_gates = plan.structural_gates;
-        project_config.codegen.cornucopia_include_hydration =
-            feature_bool(&plan, "cornucopia_include_hydration");
         project_config.codegen.event_envelope = plan.event_envelope.as_str().to_string();
         project_config.codegen.event_idempotency = plan.event_idempotency;
         project_config.codegen.event_archive = plan.event_archive;

@@ -46,9 +46,9 @@ pub struct QueryContext {
     /// Mox derived feature names populated at SELECT time (issue #508).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_derived_names: Vec<String>,
-    /// Pre-rendered cornucopia `?include=` hydration methods (issue #781 P1).
-    /// Empty unless the preview feature is on and the entity models at least
-    /// one implemented include shape.
+    /// Pre-rendered cornucopia `?include=` hydration methods (issue #781 P1,
+    /// default ON). Empty unless the provider is cornucopia and the entity
+    /// models at least one implemented include shape.
     #[serde(default)]
     pub include_query_methods: String,
     /// The `use …;` lines the include methods need (target response DTOs).
@@ -230,7 +230,7 @@ impl EntityGenerator for QueryGenerator {
             .filter(|name| !dto_names.contains(name.as_str()))
             .collect();
 
-        // `?include=` hydration wrappers (issue #781 P1 preview feature):
+        // `?include=` hydration wrappers (issue #781 P1, default ON):
         // cornucopia-only, pre-rendered — the query handler owns the client,
         // the transaction, and the RLS session vars, exactly like the tree /
         // CRUD methods above.
@@ -279,9 +279,8 @@ impl EntityGenerator for QueryGenerator {
         ///   lines the method signatures need (deduped, self-targets skipped because
         ///   the header already imports them).
         ///
-        /// Empty pair unless the provider is cornucopia, the
-        /// `cornucopia_include_hydration` preview feature is on, and the entity
-        /// models at least one implemented include shape.
+        /// Empty pair unless the provider is cornucopia and the entity models
+        /// at least one implemented include shape (issue #781 P1, default ON).
         #[allow(clippy::too_many_arguments)]
         async fn cornucopia_include_query_surface(
             db: &dyn GraphQuerier,
@@ -292,7 +291,7 @@ impl EntityGenerator for QueryGenerator {
             entity_name: &str,
             module_name: &str,
         ) -> (String, String) {
-            if !project.is_cornucopia() || !project.codegen.cornucopia_include_hydration {
+            if !project.is_cornucopia() {
                 return (String::new(), String::new());
             }
             let entity_cfg = config

@@ -1,12 +1,23 @@
 # TDD — cornucopia `?include=` hydration (issue #781 P1)
 
-Status: **contained PoC on `ws/781-cornucopia-includes`** (branch stacked on the open
-`ws/778-handler-refactor` PR). The production switch
-(`cornucopia_include_hydration`) is **OFF by default**, so every existing cornucopia
-project keeps the issue #781 **P0** behaviour (a request that sends `?include=` answers a
-guarded `501 NOT_IMPLEMENTED`). The generated surface, the per-path capability verdict,
-and the KAT/pipeline pins land here; the compile pin, the live runtime pin, and the
-switch flip are the next slices.
+Status: **P1 LANDED — cornucopia `?include=` hydration is DEFAULT ON** on
+`ws/781-cornucopia-includes` (branch stacked on the open `ws/778-handler-refactor` PR).
+The `cornucopia_include_hydration` preview flag is **deleted** (`ProjectConfig.codegen`
+field, `driver::feature_bool`, the `[features]` key and the profile pair are gone), so
+every cornucopia project hydrates includes by default:
+
+* **supported shapes hydrate** — single-segment scalar `refers`, single-segment reverse-FK
+  collection, and one hop of dot notation (`customer.org`);
+* **every other SHAPE still fails closed per path** with a guarded
+  `501 NOT_IMPLEMENTED` naming the requested alias and the construct (depth-3 dot,
+  collection hops, VO→entity child tables, no-back-FK defensive arms) — never a
+  provider-level 501, never a silently empty include;
+* **hurl contracts carry the provable legs** for the supported shapes (array/junction
+  unconditional; scalar when the create body wires the FK) and per-path omission
+  comments otherwise.
+
+The compile pin, the real-Postgres runtime pin, the flag-ON workers wasm gate and the
+single-permutation handler-matrix re-bless all landed with the flip.
 
 Related records: `docs/tdd/778-handler-refactor.tdd.md` §6 (the P0 landing and the P1
 hand-off), `AGENTS.md` → "API handler generation plan (issue #778)".
@@ -20,29 +31,35 @@ The `?include=` decision plane was already provider-agnostic:
 | Layer | File | Today |
 |---|---|---|
 | Path resolution | `crates/codegraph-generate/src/api/include_path.rs` | Fully implemented, provider-agnostic (`ResolvedIncludePath` = alias + segments + `fetch_method` / `batch_fetch_method` / `response_rust_type`) |
-| Handler blocks | `crates/codegraph-generate/src/api/include_plan.rs` | SeaORM renders real hydration; cornucopia renders the P0 guarded 501 |
+| Handler blocks | `crates/codegraph-generate/src/api/include_plan.rs` | SeaORM renders real hydration; cornucopia renders real hydration for its implemented shapes and a per-path guarded 501 for every other SHAPE |
 | SeaORM execution | `ddd/repository_emitter/tree.rs::emit_include_fetch_methods` | Inherent `fetch_*_for_*` / `fetch_*_batch_for_*` on the source `{Entity}RepositoryImpl` |
-| Cornucopia execution | — | **Nothing.** `db/cornucopia_queries.rs` and `ddd/cornucopia_repo.rs` have no include surface at all |
+| Cornucopia execution | `db/cornucopia_queries.rs` + `ddd/cornucopia_repo_include.rs` + `ddd/query.rs` | Include SQL pairs, inherent adapter fetch methods, and session-owning query wrappers — **landed** (#781 P1) |
 
-So P1 is not "wire a flag": it is three new emission sites (SQL, adapter, query handler)
+So P1 was never "wire a flag": it is three emission sites (SQL, adapter, query handler)
 plus a per-path capability verdict so a shape the plane does not implement still fails
 closed instead of returning empty data.
 
-### The switch
+### The switch (deleted in the flip PR)
 
-`[features] cornucopia_include_hydration = true` in `profiles.toml`.
+The plane shipped behind `[features] cornucopia_include_hydration = true` while it was
+built. That scaffolding is **gone**:
 
-* `BuildPlan` has **no typed field** for it (it is read from the raw
-  `BuildPlan.features` table via `driver.rs::feature_bool`, deliberately: a typed field
-  would churn every `BuildPlan` literal in the test suite for one preview bit).
-* The driver threads it into `ProjectConfig.codegen.cornucopia_include_hydration`
-  (`crates/codegraph/src/driver.rs`, both the plan-built and the plan-mutating site).
-* `CodegenConfig.cornucopia_include_hydration` is `#[serde(default)]` = `false`, so a
-  plan-less run, a consumer that never sets the feature, and every test fixture are
-  byte-identical.
-* Non-bool values read as absent (a typo can never turn a preview plane ON). Once the
-  feature graduates, this becomes a typed strict bool like `ux_rules`; the deletion is
-  part of the flip PR.
+* `ProjectConfig.codegen.cornucopia_include_hydration` (field, `Default`, the serialized
+  shape key) is removed;
+* `driver.rs::feature_bool` (its only caller) and both driver assignments are removed;
+  the review-fixture regen recipe and the workers wasm gate no longer set it;
+* the fixture's `[features]` key and its ON/OFF profile pair collapse to ONE profile
+  (`cornucopia-includes`), and the wiring pin asserts the default plane plus the
+  per-path 501s;
+* `include_support_for` returns `IncludeSupport::CornucopiaHydration` for every cornucopia
+  project, unconditionally. The historical `IncludeSupport::Cornucopia` empty-data arm is
+  deleted; `Unsupported` remains for a provider that cannot hydrate at all (no
+  production provider — reachable only through `build_include_plan_with_support`).
+
+This is a **deliberate behavioural change** for cornucopia consumers: a request that
+sends `?include=` now hydrates the supported shapes instead of answering the P0 501, and
+an unimplemented shape answers a per-path 501 naming the alias (never a silent empty
+include).
 
 ---
 
@@ -55,13 +72,13 @@ they reach the plan** (`parent_holds_child_as_junction` / the "no back-FK column
 gates): a junction-only relationship never becomes a `ResolvedIncludePath`. The
 taxonomy is therefore:
 
-| Shape | `ResolvedIncludePath` discriminant | PoC |
+| Shape | `ResolvedIncludePath` discriminant | Status |
 |---|---|---|
-| scalar FK on the source | `segments.len() == 1`, `!is_array`, no override | **implemented** |
-| reverse FK on the target (one-to-many) | `segments.len() == 1`, `is_array` | **implemented** (§1.4) |
-| one-hop dot notation (the target's own child) | `segments.len() == 2` | **implemented** (§1.4b) |
-| VO→entity child table | `segments[0].child_table_override.is_some()` | deferred |
-| dot notation deeper than one hop | `segments.len() > 2` | deferred |
+| scalar FK on the source | `segments.len() == 1`, `!is_array`, no override | **hydrates** |
+| reverse FK on the target (one-to-many) | `segments.len() == 1`, `is_array` | **hydrates** (§1.4) |
+| one-hop dot notation (the target's own child) | `segments.len() == 2` | **hydrates** (§1.4b) |
+| VO→entity child table | `segments[0].child_table_override.is_some()` | **per-path 501** (deferred) |
+| dot notation deeper than one hop | `segments.len() > 2` | **per-path 501** (deferred) |
 
 ### 1.2 Single-segment scalar — GET (`include_{alias}_for_{source} (source_id)`)
 
@@ -450,9 +467,8 @@ and a missing `)` closing `serde_json::to_value` in the LIST arm).
 ```rust
 pub enum IncludeSupport {
     SeaOrm,                                        // every resolved path hydrates
-    Cornucopia,                                    // historical empty-data arm (explicit injection only)
-    CornucopiaHydration,                           // preview flag ON: per-path verdict
-    Unsupported { reason: String },                // whole-provider refusal (P0)
+    CornucopiaHydration,                           // default for cornucopia: per-path verdict
+    Unsupported { reason: String },                // provider cannot hydrate at all (injected only)
 }
 
 pub enum IncludePathSupport { Supported, Unsupported { reason: String } }
@@ -499,17 +515,17 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
 
 ## 6. Test plan
 
-### Landed in this PoC (node-free, PR CI)
+### Landed (node-free, PR CI)
 
 | Gate | Covers |
 |---|---|
-| `cargo test -p codegraph-generate --lib -- api include_plan cornucopia` | 23 include-plan KATs (incl. the cornucopia ones: flag-off P0, flag-on per-path support, classifier reasons + all three accepted shapes + the dot refusals, GET block bytes incl. the `Some(collection)` arm and the dot merge, LIST block bytes incl. the dot accumulation, all-unsupported, doc line) · 10 SQL KATs (`db::cornucopia_queries::include_query_tests`: correlated-subquery shape, batch keying/qualification, append-only/aliases, text casts, reverse-FK single predicate, reverse-FK batch keying + `uuid[]` cast, array append-only/marker-free arm, **dot join single + batch with both markers**) · 7 adapter KATs (`ddd::cornucopia_repo_include::include_adapter_tests`: query calls + batch keying, imports, self-target, array collection/grouping, required vs optional reverse-FK key, **dot leaf merge + dot import surface**) · 20 hurl KATs (per-path omission incl. the supported-but-unprovable dot comment) |
-| `cargo test -p codegraph --test cornucopia_include_tests` | The **wiring pin**: one mox fixture, two profiles (flag ON / OFF) through `driver::run`. ON asserts the scalar SQL pair, the reverse-FK SQL pair (optional `work_order` + required `invoice`), the dot plane (the intermediate probe pair emitted for a dot-only source, the leaf join pair keyed by source id, the adapter's combined merge/seed, the wrappers' `Option<Combined>`/`HashMap<Uuid, Combined>` returns, the handler's merge block), and the per-path 501 for `customer.org.currency` (depth 3); `syn`-parses nine emitted files. OFF asserts no include SQL / adapter / wrappers (scalar, array, or dot) and the P0 guarded 501 on all three handlers. |
+| `cargo test -p codegraph-generate --lib -- api include_plan cornucopia` | 22 include-plan KATs (default-cornucopia hydration, per-path support, classifier reasons + all three accepted shapes + the dot refusals, GET block bytes incl. the `Some(collection)` arm and the dot merge, LIST block bytes incl. the dot accumulation, all-unsupported, injected-`Unsupported` 501, doc lines) · 10 SQL KATs (`db::cornucopia_queries::include_query_tests`: correlated-subquery shape, batch keying/qualification, append-only/aliases, text casts, reverse-FK single predicate, reverse-FK batch keying + `uuid[]` cast, array append-only/marker-free arm, **dot join single + batch with both markers**) · 7 adapter KATs (`ddd::cornucopia_repo_include::include_adapter_tests`: query calls + batch keying, imports, self-target, array collection/grouping, required vs optional reverse-FK key, **dot leaf merge + dot import surface**) · 12 hurl KATs (cornucopia gets the same provable legs as SeaORM; injected-`Unsupported` gets one comment + no legs; per-path omission incl. the supported-but-unprovable dot comment). |
+| `cargo test -p codegraph --test cornucopia_include_tests` | The **wiring pin**: one mox fixture, ONE profile, through `driver::run`. Asserts the scalar SQL pair, the reverse-FK SQL pair (optional `work_order` + required `invoice`), the dot plane (the intermediate probe pair emitted for a dot-only source, the leaf join pair keyed by source id, the adapter's combined merge/seed, the wrappers' `Option<Combined>`/`HashMap<Uuid, Combined>` returns, the handler's merge block), and the retained per-path 501 arms (`customer.org.currency`, depth 3) emitting NO SQL / adapter method / wrapper while the one-hop path on the SAME handler hydrates; `syn`-parses nine emitted files. |
 | `file_length_contract` | The adapter emission was split into `ddd/cornucopia_repo_include.rs` (issue #751 budget: `cornucopia_repo.rs` 1,780 → 1,829 lines, new module 415) — the test stays green with no allow-list entry. |
-| `handler_matrix_tests` | **Unchanged** in this slice (the matrix's `cornucopia_include` permutation uses a default `ProjectConfig`, so the flag is off). |
-| `hurl_contract_tests` / `review_fixture_drift_tests` / `service_ops_tests` / `include_junction_tests` | Verified green (no flag-off movement). |
+| `handler_matrix_tests` | The flipped `cornucopia_include` permutation (see §8) — re-blessed, exactly one line moved. |
+| `hurl_contract_tests` / `review_fixture_drift_tests` / `policy_rls_tests` / `service_ops_tests` / `include_junction_tests` | Verified green with no movement (the review and policy_rls fixtures are SeaORM). |
 
-### To add BEFORE flipping the switch
+### Landed with the flip (all gates green)
 
 1. **Compile pin (#551 policy) — LANDED.**
    `crates/codegraph/tests/cornucopia_include_compile_tests.rs` assembles a scratch app from
@@ -535,8 +551,8 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    re-run green with the dot changes).
 2. **Real-Postgres runtime pin — LANDED.**
    `crates/codegraph/tests/cornucopia_include_runtime_tests.rs` (ignored, the
-   `test-ops-integration` lane) generates the SAME shop fixture with the preview flag
-   ON, provisions a unique database through `test_framework::postgres::GateDb`, applies
+   `test-ops-integration` lane) generates the SAME shop fixture (the include plane is
+   default ON), provisions a unique database through `test_framework::postgres::GateDb`, applies
    the **emitted** table DDL + the emitted `_rls.sql` band (plus a test-owned bootstrap
    for the session-role band a minimal profile does not emit: `app_user`/`api_key`
    roles, `public.get_current_org_id()` verbatim from `api_key_migration.tera`, and a
@@ -558,10 +574,9 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    its semantics on the migrated schema. The end-to-end marker arm needs an input that
    produces the policy — a follow-up, not a guess.
 3. **wasm32 worker gate — LANDED.** `worker_wasm_compile_tests` runs the
-   workers-topology cornucopia fixture with `codegen.cornucopia_include_hydration
-   = true` (the test writes its `ProjectConfig` directly — no `profiles.toml`;
-   the driver sets the same field from `feature_bool("cornucopia_include_hydration")`),
-   so the adapter + wrapper + handler call sites compile natively AND on
+   workers-topology cornucopia fixture (the test writes its `ProjectConfig`
+   directly — no `profiles.toml`; the include plane is default ON, so it sets
+   no switch), so the adapter + wrapper + handler call sites compile natively AND on
    `wasm32-unknown-unknown` against the real worker `AppState`. Both implemented
    shapes are covered: the reverse-FK collection (`PayRunLineType`'s config
    `parent_ref` FK, `--!` hint `source_id?`) and a same-domain scalar
@@ -574,12 +589,14 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
    (`ClientSource` + `GenericClient`), so no emission change was owed. Teeth
    re-validated by mutation: renaming a stub row field fails the wasm check
    (E0308) at the emitted adapter.
-4. **Hurl include legs for cornucopia.** `sections_for_paths` already omits unsupported
-   shapes and emits provable legs for supported ones. A reverse-FK collection is
-   unconditionally provable (`included.<seg>` is `Some(vec)` — `[]` when empty), so the
-   array shape gets both legs from the same planner; the live proof belongs to the
-   runtime gate above.
-5. **Matrix re-bless** — see §8.
+4. **Hurl include legs for cornucopia — LANDED.** `sections_for_paths` no longer
+   gates cornucopia out: it emits the provable legs for supported shapes. A reverse-FK
+   collection is unconditionally provable (`included.<seg>` is `Some(vec)` — `[]` when
+   empty), so the array shape gets both legs; a scalar needs a required FK the create
+   body wires; a dot path is omitted with the documented comment (the combined leaf is
+   an `Option`); an unimplemented SHAPE gets a per-path omission comment. The provider
+   gate now only fires for injected `IncludeSupport::Unsupported`.
+5. **Matrix re-bless — LANDED** — see §8.
 
 ---
 
@@ -605,23 +622,24 @@ wrapper arm + the KATs, in one PR; the classifier is the only switch.
 
 ---
 
-## 8. Expected handler-matrix re-bless (NOT blessed here)
+## 8. Handler-matrix re-bless (EXECUTED — exactly one permutation moved)
 
-When the switch flips by default (feature graduated, `include_support_for` returning
-`CornucopiaHydration` for cornucopia projects), exactly ONE permutation changes:
-`cornucopia_include` in `crates/codegraph/tests/fixtures/handler_matrix.sha256`. Its three
-include keys become:
+With the switch flipped (`include_support_for` returning `CornucopiaHydration` for
+cornucopia projects), exactly ONE permutation changed:
+`cornucopia_include` in `crates/codegraph/tests/fixtures/handler_matrix.sha256`
+(`4963815b…` → `4e27aad4…`). Its three include keys became:
 
 * `include_get_block` — the `for path in &include_paths { … match "person" =>
   included.person = state.common_task_queries.fetch_person_for_task(id, api_key_info…) … }`
   block from §4 (the fixture's one scalar path is `SingleScalar`, so no 501 guard);
 * `include_list_block` — the `included_map` batch block from §4;
 * `include_doc` — "Eager-load related entities. The cornucopia persistence provider
-  hydrates scalar `refers` includes; any other modelled shape answers 501 (issue #781)."
+  hydrates scalar `refers` includes, reverse-FK collections, and one-hop dot-notation
+  includes; any other modelled shape answers 501 (issue #781)."
 
-The other 19 permutations (all `ProjectConfig::default()` = SeaORM) do not move. No
-committed `crates/review/` tree moves either (it is a SeaORM fixture). Re-bless only with
-`HANDLER_MATRIX_BLESS=1` and an enumerated diff, in the flip PR.
+The other 19 permutations (all `ProjectConfig::default()` = SeaORM) did not move. No
+committed `crates/review/` tree or `policy_rls` snapshot moved either (both SeaORM
+fixtures). Blessed with `HANDLER_MATRIX_BLESS=1` and an enumerated diff.
 
 ---
 
@@ -666,5 +684,7 @@ Continue with this split, in this order:
    `Option<Combined>`/`HashMap<Uuid, Combined>` returns, and the handler's
    merge/accumulation arms. The compile pin stubs the new `--!` surface and
    compiles it. Depth > 2 stays a named 501.
-6. flip the switch by default (typed strict feature + profiles.toml + matrix re-bless +
-   review-fixture regeneration note), then delete the preview flag.
+6. ~~flip the switch by default, then delete the preview flag~~ — **LANDED**: the flag
+   field/driver plumbing/profile pair are deleted, `include_support_for` returns
+   `CornucopiaHydration` for cornucopia, the matrix is re-blessed (§8), and no review /
+   `policy_rls` fixture moved.

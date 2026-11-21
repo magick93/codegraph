@@ -7,13 +7,17 @@
 //! handler uses ([`crate::api::include_path::resolve_include_paths_for_entity`])
 //! so the contract cannot assert a surface the handler does not serve.
 //!
-//! ## Provider gate (issue #781 P0)
+//! ## Provider gate (issue #781)
 //!
-//! A cornucopia project answers a guarded 501 for an include request, so it
-//! gets NO legs — just one comment line naming #781. The gate reads
+//! Cornucopia hydrates includes by DEFAULT (issue #781 P1 landed), so a
+//! cornucopia project gets the SAME provable legs as SeaORM. The only
+//! provider-level omission is [`IncludeSupport::Unsupported`] — a persistence
+//! provider that cannot hydrate at all answers a guarded 501, so it gets one
+//! comment line and no legs. The gate reads
 //! [`crate::api::include_plan::include_support_for`], the SAME predicate the
-//! handler's hydration plan reads: when the P1 implementation lands, flipping
-//! that one predicate flips the contract too.
+//! handler's hydration plan reads, so the contract cannot advertise a surface
+//! the handler refuses. Per-path verdicts refine it: a shape the cornucopia
+//! plane does not implement gets its own omission comment (never a leg).
 //!
 //! ## Provability (never guess a status or a payload)
 //!
@@ -384,10 +388,11 @@ mod tests {
         assert!(!out.contains("HTTP 200"), "{out}");
     }
 
-    /// Issue #781 P0: a non-hydrating provider gets ONE comment line naming
-    /// the issue and NO legs — a request would answer a guarded 501.
+    /// Issue #781 P1 landed: a cornucopia project hydrates by default, so it
+    /// gets the SAME provable legs SeaORM does (array/junction is
+    /// unconditional).
     #[test]
-    fn cornucopia_emits_the_781_comment_and_no_legs() {
+    fn cornucopia_emits_the_same_provable_legs_as_sea_orm() {
         let paths = vec![path(
             "parts",
             vec![segment("part", "widget_id", true, false)],
@@ -400,8 +405,48 @@ mod tests {
             ..Default::default()
         };
         let support = include_support_for(&project);
-        assert!(!support.is_supported(), "cornucopia must be unsupported");
+        assert!(support.is_supported(), "cornucopia hydrates by default");
+        assert_eq!(support, IncludeSupport::CornucopiaHydration);
 
+        let out = sections_for_paths(
+            &paths, &support, ITEM, CAPTURE, LIST, "{}", true, true, true,
+        )
+        .into_iter()
+        .map(|s| s.body)
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(
+            out.contains("GET {{base_url}}/api/v1/inventory/widget/{{widget_id}}?include=parts"),
+            "{out}"
+        );
+        assert!(
+            out.contains("jsonpath \"$.included.part\" != null"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "GET {{base_url}}/api/v1/inventory/widget?page=0&page_size=10&include=parts"
+            ),
+            "{out}"
+        );
+        assert!(
+            !out.contains("guarded 501 for include requests"),
+            "no provider-level omission:\n{out}"
+        );
+        assert!(!out.contains("omitted"), "no omission comment:\n{out}");
+    }
+
+    /// A genuinely unsupported PROVIDER (no production one exists — injected)
+    /// still gets ONE comment line and NO legs, because its handler 501s.
+    #[test]
+    fn unsupported_provider_emits_the_781_comment_and_no_legs() {
+        let paths = vec![path(
+            "parts",
+            vec![segment("part", "widget_id", true, false)],
+        )];
+        let support = IncludeSupport::Unsupported {
+            reason: "persistence provider `diesel` has no include fetch plane".to_string(),
+        };
         let out = sections_for_paths(
             &paths, &support, ITEM, CAPTURE, LIST, "{}", true, true, true,
         )

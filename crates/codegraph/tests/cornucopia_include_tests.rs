@@ -1,17 +1,18 @@
-//! Issue #781 P1 — cornucopia `?include=` hydration (preview feature
-//! `cornucopia_include_hydration`).
+//! Issue #781 P1 — cornucopia `?include=` hydration (DEFAULT ON).
 //!
-//! End-to-end proof that ONE switch flips the whole plane together:
+//! End-to-end proof that the plane is wired together with no switch:
 //!
 //! * `queries/{domain}/{table}.sql` gains the annotated include query pair
 //!   (single + batch),
 //! * `cornucopia_repository_impl.rs` gains the inherent fetch methods,
 //! * `query.rs` gains the session-owning query-handler wrappers,
-//! * the handler hydrates the implemented shape and answers a guarded 501 for
-//!   every modelled shape the plane does not implement.
+//! * the handler hydrates the implemented shapes and answers a guarded per-path
+//!   501 for every modelled shape the plane does not implement.
 //!
-//! Flag OFF is the issue #781 P0 behaviour: no include SQL, no adapter methods,
-//! no wrappers, and the handler's guarded 501 — byte-identical to today.
+//! The retained fail-closed arms are PER SHAPE, never a provider-level 501:
+//! the fixture models `customer.org.currency` (depth 3) beside the implemented
+//! hop, and `invoice_handler` must 501 the depth-3 alias while hydrating the
+//! one-hop path on the same handler.
 //!
 //! The unit KATs for each emitted fragment live beside the emitters
 //! (`db::cornucopia_queries`, `ddd::cornucopia_repo`, `api::include_plan`); this
@@ -22,7 +23,7 @@ use std::path::Path;
 #[path = "cornucopia_include_support/mod.rs"]
 mod support;
 
-use support::{FLAG_OFF_PROFILE, FLAG_ON_PROFILE, generate, read};
+use support::{PROFILE, generate, read};
 
 /// Parse-only gate: the emitted Rust must be syntactically valid. Types are
 /// NOT checked here — the type-level #551 pin is
@@ -41,7 +42,7 @@ fn assert_parses(path: &Path) {
 
 #[tokio::test]
 async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
-    let (_fixture, output) = generate(FLAG_ON_PROFILE).await;
+    let (_fixture, output) = generate(PROFILE).await;
 
     // ── 1. SQL: the annotated include query pair ────────────────────────
     let sql = read(&output.join("queries/shop/work_order.sql"));
@@ -473,98 +474,68 @@ async fn cornucopia_include_hydration_plane_is_wired_end_to_end() {
     }
 }
 
+/// The retained fail-closed arms are PER PATH: the depth-3 dot shape on the
+/// invoice handler emits NO SQL, NO adapter method, and NO query wrapper, and
+/// the handler answers a guarded 501 naming that alias — while the ONE-HOP
+/// path on the SAME handler hydrates. Never a provider-level 501, never a
+/// silently empty include.
 #[tokio::test]
-async fn cornucopia_include_hydration_flag_off_is_the_p0_surface() {
-    let (_fixture, output) = generate(FLAG_OFF_PROFILE).await;
+async fn cornucopia_unsupported_shapes_fail_closed_per_path() {
+    let (_fixture, output) = generate(PROFILE).await;
 
-    let sql = read(&output.join("queries/shop/work_order.sql"));
-    assert!(
-        !sql.contains("include_customer"),
-        "flag off must emit no include SQL:\n{sql}"
-    );
-
-    let adapter = read(&output.join("src/domain/shop/work_order/cornucopia_repository_impl.rs"));
-    assert!(
-        !adapter.contains("fetch_customer_for_work_order"),
-        "flag off must emit no include adapter methods:\n{adapter}"
-    );
-
-    let query = read(&output.join("src/domain/shop/work_order/query.rs"));
-    assert!(
-        !query.contains("fetch_customer_for_work_order"),
-        "flag off must emit no include query wrappers:\n{query}"
-    );
-
-    // Issue #781 P0: every include request answers the guarded 501.
-    let handler = read(&output.join("src/api/shop/work_order_handler.rs"));
-    assert!(
-        handler.contains("if !include_paths.is_empty()"),
-        "flag off keeps the guarded 501:\n{handler}"
-    );
-    assert!(
-        handler.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
-        "flag off keeps the 501 status:\n{handler}"
-    );
-    assert!(
-        !handler.contains("fetch_customer_for_work_order"),
-        "flag off must not call a hydration method:\n{handler}"
-    );
-
-    // The reverse-FK plane is part of the SAME switch: no array SQL, no array
-    // adapter, no array wrapper, and the same guarded 501 on the customer
-    // handler.
-    let customer_sql = read(&output.join("queries/shop/customer.sql"));
-    assert!(
-        !customer_sql.contains("include_work_order"),
-        "flag off must emit no array include SQL:\n{customer_sql}"
-    );
-    let customer_adapter =
-        read(&output.join("src/domain/shop/customer/cornucopia_repository_impl.rs"));
-    assert!(
-        !customer_adapter.contains("fetch_work_order_for_customer"),
-        "flag off must emit no array adapter methods:\n{customer_adapter}"
-    );
-    let customer_query = read(&output.join("src/domain/shop/customer/query.rs"));
-    assert!(
-        !customer_query.contains("fetch_work_order_for_customer"),
-        "flag off must emit no array query wrappers:\n{customer_query}"
-    );
-    let customer_handler = read(&output.join("src/api/shop/customer_handler.rs"));
-    assert!(
-        customer_handler.contains("if !include_paths.is_empty()"),
-        "flag off keeps the guarded 501 on the reverse side:\n{customer_handler}"
-    );
-    assert!(
-        !customer_handler.contains("included.work_order"),
-        "flag off must not hydrate the reverse collection:\n{customer_handler}"
-    );
-
-    // The dot plane is part of the SAME switch: no leaf/intermediate SQL, no
-    // dot adapter methods, no dot wrappers, and the same guarded 501 on the
-    // invoice handler (every path, including the depth-3 one).
+    // No SQL for the unsupported depth-3 shape…
     let invoice_sql = read(&output.join("queries/shop/invoice.sql"));
     assert!(
-        !invoice_sql.contains("include_customer"),
-        "flag off must emit no dot include SQL:\n{invoice_sql}"
+        !invoice_sql.contains("customer_org_currency"),
+        "the depth-3 shape must emit no SQL:\n{invoice_sql}"
     );
+    // …while the implemented one-hop shapes do.
+    assert!(
+        invoice_sql.contains("--! include_customer_org_for_invoice (source_id) : ("),
+        "the implemented hop still emits:\n{invoice_sql}"
+    );
+
+    // No adapter method for the unsupported shape (a handler must never call
+    // a method the adapter skipped — E0599).
     let invoice_adapter =
         read(&output.join("src/domain/shop/invoice/cornucopia_repository_impl.rs"));
     assert!(
-        !invoice_adapter.contains("fetch_customer_org_for_invoice"),
-        "flag off must emit no dot adapter methods:\n{invoice_adapter}"
+        !invoice_adapter.contains("fetch_customer_org_currency_for_invoice"),
+        "the depth-3 shape must emit no adapter method:\n{invoice_adapter}"
     );
+    assert!(
+        invoice_adapter.contains("fetch_customer_org_for_invoice"),
+        "the implemented hop still emits its adapter method:\n{invoice_adapter}"
+    );
+
+    // No query wrapper for the unsupported shape.
     let invoice_query = read(&output.join("src/domain/shop/invoice/query.rs"));
     assert!(
-        !invoice_query.contains("fetch_customer_org_for_invoice"),
-        "flag off must emit no dot query wrappers:\n{invoice_query}"
+        !invoice_query.contains("fetch_customer_org_currency_for_invoice"),
+        "the depth-3 shape must emit no query wrapper:\n{invoice_query}"
     );
+
+    // The handler 501s the REQUESTED unsupported alias, naming it…
     let invoice_handler = read(&output.join("src/api/shop/invoice_handler.rs"));
     assert!(
-        invoice_handler.contains("if !include_paths.is_empty()"),
-        "flag off keeps the guarded 501 on the dot side:\n{invoice_handler}"
+        invoice_handler.contains("\"customer.org.currency\" => Some(\"dot-notation"),
+        "the depth-3 alias must be named in the per-path guard:\n{invoice_handler}"
     );
     assert!(
-        !invoice_handler.contains("included.customer"),
-        "flag off must not hydrate the dot leaf:\n{invoice_handler}"
+        invoice_handler.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
+        "the unsupported shape fails closed with a 501:\n{invoice_handler}"
+    );
+    assert!(
+        invoice_handler.contains(
+            "message: format!(\"?include={path} is not supported: {reason} (issue #781)\")"
+        ),
+        "the 501 names the requested path and reason:\n{invoice_handler}"
+    );
+    // …and the implemented hop on the same handler still hydrates.
+    assert!(
+        invoice_handler.contains(
+            "let leaf_resp = state.shop_invoice_queries.fetch_customer_org_for_invoice(id,"
+        ),
+        "the implemented hop still hydrates beside the refusal:\n{invoice_handler}"
     );
 }

@@ -12,8 +12,8 @@
 //! # What runs
 //!
 //! 1. Generate the fixture through the shared
-//!    `cornucopia_include_support` module with the preview flag ON
-//!    (`cornucopia-includes` profile, §1).
+//!    `cornucopia_include_support` module (the `cornucopia-includes` profile;
+//!    the include plane is DEFAULT ON, §1).
 //! 2. Provision a unique database through `test_framework::postgres::GateDb`
 //!    (`DATABASE_URL` when it can host per-run databases, else the pinned
 //!    docker fallback).
@@ -98,8 +98,7 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, Row};
 use uuid::Uuid;
 
-// The shared fixture also carries the flag-OFF profile constant, which this
-// binary (flag-ON only) never reads.
+// The shared fixture carries helpers this binary does not all read.
 #[allow(dead_code)]
 #[path = "cornucopia_include_support/mod.rs"]
 mod support;
@@ -107,7 +106,7 @@ mod support;
 #[path = "test_framework/mod.rs"]
 mod test_framework;
 
-use support::{FLAG_ON_PROFILE, generate, read};
+use support::{PROFILE, generate, read};
 use test_framework::postgres::{GateDb, resolve_base_target};
 
 /// The fixture's include-emitting tables, in the order the assertions walk
@@ -288,7 +287,7 @@ fn binding_rejects_a_placeholder_it_did_not_map() {
 /// policy — see the module docs).
 #[tokio::test]
 async fn emitted_include_queries_extract_bind_and_carry_no_marker() {
-    let (_fixture, output) = generate(FLAG_ON_PROFILE).await;
+    let (_fixture, output) = generate(PROFILE).await;
     let queries = include_queries(&output);
     let names: BTreeSet<&str> = queries.keys().map(String::as_str).collect();
     assert_eq!(
@@ -743,8 +742,8 @@ async fn apply_band(client: &Client, migrations: &Path, base_user: &str) {
 #[tokio::test]
 #[ignore = "needs Postgres (DATABASE_URL or the docker fallback); see the module docs"]
 async fn cornucopia_includes_hydrate_under_rls() {
-    // ── 1. Generate the fixture with the preview flag ON ──
-    let (_fixture, output) = generate(FLAG_ON_PROFILE).await;
+    // ── 1. Generate the fixture (the include plane is default ON) ──
+    let (_fixture, output) = generate(PROFILE).await;
     let queries = include_queries(&output);
     for (name, query) in &queries {
         // The marker-free contract is asserted again at runtime so the

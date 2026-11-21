@@ -3823,7 +3823,7 @@ their runtime substitute.
 |-------|-----|-------|
 | mox plane (`mox_types` + ops) | `mox_plane_compile_tests` | native + wasm32, sea_orm-free (#517) |
 | SeaORM repository impl (trait + emitter + DTO shims; child tables, junctions, includes, **design finders**, **media child exclusion (#719)**) | `repository_compile_tests` | native, scratch crate (caught the #551 design-finder double-close — never compiled anywhere); the `media_repository_plane_compiles` leg carries a `[media]` through-app fixture pinning the #707 shape — request DTO pair omits the reference, response DTO keeps it, the child insert/replace loops skip the media child while reads hydrate it — and no wasm32 leg (SeaORM; cornucopia/wasm rides #550) |
-| cornucopia include plane (adapter include methods + `query.rs` wrappers + handler include blocks; preview flag `cornucopia_include_hydration`) | `cornucopia_include_compile_tests` | native, scratch crate over the stubbed `cornucopia-queries` (the `hooks_cornucopia_runtime_tests` harness pattern); the stub query surface is pinned EXACTLY to the emitted SQL `--! include_*` names and the handler's call set (a renamed query fails before compiling); teeth validated by row-shape (E0609) and bind-arity (E0061) mutations; wasm32 rides the #550 worker gate |
+| cornucopia include plane (adapter include methods + `query.rs` wrappers + handler include blocks; DEFAULT ON since #781 P1 — the preview flag is deleted; every unimplemented SHAPE still fails closed per path with a named 501) | `cornucopia_include_compile_tests` | native, scratch crate over the stubbed `cornucopia-queries` (the `hooks_cornucopia_runtime_tests` harness pattern); the stub query surface is pinned EXACTLY to the emitted SQL `--! include_*` names and the handler's call set (a renamed query fails before compiling); teeth validated by row-shape (E0609) and bind-arity (E0061) mutations; wasm32 rides the #550 worker gate |
 | command + query (hooks-gated + ext-points-gated), push dispatcher (monolith leg), hooks SPI types | `command_compile_tests` | native, scratch crate; the cornucopia command/repo legs ride #550's wasm gate + the runtime pin |
 | worker crate (cornucopia command + repository impl + dispatcher wasm leg) | `worker_wasm_compile_tests -- --ignored` | native + wasm32 whole-worker (#550) |
 | gateway crate (integration catalog) | `workers_gateway_compile_tests -- --ignored` | #521 |
@@ -5923,10 +5923,16 @@ extensibility, mox, service_op). Rust owns the decisions:
 - `HandlerContext` (`api/handler/mod.rs`) is the plan IR: pre-rendered path extractors
   (five shapes + child-op-add), guard-presence flags, include default fields, and the
   guard/invariant/media blocks (#338/#666).
-- `api/include_plan.rs` owns `?include=` hydration: `IncludeSupport::{SeaOrm, Cornucopia,
-  Unsupported}`. A non-SeaORM provider renders a GUARDED 501 naming the provider and
-  issue #781 (a request without `?include=` still succeeds) and the utoipa include doc is
-  provider-honest. NEVER return 200 with silently empty include data (#781 P0).
+- `api/include_plan.rs` owns `?include=` hydration: `IncludeSupport::{SeaOrm,
+  CornucopiaHydration, Unsupported}`. Both real providers hydrate (cornucopia is
+  DEFAULT ON since #781 P1): SeaORM renders transaction-scoped repository fetches,
+  cornucopia renders per-path query-handler calls (`CornucopiaIncludeShape::classify`
+  accepts a single-segment scalar `refers`, a single-segment reverse-FK collection and
+  one hop of dot notation). Every other SHAPE fails closed with a GUARDED 501 naming
+  the requested alias (a request without `?include=` still succeeds) — never a
+  provider-level 501, never a 200 with silently empty include data. `Unsupported` is
+  retained for a provider that cannot hydrate at all (no production provider; reachable
+  via `build_include_plan_with_support`).
 - `ddd/service_ops/render/` owns every service-op execution body, dispatched exhaustively
   on `ExecutionKind` (seam / read / delete / update / child_op / create / projection_read /
   body). The handler generator re-renders every route ONCE after its invariant/guard

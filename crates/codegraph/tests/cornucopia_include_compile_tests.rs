@@ -66,13 +66,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[path = "cornucopia_include_support/mod.rs"]
-#[allow(dead_code)] // `FLAG_OFF_PROFILE` belongs to the wiring pin's half.
+#[allow(dead_code)] // the wiring pin's helpers are not all used by this binary.
 mod support;
 
 #[path = "test_framework/mod.rs"]
 mod test_framework;
 
-use support::{FLAG_ON_PROFILE, generate, read};
+use support::{PROFILE, generate, read};
 use test_framework::cornucopia_queries_stub;
 
 /// The four fixture tables, in the order the stub modules are rendered.
@@ -1378,7 +1378,7 @@ fn cargo_check(workspace_manifest: &Path, label: &str) {
 /// against a stubbed `cornucopia-queries` carrying the emitted `--!` surface.
 #[tokio::test]
 async fn cornucopia_include_plane_compiles_in_isolation() {
-    let (_fixture, output) = generate(FLAG_ON_PROFILE).await;
+    let (_fixture, output) = generate(PROFILE).await;
 
     // ── Tripwires BEFORE the (slow) compile, so drift is named. ──
     let include_fns = emitted_include_fns(&output);

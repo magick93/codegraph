@@ -283,13 +283,6 @@ async fn regenerate_fixture() -> Result<Vec<PathBuf>, String> {
             ui_live_queries: plan.ui_live_queries,
             testid_module: plan.testid_module,
             structural_gates: plan.structural_gates,
-            // Issue #781 P1 preview flag: read from the raw feature map, the
-            // same way the driver threads it (no typed BuildPlan field).
-            cornucopia_include_hydration: plan
-                .features
-                .get("cornucopia_include_hydration")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
             event_envelope: plan.event_envelope.as_str().to_string(),
             event_idempotency: plan.event_idempotency,
             event_archive: plan.event_archive,

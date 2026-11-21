@@ -41,8 +41,8 @@
 //! cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture
 //! ```
 //!
-//! The fixture runs with the preview `cornucopia_include_hydration` feature
-//! ON (issue #781 P1), so the cornucopia `?include=` plane — the include SQL,
+//! The fixture is a cornucopia project, and the `?include=` plane is DEFAULT
+//! ON (issue #781 P1 landed), so the include plane — the include SQL,
 //! the adapter fetch methods, the session-owning query wrappers and the
 //! handler hydration call sites — compiles natively AND on wasm32. This is
 //! the gate the design record delegates the wasm question to: the wrappers are
@@ -1707,15 +1707,10 @@ fn worker_project_config(repo: &Path) -> codegraph::generate::ProjectConfig {
         deployment: codegraph::generate::DeploymentConfig {
             deployment_topology: codegraph::profile::DeploymentTopology::Workers,
         },
-        // Issue #781 P1: the cornucopia `?include=` hydration plane ON, so its
-        // SQL / adapter / query wrappers / handler call sites compile on
-        // native AND wasm32. The gate writes its `ProjectConfig` directly (no
-        // `profiles.toml`), so this field IS the feature switch — the driver's
-        // `feature_bool("cornucopia_include_hydration")` sets the same field.
-        codegen: codegraph::generate::CodegenConfig {
-            cornucopia_include_hydration: true,
-            ..Default::default()
-        },
+        // Issue #781 P1: the cornucopia `?include=` hydration plane is
+        // DEFAULT ON, so its SQL / adapter / query wrappers / handler call
+        // sites compile on native AND wasm32 with no switch to set.
+        codegen: codegraph::generate::CodegenConfig::default(),
         integration: codegraph::generate::IntegrationFlags {
             has_extension_points: true,
             ..Default::default()

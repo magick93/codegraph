@@ -138,17 +138,14 @@ Contract:
 - **P2 (T7.3):** generated hurl contracts gain deterministic include legs (array/junction
   includes assert non-null; scalar includes only when the create body provably wires the FK;
   otherwise an omission comment). Cornucopia contracts emit no legs until P1 lands.
-- **P1 (in progress, issue #781):** implement cornucopia include fetch queries in
-  `cornucopia_queries.rs` + `cornucopia_repo.rs` (mirror `find_tree`), add the include
-  methods to the provider-generic repository trait, and flip `IncludeSupport`.
-  **The contained PoC + design record now live at
-  `docs/tdd/781-cornucopia-includes.tdd.md`:** the single-segment scalar shape (GET +
-  LIST batch) is implemented behind the default-OFF `cornucopia_include_hydration`
-  preview feature, with a per-path capability verdict (`CornucopiaIncludeShape`) so
-  every unimplemented shape (array/reverse-FK, dot notation, VO→entity child table)
-  still fails closed with the guarded 501. The compile + live runtime pins and the
-  switch flip (with the single expected `cornucopia_include` matrix re-bless) are the
-  next slices.
+- **P1 (LANDED, issue #781):** cornucopia include fetch queries in
+  `cornucopia_queries.rs` + `cornucopia_repo_include.rs`, the session-owning wrappers in
+  `query.rs`, and a per-path capability verdict (`CornucopiaIncludeShape`) so every
+  unimplemented shape (VO→entity child table, dot deeper than one hop) still fails closed
+  with a named guarded 501. The plane is **DEFAULT ON** (the preview flag is deleted);
+  the full design record is `docs/tdd/781-cornucopia-includes.tdd.md`. The compile pin,
+  the real-Postgres runtime pin, the flag-ON workers wasm gate and the single expected
+  `cornucopia_include` matrix re-bless all landed with the flip.
 
 ## 7. Assumptions and deviations from the issue
 

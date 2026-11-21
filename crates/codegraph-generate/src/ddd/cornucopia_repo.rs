@@ -100,15 +100,12 @@ impl EntityGenerator for CornucopiaRepoGenerator {
                 .map(|plan| !plan.is_empty())
                 .unwrap_or(false);
 
-        // `?include=` hydration (issue #781 P1 preview feature): resolve the
+        // `?include=` hydration (issue #781 P1, default ON): resolve the
         // SAME path set the handler plans against, keep the shapes the plane
         // implements, and build each target's tree so the response mapping
         // reuses `emit_response_expr`.
-        let include_plans_data = if project.codegen.cornucopia_include_hydration {
-            resolve_cornucopia_include_targets(db, config, project, domain, schema_title).await
-        } else {
-            Vec::new()
-        };
+        let include_plans_data =
+            resolve_cornucopia_include_targets(db, config, project, domain, schema_title).await;
         let include_plans: Vec<IncludeAdapterPlan<'_>> = include_plans_data
             .iter()
             .filter_map(|entry| {

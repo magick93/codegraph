@@ -1,16 +1,20 @@
 //! Shared fixture for the issue #781 P1 cornucopia `?include=` gates.
 //!
-//! Two integration tests consume this module:
+//! Three integration tests consume this module:
 //!
 //! * `cornucopia_include_tests` — the wiring pin (string/syn assertions over
-//!   the emitted plane, flag ON and flag OFF);
+//!   the emitted plane);
 //! * `cornucopia_include_compile_tests` — the #551 compile pin (the include
 //!   plane assembled into a scratch crate and `cargo check`ed against a
-//!   stubbed `cornucopia-queries`).
+//!   stubbed `cornucopia-queries`);
+//! * `cornucopia_include_runtime_tests` — the real-Postgres runtime pin.
+//!
+//! The include plane is DEFAULT ON for cornucopia projects (issue #781 P1
+//! landed), so there is ONE profile — no preview switch to toggle.
 //!
 //! Factored out (the `tests/test_framework` precedent) so the fixture cannot
-//! drift between the two gates: the compile pin must assemble the SAME model,
-//! config and profiles the wiring pin asserts.
+//! drift between the gates: they must assemble the SAME model, config and
+//! profile.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,8 +96,8 @@ allow_include = ["customer"]
 allow_include = ["customer.org", "customer.org.currency"]
 "#;
 
-/// Two profiles over one model: the preview feature ON and OFF. Everything
-/// else is identical, so the flag is the only variable.
+/// ONE cornucopia profile over the fixture model. The include plane is
+/// DEFAULT ON (issue #781 P1 landed), so there is no preview switch.
 ///
 /// `domain_types_base` is deliberately NOT set: the profile's generator list
 /// omits the monolith `scaffold` generator, so the run emits the
@@ -106,12 +110,11 @@ pub const PROFILES_TOML: &str = r#"
 [profiles.cornucopia-includes.meta]
 name = "cornucopia-includes"
 version = "1.0.0"
-description = "cornucopia include hydration preview"
+description = "cornucopia include hydration"
 
 [profiles.cornucopia-includes.features]
 persistence_provider = "cornucopia"
 deployment_topology = "monolith"
-cornucopia_include_hydration = true
 
 [profiles.cornucopia-includes.api]
 generators = [
@@ -124,31 +127,10 @@ generators = [
     "openapi",
 ]
 output = "generated/"
-
-[profiles.cornucopia-off.meta]
-name = "cornucopia-off"
-version = "1.0.0"
-description = "cornucopia without include hydration"
-
-[profiles.cornucopia-off.features]
-persistence_provider = "cornucopia"
-deployment_topology = "monolith"
-
-[profiles.cornucopia-off.api]
-generators = [
-    "ddl", "cornucopia_queries", "cornucopia_repo", "dto", "repository",
-    "command", "query", "event", "handler", "lifecycle_trait",
-    "domain_types_dto", "domain_types_query_service",
-    "errors", "router", "links",
-    "cornucopia_config", "basejump_setup", "pgmq_setup", "platform_schema",
-    "workflow_seed", "hook_registry", "domain_types_scaffold", "codelist",
-    "openapi",
-]
-output = "generated/"
 "#;
 
-pub const FLAG_ON_PROFILE: &str = "cornucopia-includes";
-pub const FLAG_OFF_PROFILE: &str = "cornucopia-off";
+/// The single fixture profile name.
+pub const PROFILE: &str = "cornucopia-includes";
 
 pub struct Fixture {
     pub root: tempfile::TempDir,

@@ -9,29 +9,24 @@
 //! The SeaORM blocks are a verbatim port of the template's SeaORM branches
 //! (including comments and the dot-notation accumulation merge).
 //!
-//! ## Cornucopia: fail closed (issue #781 P0) and the P1 hydration preview
+//! ## Cornucopia hydration (issue #781 P1, default ON)
 //!
-//! The cornucopia SQL-first repositories did not implement include hydration,
-//! so [`build_include_plan`] returns [`IncludeSupport::Unsupported`] for a
-//! cornucopia project: a request that ASKS for `?include=` answers a 501
-//! naming the provider and issue #781 instead of silently returning empty
-//! include data. The guard is `if !include_paths.is_empty()` — a request
-//! without includes proceeds normally (the handler region is emitted whenever
-//! the ENTITY models include paths, not only when the request asks for them).
-//! [`IncludeSupport::Cornucopia`] remains reachable through
-//! [`build_include_plan_with_support`] and keeps the historical empty-data
-//! shape (no production path produces it any more).
+//! The cornucopia SQL-first repositories now DRIVE include hydration
+//! ([`IncludeSupport::CornucopiaHydration`]) for a cornucopia project, with
+//! no preview switch. Its verdict is **per path**:
+//! [`CornucopiaIncludeShape::classify`] accepts the shapes the
+//! SQL/adapter/query planes implement (a single-segment scalar `refers`, a
+//! single-segment reverse-FK collection, and one hop of dot notation) and
+//! names the construct for every other shape, so an unimplemented shape still
+//! fails closed (a guarded 501 naming the alias) instead of silently
+//! returning empty data. The rendered block calls the entity's cornucopia
+//! QUERY handler (the provider's session/transaction owner), mirroring the
+//! tree handler's call shape — never the adapter directly.
 //!
-//! Issue #781 P1 adds [`IncludeSupport::CornucopiaHydration`] behind the
-//! `cornucopia_include_hydration` preview feature (default OFF). Its verdict
-//! is **per path**: [`CornucopiaIncludeShape::classify`] accepts the shapes
-//! the SQL/adapter/query planes implement (a single-segment scalar `refers`,
-//! and a single-segment reverse-FK collection) and names the construct for
-//! every other shape, so an unimplemented shape still fails closed (a guarded
-//! 501 naming the alias) instead of silently returning empty data. The
-//! rendered block calls the entity's cornucopia QUERY handler (the provider's
-//! session/transaction owner), mirroring the tree handler's call shape —
-//! never the adapter directly.
+//! [`IncludeSupport::Unsupported`] remains for a persistence provider that
+//! genuinely cannot hydrate includes; no production provider does (both
+//! variants are covered), so it is reachable only through
+//! [`build_include_plan_with_support`].
 //!
 //! The design record is `docs/tdd/781-cornucopia-includes.tdd.md`.
 //!
@@ -69,13 +64,7 @@ use crate::project_config::ProjectConfig;
 pub enum IncludeSupport {
     /// The SeaORM repository plane: per-id fetch on GET, batch fetch on LIST.
     SeaOrm,
-    /// The cornucopia SQL-first plane: hydration is not implemented yet. No
-    /// production path produces this verdict any more (issue #781 makes
-    /// cornucopia `Unsupported`); the historical empty-data block is kept for
-    /// callers that inject the verdict explicitly.
-    Cornucopia,
-    /// The cornucopia SQL-first plane WITH the hydration plane switched on
-    /// (issue #781 P1 preview feature `cornucopia_include_hydration`).
+    /// The cornucopia SQL-first plane (issue #781 P1, default ON).
     ///
     /// Support is PER PATH: [`CornucopiaIncludeShape::classify`] decides each
     /// modelled path independently, so the shapes the SQL/adapter/query planes
@@ -229,10 +218,8 @@ impl IncludeSupport {
     /// handler refuses.
     pub fn path_support(&self, path: &ResolvedIncludePath) -> IncludePathSupport {
         match self {
-            // Historical arms: the provider either hydrates every resolved
-            // path (SeaORM) or none (the explicit `Cornucopia` injection the
-            // block renderer still understands).
-            Self::SeaOrm | Self::Cornucopia => IncludePathSupport::Supported,
+            // SeaORM hydrates every resolved path.
+            Self::SeaOrm => IncludePathSupport::Supported,
             Self::CornucopiaHydration => match CornucopiaIncludeShape::classify(path) {
                 Ok(_) => IncludePathSupport::Supported,
                 Err(reason) => IncludePathSupport::Unsupported { reason },
@@ -322,19 +309,12 @@ pub struct IncludePlanCtx<'a> {
 /// the generated hurl contract's include legs), so a contract can never probe
 /// a surface the handler refuses.
 ///
-/// Cornucopia returns [`IncludeSupport::Unsupported`] unless the
-/// `cornucopia_include_hydration` preview feature is on; with the feature on
-/// the verdict is [`IncludeSupport::CornucopiaHydration`], whose support is
-/// refined per path by [`IncludeSupport::path_support`].
+/// Cornucopia returns [`IncludeSupport::CornucopiaHydration`] (issue #781 P1
+/// landed — includes hydrate by default), whose support is refined per path by
+/// [`IncludeSupport::path_support`]; SeaORM hydrates every resolved path.
 pub fn include_support_for(project: &ProjectConfig) -> IncludeSupport {
     if project.is_cornucopia() {
-        if project.codegen.cornucopia_include_hydration {
-            IncludeSupport::CornucopiaHydration
-        } else {
-            IncludeSupport::Unsupported {
-                reason: CORNUCOPIA_UNSUPPORTED_REASON.to_string(),
-            }
-        }
+        IncludeSupport::CornucopiaHydration
     } else {
         IncludeSupport::SeaOrm
     }
@@ -343,9 +323,10 @@ pub fn include_support_for(project: &ProjectConfig) -> IncludeSupport {
 /// Build the include plan for one entity, deriving provider support from
 /// `project` (`PersistenceProvider` has exactly two variants today).
 ///
-/// Cornucopia is UNSUPPORTED (issue #781 P0): its SQL-first repositories have
-/// no include fetch plane, so asking for `?include=` must fail closed rather
-/// than silently return empty data.
+/// Both providers hydrate: SeaORM renders transaction-scoped repository
+/// fetches, cornucopia renders per-path query-handler calls (issue #781 P1).
+/// A cornucopia shape the SQL/adapter planes do not implement still fails
+/// closed with a guarded 501 naming the alias — never silent empty data.
 pub fn build_include_plan(
     paths: &[ResolvedIncludePath],
     ctx: &IncludePlanCtx<'_>,
@@ -354,11 +335,9 @@ pub fn build_include_plan(
     build_include_plan_with_support(include_support_for(project), paths, ctx)
 }
 
-/// The cornucopia verdict's reason (rendered into the 501 message).
-const CORNUCOPIA_UNSUPPORTED_REASON: &str = "the cornucopia SQL-first persistence provider does not implement `?include=` hydration (issue #781)";
-
 /// [`build_include_plan`] with an explicit support verdict — the entry point
-/// for a provider the caller cannot lower (see [`IncludeSupport::Unsupported`]).
+/// for a provider the caller cannot lower (see [`IncludeSupport::Unsupported`])
+/// and for tests that inject a per-path verdict.
 pub fn build_include_plan_with_support(
     support: IncludeSupport,
     paths: &[ResolvedIncludePath],
@@ -393,7 +372,6 @@ fn render_get_block(
 ) -> String {
     match support {
         IncludeSupport::SeaOrm => render_get_sea_orm(paths, ctx),
-        IncludeSupport::Cornucopia => CORNUCOPIA_GET_BLOCK.to_string(),
         IncludeSupport::CornucopiaHydration => render_get_cornucopia(paths, ctx, support),
         IncludeSupport::Unsupported { reason } => render_unsupported_get_block(reason),
     }
@@ -770,7 +748,6 @@ fn render_list_block(
 ) -> String {
     match support {
         IncludeSupport::SeaOrm => render_list_sea_orm(paths, ctx),
-        IncludeSupport::Cornucopia => CORNUCOPIA_LIST_BLOCK.to_string(),
         IncludeSupport::CornucopiaHydration => render_list_cornucopia(paths, ctx, support),
         IncludeSupport::Unsupported { reason } => render_unsupported_list_block(reason),
     }
@@ -888,33 +865,6 @@ fn render_list_sea_orm(paths: &[ResolvedIncludePath], ctx: &IncludePlanCtx<'_>) 
 // Provider branches without hydration / without support
 // =============================================================================
 
-/// The current cornucopia GET block: hydration is not implemented on the
-/// SQL-first repositories, so `included` stays all-`None`. Ported verbatim
-/// from `handler.tera` (the comment lines are the contract the wiring task
-/// keeps byte-identical).
-///
-/// NB: the literal must NOT use a `"\` line continuation for its first line —
-/// Rust strips the following line's indentation, which would emit the comment
-/// at column 0.
-const CORNUCOPIA_GET_BLOCK: &str =
-    "    // Cornucopia provider: include fetch methods are not implemented on the
-    // SQL-first repositories yet; `included` stays all-None (validation of
-    // the requested paths above still applies).
-    // TODO(worker-cornucopia-includes): resolve includes through the
-    // cornucopia query layer (later epic step).";
-
-/// The current cornucopia LIST block: includes stay empty, with the
-/// historical comment marker (`handler.tera`). The template's
-/// `ALLOWED_INCLUDE_KEYS` loop is NOT reproduced (validation is hoisted out
-/// of the provider branch by the wiring task).
-const CORNUCOPIA_LIST_BLOCK: &str =
-    "    // Cornucopia provider: batch include fetches are not implemented on the
-    // SQL-first repositories yet; includes stay empty (path validation above
-    // still applies).
-    // TODO(worker-cornucopia-includes): resolve includes through the
-    // cornucopia query layer (later epic step).
-    let included = std::collections::HashMap::<String, serde_json::Value>::new();";
-
 /// A fail-closed 501 (issue #781): a provider that cannot hydrate includes
 /// must never answer with silently-empty include data.
 ///
@@ -974,14 +924,14 @@ fn render_unsupported_guard(reason: &str) -> String {
 
 /// The `?include=` doc-comment line rendered into the query-params struct.
 ///
-/// * SeaORM / the historical cornucopia arm: the pre-#781 line, byte-exact.
-/// * Cornucopia with the P1 hydration preview on: eager-loading works for the
-///   implemented shapes; the wording names the residual limit honestly.
+/// * SeaORM: the pre-#781 line, byte-exact.
+/// * Cornucopia: eager-loading works for the implemented shapes; the wording
+///   names the residual limit honestly.
 /// * Unsupported: honest — includes are modelled but the deployment's
 ///   persistence provider cannot serve them, so requests answer 501.
 fn include_doc_for(support: &IncludeSupport) -> &'static str {
     match support {
-        IncludeSupport::SeaOrm | IncludeSupport::Cornucopia => {
+        IncludeSupport::SeaOrm => {
             "    /// Eager-load related entities, e.g. `?include=person,deployment.position`."
         }
         IncludeSupport::CornucopiaHydration => {
@@ -1337,77 +1287,74 @@ mod tests {
         assert_eq!(plan.support, IncludeSupport::SeaOrm);
     }
 
-    /// Issue #781 P0: a cornucopia project's include surface FAILS CLOSED.
+    /// Issue #781 P1 landed: a default cornucopia project HYDRATES — the
+    /// preview switch is gone, so this is what every cornucopia run emits.
     #[test]
-    fn cornucopia_project_fails_closed_with_a_guarded_501() {
+    fn cornucopia_project_hydrates_by_default() {
         let paths = vec![path("person", vec![segment("person", false)])];
         let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
-        assert!(!plan.support.is_supported());
-        match &plan.support {
-            IncludeSupport::Unsupported { reason } => {
-                assert!(reason.contains("cornucopia"), "{reason}");
-                assert!(reason.contains("issue #781"), "{reason}");
-                assert!(reason.contains("does not implement"), "{reason}");
-            }
-            other => panic!("expected Unsupported, got {other:?}"),
-        }
-        // Both arms are GUARDED on the request asking for includes: a request
-        // without `?include=` must proceed normally.
-        for block in [&plan.get_block, &plan.list_block] {
-            assert!(
-                block.starts_with("    if !include_paths.is_empty() {\n"),
-                "{block}"
-            );
-            assert!(block.contains("        return Err(AppError {"), "{block}");
-            assert!(
-                block.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
-                "{block}"
-            );
-            assert!(block.contains("code: \"NOT_IMPLEMENTED\","), "{block}");
-            assert!(
-                block.contains("correlation_id: Some(correlation_id),"),
-                "{block}"
-            );
-            assert!(block.contains("A request without includes proceeds normally."));
-            // No silent empty-data shape left on either arm.
-            assert!(!block.contains("TODO(worker-cornucopia-includes)"));
-        }
-        // The GET arm ends at the guard's closing brace (the template's
-        // `included` initialiser + Ok envelope follow).
-        assert!(plan.get_block.ends_with("\n    }"), "{}", plan.get_block);
-        // The LIST arm defines the empty map the Ok envelope always reads.
+        assert_eq!(plan.support, IncludeSupport::CornucopiaHydration);
+        assert!(plan.support.is_supported());
         assert!(
-            plan.list_block.ends_with(
-                "\n    let included = std::collections::HashMap::<String, serde_json::Value>::new();"
+            plan.get_block.contains(
+                "included.person = state.common_worker_queries.fetch_person_for_worker(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "{}",
+            plan.get_block
+        );
+        assert!(
+            plan.list_block.contains(
+                "serde_json::to_value(state.common_worker_queries.fetch_person_batch_for_worker(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
             ),
             "{}",
             plan.list_block
         );
+        // The scalar shape is implemented, so no per-path guard is emitted.
+        assert!(!plan.get_block.contains("let unsupported = match"));
+        assert!(!plan.list_block.contains("let unsupported = match"));
     }
 
+    /// Unsupported SHAPES still fail closed per path (the retained 501 arm):
+    /// a cornucopia project's depth-3 dot path 501s while the implemented
+    /// scalar on the same handler hydrates.
     #[test]
-    fn explicit_cornucopia_verdict_keeps_the_historical_empty_blocks() {
-        let paths = vec![path("person", vec![segment("person", false)])];
-        let plan = build_include_plan_with_support(IncludeSupport::Cornucopia, &paths, &ctx());
+    fn cornucopia_unsupported_shapes_still_fail_closed() {
+        let paths = vec![
+            path("person", vec![segment("person", false)]),
+            path(
+                "person.address.city",
+                vec![
+                    segment("person", false),
+                    segment("address", false),
+                    segment("city", false),
+                ],
+            ),
+        ];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
+        let block = &plan.get_block;
         assert!(
-            matches!(plan.support, IncludeSupport::Cornucopia),
-            "historical arm is not the 501 arm"
+            block.contains("        let unsupported = match path.as_str() {"),
+            "{block}"
         );
-        // The comment starts at the handler-fn-body indent (4 spaces) — the
-        // blocks are inserted verbatim into a generated fn body.
-        assert!(plan.get_block.starts_with("    // Cornucopia provider"));
-        assert!(plan.list_block.starts_with("    // Cornucopia provider"));
-        assert!(plan.get_block.contains("`included` stays all-None"));
         assert!(
-            plan.get_block
-                .contains("// TODO(worker-cornucopia-includes): resolve includes through the")
+            block.contains("            \"person.address.city\" => Some(\"dot-notation"),
+            "{block}"
         );
-        // No SeaORM fetch code leaks into the cornucopia blocks.
-        assert!(!plan.get_block.contains("sea_orm"));
-        assert!(!plan.list_block.contains("sea_orm"));
-        assert!(plan.list_block.contains(
-            "let included = std::collections::HashMap::<String, serde_json::Value>::new();"
-        ));
+        assert!(
+            block.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "message: format!(\"?include={path} is not supported: {reason} (issue #781)\")"
+            ),
+            "{block}"
+        );
+        // The implemented shape on the same handler still hydrates.
+        assert!(
+            block.contains("included.person = state.common_worker_queries"),
+            "{block}"
+        );
     }
 
     #[test]
@@ -1453,7 +1400,10 @@ mod tests {
     #[test]
     fn unsupported_doc_line_is_honest_about_the_501() {
         let paths = vec![path("person", vec![segment("person", false)])];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
+        let support = IncludeSupport::Unsupported {
+            reason: "persistence provider `diesel` has no include fetch plane".to_string(),
+        };
+        let plan = build_include_plan_with_support(support, &paths, &ctx());
         assert!(
             plan.include_doc
                 .starts_with("    /// Includes are modelled for this entity")
@@ -1467,31 +1417,12 @@ mod tests {
         assert!(!plan.include_doc.contains("Eager-load related entities"));
     }
 
-    // ── Cornucopia hydration (issue #781 P1 preview feature) ────────────
+    // ── Cornucopia hydration (issue #781 P1, default ON) ───────────────
 
-    fn cornucopia_hydration_project() -> ProjectConfig {
-        let mut project = cornucopia_project();
-        project.codegen.cornucopia_include_hydration = true;
-        project
-    }
-
-    /// The preview flag is the switch: OFF keeps the issue #781 P0 guarded
-    /// 501 for every cornucopia project (the handler matrix's arm).
-    #[test]
-    fn cornucopia_preview_flag_off_keeps_the_p0_501() {
-        let paths = vec![path("person", vec![segment("person", false)])];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
-        assert!(matches!(plan.support, IncludeSupport::Unsupported { .. }));
-        assert!(
-            plan.get_block
-                .contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,")
-        );
-    }
-
-    /// With the flag on the verdict is the hydrating one, and the per-path
+    /// A default cornucopia project is the hydrating verdict, and the per-path
     /// classifier decides support.
     #[test]
-    fn cornucopia_preview_flag_on_reports_per_path_support() {
+    fn cornucopia_reports_per_path_support() {
         let paths = vec![
             path("person", vec![segment("person", false)]),
             path("deployment", vec![segment("deployment", true)]),
@@ -1508,7 +1439,7 @@ mod tests {
                 ],
             ),
         ];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         assert_eq!(plan.support, IncludeSupport::CornucopiaHydration);
         assert!(plan.support.is_supported());
         let supported = plan.support.supported_paths(&paths);
@@ -1632,7 +1563,7 @@ mod tests {
                 ],
             ),
         ];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         let block = &plan.get_block;
 
         assert!(
@@ -1707,7 +1638,7 @@ mod tests {
             path("person", vec![segment("person", false)]),
             path("deployment", vec![segment("deployment", true)]),
         ];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         let block = &plan.list_block;
 
         assert!(
@@ -1760,7 +1691,7 @@ mod tests {
                 segment("building", false),
             ],
         )];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         assert!(
             plan.get_block
                 .contains("\"deployment.position.building\" => Some(\"dot-notation"),
@@ -1792,7 +1723,7 @@ mod tests {
             "customer.org",
             vec![segment("customer", false), segment("organization", false)],
         )];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         let block = &plan.get_block;
 
         assert!(
@@ -1842,7 +1773,7 @@ mod tests {
                 vec![segment("customer", false), segment("billing", false)],
             ),
         ];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         let block = &plan.list_block;
 
         assert!(
@@ -1882,7 +1813,7 @@ mod tests {
     #[test]
     fn cornucopia_hydration_doc_line_names_the_residual_limit() {
         let paths = vec![path("person", vec![segment("person", false)])];
-        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
         assert!(
             plan.include_doc.contains("Eager-load related entities"),
             "{}",

@@ -212,15 +212,6 @@ pub struct CodegenConfig {
     /// Default false = zero behavior.
     #[serde(default)]
     pub structural_gates: bool,
-    /// Cornucopia `?include=` hydration (issue #781 P1 preview feature,
-    /// `cornucopia_include_hydration`): when true a cornucopia project emits
-    /// the include SQL queries, the adapter fetch methods, and the query
-    /// handler's hydration wrappers for the shapes the plane implements, and
-    /// the handler hydrates them. Every other shape still fails closed with a
-    /// guarded 501. Default false = the issue #781 P0 guarded 501 for every
-    /// include request, byte-identical output.
-    #[serde(default)]
-    pub cornucopia_include_hydration: bool,
     /// Import prefix for structured wrapper types in generated re-exports.
     /// Default: "codegraph_type_contracts".
     /// Domain crates should set this to their own crate or module path (e.g. "crate").
@@ -241,7 +232,6 @@ impl Default for CodegenConfig {
             ui_live_queries: false,
             testid_module: false,
             structural_gates: false,
-            cornucopia_include_hydration: false,
             event_envelope: "native".into(),
             event_idempotency: false,
             event_archive: false,
@@ -519,7 +509,6 @@ mod tests {
             ("ui_live_queries", serde_json::json!(false)),
             ("testid_module", serde_json::json!(false)),
             ("structural_gates", serde_json::json!(false)),
-            ("cornucopia_include_hydration", serde_json::json!(false)),
             ("event_envelope", serde_json::json!("native")),
             ("event_idempotency", serde_json::json!(false)),
             ("event_archive", serde_json::json!(false)),
