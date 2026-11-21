@@ -108,6 +108,11 @@ fn root_base() -> Value {
     ctx["read_guarded"] = json!(false);
     ctx["update_guarded"] = json!(false);
     ctx["delete_guarded"] = json!(false);
+    // The `?include_deleted=` gate artifacts (issue #792) are pre-rendered
+    // from Rust (the #338 block convention): the real serializer ALWAYS
+    // emits the keys (empty when inactive), so the key must exist here.
+    ctx["include_deleted_helper_fn"] = json!("");
+    ctx["include_deleted_guard_block"] = json!("");
     attach_path_extractors(&mut ctx, "root", 0, "task_id");
     ctx
 }
@@ -236,6 +241,28 @@ fn cornucopia_project() -> ProjectConfig {
     let mut project = ProjectConfig::default();
     project.database.persistence_provider = PersistenceProvider::Cornucopia;
     project
+}
+
+/// Mirror PRODUCTION for the `?include_deleted=` gate artifacts (issue #792):
+/// they come from the real [`build_include_deleted_gate`] over the domain's
+/// role hierarchy, never hand-copied. Production resolves the hierarchy from
+/// `[rbac] roles_hierarchy` (default basejump); the matrix feeds the same
+/// default and an explicit custom hierarchy for the fail-closed permutation.
+fn apply_include_deleted_gate(ctx: &mut Value) {
+    let hierarchy = codegraph_config::config::default_roles_hierarchy();
+    apply_include_deleted_gate_with(ctx, &hierarchy);
+}
+
+fn apply_include_deleted_gate_with(ctx: &mut Value, hierarchy: &[String]) {
+    let gate = codegraph::generate::api::handler::include_deleted::build_include_deleted_gate(
+        ctx["is_auditable"].as_bool().unwrap_or(false),
+        ctx["has_read"].as_bool().unwrap_or(false),
+        ctx["has_list"].as_bool().unwrap_or(false),
+        ctx["has_fts"].as_bool().unwrap_or(false),
+        hierarchy,
+    );
+    ctx["include_deleted_helper_fn"] = json!(gate.helper_fn);
+    ctx["include_deleted_guard_block"] = json!(gate.guard_block);
 }
 
 // ── Pre-rendered blocks (opaque to the template — hashed bytes) ─────────
@@ -1190,12 +1217,75 @@ fn cases() -> Vec<Case> {
         project: ProjectConfig::default(),
     });
 
+    // 20. root, auditable, NO include surface: the `?include_deleted=` toggle
+    //     (issue #792). The GET extractor widens from `has_include` to
+    //     `has_include or is_auditable`, ListParams gains the toggle field,
+    //     and GET/LIST forward `params.include_deleted.unwrap_or(false)`
+    //     where `false` used to be hardcoded. The pre-rendered role gate
+    //     (manager-or-better; api-key bypass) rides both read endpoints.
+    let mut ctx = root_base();
+    full_crud(&mut ctx);
+    ctx["is_auditable"] = json!(true);
+    out.push(Case {
+        name: "root_auditable_include_deleted_toggle",
+        ctx,
+        project: ProjectConfig::default(),
+    });
+
+    // 21. the same auditable shape under a hierarchy WITHOUT `manager`: the
+    //     emitted helper keeps its fail-closed arm (every JWT role refuses;
+    //     API-key sessions still bypass). The hierarchy is not serialized
+    //     into the template context (the gate is pre-rendered), so this
+    //     case's gate is re-applied with the custom hierarchy after the
+    //     shared loop below.
+    let mut ctx = root_base();
+    full_crud(&mut ctx);
+    ctx["is_auditable"] = json!(true);
+    out.push(Case {
+        name: "root_auditable_toggle_no_manager_hierarchy",
+        ctx,
+        project: ProjectConfig::default(),
+    });
+
+    // 22. provider parity (issue #792): the cornucopia project renders the
+    //     SAME toggle surface — identical forward + guard — for the same
+    //     auditable context. Both providers' query planes take
+    //     `include_deleted: bool`; only the persistence plane differs.
+    let mut ctx = root_base();
+    full_crud(&mut ctx);
+    ctx["is_auditable"] = json!(true);
+    out.push(Case {
+        name: "cornucopia_auditable_include_deleted_toggle",
+        ctx,
+        project: cornucopia_project(),
+    });
+
     for case in out.iter_mut() {
         with_execution_blocks(&mut case.ctx);
     }
 
+    // The gate artifacts mirror production for every case (the builder's own
+    // gating decides active vs empty); the no-manager case re-applies with
+    // its custom hierarchy.
+    let custom = no_manager_hierarchy();
+    for case in out.iter_mut() {
+        if case.name == "root_auditable_toggle_no_manager_hierarchy" {
+            apply_include_deleted_gate_with(&mut case.ctx, &custom);
+        } else {
+            apply_include_deleted_gate(&mut case.ctx);
+        }
+    }
+
     out.sort_by(|a, b| a.name.cmp(b.name));
     out
+}
+
+/// A hierarchy without `manager`: the fail-closed permutation's hierarchy.
+fn no_manager_hierarchy() -> Vec<String> {
+    ["owner", "admin", "member"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 // ── Rendering + hashing ────────────────────────────────────────────────

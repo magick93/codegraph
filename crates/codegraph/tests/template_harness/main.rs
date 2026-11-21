@@ -6,6 +6,7 @@ mod dto;
 mod dto_include;
 mod entity;
 mod handler_include;
+mod handler_include_deleted;
 mod handler_router;
 mod harness;
 mod include_resolution;
