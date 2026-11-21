@@ -5911,6 +5911,37 @@ Entity-type pre-registration follows `compute_generation_order`'s title claim: e
 
 The process-ambient registry remains as a **compatibility surface only**: the free `register_framework_types`/`register_type`/`resolve_imports` shims read/write it, and `init_type_registry()` is a `#[deprecated]` no-op. **Ambient registrations do NOT affect pipeline runs** — a pipeline that starts with a non-empty ambient registry prints `warning: type-registry: N ambient registration(s) do not affect pipeline runs (issue #746)`. Registration conflicts are visible too: the first path wins, and a once-per-name `warning: type-registry: …` line on stderr names both module paths (`TypeRegistryHandle::conflict_messages` records the same diagnostics for tests — `tracing` is invisible without RUST_LOG, so generation diagnostics use the `eprintln!` convention).
 
+## API handler generation plan (issue #778)
+
+`api/handler.tera` is a 19-line assembler over `templates/api/handler/*.tera` fragments
+(support, create, read, update, delete, list, search, semantic_search, tree,
+extensibility, mox, service_op). Rust owns the decisions:
+
+- `HandlerContext` (`api/handler/mod.rs`) is the plan IR: pre-rendered path extractors
+  (five shapes + child-op-add), guard-presence flags, include default fields, and the
+  guard/invariant/media blocks (#338/#666).
+- `api/include_plan.rs` owns `?include=` hydration: `IncludeSupport::{SeaOrm, Cornucopia,
+  Unsupported}`. A non-SeaORM provider renders a GUARDED 501 naming the provider and
+  issue #781 (a request without `?include=` still succeeds) and the utoipa include doc is
+  provider-honest. NEVER return 200 with silently empty include data (#781 P0).
+- `ddd/service_ops/render/` owns every service-op execution body, dispatched exhaustively
+  on `ExecutionKind` (seam / read / delete / update / child_op / create / projection_read /
+  body). The handler generator re-renders every route ONCE after its invariant/guard
+  post-pass attaches `invariant_block` / `create_guard_block` / `create_invariant_block`.
+  Blocks are whitespace-exact copies of the old template output (no trailing newline
+  except the body arm, whose plan block already ends with one).
+- The service-op header (doc comment, utoipa path/params/responses, signature,
+  load/authorize prelude) stays in `service_op.tera` — presentation plus a data-driven
+  call, not execution logic.
+
+Gates: `cargo test -p codegraph --test handler_matrix_tests` is the byte-identity oracle
+(20 permutations, sha256 fixture; re-bless ONLY with `HANDLER_MATRIX_BLESS=1` and an
+enumerated, reviewed diff). Template size budget is 500 lines
+(`file_length_contract`, shrink-only allow-list). Compile pins:
+`service_ops_compile_gate`, `worker_wasm_compile_tests`, `media_compile_tests`,
+`grafeo_e2e_tests::grafeo_generated_code_compiles`. Full record:
+`docs/tdd/778-handler-refactor.tdd.md`.
+
 ## Dependency policy (#426)
 
 - **Cadence**: monthly Tier-0 lockfile refresh (`cargo update`, lockfile-only PR — the #418 shape); quarterly review of Tier-3 majors against the #417 table. Majors are deliberate epic work — no drive-by major bumps.
