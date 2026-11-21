@@ -16,6 +16,8 @@ use uuid::Uuid;
 use super::dto_response::{{ entity_name }}Response;
 use super::repository::{{ entity_name }}Repository;
 use super::super::errors::{{ domain | pascal_case }}Error;
+{%- if include_response_imports %}
+{{ include_response_imports }}{% endif %}
 
 /// Set API key + org + user request context within a transaction so Postgres
 /// RLS policies can enforce tenant isolation and scope checks (#169). The
@@ -384,4 +386,4 @@ impl {{ entity_name }}QueryHandler {
         Ok(rows)
     }
 {% endif %}
-}
+{{ include_query_methods | default(value="") }}}

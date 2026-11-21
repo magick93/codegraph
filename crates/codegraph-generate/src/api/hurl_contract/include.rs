@@ -7,13 +7,17 @@
 //! handler uses ([`crate::api::include_path::resolve_include_paths_for_entity`])
 //! so the contract cannot assert a surface the handler does not serve.
 //!
-//! ## Provider gate (issue #781 P0)
+//! ## Provider gate (issue #781)
 //!
-//! A cornucopia project answers a guarded 501 for an include request, so it
-//! gets NO legs — just one comment line naming #781. The gate reads
+//! Cornucopia hydrates includes by DEFAULT (issue #781 P1 landed), so a
+//! cornucopia project gets the SAME provable legs as SeaORM. The only
+//! provider-level omission is [`IncludeSupport::Unsupported`] — a persistence
+//! provider that cannot hydrate at all answers a guarded 501, so it gets one
+//! comment line and no legs. The gate reads
 //! [`crate::api::include_plan::include_support_for`], the SAME predicate the
-//! handler's hydration plan reads: when the P1 implementation lands, flipping
-//! that one predicate flips the contract too.
+//! handler's hydration plan reads, so the contract cannot advertise a surface
+//! the handler refuses. Per-path verdicts refine it: a shape the cornucopia
+//! plane does not implement gets its own omission comment (never a leg).
 //!
 //! ## Provability (never guess a status or a payload)
 //!
@@ -46,7 +50,7 @@ use codegraph_core::types::SchemaNode;
 use super::ContractSection;
 use crate::ProjectConfig;
 use crate::api::include_path::{ResolvedIncludePath, resolve_include_paths_for_entity};
-use crate::api::include_plan::{IncludeSupport, include_support_for};
+use crate::api::include_plan::{IncludePathSupport, IncludeSupport, include_support_for};
 use crate::error::Result;
 
 /// The one line a non-hydrating provider emits instead of legs (issue #781).
@@ -119,6 +123,13 @@ pub(super) fn sections_for_paths(
 
     let mut sections = Vec::new();
     for path in paths {
+        // Per-path verdict (issue #781 P1): a provider that hydrates SOME
+        // shapes must not advertise the ones it refuses — the handler would
+        // answer a 501 for them.
+        if let IncludePathSupport::Unsupported { reason } = support.path_support(path) {
+            sections.push(section(omitted_unsupported_path(path, &reason)));
+            continue;
+        }
         let Some(first) = path.segments.first() else {
             continue;
         };
@@ -194,6 +205,17 @@ fn omitted_scalar_path(path: &ResolvedIncludePath) -> String {
         "# ?include={alias} — omitted: this contract's create body does not wire the\n\
          # FK, so a fresh row cannot prove a scalar include hydrates (a row-dependent\n\
          # assertion would fail in either direction — the #662 may_refuse rule).",
+        alias = path.alias
+    )
+}
+
+/// A path whose SHAPE the deployment's provider does not implement (issue
+/// #781 P1): the handler answers a 501 for it, so the contract omits the leg
+/// rather than advertising a surface that is refused.
+fn omitted_unsupported_path(path: &ResolvedIncludePath, reason: &str) -> String {
+    format!(
+        "# ?include={alias} — omitted: this shape is not implemented on the\n\
+         # deployment's persistence provider ({reason}; issue #781).",
         alias = path.alias
     )
 }
@@ -366,10 +388,11 @@ mod tests {
         assert!(!out.contains("HTTP 200"), "{out}");
     }
 
-    /// Issue #781 P0: a non-hydrating provider gets ONE comment line naming
-    /// the issue and NO legs — a request would answer a guarded 501.
+    /// Issue #781 P1 landed: a cornucopia project hydrates by default, so it
+    /// gets the SAME provable legs SeaORM does (array/junction is
+    /// unconditional).
     #[test]
-    fn cornucopia_emits_the_781_comment_and_no_legs() {
+    fn cornucopia_emits_the_same_provable_legs_as_sea_orm() {
         let paths = vec![path(
             "parts",
             vec![segment("part", "widget_id", true, false)],
@@ -382,8 +405,48 @@ mod tests {
             ..Default::default()
         };
         let support = include_support_for(&project);
-        assert!(!support.is_supported(), "cornucopia must be unsupported");
+        assert!(support.is_supported(), "cornucopia hydrates by default");
+        assert_eq!(support, IncludeSupport::CornucopiaHydration);
 
+        let out = sections_for_paths(
+            &paths, &support, ITEM, CAPTURE, LIST, "{}", true, true, true,
+        )
+        .into_iter()
+        .map(|s| s.body)
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(
+            out.contains("GET {{base_url}}/api/v1/inventory/widget/{{widget_id}}?include=parts"),
+            "{out}"
+        );
+        assert!(
+            out.contains("jsonpath \"$.included.part\" != null"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "GET {{base_url}}/api/v1/inventory/widget?page=0&page_size=10&include=parts"
+            ),
+            "{out}"
+        );
+        assert!(
+            !out.contains("guarded 501 for include requests"),
+            "no provider-level omission:\n{out}"
+        );
+        assert!(!out.contains("omitted"), "no omission comment:\n{out}");
+    }
+
+    /// A genuinely unsupported PROVIDER (no production one exists — injected)
+    /// still gets ONE comment line and NO legs, because its handler 501s.
+    #[test]
+    fn unsupported_provider_emits_the_781_comment_and_no_legs() {
+        let paths = vec![path(
+            "parts",
+            vec![segment("part", "widget_id", true, false)],
+        )];
+        let support = IncludeSupport::Unsupported {
+            reason: "persistence provider `diesel` has no include fetch plane".to_string(),
+        };
         let out = sections_for_paths(
             &paths, &support, ITEM, CAPTURE, LIST, "{}", true, true, true,
         )
@@ -395,6 +458,93 @@ mod tests {
         assert!(out.contains("501"), "{out}");
         assert!(!out.contains("GET "), "no legs for a 501 provider:\n{out}");
         assert!(!out.contains("HTTP 200"), "{out}");
+    }
+
+    /// Issue #781 P1: a provider that hydrates SOME shapes advertises only
+    /// those — an unimplemented shape is omitted with the reason, never a leg
+    /// the handler would 501.
+    #[test]
+    fn cornucopia_hydration_omits_only_the_unsupported_shapes() {
+        let paths = vec![
+            path("part", vec![segment("part", "part_id", false, true)]),
+            path(
+                "part.vendor.country",
+                vec![
+                    segment("part", "part_id", false, true),
+                    segment("vendor", "part_id", false, false),
+                    segment("country", "vendor_id", false, false),
+                ],
+            ),
+        ];
+        let out = sections_for_paths(
+            &paths,
+            &IncludeSupport::CornucopiaHydration,
+            ITEM,
+            CAPTURE,
+            LIST,
+            "{\"part_id\": \"00000000-0000-0000-0000-000000000001\"}",
+            true,
+            true,
+            true,
+        )
+        .into_iter()
+        .map(|s| s.body)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(
+            out.contains("GET {{base_url}}/api/v1/inventory/widget/{{widget_id}}?include=part"),
+            "the implemented scalar shape gets its GET leg:\n{out}"
+        );
+        assert!(
+            out.contains(
+                "# ?include=part.vendor.country — omitted: this shape is not implemented on the"
+            ),
+            "the depth-3 shape is omitted with the reason:\n{out}"
+        );
+        assert!(
+            !out.contains("include=part.vendor.country\n"),
+            "no leg may address the unsupported shape:\n{out}"
+        );
+    }
+
+    /// A SUPPORTED one-hop dot path is still unprovable on a fresh row (its
+    /// leaf is an `Option`), so it gets the omission comment — never a leg.
+    #[test]
+    fn supported_dot_path_is_omitted_as_unprovable() {
+        let paths = vec![path(
+            "part.vendor",
+            vec![
+                segment("part", "part_id", false, true),
+                segment("vendor", "part_id", false, false),
+            ],
+        )];
+        let out = sections_for_paths(
+            &paths,
+            &IncludeSupport::CornucopiaHydration,
+            ITEM,
+            CAPTURE,
+            LIST,
+            "{}",
+            true,
+            true,
+            true,
+        )
+        .into_iter()
+        .map(|s| s.body)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(
+            out.contains(
+                "# ?include=part.vendor — omitted: the combined response types the leaf as a"
+            ),
+            "{out}"
+        );
+        assert!(
+            !out.contains("GET "),
+            "no leg may address the unprovable dot shape:\n{out}"
+        );
     }
 
     /// No modelled include surface ⇒ no sections at all (byte-identical

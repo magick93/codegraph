@@ -902,6 +902,7 @@ dependencies = [
  "tera",
  "thiserror",
  "tokio",
+ "tokio-postgres",
  "toml",
  "tracing",
  "tracing-subscriber",

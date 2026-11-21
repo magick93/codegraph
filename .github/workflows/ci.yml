@@ -129,6 +129,8 @@ jobs:
         run: cargo test -p codegraph --test service_ops_compile_gate -- --ignored --nocapture
       - name: Run cornucopia hooks runtime pins (issue #518)
         run: cargo test -p codegraph --test hooks_cornucopia_runtime_tests -- --ignored --nocapture
+      - name: Cornucopia include runtime pin (issue #781 P1)
+        run: cargo test -p codegraph --test cornucopia_include_runtime_tests -- --ignored --nocapture
       - name: Worker wasm gate (issue #550)
         run: cargo test -p codegraph --test worker_wasm_compile_tests -- --ignored --nocapture
       - name: Install hurl (service-ops live gates)

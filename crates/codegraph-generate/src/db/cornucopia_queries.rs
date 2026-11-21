@@ -103,6 +103,23 @@ impl EntityGenerator for CornucopiaQueryGenerator {
 
         let mut sql = render_entity_sql(schema_title, domain, config, &tree, &pg_types);
 
+        // `?include=` hydration queries (issue #781 P1, default ON).
+        // Only the shapes the plane implements reach here — every other
+        // modelled path stays un-hydratable (the handler answers its guarded
+        // 501 naming the shape), so no query is emitted for it.
+        sql.push_str(
+            &render_include_queries(
+                db,
+                config,
+                project,
+                domain,
+                schema_title,
+                &tree,
+                &self.parent_candidates,
+            )
+            .await,
+        );
+
         // Deployed-worker query for tree_include entities: the resolution
         // needs the repository emitter's graph walk (the persistence tree
         // leaves tree_include empty), so it happens here in the async caller.
@@ -774,10 +791,438 @@ fn write_get_queries(
     }
 }
 
+// ── `?include=` hydration queries (issue #781 P1) ─────────────────────
+
+/// Generation-time facts for one cornucopia include query.
+///
+/// Plain data (no tree walk) so the SQL shape is unit-testable without a
+/// graph: the emitters build it from the resolved include path + the target's
+/// `EntityTree`, and the KATs build it by hand.
+struct IncludeQueryFacts<'a> {
+    /// The dot-notation alias exactly as the request spells it (the query
+    /// function name is derived from it).
+    alias: &'a str,
+    /// The shape the SQL/adapter/query planes implement for this path (the
+    /// SAME classifier the handler reads).
+    shape: crate::api::include_plan::CornucopiaIncludeShape,
+    /// FK column ON THE SOURCE table referencing the target (`person_id`).
+    /// Read only by the scalar shape.
+    fk_column: &'a str,
+    /// FK column ON THE TARGET table referencing the source (`customer_id`).
+    /// Read only by the array shape — it is the predicate of both queries and
+    /// the selected group key of the batch query.
+    reverse_fk_column: &'a str,
+    /// Whether the reverse FK is a REQUIRED genuine `EntityReference`. It
+    /// decides the batch key's nullability hint: required ⇒ `source_id`
+    /// (a plain `Uuid` row field), optional ⇒ `source_id?` (`Option<Uuid>`),
+    /// which is what the adapter's group-key arm matches.
+    reverse_fk_is_required: bool,
+    /// The target entity's tree (columns, table, soft delete).
+    target: &'a EntityTree,
+    /// Column → PG type for the target's casts.
+    target_pg_types: &'a std::collections::HashMap<String, String>,
+    /// The LEAF entity's tree for a one-hop dot path (`customer.org` → the
+    /// `organization` tree). `None` for every single-segment shape.
+    leaf: Option<&'a EntityTree>,
+    /// FK column ON the intermediate (`target`) table referencing the leaf
+    /// (`org_id` on `customer`). Read only by the dot shape.
+    leaf_fk_column: &'a str,
+    /// Column → PG type for the leaf's casts (dot shape only).
+    leaf_pg_types: Option<&'a std::collections::HashMap<String, String>>,
+}
+
+/// Append one `include_*` query pair per implemented include path.
+///
+/// Resolution goes through the SAME gate the handler uses
+/// ([`crate::api::include_path::resolve_include_paths_for_entity`]) and the
+/// SAME per-path verdict ([`crate::api::include_plan::IncludeSupport`]), so the
+/// emitted SQL surface cannot advertise a path the handler refuses.
+async fn render_include_queries(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    project: &ProjectConfig,
+    domain: &str,
+    schema_title: &str,
+    tree: &EntityTree,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+) -> String {
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title));
+    let paths = crate::api::include_path::resolve_include_paths_for_entity(
+        db,
+        config,
+        domain,
+        schema_title,
+        entity_cfg,
+        project.is_workers_topology(),
+    )
+    .await
+    .unwrap_or_default();
+    let support = crate::api::include_plan::include_support_for(project);
+
+    let mut sql = String::new();
+    // Aliases whose single-segment pair is emitted in this file. A dot path
+    // reuses its first hop's scalar query for the GET existence probe; when
+    // that path is NOT modelled on its own, the pair is emitted here under the
+    // first hop's module alias, so the adapter's call always resolves.
+    let mut emitted_aliases: std::collections::HashSet<String> = support
+        .supported_paths(&paths)
+        .iter()
+        .filter(|path| path.segments.len() == 1)
+        .map(|path| path.alias.clone())
+        .collect();
+
+    for path in support.supported_paths(&paths) {
+        let Some(seg) = path.segments.first() else {
+            continue;
+        };
+        // The SAME classifier the handler reads: only an implemented shape
+        // emits SQL (a refusal here is defensive — `supported_paths` already
+        // filtered on it).
+        let Ok(shape) = crate::api::include_plan::CornucopiaIncludeShape::classify(path) else {
+            continue;
+        };
+        // A shape the plane implements always resolves its target tree; a
+        // miss is a graph inconsistency, not a generation decision — skip it
+        // (the handler's per-path verdict stays authoritative).
+        let Ok(target) = RepositoryImplEmitter
+            .query_entity_tree(db, &seg.schema_title, &seg.domain, config, None)
+            .await
+        else {
+            continue;
+        };
+        let Ok(target_pg_types) =
+            pg_types_for_entity(db, config, parent_candidates, seg, domain).await
+        else {
+            continue;
+        };
+
+        if shape == crate::api::include_plan::CornucopiaIncludeShape::Dot {
+            // (a) The first hop's query pair, when no standalone single-segment
+            // path already emits it under the same alias. The GET adapter
+            // probes the intermediate row through the SINGLE query (a target
+            // miss is `Ok(None)`); the batch query seeds the LIST map with
+            // every source that HAS a target, matching the SeaORM dot batch's
+            // "present combos only" contract.
+            if emitted_aliases.insert(seg.module_name.clone()) {
+                let facts = IncludeQueryFacts {
+                    alias: &seg.module_name,
+                    shape: crate::api::include_plan::CornucopiaIncludeShape::SingleScalar,
+                    fk_column: &seg.fk_column,
+                    reverse_fk_column: &seg.reverse_fk_column,
+                    reverse_fk_is_required: seg.reverse_fk_is_required,
+                    target: &target,
+                    target_pg_types: &target_pg_types,
+                    leaf: None,
+                    leaf_fk_column: "",
+                    leaf_pg_types: None,
+                };
+                sql.push_str(&render_include_sql(tree, &facts));
+            }
+            // (b) The leaf hop, addressed through the intermediate's FK.
+            let leaf_seg = &path.segments[1];
+            let Ok(leaf) = RepositoryImplEmitter
+                .query_entity_tree(db, &leaf_seg.schema_title, &leaf_seg.domain, config, None)
+                .await
+            else {
+                continue;
+            };
+            let Ok(leaf_pg_types) =
+                pg_types_for_entity(db, config, parent_candidates, leaf_seg, domain).await
+            else {
+                continue;
+            };
+            let facts = IncludeQueryFacts {
+                alias: &path.alias,
+                shape,
+                fk_column: &seg.fk_column,
+                reverse_fk_column: &seg.reverse_fk_column,
+                reverse_fk_is_required: seg.reverse_fk_is_required,
+                target: &target,
+                target_pg_types: &target_pg_types,
+                leaf: Some(&leaf),
+                leaf_fk_column: &leaf_seg.fk_column,
+                leaf_pg_types: Some(&leaf_pg_types),
+            };
+            sql.push_str(&render_include_sql(tree, &facts));
+            continue;
+        }
+
+        let facts = IncludeQueryFacts {
+            alias: &path.alias,
+            shape,
+            fk_column: &seg.fk_column,
+            reverse_fk_column: &seg.reverse_fk_column,
+            reverse_fk_is_required: seg.reverse_fk_is_required,
+            target: &target,
+            target_pg_types: &target_pg_types,
+            leaf: None,
+            leaf_fk_column: "",
+            leaf_pg_types: None,
+        };
+        sql.push_str(&render_include_sql(tree, &facts));
+    }
+    sql
+}
+
+/// Column → PG type for one entity (the text-cast decision input).
+async fn pg_types_for_entity(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+    seg: &crate::api::include_path::IncludeSegment,
+    _domain: &str,
+) -> std::result::Result<std::collections::HashMap<String, String>, crate::error::Error> {
+    let entity_ir = build_persistence_entity(
+        db,
+        &seg.schema_title,
+        &seg.domain,
+        config,
+        parent_candidates,
+    )
+    .await?;
+    Ok(entity_ir
+        .columns
+        .iter()
+        .map(|c| (c.column_name.clone(), c.pg_type.clone()))
+        .collect())
+}
+
+/// Render the two annotated queries for one implemented include path.
+///
+/// **Single scalar** (`include_{alias}_for_{source} (source_id)`): the target
+/// row addressed through the SOURCE's own FK column. The FK is read by a
+/// correlated subquery rather than a JOIN so the SELECT list stays the plain
+/// unqualified `row_col_list` every other query uses (a JOIN makes `"id"`
+/// ambiguous), and so RLS applies to the source row as well: a tenant who
+/// cannot see the source sees no include.
+///
+/// **Batch scalar** (`include_{alias}_batch_for_{source} (source_ids)`): one
+/// row per (source, target) pair, keyed by `source_id`, so the adapter can
+/// build the provider-identical `HashMap<Uuid, Option<{Target}Response>>` the
+/// LIST envelope serializes. The inner derived table carries the source id +
+/// FK under distinct names, so the target column list is unambiguous.
+///
+/// **Single array** (`include_{alias}_for_{source}` same signature): every
+/// TARGET row whose reverse FK points at the source — the one-to-many shape.
+/// No JOIN: the target table alone carries both the predicate column and the
+/// selected columns, so the plain `row_col_list` renderer applies verbatim.
+///
+/// **Batch array** (`…_batch_for_…`): the same rows for many sources in one
+/// query, with the reverse FK selected FIRST under the fixed alias
+/// `"source_id"` so the adapter groups without depending on the target's
+/// column list carrying the FK under its DTO field name (a config-declared
+/// child's `parent_ref` column need not appear in the child's schema
+/// properties). The annotation's `source_id`/`source_id?` hint is the row
+/// type's nullability source — it mirrors `reverse_fk_is_required`, which is
+/// exactly the split the adapter's group-key arm matches. Rows whose FK is
+/// NULL never match `= ANY(...)`, so the optional arm's `None` is
+/// unreachable-by-construction (but required by the type).
+///
+/// Soft-delete: the TARGET's marker column filters in both queries (matching
+/// the SeaORM include fetch, which runs under the default scope — there is no
+/// per-include `include_deleted` request parameter).
+fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> String {
+    let src_table = format!("\"{}\".\"{}\"", tree.schema_name, tree.table_name);
+    let target = facts.target;
+    let target_table = format!("\"{}\".\"{}\"", target.schema_name, target.table_name);
+    let source = &tree.table_name;
+    let alias = facts.alias;
+    let alias_snake = facts.alias.replace('.', "_");
+
+    let row_cols: Vec<&TreeColumn> = target
+        .direct_columns
+        .iter()
+        .filter(|c| !c.is_composite_range)
+        .collect();
+    let cols = row_col_list(&row_cols, facts.target_pg_types, target.append_only);
+    let hints = row_hints(&row_cols, target.append_only);
+    let soft_delete = target.soft_delete_column.as_deref();
+
+    match facts.shape {
+        crate::api::include_plan::CornucopiaIncludeShape::SingleArray => {
+            let reverse_fk = facts.reverse_fk_column;
+            // `AND` joins the reverse-FK predicate on both queries.
+            let single_soft = soft_delete
+                .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
+                .unwrap_or_default();
+            let batch_soft = soft_delete
+                .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
+                .unwrap_or_default();
+            let mut sql = String::new();
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_for_{source} (source_id) : ({hints})\n\
+                 --- Eager-load the `{alias}` collection for one {source} row through the \
+                 target's reverse FK (issue #781 P1).\n\
+                 SELECT {cols}\n\
+                 FROM {target_table}\n\
+                 WHERE \"{reverse_fk}\" = :source_id{single_soft};\n\n",
+            ));
+            // The hint is the row type's nullability source: a required FK is a
+            // plain `Uuid`, a nullable one an `Option<Uuid>` — the same split
+            // the adapter's group-key arm consumes.
+            let key_hint = if facts.reverse_fk_is_required {
+                "source_id"
+            } else {
+                "source_id?"
+            };
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_batch_for_{source} (source_ids) : ({key_hint}, {hints})\n\
+                 --- Eager-load the `{alias}` collection for many {source} rows, grouped by the \
+                 target's reverse FK (issue #781 P1).\n\
+                 SELECT \"{reverse_fk}\" AS \"source_id\", {cols}\n\
+                 FROM {target_table}\n\
+                 WHERE \"{reverse_fk}\" = ANY(:source_ids::uuid[]){batch_soft};\n\n",
+            ));
+            return sql;
+        }
+        crate::api::include_plan::CornucopiaIncludeShape::Dot => {
+            let Some(leaf) = facts.leaf else {
+                return String::new();
+            };
+            let fk = facts.fk_column;
+            let leaf_fk = facts.leaf_fk_column;
+            let inter_table = target_table;
+            let leaf_table = format!("\"{}\".\"{}\"", leaf.schema_name, leaf.table_name);
+            let empty_pg_types = std::collections::HashMap::new();
+            let leaf_pg_types = facts.leaf_pg_types.unwrap_or(&empty_pg_types);
+            let leaf_cols: Vec<&TreeColumn> = leaf
+                .direct_columns
+                .iter()
+                .filter(|c| !c.is_composite_range)
+                .collect();
+            let cols = prefixed_row_col_list("l", &leaf_cols, leaf_pg_types, leaf.append_only);
+            let hints = row_hints(&leaf_cols, leaf.append_only);
+            // Both hops' soft-delete markers apply: the intermediate row must
+            // be visible (the GET probe's target fetch already filters it, but
+            // the leaf query must not resurrect a deleted intermediate), and
+            // the leaf itself is filtered like every other read.
+            let mut marker_conds: Vec<String> = Vec::new();
+            if let Some(sd) = target.soft_delete_column.as_deref() {
+                marker_conds.push(format!("\"i\".\"{sd}\" IS NULL"));
+            }
+            if let Some(sd) = leaf.soft_delete_column.as_deref() {
+                marker_conds.push(format!("\"l\".\"{sd}\" IS NULL"));
+            }
+            let single_markers: String = marker_conds
+                .iter()
+                .map(|cond| format!("\n  AND {cond}"))
+                .collect();
+            let batch_where = if marker_conds.is_empty() {
+                String::new()
+            } else {
+                format!("\nWHERE {}", marker_conds.join("\n  AND "))
+            };
+            let mut sql = String::new();
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_for_{source} (source_id) : ({hints})\n\
+                 --- Eager-load `{alias}` (the `{leaf_alias}` hop of the `{inter}` intermediate) for one {source} row through the intermediate's own FK (issue #781 P1).\n\
+                 SELECT {cols}\n\
+                 FROM {leaf_table} AS \"l\"\n\
+                 JOIN {inter_table} AS \"i\" ON \"i\".\"{leaf_fk}\" = \"l\".\"id\"\n\
+                 WHERE \"i\".\"id\" = (SELECT \"{fk}\" FROM {src_table} WHERE \"id\" = :source_id){single_markers}\n\
+                 LIMIT 1;\n\n",
+                leaf_alias = leaf.table_name,
+                inter = target.table_name,
+            ));
+            sql.push_str(&format!(
+                "--! include_{alias_snake}_batch_for_{source} (source_ids) : (source_id, {hints})\n\
+                 --- Eager-load `{alias}` for many {source} rows, keyed by source id (issue #781 P1).\n\
+                 SELECT \"src\".\"source_id\" AS \"source_id\", {cols}\n\
+                 FROM (\n\
+                 \x20   SELECT \"id\" AS \"source_id\", \"{fk}\" AS \"target_id\"\n\
+                 \x20   FROM {src_table}\n\
+                 \x20   WHERE \"id\" = ANY(:source_ids::uuid[])\n\
+                 ) AS \"src\"\n\
+                 JOIN {inter_table} AS \"i\" ON \"i\".\"id\" = \"src\".\"target_id\"\n\
+                 JOIN {leaf_table} AS \"l\" ON \"l\".\"id\" = \"i\".\"{leaf_fk}\"{batch_where};\n\n",
+            ));
+            return sql;
+        }
+        crate::api::include_plan::CornucopiaIncludeShape::SingleScalar => {}
+    }
+
+    let fk = facts.fk_column;
+    let batch_cols =
+        prefixed_row_col_list("t", &row_cols, facts.target_pg_types, target.append_only);
+    let single_soft = soft_delete
+        .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
+        .unwrap_or_default();
+    let batch_soft = soft_delete
+        .map(|sd| format!("\nWHERE \"t\".\"{sd}\" IS NULL"))
+        .unwrap_or_default();
+
+    let mut sql = String::new();
+    sql.push_str(&format!(
+        "--! include_{alias_snake}_for_{source} (source_id) : ({hints})\n\
+         --- Eager-load `{alias}` for one {source} row through its own FK (issue #781 P1).\n\
+         SELECT {cols}\n\
+         FROM {target_table}\n\
+         WHERE \"id\" = (SELECT \"{fk}\" FROM {src_table} WHERE \"id\" = :source_id){single_soft}\n\
+         LIMIT 1;\n\n",
+    ));
+    sql.push_str(&format!(
+        "--! include_{alias_snake}_batch_for_{source} (source_ids) : (source_id, {hints})\n\
+         --- Eager-load `{alias}` for many {source} rows, keyed by source id (issue #781 P1).\n\
+         SELECT \"src\".\"source_id\" AS \"source_id\", {batch_cols}\n\
+         FROM (\n\
+         \x20   SELECT \"id\" AS \"source_id\", \"{fk}\" AS \"target_id\"\n\
+         \x20   FROM {src_table}\n\
+         \x20   WHERE \"id\" = ANY(:source_ids::uuid[])\n\
+         ) AS \"src\"\n\
+         JOIN {target_table} AS \"t\" ON \"t\".\"id\" = \"src\".\"target_id\"{batch_soft};\n\n",
+    ));
+    sql
+}
+
+/// `row_col_list` with every column qualified by the JOIN alias — needed when
+/// the FROM clause carries more than one table (the batch include query).
+fn prefixed_row_col_list(
+    prefix: &str,
+    cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
+) -> String {
+    let mut names: Vec<String> = vec![format!("\"{prefix}\".\"id\"")];
+    for c in cols {
+        names.push(select_col_prefixed(
+            prefix,
+            c.field_name.trim_start_matches("r#"),
+            c,
+            pg_types,
+        ));
+    }
+    names.push(format!("\"{prefix}\".\"created_at\""));
+    if !append_only {
+        names.push(format!("\"{prefix}\".\"updated_at\""));
+    }
+    names.join(", ")
+}
+
+/// [`select_col`] qualified by a table alias.
+fn select_col_prefixed(
+    prefix: &str,
+    field_name: &str,
+    c: &TreeColumn,
+    pg_types: &std::collections::HashMap<String, String>,
+) -> String {
+    let expr = if needs_text_cast(c, pg_types) {
+        format!("\"{prefix}\".\"{}\"::text", c.pg_column_name)
+    } else {
+        format!("\"{prefix}\".\"{}\"", c.pg_column_name)
+    };
+    if c.pg_column_name == field_name {
+        expr
+    } else {
+        format!("{expr} AS \"{field_name}\"")
+    }
+}
+
 fn is_writable_col(col: &TreeColumn) -> bool {
     !col.is_workflow_managed && !col.is_composite_range && !col.is_media
 }
-
 fn param_name(col: &TreeColumn) -> String {
     col.field_name.trim_start_matches("r#").to_string()
 }
@@ -1358,3 +1803,7 @@ fn write_tree_workers_query(sql: &mut String, tree: &EntityTree) {
         fk = inc.via_fk_column,
     ));
 }
+
+#[cfg(test)]
+#[path = "cornucopia_queries_tests.rs"]
+mod include_query_tests;
