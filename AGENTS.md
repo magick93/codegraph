@@ -5675,6 +5675,12 @@ the owner/manager/member/employee matrix from the retired
 `role_allows()`. The org role rides the bundle (`app.role`, resolved once
 at auth time); denial raises **P0403** with a `ROLE_FORBIDDEN` payload.
 Entities without permission config keep tenancy-only behaviour.
+**Handler-side analogue (issue #792)**: the `?include_deleted=` toggle
+(see Include Path System) renders a `manager`-or-better role gate in
+the handler — JWT roles rank by `[rbac] roles_hierarchy` (unknown
+roles and hierarchies without `manager` fail closed), API-key sessions
+bypass it (their authority is the key's RLS scopes — the
+`permission_middleware` precedent).
 
 ### 403 mapping
 
@@ -6113,6 +6119,15 @@ entries in `domains.toml` are explicit paths; everything else comes from
 auto-discovery (config children with `parent`/`parent_ref`, graph
 entity-refs, parent candidates). Heaviest consumer: hr-specs (its
 ~4,000-test e2e suite is the acceptance gate for include changes).
+
+**The read toggle (issue #792)**: auditable entities' GET/LIST/SEARCH
+expose `?include_deleted=` (`ListParams`/`SearchParams`
+`Option<bool>`, strict serde_qs parse — garbage 400s), forwarded into
+the query plane's `include_deleted` slot where handlers used to
+hardcode `false`; an under-privileged session answers 403 (see the
+role gate in the DB-Level Authorization section), non-auditable
+entities accept-and-ignore, and `?include=` hydration does NOT honor
+the toggle (the #784 marker stays request-free).
 
 **Soft delete (issue #784)**: includes exclude soft-deleted related rows for
 auditable entities; soft-deleted sources still hydrate. One derivation —
