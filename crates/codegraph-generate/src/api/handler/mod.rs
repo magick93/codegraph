@@ -83,6 +83,50 @@ pub async fn routable_mox_ops(
         .collect()
 }
 
+/// Per-operation guard presence (issue #338): whether the handler carries an
+/// eligibility guard for each write/read operation. Derived from
+/// [`crate::ddd::rules::EligibilityGuard`]s once, in Rust, so the handler
+/// template's utoipa 403 documentation needs no guard-loop programming.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GuardPresence {
+    pub create: bool,
+    pub read: bool,
+    pub update: bool,
+    pub delete: bool,
+}
+
+impl GuardPresence {
+    /// True for an operation iff at least one guard gates it.
+    pub fn from_guards(guards: &[crate::ddd::rules::EligibilityGuard]) -> Self {
+        let gates = |op: &str| {
+            guards
+                .iter()
+                .any(|guard| guard.operations.iter().any(|gated| gated == op))
+        };
+        Self {
+            create: gates("create"),
+            read: gates("read"),
+            update: gates("update"),
+            delete: gates("delete"),
+        }
+    }
+}
+
+/// The `{Entity}IncludedData` default fields for the `?include=` initialiser:
+/// the unique `segments[0].module_name` values in FIRST-OCCURRENCE order.
+/// Sibling dot-notation paths share a first segment, so the field is
+/// initialised exactly once; an empty input yields an empty list (no include
+/// surface). A defensively empty `segments` is skipped.
+pub fn included_default_fields(include_paths: &[ResolvedIncludePath]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    include_paths
+        .iter()
+        .filter_map(|path| path.segments.first())
+        .map(|segment| segment.module_name.clone())
+        .filter(|field| seen.insert(field.clone()))
+        .collect()
+}
+
 #[derive(Debug, Serialize)]
 pub struct HandlerContext {
     pub entity_name: String,
@@ -147,6 +191,13 @@ pub struct HandlerContext {
     pub has_include: bool,
     /// Resolved include paths for `?include=` query parameter.
     pub include_paths: Vec<ResolvedIncludePath>,
+    /// `{Entity}IncludedData`'s default-field list: the unique
+    /// `segments[0].module_name` values of [`Self::include_paths`] in
+    /// first-occurrence order (sibling dot-paths sharing a first segment
+    /// initialise the field once). Empty = no include surface, so the key is
+    /// omitted and the handler stays byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub included_default_fields: Vec<String>,
     /// Resolved `use` import statements for types referenced by this handler.
     /// Populated through this run's type registry instead of hard-coded
     /// template paths.
@@ -178,6 +229,15 @@ pub struct HandlerContext {
     /// is monolith (the rules module is not worker-routed).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub eligibility_guards: Vec<crate::ddd::rules::EligibilityGuard>,
+    /// Guard presence flags (issue #338): true iff ANY entry of
+    /// [`Self::eligibility_guards`] gates `create` / `read` / `update` /
+    /// `delete`. These are the presence flags the template's utoipa 403
+    /// documentation reads — the derivation lives here so the template does
+    /// no guard-loop programming of its own.
+    pub create_guarded: bool,
+    pub read_guarded: bool,
+    pub update_guarded: bool,
+    pub delete_guarded: bool,
     /// Pre-rendered guard code blocks (issue #338), whitespace-exact so
     /// the template renders them inline; empty strings when inactive.
     /// `*_ownership_prefix` binds the existing ownership load (`let
@@ -597,6 +657,12 @@ impl EntityGenerator for HandlerGenerator {
             .clone()
             .unwrap_or_else(|| guard_blocks.update_ownership_prefix.clone());
 
+        // Template decisions resolved in Rust (issue #778 wave 1): the guard
+        // presence flags the utoipa 403 docs read, and the `?include=`
+        // initialiser's deduped field list.
+        let guard_presence = GuardPresence::from_guards(&eligibility_guards);
+        let included_default_fields = included_default_fields(&include_paths);
+
         let ctx = HandlerContext {
             has_create: operations.contains(&"create".to_string()),
             has_read: operations.contains(&"read".to_string()),
@@ -641,6 +707,7 @@ impl EntityGenerator for HandlerGenerator {
                 .unwrap_or(false),
             has_include,
             include_paths: include_paths.clone(),
+            included_default_fields,
             handler_imports,
             is_auditable,
             ux_sort_fields,
@@ -650,6 +717,10 @@ impl EntityGenerator for HandlerGenerator {
             delete_guard_block: guard_blocks.delete_guard_block,
             read_guard_block: guard_blocks.read_guard_block,
             create_guard_block: guard_blocks.create_guard_block,
+            create_guarded: guard_presence.create,
+            read_guarded: guard_presence.read,
+            update_guarded: guard_presence.update,
+            delete_guarded: guard_presence.delete,
             create_invariant_block: invariant_blocks.create_block,
             update_invariant_block: invariant_blocks.update_block,
             media_cleanup_block,
@@ -1443,5 +1514,117 @@ mod ux_sort_handler_template_tests {
                 "read-only handler must not emit {needle:?}:\n{out}"
             );
         }
+    }
+}
+
+/// Template decisions resolved in Rust (issue #778 wave 1): the guard
+/// presence flags and the `?include=` default-field dedup. These are
+/// derivation tests — the template oracle (handler matrix) pins the rendered
+/// bytes; this module pins the Rust values the template reads.
+#[cfg(test)]
+mod template_decisions_tests {
+    use super::*;
+
+    fn guard(operations: &[&str]) -> crate::ddd::rules::EligibilityGuard {
+        crate::ddd::rules::EligibilityGuard {
+            rule_name: "PositiveTotal".to_string(),
+            fn_name: "task_positive_total".to_string(),
+            call_path: "crate::domain::common::rules::task_positive_total".to_string(),
+            operations: operations.iter().map(|op| op.to_string()).collect(),
+        }
+    }
+
+    fn include_path(alias: &str, modules: &[&str]) -> ResolvedIncludePath {
+        ResolvedIncludePath {
+            alias: alias.to_string(),
+            segments: modules
+                .iter()
+                .map(|module| super::super::include_path::IncludeSegment {
+                    entity_name: module.to_string(),
+                    schema_title: format!("{module}Type"),
+                    module_name: module.to_string(),
+                    domain: "common".to_string(),
+                    table: format!("\"common\".\"{module}\""),
+                    fk_column: format!("{module}_id"),
+                    reverse_fk_column: "task_id".to_string(),
+                    fk_is_required: false,
+                    reverse_fk_is_required: false,
+                    is_array: false,
+                    child_table_override: None,
+                })
+                .collect(),
+            response_rust_type: format!("{alias}Response"),
+            fetch_method: format!("fetch_{alias}"),
+            batch_fetch_method: format!("fetch_{alias}_batch"),
+        }
+    }
+
+    #[test]
+    fn guard_presence_flags_every_gated_operation() {
+        let presence =
+            GuardPresence::from_guards(&[guard(&["create", "read", "update", "delete"])]);
+        assert_eq!(
+            presence,
+            GuardPresence {
+                create: true,
+                read: true,
+                update: true,
+                delete: true,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_presence_is_empty_without_guards() {
+        assert_eq!(GuardPresence::from_guards(&[]), GuardPresence::default());
+        assert!(!GuardPresence::default().create);
+        assert!(!GuardPresence::default().read);
+        assert!(!GuardPresence::default().update);
+        assert!(!GuardPresence::default().delete);
+    }
+
+    #[test]
+    fn guard_presence_unions_across_guards_and_ignores_unguarded_operations() {
+        // Two rules, disjoint gates; `list`/`search` never guard (row
+        // filtering is a documented follow-up) and must not leak a flag.
+        let presence = GuardPresence::from_guards(&[
+            guard(&["read", "list"]),
+            guard(&["update", "delete", "search"]),
+        ]);
+        assert_eq!(
+            presence,
+            GuardPresence {
+                create: false,
+                read: true,
+                update: true,
+                delete: true,
+            }
+        );
+    }
+
+    #[test]
+    fn included_default_fields_dedup_sibling_paths_in_first_occurrence_order() {
+        // Two dot paths share the `assignee` first segment; the third is a
+        // scalar path. One field per first segment, declaration order.
+        let fields = included_default_fields(&[
+            include_path("assignee.person", &["assignee", "person"]),
+            include_path("assignee.organization", &["assignee", "organization"]),
+            include_path("attachments", &["attachment"]),
+        ]);
+        assert_eq!(
+            fields,
+            vec!["assignee".to_string(), "attachment".to_string()]
+        );
+    }
+
+    #[test]
+    fn included_default_fields_are_empty_without_paths() {
+        assert!(included_default_fields(&[]).is_empty());
+        // Defensive: a path with no segments contributes no field.
+        let no_segments = ResolvedIncludePath {
+            segments: Vec::new(),
+            ..include_path("broken", &["task"])
+        };
+        assert!(included_default_fields(&[no_segments]).is_empty());
     }
 }
