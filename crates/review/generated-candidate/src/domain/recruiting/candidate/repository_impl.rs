@@ -536,6 +536,7 @@ impl CandidateRepositoryImpl {
     ) -> Result<Vec<ApplicationResponse>, Box<dyn std::error::Error>> {
         let rows = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::CandidateId.eq(source_id))
+            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
             .all(db)
             .await?;
         let mut results = Vec::with_capacity(rows.len());
@@ -561,6 +562,7 @@ impl CandidateRepositoryImpl {
     ) -> Result<std::collections::HashMap<Uuid, Vec<ApplicationResponse>>, Box<dyn std::error::Error>> {
         let rows = crate::entity::recruiting_application::Entity::find()
             .filter(crate::entity::recruiting_application::Column::CandidateId.is_in(source_ids.to_vec()))
+            .filter(crate::entity::recruiting_application::Column::DeletedAt.is_null())
             .all(db)
             .await?;
         let mut result: std::collections::HashMap<Uuid, Vec<ApplicationResponse>> = std::collections::HashMap::new();
