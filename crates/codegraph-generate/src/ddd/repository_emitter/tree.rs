@@ -990,7 +990,7 @@ impl RepositoryImplEmitter {
     #[allow(clippy::too_many_arguments)]
     fn emit_dot_fetch_method(
         &self,
-        _tree: &EntityTree,
+        tree: &EntityTree,
         code: &mut CodeWriter,
         path: &ResolvedIncludePath,
         intermediate_tree: Option<&EntityTree>,
@@ -1018,6 +1018,7 @@ impl RepositoryImplEmitter {
             .last()
             .map(|s| format!("{}Response", s.entity_name))
             .unwrap_or_default();
+        let src_module = &tree.entity_module;
         let intermediate_module = format!("{}_{}", seg0.domain, seg0.module_name);
         let leaf_module = format!("{}_{}", seg1.domain, seg1.module_name);
 
@@ -1032,26 +1033,58 @@ impl RepositoryImplEmitter {
             resp_type
         );
 
+        // Issue #789: address the INTERMEDIATE through the SOURCE's FK —
+        // load the source row by its own PK, read its FK, then load the
+        // intermediate by that value. The old emission filtered the
+        // intermediate with `Id.eq(source_id)` (the SOURCE's primary key),
+        // which never matches across entities, so every dot include
+        // answered empty; the SeaORM arm now mirrors the cornucopia dot
+        // SQL's correlated subquery
+        // (`"i"."id" = (SELECT "{fk}" FROM source WHERE "id" = :source_id)`)
+        // via the scalar include arm's own idiom. There is deliberately no
+        // `seg0.is_array` arm: the include classifier refuses dot paths
+        // whose first hop is a collection (`api/include_plan.rs::
+        // CornucopiaIncludeShape::classify`), so the branch was
+        // unreachable.
+        wln!(
+            code,
+            "        let source = crate::entity::{}::Entity::find()",
+            src_module
+        );
+        wln!(
+            code,
+            "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
+            src_module
+        );
+        wln!(code, "            .one(db)");
+        wln!(code, "            .await?;");
+        wln!(code, "        let source = match source {{");
+        wln!(code, "            Some(s) => s,");
+        wln!(code, "            None => return Ok(None),");
+        wln!(code, "        }};");
+        if seg0.fk_is_required {
+            // Required genuine EntityReference: the FK field is a plain Uuid.
+            wln!(code, "        let fk_value = source.{};", seg0.fk_column);
+        } else {
+            wln!(
+                code,
+                "        let fk_value = match source.{} {{",
+                seg0.fk_column
+            );
+            wln!(code, "            Some(v) => v,");
+            wln!(code, "            None => return Ok(None),");
+            wln!(code, "        }};");
+        }
         wln!(
             code,
             "        let intermediate = crate::entity::{}::Entity::find()",
             intermediate_module
         );
-        if seg0.is_array {
-            let rev_fk_pascal = codegraph_naming::to_pascal_case(&seg0.reverse_fk_column);
-            wln!(
-                code,
-                "            .filter(crate::entity::{}::Column::{}.eq(source_id))",
-                intermediate_module,
-                rev_fk_pascal
-            );
-        } else {
-            wln!(
-                code,
-                "            .filter(crate::entity::{}::Column::Id.eq(source_id))",
-                intermediate_module
-            );
-        }
+        wln!(
+            code,
+            "            .filter(crate::entity::{}::Column::Id.eq(fk_value))",
+            intermediate_module
+        );
         // Issue #784: a soft-deleted INTERMEDIATE hides its leaf — the fetch
         // answers `None` for the whole combined response, mirroring the
         // cornucopia dot SQL's `"i"."deleted_at" IS NULL` hop.
