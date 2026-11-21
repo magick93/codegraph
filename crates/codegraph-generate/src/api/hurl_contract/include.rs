@@ -46,7 +46,7 @@ use codegraph_core::types::SchemaNode;
 use super::ContractSection;
 use crate::ProjectConfig;
 use crate::api::include_path::{ResolvedIncludePath, resolve_include_paths_for_entity};
-use crate::api::include_plan::{IncludeSupport, include_support_for};
+use crate::api::include_plan::{IncludePathSupport, IncludeSupport, include_support_for};
 use crate::error::Result;
 
 /// The one line a non-hydrating provider emits instead of legs (issue #781).
@@ -119,6 +119,13 @@ pub(super) fn sections_for_paths(
 
     let mut sections = Vec::new();
     for path in paths {
+        // Per-path verdict (issue #781 P1): a provider that hydrates SOME
+        // shapes must not advertise the ones it refuses — the handler would
+        // answer a 501 for them.
+        if let IncludePathSupport::Unsupported { reason } = support.path_support(path) {
+            sections.push(section(omitted_unsupported_path(path, &reason)));
+            continue;
+        }
         let Some(first) = path.segments.first() else {
             continue;
         };
@@ -194,6 +201,17 @@ fn omitted_scalar_path(path: &ResolvedIncludePath) -> String {
         "# ?include={alias} — omitted: this contract's create body does not wire the\n\
          # FK, so a fresh row cannot prove a scalar include hydrates (a row-dependent\n\
          # assertion would fail in either direction — the #662 may_refuse rule).",
+        alias = path.alias
+    )
+}
+
+/// A path whose SHAPE the deployment's provider does not implement (issue
+/// #781 P1): the handler answers a 501 for it, so the contract omits the leg
+/// rather than advertising a surface that is refused.
+fn omitted_unsupported_path(path: &ResolvedIncludePath, reason: &str) -> String {
+    format!(
+        "# ?include={alias} — omitted: this shape is not implemented on the\n\
+         # deployment's persistence provider ({reason}; issue #781).",
         alias = path.alias
     )
 }
@@ -395,6 +413,51 @@ mod tests {
         assert!(out.contains("501"), "{out}");
         assert!(!out.contains("GET "), "no legs for a 501 provider:\n{out}");
         assert!(!out.contains("HTTP 200"), "{out}");
+    }
+
+    /// Issue #781 P1: a provider that hydrates SOME shapes advertises only
+    /// those — an unimplemented shape is omitted with the reason, never a leg
+    /// the handler would 501.
+    #[test]
+    fn cornucopia_hydration_omits_only_the_unsupported_shapes() {
+        let paths = vec![
+            path("part", vec![segment("part", "part_id", false, true)]),
+            path(
+                "part.vendor",
+                vec![
+                    segment("part", "part_id", false, true),
+                    segment("vendor", "part_id", false, false),
+                ],
+            ),
+        ];
+        let out = sections_for_paths(
+            &paths,
+            &IncludeSupport::CornucopiaHydration,
+            ITEM,
+            CAPTURE,
+            LIST,
+            "{\"part_id\": \"00000000-0000-0000-0000-000000000001\"}",
+            true,
+            true,
+            true,
+        )
+        .into_iter()
+        .map(|s| s.body)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        assert!(
+            out.contains("GET {{base_url}}/api/v1/inventory/widget/{{widget_id}}?include=part"),
+            "the implemented scalar shape gets its GET leg:\n{out}"
+        );
+        assert!(
+            out.contains("# ?include=part.vendor — omitted: this shape is not implemented on the"),
+            "the dot-notation shape is omitted with the reason:\n{out}"
+        );
+        assert!(
+            !out.contains("include=part.vendor\n"),
+            "no leg may address the unsupported shape:\n{out}"
+        );
     }
 
     /// No modelled include surface ⇒ no sections at all (byte-identical

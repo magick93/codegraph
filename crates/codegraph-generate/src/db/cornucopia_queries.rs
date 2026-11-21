@@ -103,6 +103,25 @@ impl EntityGenerator for CornucopiaQueryGenerator {
 
         let mut sql = render_entity_sql(schema_title, domain, config, &tree, &pg_types);
 
+        // `?include=` hydration queries (issue #781 P1 preview feature).
+        // Only the shapes the plane implements reach here — every other
+        // modelled path stays un-hydratable (the handler answers its guarded
+        // 501 naming the shape), so no query is emitted for it.
+        if project.codegen.cornucopia_include_hydration {
+            sql.push_str(
+                &render_include_queries(
+                    db,
+                    config,
+                    project,
+                    domain,
+                    schema_title,
+                    &tree,
+                    &self.parent_candidates,
+                )
+                .await,
+            );
+        }
+
         // Deployed-worker query for tree_include entities: the resolution
         // needs the repository emitter's graph walk (the persistence tree
         // leaves tree_include empty), so it happens here in the async caller.
@@ -774,10 +793,214 @@ fn write_get_queries(
     }
 }
 
+// ── `?include=` hydration queries (issue #781 P1) ─────────────────────
+
+/// Generation-time facts for one cornucopia include query.
+///
+/// Plain data (no tree walk) so the SQL shape is unit-testable without a
+/// graph: the emitters build it from the resolved include path + the target's
+/// `EntityTree`, and the KATs build it by hand.
+struct IncludeQueryFacts<'a> {
+    /// The dot-notation alias exactly as the request spells it (the query
+    /// function name is derived from it).
+    alias: &'a str,
+    /// FK column ON THE SOURCE table referencing the target (`person_id`).
+    fk_column: &'a str,
+    /// The target entity's tree (columns, table, soft delete).
+    target: &'a EntityTree,
+    /// Column → PG type for the target's casts.
+    target_pg_types: &'a std::collections::HashMap<String, String>,
+}
+
+/// Append one `include_*` query pair per implemented include path.
+///
+/// Resolution goes through the SAME gate the handler uses
+/// ([`crate::api::include_path::resolve_include_paths_for_entity`]) and the
+/// SAME per-path verdict ([`crate::api::include_plan::IncludeSupport`]), so the
+/// emitted SQL surface cannot advertise a path the handler refuses.
+async fn render_include_queries(
+    db: &dyn GraphQuerier,
+    config: &DomainConfig,
+    project: &ProjectConfig,
+    domain: &str,
+    schema_title: &str,
+    tree: &EntityTree,
+    parent_candidates: &[codegraph_core::types::ParentCandidate],
+) -> String {
+    let entity_cfg = config
+        .domains
+        .get(domain)
+        .and_then(|d| d.get_entity_config(schema_title));
+    let paths = crate::api::include_path::resolve_include_paths_for_entity(
+        db,
+        config,
+        domain,
+        schema_title,
+        entity_cfg,
+        project.is_workers_topology(),
+    )
+    .await
+    .unwrap_or_default();
+    let support = crate::api::include_plan::include_support_for(project);
+
+    let mut sql = String::new();
+    for path in support.supported_paths(&paths) {
+        let Some(seg) = path.segments.first() else {
+            continue;
+        };
+        // A shape the plane implements always resolves its target tree; a
+        // miss is a graph inconsistency, not a generation decision — skip it
+        // (the handler's per-path verdict stays authoritative).
+        let Ok(target) = RepositoryImplEmitter
+            .query_entity_tree(db, &seg.schema_title, &seg.domain, config, None)
+            .await
+        else {
+            continue;
+        };
+        let Ok(entity_ir) = build_persistence_entity(
+            db,
+            &seg.schema_title,
+            &seg.domain,
+            config,
+            parent_candidates,
+        )
+        .await
+        else {
+            continue;
+        };
+        let target_pg_types: std::collections::HashMap<String, String> = entity_ir
+            .columns
+            .iter()
+            .map(|c| (c.column_name.clone(), c.pg_type.clone()))
+            .collect();
+        let facts = IncludeQueryFacts {
+            alias: &path.alias,
+            fk_column: &seg.fk_column,
+            target: &target,
+            target_pg_types: &target_pg_types,
+        };
+        sql.push_str(&render_include_sql(tree, &facts));
+    }
+    sql
+}
+
+/// Render the two annotated queries for one implemented include path.
+///
+/// **Single** (`include_{alias}_for_{source} (source_id)`): the target row
+/// addressed through the SOURCE's own FK column. The FK is read by a
+/// correlated subquery rather than a JOIN so the SELECT list stays the plain
+/// unqualified `row_col_list` every other query uses (a JOIN makes `"id"`
+/// ambiguous), and so RLS applies to the source row as well: a tenant who
+/// cannot see the source sees no include.
+///
+/// **Batch** (`include_{alias}_batch_for_{source} (source_ids)`): one row per
+/// (source, target) pair, keyed by `source_id`, so the adapter can build the
+/// provider-identical `HashMap<Uuid, Option<{Target}Response>>` the LIST
+/// envelope serializes. The inner derived table carries the source id +
+/// FK under distinct names, so the target column list is unambiguous.
+///
+/// Soft-delete: the TARGET's marker column filters in both queries (matching
+/// the SeaORM include fetch, which runs under the default scope — there is no
+/// per-include `include_deleted` request parameter).
+fn render_include_sql(tree: &EntityTree, facts: &IncludeQueryFacts<'_>) -> String {
+    let src_table = format!("\"{}\".\"{}\"", tree.schema_name, tree.table_name);
+    let target = facts.target;
+    let target_table = format!("\"{}\".\"{}\"", target.schema_name, target.table_name);
+    let source = &tree.table_name;
+    let alias = facts.alias;
+    let alias_snake = facts.alias.replace('.', "_");
+    let fk = facts.fk_column;
+
+    let row_cols: Vec<&TreeColumn> = target
+        .direct_columns
+        .iter()
+        .filter(|c| !c.is_composite_range)
+        .collect();
+    let cols = row_col_list(&row_cols, facts.target_pg_types, target.append_only);
+    let hints = row_hints(&row_cols, target.append_only);
+    let batch_cols =
+        prefixed_row_col_list("t", &row_cols, facts.target_pg_types, target.append_only);
+
+    let single_soft = target
+        .soft_delete_column
+        .as_deref()
+        .map(|sd| format!("\n  AND \"{sd}\" IS NULL"))
+        .unwrap_or_default();
+    let batch_soft = target
+        .soft_delete_column
+        .as_deref()
+        .map(|sd| format!("\nWHERE \"t\".\"{sd}\" IS NULL"))
+        .unwrap_or_default();
+
+    let mut sql = String::new();
+    sql.push_str(&format!(
+        "--! include_{alias_snake}_for_{source} (source_id) : ({hints})\n\
+         --- Eager-load `{alias}` for one {source} row through its own FK (issue #781 P1).\n\
+         SELECT {cols}\n\
+         FROM {target_table}\n\
+         WHERE \"id\" = (SELECT \"{fk}\" FROM {src_table} WHERE \"id\" = :source_id){single_soft}\n\
+         LIMIT 1;\n\n",
+    ));
+    sql.push_str(&format!(
+        "--! include_{alias_snake}_batch_for_{source} (source_ids) : (source_id, {hints})\n\
+         --- Eager-load `{alias}` for many {source} rows, keyed by source id (issue #781 P1).\n\
+         SELECT \"src\".\"source_id\" AS \"source_id\", {batch_cols}\n\
+         FROM (\n\
+         \x20   SELECT \"id\" AS \"source_id\", \"{fk}\" AS \"target_id\"\n\
+         \x20   FROM {src_table}\n\
+         \x20   WHERE \"id\" = ANY(:source_ids::uuid[])\n\
+         ) AS \"src\"\n\
+         JOIN {target_table} AS \"t\" ON \"t\".\"id\" = \"src\".\"target_id\"{batch_soft};\n\n",
+    ));
+    sql
+}
+
+/// `row_col_list` with every column qualified by the JOIN alias — needed when
+/// the FROM clause carries more than one table (the batch include query).
+fn prefixed_row_col_list(
+    prefix: &str,
+    cols: &[&TreeColumn],
+    pg_types: &std::collections::HashMap<String, String>,
+    append_only: bool,
+) -> String {
+    let mut names: Vec<String> = vec![format!("\"{prefix}\".\"id\"")];
+    for c in cols {
+        names.push(select_col_prefixed(
+            prefix,
+            c.field_name.trim_start_matches("r#"),
+            c,
+            pg_types,
+        ));
+    }
+    names.push(format!("\"{prefix}\".\"created_at\""));
+    if !append_only {
+        names.push(format!("\"{prefix}\".\"updated_at\""));
+    }
+    names.join(", ")
+}
+
+/// [`select_col`] qualified by a table alias.
+fn select_col_prefixed(
+    prefix: &str,
+    field_name: &str,
+    c: &TreeColumn,
+    pg_types: &std::collections::HashMap<String, String>,
+) -> String {
+    let expr = if needs_text_cast(c, pg_types) {
+        format!("\"{prefix}\".\"{}\"::text", c.pg_column_name)
+    } else {
+        format!("\"{prefix}\".\"{}\"", c.pg_column_name)
+    };
+    if c.pg_column_name == field_name {
+        expr
+    } else {
+        format!("{expr} AS \"{field_name}\"")
+    }
+}
+
 fn is_writable_col(col: &TreeColumn) -> bool {
     !col.is_workflow_managed && !col.is_composite_range && !col.is_media
 }
-
 fn param_name(col: &TreeColumn) -> String {
     col.field_name.trim_start_matches("r#").to_string()
 }
@@ -1357,4 +1580,203 @@ fn write_tree_workers_query(sql: &mut String, tree: &EntityTree) {
         snake = tree.table_name,
         fk = inc.via_fk_column,
     ));
+}
+
+#[cfg(test)]
+mod include_query_tests {
+    use super::*;
+
+    fn col(field: &str, pg_column: &str, rust_type: &str, is_nullable: bool) -> TreeColumn {
+        TreeColumn {
+            field_name: field.to_string(),
+            pg_column_name: pg_column.to_string(),
+            dto_field_name: None,
+            rust_type: rust_type.to_string(),
+            is_nullable,
+            is_entity_ref: false,
+            dto_rust_type: None,
+            is_workflow_managed: false,
+            is_array: false,
+            pg_cast: None,
+            is_composite_range: false,
+            is_structured_wrapper: false,
+            is_media: false,
+        }
+    }
+
+    fn tree(
+        entity: &str,
+        table: &str,
+        columns: Vec<TreeColumn>,
+        soft_delete: Option<&str>,
+        append_only: bool,
+    ) -> EntityTree {
+        EntityTree {
+            entity_name: entity.to_string(),
+            module_name: table.to_string(),
+            schema_name: "common".to_string(),
+            table_name: table.to_string(),
+            entity_module: format!("common_{table}"),
+            namespace: None,
+            direct_columns: columns,
+            child_tables: vec![],
+            junction_tables: vec![],
+            has_create: true,
+            has_read: true,
+            has_update: false,
+            has_delete: false,
+            has_list: true,
+            has_workflow: false,
+            has_fts: false,
+            has_embeddings: false,
+            fts_language: "english".to_string(),
+            is_auditable: soft_delete.is_some(),
+            soft_delete_visibility: "exclude_by_default".to_string(),
+            soft_delete_column: soft_delete.map(str::to_string),
+            soft_delete_cascade: "restrict".to_string(),
+            track_updated_user: false,
+            track_deleted_user: false,
+            append_only,
+            filter_fields: vec![],
+            nested_filter_fields: vec![],
+            parent_ref: None,
+            hierarchy_field: None,
+            tree_include: vec![],
+            design_finders: vec![],
+        }
+    }
+
+    fn facts<'a>(
+        alias: &'a str,
+        fk: &'a str,
+        target: &'a EntityTree,
+        pg_types: &'a std::collections::HashMap<String, String>,
+    ) -> IncludeQueryFacts<'a> {
+        IncludeQueryFacts {
+            alias,
+            fk_column: fk,
+            target,
+            target_pg_types: pg_types,
+        }
+    }
+
+    fn worker() -> EntityTree {
+        tree("Worker", "worker", vec![], Some("deleted_at"), false)
+    }
+
+    /// The single-fetch query addresses the FK through a correlated subquery
+    /// (unambiguous columns, RLS on the source) and filters the TARGET's
+    /// soft-delete marker.
+    #[test]
+    fn single_scalar_include_sql_shape() {
+        let target = tree(
+            "Person",
+            "person",
+            vec![
+                col("given_name", "given_name", "String", false),
+                col("nickname", "nickname", "String", true),
+            ],
+            Some("deleted_at"),
+            false,
+        );
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
+
+        assert!(
+            sql.contains(
+                "--! include_person_for_worker (source_id) : (id, given_name, nickname?, created_at, updated_at)"
+            ),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                "FROM \"common\".\"person\"\nWHERE \"id\" = (SELECT \"person_id\" FROM \"common\".\"worker\" WHERE \"id\" = :source_id)\n  AND \"deleted_at\" IS NULL\nLIMIT 1;"
+            ),
+            "{sql}"
+        );
+    }
+
+    /// The batch query keys each target row by the source id and qualifies
+    /// every target column (the JOIN makes unqualified names ambiguous).
+    #[test]
+    fn batch_scalar_include_sql_is_keyed_and_qualified() {
+        let target = tree(
+            "Person",
+            "person",
+            vec![col("given_name", "given_name", "String", false)],
+            None,
+            false,
+        );
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
+
+        assert!(
+            sql.contains("--! include_person_batch_for_worker (source_ids) : (source_id, id, given_name, created_at, updated_at)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("SELECT \"src\".\"source_id\" AS \"source_id\", \"t\".\"id\", \"t\".\"given_name\", \"t\".\"created_at\", \"t\".\"updated_at\""),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("WHERE \"id\" = ANY(:source_ids::uuid[])"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(
+                "JOIN \"common\".\"person\" AS \"t\" ON \"t\".\"id\" = \"src\".\"target_id\";"
+            ),
+            "{sql}"
+        );
+        // No soft-delete filter when the target has no marker.
+        assert!(!sql.contains("IS NULL"), "{sql}");
+    }
+
+    /// Append-only targets carry no `updated_at` (issue #284), and a
+    /// renamed physical column keeps its field-name alias.
+    #[test]
+    fn append_only_target_omits_updated_at_and_keeps_aliases() {
+        let target = tree(
+            "Person",
+            "person",
+            vec![col("gender", "gender_code", "String", false)],
+            Some("deleted_at"),
+            true,
+        );
+        let pg = std::collections::HashMap::new();
+        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
+
+        assert!(
+            sql.contains("AS \"gender\""),
+            "physical column keeps its field alias:\n{sql}"
+        );
+        assert!(
+            sql.contains("(id, gender, created_at)"),
+            "append-only target has no updated_at hint:\n{sql}"
+        );
+        assert!(!sql.contains("updated_at"), "{sql}");
+        assert!(
+            sql.contains("WHERE \"t\".\"deleted_at\" IS NULL;"),
+            "batch filters the target's soft delete:\n{sql}"
+        );
+    }
+
+    /// Columns whose Postgres type maps to `String` in Rust (numeric, ranges,
+    /// geometry) cast to text in both the plain and the prefixed list.
+    #[test]
+    fn text_cast_applies_to_both_select_forms() {
+        let target = tree(
+            "Person",
+            "person",
+            vec![col("salary", "salary", "String", false)],
+            None,
+            false,
+        );
+        let mut pg = std::collections::HashMap::new();
+        pg.insert("salary".to_string(), "NUMERIC".to_string());
+        let sql = render_include_sql(&worker(), &facts("person", "person_id", &target, &pg));
+
+        assert!(sql.contains("\"salary\"::text"), "{sql}");
+        assert!(sql.contains("\"t\".\"salary\"::text"), "{sql}");
+    }
 }

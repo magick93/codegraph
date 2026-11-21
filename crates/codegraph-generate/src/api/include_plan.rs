@@ -9,9 +9,9 @@
 //! The SeaORM blocks are a verbatim port of the template's SeaORM branches
 //! (including comments and the dot-notation accumulation merge).
 //!
-//! ## Cornucopia: fail closed (issue #781 P0)
+//! ## Cornucopia: fail closed (issue #781 P0) and the P1 hydration preview
 //!
-//! The cornucopia SQL-first repositories do not implement include hydration,
+//! The cornucopia SQL-first repositories did not implement include hydration,
 //! so [`build_include_plan`] returns [`IncludeSupport::Unsupported`] for a
 //! cornucopia project: a request that ASKS for `?include=` answers a 501
 //! naming the provider and issue #781 instead of silently returning empty
@@ -21,6 +21,18 @@
 //! [`IncludeSupport::Cornucopia`] remains reachable through
 //! [`build_include_plan_with_support`] and keeps the historical empty-data
 //! shape (no production path produces it any more).
+//!
+//! Issue #781 P1 adds [`IncludeSupport::CornucopiaHydration`] behind the
+//! `cornucopia_include_hydration` preview feature (default OFF). Its verdict
+//! is **per path**: [`CornucopiaIncludeShape::classify`] accepts the shape the
+//! SQL/adapter/query planes implement (a single-segment scalar `refers`) and
+//! names the construct for every other shape, so an unimplemented shape still
+//! fails closed (a guarded 501 naming the alias) instead of silently
+//! returning empty data. The rendered block calls the entity's cornucopia
+//! QUERY handler (the provider's session/transaction owner), mirroring the
+//! tree handler's call shape — never the adapter directly.
+//!
+//! The design record is `docs/tdd/781-cornucopia-includes.tdd.md`.
 //!
 //! ## What the blocks do NOT contain
 //!
@@ -61,17 +73,139 @@ pub enum IncludeSupport {
     /// cornucopia `Unsupported`); the historical empty-data block is kept for
     /// callers that inject the verdict explicitly.
     Cornucopia,
+    /// The cornucopia SQL-first plane WITH the hydration plane switched on
+    /// (issue #781 P1 preview feature `cornucopia_include_hydration`).
+    ///
+    /// Support is PER PATH: [`CornucopiaIncludeShape::classify`] decides each
+    /// modelled path independently, so the shapes the SQL/adapter/query planes
+    /// implement hydrate while every other shape renders a guarded 501 naming
+    /// the alias. Never a silent empty include.
+    CornucopiaHydration,
     /// The provider cannot hydrate `?include=` at all: a request that asks
     /// for includes fails closed with a 501 naming the provider and issue
     /// #781. A request WITHOUT includes proceeds normally.
     Unsupported { reason: String },
 }
 
-impl IncludeSupport {
-    /// True when the provider renders real hydration code.
+/// The per-path verdict for one modelled include path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncludePathSupport {
+    /// The provider renders real hydration code for this path.
+    Supported,
+    /// This path's shape is not implemented on the provider plane — the
+    /// handler must answer a guarded 501 naming the alias and this reason.
+    Unsupported { reason: String },
+}
+
+impl IncludePathSupport {
     pub fn is_supported(&self) -> bool {
-        matches!(self, Self::SeaOrm)
+        matches!(self, Self::Supported)
     }
+}
+
+/// The cornucopia include shapes the SQL/adapter/query planes implement
+/// (issue #781 P1). Adding a variant is how a shape becomes hydratable: the
+/// classifier, the three emitters, and the KATs move together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CornucopiaIncludeShape {
+    /// GET: one row on the target table through the source's own FK column.
+    /// LIST: the same relationship keyed by `source_ids` in one query.
+    SingleScalar,
+}
+
+impl CornucopiaIncludeShape {
+    /// Classify one resolved include path. `Err` carries the human reason the
+    /// handler puts in its 501 and the emitters put in their WARN/omission.
+    pub fn classify(path: &ResolvedIncludePath) -> Result<Self, String> {
+        let Some(first) = path.segments.first() else {
+            return Err("the path resolves to no segment".to_string());
+        };
+        if path.segments.len() > 1 {
+            return Err(
+                "dot-notation includes (a target's child) are not implemented on the \
+                 cornucopia SQL-first plane yet"
+                    .to_string(),
+            );
+        }
+        if first.is_array {
+            return Err(
+                "array / reverse-FK includes are not implemented on the cornucopia \
+                 SQL-first plane yet"
+                    .to_string(),
+            );
+        }
+        if first.child_table_override.is_some() {
+            return Err(
+                "VO→entity child-table includes are not implemented on the cornucopia \
+                 SQL-first plane yet"
+                    .to_string(),
+            );
+        }
+        Ok(Self::SingleScalar)
+    }
+}
+
+impl IncludeSupport {
+    /// True when the provider renders real hydration code (for at least the
+    /// shapes it supports — see [`Self::path_support`]).
+    pub fn is_supported(&self) -> bool {
+        matches!(self, Self::SeaOrm | Self::CornucopiaHydration)
+    }
+
+    /// The per-path verdict this provider gives `path`. The ONE predicate the
+    /// handler plan, the three cornucopia emitters, and the generated hurl
+    /// contract all read, so a contract can never probe a surface the
+    /// handler refuses.
+    pub fn path_support(&self, path: &ResolvedIncludePath) -> IncludePathSupport {
+        match self {
+            // Historical arms: the provider either hydrates every resolved
+            // path (SeaORM) or none (the explicit `Cornucopia` injection the
+            // block renderer still understands).
+            Self::SeaOrm | Self::Cornucopia => IncludePathSupport::Supported,
+            Self::CornucopiaHydration => match CornucopiaIncludeShape::classify(path) {
+                Ok(_) => IncludePathSupport::Supported,
+                Err(reason) => IncludePathSupport::Unsupported { reason },
+            },
+            Self::Unsupported { reason } => IncludePathSupport::Unsupported {
+                reason: reason.clone(),
+            },
+        }
+    }
+
+    /// The aliases that must fail closed (with their reasons), in declaration
+    /// order.
+    pub fn unsupported_paths(&self, paths: &[ResolvedIncludePath]) -> Vec<UnsupportedInclude> {
+        paths
+            .iter()
+            .filter_map(|path| match self.path_support(path) {
+                IncludePathSupport::Supported => None,
+                IncludePathSupport::Unsupported { reason } => Some(UnsupportedInclude {
+                    alias: path.alias.clone(),
+                    reason,
+                }),
+            })
+            .collect()
+    }
+
+    /// The paths the provider hydrates, in declaration order.
+    pub fn supported_paths<'a>(
+        &self,
+        paths: &'a [ResolvedIncludePath],
+    ) -> Vec<&'a ResolvedIncludePath> {
+        paths
+            .iter()
+            .filter(|path| self.path_support(path).is_supported())
+            .collect()
+    }
+}
+
+/// A modelled include path whose SHAPE the provider plane does not implement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedInclude {
+    /// The dot-notation alias exactly as the request spells it.
+    pub alias: String,
+    /// Why the shape is not hydratable (rendered into the 501 message).
+    pub reason: String,
 }
 
 /// The pre-rendered `?include=` hydration blocks for one entity handler.
@@ -116,10 +250,19 @@ pub struct IncludePlanCtx<'a> {
 /// the ONE predicate every consumer reads (the handler's hydration plan and
 /// the generated hurl contract's include legs), so a contract can never probe
 /// a surface the handler refuses.
+///
+/// Cornucopia returns [`IncludeSupport::Unsupported`] unless the
+/// `cornucopia_include_hydration` preview feature is on; with the feature on
+/// the verdict is [`IncludeSupport::CornucopiaHydration`], whose support is
+/// refined per path by [`IncludeSupport::path_support`].
 pub fn include_support_for(project: &ProjectConfig) -> IncludeSupport {
     if project.is_cornucopia() {
-        IncludeSupport::Unsupported {
-            reason: CORNUCOPIA_UNSUPPORTED_REASON.to_string(),
+        if project.codegen.cornucopia_include_hydration {
+            IncludeSupport::CornucopiaHydration
+        } else {
+            IncludeSupport::Unsupported {
+                reason: CORNUCOPIA_UNSUPPORTED_REASON.to_string(),
+            }
         }
     } else {
         IncludeSupport::SeaOrm
@@ -180,8 +323,178 @@ fn render_get_block(
     match support {
         IncludeSupport::SeaOrm => render_get_sea_orm(paths, ctx),
         IncludeSupport::Cornucopia => CORNUCOPIA_GET_BLOCK.to_string(),
+        IncludeSupport::CornucopiaHydration => render_get_cornucopia(paths, ctx, support),
         IncludeSupport::Unsupported { reason } => render_unsupported_get_block(reason),
     }
+}
+
+/// The cornucopia GET block (issue #781 P1).
+///
+/// Per path: an unimplemented SHAPE answers a 501 naming the alias and the
+/// construct; an implemented shape calls the entity's cornucopia QUERY
+/// handler — the provider's session/transaction owner — instead of opening a
+/// transaction in the handler the way the SeaORM arm does. The RLS session
+/// vars therefore come from the query layer's `set_rls_session_vars`, exactly
+/// like every other cornucopia read (the tree handler's call shape).
+fn render_get_cornucopia(
+    paths: &[ResolvedIncludePath],
+    ctx: &IncludePlanCtx<'_>,
+    support: &IncludeSupport,
+) -> String {
+    let supported = support.supported_paths(paths);
+    let unsupported = support.unsupported_paths(paths);
+    let error_type = cornucopia_error_type(ctx.domain);
+    let queries = cornucopia_queries_handle(ctx);
+
+    let mut out = String::new();
+    out.push_str("    for path in &include_paths {\n");
+    push_cornucopia_unsupported_guard(&mut out, &unsupported, "        ");
+    if !supported.is_empty() {
+        out.push_str("        match path.as_str() {\n");
+        for ipath in &supported {
+            let Some(first) = ipath.segments.first() else {
+                continue;
+            };
+            out.push_str(&format!(
+                "            {} => {{\n",
+                rust_string_literal(&ipath.alias)
+            ));
+            out.push_str(&format!(
+                "                included.{} = {queries}.{}(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+                first.module_name, ipath.fetch_method
+            ));
+            push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+            out.push_str("                    })?;\n");
+            out.push_str("            }\n");
+        }
+        out.push_str("            _ => {}\n");
+        out.push_str("        }\n");
+    }
+    out.push_str("    }");
+    out
+}
+
+/// The cornucopia LIST block (issue #781 P1): one batch query per
+/// implemented path, keyed by source id in the same `HashMap` JSON shape the
+/// SeaORM arm emits (so the DTO/included envelope is provider-identical).
+fn render_list_cornucopia(
+    paths: &[ResolvedIncludePath],
+    ctx: &IncludePlanCtx<'_>,
+    support: &IncludeSupport,
+) -> String {
+    let supported = support.supported_paths(paths);
+    let unsupported = support.unsupported_paths(paths);
+    let error_type = cornucopia_error_type(ctx.domain);
+    let queries = cornucopia_queries_handle(ctx);
+
+    let mut out = String::new();
+    out.push_str("    for path in &include_paths {\n");
+    push_cornucopia_unsupported_guard(&mut out, &unsupported, "        ");
+    out.push_str("    }\n");
+
+    out.push_str("    let included = if !include_paths.is_empty() {\n");
+    out.push_str("        let ids: Vec<Uuid> = results.iter().map(|r| r.id).collect();\n");
+    out.push_str(
+        "        let mut included_map = std::collections::HashMap::<String, serde_json::Value>::new();\n",
+    );
+    for ipath in &supported {
+        let Some(first) = ipath.segments.first() else {
+            continue;
+        };
+        out.push_str(&format!(
+            "        if include_paths.contains(&\"{}\".to_string()) {{\n",
+            ipath.alias
+        ));
+        out.push_str("            included_map.insert(\n");
+        out.push_str(&format!(
+            "                \"{}\".to_string(),\n",
+            first.module_name
+        ));
+        out.push_str(&format!(
+            "                serde_json::to_value({queries}.{}(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await\n",
+            ipath.batch_fetch_method
+        ));
+        push_cornucopia_map_err(&mut out, 20, &ipath.alias, &error_type);
+        out.push_str("                    })?).unwrap_or_default(),\n");
+        out.push_str("            );\n");
+        out.push_str("        }\n");
+    }
+    out.push_str("        included_map\n");
+    out.push_str("    } else {\n");
+    out.push_str("        std::collections::HashMap::new()\n");
+    out.push_str("    };");
+    out
+}
+
+/// `state.{domain}_{module}_queries` — the entity's cornucopia query handler.
+fn cornucopia_queries_handle(ctx: &IncludePlanCtx<'_>) -> String {
+    format!("state.{}_{}_queries", ctx.domain, ctx.module_name)
+}
+
+/// `{Domain}Error` — the generated domain error type the query layer returns.
+fn cornucopia_error_type(domain: &str) -> String {
+    format!("{}Error", codegraph_naming::to_pascal_case(domain))
+}
+
+/// The `.map_err(|e: {Domain}Error| AppError::from_domain_error(…))` block the
+/// query-layer call maps through (the provider's `from_repo_err` classifier
+/// turns a scope/RLS denial into 403). Ends with the `.with_correlation_id(…)`
+/// line; the caller closes the closure block with its own trailing
+/// punctuation (`})?;` / `}).unwrap_or_default(),`).
+fn push_cornucopia_map_err(out: &mut String, indent: usize, alias: &str, error_type: &str) {
+    let pad = " ".repeat(indent);
+    out.push_str(&format!("{pad}.map_err(|e: {error_type}| {{\n"));
+    out.push_str(&format!(
+        "{pad}    AppError::from_domain_error(e.http_status(), e.to_string(), \"Failed to include {alias}\")\n"
+    ));
+    out.push_str(&format!(
+        "{pad}        .with_correlation_id(correlation_id)\n"
+    ));
+}
+
+/// The per-path fail-closed guard for shapes the cornucopia plane does not
+/// implement: only the REQUESTED alias trips it, so a request that asks for an
+/// implemented path is unaffected. Emitted only when some modelled path is
+/// unsupported.
+fn push_cornucopia_unsupported_guard(
+    out: &mut String,
+    unsupported: &[UnsupportedInclude],
+    pad: &str,
+) {
+    if unsupported.is_empty() {
+        return;
+    }
+    out.push_str(&format!("{pad}let unsupported = match path.as_str() {{\n"));
+    for entry in unsupported {
+        out.push_str(&format!(
+            "{pad}    {} => Some({}),\n",
+            rust_string_literal(&entry.alias),
+            rust_string_literal(&entry.reason)
+        ));
+    }
+    out.push_str(&format!("{pad}    _ => None,\n"));
+    out.push_str(&format!("{pad}}};\n"));
+    out.push_str(&format!("{pad}if let Some(reason) = unsupported {{\n"));
+    out.push_str(&format!(
+        "{pad}    // This include's SHAPE is not implemented on the cornucopia plane\n"
+    ));
+    out.push_str(&format!(
+        "{pad}    // (issue #781 P1): fail closed instead of returning empty data.\n"
+    ));
+    out.push_str(&format!("{pad}    return Err(AppError {{\n"));
+    out.push_str(&format!(
+        "{pad}        status: axum::http::StatusCode::NOT_IMPLEMENTED,\n"
+    ));
+    out.push_str(&format!("{pad}        code: \"NOT_IMPLEMENTED\",\n"));
+    out.push_str(&format!(
+        "{pad}        message: format!(\"?include={{path}} is not supported: {{reason}} (issue #781)\"),\n"
+    ));
+    out.push_str(&format!("{pad}        details: None,\n"));
+    out.push_str(&format!(
+        "{pad}        correlation_id: Some(correlation_id),\n"
+    ));
+    out.push_str(&format!("{pad}    }});\n"));
+    out.push_str(&format!("{pad}}}\n"));
 }
 
 fn render_get_sea_orm(paths: &[ResolvedIncludePath], ctx: &IncludePlanCtx<'_>) -> String {
@@ -278,6 +591,7 @@ fn render_list_block(
     match support {
         IncludeSupport::SeaOrm => render_list_sea_orm(paths, ctx),
         IncludeSupport::Cornucopia => CORNUCOPIA_LIST_BLOCK.to_string(),
+        IncludeSupport::CornucopiaHydration => render_list_cornucopia(paths, ctx, support),
         IncludeSupport::Unsupported { reason } => render_unsupported_list_block(reason),
     }
 }
@@ -481,12 +795,17 @@ fn render_unsupported_guard(reason: &str) -> String {
 /// The `?include=` doc-comment line rendered into the query-params struct.
 ///
 /// * SeaORM / the historical cornucopia arm: the pre-#781 line, byte-exact.
+/// * Cornucopia with the P1 hydration preview on: eager-loading works for the
+///   implemented shapes; the wording names the residual limit honestly.
 /// * Unsupported: honest — includes are modelled but the deployment's
 ///   persistence provider cannot serve them, so requests answer 501.
 fn include_doc_for(support: &IncludeSupport) -> &'static str {
     match support {
         IncludeSupport::SeaOrm | IncludeSupport::Cornucopia => {
             "    /// Eager-load related entities, e.g. `?include=person,deployment.position`."
+        }
+        IncludeSupport::CornucopiaHydration => {
+            "    /// Eager-load related entities. The cornucopia persistence provider hydrates scalar `refers` includes; any other modelled shape answers 501 (issue #781)."
         }
         IncludeSupport::Unsupported { .. } => {
             "    /// Includes are modelled for this entity but are not supported by this deployment's persistence provider; a request that sends `?include=` answers 501 (issue #781)."
@@ -966,5 +1285,224 @@ mod tests {
         assert!(plan.include_doc.contains("answers 501 (issue #781)"));
         // The historical "eager-load" claim is gone.
         assert!(!plan.include_doc.contains("Eager-load related entities"));
+    }
+
+    // ── Cornucopia hydration (issue #781 P1 preview feature) ────────────
+
+    fn cornucopia_hydration_project() -> ProjectConfig {
+        let mut project = cornucopia_project();
+        project.codegen.cornucopia_include_hydration = true;
+        project
+    }
+
+    /// The preview flag is the switch: OFF keeps the issue #781 P0 guarded
+    /// 501 for every cornucopia project (the handler matrix's arm).
+    #[test]
+    fn cornucopia_preview_flag_off_keeps_the_p0_501() {
+        let paths = vec![path("person", vec![segment("person", false)])];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_project());
+        assert!(matches!(plan.support, IncludeSupport::Unsupported { .. }));
+        assert!(
+            plan.get_block
+                .contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,")
+        );
+    }
+
+    /// With the flag on the verdict is the hydrating one, and the per-path
+    /// classifier decides support.
+    #[test]
+    fn cornucopia_preview_flag_on_reports_per_path_support() {
+        let paths = vec![
+            path("person", vec![segment("person", false)]),
+            path("deployment", vec![segment("deployment", true)]),
+        ];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        assert_eq!(plan.support, IncludeSupport::CornucopiaHydration);
+        assert!(plan.support.is_supported());
+        let supported = plan.support.supported_paths(&paths);
+        assert_eq!(supported.len(), 1);
+        assert_eq!(supported[0].alias, "person");
+        let unsupported = plan.support.unsupported_paths(&paths);
+        assert_eq!(unsupported.len(), 1);
+        assert_eq!(unsupported[0].alias, "deployment");
+        assert!(
+            unsupported[0].reason.contains("array / reverse-FK"),
+            "{}",
+            unsupported[0].reason
+        );
+    }
+
+    /// The classifier names the construct for every unimplemented shape.
+    #[test]
+    fn cornucopia_shape_classifier_names_the_construct() {
+        let dot = path(
+            "deployment.position",
+            vec![segment("deployment", false), segment("position", false)],
+        );
+        let reason = CornucopiaIncludeShape::classify(&dot).unwrap_err();
+        assert!(reason.contains("dot-notation"), "{reason}");
+
+        let array = path("deployment", vec![segment("deployment", true)]);
+        let reason = CornucopiaIncludeShape::classify(&array).unwrap_err();
+        assert!(reason.contains("array / reverse-FK"), "{reason}");
+
+        let mut vo = segment("person", false);
+        vo.child_table_override = Some(crate::api::include_path::ChildTableOverride {
+            vo_title: "PersonLegalType".to_string(),
+            child_table_name: "worker_person".to_string(),
+            child_module: "common_worker_person".to_string(),
+            child_schema: "common".to_string(),
+            parent_fk_column: "worker_id".to_string(),
+            response_type: "WorkerPersonLegalResponse".to_string(),
+        });
+        let reason = CornucopiaIncludeShape::classify(&path("person", vec![vo])).unwrap_err();
+        assert!(reason.contains("VO→entity child-table"), "{reason}");
+
+        let scalar = path("person", vec![segment("person", false)]);
+        assert_eq!(
+            CornucopiaIncludeShape::classify(&scalar),
+            Ok(CornucopiaIncludeShape::SingleScalar)
+        );
+    }
+
+    /// GET: the supported arm calls the entity's cornucopia QUERY handler
+    /// (which owns the client/transaction/RLS session vars) — never the
+    /// adapter directly — and the unsupported arm 501s naming the alias.
+    #[test]
+    fn cornucopia_hydration_get_block_calls_the_query_handler() {
+        let paths = vec![
+            path("person", vec![segment("person", false)]),
+            path("deployment", vec![segment("deployment", true)]),
+        ];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let block = &plan.get_block;
+
+        assert!(
+            block.starts_with("    for path in &include_paths {\n"),
+            "{block}"
+        );
+        // Per-path fail-closed guard names the requested alias.
+        assert!(
+            block.contains("        let unsupported = match path.as_str() {"),
+            "{block}"
+        );
+        assert!(
+            block.contains("            \"deployment\" => Some(\"array / reverse-FK"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "message: format!(\"?include={path} is not supported: {reason} (issue #781)\")"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains("status: axum::http::StatusCode::NOT_IMPLEMENTED,"),
+            "{block}"
+        );
+        // The implemented arm hydrates through the query handler with the
+        // session args in the provider's positional order.
+        assert!(
+            block.contains(
+                "included.person = state.common_worker_queries.fetch_person_for_worker(id, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "{block}"
+        );
+        assert!(block.contains(".map_err(|e: CommonError| {"), "{block}");
+        assert!(
+            block.contains(
+                "AppError::from_domain_error(e.http_status(), e.to_string(), \"Failed to include person\")"
+            ),
+            "{block}"
+        );
+        assert!(block.contains("            _ => {}"), "{block}");
+        // No SeaORM transaction opened in the handler.
+        assert!(!block.contains("state.db.begin()"), "{block}");
+        assert!(
+            !block.ends_with('\n'),
+            "the template supplies the line break"
+        );
+    }
+
+    /// LIST: one batch call per path, keyed by source id in the same
+    /// `HashMap<Uuid, …>` JSON shape the SeaORM arm emits.
+    #[test]
+    fn cornucopia_hydration_list_block_batches_by_source_id() {
+        let paths = vec![path("person", vec![segment("person", false)])];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        let block = &plan.list_block;
+
+        assert!(
+            block.contains("    let included = if !include_paths.is_empty() {"),
+            "{block}"
+        );
+        assert!(
+            block.contains("let ids: Vec<Uuid> = results.iter().map(|r| r.id).collect();"),
+            "{block}"
+        );
+        assert!(
+            block.contains("if include_paths.contains(&\"person\".to_string()) {"),
+            "{block}"
+        );
+        assert!(
+            block.contains(
+                "serde_json::to_value(state.common_worker_queries.fetch_person_batch_for_worker(&ids, api_key_info.api_key_id, api_key_info.organization_id, api_key_info.user_id, api_key_info.role.clone()).await"
+            ),
+            "{block}"
+        );
+        assert!(block.contains(".unwrap_or_default(),"), "{block}");
+        assert!(
+            block.contains("        std::collections::HashMap::new()"),
+            "{block}"
+        );
+        // No per-path guard when every modelled path is implemented.
+        assert!(!block.contains("let unsupported = match"), "{block}");
+        assert!(!block.contains("state.db.begin()"), "{block}");
+    }
+
+    /// A dict with ONLY unsupported shapes still 501s — the block is the
+    /// guard plus the empty map the Ok envelope reads.
+    #[test]
+    fn cornucopia_hydration_all_unsupported_still_fails_closed() {
+        let paths = vec![path("deployment", vec![segment("deployment", true)])];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        assert!(
+            plan.get_block
+                .contains("\"deployment\" => Some(\"array / reverse-FK"),
+            "{}",
+            plan.get_block
+        );
+        assert!(
+            !plan.get_block.contains("state.common_worker_queries"),
+            "{}",
+            plan.get_block
+        );
+        assert!(
+            plan.list_block.contains(
+                "let included = std::collections::HashMap::<String, serde_json::Value>::new();"
+            ) || plan
+                .list_block
+                .contains("let included = if !include_paths.is_empty() {"),
+            "{}",
+            plan.list_block
+        );
+    }
+
+    /// The hydrated arm's doc line is honest about the residual limits.
+    #[test]
+    fn cornucopia_hydration_doc_line_names_the_residual_limit() {
+        let paths = vec![path("person", vec![segment("person", false)])];
+        let plan = build_include_plan(&paths, &ctx(), &cornucopia_hydration_project());
+        assert!(
+            plan.include_doc.contains("Eager-load related entities"),
+            "{}",
+            plan.include_doc
+        );
+        assert!(
+            plan.include_doc.contains("scalar `refers`"),
+            "{}",
+            plan.include_doc
+        );
+        assert!(plan.include_doc.contains("501"), "{}", plan.include_doc);
     }
 }

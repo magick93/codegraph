@@ -46,6 +46,14 @@ pub struct QueryContext {
     /// Mox derived feature names populated at SELECT time (issue #508).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mox_derived_names: Vec<String>,
+    /// Pre-rendered cornucopia `?include=` hydration methods (issue #781 P1).
+    /// Empty unless the preview feature is on and the entity models at least
+    /// one implemented include shape.
+    #[serde(default)]
+    pub include_query_methods: String,
+    /// The `use …;` lines the include methods need (target response DTOs).
+    #[serde(default)]
+    pub include_response_imports: String,
 }
 
 pub struct QueryGenerator {
@@ -221,6 +229,22 @@ impl EntityGenerator for QueryGenerator {
             })
             .filter(|name| !dto_names.contains(name.as_str()))
             .collect();
+
+        // `?include=` hydration wrappers (issue #781 P1 preview feature):
+        // cornucopia-only, pre-rendered — the query handler owns the client,
+        // the transaction, and the RLS session vars, exactly like the tree /
+        // CRUD methods above.
+        let (include_query_methods, include_response_imports) = cornucopia_include_query_surface(
+            db,
+            config,
+            project,
+            &domain,
+            schema_title,
+            &entity_name,
+            &module_name,
+        )
+        .await;
+
         let ctx = QueryContext {
             has_read: operations.contains(&"read".to_string()),
             has_create: operations.contains(&"create".to_string()),
@@ -237,7 +261,141 @@ impl EntityGenerator for QueryGenerator {
             tree_include,
             ux_sort,
             mox_derived_names,
+            include_query_methods,
+            include_response_imports,
         };
+
+        /// Build the cornucopia `?include=` query-handler surface (issue #781 P1).
+        ///
+        /// Returns `(methods, imports)`:
+        ///
+        /// * `methods` — one GET wrapper + one LIST wrapper per IMPLEMENTED include
+        ///   path, rendered at the `impl {Entity}QueryHandler` level. Each opens the
+        ///   client + transaction, installs the RLS session vars, calls the adapter
+        ///   fetch on that transaction, and commits — the tree handler's call shape,
+        ///   so the session context (and therefore RLS) is exactly the same as every
+        ///   other cornucopia read.
+        /// * `imports` — the `use crate::domain::{target}::dto_response::{Resp};`
+        ///   lines the method signatures need (deduped, self-targets skipped because
+        ///   the header already imports them).
+        ///
+        /// Empty pair unless the provider is cornucopia, the
+        /// `cornucopia_include_hydration` preview feature is on, and the entity
+        /// models at least one implemented include shape.
+        #[allow(clippy::too_many_arguments)]
+        async fn cornucopia_include_query_surface(
+            db: &dyn GraphQuerier,
+            config: &DomainConfig,
+            project: &ProjectConfig,
+            domain: &str,
+            schema_title: &str,
+            entity_name: &str,
+            module_name: &str,
+        ) -> (String, String) {
+            if !project.is_cornucopia() || !project.codegen.cornucopia_include_hydration {
+                return (String::new(), String::new());
+            }
+            let entity_cfg = config
+                .domains
+                .get(domain)
+                .and_then(|d| d.get_entity_config(schema_title));
+            let paths = crate::api::include_path::resolve_include_paths_for_entity(
+                db,
+                config,
+                domain,
+                schema_title,
+                entity_cfg,
+                project.is_workers_topology(),
+            )
+            .await
+            .unwrap_or_default();
+            // The SAME per-path verdict the handler and the emitters read: a shape
+            // the plane does not implement gets no wrapper (its request answers 501).
+            let support = crate::api::include_plan::include_support_for(project);
+            let supported = support.supported_paths(&paths);
+            if supported.is_empty() {
+                return (String::new(), String::new());
+            }
+
+            let error_type = format!("{}Error", codegraph_naming::to_pascal_case(domain));
+            let mut methods = String::new();
+            let mut imports = String::new();
+            let mut imported: std::collections::HashSet<String> =
+                std::collections::HashSet::from([format!("{entity_name}Response")]);
+
+            for path in supported {
+                let Some(seg) = path.segments.first() else {
+                    continue;
+                };
+                let resp = &path.response_rust_type;
+                let same_module = seg.domain == domain && seg.module_name == module_name;
+                if !same_module && imported.insert(resp.clone()) && resp.ends_with("Response") {
+                    imports.push_str(&format!(
+                        "use crate::domain::{}::{}::dto_response::{};\n",
+                        seg.domain, seg.module_name, resp
+                    ));
+                }
+                methods.push_str(&format!(
+                    "\n    /// Eager-load `{}` for one {entity_name} row (issue #781 P1).\n",
+                    path.alias
+                ));
+                methods.push_str(&format!(
+            "    pub async fn {}(&self, source_id: Uuid, api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<Option<{resp}>, {error_type}> {{\n",
+            path.fetch_method
+        ));
+                push_cornucopia_query_tx(
+                    &mut methods,
+                    &error_type,
+                    &path.fetch_method,
+                    "&tx, source_id",
+                );
+                methods.push_str("        Ok(result)\n    }\n");
+
+                methods.push_str(&format!(
+            "\n    /// Eager-load `{}` for many {entity_name} rows, keyed by source id (issue #781 P1).\n",
+            path.alias
+        ));
+                methods.push_str(&format!(
+            "    pub async fn {}(&self, source_ids: &[Uuid], api_key_id: Uuid, organization_id: Uuid, user_id: Uuid, role: String) -> Result<std::collections::HashMap<Uuid, Option<{resp}>>, {error_type}> {{\n",
+            path.batch_fetch_method
+        ));
+                push_cornucopia_query_tx(
+                    &mut methods,
+                    &error_type,
+                    &path.batch_fetch_method,
+                    "&tx, source_ids",
+                );
+                methods.push_str("        Ok(result)\n    }\n");
+            }
+
+            (methods, imports)
+        }
+
+        /// The client/transaction/session preamble + fetch + commit shared by both
+        /// include wrappers.
+        fn push_cornucopia_query_tx(out: &mut String, error_type: &str, method: &str, args: &str) {
+            out.push_str("        let mut client = self.client_source.client().await\n");
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+            out.push_str("        let tx = client.transaction().await\n");
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+            out.push_str(
+        "        set_rls_session_vars(&tx, api_key_id, organization_id, user_id, &role).await?;\n",
+    );
+            out.push_str(&format!(
+                "        let result = self.repo.{method}({args}).await\n"
+            ));
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+            out.push_str("        tx.commit().await\n");
+            out.push_str(&format!(
+                "            .map_err(|e| {error_type}::from_repo_err(e))?;\n"
+            ));
+        }
 
         let content = render_template_with_project(tera, "ddd/query.tera", &ctx, project)?;
         Ok(vec![GeneratedFile {

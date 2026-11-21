@@ -5,6 +5,7 @@ pub mod boundary_derive;
 pub mod boundary_map;
 pub mod command;
 pub mod cornucopia_repo;
+pub mod cornucopia_repo_include;
 pub mod design;
 pub mod dto;
 pub mod dto_boundaries;
