@@ -462,3 +462,157 @@ fn include_fetch_keeps_plain_assignment_for_matching_types() {
     );
     assert!(!out.contains(".to_string()"), "{out}");
 }
+
+// --- include-fetch soft-delete filtering (issue #784) ---
+
+/// One path, emitted with an explicit target tree — the soft-delete marker's
+/// derivation input.
+fn emit_include_with_target(path: &ResolvedIncludePath, target_tree: Option<EntityTree>) -> String {
+    let tree = sort_test_tree(false);
+    let per_seg_dto: Vec<Vec<String>> = path
+        .segments
+        .iter()
+        .map(|_| vec!["organization_id".to_string()])
+        .collect();
+    let per_seg_col: Vec<Vec<String>> = per_seg_dto.clone();
+    let per_seg_structured: Vec<Vec<bool>> = path.segments.iter().map(|_| vec![false]).collect();
+    let per_seg_codelist: Vec<Vec<bool>> = per_seg_structured.clone();
+    let per_seg_dto_types: Vec<Vec<Option<String>>> =
+        path.segments.iter().map(|_| vec![None]).collect();
+    let per_seg_nullable: Vec<Vec<bool>> = per_seg_structured.clone();
+    let per_seg_col_types: Vec<Vec<String>> = per_seg_dto.clone();
+    let mut code = CodeWriter::new();
+    RepositoryImplEmitter.emit_include_fetch_methods(
+        &tree,
+        &mut code,
+        std::slice::from_ref(path),
+        &[target_tree],
+        &[per_seg_dto],
+        &[per_seg_col],
+        &[per_seg_structured],
+        &[per_seg_codelist],
+        &[per_seg_dto_types],
+        &[per_seg_nullable],
+        &[per_seg_col_types],
+    );
+    code.into_string()
+}
+
+/// The reverse-FK (collection) include path.
+fn array_include_path() -> ResolvedIncludePath {
+    ResolvedIncludePath {
+        alias: "work_order".into(),
+        segments: vec![IncludeSegment {
+            entity_name: "WorkOrder".into(),
+            schema_title: "WorkOrderType".into(),
+            module_name: "work_order".into(),
+            domain: "hr".into(),
+            table: "\"hr\".\"work_order\"".into(),
+            fk_column: "unused_for_the_array_shape".into(),
+            reverse_fk_column: "customer_id".into(),
+            fk_is_required: false,
+            reverse_fk_is_required: false,
+            is_array: true,
+            child_table_override: None,
+        }],
+        response_rust_type: "WorkOrderResponse".into(),
+        fetch_method: "fetch_work_order_for_task".into(),
+        batch_fetch_method: "fetch_work_order_batch_for_task".into(),
+    }
+}
+
+/// The one-hop dot path (`job.position` — the target's own FK hop).
+fn dot_include_path() -> ResolvedIncludePath {
+    let seg = |entity: &str, module: &str, fk: &str| IncludeSegment {
+        entity_name: entity.to_string(),
+        schema_title: format!("{entity}Type"),
+        module_name: module.to_string(),
+        domain: "hr".into(),
+        table: format!("\"hr\".\"{module}\""),
+        fk_column: fk.to_string(),
+        reverse_fk_column: fk.to_string(),
+        fk_is_required: false,
+        reverse_fk_is_required: false,
+        is_array: false,
+        child_table_override: None,
+    };
+    ResolvedIncludePath {
+        alias: "job.position".into(),
+        segments: vec![
+            seg("Job", "job", "job_id"),
+            seg("Position", "position", "position_id"),
+        ],
+        response_rust_type: "JobResponse".into(),
+        fetch_method: "fetch_job_position_for_task".into(),
+        batch_fetch_method: "fetch_job_position_batch_for_task".into(),
+    }
+}
+
+/// An auditable target's include fetch EXCLUDES soft-deleted rows (issue
+/// #784): the scalar arm's target load ANDs the `DeletedAt.is_null()` filter
+/// the CRUD read plane applies, in BOTH the single and the batch variant.
+#[test]
+fn scalar_include_fetch_filters_soft_deleted_target_when_auditable() {
+    let out = emit_include_with_target(&single_include_path(), Some(sort_test_tree(true)));
+    assert_eq!(
+        out.matches("crate::entity::hr_job::Column::DeletedAt.is_null()")
+            .count(),
+        2,
+        "single + batch scalar arms must both filter the auditable target:\n{out}"
+    );
+}
+
+/// A non-auditable target invents no filter — the DDL gives the table no
+/// `deleted_at` column to filter on.
+#[test]
+fn scalar_include_fetch_invents_no_filter_when_target_not_auditable() {
+    let out = emit_include_with_target(&single_include_path(), Some(sort_test_tree(false)));
+    assert!(
+        !out.contains("DeletedAt"),
+        "a non-auditable target must carry no soft-delete filter:\n{out}"
+    );
+}
+
+/// A target tree the emitter could not resolve hydrates unfiltered (today's
+/// shape, preserved: no tree, no invented marker).
+#[test]
+fn include_fetch_without_a_target_tree_invents_no_filter() {
+    let out = emit_include_with_target(&single_include_path(), None);
+    assert!(!out.contains("DeletedAt"), "{out}");
+}
+
+/// The reverse-FK (collection) include excludes soft-deleted children in
+/// both the single and the batch variant (issue #784). Excluding every row
+/// yields the empty collection — the handler's `Some(vec![])` shape.
+#[test]
+fn reverse_fk_include_fetch_filters_soft_deleted_target_when_auditable() {
+    let out = emit_include_with_target(&array_include_path(), Some(sort_test_tree(true)));
+    assert_eq!(
+        out.matches("crate::entity::hr_work_order::Column::DeletedAt.is_null()")
+            .count(),
+        2,
+        "single + batch reverse-FK arms must both filter the auditable target:\n{out}"
+    );
+}
+
+/// The dot path's LEAF load excludes soft-deleted leaf rows when the leaf is
+/// auditable (issue #784): the leaf field stays `None` on the combined
+/// response rather than surfacing a deleted row.
+#[test]
+fn dot_include_fetch_filters_the_leaf_when_auditable() {
+    let out = emit_include_with_target(&dot_include_path(), Some(sort_test_tree(true)));
+    assert!(
+        out.contains(".filter(crate::entity::hr_position::Column::DeletedAt.is_null())"),
+        "the dot leaf load must filter the auditable leaf:\n{out}"
+    );
+}
+
+/// The dot path invents no leaf filter when the leaf is not auditable.
+#[test]
+fn dot_include_fetch_invents_no_leaf_filter_when_leaf_not_auditable() {
+    let out = emit_include_with_target(&dot_include_path(), Some(sort_test_tree(false)));
+    assert!(
+        !out.contains("DeletedAt"),
+        "a non-auditable leaf must carry no soft-delete filter:\n{out}"
+    );
+}

@@ -67,21 +67,20 @@
 //! `FORCE ROW LEVEL SECURITY`, so a missing bundle would flood every leg with
 //! the other tenant's rows.
 //!
-//! # Soft delete — the honest shape of this fixture
+//! # Soft delete — the contract under test (issue #784)
 //!
-//! §1.2: the marker filter keys on the target `EntityTree`'s
-//! `soft_delete_column`, which comes from a **`SoftDelete` policy node** — not
-//! from auditable-ness. No current input produces one (`policy_ingest`'s
-//! `ingest_policies_and_relationships` has no caller on the mox-first driver
-//! path), so the generated include SQL for this fixture carries **no**
-//! `deleted_at` predicate, and auditable tables all have the column. The suite
-//! therefore asserts (a) the emitted SQL carries no marker, (b) a soft-deleted
-//! source still hydrates and a soft-deleted target IS still returned (the
-//! designed behaviour of a marker-less tree), and (c) the marker suffix the
-//! emitter appends (`render_include_sql`, `db/cornucopia_queries.rs`) — applied
-//! to the same emitted statement — really does exclude the seeded row on this
-//! schema. (c) is the runtime half of the emitter KATs; the end-to-end marker
-//! arm has no reachable input yet and is called out in the report.
+//! The include marker keys on the read plane's auditable decision
+//! (`EntityTree.is_auditable` — the same predicate that gates the CRUD reads'
+//! `include_deleted` parameter and `DeletedAt.is_null()` filters), NOT on the
+//! policy-derived `soft_delete_column` the mox-first driver path never
+//! populates (`docs/tdd/784-soft-delete-includes.tdd.md`). Every auditable
+//! table has the `deleted_at` column, so the emitted include SQL carries
+//! `AND "deleted_at" IS NULL`. The suite therefore asserts (a) every emitted
+//! include statement carries the marker, (b) a soft-deleted TARGET is
+//! EXCLUDED — scalar, reverse-FK collection, and both dot hops (intermediate
+//! and leaf) — while (c) a soft-deleted SOURCE still hydrates its includes
+//! (the CRUD read owns the source's visibility decision), and the cross-tenant
+//! legs are unchanged.
 //!
 //! # Running
 //!
@@ -89,8 +88,8 @@
 //! cargo test -p codegraph --test cornucopia_include_runtime_tests -- --ignored --nocapture
 //! ```
 //!
-//! `emitted_include_queries_extract_bind_and_carry_no_marker` and the extractor
-//! unit tests run in PR CI (node-free, DB-free).
+//! `emitted_include_queries_extract_bind_and_carry_the_soft_delete_marker` and
+//! the extractor unit tests run in PR CI (node-free, DB-free).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -282,11 +281,13 @@ fn binding_rejects_a_placeholder_it_did_not_map() {
 }
 
 /// The generation-time half of the runtime pin: every include statement the
-/// fixture emits is extractable, binds to exactly one positional parameter, and
-/// carries no soft-delete marker (this fixture's graph holds no `SoftDelete`
-/// policy — see the module docs).
+/// fixture emits is extractable, binds to exactly one positional parameter,
+/// and carries the soft-delete marker (issue #784 — every table in this
+/// fixture is auditable, the read plane's `is_auditable` decision, so each
+/// statement ANDs `"deleted_at" IS NULL` on the target hop; the dot shape
+/// markers BOTH hops).
 #[tokio::test]
-async fn emitted_include_queries_extract_bind_and_carry_no_marker() {
+async fn emitted_include_queries_extract_bind_and_carry_the_soft_delete_marker() {
     let (_fixture, output) = generate(PROFILE).await;
     let queries = include_queries(&output);
     let names: BTreeSet<&str> = queries.keys().map(String::as_str).collect();
@@ -321,8 +322,18 @@ async fn emitted_include_queries_extract_bind_and_carry_no_marker() {
             "{name} must bind exactly one positional parameter:\n{bound}"
         );
         assert!(
-            !bound.contains("deleted_at"),
-            "{name} must invent no soft-delete marker on a marker-less tree:\n{bound}"
+            bound.contains("\"deleted_at\" IS NULL"),
+            "{name} must carry the soft-delete marker on an auditable target \
+             (issue #784):\n{bound}"
+        );
+        // The dot shape markers BOTH hops; the single-segment shapes marker
+        // the target once. One `IS NULL` predicate per auditable hop, never
+        // more (no invented markers on tables the DDL gives no column).
+        let expected = if name.contains("_org_") { 2 } else { 1 };
+        assert_eq!(
+            bound.matches("\"deleted_at\" IS NULL").count(),
+            expected,
+            "{name} must marker exactly {expected} hop(s):\n{bound}"
         );
     }
 }
@@ -448,13 +459,20 @@ struct Seed {
     org_b: Uuid,
     organization_a: Uuid,
     organization_b: Uuid,
+    /// A soft-deleted org — the dot LEAF exclusion seed's target.
+    organization_a_deleted: Uuid,
     customer_a: Uuid,
     customer_a_deleted: Uuid,
     customer_b: Uuid,
+    /// A live customer whose org is soft-deleted — the dot LEAF exclusion seed.
+    customer_deleted_org: Uuid,
     invoice_a1: Uuid,
     invoice_a2: Uuid,
     invoice_b: Uuid,
     invoice_deleted_target: Uuid,
+    /// An invoice whose customer resolves to the soft-deleted org — the dot
+    /// LEAF exclusion source.
+    invoice_deleted_leaf: Uuid,
     invoice_cross: Uuid,
     work_order_a1: Uuid,
     work_order_a2: Uuid,
@@ -470,13 +488,16 @@ impl Seed {
             org_b: Uuid::new_v4(),
             organization_a: Uuid::new_v4(),
             organization_b: Uuid::new_v4(),
+            organization_a_deleted: Uuid::new_v4(),
             customer_a: Uuid::new_v4(),
             customer_a_deleted: Uuid::new_v4(),
             customer_b: Uuid::new_v4(),
+            customer_deleted_org: Uuid::new_v4(),
             invoice_a1: Uuid::new_v4(),
             invoice_a2: Uuid::new_v4(),
             invoice_b: Uuid::new_v4(),
             invoice_deleted_target: Uuid::new_v4(),
+            invoice_deleted_leaf: Uuid::new_v4(),
             invoice_cross: Uuid::new_v4(),
             work_order_a1: Uuid::new_v4(),
             work_order_a2: Uuid::new_v4(),
@@ -491,15 +512,23 @@ impl Seed {
 /// role the generated migrations run as). No trigger band is applied, so the
 /// explicit `platform_organization_id` is what lands.
 async fn seed_rows(client: &Client, seed: &Seed) {
-    for (id, org, name) in [
-        (seed.organization_a, seed.org_a, "Org A"),
-        (seed.organization_b, seed.org_b, "Org B"),
+    for (id, org, name, deleted) in [
+        (seed.organization_a, seed.org_a, "Org A", false),
+        (seed.organization_b, seed.org_b, "Org B", false),
+        // The dot LEAF exclusion seed: a soft-deleted org whose row otherwise
+        // satisfies the same tenant + FK shape as the live orgs.
+        (
+            seed.organization_a_deleted,
+            seed.org_a,
+            "Org A Deleted",
+            true,
+        ),
     ] {
         client
             .execute(
-                "INSERT INTO shop.organization (id, platform_organization_id, \"name\") \
-                 VALUES ($1, $2, $3)",
-                &[&id, &org, &name],
+                "INSERT INTO shop.organization (id, platform_organization_id, \"name\", deleted_at) \
+                 VALUES ($1, $2, $3, CASE WHEN $4 THEN now() ELSE NULL END)",
+                &[&id, &org, &name, &deleted],
             )
             .await
             .expect("seed organization");
@@ -527,6 +556,15 @@ async fn seed_rows(client: &Client, seed: &Seed) {
             "Customer B",
             false,
         ),
+        // The dot LEAF exclusion seed: a LIVE customer whose org is the
+        // soft-deleted one — the intermediate hop resolves, the leaf does not.
+        (
+            seed.customer_deleted_org,
+            seed.org_a,
+            seed.organization_a_deleted,
+            "Customer Deleted Org",
+            false,
+        ),
     ] {
         client
             .execute(
@@ -548,6 +586,13 @@ async fn seed_rows(client: &Client, seed: &Seed) {
             seed.org_a,
             seed.customer_a_deleted,
             "INV-A-DELETED-TARGET",
+        ),
+        // Org A's invoice whose customer is live but whose org is soft-deleted.
+        (
+            seed.invoice_deleted_leaf,
+            seed.org_a,
+            seed.customer_deleted_org,
+            "INV-A-DELETED-LEAF",
         ),
         // Org A's invoice whose REQUIRED FK points at an org-B customer.
         (seed.invoice_cross, seed.org_a, seed.customer_b, "INV-CROSS"),
@@ -683,22 +728,6 @@ fn ids(rows: &[Row]) -> BTreeSet<Uuid> {
     rows.iter().map(|row| uuid_col(row, "id")).collect()
 }
 
-/// The target marker suffix `render_include_sql` appends for the reverse-FK
-/// (`SingleArray`) shape — `db/cornucopia_queries.rs`.
-fn array_marker_suffix() -> &'static str {
-    "\n  AND \"deleted_at\" IS NULL"
-}
-
-/// The target marker suffix `render_include_sql` appends for the single-scalar
-/// shape: `AND "deleted_at" IS NULL` between the FK predicate and `LIMIT 1`.
-fn scalar_marker_sql(body: &str) -> String {
-    assert!(
-        body.contains("\nLIMIT 1"),
-        "the scalar include must end in LIMIT 1:\n{body}"
-    );
-    body.replace("\nLIMIT 1", "\n  AND \"deleted_at\" IS NULL\nLIMIT 1")
-}
-
 // ── The runtime gate ──
 
 async fn connect(url: &str) -> Client {
@@ -746,12 +775,13 @@ async fn cornucopia_includes_hydrate_under_rls() {
     let (_fixture, output) = generate(PROFILE).await;
     let queries = include_queries(&output);
     for (name, query) in &queries {
-        // The marker-free contract is asserted again at runtime so the
-        // soft-delete legs below state its premise.
+        // The marker contract is asserted again at runtime so the soft-delete
+        // legs below state their premise (issue #784: auditable targets are
+        // filtered).
         assert!(
-            !query.body.contains("deleted_at"),
-            "{name} carries a soft-delete marker although the fixture's graph \
-             has no SoftDelete policy:\n{}",
+            query.body.contains("\"deleted_at\" IS NULL"),
+            "{name} must carry the soft-delete marker although the fixture's \
+             tables are all auditable:\n{}",
             query.body
         );
     }
@@ -806,7 +836,9 @@ async fn cornucopia_includes_hydrate_under_rls() {
     );
 
     // Batch: one row per source id, keyed by `source_id` (the adapter's map
-    // key). The soft-deleted source hydrates too — see the soft-delete legs.
+    // key). The soft-deleted SOURCE hydrates too — the include marker filters
+    // the TARGET, and the source's visibility belongs to the CRUD read that
+    // produced it (issue #784).
     let rows = query_scoped(
         &mut client,
         seed.org_a,
@@ -818,7 +850,12 @@ async fn cornucopia_includes_hydrate_under_rls() {
         ]),
     )
     .await;
-    assert_eq!(rows.len(), 3, "one target row per requested source id");
+    assert_eq!(
+        rows.len(),
+        3,
+        "one target row per requested source id — a soft-deleted source still \
+         hydrates its include"
+    );
     assert_eq!(
         rows.iter()
             .map(|row| uuid_col(row, "source_id"))
@@ -849,13 +886,9 @@ async fn cornucopia_includes_hydrate_under_rls() {
     .await;
     assert_eq!(
         ids(&rows),
-        BTreeSet::from([
-            seed.work_order_a1,
-            seed.work_order_a2,
-            seed.work_order_soft_deleted,
-        ]),
-        "the reverse include scans the target's FK and returns the whole \
-         collection (the soft-deleted source has no marker filter)"
+        BTreeSet::from([seed.work_order_a1, seed.work_order_a2]),
+        "the reverse include scans the target's FK and EXCLUDES the \
+         soft-deleted child (issue #784)"
     );
     assert!(
         rows.iter()
@@ -870,7 +903,12 @@ async fn cornucopia_includes_hydrate_under_rls() {
         Bind::Sources(&[seed.customer_a]),
     )
     .await;
-    assert_eq!(rows.len(), 3, "the batch groups the same three children");
+    assert_eq!(
+        rows.len(),
+        2,
+        "the batch groups the two live children (the soft-deleted child is \
+         excluded from the batch too)"
+    );
     assert!(
         rows.iter()
             .all(|row| opt_uuid_col(row, "source_id") == Some(seed.customer_a)),
@@ -1046,12 +1084,10 @@ async fn cornucopia_includes_hydrate_under_rls() {
         "org B's own pair still resolves"
     );
 
-    // ── 9. Soft delete ──
+    // ── 9. Soft delete (issue #784) ──
     //
-    // (a) The emitted SQL carries no marker (asserted at the top, on every
-    //     statement): the tree has no `SoftDelete` policy, so a soft-deleted
-    //     TARGET is still returned — the "no invented marker" half of the
-    //     contract.
+    // (a) The emitted SQL carries the marker (asserted on every statement at
+    //     the top), so a soft-deleted TARGET is EXCLUDED — scalar:
     let rows = query_scoped(
         &mut client,
         seed.org_a,
@@ -1059,12 +1095,52 @@ async fn cornucopia_includes_hydrate_under_rls() {
         Bind::Source(seed.invoice_deleted_target),
     )
     .await;
+    assert!(
+        rows.is_empty(),
+        "the emitted scalar include must exclude a soft-deleted target"
+    );
+
+    // (a2) The dot path's INTERMEDIATE hop: the invoice's customer is
+    //      soft-deleted, so the leaf is unreachable through it.
+    let rows = query_scoped(
+        &mut client,
+        seed.org_a,
+        &customer_org_for_invoice,
+        Bind::Source(seed.invoice_deleted_target),
+    )
+    .await;
+    assert!(
+        rows.is_empty(),
+        "the emitted dot include must exclude a soft-deleted intermediate"
+    );
+
+    // (a3) The dot path's LEAF hop: the intermediate customer is live but its
+    //      org is soft-deleted — the leaf marker excludes the row while the
+    //      single-hop include still resolves the live intermediate.
+    let rows = query_scoped(
+        &mut client,
+        seed.org_a,
+        &customer_for_invoice,
+        Bind::Source(seed.invoice_deleted_leaf),
+    )
+    .await;
     assert_eq!(
         rows.len(),
         1,
-        "a marker-less tree filters no `deleted_at` on the target"
+        "the intermediate is live, so the single-hop include still resolves it"
     );
-    assert_eq!(uuid_col(&rows[0], "id"), seed.customer_a_deleted);
+    assert_eq!(uuid_col(&rows[0], "id"), seed.customer_deleted_org);
+    let rows = query_scoped(
+        &mut client,
+        seed.org_a,
+        &customer_org_for_invoice,
+        Bind::Source(seed.invoice_deleted_leaf),
+    )
+    .await;
+    assert!(
+        rows.is_empty(),
+        "the emitted dot include must exclude a soft-deleted leaf"
+    );
 
     // (b) A soft-deleted SOURCE still hydrates: the `include_deleted` decision
     //     belongs to the CRUD read that produced the source row, not to the
@@ -1083,42 +1159,13 @@ async fn cornucopia_includes_hydrate_under_rls() {
     );
     assert_eq!(uuid_col(&rows[0], "id"), seed.customer_a);
 
-    // (c) The marker suffix `render_include_sql` appends, applied to the SAME
-    //     emitted statements, excludes the seeded row on this schema (the
-    //     column exists on every auditable table; the predicate is
-    //     `IS NULL`). This is the runtime half of the emitter KATs — the
-    //     end-to-end marker arm has no reachable input today.
+    // (c) The emitted marker filters the TARGET, not the source: the
+    //     soft-deleted work_order is the source here, and its live customer
+    //     still hydrates through the emitted (marked) SQL.
     let rows = query_scoped(
         &mut client,
         seed.org_a,
-        &scalar_marker_sql(&customer_for_invoice),
-        Bind::Source(seed.invoice_deleted_target),
-    )
-    .await;
-    assert!(
-        rows.is_empty(),
-        "the scalar marker arm must exclude a soft-deleted target"
-    );
-
-    let marked_array = format!("{work_order_for_customer}{}", array_marker_suffix());
-    let rows = query_scoped(
-        &mut client,
-        seed.org_a,
-        &marked_array,
-        Bind::Source(seed.customer_a),
-    )
-    .await;
-    assert_eq!(
-        ids(&rows),
-        BTreeSet::from([seed.work_order_a1, seed.work_order_a2]),
-        "the reverse-FK marker arm excludes the soft-deleted child"
-    );
-
-    let marked_scalar = scalar_marker_sql(&customer_for_work_order);
-    let rows = query_scoped(
-        &mut client,
-        seed.org_a,
-        &marked_scalar,
+        &customer_for_work_order,
         Bind::Source(seed.work_order_soft_deleted),
     )
     .await;

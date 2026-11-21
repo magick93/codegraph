@@ -31,6 +31,11 @@ fn tree(
     soft_delete: Option<&str>,
     append_only: bool,
 ) -> EntityTree {
+    // Production truth: `is_auditable` is the read plane's decision
+    // (`(...) && !append_only`) and the DDL emits `deleted_at` exactly for it —
+    // an append-only table carries no audit columns at all, so a tree cannot
+    // be auditable and append-only at once.
+    let is_auditable = soft_delete.is_some() && !append_only;
     EntityTree {
         entity_name: entity.to_string(),
         module_name: table.to_string(),
@@ -50,7 +55,7 @@ fn tree(
         has_fts: false,
         has_embeddings: false,
         fts_language: "english".to_string(),
-        is_auditable: soft_delete.is_some(),
+        is_auditable,
         soft_delete_visibility: "exclude_by_default".to_string(),
         soft_delete_column: soft_delete.map(str::to_string),
         soft_delete_cascade: "restrict".to_string(),
@@ -201,10 +206,12 @@ fn batch_scalar_include_sql_is_keyed_and_qualified() {
     assert!(!sql.contains("IS NULL"), "{sql}");
 }
 
-/// Append-only targets carry no `updated_at` (issue #284), and a
-/// renamed physical column keeps its field-name alias.
+/// Append-only targets carry no `updated_at` (issue #284) — and no
+/// `deleted_at` either: the DDL emits no audit column for an append-only
+/// table (`is_auditable = auditable && !append_only`), so the include SQL
+/// must not invent the marker (issue #784 — inventing it 500s every request).
 #[test]
-fn append_only_target_omits_updated_at_and_keeps_aliases() {
+fn append_only_target_omits_updated_at_and_invents_no_marker() {
     let target = tree(
         "Person",
         "person",
@@ -225,8 +232,9 @@ fn append_only_target_omits_updated_at_and_keeps_aliases() {
     );
     assert!(!sql.contains("updated_at"), "{sql}");
     assert!(
-        sql.contains("WHERE \"t\".\"deleted_at\" IS NULL;"),
-        "batch filters the target's soft delete:\n{sql}"
+        !sql.contains("IS NULL"),
+        "an append-only target has no deleted_at column — the marker must not \
+         be invented:\n{sql}"
     );
 }
 
@@ -477,5 +485,74 @@ fn dot_include_batch_keys_the_source_and_applies_both_markers() {
              WHERE \"i\".\"deleted_at\" IS NULL\n  AND \"l\".\"deleted_at\" IS NULL;"
         ),
         "{sql}"
+    );
+}
+
+/// The include marker derives from the read plane's auditable decision, NOT
+/// from the policy-derived `soft_delete_column` (issue #784): the mox-first
+/// driver path never ingests `SoftDelete` policies, so a marker keyed on that
+/// field is unreachable exactly where the tables ARE auditable. Both arms:
+///
+/// * an auditable tree with NO policy field still carries the marker (the
+///   mox-first shape — RED before the fix, the #784 root cause);
+/// * a stale policy field over a non-auditable tree invents NO marker (a
+///   table without the column would 500 every include request).
+#[test]
+fn include_sql_marker_follows_the_auditable_decision_not_the_policy_field() {
+    let pg = std::collections::HashMap::new();
+
+    // The mox-first auditable shape: no `SoftDelete` policy, auditable table.
+    let mut auditable = tree("Person", "person", vec![], None, false);
+    assert!(auditable.is_auditable);
+    let sql = render_include_sql(&worker(), &facts("person", "person_id", &auditable, &pg));
+    assert!(
+        sql.contains("\n  AND \"deleted_at\" IS NULL\nLIMIT 1;"),
+        "an auditable target must carry the marker without any policy field:\n{sql}"
+    );
+
+    // A stale policy field over a non-auditable tree must NOT resurrect the
+    // marker (explicit `auditable = false` — the DDL gives no column).
+    auditable.is_auditable = false;
+    auditable.soft_delete_column = Some("deleted_at".to_string());
+    let sql = render_include_sql(&worker(), &facts("person", "person_id", &auditable, &pg));
+    assert!(
+        !sql.contains("IS NULL"),
+        "a policy field must not invent a marker on a non-auditable tree:\n{sql}"
+    );
+}
+
+/// The dot shape filters BOTH hops through the auditable decision: a live
+/// intermediate over a soft-deleted leaf still excludes the row, and the
+/// batch applies the same two-hop marker.
+#[test]
+fn dot_include_sql_markers_follow_the_auditable_decision_per_hop() {
+    let pg = std::collections::HashMap::new();
+
+    // Live intermediate, soft-deleted leaf: only the leaf marker applies.
+    let intermediate = tree("Customer", "customer", vec![], None, false);
+    let leaf = tree("Organization", "organization", vec![], Some("deleted_at"), false);
+    let sql = render_include_sql(
+        &worker(),
+        &dot_facts("customer.org", "customer_id", "org_id", &intermediate, &leaf, &pg),
+    );
+    assert!(
+        sql.contains("WHERE \"i\".\"id\" = (SELECT \"customer_id\" FROM \"common\".\"worker\" WHERE \"id\" = :source_id)\n  AND \"l\".\"deleted_at\" IS NULL\nLIMIT 1;"),
+        "the leaf hop carries the marker while the live intermediate carries none:\n{sql}"
+    );
+
+    // The mirror: soft-deleted intermediate, live leaf.
+    let intermediate = tree("Customer", "customer", vec![], Some("deleted_at"), false);
+    let leaf = tree("Organization", "organization", vec![], None, false);
+    let sql = render_include_sql(
+        &worker(),
+        &dot_facts("customer.org", "customer_id", "org_id", &intermediate, &leaf, &pg),
+    );
+    assert!(
+        sql.contains("AND \"i\".\"deleted_at\" IS NULL\nLIMIT 1;"),
+        "the intermediate hop carries the marker:\n{sql}"
+    );
+    assert!(
+        !sql.contains("\"l\".\"deleted_at\""),
+        "the live leaf carries no marker:\n{sql}"
     );
 }
