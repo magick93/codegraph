@@ -39,6 +39,7 @@ use serde::Serialize;
 mod actions;
 mod derive_fold;
 mod include;
+mod include_deleted;
 mod invariants;
 
 use invariants::{InvariantContractFacts, invariant_contract_facts};
@@ -149,6 +150,13 @@ struct EntityContractCtx {
     /// contract.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     include_sections: Vec<ContractSection>,
+    /// The `?include_deleted=` soft-delete toggle leg (issue #792): POST a
+    /// second row, DELETE it (204 — soft delete on both providers), GET it
+    /// WITH the toggle (200, the row is served) and WITHOUT it (404). One
+    /// omission comment when the entity is auditable but a gate is missing;
+    /// silence for non-auditable entities (the toggle is not served).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    include_deleted_sections: Vec<ContractSection>,
     /// `true` when the contract's update values PROVABLY violate an
     /// invariant: the PUT roundtrip then pins 409 + INVARIANT_VIOLATION
     /// (the write never starts) instead of the 200 roundtrip.
@@ -1072,6 +1080,24 @@ async fn build_entity_contract(
     )
     .await?;
 
+    // `?include_deleted=` toggle leg (issue #792). The entity's own
+    // read-plane auditable decision gates the leg — the contract cannot pin
+    // a toggle the handler does not serve. Silent for non-auditable
+    // entities: byte-identical contract.
+    let include_deleted_sections = include_deleted::include_deleted_sections(
+        db,
+        config,
+        domain,
+        schema,
+        &entity_url,
+        module,
+        &create_body,
+        has("create"),
+        has("read"),
+        has("delete"),
+    )
+    .await?;
+
     Ok(EntityContractCtx {
         domain: domain.to_string(),
         module: module.clone(),
@@ -1098,6 +1124,7 @@ async fn build_entity_contract(
         update_invariant_denied: invariant_facts.update_denied,
         update_invariant_note: invariant_facts.update_note,
         include_sections,
+        include_deleted_sections,
     })
 }
 

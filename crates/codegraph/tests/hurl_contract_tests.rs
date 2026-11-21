@@ -179,6 +179,37 @@ Authorization: Bearer {{api_key}}
 
 HTTP 404
 
+# ?include_deleted=true — the soft-delete read toggle (issue #792). The role
+# gate: JWT callers need a `manager`-or-better role; API-key sessions pass
+# (their scopes enforce at the DB tier).
+POST {{base_url}}/api/v1/inventory/widget-part
+Authorization: Bearer {{api_key}}
+{
+  "label": "contract-widget_part",
+  "status": "Active"
+}
+
+HTTP 201
+[Captures]
+widget_part_deleted_id: jsonpath "$.data.id"
+
+DELETE {{base_url}}/api/v1/inventory/widget-part/{{widget_part_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 204
+
+GET {{base_url}}/api/v1/inventory/widget-part/{{widget_part_deleted_id}}?include_deleted=true
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.id" == "{{widget_part_deleted_id}}"
+
+GET {{base_url}}/api/v1/inventory/widget-part/{{widget_part_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+
 # PUT roundtrip
 PUT {{base_url}}/api/v1/inventory/widget-part/{{widget_part_id}}
 Authorization: Bearer {{api_key}}
@@ -262,6 +293,37 @@ jsonpath "$.data.part_id" == "{{parent_part_id}}"
 
 # GET zero-uuid — 404
 GET {{base_url}}/api/v1/inventory/widget/00000000-0000-0000-0000-000000000000
+Authorization: Bearer {{api_key}}
+
+HTTP 404
+
+# ?include_deleted=true — the soft-delete read toggle (issue #792). The role
+# gate: JWT callers need a `manager`-or-better role; API-key sessions pass
+# (their scopes enforce at the DB tier).
+POST {{base_url}}/api/v1/inventory/widget
+Authorization: Bearer {{api_key}}
+{
+  "name": "contract-widget",
+  "part_id": "{{parent_part_id}}"
+}
+
+HTTP 201
+[Captures]
+widget_deleted_id: jsonpath "$.data.id"
+
+DELETE {{base_url}}/api/v1/inventory/widget/{{widget_deleted_id}}
+Authorization: Bearer {{api_key}}
+
+HTTP 204
+
+GET {{base_url}}/api/v1/inventory/widget/{{widget_deleted_id}}?include_deleted=true
+Authorization: Bearer {{api_key}}
+
+HTTP 200
+[Asserts]
+jsonpath "$.data.id" == "{{widget_deleted_id}}"
+
+GET {{base_url}}/api/v1/inventory/widget/{{widget_deleted_id}}
 Authorization: Bearer {{api_key}}
 
 HTTP 404
