@@ -82,6 +82,12 @@
 //! (the CRUD read owns the source's visibility decision), and the cross-tenant
 //! legs are unchanged.
 //!
+//! The CRUD band joins the same contract (issue #788): `list_customer` /
+//! `list_customer_including_deleted` — driven straight off the emitted SQL —
+//! prove the default list hides a soft-deleted row and the
+//! `_including_deleted` twin returns it, on the SAME one-derivation predicate
+//! (`include_soft_delete_marker` over `EntityTree.is_auditable`).
+//!
 //! # Running
 //!
 //! ```bash
@@ -200,6 +206,26 @@ fn bind_source_param(query: &EmittedQuery) -> String {
         .body
         .replace(":source_ids", "$1")
         .replace(":source_id", "$1");
+    assert_no_placeholders(&sql);
+    sql
+}
+
+/// Substitute a named-parameter map for positional binds, in the annotation's
+/// declared order, and refuse any placeholder the map did not cover (the
+/// `bind_source_param` contract — an unmapped `:name` would bind garbage or
+/// error opaquely at the driver).
+fn bind_named_params(query: &EmittedQuery, substitutions: &[(&str, &str)]) -> String {
+    let mut sql = query.body.clone();
+    for (name, positional) in substitutions {
+        sql = sql.replace(&format!(":{name}"), positional);
+    }
+    assert_no_placeholders(&sql);
+    sql
+}
+
+/// Panic if `sql` still carries a named placeholder (`:name` not followed by
+/// a second colon of a cast).
+fn assert_no_placeholders(sql: &str) {
     let mut chars = sql.char_indices().peekable();
     while let Some((index, ch)) = chars.next() {
         if ch != ':' {
@@ -216,7 +242,6 @@ fn bind_source_param(query: &EmittedQuery) -> String {
             }
         }
     }
-    sql
 }
 
 /// Every `include_*` query the fixture emits, keyed by name.
@@ -231,6 +256,13 @@ fn include_queries(output: &Path) -> BTreeMap<String, EmittedQuery> {
         }
     }
     out
+}
+
+/// Every `--!` query one fixture table emits — the CRUD statements beside the
+/// `include_*` pairs (the CRUD soft-delete legs read `list_customer` off this
+/// map, issue #788).
+fn table_queries(output: &Path, table: &str) -> BTreeMap<String, EmittedQuery> {
+    parse_emitted_queries(&read(&output.join(format!("queries/shop/{table}.sql"))))
 }
 
 // ── PR-CI pins (node-free, DB-free) ──
@@ -709,6 +741,26 @@ async fn query_scoped(client: &mut Client, org: Uuid, sql: &str, bind: Bind<'_>)
     rows
 }
 
+/// Run one generated CRUD list/count statement — `(offset, page_size)` binds
+/// positionally — under an `app_user` session scoped to `org`, the same
+/// transaction shape the generated query wrapper owns (issue #788).
+async fn query_list_scoped(
+    client: &mut Client,
+    org: Uuid,
+    sql: &str,
+    offset: i64,
+    page_size: i64,
+) -> Vec<Row> {
+    let tx = client.transaction().await.expect("begin scoped tx");
+    set_rls_session_vars(&tx, org).await;
+    let rows = tx
+        .query(sql, &[&offset, &page_size])
+        .await
+        .unwrap_or_else(|e| panic!("list statement failed under app_user:\n{sql}\n{e}"));
+    tx.commit().await.expect("commit scoped tx");
+    rows
+}
+
 fn uuid_col(row: &Row, name: &str) -> Uuid {
     row.try_get(name)
         .unwrap_or_else(|e| panic!("column {name} as uuid: {e}"))
@@ -1174,6 +1226,41 @@ async fn cornucopia_includes_hydrate_under_rls() {
         1,
         "the scalar marker filters the TARGET, not the source: the soft-deleted \
          source's live customer is still returned"
+    );
+
+    // ── 10. CRUD soft delete (issue #788) ──
+    //
+    // The emitted `list_customer` statement now filters `deleted_at` on the
+    // default arm and the `_including_deleted` twin stays unfiltered — the
+    // toggle the repository plane drives from `is_auditable` branches REAL
+    // statements on this provider. Org A's customers: `customer_a` (live),
+    // `customer_deleted_org` (live, its org is the soft-deleted dot-leaf seed)
+    // and `customer_a_deleted` (soft-deleted). The default list must hide the
+    // third, the twin must return it, and org B's customer must be absent
+    // from both (RLS still owns tenancy — no tenant predicate was added).
+    let crud = table_queries(&output, "customer");
+    let page_binds = &[("offset", "$1"), ("page_size", "$2")];
+    let list_default = bind_named_params(&crud["list_customer"], page_binds);
+    let list_all = bind_named_params(&crud["list_customer_including_deleted"], page_binds);
+
+    let rows = query_list_scoped(&mut client, seed.org_a, &list_default, 0, 10).await;
+    assert_eq!(
+        ids(&rows),
+        BTreeSet::from([seed.customer_a, seed.customer_deleted_org]),
+        "the default list excludes the soft-deleted customer AND the other \
+         tenant's rows"
+    );
+
+    let rows = query_list_scoped(&mut client, seed.org_a, &list_all, 0, 10).await;
+    assert_eq!(
+        ids(&rows),
+        BTreeSet::from([
+            seed.customer_a,
+            seed.customer_deleted_org,
+            seed.customer_a_deleted,
+        ]),
+        "`list_customer_including_deleted` is the escape hatch: the \
+         soft-deleted customer IS present"
     );
 
     db.cleanup().await;
